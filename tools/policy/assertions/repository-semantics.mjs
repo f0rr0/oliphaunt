@@ -155,7 +155,6 @@ function checkTooling() {
     ".github/actions/setup-node-pnpm/action.yml",
     ".github/actions/setup-npm-publisher/action.yml",
     ".github/workflows/ci.yml",
-    ".github/workflows/release-execute.yml",
     ".github/workflows/release.yml",
     "biome.json",
     "docs/maintainers/tooling.md",

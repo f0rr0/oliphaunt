@@ -356,7 +356,7 @@ function checkToolchains() {
   for (const workflow of [
     '.github/workflows/ci.yml',
     '.github/workflows/mobile-e2e.yml',
-    '.github/workflows/release-execute.yml',
+    '.github/workflows/release.yml',
   ]) {
     requireText(workflow, `NODE_VERSION: ${nodeVersion}`);
   }

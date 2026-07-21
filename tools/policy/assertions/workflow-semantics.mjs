@@ -106,6 +106,33 @@ function commandPattern(command) {
   return new RegExp(`${COMMAND_BOUNDARY}${command}`, "mu");
 }
 
+function workflowSecretReferences(value, context) {
+  const references = [];
+  const visit = (entry) => {
+    if (typeof entry === "string") {
+      const tokens = [...entry.matchAll(/\bsecrets\b/giu)];
+      const literals = [
+        ...entry.matchAll(/\bsecrets\s*(?:[.]([A-Z0-9_]+)|\[\s*(["'])([A-Z0-9_]+)\2\s*\])/giu),
+      ];
+      invariant(
+        tokens.length === literals.length,
+        `${context} must use only literal dot or bracket secret references`,
+      );
+      for (const match of literals) references.push((match[1] ?? match[3]).toUpperCase());
+      return;
+    }
+    if (Array.isArray(entry)) {
+      for (const item of entry) visit(item);
+      return;
+    }
+    if (object(entry)) {
+      for (const item of Object.values(entry)) visit(item);
+    }
+  };
+  visit(value);
+  return references;
+}
+
 function activeRun(entry) {
   return executableShell(entry.step.run);
 }
@@ -651,25 +678,25 @@ export function assertMobileWorkflow(workflow) {
   );
 }
 
-export function assertReleaseDispatcherWorkflow(workflow) {
-  assertWorkflowFoundation(workflow, "Release dispatcher");
+export function assertReleaseEntryWorkflow(workflow) {
+  assertWorkflowFoundation(workflow, "Release entry");
   invariant(
     sameSet(Object.keys(workflow.on), ["workflow_dispatch"]),
-    "Release dispatcher must be manual only",
+    "Release entry must be manual only",
   );
   const operations = workflow.on.workflow_dispatch?.inputs?.operation?.options ?? [];
   invariant(
     sameSet(operations, ["prepare-release-pr", "publish-dry-run", "publish", "publish-bootstrap"]),
-    "Release dispatcher must expose only supported state transitions",
+    "Release entry must expose only supported state transitions",
   );
   assertConcurrency(workflow, {
     group: "release-${{ inputs.operation == 'publish-dry-run' && github.sha || 'mutation' }}",
     cancel: false,
-  }, "Release dispatcher");
+  }, "Release entry");
   // GitHub concurrency retains at most one running and one pending run for a
   // group. The non-cancelling mutation group serializes those two runs, but it
   // cannot be treated as an unbounded release queue.
-  assertPermissions(workflow.permissions, { contents: "read" }, "Release dispatcher workflow");
+  assertPermissions(workflow.permissions, { contents: "read" }, "Release entry workflow");
   const inputs = workflow.on.workflow_dispatch?.inputs ?? {};
   invariant(
     sameSet(Object.keys(inputs), ["operation", "release_commit", "continuation_pointer"])
@@ -678,70 +705,58 @@ export function assertReleaseDispatcherWorkflow(workflow) {
       && inputs.release_commit?.type === "string"
       && inputs.continuation_pointer?.required === false
       && inputs.continuation_pointer?.type === "string",
-    "Release dispatcher inputs must be operation plus optional exact commit and canonical continuation pointer",
+    "Release entry inputs must be operation plus optional exact commit and canonical continuation pointer",
   );
 
-  // A reusable-workflow caller's permissions are a ceiling for every nested
-  // job. GitHub validates that ceiling before evaluating nested job `if`
-  // conditions, so every operation-specific caller must expose the union of
-  // the called workflow's job permissions. The called jobs retain their
-  // explicit, narrower permissions and therefore remain least privilege at
-  // execution time.
-  const reusableWorkflowCeiling = {
-    actions: "read",
-    attestations: "write",
-    contents: "write",
-    "id-token": "write",
-    issues: "write",
-    "pull-requests": "write",
-  };
-  const operationJobIds = ["prepare-release-pr", "publish-dry-run", "publish-bootstrap", "publish"];
+  const operationJobIds = [
+    "prepare-release-pr",
+    "publish-dry-run",
+    "publish",
+    "publish-registry",
+    "publish-finalize",
+    "publish-bootstrap",
+  ];
   const dispatchers = {
     "dispatch-bootstrap-continuation": "publish-bootstrap",
-    "dispatch-publish-continuation": "publish",
+    "dispatch-publish-continuation": "publish-registry",
   };
   invariant(
     sameSet(Object.keys(workflow.jobs), ["validate-inputs", ...operationJobIds, ...Object.keys(dispatchers)]),
-    "Release dispatcher must have one unconditional input validator, one reusable-workflow caller per operation, and isolated continuation dispatchers",
+    "Release workflow must have one unconditional input validator, direct operation jobs, and isolated continuation dispatchers",
   );
   const inputValidation = assertRunInvocation(
     workflow,
     "validate-inputs",
     "validate_release_inputs",
     commandPattern("bash\\s+[.]github/scripts/validate-release-workflow-inputs[.]sh\\b"),
-    "the unconditional root release-input validator",
+    "the unconditional release-input validator",
   );
   invariant(
     workflow.jobs["validate-inputs"]["runs-on"] === "ubuntu-24.04"
-      && workflow.jobs["validate-inputs"]["timeout-minutes"] === 2
+      && workflow.jobs["validate-inputs"]["timeout-minutes"] === 5
       && inputValidation.step.env?.RELEASE_OPERATION === "${{ inputs.operation }}"
       && inputValidation.step.env?.RELEASE_COMMIT === "${{ inputs.release_commit }}"
       && inputValidation.step.env?.RELEASE_CONTINUATION_POINTER === "${{ inputs.continuation_pointer }}"
       && normalized(inputValidation.step.if) === "",
-    "the root dispatcher must validate every caller-controlled input unconditionally and inside a bounded read-only job",
+    "the release workflow must validate every caller-controlled input unconditionally and inside a bounded read-only job",
   );
   assertPermissions(
     workflow.jobs["validate-inputs"].permissions,
     { contents: "read" },
-    "Release dispatcher input validation",
+    "Release input validation",
   );
-  assertSingleCheckout(workflow, "validate-inputs", undefined);
+  assertSingleCheckout(workflow, "validate-inputs", "${{ github.sha }}");
+  invariant(
+    workflow.jobs["validate-inputs"].environment === undefined
+      && workflow.jobs["validate-inputs"].secrets === undefined
+      && workflowSecretReferences(workflow.jobs["validate-inputs"], "validate-inputs").length === 0,
+    "release input validation must not receive an environment or secrets",
+  );
   for (const jobId of operationJobIds) {
     const job = workflow.jobs[jobId];
-    assertExactNeeds(workflow, jobId, ["validate-inputs"]);
-    invariant(job.uses === "./.github/workflows/release-execute.yml", `${jobId} must call release execution`);
-    assertConditionRequires(job.if, [`inputs.operation == '${jobId}'`], jobId);
-    invariant(job.with?.operation === jobId, `${jobId} must pass its literal operation`);
-    invariant(job.with?.release_commit === "${{ inputs.release_commit }}", `${jobId} must forward release_commit`);
     invariant(
-      job.with?.continuation_pointer === "${{ inputs.continuation_pointer }}",
-      `${jobId} must forward only the canonical continuation pointer`,
-    );
-    invariant(job.secrets === undefined, `${jobId} must not inherit caller secrets`);
-    assertPermissions(
-      job.permissions,
-      reusableWorkflowCeiling,
-      `Release dispatcher ${jobId} reusable-workflow permission ceiling`,
+      job.uses === undefined && Array.isArray(job.steps) && job.steps.length > 0,
+      `${jobId} must be implemented directly in the protected release workflow`,
     );
   }
   for (const [jobId, parent] of Object.entries(dispatchers)) {
@@ -754,10 +769,10 @@ export function assertReleaseDispatcherWorkflow(workflow) {
     invariant(
       job.environment === undefined
         && job.secrets === undefined
-        && !JSON.stringify(job).includes("secrets."),
+        && workflowSecretReferences(job, jobId).length === 0,
       `${jobId} must not receive an environment or registry secrets`,
     );
-    assertPermissions(job.permissions, { actions: "write", contents: "read" }, `Release dispatcher ${jobId}`);
+    assertPermissions(job.permissions, { actions: "write", contents: "read" }, `Release entry ${jobId}`);
     invariant(
       job["timeout-minutes"] === RELEASE_CONTINUATION_DISPATCH_JOB_TIMEOUT_MINUTES,
       `${jobId} must bound validation, delayed dispatch, authorization upload, and cleanup`,
@@ -792,7 +807,13 @@ export function assertReleaseDispatcherWorkflow(workflow) {
         && dispatch.step["timeout-minutes"] * 60_000
           >= RELEASE_CONTINUATION_DISPATCH_RETRY_ENVELOPE_MS
         && dispatch.step.env?.CONTINUATION_AUTHORIZATION_PATH
-          === "${{ runner.temp }}/release-continuation-authorization.json",
+          === "${{ runner.temp }}/release-continuation-authorization.json"
+        && dispatch.step.env?.CONTINUATION_ARTIFACT_ID
+          === `\${{ needs.${parent}.outputs.continuation_artifact_id }}`
+        && dispatch.step.env?.CONTINUATION_ARTIFACT_DIGEST
+          === `\${{ needs.${parent}.outputs.continuation_artifact_digest }}`
+        && dispatch.step.env?.CONTINUATION_CONTRACT_DIGEST
+          === `\${{ needs.${parent}.outputs.continuation_contract_digest }}`,
       `${jobId} must reserve a bounded exact dispatched-child authorization receipt`,
     );
     const authorization = assertUploadById(
@@ -824,9 +845,9 @@ export function assertReleaseDispatcherWorkflow(workflow) {
   }
   invariant(
     workflow.env?.NODE_VERSION === RELEASE_NODE_RUNTIME_VERSION,
-    `release dispatcher must pin Node ${RELEASE_NODE_RUNTIME_VERSION}`,
+    `release entry must pin Node ${RELEASE_NODE_RUNTIME_VERSION}`,
   );
-  assertPinnedNodeCommandRuntimes(workflow, "Release dispatcher");
+  assertPinnedNodeCommandRuntimes(workflow, "Release entry");
 }
 
 const GITHUB_STAGE_PHASES = [
@@ -984,7 +1005,7 @@ function assertNormalStageConditions(workflow) {
 function assertCriticalReleaseCommands(workflow) {
   const commands = [
     ["publish", "release_head", "[.]github/scripts/resolve-release-head[.]sh\\b", "the exact release-head resolver"],
-    ["publish", "verify_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the caller-bound OIDC verifier"],
+    ["publish", "verify_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the direct-workflow OIDC verifier"],
     ["publish", "verify_maven_signing", "tools/dev/bun[.]sh\\s+tools/release/verify-maven-signing-readiness[.]mjs\\b", "the pre-mutation Maven signing verifier"],
     ["publish", "ci_qualification", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the exact-SHA CI selector"],
     ["publish", "verify_qualification", "node\\s+[.]github/scripts/verify-release-candidate[.]mjs\\b", "the candidate verifier"],
@@ -1008,7 +1029,7 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish-registry", "download_approved_publication_inputs", "node\\s+[.]github/scripts/download-build-artifacts[.]mjs\\b", "the approved dry-run input downloader"],
     ["publish-registry", "install_github_stage_handoff", "tools/dev/bun[.]sh\\s+tools/release/release-phase-handoff[.]mjs\\s+install\\b", "the validated staging handoff installer"],
     ["publish-registry", "install_github_stage_handoff", "node\\s+[.]github/scripts/install-release-continuation-github-state[.]mjs\\b", "the continuation-safe GitHub state installer"],
-    ["publish-registry", "verify_registry_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the registry caller-bound OIDC verifier"],
+    ["publish-registry", "verify_registry_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the registry direct-workflow OIDC verifier"],
     ["publish-registry", "verify_registry_maven_signing", "tools/dev/bun[.]sh\\s+tools/release/verify-maven-signing-readiness[.]mjs\\b", "the registry Maven signing verifier"],
     ["publish-registry", "verify_registry_github_staging", "tools/dev/bun[.]sh\\s+tools/release/verify_product_tags[.]mjs\\b", "registry pre-mutation staging verification"],
     ["publish-registry", "restore_normal_publication_checkpoint", "tools/dev/bun[.]sh\\s+[.]github/scripts/download-normal-publication-checkpoint[.]mjs\\b", "normal-publication recovery"],
@@ -2067,7 +2088,7 @@ function assertOidcBoundaries(workflow) {
         observed.push(location);
         invariant(
           expected.get(location) === step.env?.RELEASE_OPERATION,
-          `${location} must verify the caller-bound OIDC identity for its exact operation`,
+          `${location} must verify the direct-workflow OIDC identity for its exact operation`,
         );
       }
     }
@@ -2102,7 +2123,7 @@ function assertBootstrapJob(workflow) {
   }
   for (const [id, command, description] of [
     ["release_head", "[.]github/scripts/resolve-release-head[.]sh\\b", "the release-head resolver"],
-    ["verify_bootstrap_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the bootstrap caller-bound OIDC verifier"],
+    ["verify_bootstrap_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the bootstrap direct-workflow OIDC verifier"],
     ["ci_qualification", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the exact-SHA CI selector"],
     ["verify_bootstrap_qualification", "node\\s+[.]github/scripts/verify-release-candidate[.]mjs\\b", "the candidate verifier"],
     ["inspect_bootstrap_continuation", "node\\s+[.]github/scripts/inspect-release-continuation[.]mjs\\b", "the exact parent continuation inspector"],
@@ -2279,73 +2300,62 @@ function assertBootstrapJob(workflow) {
   assertConditionRequires(ledger.if, ["always()"], "publish-bootstrap.preserve_bootstrap_ledger");
 }
 
-export function assertReleaseExecutionWorkflow(workflow) {
-  assertWorkflowFoundation(workflow, "Release execution");
+export function assertReleaseOperationWorkflow(workflow) {
+  assertWorkflowFoundation(workflow, "Release");
   invariant(
-    sameSet(Object.keys(workflow.on), ["workflow_call"]),
-    "Release execution must be callable only",
+    sameSet(Object.keys(workflow.on), ["workflow_dispatch"]),
+    "Release jobs must execute directly from the manual release workflow",
   );
-  const inputs = workflow.on.workflow_call?.inputs ?? {};
-  invariant(
-    sameSet(Object.keys(inputs), ["operation", "release_commit", "continuation_pointer"])
-      && inputs.operation?.required === true
-      && inputs.operation?.type === "string"
-      && inputs.release_commit?.required === false
-      && inputs.release_commit?.type === "string"
-      && inputs.continuation_pointer?.required === false
-      && inputs.continuation_pointer?.type === "string",
-    "Release execution inputs must be a required operation and optional release_commit/continuation_pointer",
-  );
-  invariant(workflow.on.workflow_call?.secrets === undefined, "Release execution must not accept caller secrets");
-  invariant(workflow.concurrency === undefined, "Release execution must inherit dispatcher serialization");
-  assertPermissions(workflow.permissions, { contents: "read" }, "Release execution workflow");
+  assertPermissions(workflow.permissions, { contents: "read" }, "Release workflow");
   invariant(
     sameSet(Object.keys(workflow.jobs), [
-      "release-identity",
+      "validate-inputs",
       "prepare-release-pr",
       "publish-dry-run",
       "publish",
       "publish-registry",
       "publish-finalize",
       "publish-bootstrap",
+      "dispatch-bootstrap-continuation",
+      "dispatch-publish-continuation",
     ]),
-    "Release execution must keep the isolated staging, registry, finalization, and bootstrap jobs",
+    "Release workflow must keep validation, isolated operation jobs, and continuation dispatchers",
   );
   const releaseInputValidation = assertRunInvocation(
     workflow,
-    "release-identity",
+    "validate-inputs",
     "validate_release_inputs",
     commandPattern("bash\\s+[.]github/scripts/validate-release-workflow-inputs[.]sh\\b"),
     "the global release workflow input validator",
   );
-  const identityCheckouts = workflowSteps(workflow, "release-identity")
+  const identityCheckouts = workflowSteps(workflow, "validate-inputs")
     .map((step, index) => ({ index, step }))
     .filter(({ step }) => String(step.uses ?? "").startsWith("actions/checkout@"));
   invariant(
     identityCheckouts.length === 1,
-    `release identity must contain exactly one checkout; found ${identityCheckouts.length}`,
+    `release input validation must contain exactly one checkout; found ${identityCheckouts.length}`,
   );
-  assertCheckout(identityCheckouts[0].step, "${{ github.sha }}", "release identity");
+  assertCheckout(identityCheckouts[0].step, "${{ github.sha }}", "release input validation");
   invariant(
     identityCheckouts[0].index < releaseInputValidation.index,
-    "release identity must checkout the exact workflow commit before invoking its input validator",
+    "release input validation must checkout the exact workflow commit before invoking its input validator",
   );
   invariant(
     releaseInputValidation.step.env?.RELEASE_OPERATION === "${{ inputs.operation }}"
       && releaseInputValidation.step.env?.RELEASE_COMMIT === "${{ inputs.release_commit }}"
       && releaseInputValidation.step.env?.RELEASE_CONTINUATION_POINTER
         === "${{ inputs.continuation_pointer }}",
-    "release identity must bind every caller-controlled release input to the global validator",
+    "release input validation must bind every caller-controlled release input to the global validator",
   );
-  assertExactNeeds(workflow, "prepare-release-pr", ["release-identity"]);
-  assertExactNeeds(workflow, "publish-dry-run", ["release-identity"]);
-  assertExactNeeds(workflow, "publish", ["release-identity"]);
-  assertExactNeeds(workflow, "publish-registry", ["release-identity", "publish"]);
+  assertExactNeeds(workflow, "prepare-release-pr", ["validate-inputs"]);
+  assertExactNeeds(workflow, "publish-dry-run", ["validate-inputs"]);
+  assertExactNeeds(workflow, "publish", ["validate-inputs"]);
+  assertExactNeeds(workflow, "publish-registry", ["validate-inputs", "publish"]);
   assertExactNeeds(workflow, "publish-finalize", [
-    "release-identity",
+    "validate-inputs",
     "publish-registry",
   ]);
-  assertExactNeeds(workflow, "publish-bootstrap", ["release-identity"]);
+  assertExactNeeds(workflow, "publish-bootstrap", ["validate-inputs"]);
   assertPermissions(workflow.jobs["prepare-release-pr"].permissions, {
     contents: "write",
     issues: "write",
@@ -2394,6 +2404,57 @@ export function assertReleaseExecutionWorkflow(workflow) {
       && workflow.jobs["publish-bootstrap"].environment === "release-bootstrap",
     "release jobs must use their isolated protected environments",
   );
+  const expectedSecretReferences = {
+    "validate-inputs": [],
+    "prepare-release-pr": ["RELEASE_PR_TOKEN"],
+    "publish-dry-run": [
+      "GITHUB_TOKEN",
+      "MAVEN_CENTRAL_PASSWORD",
+      "MAVEN_CENTRAL_USERNAME",
+      "MAVEN_GPG_KEY_ID",
+      "MAVEN_GPG_PASSPHRASE",
+      "MAVEN_GPG_PRIVATE_KEY",
+    ],
+    publish: [
+      "GITHUB_TOKEN",
+      "MAVEN_CENTRAL_PASSWORD",
+      "MAVEN_CENTRAL_USERNAME",
+      "MAVEN_GPG_KEY_ID",
+      "MAVEN_GPG_PASSPHRASE",
+      "MAVEN_GPG_PRIVATE_KEY",
+    ],
+    "publish-registry": [
+      "GITHUB_TOKEN",
+      "MAVEN_CENTRAL_PASSWORD",
+      "MAVEN_CENTRAL_USERNAME",
+      "MAVEN_GPG_KEY_ID",
+      "MAVEN_GPG_PASSPHRASE",
+      "MAVEN_GPG_PRIVATE_KEY",
+    ],
+    "publish-finalize": ["GITHUB_TOKEN"],
+    "publish-bootstrap": ["CRATES_IO_BOOTSTRAP_TOKEN", "GITHUB_TOKEN", "NPM_BOOTSTRAP_TOKEN"],
+    "dispatch-bootstrap-continuation": [],
+    "dispatch-publish-continuation": [],
+  };
+  for (const [jobId, expected] of Object.entries(expectedSecretReferences)) {
+    const job = workflow.jobs[jobId];
+    const referenced = workflowSecretReferences(job, jobId);
+    invariant(job.secrets === undefined, `${jobId} must not forward or inherit secrets`);
+    invariant(
+      sameSet(referenced, expected),
+      `${jobId} must reference exactly its protected-environment secret contract`,
+    );
+  }
+  for (const step of workflowSteps(workflow, "publish-dry-run")) {
+    if (workflowSecretReferences(step, `publish-dry-run.${step.id ?? step.name ?? "unnamed-step"}`)
+      .some((name) => name.startsWith("MAVEN_"))) {
+      assertConditionRequires(
+        step.if,
+        ["inputs.operation == 'publish'"],
+        `publish-dry-run.${step.id ?? step.name ?? "unnamed-maven-step"}`,
+      );
+    }
+  }
   assertCondition(workflow, "prepare-release-pr", ["inputs.operation == 'prepare-release-pr'"]);
   invariant(
     normalized(workflow.jobs["publish-dry-run"].if)
@@ -2404,9 +2465,9 @@ export function assertReleaseExecutionWorkflow(workflow) {
   );
   invariant(
     normalized(workflow.jobs["publish-registry"].if)
-      === "${{ always() && inputs.operation == 'publish' && ((inputs.continuation_pointer == '' && needs.publish.result == 'success' && needs.publish.outputs.has_release_changes == 'true') || (inputs.continuation_pointer != '' && needs.release-identity.result == 'success')) }}"
+      === "${{ always() && inputs.operation == 'publish' && ((inputs.continuation_pointer == '' && needs.publish.result == 'success' && needs.publish.outputs.has_release_changes == 'true') || (inputs.continuation_pointer != '' && needs.validate-inputs.result == 'success')) }}"
       && normalized(workflow.jobs["publish-finalize"].if)
-        === "${{ always() && inputs.operation == 'publish' && needs.release-identity.result == 'success' && needs.publish-registry.result == 'success' && needs.publish-registry.outputs.publication_complete == 'true' }}",
+        === "${{ always() && inputs.operation == 'publish' && needs.validate-inputs.result == 'success' && needs.publish-registry.result == 'success' && needs.publish-registry.outputs.publication_complete == 'true' }}",
     "registry and finalization jobs must run only for their exact root/continuation success state",
   );
   assertCondition(workflow, "publish-bootstrap", ["inputs.operation == 'publish-bootstrap'"]);
@@ -2414,7 +2475,7 @@ export function assertReleaseExecutionWorkflow(workflow) {
     workflow.env?.NODE_VERSION === RELEASE_NODE_RUNTIME_VERSION
       && workflow.env?.NPM_VERSION === RELEASE_NPM_PUBLISHER_VERSION
       && workflow.env?.PNPM_VERSION === RELEASE_PNPM_VERSION,
-    `release execution must pin Node ${RELEASE_NODE_RUNTIME_VERSION}, npm ${RELEASE_NPM_PUBLISHER_VERSION}, and pnpm ${RELEASE_PNPM_VERSION}`,
+    `release workflow must pin Node ${RELEASE_NODE_RUNTIME_VERSION}, npm ${RELEASE_NPM_PUBLISHER_VERSION}, and pnpm ${RELEASE_PNPM_VERSION}`,
   );
   assertAllCheckouts(workflow, undefined);
   assertSingleCheckout(workflow, "prepare-release-pr", undefined);
@@ -2475,7 +2536,7 @@ export function assertReleaseExecutionWorkflow(workflow) {
   ]);
   assertNormalStageConditions(workflow);
   assertPinnedNpmPublisherRuntimes(workflow);
-  assertPinnedNodeCommandRuntimes(workflow, "Release execution");
+  assertPinnedNodeCommandRuntimes(workflow, "Release");
   assertCriticalReleaseCommands(workflow);
   assertReleaseTiming(workflow);
   assertAttestations(workflow);
@@ -2513,46 +2574,18 @@ export function assertReleaseExecutionWorkflow(workflow) {
   });
 }
 
-export function assertReleaseWorkflow(dispatcher, execution) {
-  invariant(execution !== undefined, "release checks require dispatcher and execution workflows");
-  assertReleaseDispatcherWorkflow(dispatcher);
-  const accessRank = { none: 0, read: 1, write: 2 };
-  const permissionCeiling = new Map();
-  for (const [jobId, job] of Object.entries(execution.jobs)) {
-    const permissions = job.permissions ?? execution.permissions;
-    invariant(object(permissions), `Release execution ${jobId} must have an effective permission object`);
-    for (const [scope, access] of Object.entries(permissions)) {
-      invariant(
-        Object.hasOwn(accessRank, access),
-        `Release execution ${jobId} has unsupported ${scope} permission ${String(access)}`,
-      );
-      if ((accessRank[access] ?? 0) > (accessRank[permissionCeiling.get(scope)] ?? 0)) {
-        permissionCeiling.set(scope, access);
-      }
-    }
-  }
-  const derivedCeiling = Object.fromEntries(
-    [...permissionCeiling.entries()]
-      .filter(([, access]) => access !== "none")
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
-  );
-  for (const jobId of ["prepare-release-pr", "publish-dry-run", "publish-bootstrap", "publish"]) {
-    assertPermissions(
-      dispatcher.jobs[jobId]?.permissions,
-      derivedCeiling,
-      `Release dispatcher ${jobId} derived nested permission ceiling`,
-    );
-  }
-  assertReleaseExecutionWorkflow(execution);
+export function assertReleaseWorkflow(workflow) {
+  invariant(workflow !== undefined, "release checks require the direct release workflow");
+  assertReleaseEntryWorkflow(workflow);
+  assertReleaseOperationWorkflow(workflow);
 }
 
 export function assertStableWorkflowInvariants(root, { builderJobs = [] } = {}) {
   const ci = parseWorkflow(root, ".github/workflows/ci.yml");
   const mobile = parseWorkflow(root, ".github/workflows/mobile-e2e.yml");
   const release = parseWorkflow(root, ".github/workflows/release.yml");
-  const releaseExecution = parseWorkflow(root, ".github/workflows/release-execute.yml");
   assertCiWorkflow(ci, { builderJobs });
   assertMobileWorkflow(mobile);
-  assertReleaseWorkflow(release, releaseExecution);
-  return { ci, mobile, release, releaseExecution };
+  assertReleaseWorkflow(release);
+  return { ci, mobile, release };
 }

@@ -90,7 +90,7 @@ test("rejects unknown or duplicate product selection", () => {
 test("classifies only the exact npm publish permission and caller identity as trusted", () => {
   assert.deepEqual(classifyNpmTrustConfigs([]), { state: "missing" });
   assert.deepEqual(classifyNpmTrustConfigs([exactNpm()]), { state: "exact" });
-  assert.equal(classifyNpmTrustConfigs([{ ...exactNpm(), file: "release-execute.yml" }]).state, "conflict");
+  assert.equal(classifyNpmTrustConfigs([{ ...exactNpm(), file: "wrong.yml" }]).state, "conflict");
   assert.equal(classifyNpmTrustConfigs([{
     ...exactNpm(),
     permissions: ["createPackage", "createStagedPackage"],

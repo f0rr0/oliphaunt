@@ -7,7 +7,7 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dir, "../..");
 
 function workflowStep(name) {
-  const workflow = readFileSync(path.join(ROOT, ".github/workflows/release-execute.yml"), "utf8");
+  const workflow = readFileSync(path.join(ROOT, ".github/workflows/release.yml"), "utf8");
   const marker = `      - name: ${name}\n`;
   const start = workflow.indexOf(marker);
   assert.notEqual(start, -1, `missing workflow step ${name}`);
@@ -24,7 +24,7 @@ test("Swift staging creates a selection-neutral embedded carrier", () => {
   assert.match(stageSwift, /buildIosCarrierManifest\(\{[\s\S]*?extensionManifests: \[\],/u);
 });
 
-test("release execution preserves the embedded carrier and validates independent extension carriers", () => {
+test("the release workflow preserves the embedded carrier and validates independent extension carriers", () => {
   const step = workflowStep("Freeze canonical Apple extension carrier input");
   assert.doesNotMatch(step, /carrier_destination|\bcp\b/u);
   assert.match(
@@ -45,7 +45,7 @@ test("release execution preserves the embedded carrier and validates independent
   );
 });
 
-test("release execution projects extension roots to the selected release products", () => {
+test("the release workflow projects extension roots to the selected release products", () => {
   for (const name of ["Assemble exact candidate Cargo registry", "Freeze exhaustive publication lock"]) {
     const step = workflowStep(name);
     assert.match(step, /--family extension-artifacts/u);

@@ -4,10 +4,10 @@ export const RELEASE_PLEASE_DISPLACED_MAIN_SHA =
   "06816d377f96ab8e53d3c6ec8732577cc4386f2e";
 // The original displaced tip above remains the immutable release-metadata
 // transition baseline. This separate value is the exact `github.event.before`
-// authorized for the final corrective rewrite after the qualified introduction
-// exposed release-PR toolchain and macOS full-gate portability defects.
+// authorized for the final corrective rewrite after hosted qualification
+// exposed the reusable-workflow environment-secret boundary defect.
 export const RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA =
-  "85ae0988b64ab186a8499327268acc1ceea03ab0";
+  "1b27e2388260e23810cf2611f454432c6f724744";
 export const RELEASE_PLEASE_INTRODUCTION_SUBJECT = "feat: introduce oliphaunt";
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";

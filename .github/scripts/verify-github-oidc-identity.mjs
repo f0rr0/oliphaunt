@@ -7,7 +7,10 @@ const OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const OIDC_AUDIENCE = "oliphaunt-release-identity-preflight";
 const MAX_OIDC_RESPONSE_BYTES = 128 * 1024;
 const CALLER_WORKFLOW = "release.yml";
-const CALLED_WORKFLOW = "release-execute.yml";
+const REUSABLE_WORKFLOW_ONLY_CLAIMS = Object.freeze([
+  "job_workflow_ref",
+  "job_workflow_sha",
+]);
 const ENVIRONMENT_BY_OPERATION = Object.freeze({
   "publish-bootstrap": "release-bootstrap",
   publish: "release-publish",
@@ -54,8 +57,6 @@ export function expectedOidcIdentity(environment = process.env) {
     environment: releaseEnvironment,
     event_name: eventName,
     iss: OIDC_ISSUER,
-    job_workflow_ref: `${repository}/.github/workflows/${CALLED_WORKFLOW}@${ref}`,
-    job_workflow_sha: sha,
     ref,
     ref_type: "branch",
     repository,
@@ -73,6 +74,13 @@ function printable(value) {
 export function verifyOidcClaims(claims, expected) {
   if (claims === null || typeof claims !== "object" || Array.isArray(claims)) {
     throw new Error("GitHub OIDC token payload must be an object");
+  }
+  for (const claim of REUSABLE_WORKFLOW_ONLY_CLAIMS) {
+    if (Object.hasOwn(claims, claim)) {
+      throw new Error(
+        `GitHub OIDC claim ${claim} is forbidden for a direct release workflow; got ${printable(claims[claim])}`,
+      );
+    }
   }
   for (const [claim, value] of Object.entries(expected)) {
     if (claims[claim] !== value) {
@@ -192,7 +200,7 @@ async function main() {
   try {
     const expected = await verifyGithubOidcIdentity();
     console.log(
-      `GitHub OIDC identity passed: caller=${expected.workflow_ref}, reusable=${expected.job_workflow_ref}, environment=${expected.environment}`,
+      `GitHub OIDC identity passed: workflow=${expected.workflow_ref}, environment=${expected.environment}`,
     );
   } catch (error) {
     console.error(`${TOOL}: ${error.message}`);

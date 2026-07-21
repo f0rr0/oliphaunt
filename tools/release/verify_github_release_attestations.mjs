@@ -1825,7 +1825,7 @@ function receiptDigest(receipt) {
 }
 
 function githubSignerWorkflow(repo) {
-  return `${repo}/.github/workflows/release-execute.yml`;
+  return `${repo}/.github/workflows/release.yml`;
 }
 
 export function buildGithubAttestationReceipt({ attestations, lock, releases, repo = repository() }) {

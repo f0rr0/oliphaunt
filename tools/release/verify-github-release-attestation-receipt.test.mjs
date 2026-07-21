@@ -817,7 +817,7 @@ describe("GitHub release attestation receipt", () => {
       repo: REPO,
     });
     expect(validateGithubAttestationReceipt(receipt, lock, { repo: REPO })).toBe(receipt);
-    expect(receipt.signerWorkflow).toBe("f0rr0/oliphaunt/.github/workflows/release-execute.yml");
+    expect(receipt.signerWorkflow).toBe("f0rr0/oliphaunt/.github/workflows/release.yml");
     expect(receipt.head).toBe(COMMIT);
     expect(receipt.lockDigest).toBe(LOCK_DIGEST);
 
@@ -862,14 +862,14 @@ describe("GitHub release attestation receipt", () => {
     })).rejects.toThrow("differ from its DSSE statement");
   });
 
-  test("builds exact reusable-signer and exact-source gh verification arguments", () => {
+  test("builds exact direct-workflow signer and exact-source gh verification arguments", () => {
     const args = ghBundleVerifyArgs({
       bundlePath: "/tmp/bundle.json",
       file: "/tmp/asset.tar.zst",
       head: COMMIT,
       repo: REPO,
     });
-    expect(args).toContain("f0rr0/oliphaunt/.github/workflows/release-execute.yml");
+    expect(args).toContain("f0rr0/oliphaunt/.github/workflows/release.yml");
     expect(args.slice(args.indexOf("--source-ref"), args.indexOf("--source-ref") + 2)).toEqual([
       "--source-ref",
       "refs/heads/main",

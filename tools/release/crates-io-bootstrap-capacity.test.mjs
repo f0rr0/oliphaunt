@@ -74,7 +74,7 @@ describe("crates.io release capacity gates", () => {
 
   test("starts mutation clocks only after qualification, dry-runs, and lock matching", () => {
     const workflow = readFileSync(
-      new URL("../../.github/workflows/release-execute.yml", import.meta.url),
+      new URL("../../.github/workflows/release.yml", import.meta.url),
       "utf8",
     );
     const qualification = workflow.indexOf("Require qualified release-commit CI run");

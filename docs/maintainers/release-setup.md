@@ -1,12 +1,12 @@
 # Release setup
 
-Status: normative external-setup guide. Last verified: 2026-07-20. Owner: repository maintainers.
+Status: normative external-setup guide. Last verified: 2026-07-21. Owner: repository maintainers.
 
 This document covers state that cannot live in the repository. The executable
-contract is the least-privilege dispatcher in `.github/workflows/release.yml`,
-the shared implementation in `.github/workflows/release-execute.yml`, and
-`tools/release/check_publish_environment.mjs`; update this guide when any of
-them changes.
+contract is the direct least-privilege workflow in
+`.github/workflows/release.yml` and
+`tools/release/check_publish_environment.mjs`; update this guide when either
+changes.
 
 ## GitHub controls
 
@@ -61,15 +61,15 @@ authorization. After package identities and their external publisher settings
 exist, normal Cargo/npm publication uses the `release-publish` environment and
 short-lived OIDC credentials without bootstrap tokens.
 
-### Trusted-publisher identity through the reusable workflow
+### Trusted-publisher identity through the direct workflow
 
-GitHub's standard OIDC claims describe the top-level caller, while
-`job_workflow_ref` describes the called reusable workflow. Consequently,
-crates.io and npm must be configured with the dispatcher filename
-`release.yml`, **not** `release-execute.yml`. The protected environment belongs
-to the called job and is still emitted as the `environment` claim. The workflow
-performs a read-only live-token check of all three values before either
-mutating operation.
+Cargo and npm publication jobs run directly in `.github/workflows/release.yml`.
+Their GitHub OIDC identity therefore contains that exact file in
+`workflow_ref`, its exact commit in `workflow_sha`, and the protected
+`release-publish` environment claim. There is no called reusable-workflow
+identity in this topology. The workflow performs a read-only live-token check
+of the repository, workflow, ref, SHA, hosted runner, event, and environment
+claims before either mutating operation.
 
 | Registry | Exact external configuration | Branch binding |
 | --- | --- | --- |
@@ -77,11 +77,10 @@ mutating operation.
 | npm | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish`, allowed action `npm publish` | npm has no branch field; the GitHub `release-publish` environment must allow only `main` |
 | JSR | link `@oliphaunt/ts` to GitHub repository `f0rr0/oliphaunt` | JSR has no workflow filename, environment, or branch publisher field; the workflow and GitHub environment enforce `main` |
 
-This distinction follows GitHub's [OIDC behavior for reusable
-workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows),
-the [crates.io trusted-publishing setup](https://crates.io/docs/trusted-publishing),
-npm's [trusted-publisher fields and reusable-workflow
-behavior](https://docs.npmjs.com/trusted-publishers/), and JSR's
+This identity follows GitHub's [OIDC claim
+reference](https://docs.github.com/en/actions/reference/security/oidc), the
+[crates.io trusted-publishing setup](https://crates.io/docs/trusted-publishing),
+npm's [trusted-publisher fields](https://docs.npmjs.com/trusted-publishers/), and JSR's
 [repository-link publishing model](https://jsr.io/docs/publishing-packages).
 Registry settings are external state: the OIDC preflight proves what GitHub
 emits, not what a registry operator entered. Audit the table after bootstrap.
@@ -107,19 +106,25 @@ creation. It never revokes or replaces a registry configuration. A failed or
 expired-auth run is resumable by rerunning the same lock and batch: exact
 configurations are skipped, while conflicts still fail closed.
 
-The dispatcher callers intentionally omit both named secrets and
-`secrets: inherit`. GitHub resolves only the environment secrets selected by
-the called job (`release-pr`, `release-bootstrap`, or `release-publish`) and
-automatically provides the scoped `GITHUB_TOKEN`. GitHub validates every job
-in a called reusable workflow before evaluating its `if`, so all four caller
-jobs must declare the union ceiling needed by all nested jobs. The called jobs'
-explicit `permissions` remain the effective grants: dry-run is read-only,
-bootstrap adds OIDC for npm provenance, preparation gets release-PR writes,
-and normal publish gets only its required write scopes. Dry-run and publish
-share one YAML-anchored step list but remain separate permission and
-environment boundaries. Policy regressions reject an operation-only caller
-ceiling, a write-capable dry-run, or detached step lists because any of those
-would respectively fail startup, weaken least privilege, or invite drift.
+Each credential-bearing job directly selects exactly one protected environment:
+`release-pr`, `release-bootstrap`, or `release-publish`. Keep the named secrets
+only in those environments; do not add repository-level duplicates or a
+reusable-workflow secret bridge. GitHub automatically provides the scoped
+`GITHUB_TOKEN`. Every job declares its own effective permissions: dry-run is
+read-only, bootstrap adds OIDC for npm provenance, preparation gets release-PR
+writes, and the three normal-publish phases receive only their required
+staging, registry, or finalization grants. Dry-run and publish share one
+YAML-anchored step list but remain separate permission and environment
+boundaries.
+
+The direct continuation DAG does not widen those boundaries.
+`dispatch-bootstrap-continuation` consumes only outputs from
+`publish-bootstrap`, and `dispatch-publish-continuation` consumes only outputs
+from `publish-registry`. Both dispatcher jobs are environment-free and
+secret-free, with Actions write only for the bounded exact-child dispatch and
+repository read for its transport checkout. Policy regressions reject a
+write-capable dry-run, detached shared step lists, secret-bearing continuation
+dispatchers, or a continuation wired to any other parent.
 
 Audit the live controls without changing them:
 
@@ -302,7 +307,7 @@ Generated Cargo `*-part-NNN` crates are allowed only when a `.crate` would excee
    Repeat with the next batch number, completing npm's 2FA prompt when a new
    window is needed. The first audit exits `1` for missing configurations; its
    JSON is still the required pre-mutation inventory. Every exact package receives repository
-   `f0rr0/oliphaunt`, caller workflow `release.yml`, environment
+   `f0rr0/oliphaunt`, workflow `release.yml`, environment
    `release-publish`, and only `npm publish`; staged publishing is never
    authorized. After all batches, rerun `--audit` for every batch and retain
    the zero-missing, zero-conflict reports.
@@ -414,13 +419,13 @@ Publishing is resumable but not cross-registry atomic. On failure, preserve and 
 - `release-pr` can create a PR that triggers normal CI;
 - dry-run has no write credentials;
 - bootstrap tokens are absent unless a reviewed first-identity run is imminent;
-- every Cargo and npm identity uses dispatcher `release.yml` and environment
-  `release-publish` (never reusable implementation `release-execute.yml`), npm
+- every Cargo and npm identity uses workflow `release.yml` and environment
+  `release-publish`, npm
   allows `npm publish`, and neither registry is expected to bind a branch;
 - the exact-lock trusted-publisher audit reports every selected Cargo/npm
   identity exact, with zero missing and zero conflicting/extra configurations;
-- JSR `@oliphaunt/ts` links to `f0rr0/oliphaunt`, and each workflow dispatcher
-  is a JSR scope member while the default actor restriction is enabled;
+- JSR `@oliphaunt/ts` links to `f0rr0/oliphaunt`, and each release operator is
+  a JSR scope member while the default actor restriction is enabled;
 - Central Portal visibly marks `dev.oliphaunt` Verified, the deployment API
   credentials authenticate, and the primary signing key preflight validates;
 - registry owners and GitHub maintainers can recover/revoke credentials;

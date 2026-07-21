@@ -1,13 +1,13 @@
 # Maintainer documentation
 
-Status: index. Last verified: 2026-07-16. Owner: repository maintainers.
+Status: index. Last verified: 2026-07-21. Owner: repository maintainers.
 
 Executable configuration is authoritative. Documentation explains intent and operation; it must not invent workflow names, package identities, targets, or release state. When prose conflicts with the sources below, fix the prose in the same change.
 
 | Topic | Maintainer entry point | Executable source |
 | --- | --- | --- |
 | Release products, versions, tags, and recovery | `release.md` | `release-please-config.json`, `.release-please-manifest.json`, product `release.toml`, `tools/release/publication-catalog.mjs`, `.github/scripts/manage-release-drafts.mjs` |
-| Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `.github/workflows/release-execute.yml`, `tools/release/check_publish_environment.mjs` |
+| Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `tools/release/check_publish_environment.mjs` |
 | CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mjs`, Moon project files |
 | Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, `tools/xtask`, the committed binary-semantic fingerprint |
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, product `targets/artifacts.toml`, evidence matrix, release catalog |

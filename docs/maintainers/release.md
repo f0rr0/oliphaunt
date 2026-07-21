@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-16. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-21. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -161,26 +161,31 @@ artifacts, downloads the approved lock, and byte-compares the two locks before
 publication. A mutating run therefore cannot
 approve itself or silently combine artifacts from different dry-runs.
 
-The manual workflow is a small dispatcher. Each operation calls one shared
-execution workflow. GitHub validates every nested job's permission request
-before it evaluates the nested `if` conditions, so every caller declares the
-same union permission ceiling required to compile the reusable workflow. This
-does not give that union to the running operation: explicit permissions on the
-called jobs reduce the actual token to repository-read-only for dry-run, OIDC
-plus repository read for bootstrap, release-PR writes for preparation, or the
-normal publish scopes. Dry-run and normal staging are separate jobs over one
-YAML-anchored step list, so this separation does not create two release
-implementations that can drift. Secrets come only from the operation's protected
-environment; callers do not inherit repository or organization secrets.
-Trusted publishers match the top-level caller filename `release.yml` because
-GitHub exposes that file through `workflow_ref`; the shared
-`release-execute.yml` implementation appears separately through
-`job_workflow_ref` and must not be entered as the npm or crates.io publisher.
-Before any reusable caller is compiled, an unconditional two-minute,
-repository-read-only job validates the operation, optional exact commit, and
-continuation pointer together. Malformed or contradictory manual inputs
-therefore fail as input errors instead of opaque reusable-workflow startup
-failures.
+`.github/workflows/release.yml` is the one directly dispatched release
+workflow. Its operation jobs declare their own least-privilege permissions and
+protected environments: dry-run is repository-read-only, bootstrap adds OIDC
+to repository read, preparation receives only release-PR writes, and normal
+publication separates staging, registry, and finalization grants. Dry-run and
+normal staging are separate jobs over one YAML-anchored step list, so this
+separation does not create two release implementations that can drift.
+
+Credential-bearing steps execute only in direct jobs that select the
+corresponding protected environment. The YAML anchor shared by dry-run and
+staging contains Maven secret expressions, but every such step also requires
+the literal `publish` operation and therefore cannot execute in dry-run.
+`release-pr`, `release-bootstrap`, and `release-publish` remain the credential
+boundaries; do not duplicate their secrets at repository level or route those
+jobs through a reusable workflow that changes the environment-secret boundary.
+GitHub automatically provides each job's scoped `GITHUB_TOKEN`.
+
+Trusted publishers match `release.yml`: direct publication exposes that file
+through `workflow_ref`, together with the exact `workflow_sha` and the
+`release-publish` environment claim. There is no called-workflow
+`job_workflow_ref` in this topology. An unconditional, bounded,
+repository-read-only validation job checks the canonical repository, exact
+workflow commit, operation, optional exact commit, and continuation pointer
+before any operation job. Malformed or contradictory manual inputs therefore
+fail before release work begins.
 After bootstrap, derive the complete configuration inventory from the exact
 publication lock with `tools/release/trusted-publisher-config.mjs`. Its default
 plan is offline/read-only; authenticated inspection requires `--audit`, and
@@ -234,6 +239,14 @@ lock/catalog/package-envelope digests, approved dry-run artifact
 IDs/digests/sizes, and every transported file digest/size. The downstream job
 downloads a current-run handoff by immutable artifact ID and rejects missing,
 extra, changed, executable, or path-unsafe payloads.
+
+Continuation dispatch is part of the same direct workflow but remains outside
+the protected credential jobs. A deferred bootstrap result flows from
+`publish-bootstrap` to `dispatch-bootstrap-continuation`; a deferred normal
+registry result flows from `publish-registry` to
+`dispatch-publish-continuation`. Each dispatcher has only Actions write and
+repository read, receives no release environment or registry secret, and may
+dispatch only the immutable exact-parent pointer emitted by its direct parent.
 
 The workflow does not encode a second product/ecosystem publish order. Before
 the first mutation it writes `normal-publication-plan.json` directly from the

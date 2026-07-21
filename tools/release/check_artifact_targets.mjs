@@ -853,9 +853,8 @@ export function validateRepository() {
   validateStructuredExtensionRecipes(inventory.products, inventory.extensions, inventory.graph);
   const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
   const release = parseWorkflow(ROOT, ".github/workflows/release.yml");
-  const releaseExecution = parseWorkflow(ROOT, ".github/workflows/release-execute.yml");
   assertCiWorkflow(ci, { builderJobs: BUILDER_JOBS });
-  assertReleaseWorkflow(release, releaseExecution);
+  assertReleaseWorkflow(release);
   validateCiArtifactCoverage(ci, inventory);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
   const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));

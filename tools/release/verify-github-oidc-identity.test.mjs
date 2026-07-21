@@ -34,36 +34,45 @@ function jwt(payload) {
   ].join(".");
 }
 
-test("models the caller and reusable workflow identities separately", () => {
+test("models the direct release workflow identity", () => {
   const publish = expectedOidcIdentity(environment("publish"));
   assert.equal(
     publish.workflow_ref,
     `f0rr0/oliphaunt/.github/workflows/release.yml@refs/heads/main`,
   );
-  assert.equal(
-    publish.job_workflow_ref,
-    `f0rr0/oliphaunt/.github/workflows/release-execute.yml@refs/heads/main`,
-  );
+  assert.equal(Object.hasOwn(publish, "job_workflow_ref"), false);
+  assert.equal(Object.hasOwn(publish, "job_workflow_sha"), false);
   assert.equal(publish.environment, "release-publish");
   assert.equal(expectedOidcIdentity(environment("publish-bootstrap")).environment, "release-bootstrap");
 });
 
-test("requires the exact caller, reusable workflow, environment, SHA, and hosted runner claims", () => {
+test("requires the exact direct workflow, environment, SHA, and hosted runner claims", () => {
   const expected = expectedOidcIdentity(environment());
   assert.doesNotThrow(() => verifyOidcClaims({ ...expected }, expected));
 
   for (const [claim, value] of [
-    ["workflow_ref", expected.job_workflow_ref],
-    ["job_workflow_ref", expected.workflow_ref],
+    ["workflow_ref", `f0rr0/oliphaunt/.github/workflows/other.yml@refs/heads/main`],
     ["environment", "release-bootstrap"],
     ["sha", "f".repeat(40)],
     ["workflow_sha", "f".repeat(40)],
-    ["job_workflow_sha", "f".repeat(40)],
     ["runner_environment", "self-hosted"],
   ]) {
     assert.throws(
       () => verifyOidcClaims({ ...expected, [claim]: value }, expected),
       new RegExp(`claim ${claim} mismatch`, "u"),
+    );
+  }
+});
+
+test("rejects reusable-workflow-only claims", () => {
+  const expected = expectedOidcIdentity(environment());
+  for (const [claim, value] of [
+    ["job_workflow_ref", `f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main`],
+    ["job_workflow_sha", SHA],
+  ]) {
+    assert.throws(
+      () => verifyOidcClaims({ ...expected, [claim]: value }, expected),
+      new RegExp(`claim ${claim} is forbidden for a direct release workflow`, "u"),
     );
   }
 });

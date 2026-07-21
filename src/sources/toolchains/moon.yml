@@ -25,7 +25,7 @@ tasks:
       - "/.moon/toolchains.yml"
       - "/.github/workflows/ci.yml"
       - "/.github/workflows/mobile-e2e.yml"
-      - "/.github/workflows/release-execute.yml"
+      - "/.github/workflows/release.yml"
       - "/.github/actions/setup-android/action.yml"
       - "/.github/actions/setup-bun/action.yml"
       - "/.github/actions/setup-deno/action.yml"

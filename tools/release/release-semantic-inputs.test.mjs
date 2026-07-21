@@ -282,7 +282,7 @@ test("the WASIX xtask producer closure excludes only download, install, and vali
 
 test("validators, workflow ceremony, and test fixtures remain non-release semantic inputs", () => {
   for (const candidate of [
-    ".github/workflows/release-execute.yml",
+    ".github/workflows/release.yml",
     "src/extensions/tools/check-extension-model.py",
     "src/shared/fixtures/protocol/query-response-cases.json",
     "tools/release/extension-manifest-discovery-proof.mjs",
@@ -297,7 +297,7 @@ test("validators, workflow ceremony, and test fixtures remain non-release semant
     );
   }
   assert.deepEqual(
-    buildPlan(graph, [".github/workflows/release-execute.yml"], "release-semantic-inputs.test").releaseProducts,
+    buildPlan(graph, [".github/workflows/release.yml"], "release-semantic-inputs.test").releaseProducts,
     [],
   );
   assert.deepEqual(
