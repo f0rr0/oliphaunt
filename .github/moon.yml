@@ -38,6 +38,8 @@ tasks:
       - "/tools/dev/install-pinned-winflexbison.test.sh"
       - "/tools/dev/setup-android-sdk.sh"
       - "/tools/dev/setup-android-sdk.test.sh"
+      - "/tools/dev/start-android-emulator-ci.sh"
+      - "/tools/dev/start-android-emulator-ci.test.sh"
       - "/tools/policy/check-workflows.sh"
       - "/tools/release/install-verdaccio-runtime.sh"
       - "/tools/release/install-verdaccio-runtime.test.sh"

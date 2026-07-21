@@ -13,6 +13,7 @@ const INSTALLER_FAULT_SUITES = [
   {script: 'tools/dev/install-pinned-js-runtime.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: 'tools/dev/install-pinned-winflexbison.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: 'tools/dev/setup-android-sdk.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
+  {script: 'tools/dev/start-android-emulator-ci.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-moon/install-pinned-node.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-moon/install-pinned-toolchain.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},

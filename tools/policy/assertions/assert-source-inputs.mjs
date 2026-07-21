@@ -897,12 +897,16 @@ function checkToolchains() {
     if (matches.length !== 1) fail(`CI job ${job} must use setup-android exactly once`);
     return matches[0];
   };
-  for (const job of ['extension-artifacts-native', 'liboliphaunt-native-android']) {
+  for (const job of [
+    'extension-artifacts-native',
+    'liboliphaunt-native-android',
+    'mobile-e2e-android',
+  ]) {
     if (androidStep(job).with?.['gradle-cache'] !== 'false') {
-      fail(`native-only CI job ${job} must disable setup-java Gradle caching`);
+      fail(`non-Gradle CI job ${job} must disable setup-java Gradle caching`);
     }
   }
-  for (const job of ['kotlin-sdk-package', 'mobile-build-android', 'mobile-e2e-android']) {
+  for (const job of ['kotlin-sdk-package', 'mobile-build-android']) {
     if (androidStep(job).with?.['gradle-cache'] === 'false') {
       fail(`Gradle/Expo CI job ${job} must retain setup-java Gradle caching`);
     }

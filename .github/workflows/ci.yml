@@ -2792,14 +2792,21 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Node and pnpm
-        uses: ./.github/actions/setup-node-pnpm
+      - name: Set up Node
+        id: setup_android_e2e_node
+        uses: ./.github/actions/setup-node-runtime
         with:
           node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Reclaim Android emulator disk
+        id: reclaim_android_emulator_disk
+        run: node .github/scripts/reclaim-android-mobile-build-disk.mjs
 
       - name: Set up Android
+        id: setup_android_e2e
         uses: ./.github/actions/setup-android
+        with:
+          gradle-cache: "false"
 
       - name: Set up Maestro
         uses: ./.github/actions/setup-maestro
@@ -2814,8 +2821,11 @@ jobs:
         run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
       - name: Start Android emulator
+        id: start_android_emulator
         env:
           OLIPHAUNT_ANDROID_EMULATOR_API: "35"
+          OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB: "2048"
+          OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB: "6144"
         run: tools/dev/start-android-emulator-ci.sh
 
       - name: Run Android installed-app E2E

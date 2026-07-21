@@ -16,13 +16,17 @@ const seedManifest = { "packages/alpha": "0.0.0", "packages/beta": "0.0.0" };
 const releasedManifest = { ...seedManifest, "packages/alpha": "0.1.0" };
 const seedConfig = { "bootstrap-sha": RELEASE_PLEASE_BOOTSTRAP_SHA, packages: {} };
 
-test("keeps release-metadata and final history-repair boundaries distinct and immutable", () => {
+test("keeps release-metadata and current history-repair boundaries distinct", () => {
   assert.match(RELEASE_PLEASE_DISPLACED_MAIN_SHA, /^[0-9a-f]{40}$/u);
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-    "1b27e2388260e23810cf2611f454432c6f724744",
+    "e0a468dfb6970f8afd66700b72e29a2d7c76c555",
   );
   assert.notEqual(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
+  assert.notEqual(
+    RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    "1b27e2388260e23810cf2611f454432c6f724744",
+  );
 });
 
 test("requires the exact full history boundary while every product is unreleased", () => {

@@ -606,7 +606,9 @@ Every exact extension has its own product and stable ecosystem façades. Each pr
 
 On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Repository changes require a new version and candidate.
 
-History repair is allowed only before any affected product tag/package is public. Freeze main, archive the old tip, qualify the replacement tree, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. The desired bootstrap history is one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
+History repair is allowed only before any affected product tag/package is public. Freeze main, archive and bundle the old tip, qualify the replacement tree on a temporary branch, bind the one-shot repair predecessor to that exact old tip, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. Temporary-branch success is not the protected-main `Qualified` record: run the complete non-cancelled graph again on the rewritten introduction SHA.
+
+If that exact-main run exposes another defect, do not layer a fix commit onto the intended public history and do not prepare a release. Archive the superseded introduction separately, qualify a new replacement tree, and repeat the controlled rewrite. Rotate only `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` to the current main tip; the Release Please bootstrap boundary and displaced-main metadata baseline remain immutable, and every earlier repair predecessor must be rejected as a replay. The desired public bootstrap history remains one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
 
 ## Handoff evidence
 

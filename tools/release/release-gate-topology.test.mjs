@@ -29,6 +29,7 @@ const INSTALLER_FAULT_SUITES = [
   "tools/dev/install-pinned-js-runtime.test.sh",
   "tools/dev/install-pinned-winflexbison.test.sh",
   "tools/dev/setup-android-sdk.test.sh",
+  "tools/dev/start-android-emulator-ci.test.sh",
   ".github/actions/setup-moon/install-pinned-node.test.sh",
   ".github/actions/setup-moon/install-pinned-toolchain.test.sh",
   ".github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh",

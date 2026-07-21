@@ -383,7 +383,14 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
 2. Merge the introduction tree through the qualified path. Its parent must be
    the full `bootstrap-sha` boundary recorded in `release-please-config.json`,
    so legacy release commits are excluded from the first product releases. Do
-   not rewrite history after any affected identity is public.
+   not rewrite history after any affected identity is public. Before
+   publication, if the exact protected-main introduction run exposes a defect,
+   archive and bundle that introduction, qualify the corrected replacement
+   tree on a temporary branch, and repeat the controlled rewrite. Rotate only
+   the one-shot `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` predecessor to the
+   current main tip; never move `bootstrap-sha` or the displaced-main metadata
+   baseline. An earlier predecessor remains invalid, and the replacement must
+   receive a fresh exact-main `Qualified` run before this sequence continues.
 3. Run `prepare-release-pr` from current `main`; review the single generated release-bump commit.
    A large Release Please update may arrive internally as multiple transport
    chunks; the prepare job validates and collapses the exact canonical PR tree

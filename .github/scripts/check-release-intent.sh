@@ -18,12 +18,14 @@ if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# The final authorized protected-main rewrite reports the already-qualified
-# introduction tip as `github.event.before`. This is intentionally distinct
-# from the older displaced-main release-metadata baseline. Its immutable
-# before/ref/event tuple and the exact unreleased introduction shape make this
-# exception non-replayable. Every other non-fast-forward comparison remains
-# strict.
+# The current authorized protected-main rewrite reports the immediately
+# superseded introduction tip as `github.event.before`. This is intentionally
+# distinct from the immutable displaced-main release-metadata baseline. Its
+# one-shot before/ref/event tuple and the exact unreleased introduction shape
+# make this exception non-replayable. A temporary-branch qualification proves
+# the replacement tree before the rewrite; only a later exact-main run can
+# produce publication qualification. Every other non-fast-forward comparison
+# remains strict.
 if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
   ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
   if ! repair_contract="$(
@@ -81,10 +83,10 @@ process.stdout.write(String(versions.length > 0 && versions.every((version) => v
     [[ "${candidate_bootstrap_sha}" != "${canonical_bootstrap_sha}" ]] ||
     [[ "${candidate_manifest_unreleased}" != "true" ]]; then
     echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
-    echo "non-fast-forward main updates are allowed only for the exact final introduction repair" >&2
+    echo "non-fast-forward main updates are allowed only for the exact current introduction repair" >&2
     exit 1
   fi
-  echo "authorized final main history repair; comparing ${head_ref} to its exact introduction parent" >&2
+  echo "authorized current main history repair; comparing ${head_ref} to its exact introduction parent" >&2
   base_ref="${head_ref}^{commit}^"
 fi
 

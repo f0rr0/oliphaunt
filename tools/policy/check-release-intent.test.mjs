@@ -159,10 +159,10 @@ function releaseIntent({
   };
 }
 
-test("accepts only the exact final protected-main introduction repair", { timeout: 20_000 }, () => {
+test("accepts only the exact current protected-main introduction repair", { timeout: 20_000 }, () => {
   const result = releaseIntent();
   assert.equal(result.status, 0, result.output);
-  assert.match(result.output, /authorized final main history repair; comparing .* to its exact introduction parent/u);
+  assert.match(result.output, /authorized current main history repair; comparing .* to its exact introduction parent/u);
 });
 
 test("keeps the immutable introduction fixture after a later release commit becomes HEAD", () => {
@@ -182,27 +182,35 @@ test("rejects a fork PR whose head branch is named main", () => {
   const result = releaseIntent({ eventName: "pull_request", fullRef: "refs/pull/123/merge" });
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /release-intent base .* is not an ancestor/u);
-  assert.doesNotMatch(result.output, /authorized final main history repair/u);
+  assert.doesNotMatch(result.output, /authorized current main history repair/u);
 });
 
 test("rejects a manual sibling dispatch whose ref name is main", () => {
   const result = releaseIntent({ eventName: "workflow_dispatch" });
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /release-intent base .* is not an ancestor/u);
-  assert.doesNotMatch(result.output, /authorized final main history repair/u);
+  assert.doesNotMatch(result.output, /authorized current main history repair/u);
 });
 
 test("rejects the original displaced-main tip after the first repair completed", () => {
   const result = releaseIntent({ base: RELEASE_PLEASE_DISPLACED_MAIN_SHA });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
+});
+
+test("rejects the superseded predecessor from the completed repair", () => {
+  const result = releaseIntent({
+    base: "1b27e2388260e23810cf2611f454432c6f724744",
+  });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /exact current introduction repair/u);
 });
 
 test("rejects a replay after the authorized repair predecessor has changed", () => {
   const replayCandidate = commitTree(SUBJECT, "2026-01-01T00:00:03Z");
   const result = releaseIntent({ base: rewriteCandidate, head: replayCandidate });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
 });
 
 test("rejects a rewrite whose sole parent is not the canonical bootstrap boundary", () => {
@@ -223,7 +231,7 @@ test("rejects a rewrite whose sole parent is not the canonical bootstrap boundar
   );
   const result = releaseIntent({ head: wrongParent });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
 });
 
 test("rejects a rewrite whose head changes the canonical bootstrap identity", () => {
@@ -233,7 +241,7 @@ test("rejects a rewrite whose head changes the canonical bootstrap identity", ()
   const head = commitTree(SUBJECT, "2026-01-01T00:00:05Z", { tree });
   const result = releaseIntent({ head });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
 });
 
 test("rejects a rewrite after any product has left the unreleased manifest state", () => {
@@ -245,11 +253,11 @@ test("rejects a rewrite after any product has left the unreleased manifest state
   const head = commitTree(SUBJECT, "2026-01-01T00:00:06Z", { tree });
   const result = releaseIntent({ head });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
 });
 
 test("rejects any other subject on the authorized before SHA", () => {
   const result = releaseIntent({ subject: "feat: replay history repair" });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /exact final introduction repair/u);
+  assert.match(result.output, /exact current introduction repair/u);
 });

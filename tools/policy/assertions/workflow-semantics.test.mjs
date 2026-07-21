@@ -6,6 +6,7 @@ import test from "node:test";
 import { BUILDER_JOBS } from "../../graph/ci_plan.mjs";
 import {
   assertCiWorkflow,
+  assertMobileWorkflow,
   assertReleaseEntryWorkflow,
   assertReleaseOperationWorkflow,
   assertReleaseWorkflow,
@@ -14,6 +15,7 @@ import {
 
 const CANONICAL = parseWorkflow(process.cwd(), ".github/workflows/release.yml");
 const CI = parseWorkflow(process.cwd(), ".github/workflows/ci.yml");
+const MOBILE = parseWorkflow(process.cwd(), ".github/workflows/mobile-e2e.yml");
 
 function candidate() {
   return structuredClone(CANONICAL);
@@ -25,6 +27,10 @@ function entryCandidate() {
 
 function ciCandidate() {
   return structuredClone(CI);
+}
+
+function mobileCandidate() {
+  return structuredClone(MOBILE);
 }
 
 function step(workflow, jobId, stepId) {
@@ -335,6 +341,43 @@ test("the exact TypeScript consumer preserves an upload-safe emergency timeout e
   assert.throws(
     () => assertCiWorkflow(evidenceBeforeProof, { builderJobs: BUILDER_JOBS }),
     /must precede js_exact_candidate_evidence/u,
+  );
+});
+
+test("Android installed-app E2E jobs reclaim disk and bound emulator storage", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+  assert.doesNotThrow(() => assertMobileWorkflow(mobileCandidate()));
+
+  const unnecessaryPnpmCache = ciCandidate();
+  step(unnecessaryPnpmCache, "mobile-e2e-android", "setup_android_e2e_node")
+    .uses = "./.github/actions/setup-node-pnpm";
+  assert.throws(
+    () => assertCiWorkflow(unnecessaryPnpmCache, { builderJobs: BUILDER_JOBS }),
+    /must use [.][/][.]github[/]actions[/]setup-node-runtime/u,
+  );
+
+  const cachedBuildDependencies = ciCandidate();
+  step(cachedBuildDependencies, "mobile-e2e-android", "setup_android_e2e")
+    .with["gradle-cache"] = "true";
+  assert.throws(
+    () => assertCiWorkflow(cachedBuildDependencies, { builderJobs: BUILDER_JOBS }),
+    /must not restore the build-only Gradle cache/u,
+  );
+
+  const missingReclamation = mobileCandidate();
+  missingReclamation.jobs.android.steps = missingReclamation.jobs.android.steps
+    .filter((entry) => entry.id !== "reclaim_android_emulator_disk");
+  assert.throws(
+    () => assertMobileWorkflow(missingReclamation),
+    /must contain exactly one stable step id reclaim_android_emulator_disk/u,
+  );
+
+  const unboundedPartition = mobileCandidate();
+  delete step(unboundedPartition, "android", "start_android_emulator")
+    .env.OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB;
+  assert.throws(
+    () => assertMobileWorkflow(unboundedPartition),
+    /must bind the modern-image 6144 MB emulator floor/u,
   );
 });
 

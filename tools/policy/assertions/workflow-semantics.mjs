@@ -159,6 +159,54 @@ function assertWorkflowFoundation(workflow, label) {
   }
 }
 
+function assertAndroidE2eDiskSafety(workflow, jobId) {
+  assertActionStep(
+    workflow,
+    jobId,
+    "setup_android_e2e_node",
+    "./.github/actions/setup-node-runtime",
+  );
+  const reclaim = assertRunInvocation(
+    workflow,
+    jobId,
+    "reclaim_android_emulator_disk",
+    commandPattern("node\\s+[.]github/scripts/reclaim-android-mobile-build-disk[.]mjs\\b"),
+    "the bounded Android runner disk reclamation",
+  );
+  invariant(
+    normalized(reclaim.step.if) === "",
+    `${jobId} Android disk reclamation must run unconditionally`,
+  );
+  const setup = assertActionStep(
+    workflow,
+    jobId,
+    "setup_android_e2e",
+    "./.github/actions/setup-android",
+  );
+  invariant(
+    setup.step.with?.["gradle-cache"] === "false",
+    `${jobId} must not restore the build-only Gradle cache in an installed-app E2E job`,
+  );
+  const start = assertRunInvocation(
+    workflow,
+    jobId,
+    "start_android_emulator",
+    commandPattern("tools/dev/start-android-emulator-ci[.]sh\\b"),
+    "the disk-bounded Android emulator launcher",
+  );
+  invariant(
+    start.step.env?.OLIPHAUNT_ANDROID_EMULATOR_PARTITION_SIZE_MB === "6144"
+      && start.step.env?.OLIPHAUNT_ANDROID_EMULATOR_DISK_HEADROOM_MB === "2048",
+    `${jobId} must bind the modern-image 6144 MB emulator floor and 2048 MB free-disk reserve`,
+  );
+  assertStepOrder(workflow, jobId, [
+    "setup_android_e2e_node",
+    "reclaim_android_emulator_disk",
+    "setup_android_e2e",
+    "start_android_emulator",
+  ]);
+}
+
 function assertReleaseCheckToolchains(workflow) {
   const releaseCheckCallers = [];
   const metadataCheckCallers = [];
@@ -337,6 +385,7 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     );
   }
   assertAllCheckouts(workflow, CI_REF);
+  assertAndroidE2eDiskSafety(workflow, "mobile-e2e-android");
 
   assertExactNeeds(workflow, "required", ["affected", "release-intent", "checks", "tests", "builds", "e2e"]);
   assertExactNeeds(workflow, "qualified", ["affected", "required"]);
@@ -602,6 +651,7 @@ export function assertMobileWorkflow(workflow) {
     cancel: false,
   }, "mobile E2E");
   assertPermissions(workflow.permissions, { actions: "read", contents: "read" }, "mobile E2E");
+  assertAndroidE2eDiskSafety(workflow, "android");
   assertExactNeeds(workflow, "android", ["resolve"]);
   assertExactNeeds(workflow, "ios", ["resolve"]);
   assertExactNeeds(workflow, "required", ["resolve", "android", "ios"]);
