@@ -1,0 +1,21 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+# Installed dependency trees are derived state. Task invalidation comes from
+# tracked package manifests, workspace configuration, and lockfiles instead of
+# pnpm's directory symlinks, which Moon cannot hash as files.
+implicitInputs:
+  - "/.moon/tasks/**/*"
+  # Checkout normalization affects every source byte seen by every task.
+  - "/.gitattributes"
+  # Command discovery participates in Moon graph, affected-plan, policy, and
+  # release computation, so changing it must invalidate every consumer.
+  - "/tools/dev/bun.sh"
+  - "/tools/dev/moon-command.mjs"
+  - "!/node_modules"
+  - "!/node_modules/**"
+  - "!/examples/**/node_modules"
+  - "!/examples/**/node_modules/**"
+  - "!/src/**/node_modules"
+  - "!/src/**/node_modules/**"
+  - "!/tools/**/node_modules"
+  - "!/tools/**/node_modules/**"

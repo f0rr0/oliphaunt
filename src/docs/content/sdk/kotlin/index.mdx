@@ -1,0 +1,88 @@
+---
+title: Kotlin SDK
+description: Android SDK with coroutine-first database APIs and native resource handling.
+---
+
+<SdkLanding id="kotlin" />
+
+The Kotlin SDK is the Android SDK for Oliphaunt. It provides coroutine-first
+database APIs plus an Android facade for native library loading, runtime asset
+materialization, ABI selection, and app-private storage.
+
+Use this SDK directly from Android apps written with Kotlin, Java interop, or
+Jetpack Compose. React Native on Android delegates runtime work through this SDK,
+so Android packaging, lifecycle, and resource selection are defined here.
+
+## Install
+
+Add the Android package to your app:
+
+```kotlin
+plugins {
+    id("com.android.application")
+    id("dev.oliphaunt.android") version "0.1.0"
+}
+
+dependencies {
+    implementation("dev.oliphaunt:oliphaunt-android:0.1.0")
+}
+
+oliphaunt {
+    extensions.add("vector")
+}
+```
+
+The Gradle plugin verifies and packages selected native runtime artifacts,
+Android ABIs, and exact extension files. The app ships only the selected
+extensions plus declared dependencies.
+
+## Open And Query
+
+Open a database from a coroutine:
+
+```kotlin
+import dev.oliphaunt.EngineMode
+import dev.oliphaunt.OliphauntAndroid
+import dev.oliphaunt.OliphauntConfig
+
+val database = OliphauntAndroid.open(
+    context = applicationContext,
+    config = OliphauntConfig(
+        root = applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
+        mode = EngineMode.NativeDirect,
+        extensions = listOf("vector"),
+    ),
+)
+
+val rows = database.query("SELECT 1::text AS value")
+database.close()
+```
+
+## Runtime Shape
+
+Android direct mode owns one resident backend per app process and one serialized
+physical session. The SDK reports capabilities for any additional runtime modes
+available on the selected Android target.
+
+Coroutine callers may share a database handle. Direct mode queues work against
+the resident backend and preserves transaction ordering. Android packaging owns
+ABI selection, native library loading, and runtime resource hydration before the
+first open.
+
+## App Responsibilities
+
+- Store persistent data in app-private storage unless the app deliberately
+  exports a backup.
+- Select exact SQL extension names at build/configuration time so the APK or AAB
+  contains only selected extension artifacts and declared dependencies.
+- Use lifecycle hooks around background and foreground transitions.
+- Use SDK backup and restore APIs for archive validation and root
+  materialization.
+- Check `capabilities()` before showing optional UI for streaming, backup
+  formats, or additional runtime modes.
+
+## First Query
+
+Use [Build With Kotlin](/docs/sdk/kotlin/guide) for open/query,
+configuration, lifecycle, exact extensions, backup, restore, and troubleshooting.
+Use the [API reference](/docs/sdk/kotlin/api-reference) for the public API map.

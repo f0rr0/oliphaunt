@@ -1,0 +1,35 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-model"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "model"]
+
+project:
+  title: "Extension Model"
+  description: "Exact SQL extension catalog, recipe, generated metadata, and policy checks."
+  owner: "oliphaunt"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    inputs:
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

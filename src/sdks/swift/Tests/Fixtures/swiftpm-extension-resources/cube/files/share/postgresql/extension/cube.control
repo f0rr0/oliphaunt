@@ -1,0 +1,2 @@
+default_version = '1.5'
+module_pathname = '$libdir/cube'

@@ -1,0 +1,143 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "docs"
+language: "typescript"
+layer: "application"
+stack: "frontend"
+tags: ["docs", "fumadocs", "next", "public"]
+dependsOn:
+  - id: "postgres18"
+    scope: "build"
+  - id: "source-toolchains"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-native"
+    scope: "build"
+  - id: "third-party-wasix"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "oliphaunt-rust"
+    scope: "build"
+  - id: "oliphaunt-swift"
+    scope: "build"
+  - id: "oliphaunt-kotlin"
+    scope: "build"
+  - id: "oliphaunt-react-native"
+    scope: "build"
+  - id: "oliphaunt-js"
+    scope: "build"
+  - id: "oliphaunt-wasix-rust"
+    scope: "build"
+
+project:
+  title: "Oliphaunt Docs"
+  description: "Public documentation site, generated SDK matrices, tested snippets, and release-readiness docs gates."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/docs"
+  paths:
+    "**/*.md": ["@oliphaunt/docs"]
+    "**/*.ts": ["@oliphaunt/docs"]
+    "**/*.tsx": ["@oliphaunt/docs"]
+    "docs-manifest.toml": ["@oliphaunt/docs"]
+
+tasks:
+  dev:
+    tags: ["dev"]
+    command: "pnpm --dir src/docs run dev"
+    inputs:
+      - "/docs/**/*"
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/docs/**/*"
+      - "/src/extensions/**/*"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  check:
+    tags: ["quality", "static"]
+    command: "pnpm --dir src/docs run check"
+    inputs:
+      - "/README.md"
+      - "/.release-please-manifest.json"
+      - "/docs/**/*"
+      - "/release-please-config.json"
+      - "/src/*/README.md"
+      - "/src/*/typedoc.json"
+      - "/src/**/release.toml"
+      - "/src/docs/**/*"
+      - "/src/extensions/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build:
+    tags: ["build", "package"]
+    command: "pnpm --dir src/docs run build"
+    deps:
+      - "docs:check"
+    inputs:
+      - "/docs/**/*"
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/docs/**/*"
+      - "/src/extensions/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    outputs:
+      - "/target/docs/build/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "pnpm --dir src/docs run smoke"
+    deps:
+      - target: "docs:build"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/target/docs/build/**/*"
+      - "/target/docs/static/**/*"
+      - "/src/docs/tools/smoke-built-site.mjs"
+    outputs:
+      - "/target/docs/build/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "pnpm --dir src/docs run release-check"
+    deps:
+      - target: "docs:build"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/README.md"
+      - "/.release-please-manifest.json"
+      - "/docs/**/*"
+      - "/release-please-config.json"
+      - "/src/*/CHANGELOG.md"
+      - "/src/*/typedoc.json"
+      - "/src/**/release.toml"
+      - "/src/docs/**/*"
+      - "/src/extensions/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
