@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: skip data-dir ownership check under embedded WASIX
+
+WASIX host filesystem metadata can report the embedding host uid while the
+Postgres process identity shim exposes the synthetic oliphaunt uid.  Keep the
+normal upstream ownership interlock everywhere else, but bypass it for the
+embedded WASIX runtime so initdb bootstrap can start the backend against the
+mounted template data directory.
+---
+ src/backend/utils/init/miscinit.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/backend/utils/init/miscinit.c b/src/backend/utils/init/miscinit.c
+index df182577a1..6941770da1 100644
+--- a/src/backend/utils/init/miscinit.c
++++ b/src/backend/utils/init/miscinit.c
+@@ -380,7 +380,7 @@ checkDataDir(void)
+ 	 *
+ 	 * XXX can we safely enable this check on Windows?
+ 	 */
+-#if !defined(WIN32) && !defined(__CYGWIN__)
++#if !defined(WIN32) && !defined(__CYGWIN__) && !defined(OLIPHAUNT_WASM_SINGLE_USER)
+ 	if (stat_buf.st_uid != geteuid())
+ 		ereport(FATAL,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+--
+2.50.0

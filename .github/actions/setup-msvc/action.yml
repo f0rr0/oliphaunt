@@ -1,0 +1,9 @@
+name: Set up MSVC
+description: Configure the MSVC developer environment and force Rust to use the MSVC linker under Git Bash.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure MSVC developer command prompt
+      shell: pwsh
+      run: .github/scripts/setup-msvc.ps1 # zizmor: ignore[github-env] the script exports only environment changes produced by the runner-owned, locally validated Visual Studio developer shell.

@@ -1,12 +1,16 @@
 [advisories]
 yanked = "warn"
 ignore = [
-  # Wasmer/WASIX 7.2 alpha currently pulls bincode through virtual-net and
+  # Wasmer/WASIX 7.2.0 currently pulls bincode through virtual-net and
   # wasmer-journal. Keep this explicit until Wasmer removes or replaces it.
   "RUSTSEC-2025-0141",
-  # Wasmer 7.2 alpha currently pulls paste. Keep this explicit until upstream
+  # Wasmer 7.2.0 currently pulls paste. Keep this explicit until upstream
   # moves to a maintained macro helper or removes the dependency.
   "RUSTSEC-2024-0436",
+  # Wasmer 7.2.0's current stable derive crate still uses proc-macro-error2.
+  # The advisory reports maintenance status, not a known vulnerability, and
+  # provides no safe upgrade. Remove this exception when Wasmer migrates away.
+  "RUSTSEC-2026-0173",
 ]
 
 [licenses]
@@ -17,7 +21,6 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BSL-1.0",
-  "CDLA-Permissive-2.0",
   "ISC",
   "MIT",
   "MIT-0",
@@ -28,6 +31,13 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.8
+
+# saffron 0.1.0 ships a BSD-3-Clause LICENSE file but declares it through
+# license-file instead of a machine-readable SPDX expression.
+[[licenses.clarify]]
+crate = "saffron@0.1.0"
+expression = "BSD-3-Clause"
+license-files = [{ path = "LICENSE", hash = 0xb4dc584e }]
 
 [bans]
 # Wasmer and dev-only PostgreSQL client compatibility tests pull a few

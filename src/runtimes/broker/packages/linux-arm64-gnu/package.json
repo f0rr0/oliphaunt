@@ -1,0 +1,41 @@
+{
+  "name": "@oliphaunt/broker-linux-arm64-gnu",
+  "version": "0.0.0",
+  "description": "Linux arm64 glibc oliphaunt-broker helper binary.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/broker/packages/linux-arm64-gnu"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "brokerHelper": "oliphaunt-broker",
+    "target": "linux-arm64-gnu",
+    "executableRelativePath": "bin/oliphaunt-broker"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./bin/oliphaunt-broker"
+    ]
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

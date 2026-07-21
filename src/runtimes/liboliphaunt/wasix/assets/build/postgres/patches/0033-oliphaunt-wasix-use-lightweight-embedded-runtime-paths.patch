@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000033 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: use lightweight embedded runtime paths
+
+Oliphaunt WASIX has one embedded backend and reports startup parameters
+directly to the host. Use the cheaper local semaphore reset path and avoid
+retaining duplicate GUC report strings after ParameterStatus is emitted.
+---
+ src/backend/port/posix_sema.c | 5 +++++
+ src/backend/utils/misc/guc.c  | 2 ++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/backend/port/posix_sema.c b/src/backend/port/posix_sema.c
+--- a/src/backend/port/posix_sema.c
++++ b/src/backend/port/posix_sema.c
+@@ -293,20 +293,25 @@ void
+ PGSemaphoreReset(PGSemaphore sema)
+ {
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	sem_trywait(PG_SEM_REF(sema));
++	return;
++#else
+ 	/*
+ 	 * There's no direct API for this in POSIX, so we have to ratchet the
+ 	 * semaphore down to 0 with repeated trywait's.
+ 	 */
+ 	for (;;)
+ 	{
+ 		if (sem_trywait(PG_SEM_REF(sema)) < 0)
+ 		{
+ 			if (errno == EAGAIN || errno == EDEADLK)
+ 				break;			/* got it down to 0 */
+ 			if (errno == EINTR)
+ 				continue;		/* can this happen? */
+ 			elog(FATAL, "sem_trywait failed: %m");
+ 		}
+ 	}
++#endif
+ }
+
+ /*
+diff --git a/src/backend/utils/misc/guc.c b/src/backend/utils/misc/guc.c
+--- a/src/backend/utils/misc/guc.c
++++ b/src/backend/utils/misc/guc.c
+@@ -2645,13 +2645,15 @@ ReportGUCOption(struct config_generic *record)
+ 		pq_sendstring(&msgbuf, val);
+ 		pq_endmessage(&msgbuf);
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 		/*
+ 		 * We need a long-lifespan copy.  If guc_strdup() fails due to OOM,
+ 		 * we'll set last_reported to NULL and thereby possibly make a
+ 		 * duplicate report later.
+ 		 */
+ 		guc_free(record->last_reported);
+ 		record->last_reported = guc_strdup(LOG, val);
++#endif
+ 	}
+
+ 	pfree(val);
+--
+2.39.5

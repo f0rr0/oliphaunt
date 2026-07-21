@@ -1,0 +1,2 @@
+default_version = '3.6.1'
+module_pathname = '$libdir/postgis-3'
