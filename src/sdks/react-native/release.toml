@@ -1,0 +1,21 @@
+id = "oliphaunt-react-native"
+owner = "@oliphaunt/sdk-react-native"
+kind = "sdk"
+publish_targets = ["npm"]
+registry_packages = ["npm:@oliphaunt/react-native"]
+release_artifacts = [
+  "npm-package",
+  "react-native-podspec",
+  "expo-dev-client-example",
+]
+derived_version_files = ["src/sdks/react-native/OliphauntReactNative.podspec"]
+
+[compatibility_versions.oliphaunt-react-native-swift-sdk]
+source_product = "oliphaunt-swift"
+path = "src/sdks/react-native/package.json"
+parser = "json:oliphaunt.swiftSdkVersion"
+
+[compatibility_versions.oliphaunt-react-native-kotlin-sdk]
+source_product = "oliphaunt-kotlin"
+path = "src/sdks/react-native/package.json"
+parser = "json:oliphaunt.kotlinSdkVersion"

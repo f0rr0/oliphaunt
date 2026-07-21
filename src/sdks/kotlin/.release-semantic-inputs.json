@@ -1,0 +1,33 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-kotlin",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "sdk-package-producers",
+      "paths": [
+        "tools/release/build-sdk-ci-artifacts.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/build-sdk-ci-artifacts.mjs",
+          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    }
+  ],
+  "sha256": "d0e9aab3895ed1efb99cd69fe879e20417dbff287e1db9c4c6fb7ff2e1cc1a35"
+}

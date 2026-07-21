@@ -1,0 +1,22 @@
+$schema: "https://moonrepo.dev/schemas/toolchains.json"
+
+proto:
+  version: "0.57.4"
+
+javascript:
+  plugin: "registry://ghcr.io/moonrepo/javascript_toolchain@sha256:cc86bce23fb5d02228da3dd29396da21ff5e63ef97b74e6d7b4e2db78c69c762"
+  packageManager: "pnpm"
+  installDependencies: false
+  syncProjectWorkspaceDependencies: false
+
+node:
+  plugin: "registry://ghcr.io/moonrepo/node_toolchain@sha256:f3d7fb17637b543ea4916caeedbfde6827b94b4b70ab1c30651846d96c8583b1"
+  versionFromPrototools: true
+
+pnpm:
+  plugin: "registry://ghcr.io/moonrepo/node_depman_toolchain@sha256:c56f6dd596fbbf9bc628b9fcf145fd6cd5c5d842d5a65537571e775f328ddce6"
+  versionFromPrototools: true
+
+rust:
+  plugin: "registry://ghcr.io/moonrepo/rust_toolchain@sha256:46387ad173cc254f83b4bd392618c8fa530bca667bdafe4c63c5114c4a59f4a5"
+  versionFromPrototools: false
