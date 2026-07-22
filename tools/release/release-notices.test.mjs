@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
   assertReleaseNoticesInEntries,
+  hasCanonicalReleaseStagingMode,
   releasePackageLicense,
   releaseNoticeRows,
   stageReleaseNotices,
@@ -27,7 +29,7 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
 function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), "release-notices-test-"));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "release-notices-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const stage = path.join(root, "stage");
   mkdirSync(stage);
@@ -91,14 +93,36 @@ test("stages exact bytes and removes stale product notices", (t) => {
   );
 });
 
-test("rejects byte or mode drift", (t) => {
+test("rejects byte drift and POSIX directory mode drift", (t) => {
   const { stage } = fixture(t);
   stageReleaseNotices(stage);
   writeFileSync(path.join(stage, "LICENSE"), "not the license\n");
   assert.throws(() => assertReleaseNoticesInDirectory(stage), /differs byte-for-byte/u);
-  stageReleaseNotices(stage);
-  chmodSync(path.join(stage, "LICENSE"), 0o600);
-  assert.throws(() => assertReleaseNoticesInDirectory(stage), /mode 0644/u);
+  if (process.platform !== "win32") {
+    stageReleaseNotices(stage);
+    chmodSync(path.join(stage, "LICENSE"), 0o600);
+    assert.throws(() => assertReleaseNoticesInDirectory(stage), /mode 0644/u);
+  }
+});
+
+test("treats directory modes as POSIX-only staging metadata", () => {
+  assert.equal(hasCanonicalReleaseStagingMode(0o666, "win32"), true);
+  assert.equal(hasCanonicalReleaseStagingMode(0o644, "linux"), true);
+  assert.equal(hasCanonicalReleaseStagingMode(0o666, "linux"), false);
+});
+
+test("keeps portable archive notice modes exact on every host", () => {
+  const entries = new Map(releaseNoticeRows().map((row) => [
+    row.member,
+    {
+      isDirectory: false,
+      isFile: true,
+      isSymbolicLink: false,
+      mode: row.member === "LICENSE" ? 0o666 : 0o644,
+      data: () => readFileSync(row.source),
+    },
+  ]));
+  assert.throws(() => assertReleaseNoticesInEntries(entries), /mode 0644/u);
 });
 
 test("exact validation rejects unknown legal namespace members and staging removes only safe stale files", (t) => {
@@ -164,6 +188,13 @@ test("rejects unsafe prefixes and unsafe staging destinations", (t) => {
   symlinkSync(realAncestor, linkedAncestor);
   assert.throws(
     () => stageReleaseNotices(path.join(linkedAncestor, "existing-stage")),
+    /symlink or non-directory ancestor/u,
+  );
+
+  const linkedStage = path.join(root, "linked-stage");
+  symlinkSync(existingStage, linkedStage);
+  assert.throws(
+    () => stageReleaseNotices(linkedStage),
     /symlink or non-directory ancestor/u,
   );
 });

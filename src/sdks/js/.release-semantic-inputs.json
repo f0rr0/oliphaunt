@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
         }
       ]
     },
@@ -109,5 +109,5 @@
       ]
     }
   ],
-  "sha256": "68eb5a66ee4653b612f4eb0996effd57d4ff91d86f3a3310fdb50b69d85d04b3"
+  "sha256": "d60731321fb9a22ba2662beee522c7bdec3e1afaa4acb93b3894863bf51a5892"
 }

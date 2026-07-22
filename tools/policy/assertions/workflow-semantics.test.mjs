@@ -760,7 +760,59 @@ test("WASIX deferred candidates are qualified before public extension packaging"
   ).run = "true";
   assert.throws(
     () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
-    /must invoke tools\/dev\/bun[.]sh tools\/release\/verify-extension-qualification-build[.]mjs/u,
+    /exact quoted OLIPHAUNT_EXTENSION_TARGET shell handoff/u,
+  );
+
+  const missingBinding = ciCandidate();
+  delete namedStep(
+    missingBinding,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).env.OLIPHAUNT_EXTENSION_TARGET;
+  assert.throws(
+    () => assertCiWorkflow(missingBinding, { builderJobs: BUILDER_JOBS }),
+    /bind matrix[.]target to step env OLIPHAUNT_EXTENSION_TARGET/u,
+  );
+
+  const hardCodedBinding = ciCandidate();
+  namedStep(
+    hardCodedBinding,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).env.OLIPHAUNT_EXTENSION_TARGET = "wasm32-wasmer-wasi";
+  assert.throws(
+    () => assertCiWorkflow(hardCodedBinding, { builderJobs: BUILDER_JOBS }),
+    /bind matrix[.]target to step env OLIPHAUNT_EXTENSION_TARGET/u,
+  );
+
+  const unquotedTarget = ciCandidate();
+  namedStep(
+    unquotedTarget,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).run = namedStep(
+    unquotedTarget,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).run.replace('"$OLIPHAUNT_EXTENSION_TARGET"', "$OLIPHAUNT_EXTENSION_TARGET");
+  assert.throws(
+    () => assertCiWorkflow(unquotedTarget, { builderJobs: BUILDER_JOBS }),
+    /exact quoted OLIPHAUNT_EXTENSION_TARGET shell handoff/u,
+  );
+
+  const directExpression = ciCandidate();
+  namedStep(
+    directExpression,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).run = namedStep(
+    directExpression,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).run.replace('"$OLIPHAUNT_EXTENSION_TARGET"', "'${{ matrix.target }}'");
+  assert.throws(
+    () => assertCiWorkflow(directExpression, { builderJobs: BUILDER_JOBS }),
+    /exact quoted OLIPHAUNT_EXTENSION_TARGET shell handoff/u,
   );
 
   const reordered = ciCandidate();

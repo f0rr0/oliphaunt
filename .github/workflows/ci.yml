@@ -600,10 +600,12 @@ jobs:
           path: .
 
       - name: Verify publication-deferred WASIX candidate build outputs
+        env:
+          OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
         run: >-
           tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs
           --family wasix
-          --target '${{ matrix.target }}'
+          --target "$OLIPHAUNT_EXTENSION_TARGET"
           --asset-root target/oliphaunt-wasix/assets
 
       - name: Build WASIX exact-extension artifacts

@@ -29,6 +29,11 @@ const WINDOWS_VC_RUNTIME_PROFILES =
 const EXPECTED_BINARY_PATH = /(?:\.dylib|\.dll|\.exe|\.node|\.so(?:\.[0-9]+)*)$/iu;
 const STATIC_ARCHIVE_PATH = /\.a$/iu;
 const MSVC_LIBRARY_PATH = /\.lib$/iu;
+// Exact extension artifacts carry declared upstream grant text in this namespace.
+// Only UTF-8 text at the canonical COPYING.LIB identity is metadata; detected
+// formats and non-text bytes fail closed.
+const WINDOWS_EXTENSION_LEGAL_TEXT_LIBRARY_PATH =
+  /(?:^|\/)files\/share\/licenses\/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\/COPYING\.LIB$/iu;
 const MSVC_RUNTIME_IMPORT = /^(?:CONCRT|MSVCP|VCRUNTIME)[0-9A-Z_]*\.DLL$/iu;
 const WINDOWS_VC_RUNTIME_DLL_SET = new Set(WINDOWS_VC_RUNTIME_DLLS);
 const WINDOWS_RUNTIME_IMPORT_LIBRARY_PATH = "lib/oliphaunt.lib";
@@ -126,6 +131,23 @@ function detectFormat(buffer) {
     }
   }
   return null;
+}
+
+function isPlainText(buffer) {
+  if (buffer.length === 0) return false;
+  const text = buffer.toString("utf8");
+  return (
+    Buffer.from(text, "utf8").equals(buffer) &&
+    !/[\u0000-\u0008\u000b\u000e-\u001f\u007f]/u.test(text)
+  );
+}
+
+function isWindowsExtensionLegalTextLibrary(name, buffer, format) {
+  return (
+    format === null &&
+    WINDOWS_EXTENSION_LEGAL_TEXT_LIBRARY_PATH.test(name) &&
+    isPlainText(buffer)
+  );
 }
 
 function parseArchiveDecimal(buffer, offset, length, label, description) {
@@ -1033,14 +1055,21 @@ export function inspectPlatformBinaryEntries(
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const format = detectFormat(buffer);
     const windowsRuntimeImportLibrary = name === WINDOWS_RUNTIME_IMPORT_LIBRARY_PATH;
+    const windowsExtensionLegalTextLibrary =
+      target === "windows-x64-msvc" &&
+      isWindowsExtensionLegalTextLibrary(name, buffer, format);
+    const msvcLibraryPath =
+      target === "windows-x64-msvc" &&
+      MSVC_LIBRARY_PATH.test(name) &&
+      !windowsExtensionLegalTextLibrary;
     const expectedPath =
       EXPECTED_BINARY_PATH.test(name) ||
       STATIC_ARCHIVE_PATH.test(name) ||
-      MSVC_LIBRARY_PATH.test(name);
+      msvcLibraryPath;
     if (format === null && !expectedPath) continue;
     if (format === null) fail(name || rootLabel, "expected native binary is malformed or truncated");
     const label = name ? `${rootLabel}/${name}` : rootLabel;
-    if (!windowsRuntimeImportLibrary && MSVC_LIBRARY_PATH.test(name)) {
+    if (!windowsRuntimeImportLibrary && msvcLibraryPath) {
       fail(label, `only the exact ${WINDOWS_RUNTIME_IMPORT_LIBRARY_PATH} runtime import library is permitted`);
     }
     if (target === "windows-x64-msvc" && STATIC_ARCHIVE_PATH.test(name)) {

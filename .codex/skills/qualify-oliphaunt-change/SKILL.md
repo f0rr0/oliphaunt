@@ -37,7 +37,17 @@ deterministic unit gate. Qualification must show bounded canonical-to-mirror
 failover, exact-pin rejection, canonical durable origin, and transactional
 preservation of an existing checkout when every endpoint fails.
 
-5. Use `actionlint` for workflow changes. Validate shell/JS/Python syntax before waiting for CI. If the direct release job graph, job permissions, protected environment, dispatch input, or continuation dependency changed, also push the exact candidate to a disposable branch and dispatch one supported `publish-dry-run` compiler probe. Require GitHub to materialize the direct job graph, then cancel it before expensive qualification and delete the probe branch. `actionlint` cannot prove hosted environment-secret resolution or dispatch-time graph compilation.
+5. For any workflow or local-action change, run
+   `bash tools/policy/check-workflows.sh` before waiting for CI. This is the
+   repository's exact pinned `actionlint` plus `zizmor` gate and its workflow
+   behavior tests; running `actionlint` alone is not sufficient. If the direct
+   release job graph, job permissions, protected environment, dispatch input,
+   or continuation dependency changed, also push the exact candidate to a
+   disposable branch and dispatch one supported `publish-dry-run` compiler
+   probe. Require GitHub to materialize the direct job graph, then cancel it
+   before expensive qualification and delete the probe branch. The local gate
+   cannot prove hosted environment-secret resolution or dispatch-time graph
+   compilation.
    When a release workflow shell block or a shell script transitively reached by
    `release-check` changes, run the complete gate with GNU Bash 3.2, matching
    `/bin/bash` on the `macos-26` release runner. On macOS, omit the override;

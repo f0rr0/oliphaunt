@@ -789,6 +789,8 @@ test(
         commit,
       };
       command('git', ['remote', 'add', 'origin', source.url], {cwd: checkout});
+      command('git', ['config', '--local', 'core.autocrlf', 'false'], {cwd: checkout});
+      command('git', ['config', '--local', 'core.eol', 'lf'], {cwd: checkout});
       let fetched = false;
       const runProcess = (specification) => {
         if (specification.command === 'git' && specification.args.includes('fetch')) {
@@ -898,6 +900,103 @@ test('Git fetch stages and verifies the exact commit before replacing a clean ch
     assert.equal(command('git', ['remote', 'get-url', 'origin'], {cwd: checkout}), source.url);
     assert.equal(readFileSync(path.join(checkout, 'source.txt'), 'utf8'), 'exact upstream bytes');
     assert.deepEqual(readdirSync(path.join(root, 'checkouts')), ['source']);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('Git fetch materializes text bytes independently of host line-ending configuration', {timeout: 15_000}, async () => {
+  const root = makeRoot('source-git-line-endings');
+  try {
+    const upstream = path.join(root, 'upstream');
+    mkdirSync(upstream, {recursive: true});
+    command('git', ['init', '--quiet', '--initial-branch=upstream'], {cwd: upstream});
+    command('git', ['config', 'user.name', 'Source Fetch Test'], {cwd: upstream});
+    command('git', ['config', 'user.email', 'source-fetch@example.invalid'], {cwd: upstream});
+    writeFileSync(path.join(upstream, '.gitattributes'), '* text=auto\n');
+    writeFileSync(path.join(upstream, 'source.txt'), 'first line\nsecond line\n');
+    command('git', ['add', '.gitattributes', 'source.txt'], {cwd: upstream});
+    command('git', ['commit', '--quiet', '-m', 'test source'], {cwd: upstream});
+    const commit = command('git', ['rev-parse', 'HEAD'], {cwd: upstream});
+    const source = {
+      name: 'source',
+      kind: 'git',
+      url: 'https://example.invalid/source.git',
+      branch: 'pinned',
+      commit,
+    };
+    let fetches = 0;
+    const runProcess = (specification) => {
+      const hostileLineEndingConfig = [
+        '-c',
+        'core.autocrlf=true',
+        '-c',
+        'core.eol=crlf',
+      ];
+      if (specification.command === 'git' && specification.args.includes('fetch')) {
+        fetches += 1;
+        const args = [...specification.args];
+        args.splice(args.length - 2, 1, upstream);
+        return defaultRunProcess({
+          ...specification,
+          args: [...hostileLineEndingConfig, '-c', 'protocol.file.allow=always', ...args],
+        });
+      }
+      if (specification.command === 'git') {
+        return defaultRunProcess({
+          ...specification,
+          args: [...hostileLineEndingConfig, ...specification.args],
+        });
+      }
+      return defaultRunProcess(specification);
+    };
+
+    const fetcher = sourceFetcher(root, {runProcess});
+    await fetcher.materialize(source);
+
+    const checkout = path.join(root, 'checkouts', source.name);
+    assert.equal(fetches, 1);
+    assert.equal(command('git', ['config', '--local', '--get', 'core.autocrlf'], {cwd: checkout}), 'false');
+    assert.equal(command('git', ['config', '--local', '--get', 'core.eol'], {cwd: checkout}), 'lf');
+    assert.deepEqual(
+      readFileSync(path.join(checkout, 'source.txt')),
+      Buffer.from('first line\nsecond line\n'),
+    );
+
+    // A checkout created under the old policy can contain CRLF bytes yet still
+    // appear clean to Git because `text=auto` normalizes them for comparison.
+    // Poison only the local checkout policy, then prove materialization does
+    // not reuse that exact-pin cache entry.
+    command('git', ['config', '--local', 'core.autocrlf', 'true'], {cwd: checkout});
+    command('git', ['config', '--local', 'core.eol', 'crlf'], {cwd: checkout});
+    rmSync(path.join(checkout, 'source.txt'));
+    command('git', ['checkout', '--', 'source.txt'], {cwd: checkout});
+    assert.deepEqual(
+      readFileSync(path.join(checkout, 'source.txt')),
+      Buffer.from('first line\r\nsecond line\r\n'),
+    );
+    assert.equal(
+      command('git', [
+        '-c',
+        'core.autocrlf=false',
+        '-c',
+        'core.eol=lf',
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+      ], {cwd: checkout}),
+      '',
+    );
+
+    await fetcher.materialize(source);
+
+    assert.equal(fetches, 2);
+    assert.equal(command('git', ['config', '--local', '--get', 'core.autocrlf'], {cwd: checkout}), 'false');
+    assert.equal(command('git', ['config', '--local', '--get', 'core.eol'], {cwd: checkout}), 'lf');
+    assert.deepEqual(
+      readFileSync(path.join(checkout, 'source.txt')),
+      Buffer.from('first line\nsecond line\n'),
+    );
   } finally {
     rmSync(root, {recursive: true, force: true});
   }

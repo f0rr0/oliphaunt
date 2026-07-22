@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -27,7 +28,7 @@ const TARGET = Object.freeze({
 });
 
 function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), "node-direct-notices-test-"));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "node-direct-notices-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

@@ -38,13 +38,19 @@ asset="liboliphaunt-${version}-icu-data.tar.gz"
 mkdir -p "$out_dir"
 
 stage_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-icu-data.XXXXXX")"
-stage="$stage_root/liboliphaunt-${version}-icu-data"
 partial="$out_dir/.${asset}.tmp.$$.tar.gz"
 cleanup() {
   rm -rf "$stage_root"
   rm -f "$partial"
 }
 trap cleanup EXIT INT TERM HUP
+
+# macOS exposes its per-user temporary directory through /var, which is a
+# system-owned symlink to /private/var. Resolve only the fresh directory that
+# mktemp created for this process; release-notices can then retain its strict
+# rejection of arbitrary symlink ancestors supplied by callers.
+stage_root="$(cd "$stage_root" && pwd -P)"
+stage="$stage_root/liboliphaunt-${version}-icu-data"
 
 mkdir -p "$stage/share/icu"
 rsync -a --delete "$source_dir/" "$stage/share/icu/"

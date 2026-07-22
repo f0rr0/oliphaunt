@@ -505,6 +505,14 @@ export function stageReleaseNotices(destination, options = {}) {
   return rows.map((row) => path.join(directory, row.member));
 }
 
+export function hasCanonicalReleaseStagingMode(mode, platform = process.platform) {
+  // Windows exposes synthetic Unix permission bits through stat(2). chmod can
+  // toggle the read-only attribute, but it cannot establish a meaningful 0644
+  // filesystem contract. Portable archives still carry and validate their
+  // explicit modes in assertReleaseNoticesInEntries.
+  return platform === "win32" || (mode & 0o777) === 0o644;
+}
+
 export function assertReleaseNoticesInDirectory(directory, options = {}) {
   const { exact = true } = options;
   const root = path.resolve(directory);
@@ -523,7 +531,7 @@ export function assertReleaseNoticesInDirectory(directory, options = {}) {
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error(`release notice must be a regular non-symlink file: ${file}`);
     }
-    if ((stat.mode & 0o777) !== 0o644) {
+    if (!hasCanonicalReleaseStagingMode(stat.mode)) {
       throw new Error(`release notice must have mode 0644: ${file}`);
     }
     const canonical = requireCanonicalSource(row);

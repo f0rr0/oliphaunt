@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
         }
       ]
     },
@@ -56,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/extension-upstream-licenses.mjs",
-          "sha256": "baadc122b962ca961c3573489be17215c4231a1e93fbe5979e6be60e141f8fc0"
+          "sha256": "b3c57f369bd16fc56741d56ffceb92c5d42103db5f51c0b191a0f08381f256c0"
         }
       ]
     },
@@ -295,5 +295,5 @@
       ]
     }
   ],
-  "sha256": "86e46d11971e93081582deafea6e37927afa0924c1ca1f4022127c5a23ed53f6"
+  "sha256": "9377b8dae9fbc774a7dae5a4fce9a786be8076740d412a1509fc4c5d9e2d0591"
 }

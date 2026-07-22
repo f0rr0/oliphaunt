@@ -144,6 +144,14 @@ function exactObjectKeys(value, expected, label) {
   }
 }
 
+export function hasCanonicalBrokerFilesystemMode(mode, expectedMode, platform = process.platform) {
+  // Windows exposes synthetic Unix permission bits through stat(2). chmod can
+  // toggle the read-only attribute, but it cannot establish meaningful 0644
+  // or 0755 filesystem metadata. Published archives still carry and validate
+  // their explicit portable modes in assertBrokerDependencyLicensesInEntries.
+  return platform === "win32" || (mode & 0o777) === expectedMode;
+}
+
 function requireRealFile(file, label, expectedMode = 0o644) {
   let stat;
   try {
@@ -154,7 +162,7 @@ function requireRealFile(file, label, expectedMode = 0o644) {
   if (!stat.isFile() || stat.isSymbolicLink()) {
     fail(`${label} must be a regular non-symlink file: ${file}`);
   }
-  if ((stat.mode & 0o777) !== expectedMode) {
+  if (!hasCanonicalBrokerFilesystemMode(stat.mode, expectedMode)) {
     fail(`${label} must have mode 0${expectedMode.toString(8)}: ${file}`);
   }
   return stat;
@@ -803,11 +811,11 @@ export function assertBrokerDependencyLicensesInDirectory(directory, { target } 
     if (!entry) fail(`broker dependency license carrier is missing ${member}`);
     if (expected.has(member)) {
       if (!entry.stat.isFile() || entry.stat.isSymbolicLink()) fail(`${member} must be a regular non-symlink file`);
-      if ((entry.stat.mode & 0o777) !== 0o644) fail(`${member} must have mode 0644`);
+      if (!hasCanonicalBrokerFilesystemMode(entry.stat.mode, 0o644)) fail(`${member} must have mode 0644`);
       if (!readFileSync(entry.file).equals(expected.get(member))) fail(`${member} differs from the canonical dependency license bytes`);
     } else {
       if (!entry.stat.isDirectory() || entry.stat.isSymbolicLink()) fail(`${member} must be a real non-symlink directory`);
-      if ((entry.stat.mode & 0o777) !== 0o755) fail(`${member} must have mode 0755`);
+      if (!hasCanonicalBrokerFilesystemMode(entry.stat.mode, 0o755)) fail(`${member} must have mode 0755`);
     }
   }
   for (const member of actual.keys()) {
@@ -839,9 +847,13 @@ export function assertBrokerDependencyLicensesInEntries(entries, { target, prefi
     if (!Buffer.from(entry.data()).equals(bytes)) fail(`${label} dependency license member ${member} differs from canonical bytes`);
   }
   for (const [member, entry] of entries) {
-    if (member !== prefixed(BROKER_DEPENDENCY_LICENSE_ROOT) && !member.startsWith(namespace)) continue;
     if (expectedFiles.has(member)) continue;
-    if (expectedDirs.has(member) && entry.isDirectory && !entry.isSymbolicLink) continue;
+    if (expectedDirs.has(member)) {
+      if (!entry.isDirectory || entry.isSymbolicLink) fail(`${label} dependency license directory ${member} must be a real directory`);
+      if ((entry.mode & 0o777) !== 0o755) fail(`${label} dependency license directory ${member} must have mode 0755`);
+      continue;
+    }
+    if (member !== prefixed(BROKER_DEPENDENCY_LICENSE_ROOT) && !member.startsWith(namespace)) continue;
     fail(`${label} contains unexpected dependency license member ${member}`);
   }
   assertReleaseNoticesInEntries(entries, {

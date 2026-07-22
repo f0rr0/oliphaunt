@@ -28,11 +28,11 @@ function temporaryRoot() {
   return directory;
 }
 
-function run(source, output) {
+function run(source, output, { env = process.env } = {}) {
   return spawnSync("bash", [SCRIPT, source, output], {
     cwd: ROOT,
     encoding: "utf8",
-    env: process.env,
+    env,
   });
 }
 
@@ -90,4 +90,26 @@ test("rejects empty or symlinked portable ICU inputs", () => {
   const result = run(linked, output);
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain("must not contain symbolic links");
+});
+
+test("canonicalizes only its mktemp-owned stage below a symlinked OS temp alias", () => {
+  if (process.platform === "win32") return;
+
+  const root = temporaryRoot();
+  const source = path.join(root, "source", "icudt76l");
+  const output = path.join(root, "output");
+  const realTemp = path.join(root, "real-temp");
+  const linkedTemp = path.join(root, "linked-temp");
+  mkdirSync(source, { recursive: true });
+  mkdirSync(realTemp);
+  writeFileSync(path.join(source, "root.res"), "root\n");
+  symlinkSync(realTemp, linkedTemp);
+
+  const result = run(path.dirname(source), output, {
+    env: { ...process.env, TMPDIR: linkedTemp },
+  });
+  expect(result.status, result.stderr).toBe(0);
+
+  const version = currentProductVersionSync("liboliphaunt-native");
+  expect(readFileSync(path.join(output, `liboliphaunt-${version}-icu-data.tar.gz`)).length).toBeGreaterThan(0);
 });

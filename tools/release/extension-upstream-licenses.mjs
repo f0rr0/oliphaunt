@@ -20,6 +20,7 @@ import {
 } from "./extension-qualification-candidates.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import {
+  hasCanonicalReleaseStagingMode,
   releaseMavenLicenses,
   releaseProfilePackageLicense,
 } from "./release-notices.mjs";
@@ -567,7 +568,15 @@ function validateCheckout(source) {
     const gitDirectory = path.join(checkout, ".git");
     requireRealDirectory(gitDirectory, `${source.id} Git metadata`);
     const git = (args, label) => {
-      const result = captureCommandOutput("git", ["-c", "core.fsmonitor=false", ...args], {
+      const result = captureCommandOutput("git", [
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        ...args,
+      ], {
         cwd: checkout,
         label,
         maxOutputBytes: 1024 * 1024,
@@ -634,7 +643,11 @@ export function stageExtensionUpstreamLicenses(sqlName, filesRoot) {
     writeFileSync(destination, source);
     chmodSync(destination, 0o644);
     const destinationStat = lstatSync(destination);
-    if (!destinationStat.isFile() || destinationStat.isSymbolicLink() || (destinationStat.mode & 0o777) !== 0o644) {
+    if (
+      !destinationStat.isFile()
+      || destinationStat.isSymbolicLink()
+      || !hasCanonicalReleaseStagingMode(destinationStat.mode)
+    ) {
       fail(`${sqlName} staged license is not a regular mode-0644 file: ${file.destination}`);
     }
     if (hashFile(destination) !== file.sha256) fail(`${sqlName} staged license bytes changed for ${file.destination}`);
@@ -828,7 +841,7 @@ export function assertExtensionUpstreamLicensesInDirectory(sqlNames, filesRoot) 
   for (const [destination, file] of expected) {
     const staged = path.join(root, ...destination.split("/"));
     const stat = lstatSync(staged);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o644) {
+    if (!stat.isFile() || stat.isSymbolicLink() || !hasCanonicalReleaseStagingMode(stat.mode)) {
       fail(`staged upstream license must be a regular mode-0644 file: ${destination}`);
     }
     if (hashFile(staged) !== file.sha256) fail(`staged upstream license bytes changed for ${destination}`);

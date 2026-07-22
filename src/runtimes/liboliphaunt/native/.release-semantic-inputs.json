@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
         }
       ]
     },
@@ -205,7 +205,7 @@
         },
         {
           "path": "tools/release/package-liboliphaunt-icu-data.sh",
-          "sha256": "9564647d8e9258dd5eb2e2e239813b0894362694eee3611952ea2773422e8a10"
+          "sha256": "a49aa970fcad2732855653c5888dad6eb923903bfdaddd6fb04ceb0bda7c61c9"
         },
         {
           "path": "tools/release/package-liboliphaunt-linux-assets.sh",
@@ -396,5 +396,5 @@
       ]
     }
   ],
-  "sha256": "506537af4790373a7ba4796523738b6ab3882c93b71edd3321e1e04524505cad"
+  "sha256": "a7965aeef45fbea66e41d2fa1d5c13e4304a2b5b4d9ca497aeb65f1ff2bcba2a"
 }

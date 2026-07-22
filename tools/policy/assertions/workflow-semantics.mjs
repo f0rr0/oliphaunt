@@ -990,18 +990,23 @@ function assertWasixExtensionQualification(workflow) {
     downloads[0].index < verifiers[0].index && verifiers[0].index < packagers[0].index,
     "WASIX deferred-candidate qualification must run after the runtime download and before public packaging",
   );
-  const command = normalized(verifiers[0].step.run);
-  for (const token of [
-    "tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs",
-    "--family wasix",
-    "--target '${{ matrix.target }}'",
-    "--asset-root target/oliphaunt-wasix/assets",
-  ]) {
-    invariant(
-      command.includes(token),
-      `WASIX deferred-candidate qualification must invoke ${token}`,
-    );
-  }
+  const verifier = verifiers[0].step;
+  invariant(
+    object(verifier.env)
+      && verifier.env.OLIPHAUNT_EXTENSION_TARGET === "${{ matrix.target }}",
+    "WASIX deferred-candidate qualification must bind matrix.target to step env OLIPHAUNT_EXTENSION_TARGET",
+  );
+  const command = normalized(verifier.run);
+  const expectedCommand = normalized(`
+    tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs
+    --family wasix
+    --target "$OLIPHAUNT_EXTENSION_TARGET"
+    --asset-root target/oliphaunt-wasix/assets
+  `);
+  invariant(
+    command === expectedCommand,
+    "WASIX deferred-candidate qualification must use the exact quoted OLIPHAUNT_EXTENSION_TARGET shell handoff",
+  );
 }
 
 export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {

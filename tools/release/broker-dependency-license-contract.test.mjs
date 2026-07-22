@@ -9,6 +9,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,7 +27,9 @@ import {
   auditBrokerDependencyLicenseContract,
   assertBrokerDependencyLicensesInArchive,
   assertBrokerDependencyLicensesInDirectory,
+  assertBrokerDependencyLicensesInEntries,
   brokerDependencyLicenseMembers,
+  hasCanonicalBrokerFilesystemMode,
   isAllowedBrokerPathPackageMetadataRow,
   loadBrokerDependencyLicenseContract,
   normalizeBrokerDependencyLicenseModes,
@@ -34,6 +37,7 @@ import {
 } from "./broker-dependency-license-contract.mjs";
 import { brokerNpmTarballs } from "./release-product-dry-run.mjs";
 import { brokerNpmTarballs as localRegistryBrokerNpmTarballs } from "./local-registry-publish.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -42,7 +46,7 @@ const TARGETS = ["linux-x64-gnu", "linux-arm64-gnu", "macos-arm64", "windows-x64
 const TIMEOUT = 120_000;
 
 function scratch(t, label) {
-  const directory = mkdtempSync(path.join(os.tmpdir(), `oliphaunt-broker-license-${label}-`));
+  const directory = realpathSync(mkdtempSync(path.join(os.tmpdir(), `oliphaunt-broker-license-${label}-`)));
   chmodSync(directory, 0o755);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
@@ -180,6 +184,15 @@ test("broker path-package validation follows exact manifests without pinning rel
   }), false);
 });
 
+test("treats direct filesystem modes as POSIX-only metadata", () => {
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o644, "win32"), true);
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o755, "win32"), true);
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o644, 0o644, "linux"), true);
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o755, 0o755, "darwin"), true);
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o644, "linux"), false);
+  assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o755, "darwin"), false);
+});
+
 test("selected-target carrier staging is self-contained without Cargo or registry sources", (t) => {
   const directory = scratch(t, "offline-selected-target");
   const emptyPath = scratch(t, "empty-path");
@@ -251,6 +264,30 @@ test("staged and packed closures preserve exact bytes, modes, and members", { ti
   assert.throws(
     () => assertBrokerDependencyLicensesInArchive(extraArchive, { target: "linux-x64-gnu" }),
     /unexpected dependency license member/u,
+  );
+});
+
+test("portable archive dependency-license modes remain exact on every host", { timeout: TIMEOUT }, (t) => {
+  const target = "windows-x64-msvc";
+  const directory = stageCarrier(t, target);
+  const packed = archive(directory, "zip");
+  t.after(() => rmSync(packed, { force: true }));
+  const entries = readPortableArchiveEntries(packed);
+
+  const fileMember = `${BROKER_DEPENDENCY_LICENSE_ROOT}/DEPENDENCIES.json`;
+  const fileModeDrift = new Map(entries);
+  fileModeDrift.set(fileMember, { ...entries.get(fileMember), mode: 0o666 });
+  assert.throws(
+    () => assertBrokerDependencyLicensesInEntries(fileModeDrift, { target }),
+    /dependency license member .* must have mode 0644/u,
+  );
+
+  const directoryMember = `${BROKER_DEPENDENCY_LICENSE_ROOT}/licenses`;
+  const directoryModeDrift = new Map(entries);
+  directoryModeDrift.set(directoryMember, { ...entries.get(directoryMember), mode: 0o700 });
+  assert.throws(
+    () => assertBrokerDependencyLicensesInEntries(directoryModeDrift, { target }),
+    /dependency license directory .* must have mode 0755/u,
   );
 });
 

@@ -6,6 +6,8 @@ import test from "node:test";
 import { extensionReleasePropertiesText } from "./build-extension-ci-artifacts.mjs";
 import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
 import {
+  CARGO_SDK_GENERATED_LEGAL_MEMBERS,
+  cargoPackageMemberContractViolation,
   expectedExtensionBundleManifest,
   findSdkRuntimePayloadViolation,
   iosCocoaPodsExtensionLinkEvidence,
@@ -16,6 +18,44 @@ import {
   validatePackagedMobileRuntimeFiles,
   validateSwiftSourceFixtureEntries,
 } from "./check-staged-artifacts.mjs";
+
+test("WASIX Cargo packages accept only the generated legal members", () => {
+  const listed = ["Cargo.toml", "README.md", "src/lib.rs"];
+  const legalMembers = [...CARGO_SDK_GENERATED_LEGAL_MEMBERS];
+  assert.deepEqual(legalMembers, ["LICENSE", "THIRD_PARTY_NOTICES.md"]);
+  assert.equal(
+    cargoPackageMemberContractViolation(
+      [...listed, ...legalMembers],
+      listed,
+      { generatedMembers: legalMembers },
+    ),
+    null,
+  );
+
+  const unexpected = cargoPackageMemberContractViolation(
+    [...listed, ...legalMembers, "UNDECLARED.md"],
+    listed,
+    { generatedMembers: legalMembers },
+  );
+  assert.deepEqual(unexpected, {
+    kind: "mismatch",
+    actual: [
+      "Cargo.toml",
+      "LICENSE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md",
+      "UNDECLARED.md",
+      "src/lib.rs",
+    ],
+    expected: [
+      "Cargo.toml",
+      "LICENSE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md",
+      "src/lib.rs",
+    ],
+  });
+});
 
 const REPOSITORY_ROOT = path.join(
   import.meta.dir,

@@ -196,6 +196,11 @@ cargo run -p xtask -- assets verify-committed
 tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check
 ```
 
+If the candidate changes a GitHub workflow or local action, also run
+`bash tools/policy/check-workflows.sh`. That conditional gate runs the pinned
+`actionlint` and `zizmor` configuration plus workflow behavior tests;
+`actionlint` by itself is not equivalent.
+
 The default `release-check.mjs` invocation includes the release mutation unit
 suite. `release-metadata-check.mjs` is a distinct internal replay surface that
 still executes every live release-policy, Release Please, target, version,

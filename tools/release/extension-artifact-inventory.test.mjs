@@ -238,7 +238,7 @@ async function main() {
     /compareText\(left[.]target, right[.]target\)[\s\S]*compareText\(left[.]name, right[.]name\)/u,
     "mobile static dependency metadata must use the ordinal carrier comparator",
   );
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "oliphaunt-extension-inventory-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "oliphaunt-extension-inventory-")));
   try {
     const pgtapLegal = await canonicalLegalEntries(root, "pgtap");
     const legitimate = new Map([

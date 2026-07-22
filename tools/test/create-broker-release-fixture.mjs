@@ -30,7 +30,7 @@ function brokerBinary(target) {
 }
 
 async function carrierLegalEntries(target) {
-  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'oliphaunt-broker-fixture-legal-'));
+  const stage = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'oliphaunt-broker-fixture-legal-')));
   await fs.chmod(stage, 0o755);
   try {
     stageReleaseNotices(stage, { profile: 'broker' });

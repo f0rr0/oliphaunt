@@ -400,6 +400,33 @@ const CARGO_VIRTUAL_PACKAGE_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml.orig",
 ]);
+export const CARGO_SDK_GENERATED_LEGAL_MEMBERS = Object.freeze([
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]);
+
+export function cargoPackageMemberContractViolation(
+  actual,
+  listed,
+  { generatedMembers = [] } = {},
+) {
+  if (new Set(listed).size !== listed.length) {
+    return { kind: "listing-duplicate" };
+  }
+  const expected = [
+    ...listed.filter((entry) => !CARGO_VIRTUAL_PACKAGE_FILES.has(entry)),
+    ...generatedMembers,
+  ];
+  if (new Set(expected).size !== expected.length) {
+    return { kind: "generated-duplicate" };
+  }
+  const actualSorted = [...actual].sort(compareText);
+  const expectedSorted = [...expected].sort(compareText);
+  if (JSON.stringify(actualSorted) !== JSON.stringify(expectedSorted)) {
+    return { kind: "mismatch", actual: actualSorted, expected: expectedSorted };
+  }
+  return null;
+}
 
 function requireCrateMatchesCargoListing(
   crate,
@@ -415,16 +442,6 @@ function requireCrateMatchesCargoListing(
     .split(/\r?\n/u)
     .map((entry) => entry.trim())
     .filter(Boolean);
-  if (new Set(listed).size !== listed.length) {
-    fail(`${rel(listing)} repeats a Cargo package entry`);
-  }
-  const expected = [
-    ...listed.filter((entry) => !CARGO_VIRTUAL_PACKAGE_FILES.has(entry)),
-    ...generatedMembers,
-  ];
-  if (new Set(expected).size !== expected.length) {
-    fail(`${rel(listing)} and its generated-member contract repeat a Cargo package entry`);
-  }
   const prefix = `${packageName}-${packageVersion}/`;
   const actual = archiveTarNames(crate).map((entry) => {
     if (!entry.startsWith(prefix) || entry.length === prefix.length) {
@@ -432,7 +449,19 @@ function requireCrateMatchesCargoListing(
     }
     return entry.slice(prefix.length);
   });
-  exactSortedStrings(`${rel(crate)} Cargo-selected package members`, actual, expected);
+  const violation = cargoPackageMemberContractViolation(actual, listed, { generatedMembers });
+  if (violation?.kind === "listing-duplicate") {
+    fail(`${rel(listing)} repeats a Cargo package entry`);
+  }
+  if (violation?.kind === "generated-duplicate") {
+    fail(`${rel(listing)} and its generated-member contract repeat a Cargo package entry`);
+  }
+  if (violation?.kind === "mismatch") {
+    fail(
+      `${rel(crate)} Cargo-selected package members mismatch: `
+      + `expected=${JSON.stringify(violation.expected)}, actual=${JSON.stringify(violation.actual)}`,
+    );
+  }
 }
 
 function readZipEntries(file) {
@@ -1204,7 +1233,7 @@ async function checkSdkProduct(product, { require }) {
         path.join(root, "cargo-package-files.txt"),
         "oliphaunt",
         version,
-        { generatedMembers: ["LICENSE", "THIRD_PARTY_NOTICES.md"] },
+        { generatedMembers: CARGO_SDK_GENERATED_LEGAL_MEMBERS },
       );
     }
   } else if (product === "oliphaunt-wasix-rust") {
@@ -1221,6 +1250,7 @@ async function checkSdkProduct(product, { require }) {
         path.join(root, "cargo-package-files.txt"),
         "oliphaunt-wasix",
         version,
+        { generatedMembers: CARGO_SDK_GENERATED_LEGAL_MEMBERS },
       );
       checked = true;
     }

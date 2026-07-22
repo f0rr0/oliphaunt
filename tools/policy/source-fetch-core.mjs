@@ -642,7 +642,20 @@ export function createSourceFetcher({
       }));
 
   function git(source, args, cwd, env, options = {}) {
-    return run('git', ['-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', ...args], {
+    // Pinned source bytes are part of release fingerprints and legal-data
+    // checks. Force one worktree representation even when an upstream marks a
+    // file `text=auto` and the host's native checkout convention is CRLF.
+    return run('git', [
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'submodule.recurse=false',
+      '-c',
+      'core.autocrlf=false',
+      '-c',
+      'core.eol=lf',
+      ...args,
+    ], {
       cwd,
       env,
       label: options.label ?? `git ${args.join(' ')} for ${source.name}`,
@@ -666,7 +679,15 @@ export function createSourceFetcher({
       const head = git(source, ['rev-parse', '--verify', 'HEAD'], path, env).trim();
       const branch = git(source, ['branch', '--show-current'], path, env).trim();
       const remote = git(source, ['remote', 'get-url', 'origin'], path, env).trim();
-      return head === source.commit && branch === source.branch && remote === source.url;
+      const autocrlf = git(source, ['config', '--local', '--get', 'core.autocrlf'], path, env).trim();
+      const eol = git(source, ['config', '--local', '--get', 'core.eol'], path, env).trim();
+      return (
+        head === source.commit
+        && branch === source.branch
+        && remote === source.url
+        && autocrlf === 'false'
+        && eol === 'lf'
+      );
     } catch {
       return false;
     }
@@ -739,6 +760,12 @@ export function createSourceFetcher({
       const env = stagedGitEnvironment(stage);
       git(source, ['init', '--quiet', '--template=', candidate], workspaceRoot, env, {
         label: `initialize staged checkout for ${source.name}`,
+      });
+      git(source, ['config', '--local', 'core.autocrlf', 'false'], candidate, env, {
+        label: `pin LF checkout conversion for ${source.name}`,
+      });
+      git(source, ['config', '--local', 'core.eol', 'lf'], candidate, env, {
+        label: `pin LF checkout line endings for ${source.name}`,
       });
       git(source, ['remote', 'add', 'origin', source.url], candidate, env, {
         label: `configure staged HTTPS origin for ${source.name}`,

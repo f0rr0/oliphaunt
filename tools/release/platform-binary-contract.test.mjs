@@ -546,6 +546,71 @@ describe("PE32+ architecture and self-contained runtime imports", () => {
     expect(cli.status, `${cli.stderr}${cli.stdout}`).toBe(0);
   });
 
+  test("keeps PostGIS COPYING.LIB legal text out of Windows binary discovery without admitting stray libraries", () => {
+    const legalText = Buffer.from(
+      "GNU LIBRARY GENERAL PUBLIC LICENSE\n\fTERMS AND CONDITIONS\n",
+      "utf8",
+    );
+    const entries = [
+      entry("bin/oliphaunt.dll", pe()),
+      entry("files/lib/postgresql/postgis-3.dll", pe()),
+      entry("files/lib/modules/postgis-3.dll", pe()),
+      entry("lib/oliphaunt.lib", windowsImportLibraryFixture()),
+      entry("files/share/licenses/libcharset/COPYING.LIB", legalText),
+      entry("files/share/licenses/libiconv/COPYING.LIB", legalText),
+    ];
+    const result = inspectPlatformBinaryEntries(entries, {
+      target: "windows-x64-msvc",
+      requireWindowsRuntimeImportLibrary: true,
+    });
+    expect(result.files).toEqual([
+      "bin/oliphaunt.dll",
+      "files/lib/modules/postgis-3.dll",
+      "files/lib/postgresql/postgis-3.dll",
+      "lib/oliphaunt.lib",
+    ]);
+    expect(result.binaries).toBe(4);
+
+    expect(() =>
+      inspectPlatformBinaryEntries(
+        [...entries, entry("files/lib/arbitrary.lib", windowsImportLibraryFixture())],
+        { target: "windows-x64-msvc", requireWindowsRuntimeImportLibrary: true },
+      ),
+    ).toThrow(/only the exact lib\/oliphaunt\.lib runtime import library is permitted/u);
+    expect(() =>
+      inspectPlatformBinaryEntries(
+        [...entries, entry("files/lib/malformed.lib", Buffer.from("not an import library\n"))],
+        { target: "windows-x64-msvc", requireWindowsRuntimeImportLibrary: true },
+      ),
+    ).toThrow(/files\/lib\/malformed\.lib.*expected native binary is malformed or truncated/u);
+    expect(() =>
+      inspectPlatformBinaryEntries(
+        [...entries, entry("files/share/uncontracted/COPYING.LIB", legalText)],
+        { target: "windows-x64-msvc", requireWindowsRuntimeImportLibrary: true },
+      ),
+    ).toThrow(/files\/share\/uncontracted\/COPYING\.LIB.*expected native binary is malformed or truncated/u);
+    expect(() =>
+      inspectPlatformBinaryEntries(
+        entries.map((candidate) =>
+          candidate.name === "files/share/licenses/libcharset/COPYING.LIB"
+            ? entry(candidate.name, windowsImportLibraryFixture())
+            : candidate,
+        ),
+        { target: "windows-x64-msvc", requireWindowsRuntimeImportLibrary: true },
+      ),
+    ).toThrow(/only the exact lib\/oliphaunt\.lib runtime import library is permitted/u);
+    expect(() =>
+      inspectPlatformBinaryEntries(
+        entries.map((candidate) =>
+          candidate.name === "files/share/licenses/libcharset/COPYING.LIB"
+            ? entry(candidate.name, Buffer.from([0x47, 0x50, 0x4c, 0x00, 0xff]))
+            : candidate,
+        ),
+        { target: "windows-x64-msvc", requireWindowsRuntimeImportLibrary: true },
+      ),
+    ).toThrow(/COPYING\.LIB.*expected native binary is malformed or truncated/u);
+  });
+
   test("rejects malformed, wrong-machine, wrong-DLL, and arbitrary Windows libraries", () => {
     const inspectImportLibrary = (data) =>
       inspectPlatformBinaryEntries(

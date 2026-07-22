@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
         }
       ]
     },
@@ -322,7 +322,7 @@
         },
         {
           "path": "tools/release/broker-dependency-license-contract.mjs",
-          "sha256": "5d17eea587cfdfb5176de5d1ab54839ec3e2ebec0d5c6976d94605431d6c6869"
+          "sha256": "951f887f078f6939941ef514982177a213cc93087bc7a4b6238d146e4eb76014"
         }
       ]
     },
@@ -445,5 +445,5 @@
       ]
     }
   ],
-  "sha256": "64bbd679a6be4cb0f25bad61ad28191cbc2078232e458f3b3299487daff81acc"
+  "sha256": "cbd8118140b60169ba448ffec0c40af59364eed0cac9c192e2f1c88100fa6690"
 }

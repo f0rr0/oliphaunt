@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -65,6 +66,10 @@ import {
 import { elfFixture } from "../test/release-fixture-utils.mjs";
 
 const posixTest = process.platform === "win32" ? test.skip : test;
+
+function temporaryRoot(prefix) {
+  return realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
 
 const EXTENSION_ARTIFACT_PROPERTY_KEYS = [
   "packageLayout",
@@ -278,7 +283,7 @@ test("keeps the local-registry compatibility exports bound to the focused extens
 });
 
 test("discovers nested extension manifests without Bun.Glob's Windows directory-open contract", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-discovery-"));
+  const root = temporaryRoot("oliphaunt-extension-discovery-");
   try {
     const manifests = [
       path.join(root, "windows-x64-msvc", "vector", "extension-artifacts.json"),
@@ -410,7 +415,7 @@ test("discovers nested extension manifests without Bun.Glob's Windows directory-
 });
 
 posixTest("extension manifest discovery rejects symlinks instead of skipping or traversing them", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-discovery-link-"));
+  const root = temporaryRoot("oliphaunt-extension-discovery-link-");
   try {
     const target = path.join(root, "target");
     mkdirSync(target);
@@ -453,7 +458,7 @@ posixTest("extension manifest discovery rejects symlinks instead of skipping or 
 });
 
 posixTest("extension manifest discovery rejects unsupported special filesystem entries", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-discovery-special-"));
+  const root = temporaryRoot("oliphaunt-extension-discovery-special-");
   try {
     const fifo = path.join(root, "unexpected.fifo");
     const created = spawnSync("mkfifo", [fifo], { encoding: "utf8" });
@@ -602,7 +607,7 @@ test("inspects a registry crate independently of the repository Cargo workspace"
 });
 
 test("recovers and verifies exact Windows VC runtime members after unreliable bulk extraction", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-windows-vc-recovery-"));
+  const root = temporaryRoot("oliphaunt-windows-vc-recovery-");
   try {
     const source = path.join(root, "source");
     const bin = path.join(source, "runtime", "bin");
@@ -936,7 +941,7 @@ test("derives extension carrier licenses from physical payload and target semant
 test("native extension Cargo carrier assembly preserves target-qualified module bytes", {
   timeout: 30_000,
 }, async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-carrier-bytes-"));
+  const root = temporaryRoot("oliphaunt-extension-carrier-bytes-");
   const previousPath = process.env.PATH;
   const previousTrap = process.env.OLIPHAUNT_STRIP_TRAP;
   try {
@@ -1063,7 +1068,7 @@ test("native extension Cargo carrier assembly preserves target-qualified module 
 test("native extension Cargo carrier streams nested bundle archives larger than one MiB", {
   timeout: 30_000,
 }, () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-carrier-bundle-"));
+  const root = temporaryRoot("oliphaunt-extension-carrier-bundle-");
   try {
     const product = "oliphaunt-extension-vector";
     const version = "9.8.7";
@@ -1173,7 +1178,7 @@ test("native extension Cargo carrier streams nested bundle archives larger than 
 test("split native extension Cargo carrier preserves exact member dependencies", {
   timeout: 90_000,
 }, () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-carrier-split-"));
+  const root = temporaryRoot("oliphaunt-extension-carrier-split-");
   try {
     const product = "oliphaunt-extension-vector";
     const version = "9.8.7";
@@ -1272,7 +1277,7 @@ test("extension registry materialization has no live global catalog dependency",
 });
 
 test("npm extension materialization rejects a recomputed carrier with an undeclared leaf", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-npm-contaminated-"));
+  const root = temporaryRoot("oliphaunt-extension-npm-contaminated-");
   try {
     const product = "oliphaunt-extension-pgtap";
     const version = "9.8.7";
@@ -1353,7 +1358,7 @@ test("npm extension materialization rejects a recomputed carrier with an undecla
 test("native extension npm carrier assembly preserves exact target-qualified runtime bytes", {
   timeout: 30_000,
 }, () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-extension-npm-bytes-"));
+  const root = temporaryRoot("oliphaunt-extension-npm-bytes-");
   const previousPath = process.env.PATH;
   const previousTrap = process.env.OLIPHAUNT_STRIP_TRAP;
   try {

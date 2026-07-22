@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,7 +52,7 @@ function pack(directory, output) {
 }
 
 test("every native npm payload carrier declares and physically packs its exact legal profile", (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), "native-npm-notices-"));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "native-npm-notices-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const output = path.join(root, "tarballs");
   mkdirSync(output);

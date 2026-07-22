@@ -161,6 +161,8 @@ verify_checkout() {
   [ "$(git -C "$checkout" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 1
   [ "$(git -C "$checkout" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" = "$expected_commit" ] || return 1
   git -C "$checkout" cat-file -e "$expected_commit^{commit}" 2>/dev/null || return 1
+  [ "$(git -C "$checkout" config --local --get core.autocrlf 2>/dev/null)" = false ] || return 1
+  [ "$(git -C "$checkout" config --local --get core.eol 2>/dev/null)" = lf ] || return 1
   [ -z "$(git_status "$checkout" 2>/dev/null)" ] || return 1
   git -C "$checkout" fsck --strict --no-dangling >/dev/null 2>&1
 }
@@ -202,6 +204,10 @@ initialize_candidate() {
   git init --quiet "$candidate_checkout"
   git -C "$candidate_checkout" config core.protectHFS true
   git -C "$candidate_checkout" config core.protectNTFS true
+  # Upstream `text=auto` attributes must not make pinned build inputs depend on
+  # whether the checkout host uses LF or CRLF worktree conventions.
+  git -C "$candidate_checkout" config core.autocrlf false
+  git -C "$candidate_checkout" config core.eol lf
 }
 
 run_bounded() {

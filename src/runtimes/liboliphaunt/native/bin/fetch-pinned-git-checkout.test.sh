@@ -26,9 +26,10 @@ mkdir -p "$upstream/extension"
 "$real_git" init --quiet "$upstream"
 "$real_git" -C "$upstream" config user.name "Oliphaunt Test"
 "$real_git" -C "$upstream" config user.email "oliphaunt@example.invalid"
+printf '* text=auto\n' >"$upstream/.gitattributes"
 printf 'one\n' >"$upstream/extension/source.txt"
 printf '[package]\nname = "fixture"\nversion = "0.0.0"\n' >"$upstream/extension/Cargo.toml"
-"$real_git" -C "$upstream" add extension
+"$real_git" -C "$upstream" add .gitattributes extension
 "$real_git" -C "$upstream" commit --quiet -m one
 commit_one="$("$real_git" -C "$upstream" rev-parse HEAD)"
 printf 'two\n' >"$upstream/extension/source.txt"
@@ -266,6 +267,8 @@ fi
 cache_checkout="$checkout_root/cache"
 run_fetch "$cache_checkout" "$commit_one" >/dev/null
 assert_head "$cache_checkout" "$commit_one"
+[ "$("$real_git" -C "$cache_checkout" config --local --get core.autocrlf)" = false ] || fail "checkout does not pin core.autocrlf=false"
+[ "$("$real_git" -C "$cache_checkout" config --local --get core.eol)" = lf ] || fail "checkout does not pin core.eol=lf"
 [ -z "$("$real_git" -C "$cache_checkout" status --porcelain=v1 --untracked-files=all)" ] || fail "new checkout is dirty"
 [ "$(cat "$cache_checkout/extension/source.txt")" = one ] || fail "new checkout has the wrong source"
 grep -F 'protocol.allow=never' "$git_log" >/dev/null || fail "protocol deny-by-default was not passed to Git"

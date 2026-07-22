@@ -19,6 +19,7 @@ import { gzipSync } from "node:zlib";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { hasCanonicalReleaseStagingMode } from "./release-notices.mjs";
 import {
   auditExtensionUpstreamLicenseSources,
   assertExtensionUpstreamLicensesInEntries,
@@ -319,7 +320,7 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   const staged = stageExtensionUpstreamLicenses("pg_hashids", stage);
   assert.deepEqual(staged, ["share/licenses/pg_hashids/LICENSE"]);
   const output = path.join(stage, staged[0]);
-  assert.equal(lstatSync(output).mode & 0o777, 0o644);
+  assert.equal(hasCanonicalReleaseStagingMode(lstatSync(output).mode), true);
   assert.equal(
     createHash("sha256").update(readFileSync(output)).digest("hex"),
     extensionUpstreamLicenseRows().find(({ sqlName }) => sqlName === "pg_hashids").files[0].sha256,

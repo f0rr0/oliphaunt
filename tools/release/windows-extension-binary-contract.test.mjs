@@ -214,6 +214,11 @@ describe("desktop exact-extension post-strip binary qualification", () => {
       embedded,
       elfFixture({ machine: 62, requiredVersions: ["GLIBC_2.27"] }),
     );
+    await writeRuntimeFile(
+      artifact,
+      "files/share/licenses/libcharset/COPYING.LIB",
+      Buffer.from("GNU LIBRARY GENERAL PUBLIC LICENSE\n"),
+    );
     const args = {
       nativeModuleStem: "vector",
       nativeTarget: "linux-x64-gnu",
@@ -438,6 +443,16 @@ describe("Windows exact-extension binary-contract staging", () => {
       "files/share/postgresql/extension/vector.control",
       "default_version = '0.8.2'\n",
     );
+    await writeRuntimeFile(
+      artifact,
+      "files/share/licenses/libcharset/COPYING.LIB",
+      "GNU LIBRARY GENERAL PUBLIC LICENSE\n",
+    );
+    await writeRuntimeFile(
+      artifact,
+      "files/share/licenses/libiconv/COPYING.LIB",
+      "GNU LIBRARY GENERAL PUBLIC LICENSE\n",
+    );
 
     const result = await validateWindowsExtensionArtifactBinaryContract({
       artifactRoot: artifact,
@@ -445,6 +460,12 @@ describe("Windows exact-extension binary-contract staging", () => {
     });
     expect(result.files).toContain("artifact/files/lib/postgresql/vector.dll");
     expect(result.files).toContain("artifact/files/lib/modules/vector.dll");
+    expect(result.files).not.toContain(
+      "artifact/files/share/licenses/libcharset/COPYING.LIB",
+    );
+    expect(result.files).not.toContain(
+      "artifact/files/share/licenses/libiconv/COPYING.LIB",
+    );
     expect(result.serverBoundExtensionModules).toEqual(["vector.dll"]);
     expect(result.providerBoundEmbeddedModules).toEqual(["vector.dll"]);
     expect(result.hostNeutralServerModules).toEqual(["earthdistance.dll"]);
