@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   buildPublicationCandidate,
@@ -20,6 +21,12 @@ import {
   resolveActualCarrier,
 } from "./publication-catalog.mjs";
 import { extensionDependencyRequirement } from "./package_liboliphaunt_wasix_cargo_artifacts.mjs";
+import { createDeterministicTar } from "./cargo-source-package.mjs";
+import {
+  extensionCarrierLegalContract,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
+import { stageReleaseNotices } from "./release-notices.mjs";
 import {
   allArtifactTargets,
   currentProductVersionSync,
@@ -35,6 +42,28 @@ import {
 } from "./ios-carrier-manifest.mjs";
 
 const temporaryDirectories = [];
+
+function sortJsonValue(value) {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, sortJsonValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function canonicalJson(value) {
+  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
+}
+
+function refreshTarHeaderChecksum(tar, offset = 0) {
+  tar.fill(0x20, offset + 148, offset + 156);
+  const checksum = tar.subarray(offset, offset + 512)
+    .reduce((total, byte) => total + byte, 0);
+  Buffer.from(`${checksum.toString(8).padStart(6, "0")}\0 `, "ascii")
+    .copy(tar, offset + 148);
+}
 
 function temporaryDirectory() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-publication-lock-"));
@@ -153,9 +182,18 @@ function githubReleaseFixture(root, product) {
   return { checksum, directory, rows };
 }
 
-function extensionGithubReleaseFixture(root, product) {
+function extensionGithubReleaseFixture(
+  root,
+  product,
+  {
+    mutateBundleArchive = undefined,
+    mutateBundleStage = undefined,
+    bundleFixedFileMode = 0o644,
+  } = {},
+) {
   const productRoot = path.join(root, "target", "extension-artifacts", product.id);
   const directory = path.join(productRoot, "release-assets");
+  rmSync(productRoot, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   const sqlNames = extensionSqlNames(product.id, "publication-lock.test");
   const bundled = sqlNames.length > 1;
@@ -262,6 +300,8 @@ function extensionGithubReleaseFixture(root, product) {
       `${left.family}\0${left.target}`.localeCompare(`${right.family}\0${right.target}`))) {
       const archiveRoot = `${product.id}-${product.version}-${group.family}-${group.target}-bundle`;
       const stage = path.join(productRoot, "bundle-stage", archiveRoot);
+      rmSync(stage, { recursive: true, force: true });
+      mkdirSync(stage, { recursive: true });
       const manifestMembers = [];
       for (const { sqlName, asset } of group.rows.sort((left, right) =>
         `${left.sqlName}\0${left.asset.kind}\0${left.asset.identity ?? ""}`.localeCompare(
@@ -283,17 +323,47 @@ function extensionGithubReleaseFixture(root, product) {
           bytes: asset.bytes,
         });
       }
-      writeFileSync(path.join(stage, "bundle-manifest.json"), `${JSON.stringify({
+      const memberNames = [...new Set(manifestMembers.map(({ sqlName }) => sqlName))].sort();
+      const legal = extensionCarrierLegalContract(product.id, memberNames, {
+        family: group.family,
+        target: group.target,
+      });
+      for (const sqlName of memberNames) stageExtensionUpstreamLicenses(sqlName, stage);
+      const bundleManifest = path.join(stage, "bundle-manifest.json");
+      writeFileSync(bundleManifest, canonicalJson({
         schema: "oliphaunt-extension-bundle-v1",
         product: product.id,
         version: product.version,
         compatibility,
         family: group.family,
         target: group.target,
+        licenseProfile: legal.profile,
+        licenseFiles: legal.licenseFiles,
         members: manifestMembers,
-      }, null, 2)}\n`);
+      }));
+      stageReleaseNotices(stage, { profile: legal.profile });
+      mutateBundleStage?.({
+        archiveRoot,
+        bundleManifest,
+        family: group.family,
+        legal,
+        stage,
+        target: group.target,
+      });
       const output = path.join(directory, `${archiveRoot}.tar.gz`);
-      tarGzip(output, path.dirname(stage), archiveRoot);
+      const tarOptions = {
+        fail(message) {
+          throw new Error(`publication lock fixture: ${message}`);
+        },
+      };
+      if (bundleFixedFileMode !== null) tarOptions.fixedFileMode = bundleFixedFileMode;
+      writeFileSync(output, gzipSync(createDeterministicTar(stage, archiveRoot, tarOptions), { mtime: 0 }));
+      mutateBundleArchive?.({
+        archiveRoot,
+        family: group.family,
+        output,
+        target: group.target,
+      });
       carrierAssets.push({
         name: path.basename(output),
         path: output,
@@ -752,6 +822,85 @@ describe("publication artifact discovery and freezing", () => {
     forgedPublicManifest.compatibility.wasixRuntimeVersion = "9.9.9";
     writeFileSync(publicManifestPath, `${JSON.stringify(forgedPublicManifest, null, 2)}\n`);
     expect(() => discoverProductArtifacts([root], [product])).toThrow(/frozen aggregate member\/carrier inventory/u);
+  });
+
+  test("rejects stale, missing, extra, substituted, or wrongly-moded aggregate bundle legal material", { timeout: 60_000 }, () => {
+    const product = loadPublicationCatalog("publication-lock.test", {
+      products: ["oliphaunt-extension-contrib-pg18"],
+    }).products[0];
+    const reject = (options, expected) => {
+      const root = temporaryDirectory();
+      extensionGithubReleaseFixture(root, product, options);
+      expect(() => discoverProductArtifacts([root], [product])).toThrow(expected);
+    };
+
+    reject({
+      mutateBundleStage({ bundleManifest }) {
+        const manifest = JSON.parse(readFileSync(bundleManifest, "utf8"));
+        delete manifest.licenseProfile;
+        writeFileSync(bundleManifest, `${JSON.stringify(manifest, null, 2)}\n`);
+      },
+    }, /bundle-manifest\.json does not exactly freeze its nested member and legal locators/u);
+
+    reject({
+      mutateBundleStage({ stage }) {
+        unlinkSync(path.join(stage, "LICENSE"));
+      },
+    }, /contains undeclared or missing regular bundle members/u);
+
+    reject({
+      mutateBundleStage({ stage }) {
+        writeFileSync(path.join(stage, "UNDECLARED.txt"), "undeclared\n");
+      },
+    }, /contains undeclared or missing regular bundle members/u);
+
+    reject({
+      mutateBundleStage({ stage }) {
+        writeFileSync(path.join(stage, "LICENSE"), "substituted legal bytes\n");
+      },
+    }, /legal member .*\/LICENSE does not match its canonical bytes and mode/u);
+
+    reject({
+      bundleFixedFileMode: null,
+      mutateBundleStage({ stage }) {
+        chmodSync(path.join(stage, "LICENSE"), 0o600);
+      },
+    }, /member .*\/LICENSE must be a canonical regular mode=0644 uid=0 gid=0 mtime=0 file/u);
+  });
+
+  test("rejects bundle encodings that supported mobile consumers reject", { timeout: 60_000 }, () => {
+    const product = loadPublicationCatalog("publication-lock.test", {
+      products: ["oliphaunt-extension-contrib-pg18"],
+    }).products[0];
+    const reject = (options, expected) => {
+      const root = temporaryDirectory();
+      extensionGithubReleaseFixture(root, product, options);
+      expect(() => discoverProductArtifacts([root], [product])).toThrow(expected);
+    };
+
+    reject({
+      mutateBundleStage({ bundleManifest }) {
+        const manifest = JSON.parse(readFileSync(bundleManifest, "utf8"));
+        writeFileSync(bundleManifest, `${JSON.stringify(manifest)}\n`);
+      },
+    }, /bundle-manifest\.json must use the exact canonical bytes/u);
+
+    reject({
+      mutateBundleArchive({ output }) {
+        const bytes = readFileSync(output);
+        bytes[9] = 0;
+        writeFileSync(output, bytes);
+      },
+    }, /canonical gzip method, flags, mtime, XFL, and OS header/u);
+
+    reject({
+      mutateBundleArchive({ output }) {
+        const tar = gunzipSync(readFileSync(output));
+        Buffer.from("builder\0", "ascii").copy(tar, 265);
+        refreshTarHeaderChecksum(tar);
+        writeFileSync(output, gzipSync(tar, { mtime: 0 }));
+      },
+    }, /exact deterministic POSIX ustar file encoding/u);
   });
 
   test("keeps SQL-only mobile extensions resource-only", () => {

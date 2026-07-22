@@ -19,6 +19,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 
+import {
+  extensionCarrierLegalContract,
+  extensionCarrierLegalFileInventory,
+} from "../../../../tools/release/extension-upstream-licenses.mjs";
+import { stageReleaseNotices } from "../../../../tools/release/release-notices.mjs";
+
 const SCRIPT = fileURLToPath(new URL("./mobile-extension-artifact-paths.mjs", import.meta.url));
 const repositoryResult = spawnSync("git", ["rev-parse", "--show-toplevel"], {
   cwd: path.dirname(SCRIPT),
@@ -255,6 +261,9 @@ function fixture(t) {
     targets = TARGETS,
     embeddedMutator = (value) => value,
     tamperNested = null,
+    tamperLegal = null,
+    omitLegal = null,
+    extraArchiveMember = null,
     duplicatePhysicalRolePath = false,
   } = {}) {
     const members = CONTRIB_SQL_NAMES.map((sqlName) =>
@@ -347,6 +356,10 @@ function fixture(t) {
         const rightKey = `${right.sqlName}\0${right.kind}\0${right.identity ?? ""}`;
         return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
       });
+      const legal = extensionCarrierLegalContract(CONTRIB, CONTRIB_SQL_NAMES, {
+        family: "native",
+        target,
+      });
       const embedded = embeddedMutator({
         schema: "oliphaunt-extension-bundle-v1",
         product: CONTRIB,
@@ -354,11 +367,30 @@ function fixture(t) {
         compatibility: COMPATIBILITY,
         family: "native",
         target,
+        licenseProfile: legal.profile,
+        licenseFiles: legal.licenseFiles,
         members: rows,
       }, target);
       const embeddedPath = path.join(stage, carrierRoot, "bundle-manifest.json");
       mkdirSync(path.dirname(embeddedPath), { recursive: true });
       writeFileSync(embeddedPath, canonicalJson(embedded));
+      stageReleaseNotices(path.join(stage, carrierRoot), { profile: legal.profile });
+      const legalFiles = extensionCarrierLegalFileInventory(CONTRIB, CONTRIB_SQL_NAMES, {
+        family: "native",
+        target,
+      });
+      if (tamperLegal !== null) {
+        const legalPath = path.join(stage, carrierRoot, ...tamperLegal.split("/"));
+        const bytes = readFileSync(legalPath);
+        assert(bytes.length > 0, `${tamperLegal} fixture must not be empty`);
+        bytes[0] ^= 0xff;
+        writeFileSync(legalPath, bytes);
+      }
+      if (extraArchiveMember !== null) {
+        const extraPath = path.join(stage, carrierRoot, ...extraArchiveMember.split("/"));
+        mkdirSync(path.dirname(extraPath), { recursive: true });
+        writeFileSync(extraPath, "undeclared bundle member\n");
+      }
 
       const releaseAssets = path.join(productRoot(CONTRIB), "release-assets");
       mkdirSync(releaseAssets, { recursive: true });
@@ -366,7 +398,9 @@ function fixture(t) {
       const archiveNames = [
         `${carrierRoot}/bundle-manifest.json`,
         ...rows.map((row) => `${carrierRoot}/${row.path}`),
-      ];
+        ...legalFiles.map((file) => `${carrierRoot}/${file.path}`),
+        ...(extraArchiveMember === null ? [] : [`${carrierRoot}/${extraArchiveMember}`]),
+      ].filter((name) => name !== `${carrierRoot}/${omitLegal}`);
       const uniqueArchiveNames = [...new Set(archiveNames)].sort();
       writeCanonicalTarGzip(carrierPath, stage, uniqueArchiveNames);
       const carrier = {
@@ -532,7 +566,72 @@ test("rejects outer and nested carrier tampering independently", (t) => {
     assetTarget: "android-arm64-v8a",
   });
   assert.equal(nestedResult.status, 1);
-  assert.match(nestedResult.stderr, /nested member .* does not match its frozen size\/digest/u);
+  assert.match(nestedResult.stderr, /member .* does not match its canonical SHA-256/u);
+});
+
+test("binds the production bundle manifest and exact legal-file closure", (t) => {
+  const valid = fixture(t);
+  valid.installAggregate({ targets: ["android-arm64-v8a"] });
+  outputPaths(valid.run({
+    extensions: "amcheck",
+    assetKind: "runtime",
+    assetTarget: "android-arm64-v8a",
+  }));
+
+  const tampered = fixture(t);
+  tampered.installAggregate({
+    targets: ["android-arm64-v8a"],
+    tamperLegal: "LICENSE",
+  });
+  const tamperedResult = tampered.run({
+    extensions: "amcheck",
+    assetKind: "runtime",
+    assetTarget: "android-arm64-v8a",
+  });
+  assert.equal(tamperedResult.status, 1);
+  assert.match(tamperedResult.stderr, /LICENSE.*does not match its canonical SHA-256/u);
+
+  const missing = fixture(t);
+  missing.installAggregate({
+    targets: ["android-arm64-v8a"],
+    omitLegal: "THIRD_PARTY_NOTICES.md",
+  });
+  const missingResult = missing.run({
+    extensions: "amcheck",
+    assetKind: "runtime",
+    assetTarget: "android-arm64-v8a",
+  });
+  assert.equal(missingResult.status, 1);
+  assert.match(missingResult.stderr, /exact two-block ustar marker/u);
+
+  const extra = fixture(t);
+  extra.installAggregate({
+    targets: ["android-arm64-v8a"],
+    extraArchiveMember: "UNDECLARED-LEGAL.txt",
+  });
+  const extraResult = extra.run({
+    extensions: "amcheck",
+    assetKind: "runtime",
+    assetTarget: "android-arm64-v8a",
+  });
+  assert.equal(extraResult.status, 1);
+  assert.match(extraResult.stderr, /UNDECLARED-LEGAL\.txt.*undeclared/u);
+
+  const staleManifest = fixture(t);
+  staleManifest.installAggregate({
+    targets: ["android-arm64-v8a"],
+    embeddedMutator: (value) => {
+      const { licenseProfile: _licenseProfile, ...legacy } = value;
+      return legacy;
+    },
+  });
+  const staleManifestResult = staleManifest.run({
+    extensions: "amcheck",
+    assetKind: "runtime",
+    assetTarget: "android-arm64-v8a",
+  });
+  assert.equal(staleManifestResult.status, 1);
+  assert.match(staleManifestResult.stderr, /bundle-manifest\.json.*wrong ustar size/u);
 });
 
 test("rejects unsupported outer and embedded bundle schemas", (t) => {
@@ -564,7 +663,7 @@ test("rejects unsupported outer and embedded bundle schemas", (t) => {
     assetTarget: "android-arm64-v8a",
   });
   assert.equal(embeddedResult.status, 1);
-  assert.match(embeddedResult.stderr, /bundle-manifest\.json does not exactly describe/u);
+  assert.match(embeddedResult.stderr, /bundle-manifest\.json.*canonical SHA-256/u);
 });
 
 test("rejects noncanonical public evidence-envelope key sets", (t) => {

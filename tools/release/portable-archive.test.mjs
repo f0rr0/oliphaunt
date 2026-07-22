@@ -10,6 +10,7 @@ import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   decompressSingleZstdFrame,
   portableMemberName,
+  readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
 } from "./portable-archive.mjs";
@@ -311,6 +312,50 @@ test("reads strict ustar and rejects links, bad checksums, padding, and end mark
   refreshFirstTarChecksum(linkFieldTar);
   const linkField = fixtureFile(t, "link-field.tar.gz", gzipSync(linkFieldTar)).file;
   assert.throws(() => readPortableArchiveEntries(linkField), /sets a link target on non-link/u);
+});
+
+test("binds the exact deterministic tar-gzip encoding used by release consumers", (t) => {
+  const validBytes = tarArchive([
+    { name: "root/LICENSE", data: "license\n" },
+    { name: "root/bundle-manifest.json", data: "{}\n" },
+  ]);
+  const valid = fixtureFile(t, "canonical.tar.gz", validBytes).file;
+  assert.deepEqual([...readCanonicalTarGzipEntries(valid).keys()], [
+    "root/LICENSE",
+    "root/bundle-manifest.json",
+  ]);
+
+  const wrongGzipHeader = Buffer.from(validBytes);
+  wrongGzipHeader[9] = 0;
+  const wrongGzip = fixtureFile(t, "wrong-gzip-header.tar.gz", wrongGzipHeader).file;
+  assert.throws(
+    () => readCanonicalTarGzipEntries(wrongGzip),
+    /canonical gzip method, flags, mtime, XFL, and OS header/u,
+  );
+
+  const ownerTar = gunzipForTest(validBytes);
+  Buffer.from("builder\0", "ascii").copy(ownerTar, 265);
+  refreshFirstTarChecksum(ownerTar);
+  const owner = fixtureFile(t, "owner.tar.gz", gzipSync(ownerTar, { mtime: 0 })).file;
+  assert.doesNotThrow(() => readPortableArchiveEntries(owner));
+  assert.throws(
+    () => readCanonicalTarGzipEntries(owner),
+    /exact deterministic POSIX ustar file encoding/u,
+  );
+
+  const unsorted = fixtureFile(
+    t,
+    "unsorted.tar.gz",
+    tarArchive([
+      { name: "root/z", data: "last" },
+      { name: "root/a", data: "first" },
+    ]),
+  ).file;
+  assert.doesNotThrow(() => readPortableArchiveEntries(unsorted));
+  assert.throws(
+    () => readCanonicalTarGzipEntries(unsorted),
+    /canonical file members.*sorted order/u,
+  );
 });
 
 test("requires ustar directory type flags and trailing path markers to agree", (t) => {

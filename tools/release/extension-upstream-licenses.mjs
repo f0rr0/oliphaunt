@@ -21,6 +21,7 @@ import {
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import {
   hasCanonicalReleaseStagingMode,
+  releaseNoticeRows,
   releaseMavenLicenses,
   releaseProfilePackageLicense,
 } from "./release-notices.mjs";
@@ -774,6 +775,65 @@ export function extensionCarrierLegalContract(
     upstreamMembers: Object.freeze([...sqlNames]),
     licenseFiles: Object.freeze(licenseFiles),
   });
+}
+
+export function extensionCarrierLegalFileInventory(
+  product,
+  sqlNames,
+  { family, target, carriesPayload = true } = {},
+) {
+  const legal = extensionCarrierLegalContract(product, sqlNames, {
+    family,
+    target,
+    carriesPayload,
+  });
+  const files = new Map();
+  const add = (file, bytes, expectedSha256 = undefined) => {
+    const payload = Buffer.from(bytes);
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    if (expectedSha256 !== undefined && sha256 !== expectedSha256) {
+      fail(`canonical legal bytes changed for ${file}: expected ${expectedSha256}, got ${sha256}`);
+    }
+    const row = Object.freeze({
+      path: simpleRelative(file, "carrier legal member"),
+      sha256,
+      bytes: payload.length,
+      mode: "0644",
+    });
+    const prior = files.get(row.path);
+    if (
+      prior !== undefined
+      && (prior.sha256 !== row.sha256 || prior.bytes !== row.bytes || prior.mode !== row.mode)
+    ) {
+      fail(`carrier legal member collision at ${row.path}`);
+    }
+    files.set(row.path, prior ?? row);
+  };
+
+  for (const row of releaseNoticeRows({ profile: legal.profile })) {
+    add(row.member, readFileSync(row.source), row.sha256);
+  }
+
+  const upstreamPaths = [];
+  for (const sqlName of legal.upstreamMembers) {
+    const row = extensionUpstreamLicenseRow(sqlName);
+    const blobs = productLicenseBlobs(sqlName, row.files.map((file) => file.sha256));
+    for (const file of row.files) {
+      const bytes = blobs.get(file.sha256);
+      if (bytes === undefined) fail(`${sqlName} has no committed legal bytes for ${file.destination}`);
+      upstreamPaths.push(file.destination);
+      add(file.destination, bytes, file.sha256);
+    }
+  }
+  const actualUpstreamPaths = [...new Set(upstreamPaths)].sort(compareText);
+  if (JSON.stringify(actualUpstreamPaths) !== JSON.stringify([...legal.licenseFiles])) {
+    fail(
+      `carrier legal file inventory differs from its contract: expected ${legal.licenseFiles.join(", ")}, `
+      + `got ${actualUpstreamPaths.join(", ")}`,
+    );
+  }
+
+  return Object.freeze([...files.values()].sort((left, right) => compareText(left.path, right.path)));
 }
 
 export function extensionQualificationLegalContract(

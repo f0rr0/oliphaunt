@@ -95,6 +95,28 @@
       ]
     },
     {
+      "id": "postgis-reproducible-time-contract",
+      "paths": [
+        "src/extensions/external/postgis/source.toml",
+        "src/extensions/external/postgis/tools/reproducible-bin/date",
+        "src/extensions/external/postgis/tools/reproducible-time.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/external/postgis/source.toml",
+          "sha256": "cd720f3bae015515639273795df9fb6be6ba2ad7c9d6714d1b1e330643c33040"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-bin/date",
+          "sha256": "a6b0c3237e02debf0117504a5c30cc8dd47183269396f26c9341e878d1b8cf16"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
+          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+        }
+      ]
+    },
+    {
       "id": "native-npm-carrier-producer",
       "paths": [
         "tools/release/release-product-dry-run.mjs"
@@ -244,13 +266,15 @@
         "src/sdks/rust/src/liboliphaunt/root/runtime/**",
         "src/sdks/rust/src/liboliphaunt/root/template.rs",
         "src/sdks/rust/src/runtime_resources.rs",
+        "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
+        "src/sdks/rust/src/runtime_resources/manifest.rs",
         "src/sdks/rust/src/runtime_resources/package.rs",
         "src/sdks/rust/src/runtime_resources/static_registry.rs"
       ],
       "inputs": [
         {
           "path": "src/sdks/rust/src/bin/package_resources.rs",
-          "sha256": "04e84ab7a6989e215afbd9f76796d31c1e0dbc1cf63b480ca4ecaea3b0554407"
+          "sha256": "bd84c52e3bc3a6d2e273843752f48d62719cd32ec3f584e7a3ed48195d4871d1"
         },
         {
           "path": "src/sdks/rust/src/build_resources.rs",
@@ -262,15 +286,15 @@
         },
         {
           "path": "src/sdks/rust/src/extension.rs",
-          "sha256": "ecf3a2c24e42396b28be8f95679e46a53c205b4de68b1d32b8d1d4e4e99f038e"
+          "sha256": "645fb4461897010297fe103794db2c2d121bbec3346d84413dbf3fb1faae28d0"
         },
         {
           "path": "src/sdks/rust/src/generated/extensions.rs",
-          "sha256": "349f8409bedf14abbe1c5cee004ae7a23622e8cd9f2d73292c4662387d1b61de"
+          "sha256": "fb185dd07d7bc4cb7114bdd7314ec755ee235b5a9b2eb8f5ae46547bccce0071"
         },
         {
           "path": "src/sdks/rust/src/lib.rs",
-          "sha256": "9183a993a93635914f989fab3e902b78c1a1e69b75058f3d082b807070fc3abf"
+          "sha256": "5e29c193fddb9269ec35ef178318f3c41c5f4ba26ded06ec70c09a9c2ce1e83c"
         },
         {
           "path": "src/sdks/rust/src/liboliphaunt/ffi.rs",
@@ -318,11 +342,19 @@
         },
         {
           "path": "src/sdks/rust/src/runtime_resources.rs",
-          "sha256": "b45096dd670660e15634db49457dbb6401b67fb2be774e6835ba7d5df6601ecd"
+          "sha256": "35a488818a700b0304758261348ef64590510f3a65ba6119d43dbecbab92b94e"
+        },
+        {
+          "path": "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
+          "sha256": "fedc2c1de2308584e7f77f59f2edbbccc18a10c3b16742319f51edb18670f1f1"
+        },
+        {
+          "path": "src/sdks/rust/src/runtime_resources/manifest.rs",
+          "sha256": "a12d94fa214f9cf7914f9dab2f6f902204deb6aecb88f8a5e0b14d1c08ba3f11"
         },
         {
           "path": "src/sdks/rust/src/runtime_resources/package.rs",
-          "sha256": "ad87a6e5d8ad7dade9a87fa15933a32e3887c9bc4b73cb3094cfde5c67da8660"
+          "sha256": "a041d04e324e1884fde604f6823e378743edd5dad5c8632f541ea3036361ad89"
         },
         {
           "path": "src/sdks/rust/src/runtime_resources/static_registry.rs",
@@ -396,5 +428,5 @@
       ]
     }
   ],
-  "sha256": "3bf87740f9871bde9d2bce4e11490f34df2fb5c1b0a01779cd61c1d372d565b2"
+  "sha256": "7180ed4b00cf08f7015132950c12331771823166fd5cd53f105b3030b8c91ef5"
 }

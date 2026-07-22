@@ -1490,6 +1490,7 @@ def rust_extension_dependency_slice(
 
 def generated_rust_extension_rows(catalog: dict) -> list[dict]:
     rows = []
+    release_metadata = extension_metadata_by_sql_name()
     public_sql_names = {
         extension.get("sql-name", extension.get("id"))
         for extension in catalog.get("extensions", [])
@@ -1500,10 +1501,14 @@ def generated_rust_extension_rows(catalog: dict) -> list[dict]:
         if promotion.get("promoted") is not True:
             continue
         sql_name = str(extension.get("sql-name", extension.get("id")))
+        release = release_metadata.get(sql_name)
+        if release is None:
+            fail(f"release graph has no exact release owner for public Rust extension {sql_name}")
         rows.append(
             {
                 "id": extension.get("id"),
                 "sql-name": sql_name,
+                "release-product": release["product"],
                 "rust-constant": extension.get("rust-constant"),
                 "creates-extension": bool((extension.get("lifecycle") or {}).get("create-extension")),
                 "native-module-stem": native_module_stem(extension),
@@ -1626,6 +1631,12 @@ def generated_rust_extension_module(catalog: dict) -> str:
         f"pub(super) const ALL_PG18_SUPPORTED: &[Extension] = {rust_extension_slice(rows)};",
         "",
         rust_match("sql_name", "&'static str", rows, lambda row: rust_string_literal(row["sql-name"])),
+        rust_match(
+            "release_product",
+            "Option<&'static str>",
+            rows,
+            lambda row: rust_option_string(row.get("release-product")),
+        ),
         rust_match(
             "native_module_stem",
             "Option<&'static str>",

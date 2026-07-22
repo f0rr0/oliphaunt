@@ -24,8 +24,27 @@ const PROPERTY_KEYS = Object.freeze([
   "mobileStaticDependencyArchives",
   "staticSymbolPrefix",
   "staticSymbolAliases",
+  "licenseFiles",
+  "licenseProfile",
   "files",
 ]);
+const LEGAL_MEMBERS_BY_PROFILE = Object.freeze({
+  "contrib-native": Object.freeze([
+    "LICENSE",
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+    "THIRD_PARTY_NOTICES.md",
+  ]),
+  "contrib-native-openssl": Object.freeze([
+    "LICENSE",
+    "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+    "THIRD_PARTY_NOTICES.md",
+  ]),
+  "external-native": Object.freeze([
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+  ]),
+});
 const PORTABLE = /^[A-Za-z0-9._-]{1,128}$/u;
 const C_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const STABLE_SEMVER = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
@@ -291,6 +310,41 @@ function orderedCsv(value, label) {
     fail(label, "must be a unique canonical CSV");
   }
   return rows;
+}
+
+function legalPaths(properties, extension, contract, label) {
+  const licenseFiles = csv(
+    properties.get("licenseFiles"),
+    `${label} licenseFiles`,
+  ).map((relative, index) => canonicalRelativePath(
+    relative,
+    `${label} licenseFiles[${index}]`,
+  ));
+  if (licenseFiles.some((relative) => !relative.startsWith("share/licenses/"))) {
+    fail(label, "manifest licenseFiles must live under share/licenses/");
+  }
+  const contrib = extension.product === "oliphaunt-extension-contrib-pg18";
+  const dependencyNames = Array.isArray(extension?.nativeDependencies)
+    ? extension.nativeDependencies.map(({ name }) => name)
+    : [];
+  const expectedProfile = contrib
+    ? contract.sqlName === "pgcrypto" && dependencyNames.includes("openssl")
+      ? "contrib-native-openssl"
+      : "contrib-native"
+    : "external-native";
+  if (properties.get("licenseProfile") !== expectedProfile) {
+    fail(label, `manifest licenseProfile must be ${JSON.stringify(expectedProfile)}`);
+  }
+  if (contrib && licenseFiles.length !== 0) {
+    fail(label, "contrib artifacts must not declare external upstream licenseFiles");
+  }
+  if (!contrib && licenseFiles.length === 0) {
+    fail(label, "external artifacts must declare at least one upstream licenseFile");
+  }
+  return [
+    ...LEGAL_MEMBERS_BY_PROFILE[expectedProfile],
+    ...licenseFiles.map((relative) => `files/${relative}`),
+  ].sort(compareText);
 }
 
 function mobileStaticPaths(
@@ -657,6 +711,8 @@ export async function validateSwiftExtensionResourceArtifact({
     fail(label, "manifest staticSymbolAliases do not match carrier registration metadata");
   }
   const allowed = new Set(["manifest.properties"]);
+  const legalFiles = legalPaths(properties, extension, contract, label);
+  for (const legalFile of legalFiles) allowed.add(legalFile);
   for (const mobilePath of mobileStaticPaths(
     properties,
     extension,
@@ -696,6 +752,12 @@ export async function validateSwiftExtensionResourceArtifact({
       `leaf inventory mismatch${undeclared.length ? `; undeclared: ${undeclared.join(",")}` : ""}`
         + `${missing.length ? `; missing: ${missing.join(",")}` : ""}`,
     );
+  }
+  for (const legalFile of legalFiles) {
+    const snapshot = byPath.get(legalFile);
+    if (snapshot.bytes === 0 || (snapshot.mode & 0o111) !== 0) {
+      fail(label, `legal file ${legalFile} must be non-empty and non-executable`);
+    }
   }
   return {
     bytes: files

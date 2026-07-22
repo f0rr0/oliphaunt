@@ -200,6 +200,9 @@ cargo run -p oliphaunt --bin oliphaunt-extension-artifact -- \
   --embedded-module-root target/acme-pg18-embedded/modules \
   --native-runtime-version 0.1.0 \
   --data-file data/acme_ext.rules \
+  --license-profile external-native \
+  --legal-files-root vendor/acme_ext-legal \
+  --license-file share/licenses/acme_ext/LICENSE \
   --output vendor/acme_ext.tar.zst \
   --format tar-zst \
   --force
@@ -211,6 +214,11 @@ native-direct module. The artifact preserves both profile paths under
 `files/lib/postgresql` and `files/lib/modules`; native server consumers select
 the former, while native-direct and native-broker consumers select the latter.
 Both paths are mandatory, even when their files are byte-identical.
+
+`--legal-files-root` is a source tree, not an output directory. For the command
+above it contains `LICENSE`, `THIRD_PARTY_NOTICES.md`, and
+`share/licenses/acme_ext/LICENSE`; the producer places the first two at the
+carrier root and the declared upstream license below `files/`.
 
 Binary qualification derives each profile's backend binding from the binary's
 actual import inventory, never from the extension name. On Windows, a
@@ -333,10 +341,12 @@ mobileStaticArchives=android-arm64-v8a:mobile-static/android-arm64-v8a/extension
 mobileStaticDependencyArchives=android-arm64-v8a:openssl:mobile-static/android-arm64-v8a/dependencies/openssl/libcrypto.a,ios-device:openssl:mobile-static/ios-device/dependencies/openssl/libcrypto.a,ios-simulator:openssl:mobile-static/ios-simulator/dependencies/openssl/libcrypto.a
 staticSymbolPrefix=acme_static
 staticSymbolAliases=
+licenseFiles=share/licenses/acme_ext/LICENSE
+licenseProfile=external-native
 files=files
 ```
 
-The v1 manifest has exactly these 20 fields; all fields are present even when
+The v1 manifest has exactly these 22 fields; all fields are present even when
 their value is empty, and unknown fields are rejected. `nativeRuntimeProduct`
 is always `liboliphaunt-native`. `nativeRuntimeVersion` is a stable `X.Y.Z`
 version and must equal the version explicitly selected by
@@ -348,12 +358,34 @@ so one mismatched artifact also rejects a mixed-version package.
 `files/` mirrors PostgreSQL runtime paths, for example
 `files/share/postgresql/extension/acme_ext.control`,
 `files/share/postgresql/extension/acme_ext--1.0.sql`, and
-`files/lib/postgresql/acme_ext.dylib` on macOS. The runtime-resource generator copies only files
-declared by the exact selected extension: matching control/SQL files, declared
-`dataFiles`, and the declared native module. Extra files in the artifact are
-ignored. A prebuilt artifact cannot override a built-in release-ready extension
-name. Dependencies are exact extension names and must resolve either to the
-built-in catalog or to another provided prebuilt artifact.
+`files/lib/postgresql/acme_ext.dylib` on macOS. The runtime-resource generator
+copies only files declared by the exact selected extension: matching control/SQL
+files, declared `dataFiles`, the declared native module, mobile archives, and
+the exact `licenseFiles` inventory. The complete carrier leaf set must equal
+that declaration; extra files are rejected rather than ignored. Paths are
+canonical relative UTF-8 paths and manifests always use `/`, including when
+the producer runs on Windows.
+
+`licenseProfile=contrib-native` requires root `LICENSE`,
+`THIRD_PARTY_NOTICES.md`, and
+`THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT`, with an empty `licenseFiles` value.
+`contrib-native-openssl` additionally requires
+`THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt`; it is mandatory for pgcrypto targets
+that embed OpenSSL. `external-native` requires the two root notices plus at
+least one sorted exact `licenseFiles` path beneath `share/licenses/`, stored
+beneath carrier `files/`. Legal leaves must be non-empty regular non-symlink
+files with canonical mode `0644` on Unix. Missing, extra, unsafe, duplicate,
+wrong-profile, or wrongly permissioned legal leaves reject the carrier.
+
+An explicitly caller-supplied direct `--prebuilt-extension` artifact is an
+intentional local override: after its archive shape, exact manifest, complete
+inventory, legal members, native target, and selected runtime version all pass
+the normal validation boundary, it takes precedence over the built-in payload
+for the same SQL name. Artifact-index creation and loading reject entries for
+built-in release-ready names, so an index-resolved artifact cannot exercise
+that override. Dependencies are exact extension names and resolve to an
+explicitly provided prebuilt artifact first, then to the built-in catalog or
+another provided prebuilt artifact.
 
 For mobile, `mobilePrebuilt=yes` on a native-module artifact means the artifact
 itself carries matching prebuilt static archives in `mobileStaticArchives`.

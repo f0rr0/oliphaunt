@@ -37,6 +37,12 @@ impl Extension {
         generated_extensions::sql_name(self)
     }
 
+    /// Release product that owns this extension's carrier version, when the
+    /// extension is public.
+    pub const fn release_product(self) -> Option<&'static str> {
+        generated_extensions::release_product(self)
+    }
+
     /// Native module stem before the platform dynamic-library suffix.
     pub const fn native_module_stem(self) -> Option<&'static str> {
         generated_extensions::native_module_stem(self)

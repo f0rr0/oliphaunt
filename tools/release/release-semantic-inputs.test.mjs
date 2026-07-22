@@ -172,7 +172,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt",
       ["oliphaunt-extension-contrib-pg18"],
     ],
-    ["tools/release/extension-upstream-licenses.mjs", extensionProducts],
+    ["tools/release/extension-upstream-licenses.mjs", ["oliphaunt-kotlin", ...extensionProducts].sort()],
     [
       "src/sdks/js/src/native/extension-contract.ts",
       ["oliphaunt-js", ...extensionProducts].sort(),
@@ -387,9 +387,7 @@ test("the native runtime-resource Rust byte path has focused ownership", () => {
     "src/sdks/rust/src/runtime_resources",
   ).filter((candidate) => !semanticOwners(candidate).includes(nativeProduct));
   assert.deepEqual(runtimeResourceModulesWithoutNativeOwnership, [
-    "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
     "src/sdks/rust/src/runtime_resources/extension_index.rs",
-    "src/sdks/rust/src/runtime_resources/manifest.rs",
   ]);
 
   const materializerModulesWithoutNativeOwnership = repositoryFiles(
@@ -567,7 +565,7 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
       prefix: "release-semantic-inputs.test",
     });
     if (candidate === "tools/release/extension-upstream-licenses.mjs") {
-      assert.deepEqual(owners, extensionProducts);
+      assert.deepEqual(owners, ["oliphaunt-kotlin", ...extensionProducts].sort());
       continue;
     }
     if (!extensionProducts.every((product) => owners.includes(product))) unowned.push(candidate);

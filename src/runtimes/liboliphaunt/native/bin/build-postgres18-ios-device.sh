@@ -237,6 +237,7 @@ desired_hash() {
     printf 'liboliphaunt_cflags=%s\n' "$liboliphaunt_cflags"
     printf 'pg_extension_cflags=%s\n' "$pg_extension_cflags"
     printf 'mobile_static_extensions=%s\n' "${mobile_static_extensions[*]-}"
+    printf 'postgis_source_date_epoch=%s\n' "$(oliphaunt_postgis_reproducible_epoch)"
     printf 'patch_series_hash=%s\n' "$(patch_series_hash)"
     printf 'liboliphaunt_sources=%s\n' "${liboliphaunt_sources[*]}"
     printf 'plpgsql_objects=%s\n' "${plpgsql_objects[*]}"
@@ -244,6 +245,9 @@ desired_hash() {
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
     shasum -a 256 "$script_dir/postgres-backend-objects.mk"
     shasum -a 256 "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
+    shasum -a 256 \
+      "$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh" \
+      "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
     shasum -a 256 "$source_manifest"
     shasum -a 256 "${liboliphaunt_sources[@]}"
     hash_mobile_static_extension_sources

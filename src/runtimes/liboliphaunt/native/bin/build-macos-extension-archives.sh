@@ -178,7 +178,11 @@ desired_hash() {
     printf 'pg_extension_cflags=%s\n' "$pg_extension_cflags"
     printf 'extensions=%s\n' "${mobile_static_extensions[*]-}"
     printf 'dependencies=%s\n' "$(selected_dependencies | paste -sd ',' -)"
+    printf 'postgis_source_date_epoch=%s\n' "$(oliphaunt_postgis_reproducible_epoch)"
     shasum -a 256 "$script_path" "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
+    shasum -a 256 \
+      "$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh" \
+      "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
     hash_mobile_static_extension_sources
   } | shasum -a 256 | awk '{print $1}'
 }

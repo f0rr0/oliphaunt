@@ -21,6 +21,10 @@ import { isDeepStrictEqual } from "node:util";
 import { createGunzip } from "node:zlib";
 
 import { captureCommandOutput } from "../../../../tools/dev/capture-command-output.mjs";
+import {
+  extensionCarrierLegalContract,
+  extensionCarrierLegalFileInventory,
+} from "../../../../tools/release/extension-upstream-licenses.mjs";
 
 const OPTION_NAMES = new Set([
   "--root",
@@ -36,6 +40,7 @@ const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
 const C_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_BUNDLE_MEMBERS = 4096;
+const MAX_BUNDLE_ARCHIVE_MEMBERS = 32_768;
 const MAX_BUNDLE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
 const EXTENSION_MEMBER_KEYS = new Set([
   "sqlName",
@@ -792,6 +797,11 @@ function expectedBundleManifest(manifest, manifestPath, carrier) {
     `${left.sqlName}\0${left.kind}\0${left.identity ?? ""}`,
     `${right.sqlName}\0${right.kind}\0${right.identity ?? ""}`,
   ));
+  const legal = extensionCarrierLegalContract(
+    manifest.product,
+    [...allSqlNames].sort(compareText),
+    { family: carrier.family, target: carrier.target },
+  );
   return {
     schema: "oliphaunt-extension-bundle-v1",
     product: manifest.product,
@@ -799,6 +809,8 @@ function expectedBundleManifest(manifest, manifestPath, carrier) {
     compatibility: manifest.compatibility,
     family: carrier.family,
     target: carrier.target,
+    licenseProfile: legal.profile,
+    licenseFiles: legal.licenseFiles,
     members: rows,
   };
 }
@@ -874,14 +886,14 @@ function gzipHeader(carrierPath) {
   }
 }
 
-async function verifyCanonicalArchive(carrierPath, expectedSizes) {
+async function verifyCanonicalArchive(carrierPath, expectedFiles) {
   gzipHeader(carrierPath);
-  const expectedNames = [...expectedSizes.keys()].sort(compareText);
-  if (expectedNames.length > MAX_BUNDLE_MEMBERS + 1) {
-    fail(`${carrierPath} exceeds the maximum supported bundle member count`);
+  const expectedNames = [...expectedFiles.keys()].sort(compareText);
+  if (expectedNames.length > MAX_BUNDLE_ARCHIVE_MEMBERS) {
+    fail(`${carrierPath} exceeds the maximum supported physical archive member count`);
   }
-  const expectedTarBytes = [...expectedSizes.values()].reduce(
-    (total, bytes) => total + 512 + Math.ceil(bytes / 512) * 512,
+  const expectedTarBytes = [...expectedFiles.values()].reduce(
+    (total, file) => total + 512 + Math.ceil(file.bytes / 512) * 512,
     1024,
   );
   if (!Number.isSafeInteger(expectedTarBytes) || expectedTarBytes > MAX_BUNDLE_EXPANDED_BYTES) {
@@ -890,6 +902,8 @@ async function verifyCanonicalArchive(carrierPath, expectedSizes) {
   const actualNames = [];
   let buffer = Buffer.alloc(0);
   let currentEntry = "archive header";
+  let currentExpected;
+  let payloadDigest;
   let payloadRemaining = 0;
   let paddingRemaining = 0;
   let terminated = false;
@@ -913,8 +927,16 @@ async function verifyCanonicalArchive(carrierPath, expectedSizes) {
         }
         if (payloadRemaining > 0) {
           const consumed = Math.min(payloadRemaining, buffer.length);
+          payloadDigest.update(buffer.subarray(0, consumed));
           payloadRemaining -= consumed;
           buffer = buffer.subarray(consumed);
+          if (payloadRemaining === 0) {
+            const actualSha256 = payloadDigest.digest("hex");
+            if (actualSha256 !== currentExpected.sha256) {
+              fail(`${carrierPath} member ${currentEntry} does not match its canonical SHA-256`);
+            }
+            payloadDigest = undefined;
+          }
           continue;
         }
         if (paddingRemaining > 0) {
@@ -981,8 +1003,8 @@ async function verifyCanonicalArchive(carrierPath, expectedSizes) {
         ) {
           fail(`${carrierPath} member ${archiveName} has noncanonical ustar metadata`);
         }
-        const expectedSize = expectedSizes.get(archiveName);
-        if (expectedSize === undefined || size !== expectedSize) {
+        currentExpected = expectedFiles.get(archiveName);
+        if (currentExpected === undefined || size !== currentExpected.bytes) {
           fail(`${carrierPath} member ${archiveName} is undeclared or has the wrong ustar size`);
         }
         if (actualNames.includes(archiveName)) {
@@ -990,6 +1012,14 @@ async function verifyCanonicalArchive(carrierPath, expectedSizes) {
         }
         actualNames.push(archiveName);
         payloadRemaining = size;
+        payloadDigest = createHash("sha256");
+        if (payloadRemaining === 0) {
+          const actualSha256 = payloadDigest.digest("hex");
+          if (actualSha256 !== currentExpected.sha256) {
+            fail(`${carrierPath} member ${currentEntry} does not match its canonical SHA-256`);
+          }
+          payloadDigest = undefined;
+        }
         paddingRemaining = (512 - size % 512) % 512;
       }
     }
@@ -1146,11 +1176,31 @@ async function materializeBundlePlan(plan, materializeRoot) {
       carrier,
       `${manifestPath} aggregate carrier ${carrier.name} after snapshot`,
     );
-    const expectedSizes = new Map([
-      [`${carrierRoot}/bundle-manifest.json`, Buffer.byteLength(expectedText)],
-      ...expected.members.map((member) => [`${carrierRoot}/${member.path}`, member.bytes]),
-    ]);
-    await verifyCanonicalArchive(carrierSnapshot, expectedSizes);
+    const sqlNames = [...new Set(expected.members.map((member) => member.sqlName))]
+      .sort(compareText);
+    const legalFiles = extensionCarrierLegalFileInventory(manifest.product, sqlNames, {
+      family: carrier.family,
+      target: carrier.target,
+    });
+    const expectedFiles = new Map();
+    const addExpectedFile = (name, file) => {
+      if (expectedFiles.has(name)) {
+        fail(`${manifestPath} aggregate carrier ${carrier.name} repeats expected member ${name}`);
+      }
+      expectedFiles.set(name, file);
+    };
+    const expectedBytes = Buffer.from(expectedText);
+    addExpectedFile(`${carrierRoot}/bundle-manifest.json`, {
+      bytes: expectedBytes.length,
+      sha256: createHash("sha256").update(expectedBytes).digest("hex"),
+    });
+    for (const member of expected.members) {
+      addExpectedFile(`${carrierRoot}/${member.path}`, member);
+    }
+    for (const legalFile of legalFiles) {
+      addExpectedFile(`${carrierRoot}/${legalFile.path}`, legalFile);
+    }
+    await verifyCanonicalArchive(carrierSnapshot, expectedFiles);
     const requestedNames = [
       `${carrierRoot}/bundle-manifest.json`,
       ...plan.selected.map(({ asset }) => `${asset.carrierRoot}/${asset.memberPath}`),

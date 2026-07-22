@@ -60,6 +60,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::NativeExtensionArtifactIndexSignature`
 - `oliphaunt::NativeExtensionArtifactIndexSigningOptions`
 - `oliphaunt::NativeExtensionArtifactIndexTrustRoot`
+- `oliphaunt::NativeExtensionArtifactLegalContract`
+- `oliphaunt::NativeExtensionArtifactLicenseProfile`
 - `oliphaunt::NativeExtensionArtifactOptions`
 - `oliphaunt::NativeExtensionMobileStaticArchive`
 - `oliphaunt::NativeExtensionMobileStaticDependencyArchive`

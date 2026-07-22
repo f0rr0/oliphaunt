@@ -2,6 +2,7 @@ name = "postgis"
 url = "https://github.com/postgis/postgis.git"
 branch = "3.6.3"
 commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
+source_date_epoch = 1776193981
 
 [extension-control]
 sql-name = "postgis"

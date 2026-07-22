@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:392e0d63c4b4ffece561cb8451f69c378e3fe2fb38f57a582ea9618aab98910b",
+  "source-digest": "sha256:766bf306aac2d91e79e401b7f6b93e35290743a46ee1545cbd0d7b913367579a",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1410,6 +1410,8 @@
     "src/extensions/external/postgis/tests/smoke.sql",
     "src/extensions/external/postgis/tests/upstream.toml",
     "src/extensions/external/postgis/tools/build_wasix.sh",
+    "src/extensions/external/postgis/tools/reproducible-bin/date",
+    "src/extensions/external/postgis/tools/reproducible-time.sh",
     "src/extensions/external/postgis/upstream-license-data.json",
     "src/extensions/external/vector/moon.yml",
     "src/extensions/external/vector/upstream-license-data.json"

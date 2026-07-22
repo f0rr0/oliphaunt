@@ -1486,6 +1486,7 @@ mod tests {
         let archive = temp.join("acme_ext.tar");
         let archive_file = File::create(&archive).unwrap();
         let mut builder = tar::Builder::new(archive_file);
+        builder.mode(tar::HeaderMode::Deterministic);
         builder.append_dir_all("acme_ext", &artifact_root).unwrap();
         builder.finish().unwrap();
         drop(builder);
@@ -1553,14 +1554,33 @@ mod tests {
     }
 
     fn write_test_extension_artifact(root: &Path, native_runtime_version: &str) {
-        fs::create_dir_all(root.join("files")).unwrap();
+        fs::create_dir_all(root.join("files/share/licenses/acme_ext")).unwrap();
         fs::write(
             root.join("manifest.properties"),
             format!(
-                "packageLayout=oliphaunt-extension-artifact-v1\npgMajor=18\nsqlName=acme_ext\ncreatesExtension=no\nnativeModuleStem=\nnativeModuleFile=\nnativeTarget=\nnativeRuntimeProduct=liboliphaunt-native\nnativeRuntimeVersion={native_runtime_version}\ndependencies=\ndataFiles=\nextensionSqlFileNames=\nextensionSqlFilePrefixes=\nsharedPreloadLibraries=\nmobilePrebuilt=no\nmobileStaticArchives=\nmobileStaticDependencyArchives=\nstaticSymbolPrefix=\nstaticSymbolAliases=\nfiles=files\n"
+                "packageLayout=oliphaunt-extension-artifact-v1\npgMajor=18\nsqlName=acme_ext\ncreatesExtension=no\nnativeModuleStem=\nnativeModuleFile=\nnativeTarget=\nnativeRuntimeProduct=liboliphaunt-native\nnativeRuntimeVersion={native_runtime_version}\ndependencies=\ndataFiles=\nextensionSqlFileNames=\nextensionSqlFilePrefixes=\nsharedPreloadLibraries=\nmobilePrebuilt=no\nmobileStaticArchives=\nmobileStaticDependencyArchives=\nstaticSymbolPrefix=\nstaticSymbolAliases=\nlicenseFiles=share/licenses/acme_ext/LICENSE\nlicenseProfile=external-native\nfiles=files\n"
             ),
         )
         .unwrap();
+        fs::write(root.join("LICENSE"), "fixture license\n").unwrap();
+        fs::write(
+            root.join("THIRD_PARTY_NOTICES.md"),
+            "fixture third-party notices\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("files/share/licenses/acme_ext/LICENSE"),
+            "fixture upstream license\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        for legal in [
+            root.join("LICENSE"),
+            root.join("THIRD_PARTY_NOTICES.md"),
+            root.join("files/share/licenses/acme_ext/LICENSE"),
+        ] {
+            fs::set_permissions(legal, fs::Permissions::from_mode(0o644)).unwrap();
+        }
     }
 
     #[cfg(unix)]

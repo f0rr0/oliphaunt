@@ -881,7 +881,14 @@ extension_build_fingerprint() {
     done
     if native_extensions_include_postgis; then
       local dependency
+      local postgis_time_helper="$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh"
       printf 'postgis-dependency-fingerprint=%s\n' "$postgis_dependency_hash"
+      # shellcheck source=/dev/null
+      . "$postgis_time_helper"
+      printf 'postgis_source_date_epoch=%s\n' "$(oliphaunt_postgis_source_date_epoch "$repo_root")"
+      shasum -a 256 \
+        "$postgis_time_helper" \
+        "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
       for dependency in geos proj sqlite json-c libxml2; do
         if [ -d "$repo_root/target/oliphaunt-sources/checkouts/$dependency" ]; then
           printf 'postgis-dependency:%s\n' "$dependency"
@@ -2098,6 +2105,10 @@ build_postgis_extension() {
 
   (
     cd "$postgis_build_dir"
+    local postgis_time_helper="$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh"
+    # shellcheck source=/dev/null
+    . "$postgis_time_helper"
+    oliphaunt_postgis_enable_reproducible_time "$repo_root"
     local -a embedded_postgis_make_args=()
     local embedded_postgis_has_ldflags=0
     local embedded_postgis_ldflags="$embedded_module_be_dllibs"

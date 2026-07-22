@@ -191,11 +191,21 @@ Oliphaunt runtime compatibility they support. Applications never use
 release-asset download commands as their normal Rust install path.
 
 Maintainer tooling uses one canonical `oliphaunt-extension-artifact-v1`
-manifest. Its exact 20-field set always includes
+manifest. Its exact 22-field set always includes
 `nativeRuntimeProduct=liboliphaunt-native` and a stable
 `nativeRuntimeVersion=X.Y.Z`; carrier-frozen `extensionSqlFileNames` and
 `extensionSqlFilePrefixes` bind ancillary SQL without consulting a mutable SDK
-catalog. `NativeExtensionArtifactOptions::new(...)`
+catalog, while `licenseProfile` and `licenseFiles` bind the legal leaf inventory.
+`contrib-native` requires the root `LICENSE`, `THIRD_PARTY_NOTICES.md`, and
+`THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT`; `contrib-native-openssl` also
+requires `THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt`. `external-native` requires
+the two root notices and at least one exact upstream-license leaf beneath
+`files/share/licenses/`. The producer requires
+`NativeExtensionArtifactOptions::legal_contract(...)` (CLI:
+`--license-profile`, `--legal-files-root`, and one or more `--license-file`
+arguments for external artifacts). Producer and consumer both reject missing,
+extra, unsafe, symlinked, empty, wrongly profiled, or non-canonical legal
+leaves. `NativeExtensionArtifactOptions::new(...)`
 requires that version when producing an unpacked directory, `.tar`, `.tar.gz`,
 or `.tar.zst` artifact. Desktop native-module artifacts additionally require
 `.embedded_module_root(...)` (CLI: `--embedded-module-root`) and preserve the

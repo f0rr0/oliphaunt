@@ -73,7 +73,19 @@ function requireMoonTaskInputs(path, taskId, requiredInputs) {
   }
   const actual = new Set(inputs);
   for (const input of requiredInputs) {
-    if (!actual.has(input)) {
+    let covered = actual.has(input);
+    if (!covered && !/[!*?{}\[\]]/u.test(input)) {
+      const candidate = input.replace(/^\//u, '');
+      const positivePatterns = inputs
+        .filter((declared) => !declared.startsWith('!'))
+        .map((declared) => declared.replace(/^\//u, ''));
+      const negativePatterns = inputs
+        .filter((declared) => declared.startsWith('!'))
+        .map((declared) => declared.slice(1).replace(/^\//u, ''));
+      covered = positivePatterns.some((pattern) => new Bun.Glob(pattern).match(candidate))
+        && !negativePatterns.some((pattern) => new Bun.Glob(pattern).match(candidate));
+    }
+    if (!covered) {
       fail(`${path} task ${taskId} must own qualification input ${input}`);
     }
   }
@@ -1109,6 +1121,9 @@ function checkExtensions() {
     'src/extensions/external/postgis/dependencies/libxml2/source.toml',
     'src/extensions/external/postgis/dependencies/json-c/source.toml',
     'src/extensions/external/postgis/dependencies/libiconv/source.toml',
+    'src/extensions/external/postgis/tools/reproducible-bin/date',
+    'src/extensions/external/postgis/tools/reproducible-time.sh',
+    'src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh',
     'src/extensions/schemas/recipe.schema.json',
     'src/extensions/schemas/support-table.schema.json',
     'src/extensions/evidence/matrix.toml',
@@ -1136,13 +1151,72 @@ function checkExtensions() {
     'src/extensions/generated/mobile/static-extensions.tsv',
     'src/extensions/generated/mobile/qualification-static-extensions.tsv',
     'src/extensions/generated/wasix/extensions.json',
+    'src/extensions/tools/android-extension-legal-catalog.mjs',
+    'src/extensions/tools/android-extension-legal-catalog.test.mjs',
     'src/extensions/tools/check-extension-model.mjs',
     'src/extensions/tools/check-extension-model.py',
+    'src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json',
     'tools/release/extension-qualification-candidates.mjs',
+    'tools/release/postgis-reproducible-time.test.mjs',
     'tools/release/verify-extension-qualification-build.mjs',
   ]) {
     requireFile(path);
   }
+
+  requireText('src/extensions/external/postgis/source.toml', 'source_date_epoch = 1776193981');
+
+  const postgisReproducibleTimeInputs = [
+    '/src/extensions/external/postgis/source.toml',
+    '/src/extensions/external/postgis/tools/build_wasix.sh',
+    '/src/extensions/external/postgis/tools/reproducible-bin/date',
+    '/src/extensions/external/postgis/tools/reproducible-time.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh',
+    '/src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1',
+    '/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh',
+    '/src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh',
+    '/tools/release/postgis-reproducible-time.test.mjs',
+    '/tools/xtask/src/asset_checks.rs',
+    '/tools/xtask/src/asset_manifest.rs',
+    '/tools/xtask/src/asset_pipeline.rs',
+    '/tools/xtask/src/source_spine.rs',
+  ];
+  requireMoonTaskInputs(
+    'src/runtimes/liboliphaunt/native/moon.yml',
+    'postgis-reproducible-time-test',
+    postgisReproducibleTimeInputs,
+  );
+
+  const androidLegalCatalogInputs = [
+    '/LICENSE',
+    '/THIRD_PARTY_NOTICES.md',
+    '/src/postgres/versions/18/source.toml',
+    '/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt',
+    '/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT',
+    '/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json',
+    '/src/sources/third-party/shared/openssl.toml',
+    '/tools/dev/capture-command-output.mjs',
+    '/tools/policy/source-fetch-core.mjs',
+    '/tools/release/extension-qualification-candidates.mjs',
+    '/tools/release/extension-upstream-licenses.mjs',
+    '/tools/release/portable-archive.mjs',
+    '/tools/release/release-notices.mjs',
+  ];
+  requireMoonTaskInputs('src/extensions/model/moon.yml', 'check', androidLegalCatalogInputs);
+  requireMoonTaskInputs('src/extensions/moon.yml', 'check', androidLegalCatalogInputs);
+  const androidLegalFixtureInputs = [
+    '/LICENSE',
+    '/THIRD_PARTY_NOTICES.md',
+    '/src/extensions/external/**/upstream-license-data.json',
+    '/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt',
+    '/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT',
+  ];
+  requireMoonTaskInputs('src/sdks/kotlin/moon.yml', 'check', androidLegalFixtureInputs);
+  requireMoonTaskInputs('src/sdks/kotlin/moon.yml', 'test', androidLegalFixtureInputs);
 
   requireMoonTaskInputs('src/extensions/artifacts/native/moon.yml', 'release-check', [
     '/tools/release/extension-qualification-candidates.mjs',

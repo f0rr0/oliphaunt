@@ -598,7 +598,7 @@ if [ "$mode" = "regression" ] || [ "$mode" = "release-check" ]; then
 fi
 
 run cmp src/runtimes/liboliphaunt/native/include/oliphaunt.h "$project_dir/oliphaunt/src/androidMain/cpp/include/oliphaunt.h"
-package_tasks=":oliphaunt:checkMavenPublicationContract :oliphaunt:metadataSourcesJar :oliphaunt:allMetadataJar :oliphaunt:jvmJar :oliphaunt:jvmSourcesJar :oliphaunt:androidReleaseSourcesJar :oliphaunt:bundleReleaseAar"
+package_tasks=":oliphaunt:checkMavenPublicationContract :oliphaunt:metadataSourcesJar :oliphaunt:allMetadataJar :oliphaunt:jvmJar :oliphaunt:jvmSourcesJar :oliphaunt:androidReleaseSourcesJar :oliphaunt:bundleReleaseAar :oliphaunt-android-gradle-plugin:jar"
 if [ "$(uname -s)" = "Darwin" ]; then
   package_tasks="$package_tasks :oliphaunt:macosArm64SourcesJar"
 fi
@@ -619,6 +619,7 @@ jvm_sources="$kotlin_libs/oliphaunt-jvm-$kotlin_version-sources.jar"
 android_sources="$kotlin_libs/oliphaunt-android-$kotlin_version-sources.jar"
 macos_sources="$kotlin_libs/oliphaunt-macosarm64-$kotlin_version-sources.jar"
 android_release_aar="$kotlin_outputs/aar/oliphaunt-release.aar"
+android_gradle_plugin_jar="$gradle_build_root/oliphaunt-android-gradle-plugin/libs/oliphaunt-android-gradle-plugin-$kotlin_version.jar"
 
 require_jar_entry "$metadata_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin metadata sources artifact must include the common SDK API"
@@ -650,6 +651,9 @@ require_jar_entry "$android_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin Android sources artifact must include the common SDK API"
 reject_jar_entry_pattern "$android_sources" 'androidMain/cpp/|nativeInterop/|(^|/)liboliphaunt\.so$' \
   "Kotlin Android sources artifact must not include native build outputs or bundled Oliphaunt runtime binaries"
+
+require_jar_entry "$android_gradle_plugin_jar" "dev/oliphaunt/android/extension-legal-catalog.json" \
+  "Kotlin Android Gradle plugin must ship the canonical extension legal catalog used for offline verification"
 
 if [ "$(uname -s)" = "Darwin" ]; then
   require_jar_entry "$macos_sources" "nativeMain/dev/oliphaunt/NativeDirectEngine.kt" \

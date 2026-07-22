@@ -1,5 +1,4 @@
 use super::*;
-use std::path::Component;
 
 /// Resolve exact prebuilt extension artifacts from local release index files.
 ///
@@ -135,7 +134,7 @@ pub fn create_prebuilt_extension_artifact_index(
         rows.push(row);
     }
     rows.sort_by(|left, right| left.sql_name.cmp(&right.sql_name));
-    let text = extension_artifact_index_toml(&rows);
+    let text = extension_artifact_index_toml(&rows)?;
     fs::write(&options.output, text).map_err(|err| {
         Error::Engine(format!(
             "write extension artifact index {}: {err}",
@@ -336,12 +335,14 @@ fn create_extension_artifact_index_row(
     })
 }
 
-fn extension_artifact_index_toml(rows: &[NativeExtensionArtifactIndexArtifact]) -> String {
+fn extension_artifact_index_toml(rows: &[NativeExtensionArtifactIndexArtifact]) -> Result<String> {
     let mut text = format!(
         "schema = {schema}\npg_major = 18\n",
         schema = toml_string(EXTENSION_ARTIFACT_INDEX_LAYOUT)
     );
     for row in rows {
+        let artifact_path =
+            render_portable_artifact_path(&row.path, "extension artifact index path")?;
         text.push_str(&format!(
             "\n[[artifacts]]\nsql_name = {}\ntarget = {}\ncreates_extension = {}\n",
             toml_string(&row.sql_name),
@@ -357,7 +358,7 @@ fn extension_artifact_index_toml(rows: &[NativeExtensionArtifactIndexArtifact]) 
             toml_string_array(&row.shared_preload_libraries),
             row.mobile_prebuilt,
             toml_string_array(&row.mobile_static_archive_targets),
-            toml_string(&row.path.to_string_lossy()),
+            toml_string(&artifact_path),
         ));
         if let Some(url) = &row.url {
             text.push_str(&format!("url = {}\n", toml_string(url)));
@@ -368,7 +369,7 @@ fn extension_artifact_index_toml(rows: &[NativeExtensionArtifactIndexArtifact]) 
             row.bytes,
         ));
     }
-    text
+    Ok(text)
 }
 
 fn toml_string(value: &str) -> String {
@@ -418,25 +419,10 @@ fn validate_extension_artifact_url(index_path: &Path, url: &str) -> Result<()> {
 }
 
 fn join_extension_artifact_base_url(base_url: &str, relative: &Path) -> Result<String> {
-    validate_relative_artifact_path(Path::new("extension-index"), "artifact URL path", relative)?;
-    let relative = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(part) => part
-                .to_str()
-                .map(percent_encode_url_path_segment)
-                .ok_or_else(|| {
-                    Error::InvalidConfig(format!(
-                        "extension artifact URL path '{}' must be valid UTF-8",
-                        relative.display()
-                    ))
-                }),
-            _ => Err(Error::InvalidConfig(format!(
-                "extension artifact URL path '{}' must be relative",
-                relative.display()
-            ))),
-        })
-        .collect::<Result<Vec<_>>>()?
+    let relative = render_portable_artifact_path(relative, "extension artifact URL path")?
+        .split('/')
+        .map(percent_encode_url_path_segment)
+        .collect::<Vec<_>>()
         .join("/");
     let separator = if base_url.ends_with('/') { "" } else { "/" };
     Ok(format!("{base_url}{separator}{relative}"))
@@ -548,8 +534,8 @@ fn load_extension_artifact_index(
                 artifact.sql_name
             )));
         }
-        let relative = PathBuf::from(&artifact.path);
-        validate_relative_artifact_path(index_path, "artifact path", &relative)?;
+        let relative =
+            parse_portable_artifact_path_text(index_path, "artifact path", &artifact.path)?;
         if let Some(url) = &artifact.url {
             validate_extension_artifact_url(index_path, url)?;
         }

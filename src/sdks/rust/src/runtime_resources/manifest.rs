@@ -252,16 +252,7 @@ pub(super) fn parse_manifest_relative_path_list(
 ) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for item in canonical_manifest_list(path, manifest, key)? {
-        if item.contains('\\') {
-            return Err(Error::InvalidConfig(format!(
-                "manifest {} {key} entry '{}' must use forward slashes",
-                path.display(),
-                item
-            )));
-        }
-        let relative = PathBuf::from(item);
-        validate_relative_artifact_path(path, key, &relative)?;
-        out.push(relative);
+        out.push(parse_portable_artifact_path_text(path, key, &item)?);
     }
     Ok(out)
 }
@@ -377,8 +368,7 @@ pub(super) fn parse_manifest_mobile_static_archives(
                 target
             )));
         }
-        let relative_path = PathBuf::from(relative);
-        validate_relative_artifact_path(path, key, &relative_path)?;
+        let relative_path = parse_portable_artifact_path_text(path, key, relative)?;
         out.push(MobileStaticArchive {
             target: target.to_owned(),
             relative_path,
@@ -421,8 +411,7 @@ pub(super) fn parse_manifest_mobile_static_dependency_archives(
                 target
             )));
         }
-        let relative_path = PathBuf::from(relative);
-        validate_relative_artifact_path(path, key, &relative_path)?;
+        let relative_path = parse_portable_artifact_path_text(path, key, relative)?;
         out.push(MobileStaticDependencyArchive {
             target: target.to_owned(),
             name: name.to_owned(),
@@ -603,7 +592,23 @@ pub(super) fn validate_relative_artifact_path(
     }
     for component in relative.components() {
         match component {
-            Component::Normal(_) => {}
+            Component::Normal(component) => {
+                let component = component.to_str().ok_or_else(|| {
+                    Error::InvalidConfig(format!(
+                        "manifest {} {key} entry '{}' must use UTF-8 path text",
+                        manifest_path.display(),
+                        relative.display()
+                    ))
+                })?;
+                validate_portable_artifact_path_component(
+                    component,
+                    &format!(
+                        "manifest {} {key} entry '{}'",
+                        manifest_path.display(),
+                        relative.display()
+                    ),
+                )?;
+            }
             _ => {
                 return Err(Error::InvalidConfig(format!(
                     "manifest {} {key} entry '{}' must not contain '.', '..', prefixes, or root components",
@@ -614,6 +619,92 @@ pub(super) fn validate_relative_artifact_path(
         }
     }
     Ok(())
+}
+
+pub(super) fn parse_portable_artifact_path_text(
+    manifest_path: &Path,
+    key: &str,
+    value: &str,
+) -> Result<PathBuf> {
+    if value.is_empty() {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} {key} entry must be a non-empty relative POSIX path",
+            manifest_path.display()
+        )));
+    }
+    let context = format!("manifest {} {key} entry {value:?}", manifest_path.display());
+    let mut relative = PathBuf::new();
+    for component in value.split('/') {
+        validate_portable_artifact_path_component(component, &context)?;
+        relative.push(component);
+    }
+    validate_relative_artifact_path(manifest_path, key, &relative)?;
+    Ok(relative)
+}
+
+pub(super) fn render_portable_artifact_path(path: &Path, label: &str) -> Result<String> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        let Component::Normal(component) = component else {
+            return Err(Error::InvalidConfig(format!(
+                "{label} '{}' must be a canonical relative path",
+                path.display()
+            )));
+        };
+        let component = component.to_str().ok_or_else(|| {
+            Error::InvalidConfig(format!(
+                "{label} '{}' must use UTF-8 path text",
+                path.display()
+            ))
+        })?;
+        validate_portable_artifact_path_component(
+            component,
+            &format!("{label} '{}'", path.display()),
+        )?;
+        components.push(component);
+    }
+    if components.is_empty() {
+        return Err(Error::InvalidConfig(format!(
+            "{label} '{}' must not be empty",
+            path.display()
+        )));
+    }
+    Ok(components.join("/"))
+}
+
+pub(super) fn validate_portable_artifact_path_component(
+    component: &str,
+    context: &str,
+) -> Result<()> {
+    let has_forbidden_character = component.chars().any(|value| {
+        value < ' ' || matches!(value, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+    });
+    let device_stem = component
+        .split_once('.')
+        .map_or(component, |(stem, _)| stem)
+        .to_ascii_uppercase();
+    let windows_device_name = matches!(device_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || numbered_windows_device_name(&device_stem, "COM")
+        || numbered_windows_device_name(&device_stem, "LPT");
+    if component.is_empty()
+        || component == "."
+        || component == ".."
+        || component.ends_with(' ')
+        || component.ends_with('.')
+        || has_forbidden_character
+        || windows_device_name
+    {
+        return Err(Error::InvalidConfig(format!(
+            "{context} contains path component {component:?} that is unsafe on supported build hosts"
+        )));
+    }
+    Ok(())
+}
+
+fn numbered_windows_device_name(value: &str, prefix: &str) -> bool {
+    value
+        .strip_prefix(prefix)
+        .is_some_and(|suffix| matches!(suffix.as_bytes(), [b'1'..=b'9']))
 }
 
 pub(super) fn is_c_identifier(value: &str) -> bool {
@@ -631,4 +722,84 @@ pub(super) fn is_portable_module_stem(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_relative_paths_reject_host_specific_components() {
+        for component in [
+            "payload:name.bin",
+            "CON",
+            "con.txt",
+            "PrN.notice",
+            "AUX",
+            "nul.json",
+            "COM1",
+            "com9.dll",
+            "LPT1",
+            "lpt9.log",
+            "trailing-dot.",
+            "trailing-space ",
+            "control-\u{1f}",
+            "question?.txt",
+            "star*.txt",
+            "quote\".txt",
+            "less<.txt",
+            "greater>.txt",
+            "pipe|.txt",
+            "literal\\backslash.txt",
+        ] {
+            let error =
+                validate_portable_artifact_path_component(component, "contract test").unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsafe on supported build hosts"),
+                "unexpected portable-path error for {component:?}: {error}"
+            );
+        }
+        for path in [
+            "C:/payload.bin",
+            "/absolute/payload.bin",
+            "literal\\backslash.txt",
+            "double//separator",
+            "trailing/",
+            "./dot",
+            "../escape",
+        ] {
+            assert!(
+                parse_portable_artifact_path_text(
+                    Path::new("contract-test"),
+                    "artifact path",
+                    path,
+                )
+                .is_err(),
+                "consumer accepted non-portable path text {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn artifact_relative_paths_accept_portable_unicode_and_ordinary_components() {
+        for path in [
+            "files/share/postgresql/extension/acme--1.0.sql",
+            "mobile-static/android-arm64-v8a/extensions/acme/libacme.a",
+            "licenses/donn\u{e9}es/\u{8bb8}\u{53ef}\u{8bc1}.txt",
+            "devices/COM0/LPT10.txt",
+        ] {
+            let parsed = parse_portable_artifact_path_text(
+                Path::new("contract-test"),
+                "artifact path",
+                path,
+            )
+            .unwrap_or_else(|error| panic!("portable path {path:?} was rejected: {error}"));
+            assert_eq!(
+                render_portable_artifact_path(&parsed, "contract test").unwrap(),
+                path
+            );
+        }
+    }
 }

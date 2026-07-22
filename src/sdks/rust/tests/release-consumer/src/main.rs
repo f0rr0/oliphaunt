@@ -8,8 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use oliphaunt::{
-    BackupArtifact, BackupFormat, BackupRequest, Extension, Oliphaunt, OliphauntRuntime,
-    RestoreRequest,
+    BackupArtifact, BackupFormat, BackupRequest, EngineMode, Extension, NativeRuntimeResourceOptions,
+    Oliphaunt, OliphauntRuntime, RestoreRequest, build_native_runtime_resources,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -20,6 +20,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // SDK must still launch the materialized runtime copy so selected
     // extension control/SQL files are resolved relative to that executable.
     required_executable("OLIPHAUNT_POSTGRES")?;
+
+    prove_prebuilt_extension_carriers(&work_root)?;
+    println!(
+        "OLIPHAUNT_RUST_RELEASE_CONSUMER_STAGE_PASS stage=prebuilt-extension-api extensions=cube,pgcrypto,postgis"
+    );
 
     prove_server(&work_root)?;
     println!(
@@ -40,6 +45,52 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Rust exact-candidate consumer proof passed: server, broker, direct, backup, restore, vector"
     );
     println!("OLIPHAUNT_RUST_RELEASE_CONSUMER_PASS");
+    Ok(())
+}
+
+fn prove_prebuilt_extension_carriers(work_root: &Path) -> Result<(), Box<dyn Error>> {
+    let cube = required_file("OLIPHAUNT_RUST_CUBE_EXTENSION")?;
+    let pgcrypto = required_file("OLIPHAUNT_RUST_PGCRYPTO_EXTENSION")?;
+    let postgis = required_file("OLIPHAUNT_RUST_POSTGIS_EXTENSION")?;
+    let native_version = required_string("OLIPHAUNT_RUST_NATIVE_VERSION")?;
+    let target = required_string("OLIPHAUNT_RUST_EXTENSION_TARGET")?;
+    let resources = build_native_runtime_resources(
+        NativeRuntimeResourceOptions::new(work_root.join("prebuilt-extension-api"))
+            .mode(EngineMode::NativeServer)
+            .prebuilt_extensions([cube, pgcrypto, postgis])
+            .native_runtime_version(native_version)
+            .extension_target(target)
+            .replace_existing(true),
+    )?;
+    let expected = ["cube", "pgcrypto", "postgis"];
+    if resources
+        .extension_names
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        != expected
+    {
+        return Err(io::Error::other(format!(
+            "public prebuilt-extension API selected {:?}, expected {expected:?}",
+            resources.extension_names
+        ))
+        .into());
+    }
+    for relative in [
+        "share/postgresql/extension/cube.control",
+        "share/postgresql/extension/pgcrypto.control",
+        "share/postgresql/extension/postgis.control",
+        "share/licenses/postgis/COPYING",
+    ] {
+        let file = resources.runtime_files.join(relative);
+        if !file.is_file() {
+            return Err(io::Error::other(format!(
+                "public prebuilt-extension API did not materialize {}",
+                file.display()
+            ))
+            .into());
+        }
+    }
     Ok(())
 }
 
@@ -206,6 +257,18 @@ fn required_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
         );
     }
     Ok(PathBuf::from(value))
+}
+
+fn required_string(name: &str) -> Result<String, Box<dyn Error>> {
+    let value = std::env::var(name)
+        .map_err(|_| io::Error::other(format!("missing required environment variable {name}")))?;
+    if value.is_empty() {
+        return Err(io::Error::other(format!(
+            "required environment variable {name} is empty"
+        ))
+        .into());
+    }
+    Ok(value)
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {

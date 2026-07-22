@@ -66,12 +66,22 @@ oliphaunt_wasix_apply_wasix_profile build
 source_commit="$(oliphaunt_wasix_source_commit "$POSTGIS_SOURCE_DIR")"
 script_sha256="$(oliphaunt_wasix_script_sha256 "$0")"
 helper_sha256="$(oliphaunt_wasix_script_sha256 "$ROOT/wasix_third_party.sh")"
+time_helper="$REPO_ROOT/src/extensions/external/postgis/tools/reproducible-time.sh"
+date_shim="$REPO_ROOT/src/extensions/external/postgis/tools/reproducible-bin/date"
+# shellcheck source=/dev/null
+. "$time_helper"
+source_date_epoch="$(oliphaunt_postgis_source_date_epoch "$REPO_ROOT")"
+time_helper_sha256="$(oliphaunt_wasix_script_sha256 "$time_helper")"
+date_shim_sha256="$(oliphaunt_wasix_script_sha256 "$date_shim")"
 dependency_stamp_block="$(oliphaunt_wasix_extension_dependency_stamp_block "$REPO_ROOT" postgis)"
 wasixcc_version="$(wasixcc --version 2>/dev/null)"
 wasixcc_version="${wasixcc_version%%$'\n'*}"
 stamp="source=$source_commit
 script=$script_sha256
 helper=$helper_sha256
+reproducible_time_helper=$time_helper_sha256
+reproducible_date_shim=$date_shim_sha256
+source_date_epoch=$source_date_epoch
 $dependency_stamp_block
 profile=$(oliphaunt_wasix_wasix_profile_signature)
 wasixcc=$wasixcc_version
@@ -173,6 +183,11 @@ EOF
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
   export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lcharset -lsqlite3 -lc++ -lc++abi -lunwind"
   export ac_cv_lib_pq_PQserverVersion=yes
+  oliphaunt_postgis_enable_reproducible_time "$REPO_ROOT"
+  [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] || {
+    echo "PostGIS WASIX build epoch changed after fingerprinting" >&2
+    exit 1
+  }
 
   cd "$POSTGIS_BUILD_DIR"
   ./autogen.sh

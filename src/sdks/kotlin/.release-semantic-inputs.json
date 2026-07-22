@@ -27,6 +27,30 @@
       ]
     },
     {
+      "id": "extension-upstream-license-carrier-producer",
+      "paths": [
+        "tools/release/extension-upstream-licenses.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/extension-upstream-licenses.mjs",
+          "sha256": "f10d4596f13b536f0c73669eb3785e43f649a912cc8509622274c12a0f1d299f"
+        }
+      ]
+    },
+    {
+      "id": "android-extension-legal-catalog-producer",
+      "paths": [
+        "src/extensions/tools/android-extension-legal-catalog.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/tools/android-extension-legal-catalog.mjs",
+          "sha256": "8f42c3af6567c1bef8d795f6c861b19558b38eb1eeaaf78cfe6790c66782a69b"
+        }
+      ]
+    },
+    {
       "id": "shared-sdk-artifact-producer",
       "paths": [
         "tools/release/sdk-artifacts/shared.mjs"
@@ -63,5 +87,5 @@
       ]
     }
   ],
-  "sha256": "bac8c39a223b74baab30dc6e279f9e3271fc7ba086df842d89e41985c5523cdc"
+  "sha256": "350478ba55a76f6d5bb16f1ceee5e5a784727d0e80a480ca3fffabba0cf61c11"
 }

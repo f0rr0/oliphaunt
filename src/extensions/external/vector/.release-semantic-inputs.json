@@ -56,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/extension-upstream-licenses.mjs",
-          "sha256": "7e244d286d71e842964e8b5a67dd6c12d81512e9b24439cf92eebce2699a4c46"
+          "sha256": "f10d4596f13b536f0c73669eb3785e43f649a912cc8509622274c12a0f1d299f"
         }
       ]
     },
@@ -331,5 +331,5 @@
       ]
     }
   ],
-  "sha256": "e5d74145bfe27d6ec1c223c80cf897f9426909a5c8cdb5dd69c780d7f52ea9b2"
+  "sha256": "5791fcfea674177390d10020b69ef2c65e93be757695bf6303955268806e13b4"
 }

@@ -253,6 +253,63 @@ async function main() {
   const pgtapManifestText = await fs.readFile(pgtapManifest, "utf8");
   for (const [from, to, pattern] of [
     [
+      "licenseProfile=external-native\n",
+      "licenseProfile=contrib-native\n",
+      /manifest licenseProfile must be/u,
+    ],
+    [
+      "licenseFiles=share/licenses/pgtap/README.md\n",
+      "licenseFiles=outside/licenses/pgtap/README.md\n",
+      /manifest licenseFiles must live under share\/licenses/u,
+    ],
+    [
+      "licenseProfile=external-native\n",
+      "",
+      /exact canonical fields/u,
+    ],
+  ]) {
+    await fs.writeFile(pgtapManifest, pgtapManifestText.replace(from, to));
+    await assert.rejects(
+      () => validateSwiftExtensionResourceArtifact({
+        extension: pgtap,
+        canonical: catalog.get("pgtap"),
+        nativeRuntime: document.nativeRuntime,
+      }),
+      pattern,
+    );
+  }
+  await fs.writeFile(pgtapManifest, pgtapManifestText);
+  const pgtapLicense = path.join(
+    pgtap.resourceRoot,
+    "files/share/licenses/pgtap/README.md",
+  );
+  const pgtapLicenseBytes = await fs.readFile(pgtapLicense);
+  await fs.rm(pgtapLicense);
+  await assert.rejects(
+    () => validateSwiftExtensionResourceArtifact({
+      extension: pgtap,
+      canonical: catalog.get("pgtap"),
+      nativeRuntime: document.nativeRuntime,
+    }),
+    /missing: files\/share\/licenses\/pgtap\/README\.md/u,
+  );
+  await fs.writeFile(pgtapLicense, pgtapLicenseBytes);
+  const undeclaredLegalFile = path.join(
+    pgtap.resourceRoot,
+    "files/share/licenses/pgtap/UNDECLARED",
+  );
+  await fs.writeFile(undeclaredLegalFile, "undeclared legal fixture\n");
+  await assert.rejects(
+    () => validateSwiftExtensionResourceArtifact({
+      extension: pgtap,
+      canonical: catalog.get("pgtap"),
+      nativeRuntime: document.nativeRuntime,
+    }),
+    /undeclared: files\/share\/licenses\/pgtap\/UNDECLARED/u,
+  );
+  await fs.rm(undeclaredLegalFile);
+  for (const [from, to, pattern] of [
+    [
       "extensionSqlFileNames=uninstall_pgtap.sql\n",
       "extensionSqlFileNames=foreign.sql\n",
       /manifest extensionSqlFileNames must be/u,

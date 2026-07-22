@@ -106,6 +106,15 @@ broker_archive="$broker_asset_dir/oliphaunt-broker-$broker_version-linux-x64-gnu
 vector_archive="$(find_exact_artifact \
   "$extension_asset_dir" \
   "liboliphaunt-$native_version-extension-vector-linux-x64-gnu-runtime.tar.gz")"
+cube_archive="$(find_exact_artifact \
+  "$extension_asset_dir" \
+  "liboliphaunt-$native_version-extension-cube-linux-x64-gnu-runtime.tar.gz")"
+pgcrypto_archive="$(find_exact_artifact \
+  "$extension_asset_dir" \
+  "liboliphaunt-$native_version-extension-pgcrypto-linux-x64-gnu-runtime.tar.gz")"
+postgis_archive="$(find_exact_artifact \
+  "$extension_asset_dir" \
+  "liboliphaunt-$native_version-extension-postgis-linux-x64-gnu-runtime.tar.gz")"
 
 for artifact in \
   "$rust_crate" \
@@ -114,7 +123,10 @@ for artifact in \
   "$native_archive" \
   "$tools_archive" \
   "$broker_archive" \
-  "$vector_archive"; do
+  "$vector_archive" \
+  "$cube_archive" \
+  "$pgcrypto_archive" \
+  "$postgis_archive"; do
   require_file "$artifact"
 done
 
@@ -217,6 +229,11 @@ env \
   OLIPHAUNT_RESOURCES_DIR="$resources" \
   OLIPHAUNT_RUNTIME_CACHE_DIR="$scratch/runtime-cache" \
   OLIPHAUNT_BROKER="$broker" \
+  OLIPHAUNT_RUST_CUBE_EXTENSION="$cube_archive" \
+  OLIPHAUNT_RUST_PGCRYPTO_EXTENSION="$pgcrypto_archive" \
+  OLIPHAUNT_RUST_POSTGIS_EXTENSION="$postgis_archive" \
+  OLIPHAUNT_RUST_NATIVE_VERSION="$native_version" \
+  OLIPHAUNT_RUST_EXTENSION_TARGET=linux-x64-gnu \
   OLIPHAUNT_RUST_RELEASE_CONSUMER_WORK_DIR="$consumer_work" \
   LD_LIBRARY_PATH="$install_dir/lib:$scratch/native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   CARGO_TARGET_DIR="$scratch/cargo-target" \

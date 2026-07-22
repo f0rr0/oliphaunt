@@ -775,22 +775,7 @@ export function decompressSingleZstdFrame(
   return decompressed.buffer;
 }
 
-function readTarBufferEntries(compressed, file, archiveLimits, compression = "gzip") {
-  let tar;
-  try {
-    if (compression === "gzip") {
-      tar = strictGunzip(compressed, file, archiveLimits.maxExpandedBytes);
-    } else {
-      tar = decompressSingleZstdFrame(compressed, {
-        label: file,
-        maxInputBytes: archiveLimits.maxArchiveBytes,
-        maxOutputBytes: archiveLimits.maxExpandedBytes,
-      });
-    }
-  } catch (cause) {
-    if (cause instanceof Error && cause.message.startsWith("portable-archive:")) throw cause;
-    throw archiveError(file, `is not a bounded readable ${compression} stream: ${cause.message}`);
-  }
+function parseTarEntries(tar, file, archiveLimits) {
   if (tar.length === 0 || tar.length % 512 !== 0) {
     throw archiveError(file, "has a truncated or non-block-aligned ustar stream");
   }
@@ -904,6 +889,130 @@ function readTarBufferEntries(compressed, file, archiveLimits, compression = "gz
   return checkedEntries(entries, file, archiveLimits);
 }
 
+function decompressedTarBuffer(compressed, file, archiveLimits, compression) {
+  try {
+    if (compression === "gzip") {
+      return strictGunzip(compressed, file, archiveLimits.maxExpandedBytes);
+    }
+    return decompressSingleZstdFrame(compressed, {
+      label: file,
+      maxInputBytes: archiveLimits.maxArchiveBytes,
+      maxOutputBytes: archiveLimits.maxExpandedBytes,
+    });
+  } catch (cause) {
+    if (cause instanceof Error && cause.message.startsWith("portable-archive:")) throw cause;
+    throw archiveError(file, `is not a bounded readable ${compression} stream: ${cause.message}`);
+  }
+}
+
+function readTarBufferEntries(compressed, file, archiveLimits, compression = "gzip") {
+  return parseTarEntries(
+    decompressedTarBuffer(compressed, file, archiveLimits, compression),
+    file,
+    archiveLimits,
+  );
+}
+
+function canonicalTarPathParts(name, file) {
+  if (Buffer.byteLength(name) <= 100) return { name, prefix: "" };
+  const parts = name.split("/");
+  for (let index = 1; index < parts.length; index += 1) {
+    const prefix = parts.slice(0, index).join("/");
+    const suffix = parts.slice(index).join("/");
+    if (Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(suffix) <= 100) {
+      return { name: suffix, prefix };
+    }
+  }
+  throw archiveError(file, `has a path that cannot use canonical POSIX ustar fields: ${name}`);
+}
+
+function writeCanonicalTarString(header, offset, length, value, file, label) {
+  const bytes = Buffer.from(value);
+  if (bytes.length > length) {
+    throw archiveError(file, `has an overlong canonical ustar ${label}`);
+  }
+  bytes.copy(header, offset);
+}
+
+function writeCanonicalTarOctal(header, offset, length, value, file, label) {
+  const text = value.toString(8);
+  if (text.length > length - 1) {
+    throw archiveError(file, `has a canonical ustar ${label} overflow`);
+  }
+  writeCanonicalTarString(
+    header,
+    offset,
+    length,
+    `${text.padStart(length - 1, "0")}\0`,
+    file,
+    label,
+  );
+}
+
+function canonicalTarHeader(name, size, mode, file) {
+  const header = Buffer.alloc(512);
+  const fields = canonicalTarPathParts(name, file);
+  writeCanonicalTarString(header, 0, 100, fields.name, file, `name for ${name}`);
+  writeCanonicalTarOctal(header, 100, 8, mode, file, `mode for ${name}`);
+  writeCanonicalTarOctal(header, 108, 8, 0, file, `uid for ${name}`);
+  writeCanonicalTarOctal(header, 116, 8, 0, file, `gid for ${name}`);
+  writeCanonicalTarOctal(header, 124, 12, size, file, `size for ${name}`);
+  writeCanonicalTarOctal(header, 136, 12, 0, file, `mtime for ${name}`);
+  header.fill(0x20, 148, 156);
+  writeCanonicalTarString(header, 156, 1, "0", file, `type for ${name}`);
+  writeCanonicalTarString(header, 257, 6, "ustar\0", file, `magic for ${name}`);
+  writeCanonicalTarString(header, 263, 2, "00", file, `version for ${name}`);
+  writeCanonicalTarString(header, 345, 155, fields.prefix, file, `prefix for ${name}`);
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  const checksumText = checksum.toString(8);
+  if (checksumText.length > 6) {
+    throw archiveError(file, `has a canonical ustar checksum overflow for ${name}`);
+  }
+  writeCanonicalTarString(
+    header,
+    148,
+    8,
+    `${checksumText.padStart(6, "0")}\0 `,
+    file,
+    `checksum for ${name}`,
+  );
+  return header;
+}
+
+function canonicalFileTar(entries, file, mode) {
+  const names = [...entries.keys()];
+  const sorted = [...names].sort();
+  if (JSON.stringify(names) !== JSON.stringify(sorted)) {
+    throw archiveError(file, "must list canonical file members in bytewise sorted order");
+  }
+  const chunks = [];
+  for (const [name, entry] of entries) {
+    if (
+      !entry.isFile
+      || entry.isDirectory
+      || entry.isSymbolicLink
+      || entry.mode !== mode
+      || entry.uid !== 0
+      || entry.gid !== 0
+      || entry.mtime !== 0
+    ) {
+      throw archiveError(
+        file,
+        `member ${name} must be a canonical regular mode=${mode.toString(8).padStart(4, "0")} uid=0 gid=0 mtime=0 file`,
+      );
+    }
+    const data = Buffer.from(entry.data());
+    if (data.length !== entry.size) {
+      throw archiveError(file, `member ${name} changed while reconstructing its canonical ustar bytes`);
+    }
+    chunks.push(canonicalTarHeader(name, data.length, mode, file), data);
+    const remainder = data.length % 512;
+    if (remainder !== 0) chunks.push(Buffer.alloc(512 - remainder));
+  }
+  chunks.push(Buffer.alloc(1024));
+  return Buffer.concat(chunks);
+}
+
 function readTarEntries(file, archiveLimits, compression = "gzip") {
   return readTarBufferEntries(readFileSync(file), file, archiveLimits, compression);
 }
@@ -928,6 +1037,37 @@ export function readPortableArchiveEntries(file, options = {}) {
   if (format === "tar.gz") return readTarEntries(file, archiveLimits);
   if (format === "tar.zst") return readTarEntries(file, archiveLimits, "zstd");
   throw archiveError(file, `has an unsupported archive format ${JSON.stringify(format)}`);
+}
+
+/**
+ * Read a deterministic file-only tar.gz emitted by Oliphaunt's canonical
+ * carrier producer. In addition to the portable archive safety contract, this
+ * binds the exact gzip header and POSIX ustar byte encoding used by consumers.
+ */
+export function readCanonicalTarGzipEntries(file, options = {}) {
+  const archiveLimits = limits(options);
+  requireRegularArchive(file, archiveLimits.maxArchiveBytes);
+  const mode = options.fileMode ?? 0o644;
+  if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) {
+    throw archiveError(file, "canonical tar.gz fileMode must be an integer between 0000 and 0777");
+  }
+  const compressed = readFileSync(file);
+  const canonicalGzipHeader = Buffer.from([
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+  ]);
+  if (
+    compressed.length < 18
+    || !compressed.subarray(0, canonicalGzipHeader.length).equals(canonicalGzipHeader)
+  ) {
+    throw archiveError(file, "must use the canonical gzip method, flags, mtime, XFL, and OS header");
+  }
+  const tar = decompressedTarBuffer(compressed, file, archiveLimits, "gzip");
+  const entries = parseTarEntries(tar, file, archiveLimits);
+  const canonical = canonicalFileTar(entries, file, mode);
+  if (!tar.equals(canonical)) {
+    throw archiveError(file, "must use the exact deterministic POSIX ustar file encoding");
+  }
+  return entries;
 }
 
 export function readPortableTarZstdBufferEntries(input, options = {}) {

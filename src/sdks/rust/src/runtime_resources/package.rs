@@ -368,6 +368,9 @@ pub(super) fn copy_prebuilt_extension_artifacts(
                 &PathBuf::from("share/postgresql").join(relative),
             )?;
         }
+        for relative in &extension.license_files {
+            copy_artifact_runtime_file(files_root, runtime_files, relative)?;
+        }
         if prebuilt_extension_dynamic_module_required(
             extension,
             extension_target,
@@ -592,6 +595,10 @@ fn extension_asset_paths(
             let relative = PathBuf::from("share/postgresql").join(relative);
             require_report_file(runtime_files, &relative)?;
             paths.insert(relative);
+        }
+        for relative in &extension.license_files {
+            require_report_file(runtime_files, relative)?;
+            paths.insert(relative.clone());
         }
         if extension_dynamic_module_required(extension, extension_target, mobile_static_registry)? {
             let Some(module) = &extension.native_module_file else {

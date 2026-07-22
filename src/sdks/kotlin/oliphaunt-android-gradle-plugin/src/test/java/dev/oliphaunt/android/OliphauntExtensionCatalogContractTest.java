@@ -1,6 +1,7 @@
 package dev.oliphaunt.android;
 
 import groovy.json.JsonOutput;
+import groovy.json.JsonSlurper;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -9,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,10 +30,13 @@ public final class OliphauntExtensionCatalogContractTest {
     resolvesRuntimeBoundBundleOnceWithDependencyClosure();
     acceptsProductionShapedRuntimeBundlesForBothAndroidAbis();
     validatesExactNestedArtifactContract();
+    validatesGeneratedExtensionLegalCatalog();
     validatesStrictExtensionManifestParser();
     validatesStrictBundleJsonParser();
     rejectsCarrierWrapperSiblings();
     validatesExactExtensionArtifactInventory();
+    validatesPgcryptoAndPostgisLegalArtifacts();
+    replaysExactReleaseArtifactsWhenConfigured();
     validatesCarrierBoundAncillaryExtensionSqlInventory();
     resolvesCanonicalEmptyAndSqlOnlyRegistriesEndToEnd();
     resolvesExternalAggregateWithoutStaticDependenciesEndToEnd();
@@ -47,6 +52,7 @@ public final class OliphauntExtensionCatalogContractTest {
     validatesRealNdkLinkWhenAvailable();
     validatesConfiguredCarrierLinkWhenRequested();
     validatesPublicTarGzArchivePreflight();
+    rejectsNoncanonicalLegalUstarMode();
     requiresIndependentExternalVersion();
     rejectsConflictingOrUnlinkedVersions();
     rejectsMalformedTaskRuntimeVersions();
@@ -254,6 +260,40 @@ public final class OliphauntExtensionCatalogContractTest {
     }
   }
 
+  private static void rejectsNoncanonicalLegalUstarMode() throws Exception {
+    Path root = Files.createTempDirectory("oliphaunt-legal-mode-");
+    try {
+      List<TarFixtureEntry> entries =
+          canonicalLegalTarEntries(
+              "oliphaunt-extension-contrib-pg18",
+              "android-arm64-v8a",
+              "aggregate",
+              "carrier/");
+      List<TarFixtureEntry> wrongMode = new ArrayList<>();
+      for (TarFixtureEntry entry : entries) {
+        wrongMode.add(
+            entry.path().equals("carrier/LICENSE")
+                ? new TarFixtureEntry(entry.path(), entry.type(), entry.bytes(), 0600)
+                : entry);
+      }
+      Path archive =
+          writeTarGz(root.resolve("wrong-legal-mode.tar.gz"), tarBytes(wrongMode));
+      PublicTarGzArchivePreflight.Inspection inspection =
+          PublicTarGzArchivePreflight.validate(archive);
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask.validateLegalArchiveMembersForContractTest(
+                  "oliphaunt-extension-contrib-pg18",
+                  "android-arm64-v8a",
+                  "aggregate",
+                  inspection,
+                  "carrier"),
+          "must be one regular ustar mode=0644");
+    } finally {
+      deleteRecursively(root);
+    }
+  }
+
   private static TarFixtureEntry tarFile(String path, String contents) {
     return new TarFixtureEntry(path, '0', contents.getBytes(StandardCharsets.UTF_8));
   }
@@ -271,7 +311,7 @@ public final class OliphauntExtensionCatalogContractTest {
         throw new AssertionError("test fixture path exceeds the ustar name field: " + entry.path());
       }
       System.arraycopy(path, 0, header, 0, path.length);
-      writeTarOctal(header, 100, 8, entry.type() == '5' ? 0755 : 0644);
+      writeTarOctal(header, 100, 8, entry.mode());
       writeTarOctal(header, 108, 8, 0);
       writeTarOctal(header, 116, 8, 0);
       writeTarOctal(header, 124, 12, entry.bytes().length);
@@ -443,6 +483,77 @@ public final class OliphauntExtensionCatalogContractTest {
     }
   }
 
+  private static void validatesGeneratedExtensionLegalCatalog() throws Exception {
+    for (String target : List.of("android-arm64-v8a", "android-x86_64")) {
+      equal(
+          "contrib-native",
+          OliphauntExtensionLegalCatalog.requireLeaf("cube", target).profile(),
+          target + " contrib legal profile");
+      equal(
+          "contrib-native-openssl",
+          OliphauntExtensionLegalCatalog.requireLeaf("pgcrypto", target).profile(),
+          target + " pgcrypto legal profile");
+      equal(
+          "contrib-native-openssl",
+          OliphauntExtensionLegalCatalog
+              .requireAggregate("oliphaunt-extension-contrib-pg18", target)
+              .profile(),
+          target + " contrib aggregate legal profile");
+      OliphauntExtensionLegalCatalog.Contract postgis =
+          OliphauntExtensionLegalCatalog.requireLeaf("postgis", target);
+      equal("external-native", postgis.profile(), target + " PostGIS legal profile");
+      equal(16, postgis.licenseFiles().size(), target + " PostGIS upstream license count");
+      equal(18, postgis.members().size(), target + " PostGIS exact legal member count");
+      for (OliphauntExtensionLegalCatalog.LegalMember member : postgis.members()) {
+        equal(0644, member.mode(), target + " PostGIS legal mode " + member.path());
+      }
+    }
+
+    for (String identity : List.of("cube", "pgcrypto", "postgis")) {
+      OliphauntExtensionLegalCatalog.Contract arm =
+          OliphauntExtensionLegalCatalog.requireLeaf(identity, "android-arm64-v8a");
+      OliphauntExtensionLegalCatalog.Contract x86 =
+          OliphauntExtensionLegalCatalog.requireLeaf(identity, "android-x86_64");
+      equal(arm.product(), x86.product(), identity + " cross-ABI legal product");
+      equal(arm.profile(), x86.profile(), identity + " cross-ABI legal profile");
+      equal(arm.licenseFiles(), x86.licenseFiles(), identity + " cross-ABI licenseFiles");
+      equal(arm.members(), x86.members(), identity + " cross-ABI legal members");
+    }
+
+    byte[] bundled;
+    try (var input =
+        OliphauntExtensionLegalCatalog.class.getResourceAsStream(
+            "/dev/oliphaunt/android/extension-legal-catalog.json")) {
+      if (input == null) {
+        throw new AssertionError("missing packaged Android extension legal catalog");
+      }
+      bundled = input.readAllBytes();
+    }
+    String text = new String(bundled, StandardCharsets.UTF_8);
+    expectFailure(
+        () ->
+            OliphauntExtensionLegalCatalog.parseForContractTest(
+                text.replaceFirst(
+                        "\\\"profile\\\": \\\"contrib-native-openssl\\\"",
+                        "\\\"profile\\\": \\\"external-native\\\"")
+                    .getBytes(StandardCharsets.UTF_8)),
+        "profile must be contrib-native-openssl");
+    expectFailure(
+        () ->
+            OliphauntExtensionLegalCatalog.parseForContractTest(
+                text.replaceFirst("\\\"path\\\": \\\"LICENSE\\\"", "\\\"path\\\": \\\"../LICENSE\\\"")
+                    .getBytes(StandardCharsets.UTF_8)),
+        "unsafe legal member path");
+    expectFailure(
+        () ->
+            OliphauntExtensionLegalCatalog.parseForContractTest(
+                text.replaceFirst(
+                        "\\\"sourceCatalogSha256\\\": \\\"[0-9a-f]{64}\\\"",
+                        "\\\"sourceCatalogSha256\\\": \\\"" + "0".repeat(64) + "\\\"")
+                    .getBytes(StandardCharsets.UTF_8)),
+        "does not match extensions.properties");
+  }
+
   private static void rejectsCarrierWrapperSiblings() throws Exception {
     Path root = Files.createTempDirectory("oliphaunt-wrapper-inventory-");
     try {
@@ -478,8 +589,61 @@ public final class OliphauntExtensionCatalogContractTest {
           root,
           "mobile-static/android-arm64-v8a/extensions/cube/liboliphaunt_extension_cube.a",
           "archive");
+      stageCanonicalLegalFiles(root, "cube", "android-arm64-v8a");
       ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(
           root.toFile(), manifest);
+
+      Path license = root.resolve("LICENSE");
+      byte[] tamperedLicense = Files.readAllBytes(license);
+      tamperedLicense[0] ^= 1;
+      Files.write(license, tamperedLicense);
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask
+                  .validateExtensionArtifactInventoryForContractTest(root.toFile(), manifest),
+          "legal member LICENSE does not match its canonical SHA-256");
+      stageCanonicalLegalFiles(root, "cube", "android-arm64-v8a");
+      Files.delete(root.resolve("THIRD_PARTY_NOTICES.md"));
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask
+                  .validateExtensionArtifactInventoryForContractTest(root.toFile(), manifest),
+          "missing=[THIRD_PARTY_NOTICES.md]");
+      stageCanonicalLegalFiles(root, "cube", "android-arm64-v8a");
+      Path extraLegal =
+          writeInventoryFile(
+              root, "THIRD_PARTY_LICENSES/UNDECLARED-LICENSE", "undeclared\n");
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask
+                  .validateExtensionArtifactInventoryForContractTest(root.toFile(), manifest),
+          "unexpected=[THIRD_PARTY_LICENSES/UNDECLARED-LICENSE]");
+      Files.delete(extraLegal);
+
+      Properties wrongProfile = new Properties();
+      wrongProfile.putAll(manifest);
+      wrongProfile.setProperty("licenseProfile", "external-native");
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+                  "oliphaunt-extension-contrib-pg18",
+                  "cube",
+                  "android-arm64-v8a",
+                  wrongProfile,
+                  "1.2.3"),
+          "must declare licenseProfile=contrib-native");
+      Properties unsafeLicenseFile = new Properties();
+      unsafeLicenseFile.putAll(manifest);
+      unsafeLicenseFile.setProperty("licenseFiles", "../LICENSE");
+      expectFailure(
+          () ->
+              ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+                  "oliphaunt-extension-contrib-pg18",
+                  "cube",
+                  "android-arm64-v8a",
+                  unsafeLicenseFile,
+                  "1.2.3"),
+          "licenseFiles do not match the exact legal contract");
 
       Path unrelated =
           writeInventoryFile(
@@ -540,6 +704,218 @@ public final class OliphauntExtensionCatalogContractTest {
     return file;
   }
 
+  private static void validatesPgcryptoAndPostgisLegalArtifacts() throws Exception {
+    Path root = Files.createTempDirectory("oliphaunt-special-legal-artifacts-");
+    try {
+      Path pgcryptoRoot = Files.createDirectories(root.resolve("pgcrypto"));
+      Properties pgcrypto = cubeArtifactManifest();
+      pgcrypto.setProperty("sqlName", "pgcrypto");
+      pgcrypto.setProperty("nativeModuleStem", "pgcrypto");
+      pgcrypto.setProperty("nativeModuleFile", "pgcrypto.so");
+      pgcrypto.setProperty("staticSymbolPrefix", "oliphaunt_static_pgcrypto");
+      pgcrypto.setProperty(
+          "mobileStaticArchives",
+          "android-arm64-v8a:mobile-static/android-arm64-v8a/extensions/pgcrypto/liboliphaunt_extension_pgcrypto.a");
+      pgcrypto.setProperty(
+          "mobileStaticDependencyArchives",
+          "android-arm64-v8a:openssl:mobile-static/android-arm64-v8a/dependencies/openssl/libcrypto.a");
+      applyCanonicalLegalManifest(pgcrypto, "pgcrypto", "android-arm64-v8a");
+      writeInventoryFile(pgcryptoRoot, "manifest.properties", artifactManifestText(pgcrypto));
+      writeInventoryFile(pgcryptoRoot, "files/lib/postgresql/pgcrypto.so", "native\n");
+      writeInventoryFile(
+          pgcryptoRoot,
+          "files/share/postgresql/extension/pgcrypto.control",
+          "default_version='1.0'\n");
+      writeInventoryFile(
+          pgcryptoRoot,
+          "files/share/postgresql/extension/pgcrypto--1.0.sql",
+          "CREATE TYPE pgcrypto_fixture;\n");
+      writeInventoryFile(
+          pgcryptoRoot,
+          "mobile-static/android-arm64-v8a/extensions/pgcrypto/liboliphaunt_extension_pgcrypto.a",
+          "archive\n");
+      writeInventoryFile(
+          pgcryptoRoot,
+          "mobile-static/android-arm64-v8a/dependencies/openssl/libcrypto.a",
+          "openssl archive\n");
+      stageCanonicalLegalFiles(pgcryptoRoot, "pgcrypto", "android-arm64-v8a");
+      ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-contrib-pg18",
+          "pgcrypto",
+          "android-arm64-v8a",
+          pgcrypto,
+          "1.2.3");
+      ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(
+          pgcryptoRoot.toFile(), pgcrypto);
+      equal(
+          true,
+          Files.isRegularFile(
+              pgcryptoRoot.resolve("THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt")),
+          "pgcrypto OpenSSL legal member");
+
+      Path postgisRoot = Files.createDirectories(root.resolve("postgis"));
+      Properties postgis = cubeArtifactManifest();
+      postgis.setProperty("sqlName", "postgis");
+      postgis.setProperty("nativeModuleStem", "postgis-3");
+      postgis.setProperty("nativeModuleFile", "postgis-3.so");
+      postgis.setProperty("staticSymbolPrefix", "oliphaunt_static_postgis_3");
+      postgis.setProperty(
+          "mobileStaticArchives",
+          "android-arm64-v8a:mobile-static/android-arm64-v8a/extensions/postgis-3/liboliphaunt_extension_postgis-3.a");
+      applyCanonicalLegalManifest(postgis, "postgis", "android-arm64-v8a");
+      writeInventoryFile(postgisRoot, "manifest.properties", artifactManifestText(postgis));
+      writeInventoryFile(postgisRoot, "files/lib/postgresql/postgis-3.so", "native\n");
+      writeInventoryFile(
+          postgisRoot,
+          "files/share/postgresql/extension/postgis.control",
+          "default_version='3.6.3'\n");
+      writeInventoryFile(
+          postgisRoot,
+          "files/share/postgresql/extension/postgis--3.6.3.sql",
+          "CREATE TYPE postgis_fixture;\n");
+      writeInventoryFile(
+          postgisRoot,
+          "mobile-static/android-arm64-v8a/extensions/postgis-3/liboliphaunt_extension_postgis-3.a",
+          "archive\n");
+      stageCanonicalLegalFiles(postgisRoot, "postgis", "android-arm64-v8a");
+      ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
+          "oliphaunt-extension-postgis",
+          "postgis",
+          "android-arm64-v8a",
+          postgis,
+          "1.2.3");
+      ResolveOliphauntAndroidAssetsTask.validateExtensionArtifactInventoryForContractTest(
+          postgisRoot.toFile(), postgis);
+      long upstreamFiles;
+      try (var files = Files.walk(postgisRoot.resolve("files/share/licenses"))) {
+        upstreamFiles = files.filter(Files::isRegularFile).count();
+      }
+      equal(16L, upstreamFiles, "PostGIS exact upstream legal file count");
+    } finally {
+      deleteRecursively(root);
+    }
+  }
+
+  private static void replaysExactReleaseArtifactsWhenConfigured() throws Exception {
+    String extensionRootValue = System.getenv("OLIPHAUNT_ANDROID_EXTENSION_REPLAY_ROOT");
+    String runtimeRootValue = System.getenv("OLIPHAUNT_ANDROID_RUNTIME_REPLAY_ROOT");
+    if (extensionRootValue == null && runtimeRootValue == null) {
+      return;
+    }
+    if (extensionRootValue == null || runtimeRootValue == null) {
+      throw new AssertionError(
+          "exact Android replay requires both OLIPHAUNT_ANDROID_EXTENSION_REPLAY_ROOT and "
+              + "OLIPHAUNT_ANDROID_RUNTIME_REPLAY_ROOT");
+    }
+
+    Path extensionRoot = Path.of(extensionRootValue).toAbsolutePath().normalize();
+    Path runtimeRoot = Path.of(runtimeRootValue).toAbsolutePath().normalize();
+    if (!Files.isDirectory(extensionRoot) || !Files.isDirectory(runtimeRoot)) {
+      throw new AssertionError(
+          "exact Android replay roots must both be existing directories: "
+              + extensionRoot
+              + ", "
+              + runtimeRoot);
+    }
+
+    List<Path> extensionArtifacts;
+    try (var paths = Files.walk(extensionRoot)) {
+      extensionArtifacts =
+          paths
+              .filter(Files::isRegularFile)
+              .filter(path -> path.getParent().getFileName().toString().equals("release-assets"))
+              .filter(
+                  path ->
+                      path.getFileName()
+                          .toString()
+                          .matches(
+                              "oliphaunt-extension-.*-0\\.0\\.0-native-android-"
+                                  + "(arm64-v8a|x86_64)-(bundle|runtime)\\.tar\\.gz"))
+              .sorted()
+              .toList();
+    }
+    equal(16, extensionArtifacts.size(), "exact replay Android release carrier count");
+
+    List<Path> runtimeArtifacts =
+        List.of(
+            runtimeRoot.resolve("liboliphaunt-0.0.0-runtime-resources.tar.gz"),
+            runtimeRoot.resolve("liboliphaunt-0.0.0-android-arm64-v8a.tar.gz"),
+            runtimeRoot.resolve("liboliphaunt-0.0.0-android-x86_64.tar.gz"));
+    for (Path artifact : runtimeArtifacts) {
+      if (!Files.isRegularFile(artifact)) {
+        throw new AssertionError("exact replay is missing runtime carrier " + artifact);
+      }
+    }
+
+    List<String> sqlNames = OliphauntExtensionCatalog.sqlNames();
+    equal(39, sqlNames.size(), "exact replay selected extension count");
+    LinkedHashMap<String, String> ownerVersions = new LinkedHashMap<>();
+    for (String sqlName : sqlNames) {
+      ownerVersions.put(OliphauntExtensionCatalog.require(sqlName).releaseProduct(), "0.0.0");
+    }
+    equal(8, ownerVersions.size(), "exact replay release owner count");
+
+    Path root = Files.createTempDirectory("oliphaunt-exact-android-release-replay-");
+    try {
+      Path projectDir = Files.createDirectories(root.resolve("project"));
+      ResolveOliphauntAndroidAssetsTask resolve =
+          ProjectBuilder.builder()
+              .withProjectDir(projectDir.toFile())
+              .build()
+              .getTasks()
+              .create("exactReleaseReplay", ResolveOliphauntAndroidAssetsTask.class);
+      resolve.getVersion().set("0.0.0");
+      resolve.getSelectedAbis().set(List.of("arm64-v8a", "x86_64"));
+      resolve.getSelectedExtensions().set(sqlNames);
+      resolve.getExtensionOwnerVersions().set(ownerVersions);
+      resolve.getIcu().set(false);
+      resolve.getRuntimeArtifacts().from(runtimeArtifacts.stream().map(Path::toFile).toList());
+      resolve.getExtensionArtifacts().from(extensionArtifacts.stream().map(Path::toFile).toList());
+      Path runtimeOutput = root.resolve("runtime-resources");
+      Path jniOutput = root.resolve("jniLibs");
+      Path archiveOutput = root.resolve("extensionArchives");
+      resolve.getRuntimeResourcesDir().set(runtimeOutput.toFile());
+      resolve.getJniLibsDir().set(jniOutput.toFile());
+      resolve.getExtensionArchivesDir().set(archiveOutput.toFile());
+      resolve.resolve();
+
+      String runtimeManifest =
+          Files.readString(
+              runtimeOutput.resolve("oliphaunt/runtime/manifest.properties"),
+              StandardCharsets.UTF_8);
+      requireContains(
+          runtimeManifest,
+          "selectedExtensions=" + String.join(",", sqlNames) + "\n",
+          "exact replay selected extension closure");
+      String registryManifest =
+          Files.readString(
+              runtimeOutput.resolve("oliphaunt/static-registry/manifest.properties"),
+              StandardCharsets.UTF_8);
+      requireContains(registryManifest, "postgis-3", "exact replay PostGIS static module");
+      requireContains(
+          registryManifest,
+          "archiveTargets=android-arm64-v8a,android-x86_64\n",
+          "exact replay cross-ABI archive targets");
+      for (String target : List.of("android-arm64-v8a", "android-x86_64")) {
+        equal(
+            true,
+            Files.isRegularFile(
+                archiveOutput
+                    .resolve(target)
+                    .resolve("extensions/postgis-3/liboliphaunt_extension_postgis-3.a")),
+            "exact replay PostGIS archive " + target);
+      }
+      equal(
+          true,
+          Files.isRegularFile(
+              runtimeOutput.resolve(
+                  "oliphaunt/runtime/files/share/licenses/postgis/COPYING")),
+          "exact replay PostGIS upstream license payload");
+    } finally {
+      deleteRecursively(root);
+    }
+  }
+
   private static void validatesCarrierBoundAncillaryExtensionSqlInventory()
       throws Exception {
     Path root = Files.createTempDirectory("oliphaunt-ancillary-sql-inventory-");
@@ -552,12 +928,14 @@ public final class OliphauntExtensionCatalogContractTest {
     manifest.setProperty("staticSymbolPrefix", "");
     manifest.setProperty("extensionSqlFileNames", "uninstall_legacy_pgtap.sql");
     manifest.setProperty("extensionSqlFilePrefixes", "legacy-pgtap-helper");
+    applyCanonicalLegalManifest(manifest, "pgtap", "android-arm64-v8a");
     try {
       writeInventoryFile(root, "manifest.properties", artifactManifestText(manifest));
       writeInventoryFile(
           root,
           "files/share/postgresql/extension/pgtap.control",
           "default_version='1.0'\n");
+      stageCanonicalLegalFiles(root, "pgtap", "android-arm64-v8a");
       Path ancillary =
           writeInventoryFile(
               root,
@@ -1367,19 +1745,26 @@ public final class OliphauntExtensionCatalogContractTest {
     manifest.put("family", "native");
     manifest.put("target", target);
     manifest.put("compatibility", compatibility);
+    OliphauntExtensionLegalCatalog.Contract legalContract =
+        OliphauntExtensionLegalCatalog.requireAggregate(product, target);
+    manifest.put("licenseProfile", legalContract.profile());
+    manifest.put("licenseFiles", legalContract.licenseFiles());
     manifest.put("members", List.of(member));
 
     String wrapper = sqlName + "-" + target;
+    List<TarFixtureEntry> entries = new ArrayList<>();
+    entries.add(
+        new TarFixtureEntry(
+            wrapper + "/bundle-manifest.json",
+            '0',
+            (JsonOutput.prettyPrint(JsonOutput.toJson(manifest)) + "\n")
+                .getBytes(StandardCharsets.UTF_8)));
+    entries.add(new TarFixtureEntry(wrapper + "/" + memberPath, '0', memberBytes));
+    entries.addAll(canonicalLegalTarEntries(product, target, "aggregate", wrapper + "/"));
+    entries.sort(Comparator.comparing(TarFixtureEntry::path));
     return writeTarGz(
         carriers.resolve(product + "-" + productVersion + "-native-" + target + "-bundle.tar.gz"),
-        tarBytes(
-            List.of(
-                new TarFixtureEntry(
-                    wrapper + "/bundle-manifest.json",
-                    '0',
-                    (JsonOutput.prettyPrint(JsonOutput.toJson(manifest)) + "\n")
-                        .getBytes(StandardCharsets.UTF_8)),
-                new TarFixtureEntry(wrapper + "/" + memberPath, '0', memberBytes))));
+        tarBytes(entries));
   }
 
   private static byte[] singleMemberExtensionArtifact(
@@ -1402,6 +1787,7 @@ public final class OliphauntExtensionCatalogContractTest {
     Properties manifest = cubeArtifactManifest();
     manifest.setProperty("sqlName", sqlName);
     manifest.setProperty("nativeTarget", target);
+    applyCanonicalLegalManifest(manifest, sqlName, target);
     manifest.setProperty("extensionSqlFileNames", extensionSqlFileNames);
     manifest.setProperty("extensionSqlFilePrefixes", extensionSqlFilePrefixes);
     List<TarFixtureEntry> entries = new ArrayList<>();
@@ -1468,6 +1854,8 @@ public final class OliphauntExtensionCatalogContractTest {
             "manifest.properties",
             '0',
             artifactManifestText(manifest).getBytes(StandardCharsets.UTF_8)));
+    entries.addAll(canonicalLegalTarEntries(sqlName, target, "leaf", ""));
+    entries.sort(Comparator.comparing(TarFixtureEntry::path));
     return gzipBytes(tarBytes(entries));
   }
 
@@ -1511,6 +1899,7 @@ public final class OliphauntExtensionCatalogContractTest {
           root,
           "mobile-static/android-arm64-v8a/extensions/auto_explain/liboliphaunt_extension_auto_explain.a",
           "archive");
+      stageCanonicalLegalFiles(root, "auto_explain", "android-arm64-v8a");
 
       ResolveOliphauntAndroidAssetsTask.validateExtensionManifestForContractTest(
           "oliphaunt-extension-contrib-pg18",
@@ -2250,7 +2639,115 @@ public final class OliphauntExtensionCatalogContractTest {
             + "/liboliphaunt_extension_"
             + sqlName
             + ".a");
+    applyCanonicalLegalManifest(result, sqlName, result.getProperty("nativeTarget"));
     return result;
+  }
+
+  private static void applyCanonicalLegalManifest(
+      Properties manifest, String sqlName, String target) {
+    OliphauntExtensionLegalCatalog.Contract contract =
+        OliphauntExtensionLegalCatalog.requireLeaf(sqlName, target);
+    manifest.setProperty("licenseProfile", contract.profile());
+    manifest.setProperty("licenseFiles", String.join(",", contract.licenseFiles()));
+  }
+
+  private static List<TarFixtureEntry> canonicalLegalTarEntries(
+      String identity, String target, String scope, String prefix) throws Exception {
+    OliphauntExtensionLegalCatalog.Contract contract =
+        scope.equals("leaf")
+            ? OliphauntExtensionLegalCatalog.requireLeaf(identity, target)
+            : OliphauntExtensionLegalCatalog.requireAggregate(identity, target);
+    List<TarFixtureEntry> result = new ArrayList<>();
+    for (OliphauntExtensionLegalCatalog.LegalMember member : contract.members()) {
+      byte[] bytes = canonicalLegalBytes(contract, member.path());
+      equal(member.bytes(), (long) bytes.length, member.path() + " canonical legal byte count");
+      equal(member.sha256(), sha256(bytes), member.path() + " canonical legal digest");
+      result.add(new TarFixtureEntry(prefix + member.path(), '0', bytes));
+    }
+    return result;
+  }
+
+  private static void stageCanonicalLegalFiles(
+      Path root, String sqlName, String target) throws Exception {
+    OliphauntExtensionLegalCatalog.Contract contract =
+        OliphauntExtensionLegalCatalog.requireLeaf(sqlName, target);
+    stageCanonicalLegalContractFiles(root, contract);
+  }
+
+  private static void stageCanonicalLegalContractFiles(
+      Path root, OliphauntExtensionLegalCatalog.Contract contract) throws Exception {
+    for (OliphauntExtensionLegalCatalog.LegalMember member : contract.members()) {
+      Path file = root.resolve(member.path());
+      Files.createDirectories(file.getParent());
+      Files.write(file, canonicalLegalBytes(contract, member.path()));
+    }
+  }
+
+  private static byte[] canonicalLegalBytes(
+      OliphauntExtensionLegalCatalog.Contract contract, String memberPath) throws Exception {
+    String logicalPath =
+        memberPath.startsWith("files/") ? memberPath.substring("files/".length()) : memberPath;
+    Path repository = repositoryRoot();
+    return switch (logicalPath) {
+      case "LICENSE" -> Files.readAllBytes(repository.resolve("LICENSE"));
+      case "THIRD_PARTY_NOTICES.md" ->
+          Files.readAllBytes(repository.resolve("THIRD_PARTY_NOTICES.md"));
+      case "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT" ->
+          Files.readAllBytes(
+              repository.resolve(
+                  "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"));
+      case "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt" ->
+          Files.readAllBytes(
+              repository.resolve(
+                  "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"));
+      default -> canonicalUpstreamLegalBytes(repository, contract.product(), logicalPath);
+    };
+  }
+
+  private static byte[] canonicalUpstreamLegalBytes(
+      Path repository, String product, String logicalPath) throws Exception {
+    for (String sqlName : OliphauntExtensionCatalog.releaseProductMembers(product)) {
+      Path dataFile =
+          repository.resolve(
+              "src/extensions/external/" + sqlName + "/upstream-license-data.json");
+      if (!Files.isRegularFile(dataFile)) {
+        continue;
+      }
+      @SuppressWarnings("unchecked")
+      Map<String, Object> data =
+          (Map<String, Object>) new JsonSlurper().parse(dataFile.toFile(), "UTF-8");
+      @SuppressWarnings("unchecked")
+      Map<String, Object> extension = (Map<String, Object>) data.get("extension");
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> files =
+          (List<Map<String, Object>>) extension.get("files");
+      for (Map<String, Object> file : files) {
+        if (!logicalPath.equals(file.get("destination"))) {
+          continue;
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, String> blobs = (Map<String, String>) data.get("blobs");
+        String encoded = blobs.get(file.get("sha256"));
+        if (encoded == null) {
+          throw new AssertionError(
+              "missing canonical legal blob for " + sqlName + " " + logicalPath);
+        }
+        return Base64.getDecoder().decode(encoded);
+      }
+    }
+    throw new AssertionError(
+        "no canonical upstream legal bytes for " + product + " " + logicalPath);
+  }
+
+  private static Path repositoryRoot() {
+    Path candidate = Path.of("").toAbsolutePath().normalize();
+    while (candidate != null) {
+      if (Files.isRegularFile(candidate.resolve("src/extensions/generated/sdk/kotlin.json"))) {
+        return candidate;
+      }
+      candidate = candidate.getParent();
+    }
+    throw new AssertionError("cannot locate the Oliphaunt repository root");
   }
 
   private static Properties cubeArtifactManifest() {
@@ -2276,6 +2773,8 @@ public final class OliphauntExtensionCatalogContractTest {
     manifest.setProperty("mobileStaticDependencyArchives", "");
     manifest.setProperty("staticSymbolPrefix", "oliphaunt_static_cube");
     manifest.setProperty("staticSymbolAliases", "");
+    manifest.setProperty("licenseFiles", "");
+    manifest.setProperty("licenseProfile", "contrib-native");
     manifest.setProperty("files", "files");
     return manifest;
   }
@@ -2297,6 +2796,10 @@ public final class OliphauntExtensionCatalogContractTest {
           members.add(runtimeBundleMember(sqlName, bytes));
         }
         Map<String, Object> manifest = runtimeBundleManifest(target, members);
+        stageCanonicalLegalContractFiles(
+            root,
+            OliphauntExtensionLegalCatalog.requireAggregate(
+                "oliphaunt-extension-contrib-pg18", target));
         writeBundleManifest(root, manifest);
 
         equal(
@@ -2307,6 +2810,71 @@ public final class OliphauntExtensionCatalogContractTest {
                 extensionOwnerVersions,
                 "1.2.3"),
             target + " runtime member count");
+
+        manifest.put("licenseProfile", "contrib-native");
+        writeBundleManifest(root, manifest);
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "must declare licenseProfile=contrib-native-openssl");
+        manifest.put("licenseProfile", "contrib-native-openssl");
+        manifest.put("licenseFiles", List.of("../LICENSE"));
+        writeBundleManifest(root, manifest);
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "licenseFiles do not match the exact legal contract");
+        manifest.put("licenseFiles", List.of());
+        writeBundleManifest(root, manifest);
+
+        Path license = root.resolve("LICENSE");
+        byte[] tamperedLicense = Files.readAllBytes(license);
+        tamperedLicense[tamperedLicense.length - 1] ^= 1;
+        Files.write(license, tamperedLicense);
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "legal member LICENSE does not match its canonical SHA-256");
+        stageCanonicalLegalContractFiles(
+            root,
+            OliphauntExtensionLegalCatalog.requireAggregate(
+                "oliphaunt-extension-contrib-pg18", target));
+        Files.delete(root.resolve("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT"));
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "missing=[THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT]");
+        stageCanonicalLegalContractFiles(
+            root,
+            OliphauntExtensionLegalCatalog.requireAggregate(
+                "oliphaunt-extension-contrib-pg18", target));
+        Path extraLegal =
+            writeInventoryFile(root, "THIRD_PARTY_LICENSES/UNDECLARED", "extra\n");
+        expectFailure(
+            () ->
+                ResolveOliphauntAndroidAssetsTask.validateBundleSourcesForContractTest(
+                    new File("oliphaunt-extension-contrib-pg18-" + target + ".tar.gz"),
+                    root.toFile(),
+                    extensionOwnerVersions,
+                    "1.2.3"),
+            "unexpected=[THIRD_PARTY_LICENSES/UNDECLARED]");
+        Files.delete(extraLegal);
 
         manifest.put("target", "android-riscv64");
         writeBundleManifest(root, manifest);
@@ -2428,6 +2996,11 @@ public final class OliphauntExtensionCatalogContractTest {
     manifest.put("family", "native");
     manifest.put("target", target);
     manifest.put("compatibility", compatibility);
+    OliphauntExtensionLegalCatalog.Contract legalContract =
+        OliphauntExtensionLegalCatalog.requireAggregate(
+            "oliphaunt-extension-contrib-pg18", target);
+    manifest.put("licenseProfile", legalContract.profile());
+    manifest.put("licenseFiles", legalContract.licenseFiles());
     manifest.put("members", members);
     return manifest;
   }
@@ -2626,5 +3199,9 @@ public final class OliphauntExtensionCatalogContractTest {
 
   private record RuntimeCarrierSet(Path resources, Path armRuntime, Path x86Runtime) {}
 
-  private record TarFixtureEntry(String path, char type, byte[] bytes) {}
+  private record TarFixtureEntry(String path, char type, byte[] bytes, int mode) {
+    private TarFixtureEntry(String path, char type, byte[] bytes) {
+      this(path, type, bytes, type == '5' ? 0755 : 0644);
+    }
+  }
 }

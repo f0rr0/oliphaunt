@@ -134,17 +134,45 @@ JSON
   rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/fixtures"
   mkdir -p "$scratch_root/tools/dev"
+  mkdir -p "$scratch_root/tools/policy"
+  mkdir -p "$scratch_root/tools/release"
   mkdir -p "$scratch_root/tools/test"
+  mkdir -p "$scratch_root/src/postgres/versions/18"
+  mkdir -p "$scratch_root/src/runtimes/liboliphaunt/licenses"
+  mkdir -p "$scratch_root/src/sources/third-party/shared"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
-  # The copied SDK tools retain repository-relative imports. Materialize their
-  # shared command transport inside the same isolated repository topology.
+  # The copied SDK tests retain repository-relative imports and their legal
+  # helpers resolve canonical data from that same repository root. Materialize
+  # the exact module and data closure so a dirty prior scratch tree cannot make
+  # an undeclared dependency appear to pass.
   cp \
     "$root/tools/dev/capture-command-output.mjs" \
     "$scratch_root/tools/dev/capture-command-output.mjs"
   cp \
+    "$root/tools/policy/source-fetch-core.mjs" \
+    "$scratch_root/tools/policy/source-fetch-core.mjs"
+  cp \
+    "$root/tools/release/extension-qualification-candidates.mjs" \
+    "$root/tools/release/extension-upstream-licenses.mjs" \
+    "$root/tools/release/portable-archive.mjs" \
+    "$root/tools/release/release-notices.mjs" \
+    "$scratch_root/tools/release/"
+  cp \
     "$root/tools/test/fd-backed-spawn-sync.mjs" \
     "$root/tools/test/run-js-tests.mjs" \
     "$scratch_root/tools/test/"
+  cp "$root/LICENSE" "$root/THIRD_PARTY_NOTICES.md" "$scratch_root/"
+  rsync -a --delete "$root/src/extensions/" "$scratch_root/src/extensions/"
+  cp \
+    "$root/src/postgres/versions/18/source.toml" \
+    "$scratch_root/src/postgres/versions/18/source.toml"
+  rsync -a --delete \
+    "$root/src/runtimes/liboliphaunt/licenses/" \
+    "$scratch_root/src/runtimes/liboliphaunt/licenses/"
+  cp \
+    "$root/src/sources/third-party/shared/icu.toml" \
+    "$root/src/sources/third-party/shared/openssl.toml" \
+    "$scratch_root/src/sources/third-party/shared/"
   rsync -a --delete \
     --exclude node_modules \
     --exclude lib \

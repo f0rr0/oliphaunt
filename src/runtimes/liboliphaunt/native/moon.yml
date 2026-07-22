@@ -49,6 +49,7 @@ tasks:
       - "liboliphaunt-native:external-source-fetch-test"
       - "liboliphaunt-native:ios-extension-packager-test"
       - "liboliphaunt-native:module-dir-resolver-test"
+      - "liboliphaunt-native:postgis-reproducible-time-test"
       - "liboliphaunt-native:static-extension-registry-test"
       - "liboliphaunt-native:symbol-scope-test"
     inputs:
@@ -83,6 +84,33 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/bin/common.sh"
       - "/src/runtimes/liboliphaunt/native/bin/mobile-static-extensions.sh"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  postgis-reproducible-time-test:
+    tags: ["quality", "unit"]
+    script: |
+      bash src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh
+      tools/dev/bun.sh test tools/release/postgis-reproducible-time.test.mjs
+    inputs:
+      - "/src/extensions/external/postgis/source.toml"
+      - "/src/extensions/external/postgis/tools/build_wasix.sh"
+      - "/src/extensions/external/postgis/tools/reproducible-bin/date"
+      - "/src/extensions/external/postgis/tools/reproducible-time.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1"
+      - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh"
+      - "/tools/release/postgis-reproducible-time.test.mjs"
+      - "/tools/xtask/src/asset_checks.rs"
+      - "/tools/xtask/src/asset_manifest.rs"
+      - "/tools/xtask/src/asset_pipeline.rs"
+      - "/tools/xtask/src/source_spine.rs"
     options:
       cache: true
       runFromWorkspaceRoot: true

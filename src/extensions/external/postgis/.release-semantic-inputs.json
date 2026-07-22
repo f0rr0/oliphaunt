@@ -56,7 +56,54 @@
       "inputs": [
         {
           "path": "tools/release/extension-upstream-licenses.mjs",
-          "sha256": "7e244d286d71e842964e8b5a67dd6c12d81512e9b24439cf92eebce2699a4c46"
+          "sha256": "f10d4596f13b536f0c73669eb3785e43f649a912cc8509622274c12a0f1d299f"
+        }
+      ]
+    },
+    {
+      "id": "native-postgis-carrier-producers",
+      "paths": [
+        "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
+        "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
+          "sha256": "7d70a2763c515998f5c2d3ab7d830ec72a36a8103b115ebb45be13ba56f53aa4"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
+          "sha256": "2f4dd3f15ffc9b188b4e215812294063f1157aab6be0c49111d51ddb38ca6876"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
+          "sha256": "a7c00ead28ab97eb09bd61d44ce9a75c06d788c594491e4278734ea3783130b3"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
+          "sha256": "14baf57ae2d1413c3e8f287d465fc6a55db1c0d4d09a306967b98322989fc083"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
+          "sha256": "50ce9237d8452abdff025b6ab39a6806fd9e8271471933e347cdc7041bf2abd2"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+          "sha256": "d3de524e5d6cec2e3829c1af46ce2b364f8bd8658ec1696acf841b4c423e8913"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
+          "sha256": "11a1014c30c7a1d0b7708c310ac401ed691d9310a56a2fa005be0f3516368340"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
+          "sha256": "3542a4b4c4efe80fe664eb8f2421b992675f88e01e2f19a30856ff98cb711fb1"
         }
       ]
     },
@@ -331,5 +378,5 @@
       ]
     }
   ],
-  "sha256": "295a8af31eef2245dc570351bbaf5ae5f3995bff575ea2a57fb6547daefc47db"
+  "sha256": "f2cd5b0411cc10f33922ce39684f94a6fa5f6f5129993eb824f9e5dda7939b1e"
 }

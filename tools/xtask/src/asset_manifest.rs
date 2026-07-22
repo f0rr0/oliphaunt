@@ -139,6 +139,8 @@ pub(super) struct SourcePin {
     pub(super) branch: String,
     pub(super) commit: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) source_date_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) strip_prefix: Option<String>,
@@ -664,6 +666,7 @@ commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
         .expect("parse source pin without mirror");
 
         assert!(source.mirror_url.is_none());
+        assert!(source.source_date_epoch.is_none());
         let serialized =
             serde_json::to_value(&source).expect("serialize source pin without mirror");
         assert!(
@@ -671,6 +674,29 @@ commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
                 .as_object()
                 .expect("source pin object")
                 .contains_key("mirror_url")
+        );
+    }
+
+    #[test]
+    fn source_pin_round_trips_the_canonical_source_date_epoch() {
+        let source: SourcePin = toml::from_str(
+            r#"
+name = "postgis"
+url = "https://github.com/postgis/postgis.git"
+branch = "3.6.3"
+commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
+source_date_epoch = 1776193981
+"#,
+        )
+        .expect("parse source pin with canonical epoch");
+
+        assert_eq!(source.source_date_epoch, Some(1_776_193_981));
+        let serialized = serde_json::to_value(&source).expect("serialize source pin with epoch");
+        assert_eq!(
+            serialized
+                .get("source_date_epoch")
+                .and_then(serde_json::Value::as_u64),
+            Some(1_776_193_981)
         );
     }
 }

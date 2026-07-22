@@ -4,14 +4,11 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
@@ -41,6 +38,11 @@ import {
   validateSwiftSourceReleaseContract,
 } from "./swift-source-carrier-contract.mjs";
 import { validateMavenCentralPublication } from "./maven-central-contract.mjs";
+import {
+  extensionCarrierLegalContract,
+  extensionCarrierLegalFileInventory,
+} from "./extension-upstream-licenses.mjs";
+import { readCanonicalTarGzipEntries } from "./portable-archive.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -82,6 +84,21 @@ function stableJson(value) {
     return `{${Object.keys(value).sort(compareText).map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function canonicalJsonText(value) {
+  return `${JSON.stringify(canonicalJsonTextValue(value), null, 2)}\n`;
+}
+
+function canonicalJsonTextValue(value) {
+  if (Array.isArray(value)) return value.map((item) => canonicalJsonTextValue(item));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort(compareText)
+        .map((key) => [key, canonicalJsonTextValue(value[key])]),
+    );
+  }
+  return value;
 }
 
 function digestValue(value) {
@@ -167,6 +184,16 @@ function archiveMemberText(file, suffix) {
     throw error(`${rel(file)} must contain exactly one ${suffix}, found ${members.length}`);
   }
   return commandOutput(["tar", "-xOzf", file, members[0]], `read ${suffix} from ${rel(file)}`);
+}
+
+function canonicalExtensionBundleEntries(file) {
+  let entries;
+  try {
+    entries = readCanonicalTarGzipEntries(file, { fileMode: 0o644 });
+  } catch (cause) {
+    throw error(`${rel(file)} is not an exact canonical tar.gz bundle: ${cause.message}`);
+  }
+  return entries;
 }
 
 function safeArchiveMember(value, context) {
@@ -1039,6 +1066,14 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
     const manifestMembers = carrierMembers.map(({ manifestMember }) => manifestMember);
     const carrierRoot = row.name.replace(/\.tar\.gz$/u, "");
     const bundleManifestPath = `${carrierRoot}/bundle-manifest.json`;
+    const memberNames = [...new Set(manifestMembers.map((member) => member.sqlName))].sort(compareText);
+    if (stableJson(memberNames) !== stableJson(expectedSqlNames)) {
+      throw error(`${rel(file)} aggregate carrier does not contain every exact bundle member`);
+    }
+    const legal = extensionCarrierLegalContract(product.id, memberNames, {
+      family: row.family,
+      target: row.target,
+    });
     const expectedBundleManifest = {
       schema: "oliphaunt-extension-bundle-v1",
       product: product.id,
@@ -1046,65 +1081,66 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
       compatibility: extensionMetadata(product.id, "publication-lock").compatibility,
       family: row.family,
       target: row.target,
+      licenseProfile: legal.profile,
+      licenseFiles: legal.licenseFiles,
       members: manifestMembers,
     };
-    const archiveFiles = commandOutput(["tar", "-tzf", file], `list ${rel(file)}`)
-      .split(/\r?\n/u)
-      .filter((name) => name.length > 0 && !name.endsWith("/"))
-      .map((name) => name.replace(/^\.\//u, ""))
-      .sort(compareText);
+    const entries = canonicalExtensionBundleEntries(file);
+    const legalFiles = extensionCarrierLegalFileInventory(product.id, memberNames, {
+      family: row.family,
+      target: row.target,
+    });
     const expectedArchiveFiles = [
       bundleManifestPath,
       ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
+      ...legalFiles.map(({ path: legalPath }) => `${carrierRoot}/${legalPath}`),
     ].sort(compareText);
+    const archiveFiles = [...entries.keys()].sort(compareText);
     if (stableJson(archiveFiles) !== stableJson(expectedArchiveFiles)) {
       throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
     }
     for (const archiveFile of expectedArchiveFiles) safeArchiveMember(archiveFile, `${rel(file)} member`);
-    const extracted = mkdtempSync(path.join(tmpdir(), "oliphaunt-publication-bundle-"));
+    const manifestEntry = entries.get(bundleManifestPath);
+    const expectedBundleManifestBytes = Buffer.from(canonicalJsonText(expectedBundleManifest));
+    const actualBundleManifestBytes = Buffer.from(manifestEntry.data());
+    let bundleManifest;
     try {
-      const extraction = captureCommandOutput(
-        "tar",
-        ["-xzf", file, "-C", extracted, "--no-same-owner", "--no-same-permissions", ...expectedArchiveFiles],
-        {
-          cwd: ROOT,
-          label: `extract exact members from ${rel(file)}`,
-          maxOutputBytes: 1024 * 1024,
-        },
-      );
-      if (extraction.error !== undefined || extraction.status !== 0) {
-        throw error(`${rel(file)} exact member extraction failed: ${(extraction.stderr || extraction.error?.message || "").trim()}`);
+      bundleManifest = JSON.parse(actualBundleManifestBytes.toString("utf8"));
+    } catch (cause) {
+      throw error(`${rel(file)} has invalid bundle-manifest.json: ${cause.message}`);
+    }
+    if (stableJson(bundleManifest) !== stableJson(expectedBundleManifest)) {
+      throw error(`${rel(file)} bundle-manifest.json does not exactly freeze its nested member and legal locators`);
+    }
+    if (!actualBundleManifestBytes.equals(expectedBundleManifestBytes)) {
+      throw error(`${rel(file)} bundle-manifest.json must use the exact canonical bytes for its nested member and legal locators`);
+    }
+    for (const { logicalFile, manifestMember, row: logicalRow } of carrierMembers) {
+      const archivePath = `${carrierRoot}/${manifestMember.path}`;
+      const entry = entries.get(archivePath);
+      const payload = Buffer.from(entry.data());
+      if (
+        entry.size !== logicalRow.bytes
+        || payload.length !== logicalRow.bytes
+        || createHash("sha256").update(payload).digest("hex") !== logicalRow.sha256
+        || !payload.equals(readFileSync(logicalFile))
+      ) {
+        throw error(`${rel(file)} nested payload ${archivePath} does not match its staged logical bytes`);
       }
-      const extractedManifestFile = path.join(extracted, ...bundleManifestPath.split("/"));
-      const extractedManifestStat = lstatSync(extractedManifestFile);
-      if (!extractedManifestStat.isFile() || extractedManifestStat.isSymbolicLink()) {
-        throw error(`${rel(file)} bundle-manifest.json is not a regular file`);
+    }
+    for (const legalFile of legalFiles) {
+      const archivePath = `${carrierRoot}/${legalFile.path}`;
+      const entry = entries.get(archivePath);
+      const payload = Buffer.from(entry.data());
+      if (
+        legalFile.mode !== "0644"
+        || entry.mode !== 0o644
+        || entry.size !== legalFile.bytes
+        || payload.length !== legalFile.bytes
+        || createHash("sha256").update(payload).digest("hex") !== legalFile.sha256
+      ) {
+        throw error(`${rel(file)} legal member ${archivePath} does not match its canonical bytes and mode`);
       }
-      let bundleManifest;
-      try {
-        bundleManifest = JSON.parse(readFileSync(extractedManifestFile, "utf8"));
-      } catch (cause) {
-        throw error(`${rel(file)} has invalid bundle-manifest.json: ${cause.message}`);
-      }
-      if (stableJson(bundleManifest) !== stableJson(expectedBundleManifest)) {
-        throw error(`${rel(file)} bundle-manifest.json does not exactly freeze its nested member locators`);
-      }
-      for (const { logicalFile, manifestMember, row: logicalRow } of carrierMembers) {
-        const archivePath = `${carrierRoot}/${manifestMember.path}`;
-        const extractedFile = path.join(extracted, ...archivePath.split("/"));
-        const extractedStat = lstatSync(extractedFile);
-        if (
-          !extractedStat.isFile()
-          || extractedStat.isSymbolicLink()
-          || extractedStat.size !== logicalRow.bytes
-          || sha256File(extractedFile) !== logicalRow.sha256
-          || !readFileSync(extractedFile).equals(readFileSync(logicalFile))
-        ) {
-          throw error(`${rel(file)} nested payload ${archivePath} does not match its staged logical bytes`);
-        }
-      }
-    } finally {
-      rmSync(extracted, { recursive: true, force: true });
     }
   }
 

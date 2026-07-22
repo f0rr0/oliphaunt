@@ -2,6 +2,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { checkAndroidExtensionLegalCatalog } from "./android-extension-legal-catalog.mjs";
+
 const TOOL = "check-extension-model.mjs";
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -18,4 +20,13 @@ if (result.error !== undefined) {
   process.exit(1);
 }
 
-process.exit(result.status ?? 1);
+if (result.status !== 0) {
+  process.exit(result.status ?? 1);
+}
+
+try {
+  checkAndroidExtensionLegalCatalog({ write: Bun.argv.slice(2).includes("--write") });
+} catch (cause) {
+  console.error(`${TOOL}: ${cause.message}`);
+  process.exit(1);
+}

@@ -28,6 +28,7 @@ import {
   assertSupportedExtensionUpstreamSpdxId,
   externalReleaseExtensionSqlNames,
   extensionCarrierLegalContract,
+  extensionCarrierLegalFileInventory,
   extensionMavenLicenses,
   extensionQualificationLegalContract,
   extensionRegistryLicense,
@@ -94,6 +95,33 @@ test("npm extension legal inventory binds canonical paths, bytes, and modes", ()
     () => extensionUpstreamLicenseFileInventory([]),
     /requires a non-empty unique extension member list/u,
   );
+});
+
+test("carrier legal inventory binds release notices and PostGIS upstream bytes", () => {
+  const legal = extensionCarrierLegalContract(
+    "oliphaunt-extension-postgis",
+    ["postgis"],
+    { family: "native", target: "android-arm64-v8a" },
+  );
+  const files = extensionCarrierLegalFileInventory(
+    "oliphaunt-extension-postgis",
+    ["postgis"],
+    { family: "native", target: "android-arm64-v8a" },
+  );
+  assert.deepEqual(
+    files.filter(({ path: file }) => file.startsWith("share/licenses/"))
+      .map(({ path: file }) => file),
+    [...legal.licenseFiles],
+  );
+  assert.deepEqual(files.slice(0, 2).map(({ path: file }) => file), [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+  ]);
+  assert.equal(files.every(({ bytes }) => Number.isSafeInteger(bytes) && bytes > 0), true);
+  assert.equal(files.every(({ sha256 }) => /^[0-9a-f]{64}$/u.test(sha256)), true);
+  assert.equal(files.every(({ mode }) => mode === "0644"), true);
+  assert.equal(Object.isFrozen(files), true);
+  assert.equal(files.every(Object.isFrozen), true);
 });
 
 test("each external product owns an exact self-contained legal-data closure", () => {

@@ -23,28 +23,17 @@ oliphaunt_postgis_reproducible_epoch() {
     return 0
   }
   case "${oliphaunt_mobile_target:?missing oliphaunt mobile target}" in
-    android-arm64 | android-x86_64) ;;
+    android-arm64 | android-x86_64 | ios-simulator | ios-device | macos-arm64) ;;
     *)
       printf '\n'
       return 0
       ;;
   esac
-  local epoch source_dir
-  epoch="${SOURCE_DATE_EPOCH:-}"
-  source_dir="$repo_root/target/oliphaunt-sources/checkouts/postgis"
-  if [ -z "$epoch" ]; then
-    [ -d "$source_dir/.git" ] ||
-      oliphaunt_postgis_fail \
-        "pinned PostGIS source checkout is missing at $source_dir; run tools/dev/bun.sh tools/policy/fetch-sources.mjs native-runtime"
-    epoch="$(git -C "$source_dir" show -s --format=%ct HEAD 2>/dev/null)" ||
-      oliphaunt_postgis_fail "could not derive the pinned PostGIS source commit timestamp"
-  fi
-  case "$epoch" in
-    '' | *[!0-9]*)
-      oliphaunt_postgis_fail "SOURCE_DATE_EPOCH must be an unsigned integer, got '$epoch'"
-      ;;
-  esac
-  printf '%s\n' "$epoch"
+  local time_helper="$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh"
+  [ -f "$time_helper" ] || oliphaunt_postgis_fail "missing reproducible-time helper: $time_helper"
+  # shellcheck source=/dev/null
+  . "$time_helper"
+  oliphaunt_postgis_source_date_epoch "$repo_root"
 }
 
 oliphaunt_postgis_output_fingerprint() {
@@ -683,9 +672,12 @@ build_postgis_mobile_static_extension_objects() {
     export CPPFLAGS="$postgis_cppflags"
     export LDFLAGS="$ldflags"
     export ac_cv_lib_pq_PQserverVersion=yes
-    if [ -n "$source_date_epoch" ]; then
-      export SOURCE_DATE_EPOCH="$source_date_epoch"
-    fi
+    local time_helper="$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh"
+    # shellcheck source=/dev/null
+    . "$time_helper"
+    oliphaunt_postgis_enable_reproducible_time "$repo_root"
+    [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] ||
+      oliphaunt_postgis_fail "PostGIS build epoch changed after fingerprinting"
     ./autogen.sh >> "$make_log" 2>&1
     local build_alias
     build_alias="$(build-aux/config.guess)"

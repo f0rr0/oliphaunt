@@ -672,6 +672,18 @@ fn validate_source_pin(source: &SourcePin) -> Result<()> {
     {
         bail!("invalid source pin in source metadata: {source:?}");
     }
+    if source
+        .source_date_epoch
+        .is_some_and(|epoch| epoch == 0 || epoch > 253_402_300_799)
+    {
+        bail!(
+            "source '{}' source_date_epoch must be within the portable UTC range 1..=253402300799",
+            source.name
+        );
+    }
+    if source.name == "postgis" && source.source_date_epoch.is_none() {
+        bail!("PostGIS source metadata must pin source_date_epoch");
+    }
     match source.kind {
         SourceKind::Git => {
             if source.commit.len() != 40
@@ -784,6 +796,7 @@ mod tests {
             mirror_url: mirror_url.map(str::to_owned),
             branch: "v2.14.6".to_owned(),
             commit: "d23960a130c5bb82779c9405fbbf85e65fb3c57c".to_owned(),
+            source_date_epoch: None,
             sha256: None,
             strip_prefix: None,
             origin: SourceOrigin::Extension,
@@ -872,6 +885,37 @@ mod tests {
     }
 
     #[test]
+    fn postgis_requires_one_portable_source_date_epoch() {
+        let mut source = git_source(None);
+        source.name = "postgis".to_owned();
+        source.url = "https://github.com/postgis/postgis.git".to_owned();
+        source.branch = "3.6.3".to_owned();
+        source.commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796".to_owned();
+
+        let error = validate_source_pin(&source).expect_err("missing epoch must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("PostGIS source metadata must pin source_date_epoch"),
+            "unexpected error: {error:#}"
+        );
+
+        for invalid_epoch in [0, 253_402_300_800] {
+            source.source_date_epoch = Some(invalid_epoch);
+            let error = validate_source_pin(&source).expect_err("invalid epoch must fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("source_date_epoch must be within the portable UTC range"),
+                "unexpected error for {invalid_epoch}: {error:#}"
+            );
+        }
+
+        source.source_date_epoch = Some(1_776_193_981);
+        validate_source_pin(&source).expect("canonical PostGIS epoch must pass");
+    }
+
+    #[test]
     fn archive_sources_reject_git_mirror_metadata() {
         let sha256 = "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6";
         let source = SourcePin {
@@ -881,6 +925,7 @@ mod tests {
             mirror_url: Some("https://example.test/libiconv-1.19.tar.gz".to_owned()),
             branch: "1.19".to_owned(),
             commit: sha256.to_owned(),
+            source_date_epoch: None,
             sha256: Some(sha256.to_owned()),
             strip_prefix: Some("libiconv-1.19".to_owned()),
             origin: SourceOrigin::Extension,

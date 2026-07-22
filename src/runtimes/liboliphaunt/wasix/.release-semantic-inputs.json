@@ -95,6 +95,40 @@
       ]
     },
     {
+      "id": "postgis-reproducible-time-contract",
+      "paths": [
+        "src/extensions/external/postgis/source.toml",
+        "src/extensions/external/postgis/tools/reproducible-bin/date",
+        "src/extensions/external/postgis/tools/reproducible-time.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/external/postgis/source.toml",
+          "sha256": "cd720f3bae015515639273795df9fb6be6ba2ad7c9d6714d1b1e330643c33040"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-bin/date",
+          "sha256": "a6b0c3237e02debf0117504a5c30cc8dd47183269396f26c9341e878d1b8cf16"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
+          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+        }
+      ]
+    },
+    {
+      "id": "wasix-postgis-runtime-producer",
+      "paths": [
+        "src/extensions/external/postgis/tools/build_wasix.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/external/postgis/tools/build_wasix.sh",
+          "sha256": "d248aa8a29e89fd17a7a3e44b0bf92cc9084e15ea244ee9bb1e064965825fc66"
+        }
+      ]
+    },
+    {
       "id": "wasix-release-asset-rust-producers",
       "paths": [
         "tools/xtask/Cargo.toml",
@@ -124,11 +158,11 @@
         },
         {
           "path": "tools/xtask/src/asset_manifest.rs",
-          "sha256": "5a410ef17cc31ac7f4f8427fc1359320c55f57fe1d1b001fa2242eb87c488164"
+          "sha256": "945c31587d2d54fa668093c44d7f5222d857955d9433eb8c365801df13325521"
         },
         {
           "path": "tools/xtask/src/asset_pipeline.rs",
-          "sha256": "4bec64d51ddb0545e943e81b6d48a0faaab4940b8f090c6b93bb5e63f81b68ae"
+          "sha256": "4bf91b0968a0de6ac2245f1fa3081ca36e44f5b20c532996ffea9a2393a8d396"
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
@@ -178,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "79509df8d6eeedee03ad72cac013d8ac9d5f90a5473b924ddf40897804cbdf2c"
+          "sha256": "2afd2098b13d0b77578dcf921ce29d822acd1eb9337a2c6629ff149e718f6e99"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -331,5 +365,5 @@
       ]
     }
   ],
-  "sha256": "dce8f358d7ea364f84e309d7223ca1edcf9cf22af71f15674a5ea9976d1848ce"
+  "sha256": "9b9ad078927583cdba6194fb86a7b70c33382d2458de67957946cc468e67f6f3"
 }

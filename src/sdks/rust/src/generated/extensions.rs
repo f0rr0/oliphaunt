@@ -315,6 +315,53 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
 }
 
 /// Generated extension metadata accessor.
+pub(super) const fn release_product(extension: Extension) -> Option<&'static str> {
+    match extension {
+        Extension::Amcheck => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::AutoExplain => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Bloom => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::BtreeGin => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::BtreeGist => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Citext => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Cube => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::DictInt => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::DictXsyn => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Earthdistance => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::FileFdw => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Fuzzystrmatch => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Graph => None,
+        Extension::Hstore => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Intarray => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Isn => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Lo => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Ltree => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Pageinspect => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgBuffercache => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgFreespacemap => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgHashids => Some("oliphaunt-extension-pg-hashids"),
+        Extension::PgIvm => Some("oliphaunt-extension-pg-ivm"),
+        Extension::PgSearch => None,
+        Extension::PgSurgery => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgTextsearch => Some("oliphaunt-extension-pg-textsearch"),
+        Extension::PgTrgm => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgUuidv7 => Some("oliphaunt-extension-pg-uuidv7"),
+        Extension::PgVisibility => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::PgWalinspect => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Pgcrypto => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Pgtap => Some("oliphaunt-extension-pgtap"),
+        Extension::Postgis => Some("oliphaunt-extension-postgis"),
+        Extension::Seg => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Tablefunc => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Tcn => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::TsmSystemRows => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::TsmSystemTime => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Unaccent => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::UuidOssp => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Vector => Some("oliphaunt-extension-vector"),
+    }
+}
+
+/// Generated extension metadata accessor.
 pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static str> {
     match extension {
         Extension::Amcheck => Some("amcheck"),

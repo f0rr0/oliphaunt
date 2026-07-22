@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::process;
 
 use oliphaunt::{
-    NativeExtensionArtifactFormat, NativeExtensionArtifactOptions,
+    NativeExtensionArtifactFormat, NativeExtensionArtifactLegalContract,
+    NativeExtensionArtifactLicenseProfile, NativeExtensionArtifactOptions,
     NativeExtensionMobileStaticArchive, NativeExtensionMobileStaticDependencyArchive,
     NativeExtensionStaticSymbolAlias, create_prebuilt_extension_artifact,
 };
@@ -39,6 +40,17 @@ fn run() -> oliphaunt::Result<()> {
                 .to_owned(),
         )
     })?;
+    let license_profile = args.license_profile.ok_or_else(|| {
+        oliphaunt::Error::InvalidConfig("missing required --license-profile <profile>".to_owned())
+    })?;
+    let legal_files_root = args.legal_files_root.ok_or_else(|| {
+        oliphaunt::Error::InvalidConfig(
+            "missing required --legal-files-root <directory>".to_owned(),
+        )
+    })?;
+    let legal_contract =
+        NativeExtensionArtifactLegalContract::new(license_profile, legal_files_root)
+            .license_files(args.license_files);
 
     let mut options =
         NativeExtensionArtifactOptions::new(output, runtime, sql_name, native_runtime_version)
@@ -53,7 +65,8 @@ fn run() -> oliphaunt::Result<()> {
             .mobile_prebuilt(args.mobile_prebuilt)
             .mobile_static_archives(args.mobile_static_archives)
             .mobile_static_dependency_archives(args.mobile_static_dependency_archives)
-            .static_symbol_aliases(args.static_symbol_aliases);
+            .static_symbol_aliases(args.static_symbol_aliases)
+            .legal_contract(legal_contract);
     if let Some(stem) = args.native_module_stem {
         options = options.native_module_stem(stem);
     }
@@ -90,6 +103,9 @@ struct ArtifactArgs {
     runtime: Option<PathBuf>,
     sql_name: Option<String>,
     native_runtime_version: Option<String>,
+    license_profile: Option<NativeExtensionArtifactLicenseProfile>,
+    legal_files_root: Option<PathBuf>,
+    license_files: Vec<PathBuf>,
     creates_extension: bool,
     native_module_stem: Option<String>,
     native_module_file: Option<String>,
@@ -119,6 +135,9 @@ impl ArtifactArgs {
             native_runtime_version: env::var("OLIPHAUNT_LIBOLIPHAUNT_VERSION")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
+            license_profile: None,
+            legal_files_root: None,
+            license_files: Vec::new(),
             creates_extension: true,
             native_module_stem: None,
             native_module_file: None,
@@ -158,6 +177,17 @@ impl ArtifactArgs {
                 }
                 "--native-runtime-version" | "--liboliphaunt-native-version" => {
                     parsed.native_runtime_version = Some(next_value(&mut args, &arg)?);
+                }
+                "--license-profile" => {
+                    parsed.license_profile = Some(NativeExtensionArtifactLicenseProfile::parse(
+                        &next_value(&mut args, &arg)?,
+                    )?);
+                }
+                "--legal-files-root" => {
+                    parsed.legal_files_root = Some(PathBuf::from(next_value(&mut args, &arg)?));
+                }
+                "--license-file" | "--license-files" => {
+                    push_paths(&mut parsed.license_files, &next_value(&mut args, &arg)?);
                 }
                 "--format" => {
                     parsed.format = parse_format(&next_value(&mut args, &arg)?)?;
@@ -238,6 +268,29 @@ impl ArtifactArgs {
                 value if value.starts_with("--liboliphaunt-native-version=") => {
                     parsed.native_runtime_version = Some(
                         value_without_prefix(value, "--liboliphaunt-native-version=").to_owned(),
+                    );
+                }
+                value if value.starts_with("--license-profile=") => {
+                    parsed.license_profile = Some(NativeExtensionArtifactLicenseProfile::parse(
+                        value_without_prefix(value, "--license-profile="),
+                    )?);
+                }
+                value if value.starts_with("--legal-files-root=") => {
+                    parsed.legal_files_root = Some(PathBuf::from(value_without_prefix(
+                        value,
+                        "--legal-files-root=",
+                    )));
+                }
+                value if value.starts_with("--license-file=") => {
+                    push_paths(
+                        &mut parsed.license_files,
+                        value_without_prefix(value, "--license-file="),
+                    );
+                }
+                value if value.starts_with("--license-files=") => {
+                    push_paths(
+                        &mut parsed.license_files,
+                        value_without_prefix(value, "--license-files="),
                     );
                 }
                 value if value.starts_with("--format=") => {
@@ -560,10 +613,14 @@ fn print_help() {
 Create one exact prebuilt Oliphaunt extension artifact from already-built PostgreSQL runtime files.
 
 Usage:
-  oliphaunt-extension-artifact --runtime <runtime-files-dir> --sql-name <extension> --native-runtime-version <X.Y.Z> --output <path> [--format directory|tar|tar-gz|tar-zst] [options]
+  oliphaunt-extension-artifact --runtime <runtime-files-dir> --sql-name <extension> --native-runtime-version <X.Y.Z> --license-profile <profile> --legal-files-root <dir> --output <path> [--format directory|tar|tar-gz|tar-zst] [options]
 
 Options:
   --native-runtime-version <X.Y.Z> Exact stable liboliphaunt-native version
+  --license-profile <profile>      contrib-native, contrib-native-openssl,
+                                    or external-native
+  --legal-files-root <dir>         Exact profile notices and license sources
+  --license-file <path[,path]>     External license leaves below share/licenses
   --native-module-stem <stem>       Native module stem used by extension SQL
   --native-module-file <file>       Target-specific file under lib/postgresql
   --target <target>                 Public target id that built the module
@@ -596,8 +653,11 @@ linked by SDK builds when present. Native-module artifacts must declare a
 target so consumers cannot install a module built for a different platform.
 Every v1 manifest records nativeRuntimeProduct=liboliphaunt-native, the
 selected stable nativeRuntimeVersion, and the exact ancillary SQL
-names/prefixes copied into the carrier. OLIPHAUNT_LIBOLIPHAUNT_VERSION is the
-environment equivalent of --native-runtime-version.
+names/prefixes copied into the carrier. The manifest also freezes the exact
+licenseProfile and sorted licenseFiles inventory; missing, extra, unsafe, or
+profile-inconsistent legal leaves are rejected by both producer and consumer.
+OLIPHAUNT_LIBOLIPHAUNT_VERSION is the environment equivalent of
+--native-runtime-version.
 "
     );
 }

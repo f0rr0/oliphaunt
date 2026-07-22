@@ -82,6 +82,7 @@ products = ["oliphaunt-extension-contrib-pg18"]
 id = "extension-upstream-license-carrier-producer"
 paths = ["tools/release/extension-upstream-licenses.mjs"]
 products = [
+  "oliphaunt-kotlin",
   "oliphaunt-extension-contrib-pg18",
   "oliphaunt-extension-pg-hashids",
   "oliphaunt-extension-pg-ivm",
@@ -91,6 +92,39 @@ products = [
   "oliphaunt-extension-postgis",
   "oliphaunt-extension-vector",
 ]
+
+[[rules]]
+id = "android-extension-legal-catalog-producer"
+paths = ["src/extensions/tools/android-extension-legal-catalog.mjs"]
+products = ["oliphaunt-kotlin"]
+
+[[rules]]
+id = "postgis-reproducible-time-contract"
+paths = [
+  "src/extensions/external/postgis/source.toml",
+  "src/extensions/external/postgis/tools/reproducible-bin/date",
+  "src/extensions/external/postgis/tools/reproducible-time.sh",
+]
+products = ["liboliphaunt-native", "liboliphaunt-wasix"]
+
+[[rules]]
+id = "native-postgis-carrier-producers"
+paths = [
+  "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
+  "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
+]
+products = ["oliphaunt-extension-postgis"]
+
+[[rules]]
+id = "wasix-postgis-runtime-producer"
+paths = ["src/extensions/external/postgis/tools/build_wasix.sh"]
+products = ["liboliphaunt-wasix"]
 
 [[rules]]
 id = "npm-extension-contract"
@@ -357,9 +391,9 @@ products = ["liboliphaunt-native"]
 id = "native-runtime-resource-rust-producers"
 # The selection-neutral runtime-resources carrier is emitted by the Rust SDK's
 # oliphaunt-resources binary during native iOS asset packaging. Own only the
-# CLI, renderer, and native runtime/template materialization closure that can
-# alter those bytes; extension-index/artifact helpers and unrelated SDK runtime
-# behavior remain Rust-SDK-only inputs.
+# CLI, renderer, native runtime/template materialization, and prebuilt-extension
+# artifact loader closure that can alter those bytes. Index/download/signing
+# helpers and unrelated SDK runtime behavior remain Rust-SDK-only inputs.
 paths = [
   "src/sdks/rust/src/bin/package_resources.rs",
   "src/sdks/rust/src/build_resources.rs",
@@ -377,6 +411,8 @@ paths = [
   "src/sdks/rust/src/liboliphaunt/root/runtime/**",
   "src/sdks/rust/src/liboliphaunt/root/template.rs",
   "src/sdks/rust/src/runtime_resources.rs",
+  "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
+  "src/sdks/rust/src/runtime_resources/manifest.rs",
   "src/sdks/rust/src/runtime_resources/package.rs",
   "src/sdks/rust/src/runtime_resources/static_registry.rs",
 ]

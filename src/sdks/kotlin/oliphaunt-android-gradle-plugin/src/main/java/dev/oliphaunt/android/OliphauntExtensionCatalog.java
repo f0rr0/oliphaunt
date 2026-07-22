@@ -33,6 +33,10 @@ final class OliphauntExtensionCatalog {
     return entry;
   }
 
+  static List<String> sqlNames() {
+    return List.copyOf(ENTRIES.keySet());
+  }
+
   static List<String> releaseProductMembers(String releaseProduct) {
     List<String> members =
         ENTRIES.values().stream()

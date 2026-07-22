@@ -596,6 +596,11 @@ test("isolated React Native SDK worktrees materialize their external module clos
     .sort();
   assert.deepEqual(externalModules, [
     "tools/dev/capture-command-output.mjs",
+    "tools/policy/source-fetch-core.mjs",
+    "tools/release/extension-qualification-candidates.mjs",
+    "tools/release/extension-upstream-licenses.mjs",
+    "tools/release/portable-archive.mjs",
+    "tools/release/release-notices.mjs",
     "tools/test/fd-backed-spawn-sync.mjs",
   ]);
 
@@ -605,12 +610,27 @@ test("isolated React Native SDK worktrees materialize their external module clos
   );
   for (const required of [
     'mkdir -p "$scratch_root/tools/dev"',
+    'mkdir -p "$scratch_root/tools/policy"',
+    'mkdir -p "$scratch_root/tools/release"',
     'mkdir -p "$scratch_root/tools/test"',
     '"$root/tools/dev/capture-command-output.mjs"',
     '"$scratch_root/tools/dev/capture-command-output.mjs"',
+    '"$root/tools/policy/source-fetch-core.mjs"',
+    '"$scratch_root/tools/policy/source-fetch-core.mjs"',
+    '"$root/tools/release/extension-qualification-candidates.mjs"',
+    '"$root/tools/release/extension-upstream-licenses.mjs"',
+    '"$root/tools/release/portable-archive.mjs"',
+    '"$root/tools/release/release-notices.mjs"',
+    '"$scratch_root/tools/release/"',
     '"$root/tools/test/fd-backed-spawn-sync.mjs"',
     '"$root/tools/test/run-js-tests.mjs"',
     '"$scratch_root/tools/test/"',
+    '"$root/LICENSE" "$root/THIRD_PARTY_NOTICES.md" "$scratch_root/"',
+    '"$root/src/extensions/" "$scratch_root/src/extensions/"',
+    '"$root/src/postgres/versions/18/source.toml"',
+    '"$root/src/runtimes/liboliphaunt/licenses/"',
+    '"$root/src/sources/third-party/shared/icu.toml"',
+    '"$root/src/sources/third-party/shared/openssl.toml"',
     'test "$package_dir/tools/ios-app-transport.test.mjs"',
     'test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"',
   ]) {

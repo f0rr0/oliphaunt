@@ -35,7 +35,7 @@ use static_registry::*;
 const RUNTIME_RESOURCES_SCHEMA: &str = "oliphaunt-runtime-resources-v1";
 const EXTENSION_ARTIFACT_LAYOUT: &str = "oliphaunt-extension-artifact-v1";
 const EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT: &str = "liboliphaunt-native";
-const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 20] = [
+const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 22] = [
     "packageLayout",
     "pgMajor",
     "sqlName",
@@ -55,6 +55,8 @@ const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 20] = [
     "mobileStaticDependencyArchives",
     "staticSymbolPrefix",
     "staticSymbolAliases",
+    "licenseFiles",
+    "licenseProfile",
     "files",
 ];
 const EXTENSION_ARTIFACT_INDEX_LAYOUT: &str = "oliphaunt-extension-artifact-index-v1";
@@ -326,6 +328,87 @@ pub enum NativeExtensionArtifactFormat {
     TarZst,
 }
 
+/// Legal payload profile carried by one native prebuilt extension artifact.
+///
+/// The profile determines the exact release-notice leaves at the artifact
+/// root. External artifacts additionally declare their exact PostgreSQL-
+/// relative upstream license paths through
+/// [`NativeExtensionArtifactLegalContract::license_file`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeExtensionArtifactLicenseProfile {
+    /// Contrib payload carrying PostgreSQL notices.
+    ContribNative,
+    /// Contrib payload carrying PostgreSQL and embedded OpenSSL notices.
+    ContribNativeOpenSsl,
+    /// Independently versioned external-extension payload.
+    ExternalNative,
+}
+
+impl NativeExtensionArtifactLicenseProfile {
+    /// Stable `manifest.properties` spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ContribNative => "contrib-native",
+            Self::ContribNativeOpenSsl => "contrib-native-openssl",
+            Self::ExternalNative => "external-native",
+        }
+    }
+
+    /// Parse the stable `manifest.properties` spelling.
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "contrib-native" => Ok(Self::ContribNative),
+            "contrib-native-openssl" => Ok(Self::ContribNativeOpenSsl),
+            "external-native" => Ok(Self::ExternalNative),
+            _ => Err(Error::InvalidConfig(format!(
+                "unsupported native extension artifact license profile '{value}'; expected contrib-native, contrib-native-openssl, or external-native"
+            ))),
+        }
+    }
+}
+
+/// Exact legal source contract for a produced extension artifact.
+///
+/// `source_root` contains the profile's root notice files and every declared
+/// PostgreSQL-relative upstream license file. For example, an external file
+/// declared as `share/licenses/acme/LICENSE` is read from that path beneath
+/// `source_root` and written beneath the artifact's `files/` tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeExtensionArtifactLegalContract {
+    /// Payload-specific release-notice profile.
+    pub profile: NativeExtensionArtifactLicenseProfile,
+    /// Directory containing the exact legal source leaves.
+    pub source_root: PathBuf,
+    /// Sorted by the producer into exact PostgreSQL-relative license paths.
+    pub license_files: Vec<PathBuf>,
+}
+
+impl NativeExtensionArtifactLegalContract {
+    /// Create a legal contract with no external upstream license files.
+    pub fn new(
+        profile: NativeExtensionArtifactLicenseProfile,
+        source_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            profile,
+            source_root: source_root.into(),
+            license_files: Vec::new(),
+        }
+    }
+
+    /// Add one exact PostgreSQL-relative upstream license file.
+    pub fn license_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.license_files.push(path.into());
+        self
+    }
+
+    /// Add exact PostgreSQL-relative upstream license files.
+    pub fn license_files(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.license_files.extend(paths);
+        self
+    }
+}
+
 /// Options for creating one exact prebuilt extension artifact from built
 /// PostgreSQL runtime files.
 #[derive(Debug, Clone)]
@@ -376,6 +459,10 @@ pub struct NativeExtensionArtifactOptions {
     pub static_symbol_prefix: Option<String>,
     /// SQL-visible to link-time C symbol aliases for mobile static artifacts.
     pub static_symbol_aliases: Vec<NativeExtensionStaticSymbolAlias>,
+    /// Exact legal profile, source root, and upstream-license leaf inventory.
+    ///
+    /// Artifact creation fails closed when this is absent.
+    pub legal_contract: Option<NativeExtensionArtifactLegalContract>,
     /// Artifact output format.
     pub format: NativeExtensionArtifactFormat,
     /// Replace an existing output path.
@@ -410,6 +497,7 @@ impl NativeExtensionArtifactOptions {
             mobile_static_dependency_archives: Vec::new(),
             static_symbol_prefix: None,
             static_symbol_aliases: Vec::new(),
+            legal_contract: None,
             format: NativeExtensionArtifactFormat::Directory,
             replace_existing: false,
         }
@@ -596,6 +684,12 @@ impl NativeExtensionArtifactOptions {
         self
     }
 
+    /// Set the exact legal payload contract for this artifact.
+    pub fn legal_contract(mut self, contract: NativeExtensionArtifactLegalContract) -> Self {
+        self.legal_contract = Some(contract);
+        self
+    }
+
     /// Select the artifact output format.
     pub fn format(mut self, format: NativeExtensionArtifactFormat) -> Self {
         self.format = format;
@@ -618,6 +712,10 @@ pub struct NativeExtensionArtifact {
     pub manifest_path: Option<PathBuf>,
     /// Exact SQL extension name.
     pub sql_name: String,
+    /// Exact legal payload profile recorded in the manifest.
+    pub license_profile: NativeExtensionArtifactLicenseProfile,
+    /// Exact PostgreSQL-relative upstream license paths carried under `files/`.
+    pub license_files: Vec<PathBuf>,
     /// Artifact output format.
     pub format: NativeExtensionArtifactFormat,
 }
@@ -1118,6 +1216,8 @@ struct RuntimeResourceExtension {
     mobile_static_dependency_archives: Vec<MobileStaticDependencyArchive>,
     static_symbol_prefix: Option<String>,
     static_symbol_aliases: Vec<NativeExtensionStaticSymbolAlias>,
+    license_profile: Option<NativeExtensionArtifactLicenseProfile>,
+    license_files: Vec<PathBuf>,
     source: RuntimeResourceExtensionSource,
 }
 
@@ -1446,6 +1546,8 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
         mobile_static_dependency_archives: Vec::new(),
         static_symbol_prefix: None,
         static_symbol_aliases: Vec::new(),
+        license_profile: None,
+        license_files: Vec::new(),
         source: RuntimeResourceExtensionSource::BuiltIn(extension),
     }
 }
@@ -1616,6 +1718,22 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         optional_manifest_c_identifier(&manifest_path, &manifest, "staticSymbolPrefix")?;
     let static_symbol_aliases =
         parse_manifest_static_symbol_aliases(&manifest_path, &manifest, "staticSymbolAliases")?;
+    let license_files =
+        parse_manifest_relative_path_list(&manifest_path, &manifest, "licenseFiles")?;
+    validate_extension_artifact_license_paths(&manifest_path, &license_files)?;
+    let license_profile = NativeExtensionArtifactLicenseProfile::parse(required_manifest_value(
+        &manifest_path,
+        &manifest,
+        "licenseProfile",
+    )?)?;
+    validate_extension_artifact_license_profile(
+        &manifest_path,
+        &sql_name,
+        native_target.as_deref(),
+        &mobile_static_dependency_archives,
+        license_profile,
+        &license_files,
+    )?;
     validate_prebuilt_extension_mobile_static_archives(
         root,
         &manifest_path,
@@ -1630,7 +1748,7 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         &mobile_static_dependency_archives,
     )?;
 
-    Ok(RuntimeResourceExtension {
+    let extension = RuntimeResourceExtension {
         sql_name,
         native_runtime_version: Some(native_runtime_version),
         creates_extension,
@@ -1647,11 +1765,15 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
         mobile_static_dependency_archives,
         static_symbol_prefix,
         static_symbol_aliases,
+        license_profile: Some(license_profile),
+        license_files,
         source: RuntimeResourceExtensionSource::Prebuilt {
             root: root.to_path_buf(),
             files_root,
         },
-    })
+    };
+    validate_prebuilt_extension_leaf_inventory(root, &manifest_path, &extension)?;
+    Ok(extension)
 }
 
 impl RuntimeResourceExtension {
@@ -2140,6 +2262,17 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             b"comment = 'should not leak'\n",
         );
 
+        let error = resolve_runtime_resource_extensions(
+            &[],
+            &[NativePrebuiltExtensionArtifact::new(&artifact)],
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("contains undeclared extension SQL/control file files/share/postgresql/extension/hstore.control"),
+            "unexpected extra-leaf error: {error}"
+        );
+        fs::remove_file(artifact.join("files/share/postgresql/extension/hstore.control")).unwrap();
+
         let extensions = resolve_runtime_resource_extensions(
             &[],
             &[NativePrebuiltExtensionArtifact::new(&artifact)],
@@ -2260,7 +2393,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         .unwrap();
         assert_eq!(report.extensions.len(), 1);
         assert_eq!(report.extensions[0].name, "acme_ext");
-        assert_eq!(report.extensions[0].file_count, 4);
+        assert_eq!(report.extensions[0].file_count, 5);
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -2396,7 +2529,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let report =
             runtime_resource_size_report(&root, &extensions, Some("ios-xcframework"), &metadata)
                 .unwrap();
-        assert_eq!(report.extensions[0].file_count, 3);
+        assert_eq!(report.extensions[0].file_count, 4);
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -2984,6 +3117,118 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
+    fn prebuilt_extension_nested_archive_rejects_top_level_file_sibling() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-tar-file-sibling");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let archive = temp.join("acme_ext-with-file-sibling.tar");
+        write_tar_archive_from_dir_with_top_level_sibling(
+            &archive,
+            &artifact,
+            "acme_ext",
+            "undeclared.txt",
+            false,
+        );
+
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive,
+            )])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one top-level directory with no sibling entries"),
+            "unexpected top-level file sibling error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_nested_archive_rejects_top_level_directory_sibling() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-tar-directory-sibling");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let archive = temp.join("acme_ext-with-directory-sibling.tar");
+        write_tar_archive_from_dir_with_top_level_sibling(
+            &archive,
+            &artifact,
+            "acme_ext",
+            "undeclared",
+            true,
+        );
+
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive,
+            )])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one top-level directory with no sibling entries"),
+            "unexpected top-level directory sibling error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_archive_rejects_noncanonical_legal_header_modes() {
+        for (case, member) in [
+            ("root-license", "acme_ext/LICENSE"),
+            (
+                "declared-upstream-license",
+                "acme_ext/files/share/licenses/acme_ext/LICENSE",
+            ),
+        ] {
+            let temp = unique_temp_root(&format!(
+                "oliphaunt-prebuilt-extension-tar-legal-mode-{case}"
+            ));
+            let artifact = temp.join("artifact-root");
+            write_prebuilt_extension_artifact(
+                &artifact,
+                "acme_ext",
+                "acme_ext",
+                "acme_static",
+                "data/acme_ext.rules",
+                false,
+            );
+            let archive = temp.join(format!("acme_ext-{case}.tar"));
+            write_tar_archive_from_dir(&archive, &artifact, "acme_ext");
+            rewrite_tar_archive_member_mode(&archive, Path::new(member), 0o600);
+
+            let error = PreparedPrebuiltExtensionArtifacts::prepare(&[
+                NativePrebuiltExtensionArtifact::new(&archive),
+            ])
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(&format!(
+                    "legal member {member} must have exact tar header mode 0644, got 0600"
+                )),
+                "unexpected {case} legal header-mode error: {error}"
+            );
+
+            let _ = fs::remove_dir_all(temp);
+        }
+    }
+
+    #[test]
     fn prebuilt_extension_artifact_rejects_mobile_archive_path_escape() {
         let temp = unique_temp_root("oliphaunt-prebuilt-extension-mobile-path");
         let artifact = temp.join("artifact-root");
@@ -3182,6 +3427,180 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
+    fn production_extension_legal_profiles_load_with_exact_leaf_inventories() {
+        let temp = unique_temp_root("oliphaunt-extension-legal-profiles");
+        let cube = temp.join("cube");
+        write_profiled_extension_artifact(
+            &cube,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        let loaded = load_prebuilt_extension_artifact(&cube).unwrap();
+        assert_eq!(
+            loaded.license_profile,
+            Some(NativeExtensionArtifactLicenseProfile::ContribNative)
+        );
+        assert!(loaded.license_files.is_empty());
+
+        let pgcrypto = temp.join("pgcrypto");
+        write_profiled_extension_artifact(
+            &pgcrypto,
+            "pgcrypto",
+            "pgcrypto",
+            "macos-arm64",
+            NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl,
+            &[],
+        );
+        let loaded = load_prebuilt_extension_artifact(&pgcrypto).unwrap();
+        assert_eq!(
+            loaded.license_profile,
+            Some(NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl)
+        );
+
+        let postgis = temp.join("postgis");
+        let postgis_licenses = [
+            "share/licenses/geos/COPYING",
+            "share/licenses/postgis/COPYING",
+        ];
+        write_profiled_extension_artifact(
+            &postgis,
+            "postgis",
+            "postgis-3",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ExternalNative,
+            &postgis_licenses,
+        );
+        let loaded = load_prebuilt_extension_artifact(&postgis).unwrap();
+        assert_eq!(
+            loaded.license_profile,
+            Some(NativeExtensionArtifactLicenseProfile::ExternalNative)
+        );
+        assert_eq!(
+            loaded.license_files,
+            postgis_licenses.map(PathBuf::from).to_vec()
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_rejects_missing_extra_unsafe_and_wrong_profile_legal_files() {
+        let temp = unique_temp_root("oliphaunt-extension-legal-adversarial");
+
+        let missing = temp.join("missing");
+        write_profiled_extension_artifact(
+            &missing,
+            "postgis",
+            "postgis-3",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ExternalNative,
+            &["share/licenses/postgis/COPYING"],
+        );
+        fs::remove_file(missing.join("files/share/licenses/postgis/COPYING")).unwrap();
+        let error = load_prebuilt_extension_artifact(&missing).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("leaf inventory mismatch; missing: files/share/licenses/postgis/COPYING"),
+            "unexpected missing legal leaf error: {error}"
+        );
+
+        let extra = temp.join("extra");
+        write_profiled_extension_artifact(
+            &extra,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        write_file(
+            &extra.join("THIRD_PARTY_LICENSES/undeclared.txt"),
+            b"undeclared\n",
+        );
+        let error = load_prebuilt_extension_artifact(&extra).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("undeclared: THIRD_PARTY_LICENSES/undeclared.txt"),
+            "unexpected extra legal leaf error: {error}"
+        );
+
+        let unsafe_path = temp.join("unsafe");
+        write_profiled_extension_artifact(
+            &unsafe_path,
+            "postgis",
+            "postgis-3",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ExternalNative,
+            &["share/licenses/postgis/COPYING"],
+        );
+        let manifest = unsafe_path.join("manifest.properties");
+        let text = fs::read_to_string(&manifest).unwrap().replace(
+            "licenseFiles=share/licenses/postgis/COPYING\n",
+            "licenseFiles=../outside-license\n",
+        );
+        fs::write(&manifest, text).unwrap();
+        let error = load_prebuilt_extension_artifact(&unsafe_path).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("contains path component \"..\" that is unsafe on supported build hosts"),
+            "unexpected unsafe legal path error: {error}"
+        );
+
+        let wrong_profile = temp.join("wrong-profile");
+        write_profiled_extension_artifact(
+            &wrong_profile,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        let manifest = wrong_profile.join("manifest.properties");
+        let text = fs::read_to_string(&manifest).unwrap().replace(
+            "licenseProfile=contrib-native\n",
+            "licenseProfile=external-native\n",
+        );
+        fs::write(&manifest, text).unwrap();
+        let error = load_prebuilt_extension_artifact(&wrong_profile).unwrap_err();
+        assert!(
+            error.to_string().contains("expected 'contrib-native'"),
+            "unexpected wrong legal profile error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prebuilt_extension_rejects_noncanonical_legal_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = unique_temp_root("oliphaunt-extension-legal-mode");
+        let artifact = temp.join("cube");
+        write_profiled_extension_artifact(
+            &artifact,
+            "cube",
+            "cube",
+            "linux-x64-gnu",
+            NativeExtensionArtifactLicenseProfile::ContribNative,
+            &[],
+        );
+        fs::set_permissions(artifact.join("LICENSE"), fs::Permissions::from_mode(0o600)).unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error.to_string().contains("LICENSE must have mode 0644"),
+            "unexpected legal mode error: {error}"
+        );
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn create_prebuilt_extension_artifact_copies_only_exact_declared_runtime_files() {
         let temp = unique_temp_root("oliphaunt-create-prebuilt-extension-artifact");
         let runtime = temp.join("runtime");
@@ -3225,12 +3644,21 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                     "openssl",
                     &ios_dependency_archive,
                 )
-                .static_symbol_prefix("acme_static"),
+                .static_symbol_prefix("acme_static")
+                .legal_contract(write_external_legal_contract(&temp, "acme_ext")),
         )
         .unwrap();
 
         assert_eq!(created.path, artifact_root);
         assert_eq!(created.sql_name, "acme_ext");
+        assert_eq!(
+            created.license_profile,
+            NativeExtensionArtifactLicenseProfile::ExternalNative
+        );
+        assert_eq!(
+            created.license_files,
+            vec![PathBuf::from("share/licenses/acme_ext/LICENSE")]
+        );
         assert_eq!(created.format, NativeExtensionArtifactFormat::Directory);
         assert!(created.manifest_path.unwrap().is_file());
         let manifest = fs::read_to_string(artifact_root.join("manifest.properties")).unwrap();
@@ -3254,6 +3682,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "mobileStaticDependencyArchives=ios-simulator:openssl:mobile-static/ios-simulator/dependencies/openssl/libcrypto.a\n"
         ));
         assert!(manifest.contains("staticSymbolPrefix=acme_static\n"));
+        assert!(manifest.contains("licenseFiles=share/licenses/acme_ext/LICENSE\n"));
+        assert!(manifest.contains("licenseProfile=external-native\n"));
         let parsed_manifest = parse_canonical_properties_manifest(
             &artifact_root.join("manifest.properties"),
             &manifest,
@@ -3305,6 +3735,13 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .join("mobile-static/ios-simulator/dependencies/openssl/libcrypto.a")
                 .is_file()
         );
+        assert!(artifact_root.join("LICENSE").is_file());
+        assert!(artifact_root.join("THIRD_PARTY_NOTICES.md").is_file());
+        assert!(
+            artifact_root
+                .join("files/share/licenses/acme_ext/LICENSE")
+                .is_file()
+        );
         assert!(
             !artifact_root
                 .join("files/share/postgresql/extension/hstore.control")
@@ -3335,6 +3772,14 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         );
         assert_eq!(loaded.mobile_static_dependency_archives.len(), 1);
         assert_eq!(
+            loaded.license_profile,
+            Some(NativeExtensionArtifactLicenseProfile::ExternalNative)
+        );
+        assert_eq!(
+            loaded.license_files,
+            vec![PathBuf::from("share/licenses/acme_ext/LICENSE")]
+        );
+        assert_eq!(
             loaded.mobile_static_dependency_archives[0].relative_path,
             PathBuf::from("mobile-static/ios-simulator/dependencies/openssl/libcrypto.a")
         );
@@ -3363,7 +3808,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .native_module_stem("acme_ext")
                 .native_module_file("acme_ext.so")
                 .native_target("linux-x64-gnu")
-                .embedded_module_root(&embedded_modules),
+                .embedded_module_root(&embedded_modules)
+                .legal_contract(write_external_legal_contract(&temp, "acme_ext")),
         )
         .unwrap();
 
@@ -3428,7 +3874,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .native_module_stem("acme_ext")
                 .native_target("test-target")
                 .data_file("data/acme_ext.rules")
-                .format(NativeExtensionArtifactFormat::TarZst),
+                .format(NativeExtensionArtifactFormat::TarZst)
+                .legal_contract(write_external_legal_contract(&temp, "acme_ext")),
         )
         .unwrap();
         assert_eq!(created.path, archive);
@@ -3488,7 +3935,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .native_module_stem("acme_ext")
                 .native_target("test-target")
                 .data_file("data/acme_ext.rules")
-                .format(NativeExtensionArtifactFormat::TarGz),
+                .format(NativeExtensionArtifactFormat::TarGz)
+                .legal_contract(write_external_legal_contract(&temp, "acme_ext")),
         )
         .unwrap();
         assert_eq!(created.path, archive);
@@ -3681,7 +4129,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .mobile_prebuilt(true)
                 .mobile_static_archive("ios-simulator", &ios_archive)
                 .static_symbol_prefix("acme_static")
-                .format(NativeExtensionArtifactFormat::TarZst),
+                .format(NativeExtensionArtifactFormat::TarZst)
+                .legal_contract(write_external_legal_contract(&temp, "acme_ext")),
         )
         .unwrap();
 
@@ -4152,6 +4601,16 @@ bytes = {bytes}
         fs::write(path, contents).expect("write fixture file");
     }
 
+    fn write_legal_fixture_file(path: &Path, contents: &[u8]) {
+        write_file(path, contents);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o644))
+                .expect("set canonical fixture legal mode");
+        }
+    }
+
     fn write_prebuilt_extension_artifact(
         root: &Path,
         sql_name: &str,
@@ -4216,6 +4675,8 @@ mobileStaticArchives={mobile_static_archives}
 mobileStaticDependencyArchives={mobile_static_dependency_archives}
 staticSymbolPrefix={static_symbol_prefix}
 staticSymbolAliases=
+licenseFiles=share/licenses/{sql_name}/LICENSE
+licenseProfile=external-native
 files=files
 ",
                 if mobile_prebuilt { "yes" } else { "no" }
@@ -4237,6 +4698,18 @@ files=files
         write_file(
             &root.join("files/share/postgresql").join(data_file),
             b"acme-data\n",
+        );
+        write_legal_fixture_file(&root.join("LICENSE"), b"fixture Oliphaunt license\n");
+        write_legal_fixture_file(
+            &root.join("THIRD_PARTY_NOTICES.md"),
+            b"fixture third-party notices\n",
+        );
+        write_legal_fixture_file(
+            &root
+                .join("files/share/licenses")
+                .join(sql_name)
+                .join("LICENSE"),
+            b"fixture upstream license\n",
         );
         write_file(
             &root
@@ -4288,14 +4761,179 @@ files=files
         );
     }
 
+    fn write_external_legal_contract(
+        temp: &Path,
+        sql_name: &str,
+    ) -> NativeExtensionArtifactLegalContract {
+        let root = temp.join(format!("legal-{sql_name}"));
+        write_legal_fixture_file(&root.join("LICENSE"), b"fixture Oliphaunt license\n");
+        write_legal_fixture_file(
+            &root.join("THIRD_PARTY_NOTICES.md"),
+            b"fixture third-party notices\n",
+        );
+        let license = PathBuf::from(format!("share/licenses/{sql_name}/LICENSE"));
+        write_legal_fixture_file(&root.join(&license), b"fixture upstream license\n");
+        NativeExtensionArtifactLegalContract::new(
+            NativeExtensionArtifactLicenseProfile::ExternalNative,
+            root,
+        )
+        .license_file(license)
+    }
+
+    fn write_profiled_extension_artifact(
+        root: &Path,
+        sql_name: &str,
+        module_stem: &str,
+        target: &str,
+        profile: NativeExtensionArtifactLicenseProfile,
+        license_files: &[&str],
+    ) {
+        let module_file = format!("{module_stem}.so");
+        let license_value = license_files.join(",");
+        write_file(
+            &root.join("manifest.properties"),
+            format!(
+                "\
+packageLayout=oliphaunt-extension-artifact-v1
+pgMajor=18
+sqlName={sql_name}
+createsExtension=yes
+nativeModuleStem={module_stem}
+nativeModuleFile={module_file}
+nativeTarget={target}
+nativeRuntimeProduct=liboliphaunt-native
+nativeRuntimeVersion=1.2.3
+dependencies=
+dataFiles=
+extensionSqlFileNames=
+extensionSqlFilePrefixes=
+sharedPreloadLibraries=
+mobilePrebuilt=no
+mobileStaticArchives=
+mobileStaticDependencyArchives=
+staticSymbolPrefix=
+staticSymbolAliases=
+licenseFiles={license_value}
+licenseProfile={}
+files=files
+",
+                profile.as_str()
+            )
+            .as_bytes(),
+        );
+        write_legal_fixture_file(&root.join("LICENSE"), b"fixture Oliphaunt license\n");
+        write_legal_fixture_file(
+            &root.join("THIRD_PARTY_NOTICES.md"),
+            b"fixture third-party notices\n",
+        );
+        if matches!(
+            profile,
+            NativeExtensionArtifactLicenseProfile::ContribNative
+                | NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl
+        ) {
+            write_legal_fixture_file(
+                &root.join(EXTENSION_ARTIFACT_POSTGRESQL_LICENSE),
+                b"fixture PostgreSQL license\n",
+            );
+        }
+        if profile == NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl {
+            write_legal_fixture_file(
+                &root.join(EXTENSION_ARTIFACT_OPENSSL_LICENSE),
+                b"fixture OpenSSL license\n",
+            );
+        }
+        for license in license_files {
+            write_legal_fixture_file(
+                &root.join("files").join(license),
+                format!("fixture upstream license {license}\n").as_bytes(),
+            );
+        }
+        write_file(
+            &root
+                .join("files/share/postgresql/extension")
+                .join(format!("{sql_name}.control")),
+            b"comment = 'profile fixture'\n",
+        );
+        write_file(
+            &root
+                .join("files/share/postgresql/extension")
+                .join(format!("{sql_name}--1.0.sql")),
+            b"SELECT 1;\n",
+        );
+        write_file(
+            &root.join("files/lib/postgresql").join(&module_file),
+            b"fixture server module\n",
+        );
+        write_file(
+            &root.join("files/lib/modules").join(module_file),
+            b"fixture embedded module\n",
+        );
+    }
+
     fn write_tar_archive_from_dir(archive_path: &Path, source: &Path, prefix: &str) {
         if let Some(parent) = archive_path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
         let file = File::create(archive_path).unwrap();
         let mut archive = tar::Builder::new(file);
+        archive.mode(tar::HeaderMode::Deterministic);
         archive.append_dir_all(prefix, source).unwrap();
         archive.finish().unwrap();
+    }
+
+    fn write_tar_archive_from_dir_with_top_level_sibling(
+        archive_path: &Path,
+        source: &Path,
+        prefix: &str,
+        sibling: &str,
+        sibling_is_directory: bool,
+    ) {
+        if let Some(parent) = archive_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let file = File::create(archive_path).unwrap();
+        let mut archive = tar::Builder::new(file);
+        archive.append_dir_all(prefix, source).unwrap();
+        let mut header = tar::Header::new_ustar();
+        header.set_path(sibling).unwrap();
+        header.set_mode(if sibling_is_directory { 0o755 } else { 0o644 });
+        header.set_size(0);
+        header.set_entry_type(if sibling_is_directory {
+            EntryType::Directory
+        } else {
+            EntryType::Regular
+        });
+        header.set_cksum();
+        archive.append(&header, io::empty()).unwrap();
+        archive.finish().unwrap();
+    }
+
+    fn rewrite_tar_archive_member_mode(archive_path: &Path, member: &Path, mode: u32) {
+        let source_path = archive_path.with_extension("original.tar");
+        fs::rename(archive_path, &source_path).unwrap();
+        let source_file = File::open(&source_path).unwrap();
+        let mut source_archive = tar::Archive::new(source_file);
+        let output_file = File::create(archive_path).unwrap();
+        let mut output_archive = tar::Builder::new(output_file);
+        let mut found = false;
+        for entry in source_archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().into_owned();
+            let mut header = entry.header().clone();
+            if header.entry_type().is_file() {
+                header.set_mode(if path == member { mode } else { 0o644 });
+                header.set_cksum();
+                found |= path == member;
+            }
+            output_archive.append(&header, &mut entry).unwrap();
+        }
+        output_archive.finish().unwrap();
+        assert!(
+            found,
+            "tar fixture is missing mode override member {}",
+            member.display()
+        );
+        fs::remove_file(source_path).unwrap();
     }
 
     fn write_tar_zst_archive_from_dir(archive_path: &Path, source: &Path, prefix: &str) {

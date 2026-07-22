@@ -140,6 +140,7 @@ final class PublicTarGzArchivePreflight {
     LinkedHashSet<String> paths = new LinkedHashSet<>();
     Map<String, String> foldedPaths = new LinkedHashMap<>();
     Map<String, String> foldedFiles = new LinkedHashMap<>();
+    Map<String, Member> members = new LinkedHashMap<>();
     int entries = 0;
     int regularFiles = 0;
     try (InputStream raw = Files.newInputStream(archive);
@@ -176,6 +177,8 @@ final class PublicTarGzArchivePreflight {
             paths,
             foldedPaths,
             foldedFiles);
+        members.put(
+            entry.path(), new Member(entry.size(), entry.mode(), entry.directory()));
         if (!entry.directory()) {
           regularFiles += 1;
         }
@@ -192,7 +195,12 @@ final class PublicTarGzArchivePreflight {
     if (regularFiles == 0) {
       throw new GradleException(archive + " contains no regular release artifact files");
     }
-    return new Inspection(attributes.size(), state.expandedBytes, entries, regularFiles);
+    return new Inspection(
+        attributes.size(),
+        state.expandedBytes,
+        entries,
+        regularFiles,
+        java.util.Collections.unmodifiableMap(new LinkedHashMap<>(members)));
   }
 
   private static BasicFileAttributes regularArchiveAttributes(Path archive, Limits limits) {
@@ -287,6 +295,11 @@ final class PublicTarGzArchivePreflight {
               + ")");
     }
     long size = parseOctal(header, 124, 12, archive, "size for " + rawPath);
+    long rawMode = parseOctal(header, 100, 8, archive, "mode for " + rawPath);
+    if (rawMode > 07777) {
+      throw new GradleException(
+          archive + " has out-of-range ustar mode for " + rawPath + ": " + rawMode);
+    }
     if (directory && size != 0) {
       throw new GradleException(archive + " contains non-empty directory entry " + rawPath);
     }
@@ -300,7 +313,7 @@ final class PublicTarGzArchivePreflight {
               + "-byte per-entry limit");
     }
     String path = safePath(archive, rawPath, directory);
-    return new TarEntry(path, size, directory);
+    return new TarEntry(path, size, (int) rawMode, directory);
   }
 
   private static String safePath(Path archive, String rawPath, boolean directory) {
@@ -681,9 +694,16 @@ final class PublicTarGzArchivePreflight {
       int maxExpansionRatio,
       long expansionRatioFloorBytes) {}
 
-  record Inspection(long compressedBytes, long expandedBytes, int entries, int regularFiles) {}
+  record Inspection(
+      long compressedBytes,
+      long expandedBytes,
+      int entries,
+      int regularFiles,
+      Map<String, Member> members) {}
 
-  private record TarEntry(String path, long size, boolean directory) {}
+  record Member(long bytes, int mode, boolean directory) {}
+
+  private record TarEntry(String path, long size, int mode, boolean directory) {}
 
   private static final class ScanState {
     private final Path archive;

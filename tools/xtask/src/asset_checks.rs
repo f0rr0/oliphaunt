@@ -1696,6 +1696,31 @@ where
                 source.commit
             );
         }
+        if head.trim() == source.commit
+            && let Some(expected_epoch) = source.source_date_epoch
+        {
+            let actual_epoch =
+                command_output("git", &["show", "-s", "--format=%ct", "HEAD"], &path)
+                    .with_context(|| {
+                        format!("read pinned source timestamp for {}", path.display())
+                    })?;
+            if actual_epoch.trim() != expected_epoch.to_string() {
+                if strict_local {
+                    bail!(
+                        "local {} checkout commit timestamp is {}, expected source_date_epoch {}",
+                        path.display(),
+                        actual_epoch.trim(),
+                        expected_epoch
+                    );
+                }
+                eprintln!(
+                    "warning: local {} checkout commit timestamp is {}, expected source_date_epoch {}",
+                    path.display(),
+                    actual_epoch.trim(),
+                    expected_epoch
+                );
+            }
+        }
         let branch = command_output("git", &["branch", "--show-current"], &path)
             .unwrap_or_else(|_| String::from("<detached>"));
         if strict_local && branch.trim() != source.branch {

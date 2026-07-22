@@ -41,6 +41,7 @@ import {
 } from "./ios-carrier-manifest.mjs";
 import {
   portableMemberName,
+  readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
 } from "./portable-archive.mjs";
 import {
@@ -352,31 +353,18 @@ function tarReadText(file, member) {
 }
 
 function canonicalBundleTarEntries(file) {
-  const archiveEntries = strictArchiveEntries(file, "tar.gz");
-  const compressed = readFileSync(file);
-  if (compressed.length < 18 || compressed[0] !== 0x1f || compressed[1] !== 0x8b) {
-    fail(`${rel(file)} is not a gzip archive`);
-  }
-  if (!compressed.subarray(4, 8).equals(Buffer.alloc(4))) {
-    fail(`${rel(file)} gzip header must use mtime=0`);
+  let archiveEntries;
+  try {
+    archiveEntries = readCanonicalTarGzipEntries(file, { fileMode: 0o644 });
+  } catch (error) {
+    fail(`${rel(file)} is not an exact canonical bundle: ${error.message}`);
   }
   const entries = new Map();
   for (const [name, entry] of archiveEntries) {
-    if (!entry.isFile) {
-      fail(`${rel(file)} bundle member ${name} must be a regular file`);
-    }
-    if (entry.mode !== 0o644 || entry.uid !== 0 || entry.gid !== 0 || entry.mtime !== 0) {
-      fail(`${rel(file)} bundle member ${name} must use mode=0644 uid=0 gid=0 mtime=0`);
-    }
     entries.set(name, Buffer.from(entry.data()));
   }
   if (entries.size === 0) {
     fail(`${rel(file)} must contain at least one regular file and a canonical tar end marker`);
-  }
-  const names = [...entries.keys()];
-  const sorted = [...names].sort(compareText);
-  if (JSON.stringify(names) !== JSON.stringify(sorted)) {
-    fail(`${rel(file)} bundle tar members must be sorted deterministically`);
   }
   return entries;
 }
@@ -1670,6 +1658,12 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
     const manifestBytes = entries.get(manifestName);
     if (manifestBytes === undefined) {
       fail(`${carrier.name} is missing ${manifestName}`);
+    }
+    const expectedManifestBytes = Buffer.from(
+      `${JSON.stringify(sortValue(expectedBundleManifest), null, 2)}\n`,
+    );
+    if (!manifestBytes.equals(expectedManifestBytes)) {
+      fail(`${carrier.name} bundle-manifest.json must use its exact canonical nested member and legal bytes`);
     }
     let actualBundleManifest;
     try {

@@ -32,6 +32,11 @@ tasks:
       - "liboliphaunt-native:check"
       - "shared-contracts:check"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
       - "/src/sdks/rust/extension-artifact-archive-policy.properties"
@@ -48,6 +53,11 @@ tasks:
       - "liboliphaunt-native:check"
       - "shared-fixtures:check"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
       - "/src/sdks/rust/extension-artifact-archive-policy.properties"

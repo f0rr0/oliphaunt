@@ -11,6 +11,326 @@ const DESKTOP_NATIVE_TARGETS: [&str; 4] = [
     "macos-arm64",
     "windows-x64-msvc",
 ];
+const EXTENSION_ARTIFACT_BASE_LEGAL_MEMBERS: [&str; 2] = ["LICENSE", "THIRD_PARTY_NOTICES.md"];
+pub(super) const EXTENSION_ARTIFACT_POSTGRESQL_LICENSE: &str =
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT";
+pub(super) const EXTENSION_ARTIFACT_OPENSSL_LICENSE: &str =
+    "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt";
+
+fn extension_artifact_legal_members(
+    profile: NativeExtensionArtifactLicenseProfile,
+) -> Vec<PathBuf> {
+    let mut members = EXTENSION_ARTIFACT_BASE_LEGAL_MEMBERS
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    match profile {
+        NativeExtensionArtifactLicenseProfile::ContribNative => {
+            members.push(PathBuf::from(EXTENSION_ARTIFACT_POSTGRESQL_LICENSE));
+        }
+        NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl => {
+            members.push(PathBuf::from(EXTENSION_ARTIFACT_POSTGRESQL_LICENSE));
+            members.push(PathBuf::from(EXTENSION_ARTIFACT_OPENSSL_LICENSE));
+        }
+        NativeExtensionArtifactLicenseProfile::ExternalNative => {}
+    }
+    members.sort();
+    members
+}
+
+pub(super) fn validate_extension_artifact_license_paths(
+    manifest_path: &Path,
+    license_files: &[PathBuf],
+) -> Result<()> {
+    for relative in license_files {
+        let mut components = relative.components();
+        let in_license_namespace = matches!(components.next(), Some(Component::Normal(value)) if value == "share")
+            && matches!(components.next(), Some(Component::Normal(value)) if value == "licenses")
+            && components.next().is_some();
+        if !in_license_namespace {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} licenseFiles entry '{}' must be an exact leaf below share/licenses/",
+                manifest_path.display(),
+                relative.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_extension_artifact_license_profile(
+    manifest_path: &Path,
+    sql_name: &str,
+    native_target: Option<&str>,
+    mobile_static_dependency_archives: &[MobileStaticDependencyArchive],
+    profile: NativeExtensionArtifactLicenseProfile,
+    license_files: &[PathBuf],
+) -> Result<()> {
+    let external = Extension::by_sql_name(sql_name)
+        .and_then(Extension::release_product)
+        .is_none_or(|product| product != "oliphaunt-extension-contrib-pg18");
+    let embeds_openssl = !external
+        && sql_name == "pgcrypto"
+        && (matches!(native_target, Some("macos-arm64" | "windows-x64-msvc"))
+            || mobile_static_dependency_archives
+                .iter()
+                .any(|archive| archive.name == "openssl"));
+    let expected = if external {
+        NativeExtensionArtifactLicenseProfile::ExternalNative
+    } else if embeds_openssl {
+        NativeExtensionArtifactLicenseProfile::ContribNativeOpenSsl
+    } else {
+        NativeExtensionArtifactLicenseProfile::ContribNative
+    };
+    if profile != expected {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} has licenseProfile='{}' for extension '{}' and target '{}', expected '{}'",
+            manifest_path.display(),
+            profile.as_str(),
+            sql_name,
+            native_target.unwrap_or(""),
+            expected.as_str()
+        )));
+    }
+    if external && license_files.is_empty() {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} external-native profile must declare at least one exact licenseFiles leaf",
+            manifest_path.display()
+        )));
+    }
+    if !external && !license_files.is_empty() {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} contrib profile must not declare upstream licenseFiles leaves",
+            manifest_path.display()
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_prebuilt_extension_leaf_inventory(
+    root: &Path,
+    manifest_path: &Path,
+    extension: &RuntimeResourceExtension,
+) -> Result<()> {
+    let profile = extension.license_profile.ok_or_else(|| {
+        Error::Engine(format!(
+            "internal error: prebuilt extension {} has no legal profile",
+            manifest_path.display()
+        ))
+    })?;
+    let actual = extension_artifact_leaf_inventory(root)?;
+    let mut expected = BTreeSet::from([PathBuf::from("manifest.properties")]);
+    let mut legal_members = BTreeSet::new();
+    for member in extension_artifact_legal_members(profile) {
+        legal_members.insert(member.clone());
+        expected.insert(member);
+    }
+    for relative in &extension.license_files {
+        let member = PathBuf::from("files").join(relative);
+        legal_members.insert(member.clone());
+        expected.insert(member);
+    }
+
+    let extension_prefix = Path::new("files/share/postgresql/extension");
+    let mut has_control = false;
+    let mut has_install_sql = false;
+    for relative in &actual {
+        let Ok(file_name) = relative.strip_prefix(extension_prefix) else {
+            continue;
+        };
+        if file_name.components().count() != 1 {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact {} contains undeclared extension SQL/control file {}",
+                root.display(),
+                relative.display()
+            )));
+        }
+        let file_name = file_name.to_str().ok_or_else(|| {
+            Error::InvalidConfig(format!(
+                "prebuilt extension artifact {} has a non-UTF-8 extension SQL/control file {}",
+                root.display(),
+                relative.display()
+            ))
+        })?;
+        if !runtime_extension_sql_file_belongs(extension, file_name) {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact {} contains undeclared extension SQL/control file {}",
+                root.display(),
+                relative.display()
+            )));
+        }
+        expected.insert(relative.clone());
+        has_control |= file_name == format!("{}.control", extension.sql_name);
+        has_install_sql |= extension_install_sql_file_belongs(&extension.sql_name, file_name);
+    }
+    if extension.creates_extension && (!has_control || !has_install_sql) {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact {} for '{}' must include its control file and at least one canonical base install SQL file",
+            root.display(),
+            extension.sql_name
+        )));
+    }
+    for relative in &extension.data_files {
+        expected.insert(PathBuf::from("files/share/postgresql").join(relative));
+    }
+    if let Some(module) = &extension.native_module_file {
+        expected.insert(PathBuf::from("files/lib/postgresql").join(module));
+        let embedded = PathBuf::from("files/lib/modules").join(module);
+        if extension
+            .native_target
+            .as_deref()
+            .is_some_and(|target| DESKTOP_NATIVE_TARGETS.contains(&target))
+            || actual.contains(&embedded)
+        {
+            expected.insert(embedded);
+        }
+    }
+    for archive in &extension.mobile_static_archives {
+        expected.insert(archive.relative_path.clone());
+    }
+    for archive in &extension.mobile_static_dependency_archives {
+        expected.insert(archive.relative_path.clone());
+    }
+
+    if actual != expected {
+        let undeclared = actual
+            .difference(&expected)
+            .map(|path| path.display().to_string());
+        let missing = expected
+            .difference(&actual)
+            .map(|path| path.display().to_string());
+        let undeclared = undeclared.collect::<Vec<_>>();
+        let missing = missing.collect::<Vec<_>>();
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact {} leaf inventory mismatch{}{}",
+            root.display(),
+            if undeclared.is_empty() {
+                String::new()
+            } else {
+                format!("; undeclared: {}", undeclared.join(","))
+            },
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!("; missing: {}", missing.join(","))
+            }
+        )));
+    }
+    for relative in legal_members {
+        validate_extension_artifact_legal_leaf(root, &relative)?;
+    }
+    Ok(())
+}
+
+fn extension_artifact_leaf_inventory(root: &Path) -> Result<BTreeSet<PathBuf>> {
+    fn walk(root: &Path, current: &Path, out: &mut BTreeSet<PathBuf>) -> Result<()> {
+        let mut entries = fs::read_dir(current)
+            .map_err(|err| Error::InvalidConfig(format!("read {}: {err}", current.display())))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|err| {
+                Error::InvalidConfig(format!("read entry in {}: {err}", current.display()))
+            })?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).map_err(|err| {
+                Error::InvalidConfig(format!("inspect artifact member {}: {err}", path.display()))
+            })?;
+            if metadata.file_type().is_symlink() {
+                return Err(Error::InvalidConfig(format!(
+                    "prebuilt extension artifact {} contains unsafe symlink {}",
+                    root.display(),
+                    path.display()
+                )));
+            }
+            if metadata.is_dir() {
+                walk(root, &path, out)?;
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err(Error::InvalidConfig(format!(
+                    "prebuilt extension artifact {} contains non-file member {}",
+                    root.display(),
+                    path.display()
+                )));
+            }
+            let relative = path.strip_prefix(root).map_err(|err| {
+                Error::Engine(format!(
+                    "derive artifact member path {}: {err}",
+                    path.display()
+                ))
+            })?;
+            validate_relative_artifact_path(root, "artifact member", relative)?;
+            for component in relative.components() {
+                let Component::Normal(component) = component else {
+                    continue;
+                };
+                let component = component.to_str().ok_or_else(|| {
+                    Error::InvalidConfig(format!(
+                        "prebuilt extension artifact {} member {} must use UTF-8 path text",
+                        root.display(),
+                        relative.display()
+                    ))
+                })?;
+                if component.contains('\\') {
+                    return Err(Error::InvalidConfig(format!(
+                        "prebuilt extension artifact {} member {} contains a literal backslash",
+                        root.display(),
+                        relative.display()
+                    )));
+                }
+            }
+            if !out.insert(relative.to_path_buf()) {
+                return Err(Error::InvalidConfig(format!(
+                    "prebuilt extension artifact {} repeats leaf {}",
+                    root.display(),
+                    relative.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    let metadata = fs::symlink_metadata(root).map_err(|err| {
+        Error::InvalidConfig(format!(
+            "inspect prebuilt extension artifact {}: {err}",
+            root.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact {} must be a real directory after extraction",
+            root.display()
+        )));
+    }
+    let mut out = BTreeSet::new();
+    walk(root, root, &mut out)?;
+    Ok(out)
+}
+
+fn validate_extension_artifact_legal_leaf(root: &Path, relative: &Path) -> Result<()> {
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path).map_err(|err| {
+        Error::InvalidConfig(format!("inspect legal member {}: {err}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact legal member {} must be a non-empty regular non-symlink file",
+            relative.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o777 != 0o644 {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact legal member {} must have mode 0644",
+                relative.display()
+            )));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ExtensionArtifactArchivePolicy {
@@ -113,6 +433,12 @@ pub fn create_prebuilt_extension_artifact(
     options: NativeExtensionArtifactOptions,
 ) -> Result<NativeExtensionArtifact> {
     validate_extension_artifact_options(&options)?;
+    let legal_contract = options
+        .legal_contract
+        .as_ref()
+        .expect("validated artifact options require a legal contract");
+    let license_profile = legal_contract.profile;
+    let license_files = sorted_deduped_paths(&legal_contract.license_files);
 
     let output = options.output.clone();
     let mut staging_root = None;
@@ -161,6 +487,8 @@ pub fn create_prebuilt_extension_artifact(
         manifest_path: (options.format == NativeExtensionArtifactFormat::Directory)
             .then(|| output.join("manifest.properties")),
         sql_name: options.sql_name,
+        license_profile,
+        license_files,
         format: options.format,
     })
 }
@@ -429,6 +757,44 @@ fn validate_extension_artifact_options(options: &NativeExtensionArtifactOptions)
             )));
         }
     }
+    let legal_contract = options.legal_contract.as_ref().ok_or_else(|| {
+        Error::InvalidConfig(
+            "prebuilt extension artifact creation requires an exact legal contract".to_owned(),
+        )
+    })?;
+    let legal_root_metadata = fs::symlink_metadata(&legal_contract.source_root).map_err(|err| {
+        Error::InvalidConfig(format!(
+            "inspect prebuilt extension artifact legal source root {}: {err}",
+            legal_contract.source_root.display()
+        ))
+    })?;
+    if legal_root_metadata.file_type().is_symlink() || !legal_root_metadata.is_dir() {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact legal source root {} must be a real directory",
+            legal_contract.source_root.display()
+        )));
+    }
+    let canonical_license_files = sorted_deduped_paths(&legal_contract.license_files);
+    if canonical_license_files.len() != legal_contract.license_files.len() {
+        return Err(Error::InvalidConfig(
+            "prebuilt extension artifact legal contract repeats a license file".to_owned(),
+        ));
+    }
+    validate_extension_artifact_license_paths(&options.output, &canonical_license_files)?;
+    validate_extension_artifact_license_profile(
+        &options.output,
+        &options.sql_name,
+        options.native_target.as_deref(),
+        &mobile_static_dependency_archives_for_artifact_options(options)?,
+        legal_contract.profile,
+        &canonical_license_files,
+    )?;
+    for relative in extension_artifact_legal_members(legal_contract.profile)
+        .into_iter()
+        .chain(canonical_license_files.iter().cloned())
+    {
+        validate_extension_artifact_legal_source(&legal_contract.source_root, &relative)?;
+    }
     Ok(())
 }
 
@@ -491,6 +857,7 @@ fn write_prebuilt_extension_artifact_directory(
     }
     copy_mobile_static_archives_to_artifact(artifact_root, options, &extension)?;
     copy_mobile_static_dependency_archives_to_artifact(artifact_root, options, &extension)?;
+    copy_extension_artifact_legal_files(artifact_root, options)?;
     write_prebuilt_extension_artifact_manifest(artifact_root, options, &extension)?;
     Ok(())
 }
@@ -524,6 +891,15 @@ fn artifact_options_runtime_resource_extension(
         )?,
         static_symbol_prefix: options.static_symbol_prefix.clone(),
         static_symbol_aliases: sorted_static_symbol_aliases(&options.static_symbol_aliases),
+        license_profile: options
+            .legal_contract
+            .as_ref()
+            .map(|contract| contract.profile),
+        license_files: options
+            .legal_contract
+            .as_ref()
+            .map(|contract| sorted_deduped_paths(&contract.license_files))
+            .unwrap_or_default(),
         source: RuntimeResourceExtensionSource::Prebuilt {
             root: artifact_root.to_path_buf(),
             files_root: artifact_root.join("files"),
@@ -680,6 +1056,121 @@ fn copy_mobile_static_dependency_archives_to_artifact(
     Ok(())
 }
 
+fn copy_extension_artifact_legal_files(
+    artifact_root: &Path,
+    options: &NativeExtensionArtifactOptions,
+) -> Result<()> {
+    let contract = options
+        .legal_contract
+        .as_ref()
+        .expect("validated artifact options require a legal contract");
+    for relative in extension_artifact_legal_members(contract.profile) {
+        copy_extension_artifact_legal_file(
+            &contract.source_root,
+            &relative,
+            &artifact_root.join(&relative),
+        )?;
+    }
+    for relative in sorted_deduped_paths(&contract.license_files) {
+        copy_extension_artifact_legal_file(
+            &contract.source_root,
+            &relative,
+            &artifact_root.join("files").join(&relative),
+        )?;
+    }
+    Ok(())
+}
+
+fn copy_extension_artifact_legal_file(
+    source_root: &Path,
+    relative: &Path,
+    destination: &Path,
+) -> Result<()> {
+    validate_relative_artifact_path(source_root, "legal file", relative)?;
+    let source = source_root.join(relative);
+    validate_extension_artifact_legal_source(source_root, relative)?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| Error::Engine(format!("create {}: {err}", parent.display())))?;
+    }
+    fs::copy(&source, destination).map_err(|err| {
+        Error::Engine(format!(
+            "copy legal file {} -> {}: {err}",
+            source.display(),
+            destination.display()
+        ))
+    })?;
+    set_extension_artifact_legal_mode(destination)
+}
+
+fn validate_extension_artifact_legal_source(source_root: &Path, relative: &Path) -> Result<()> {
+    validate_relative_artifact_path(source_root, "legal file", relative)?;
+    let mut cursor = source_root.to_path_buf();
+    let component_count = relative.components().count();
+    for (index, component) in relative.components().enumerate() {
+        let Component::Normal(component) = component else {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact legal source path {} is unsafe",
+                relative.display()
+            )));
+        };
+        cursor.push(component);
+        let metadata = fs::symlink_metadata(&cursor).map_err(|err| {
+            Error::InvalidConfig(format!(
+                "inspect prebuilt extension artifact legal source path {}: {err}",
+                cursor.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact legal source path {} must not traverse a symlink",
+                cursor.display()
+            )));
+        }
+        if index + 1 == component_count {
+            if !metadata.is_file() || metadata.len() == 0 {
+                return Err(Error::InvalidConfig(format!(
+                    "prebuilt extension artifact legal source file {} must be a non-empty regular non-symlink file",
+                    cursor.display()
+                )));
+            }
+        } else if !metadata.is_dir() {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact legal source parent {} must be a real directory",
+                cursor.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn set_extension_artifact_legal_mode(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).map_err(|err| {
+            Error::Engine(format!(
+                "set canonical legal file permissions on {}: {err}",
+                path.display()
+            ))
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = fs::metadata(path)
+            .map_err(|err| Error::Engine(format!("stat {}: {err}", path.display())))?
+            .permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions).map_err(|err| {
+            Error::Engine(format!(
+                "set portable legal file permissions on {}: {err}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 pub(super) fn sorted_deduped_strings(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -820,8 +1311,28 @@ fn write_prebuilt_extension_artifact_manifest(
 ) -> Result<()> {
     fs::create_dir_all(artifact_root)
         .map_err(|err| Error::Engine(format!("create {}: {err}", artifact_root.display())))?;
+    let legal_contract = options
+        .legal_contract
+        .as_ref()
+        .expect("validated artifact options require a legal contract");
+    let license_files = sorted_deduped_paths(&legal_contract.license_files)
+        .iter()
+        .map(|path| render_portable_artifact_path(path, "prebuilt extension license file"))
+        .collect::<Result<Vec<_>>>()?
+        .join(",");
+    let data_files = extension
+        .data_files
+        .iter()
+        .map(|path| render_portable_artifact_path(path, "prebuilt extension data file"))
+        .collect::<Result<Vec<_>>>()?
+        .join(",");
+    let mobile_static_archives =
+        mobile_static_archive_manifest_value(&extension.mobile_static_archives)?;
+    let mobile_static_dependency_archives = mobile_static_dependency_archive_manifest_value(
+        &extension.mobile_static_dependency_archives,
+    )?;
     let text = format!(
-        "packageLayout={EXTENSION_ARTIFACT_LAYOUT}\npgMajor=18\nsqlName={}\ncreatesExtension={}\nnativeModuleStem={}\nnativeModuleFile={}\nnativeTarget={}\nnativeRuntimeProduct={EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT}\nnativeRuntimeVersion={}\ndependencies={}\ndataFiles={}\nextensionSqlFileNames={}\nextensionSqlFilePrefixes={}\nsharedPreloadLibraries={}\nmobilePrebuilt={}\nmobileStaticArchives={}\nmobileStaticDependencyArchives={}\nstaticSymbolPrefix={}\nstaticSymbolAliases={}\nfiles=files\n",
+        "packageLayout={EXTENSION_ARTIFACT_LAYOUT}\npgMajor=18\nsqlName={}\ncreatesExtension={}\nnativeModuleStem={}\nnativeModuleFile={}\nnativeTarget={}\nnativeRuntimeProduct={EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT}\nnativeRuntimeVersion={}\ndependencies={}\ndataFiles={}\nextensionSqlFileNames={}\nextensionSqlFilePrefixes={}\nsharedPreloadLibraries={}\nmobilePrebuilt={}\nmobileStaticArchives={}\nmobileStaticDependencyArchives={}\nstaticSymbolPrefix={}\nstaticSymbolAliases={}\nlicenseFiles={}\nlicenseProfile={}\nfiles=files\n",
         extension.sql_name,
         yes_no_manifest(options.creates_extension),
         extension.native_module_stem.as_deref().unwrap_or(""),
@@ -829,22 +1340,17 @@ fn write_prebuilt_extension_artifact_manifest(
         extension.native_target.as_deref().unwrap_or(""),
         options.native_runtime_version,
         extension.dependencies.join(","),
-        extension
-            .data_files
-            .iter()
-            .map(|path| path.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(","),
+        data_files,
         extension.extension_sql_file_names.join(","),
         extension.extension_sql_file_prefixes.join(","),
         extension.shared_preload_libraries.join(","),
         yes_no_manifest(extension.mobile_prebuilt),
-        mobile_static_archive_manifest_value(&extension.mobile_static_archives),
-        mobile_static_dependency_archive_manifest_value(
-            &extension.mobile_static_dependency_archives
-        ),
+        mobile_static_archives,
+        mobile_static_dependency_archives,
         extension.static_symbol_prefix.as_deref().unwrap_or(""),
         static_symbol_alias_manifest_value(&extension.static_symbol_aliases),
+        license_files,
+        legal_contract.profile.as_str(),
     );
     fs::write(artifact_root.join("manifest.properties"), text).map_err(|err| {
         Error::Engine(format!(
@@ -862,35 +1368,41 @@ fn static_symbol_alias_manifest_value(aliases: &[NativeExtensionStaticSymbolAlia
         .join(",")
 }
 
-fn mobile_static_archive_manifest_value(archives: &[MobileStaticArchive]) -> String {
-    archives
+fn mobile_static_archive_manifest_value(archives: &[MobileStaticArchive]) -> Result<String> {
+    Ok(archives
         .iter()
         .map(|archive| {
-            format!(
+            Ok(format!(
                 "{}:{}",
                 archive.target,
-                archive.relative_path.to_string_lossy()
-            )
+                render_portable_artifact_path(
+                    &archive.relative_path,
+                    "prebuilt extension mobile static archive",
+                )?
+            ))
         })
-        .collect::<Vec<_>>()
-        .join(",")
+        .collect::<Result<Vec<_>>>()?
+        .join(","))
 }
 
 fn mobile_static_dependency_archive_manifest_value(
     archives: &[MobileStaticDependencyArchive],
-) -> String {
-    archives
+) -> Result<String> {
+    Ok(archives
         .iter()
         .map(|archive| {
-            format!(
+            Ok(format!(
                 "{}:{}:{}",
                 archive.target,
                 archive.name,
-                archive.relative_path.to_string_lossy()
-            )
+                render_portable_artifact_path(
+                    &archive.relative_path,
+                    "prebuilt extension mobile static dependency archive",
+                )?
+            ))
         })
-        .collect::<Vec<_>>()
-        .join(",")
+        .collect::<Result<Vec<_>>>()?
+        .join(","))
 }
 
 fn yes_no_manifest(value: bool) -> &'static str {
@@ -1089,6 +1601,8 @@ fn append_artifact_files_to_tar<W: io::Write>(
             ))
         })?;
         validate_relative_artifact_path(artifact_root, "archive file", relative)?;
+        let portable_relative =
+            render_portable_artifact_path(relative, "prebuilt extension archive file")?;
         record_extension_artifact_archive_member(
             artifact_root,
             relative,
@@ -1104,7 +1618,7 @@ fn append_artifact_files_to_tar<W: io::Write>(
         let mut file = File::open(&path)
             .map_err(|err| Error::Engine(format!("open {}: {err}", path.display())))?;
         archive
-            .append_data(&mut header, relative, &mut file)
+            .append_data(&mut header, portable_relative, &mut file)
             .map_err(|err| {
                 Error::Engine(format!(
                     "append {} to prebuilt extension artifact archive: {err}",
@@ -1197,26 +1711,28 @@ pub(super) fn extract_prebuilt_extension_archive(
             archive_path.display()
         ))
     })?;
-    if archive_is_tar_zst(archive_path) {
+    let file_modes = if archive_is_tar_zst(archive_path) {
         let decoder = zstd::stream::read::Decoder::new(file).map_err(|err| {
             Error::InvalidConfig(format!(
                 "open zstd prebuilt extension artifact archive {}: {err}",
                 archive_path.display()
             ))
         })?;
-        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?;
+        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?
     } else if archive_is_tar_gz(archive_path) {
         let decoder = flate2::read::GzDecoder::new(file);
-        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?;
+        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?
     } else if archive_is_tar(archive_path) {
-        extract_prebuilt_extension_tar(archive_path, file, destination, policy)?;
+        extract_prebuilt_extension_tar(archive_path, file, destination, policy)?
     } else {
         return Err(Error::InvalidConfig(format!(
             "prebuilt extension artifact archive {} must end in .tar, .tar.gz, or .tar.zst",
             archive_path.display()
         )));
-    }
-    extracted_extension_artifact_root(destination)
+    };
+    let root = extracted_extension_artifact_root(destination)?;
+    validate_extension_artifact_archive_legal_modes(archive_path, destination, &root, &file_modes)?;
+    Ok(root)
 }
 
 fn archive_is_tar(path: &Path) -> bool {
@@ -1242,7 +1758,7 @@ fn extract_prebuilt_extension_tar(
     reader: impl io::Read,
     destination: &Path,
     policy: ExtensionArtifactArchivePolicy,
-) -> Result<()> {
+) -> Result<BTreeMap<PathBuf, u32>> {
     let mut archive = tar::Archive::new(reader);
     let entries = archive.entries().map_err(|err| {
         Error::InvalidConfig(format!(
@@ -1252,6 +1768,7 @@ fn extract_prebuilt_extension_tar(
     })?;
     let mut seen_files = BTreeSet::new();
     let mut seen_dirs = BTreeSet::new();
+    let mut file_modes = BTreeMap::new();
     let mut member_count = 0usize;
     // The canonical archive policy includes the two 512-byte tar end-marker
     // blocks in the expanded byte budget. `tar::Archive::entries` stops before
@@ -1306,15 +1823,21 @@ fn extract_prebuilt_extension_tar(
                 policy.max_expanded_bytes
             )));
         }
-        let relative = entry.path().map_err(|err| {
+        let entry_type = entry.header().entry_type();
+        let raw_relative = entry.path_bytes();
+        let raw_relative = std::str::from_utf8(raw_relative.as_ref()).map_err(|err| {
             Error::InvalidConfig(format!(
-                "read prebuilt extension artifact archive path in {}: {err}",
+                "prebuilt extension artifact archive {} contains a non-UTF-8 path: {err}",
                 archive_path.display()
             ))
         })?;
-        let relative = relative.into_owned();
-        validate_relative_artifact_path(archive_path, "archive entry", &relative)?;
-        let entry_type = entry.header().entry_type();
+        let raw_relative = if entry_type.is_dir() {
+            raw_relative.strip_suffix('/').unwrap_or(raw_relative)
+        } else {
+            raw_relative
+        };
+        let relative =
+            parse_portable_artifact_path_text(archive_path, "archive entry", raw_relative)?;
         if entry_type.is_dir() {
             if member_bytes != 0 {
                 return Err(Error::InvalidConfig(format!(
@@ -1332,6 +1855,14 @@ fn extract_prebuilt_extension_tar(
             })?;
         } else if entry_type.is_file() {
             validate_archive_entry_plan(&relative, false, &mut seen_files, &mut seen_dirs)?;
+            let mode = entry.header().mode().map_err(|err| {
+                Error::InvalidConfig(format!(
+                    "read prebuilt extension artifact archive mode for {} in {}: {err}",
+                    relative.display(),
+                    archive_path.display()
+                ))
+            })?;
+            file_modes.insert(relative.clone(), mode);
             if let Some(parent) = destination.join(&relative).parent() {
                 fs::create_dir_all(parent).map_err(|err| {
                     Error::Engine(format!(
@@ -1356,7 +1887,51 @@ fn extract_prebuilt_extension_tar(
             )));
         }
     }
+    Ok(file_modes)
+}
+
+fn validate_extension_artifact_archive_legal_modes(
+    archive_path: &Path,
+    destination: &Path,
+    artifact_root: &Path,
+    file_modes: &BTreeMap<PathBuf, u32>,
+) -> Result<()> {
+    let wrapper = artifact_root.strip_prefix(destination).map_err(|err| {
+        Error::Engine(format!(
+            "derive prebuilt extension artifact wrapper path for {}: {err}",
+            artifact_root.display()
+        ))
+    })?;
+    for (archive_member, mode) in file_modes {
+        let relative = if wrapper.as_os_str().is_empty() {
+            archive_member.as_path()
+        } else {
+            archive_member.strip_prefix(wrapper).map_err(|_| {
+                Error::InvalidConfig(format!(
+                    "prebuilt extension artifact archive {} contains top-level member {} outside wrapper {}",
+                    archive_path.display(),
+                    archive_member.display(),
+                    wrapper.display()
+                ))
+            })?
+        };
+        if extension_artifact_archive_member_is_legal(relative) && *mode != 0o644 {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact archive {} legal member {} must have exact tar header mode 0644, got {:04o}",
+                archive_path.display(),
+                archive_member.display(),
+                mode
+            )));
+        }
+    }
     Ok(())
+}
+
+fn extension_artifact_archive_member_is_legal(relative: &Path) -> bool {
+    relative == Path::new("LICENSE")
+        || relative == Path::new("THIRD_PARTY_NOTICES.md")
+        || relative.starts_with("THIRD_PARTY_LICENSES")
+        || relative.starts_with("files/share/licenses")
 }
 
 fn validate_archive_entry_plan(
@@ -1428,16 +2003,95 @@ fn extracted_extension_artifact_root(destination: &Path) -> Result<PathBuf> {
             ))
         })?;
     children.sort_by_key(|entry| entry.file_name());
-    let nested = children
-        .iter()
-        .filter(|entry| entry.path().join("manifest.properties").is_file())
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    if nested.len() == 1 {
-        return Ok(nested[0].clone());
+    if let [nested] = children.as_slice() {
+        let file_type = nested.file_type().map_err(|err| {
+            Error::Engine(format!(
+                "inspect top-level prebuilt extension artifact archive entry {}: {err}",
+                nested.path().display()
+            ))
+        })?;
+        if file_type.is_dir() && nested.path().join("manifest.properties").is_file() {
+            return Ok(nested.path());
+        }
     }
     Err(Error::InvalidConfig(format!(
-        "prebuilt extension artifact archive extracted to {} but did not contain manifest.properties at archive root or under one top-level directory",
+        "prebuilt extension artifact archive extracted to {} but did not contain manifest.properties at archive root or under exactly one top-level directory with no sibling entries",
         destination.display()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_manifest_path_fields_use_portable_component_separators() {
+        let data_file = ["data", "nested", "acme.rules"]
+            .into_iter()
+            .collect::<PathBuf>();
+        assert_eq!(
+            render_portable_artifact_path(&data_file, "test data file").unwrap(),
+            "data/nested/acme.rules"
+        );
+
+        let mobile_archive = MobileStaticArchive {
+            target: "ios-simulator".to_owned(),
+            relative_path: [
+                "mobile-static",
+                "ios-simulator",
+                "extensions",
+                "acme",
+                "liboliphaunt_extension_acme.a",
+            ]
+            .into_iter()
+            .collect(),
+        };
+        assert_eq!(
+            mobile_static_archive_manifest_value(&[mobile_archive]).unwrap(),
+            "ios-simulator:mobile-static/ios-simulator/extensions/acme/liboliphaunt_extension_acme.a"
+        );
+
+        let dependency_archive = MobileStaticDependencyArchive {
+            target: "android-arm64-v8a".to_owned(),
+            name: "openssl".to_owned(),
+            relative_path: [
+                "mobile-static",
+                "android-arm64-v8a",
+                "dependencies",
+                "openssl",
+                "libcrypto.a",
+            ]
+            .into_iter()
+            .collect(),
+        };
+        assert_eq!(
+            mobile_static_dependency_archive_manifest_value(&[dependency_archive]).unwrap(),
+            "android-arm64-v8a:openssl:mobile-static/android-arm64-v8a/dependencies/openssl/libcrypto.a"
+        );
+
+        assert!(render_portable_artifact_path(Path::new("../escape"), "test escape").is_err());
+        assert_eq!(
+            render_portable_artifact_path(
+                Path::new("licenses/donn\u{e9}es/\u{8bb8}\u{53ef}\u{8bc1}.txt"),
+                "test Unicode path",
+            )
+            .unwrap(),
+            "licenses/donn\u{e9}es/\u{8bb8}\u{53ef}\u{8bc1}.txt"
+        );
+        for path in [
+            "C:/payload.bin",
+            "payload:name.bin",
+            "CON.txt",
+            "com1.dll",
+            "trailing.",
+            "trailing ",
+            "control-\u{1f}",
+            "forbidden|name",
+        ] {
+            assert!(
+                render_portable_artifact_path(Path::new(path), "test unsafe path").is_err(),
+                "producer accepted non-portable manifest path {path:?}"
+            );
+        }
+    }
 }

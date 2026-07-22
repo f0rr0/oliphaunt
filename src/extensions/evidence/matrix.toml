@@ -61,6 +61,8 @@ source-digest-inputs = [
   "src/extensions/external/postgis/tests/smoke.sql",
   "src/extensions/external/postgis/tests/upstream.toml",
   "src/extensions/external/postgis/tools/build_wasix.sh",
+  "src/extensions/external/postgis/tools/reproducible-bin/date",
+  "src/extensions/external/postgis/tools/reproducible-time.sh",
   "src/extensions/external/postgis/upstream-license-data.json",
   "src/extensions/external/vector/moon.yml",
   "src/extensions/external/vector/upstream-license-data.json",

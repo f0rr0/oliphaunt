@@ -953,6 +953,37 @@ function Get-PostgisSourceRevision([string]$PostgisSourceDir, [string]$FallbackV
     $revision
 }
 
+function Get-PostgisSourceDateEpoch {
+    $manifest = Join-Path $RepoRoot "src/extensions/external/postgis/source.toml"
+    if (-not (Test-Path -PathType Leaf $manifest)) {
+        Fail "missing canonical PostGIS source manifest: $manifest"
+    }
+    $keyLines = @(Select-String -Path $manifest -Pattern '^source_date_epoch\s*=')
+    if ($keyLines.Count -ne 1) {
+        Fail "$manifest must declare exactly one canonical source_date_epoch integer"
+    }
+    $match = [regex]::Match($keyLines[0].Line, '^source_date_epoch = ([1-9][0-9]{0,17})$')
+    if (-not $match.Success) {
+        Fail "$manifest source_date_epoch must be one canonical positive integer"
+    }
+    try {
+        $epoch = [Int64]::Parse($match.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        Fail "$manifest source_date_epoch exceeds the signed 64-bit range"
+    }
+    if ($epoch -gt 253402300799) {
+        Fail "$manifest source_date_epoch exceeds the portable UTC range"
+    }
+    $epoch
+}
+
+function Format-PostgisSourceDate([Int64]$Epoch) {
+    [DateTimeOffset]::FromUnixTimeSeconds($Epoch).UtcDateTime.ToString(
+        "yyyy-MM-dd HH:mm:ss",
+        [Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
 function Expand-PostgisTemplate([string]$InputPath, [string]$OutputPath, [hashtable]$Values) {
     $text = Get-Content -Raw -Path $InputPath
     foreach ($key in $Values.Keys) {
@@ -965,7 +996,11 @@ function Expand-PostgisTemplate([string]$InputPath, [string]$OutputPath, [hashta
 function Initialize-WindowsPostgisGeneratedSource([string]$PostgisDir, [string]$OriginalSourceDir) {
     $version = Read-PostgisVersionConfig $PostgisDir
     $revision = Get-PostgisSourceRevision $OriginalSourceDir $version.Version
-    $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
+    $sourceDateEpoch = Get-PostgisSourceDateEpoch
+    if ($env:SOURCE_DATE_EPOCH -ne [string]$sourceDateEpoch) {
+        Fail "Windows PostGIS generation must run under the canonical SOURCE_DATE_EPOCH"
+    }
+    $buildDate = Format-PostgisSourceDate $sourceDateEpoch
     $geosVersionNumber = "31401"
     $projVersionNumber = "90801"
     $libXmlVersion = "2.14.6"
@@ -1306,6 +1341,11 @@ function Convert-PostgisExtensionDropGuards([string]$InputPath, [string]$OutputP
 }
 
 function Build-WindowsPostgisSql([string]$PostgisDir, [pscustomobject]$Version) {
+    $sourceDateEpoch = Get-PostgisSourceDateEpoch
+    if ($env:SOURCE_DATE_EPOCH -ne [string]$sourceDateEpoch) {
+        Fail "Windows PostGIS SQL generation must run under the canonical SOURCE_DATE_EPOCH"
+    }
+    $buildDate = Format-PostgisSourceDate $sourceDateEpoch
     $postgisSqlDir = Join-Path $PostgisDir "postgis"
     $extensionDir = Join-Path $PostgisDir "extensions/postgis"
     $extensionSqlDir = Join-Path $extensionDir "sql"
@@ -1383,7 +1423,7 @@ function Build-WindowsPostgisSql([string]$PostgisDir, [pscustomobject]$Version) 
     Set-Content -Path $templatedSql -Encoding UTF8 -Value @"
 -- Just tag extension postgis version as "ANY"
 -- Installed by postgis $($Version.Version)
--- Built on $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"))
+-- Built on $buildDate
 "@
     Copy-Item -Force $templatedSql (Join-Path $extensionSqlDir "postgis--$($Version.Version)--ANY.sql")
     Set-Content -Path (Join-Path $extensionSqlDir "postgis--unpackaged.sql") -Encoding UTF8 -Value "-- Nothing to do here"
@@ -1853,20 +1893,30 @@ function Add-PostgisMesonProducer {
     if (-not (NativeExtension-Selected "postgis")) {
         return
     }
-    Build-WindowsPostgisDependencies
-    $sourceDir = External-Checkout "postgis"
-    if (-not (Test-Path (Join-Path $sourceDir "Version.config"))) {
-        Fail "missing PostGIS checkout for Windows extension artifacts: $sourceDir"
+    $previousSourceDateEpoch = $env:SOURCE_DATE_EPOCH
+    $env:SOURCE_DATE_EPOCH = [string](Get-PostgisSourceDateEpoch)
+    try {
+        Build-WindowsPostgisDependencies
+        $sourceDir = External-Checkout "postgis"
+        if (-not (Test-Path (Join-Path $sourceDir "Version.config"))) {
+            Fail "missing PostGIS checkout for Windows extension artifacts: $sourceDir"
+        }
+        $destination = Join-Path $OliphauntContribDir "postgis"
+        Copy-SourceTree $sourceDir $destination
+        $version = Initialize-WindowsPostgisGeneratedSource $destination $sourceDir
+        Build-WindowsPostgisSql $destination $version
+        Ensure-WindowsPostgisCommentsSql $destination
+        Patch-WindowsPostgisSource $destination
+        Copy-WindowsPostgisRuntimeData $destination
+        $flatgeobufLib = Build-WindowsPostgisFlatgeobufLibrary $destination
+        Write-PostgisMesonModule $destination $version $flatgeobufLib
+    } finally {
+        if ($null -eq $previousSourceDateEpoch) {
+            Remove-Item Env:SOURCE_DATE_EPOCH -ErrorAction SilentlyContinue
+        } else {
+            $env:SOURCE_DATE_EPOCH = $previousSourceDateEpoch
+        }
     }
-    $destination = Join-Path $OliphauntContribDir "postgis"
-    Copy-SourceTree $sourceDir $destination
-    $version = Initialize-WindowsPostgisGeneratedSource $destination $sourceDir
-    Build-WindowsPostgisSql $destination $version
-    Ensure-WindowsPostgisCommentsSql $destination
-    Patch-WindowsPostgisSource $destination
-    Copy-WindowsPostgisRuntimeData $destination
-    $flatgeobufLib = Build-WindowsPostgisFlatgeobufLibrary $destination
-    Write-PostgisMesonModule $destination $version $flatgeobufLib
 }
 
 function Add-PgcryptoMesonProducer {
