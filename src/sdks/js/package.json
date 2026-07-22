@@ -2,7 +2,7 @@
   "name": "@oliphaunt/ts",
   "version": "0.0.0",
   "description": "TypeScript SDK for Oliphaunt on Node.js, Bun, and Deno.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
@@ -83,6 +83,8 @@
     "README.md",
     "ARCHITECTURE.md",
     "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "!src/__tests__"
   ],
   "scripts": {

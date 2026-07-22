@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
 import { extensionReleaseConsumerInputs } from "./swift-extension-release-consumer-inputs.mjs";
 
 const VERSION = "1.2.3";
@@ -32,6 +33,7 @@ function sourceCarrier() {
     },
     carriers: [],
     extensions: [],
+    legal: { base: iosBaseLegalMetadata(), extensions: [] },
     schema: "oliphaunt-react-native-ios-carrier-v1",
   };
 }

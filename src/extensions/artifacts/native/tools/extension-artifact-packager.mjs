@@ -15,6 +15,11 @@ import {
   isCanonicalExtensionInstallSql,
   validateExtensionInstallSqlReachability,
 } from '../../../../../tools/release/extension-artifact-inventory.mjs';
+import {
+  assertReleaseNoticesInArchive,
+  stageReleaseNotices,
+} from '../../../../../tools/release/release-notices.mjs';
+import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -902,6 +907,18 @@ async function writeArtifactDirectory(artifactRoot, args) {
   for (const archive of metadata.mobileStaticDependencyArchives) {
     await copyStandaloneFile(archive.source, path.join(artifactRoot, archive.relativePath));
   }
+  const licenseFiles = stageExtensionUpstreamLicenses(args.sqlName, filesRoot);
+  const embedsOpenSsl = args.sqlName === 'pgcrypto'
+    && (
+      args.nativeTarget === 'windows-x64-msvc'
+      || args.nativeTarget === 'macos-arm64'
+      || metadata.mobileStaticDependencyArchives.some((archive) => archive.name === 'openssl')
+    );
+  const licenseProfile = licenseFiles.length > 0
+    ? 'external-native'
+    : embedsOpenSsl
+      ? 'contrib-native-openssl'
+      : 'contrib-native';
   const manifest = [
     'packageLayout=oliphaunt-extension-artifact-v1',
     'pgMajor=18',
@@ -922,11 +939,15 @@ async function writeArtifactDirectory(artifactRoot, args) {
     `mobileStaticDependencyArchives=${metadata.mobileStaticDependencyArchives.map((archive) => `${archive.target}:${archive.name}:${archive.relativePath}`).join(',')}`,
     `staticSymbolPrefix=${args.staticSymbolPrefix ?? ''}`,
     `staticSymbolAliases=${metadata.staticSymbolAliases.map((alias) => `${alias.sqlSymbol}:${alias.linkedSymbol}`).join(',')}`,
+    `licenseFiles=${licenseFiles.join(',')}`,
+    `licenseProfile=${licenseProfile}`,
     'files=files',
     '',
   ].join('\n');
   await fs.mkdir(artifactRoot, { recursive: true });
   await fs.writeFile(path.join(artifactRoot, 'manifest.properties'), manifest);
+  stageReleaseNotices(artifactRoot, { profile: licenseProfile });
+  return { licenseProfile };
 }
 
 function stripNativeReleaseBinaries(artifactRoot, nativeTarget) {
@@ -1013,7 +1034,7 @@ async function createArtifact(argv) {
   await fs.rm(artifactRoot, { recursive: true, force: true });
   await fs.mkdir(artifactRoot, { recursive: true });
   try {
-    await writeArtifactDirectory(artifactRoot, args);
+    const { licenseProfile } = await writeArtifactDirectory(artifactRoot, args);
     stripNativeReleaseBinaries(artifactRoot, args.nativeTarget);
     await validateExactArtifactBinaryContract(artifactRoot, args);
     if (args.format === 'tar') {
@@ -1021,6 +1042,7 @@ async function createArtifact(argv) {
     } else {
       await fs.writeFile(output, canonicalGzip(await createTar(artifactRoot)));
     }
+    assertReleaseNoticesInArchive(output, { profile: licenseProfile });
   } finally {
     await fs.rm(artifactRoot, { recursive: true, force: true });
   }

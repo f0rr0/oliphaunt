@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { IOS_CARRIER_SCHEMA } from "./ios-carrier-manifest.mjs";
+import {
+  IOS_CARRIER_SCHEMA,
+  iosBaseLegalMetadata,
+} from "./ios-carrier-manifest.mjs";
 import { parseSwiftReleaseBinaryTarget } from "./prepare-swift-release-consumer.mjs";
 
 const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
@@ -75,7 +78,7 @@ export function validateSelectionNeutralSwiftSourceCarrier(
 ) {
   const root = exactKeys(
     document,
-    ["base", "carriers", "extensions", "schema"],
+    ["base", "carriers", "extensions", "legal", "schema"],
     label,
   );
   if (root.schema !== IOS_CARRIER_SCHEMA) {
@@ -92,6 +95,13 @@ export function validateSelectionNeutralSwiftSourceCarrier(
       `${label}.extensions`,
       "must be an empty array; source tags are selection-neutral",
     );
+  }
+  const legal = exactKeys(root.legal, ["base", "extensions"], `${label}.legal`);
+  if (!Array.isArray(legal.extensions) || legal.extensions.length !== 0) {
+    throw error(`${label}.legal.extensions`, "must be empty for a selection-neutral source carrier");
+  }
+  if (JSON.stringify(legal.base) !== JSON.stringify(iosBaseLegalMetadata())) {
+    throw error(`${label}.legal.base`, "must match the canonical native Apple legal locators");
   }
 
   const base = exactKeys(

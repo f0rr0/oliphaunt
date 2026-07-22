@@ -5,6 +5,28 @@
   "ownershipManifest": "tools/release/release-semantic-inputs.toml",
   "rules": [
     {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
       "id": "canonical-public-product-target-contract",
       "paths": [
         "tools/release/release-artifact-targets.mjs"
@@ -77,5 +99,5 @@
       ]
     }
   ],
-  "sha256": "251630441377d401d6856955913b246e020b66abf5f91d955cfcbef16489a591"
+  "sha256": "6f832dd1ad746aa7496168cefca64189e52fb7817f5eee54efe7af13c3cd4cae"
 }

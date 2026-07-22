@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
   rmSync,
   statSync,
@@ -17,6 +18,14 @@ import { TextDecoder } from "node:util";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from "./extension-artifact-archive-policy.mjs";
+import { extensionQualificationCandidates } from "./extension-qualification-candidates.mjs";
+import {
+  extensionCarrierLegalContract,
+  extensionQualificationLegalContract,
+  extensionUpstreamLicenseRow,
+} from "./extension-upstream-licenses.mjs";
+import { extensionProductForSqlName } from "./release-artifact-targets.mjs";
+import { releaseNoticeRows } from "./release-notices.mjs";
 
 export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   "packageLayout",
@@ -38,6 +47,8 @@ export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
   "mobileStaticDependencyArchives",
   "staticSymbolPrefix",
   "staticSymbolAliases",
+  "licenseFiles",
+  "licenseProfile",
   "files",
 ]);
 
@@ -729,6 +740,49 @@ function validateStaticLinkage(properties, metadata, target, label) {
   }
 }
 
+function canonicalLegalContract(metadata, target, label) {
+  let contract;
+  try {
+    const qualificationOnly = extensionQualificationCandidates().some(
+      (candidate) => candidate.sqlName === metadata.sqlName,
+    );
+    if (qualificationOnly) {
+      contract = extensionQualificationLegalContract(metadata.sqlName, { family: "native", target });
+    } else {
+      const product = extensionProductForSqlName(metadata.sqlName, "extension-artifact-inventory.mjs");
+      contract = extensionCarrierLegalContract(product, [metadata.sqlName], { family: "native", target });
+    }
+  } catch (cause) {
+    throw inventoryError(label, `cannot resolve canonical legal contract: ${cause.message}`);
+  }
+  const members = new Map();
+  const add = (member, sha256, source) => {
+    const prior = members.get(member);
+    if (prior !== undefined && prior.sha256 !== sha256) {
+      throw inventoryError(label, `canonical legal member collision at ${member}`);
+    }
+    members.set(member, { sha256, source });
+  };
+  for (const row of releaseNoticeRows({ profile: contract.profile })) {
+    add(
+      row.member,
+      createHash("sha256").update(readFileSync(row.source)).digest("hex"),
+      row.source,
+    );
+  }
+  const upstreamFiles = contract.upstreamMembers.flatMap(
+    (sqlName) => extensionUpstreamLicenseRow(sqlName).files,
+  );
+  const destinations = upstreamFiles.map(({ destination }) => destination).sort(compareText);
+  if (JSON.stringify(destinations) !== JSON.stringify([...contract.licenseFiles])) {
+    throw inventoryError(label, "canonical upstream legal files disagree with the carrier contract");
+  }
+  for (const row of upstreamFiles) {
+    add(`files/${row.destination}`, row.sha256, `${metadata.sqlName}:${row.path}`);
+  }
+  return { contract, members };
+}
+
 /**
  * Validate both manifest semantics and the exact leaf inventory of a native extension artifact.
  * Returns the runtime `files/` rows used by npm staging.
@@ -753,6 +807,7 @@ export function validateExtensionArtifactEntries({
     decodeUtf8(manifestEntry.data, `${label} manifest.properties`),
     `${label} manifest.properties`,
   );
+  const legal = canonicalLegalContract(metadata, target, label);
   const expectedProperties = new Map([
     ["packageLayout", "oliphaunt-extension-artifact-v1"],
     ["pgMajor", "18"],
@@ -768,6 +823,8 @@ export function validateExtensionArtifactEntries({
     ["extensionSqlFileNames", metadata.extensionSqlFileNames.join(",")],
     ["extensionSqlFilePrefixes", metadata.extensionSqlFilePrefixes.join(",")],
     ["sharedPreloadLibraries", metadata.sharedPreloadLibraries.join(",")],
+    ["licenseFiles", legal.contract.licenseFiles.join(",")],
+    ["licenseProfile", legal.contract.profile],
     ["files", "files"],
   ]);
   for (const [key, expected] of expectedProperties) {
@@ -784,6 +841,21 @@ export function validateExtensionArtifactEntries({
   validateStaticLinkage(properties, metadata, target, label);
 
   const allowed = new Set(["manifest.properties"]);
+  for (const [member, expected] of legal.members) {
+    allowed.add(member);
+    const entry = entries.get(member);
+    if (entry !== undefined) {
+      if (entry.mode !== 0o644) {
+        throw inventoryError(label, `legal member ${member} must have mode 0644`);
+      }
+      if (entry.sha256 !== expected.sha256) {
+        throw inventoryError(
+          label,
+          `legal member ${member} does not match canonical bytes from ${expected.source}`,
+        );
+      }
+    }
+  }
   const extensionPrefix = "files/share/postgresql/extension/";
   let hasControl = false;
   let hasInstallSql = false;
@@ -854,7 +926,15 @@ export function validateExtensionArtifactEntries({
   if (runtimeFiles.some((row) => !SHA256.test(row.sha256))) {
     throw inventoryError(label, "computed an invalid runtime file digest");
   }
-  return { metadata, properties, runtimeFiles };
+  const legalFiles = [...legal.members.keys()].sort(compareText).map((name) => {
+    const entry = entries.get(name);
+    return {
+      path: name,
+      bytes: entry.bytes,
+      sha256: entry.sha256,
+    };
+  });
+  return { metadata, properties, runtimeFiles, legalFiles };
 }
 
 export function validateExtensionArtifactArchive(options) {

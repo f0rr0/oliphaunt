@@ -1,6 +1,8 @@
 import { gzipSync } from "node:zlib";
 import {
-  cpSync,
+  chmodSync,
+  copyFileSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -11,6 +13,7 @@ import {
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 export const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 
@@ -97,13 +100,209 @@ function cargoMetadataPackageFromManifest(manifest, { root, fail, rel }) {
   return packages[0];
 }
 
-function copySourceTree(source, destination, ignoredNames) {
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(path.dirname(destination), { recursive: true });
-  cpSync(source, destination, {
-    recursive: true,
-    filter: (sourcePath) => !ignoredNames.has(path.basename(sourcePath)),
+const CARGO_VIRTUAL_PACKAGE_FILES = new Set([
+  ".cargo_vcs_info.json",
+  "Cargo.lock",
+  "Cargo.toml.orig",
+]);
+
+export function cargoPackageRelativePathParts(value) {
+  if (
+    !value
+    || value.includes("\\")
+    || value.includes("\0")
+    || value.startsWith("/")
+    || /^[A-Za-z]:/u.test(value)
+  ) {
+    throw new Error(`unsafe Cargo package path ${JSON.stringify(value)}`);
+  }
+  const parts = value.split("/");
+  if (
+    parts.some((part) =>
+      !part
+      || part === "."
+      || part === ".."
+      || /[<>:"|?*]/u.test(part)
+      || /[ .]$/u.test(part)
+    )
+  ) {
+    throw new Error(`non-portable Cargo package path ${JSON.stringify(value)}`);
+  }
+  return parts;
+}
+
+function portablePackagePath(value, manifest, { fail, rel }) {
+  try {
+    return cargoPackageRelativePathParts(value);
+  } catch (cause) {
+    abort(fail, `cargo package --list for ${rel(manifest)} returned ${cause.message}`);
+  }
+}
+
+function cargoPackageSourceFiles(manifest, { root, fail, rel }) {
+  const args = [
+    "package",
+    "--manifest-path",
+    manifest,
+    "--allow-dirty",
+    "--list",
+  ];
+  const result = captureCommandOutput("cargo", args, {
+    cwd: root,
+    label: `cargo package --list --manifest-path ${rel(manifest)}`,
   });
+  if (result.error !== undefined) {
+    abort(fail, `cargo failed to start while listing ${rel(manifest)}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    abort(fail, `cargo package --list failed for ${rel(manifest)}${detail ? `: ${detail}` : ""}`);
+  }
+  const files = result.stdout.split(/\r?\n/u).filter(Boolean);
+  if (files.length === 0) {
+    abort(fail, `cargo package --list returned no files for ${rel(manifest)}`);
+  }
+  const seen = new Set();
+  for (const file of files) {
+    portablePackagePath(file, manifest, { fail, rel });
+    if (seen.has(file)) {
+      abort(fail, `cargo package --list repeated ${file} for ${rel(manifest)}`);
+    }
+    seen.add(file);
+  }
+  if (!seen.has("Cargo.toml")) {
+    abort(fail, `cargo package --list omitted Cargo.toml for ${rel(manifest)}`);
+  }
+  return files;
+}
+
+function sourceFileWithoutSymlinkComponents(sourceDir, parts, manifest, { fail, rel }) {
+  let source = sourceDir;
+  for (const part of parts) {
+    source = path.join(source, part);
+    let metadata;
+    try {
+      metadata = lstatSync(source);
+    } catch (cause) {
+      abort(fail, `cargo-listed source ${rel(source)} for ${rel(manifest)} is missing: ${cause.message}`);
+    }
+    if (metadata.isSymbolicLink()) {
+      abort(fail, `cargo-listed source ${rel(source)} for ${rel(manifest)} must not be a symbolic link`);
+    }
+  }
+  const metadata = lstatSync(source);
+  if (!metadata.isFile()) {
+    abort(fail, `cargo-listed source ${rel(source)} for ${rel(manifest)} must be a regular file`);
+  }
+  return { metadata, source };
+}
+
+function copyCargoPackageSource(manifest, destination, options) {
+  const sourceDir = path.dirname(manifest);
+  const copied = new Set(["Cargo.toml"]);
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(destination, { recursive: true });
+  for (const relative of cargoPackageSourceFiles(manifest, options)) {
+    if (relative === "Cargo.toml") {
+      continue;
+    }
+    const parts = portablePackagePath(relative, manifest, options);
+    try {
+      lstatSync(path.join(sourceDir, ...parts));
+    } catch (cause) {
+      if (CARGO_VIRTUAL_PACKAGE_FILES.has(relative)) {
+        continue;
+      }
+      abort(
+        options.fail,
+        `cargo-listed source ${relative} for ${options.rel(manifest)} is missing: ${cause.message}`,
+      );
+    }
+    const { source, metadata } = sourceFileWithoutSymlinkComponents(
+      sourceDir,
+      parts,
+      manifest,
+      options,
+    );
+    const target = path.join(destination, ...parts);
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    chmodSync(target, metadata.mode & 0o777);
+    copied.add(relative);
+  }
+  const manifestMetadata = lstatSync(manifest);
+  if (manifestMetadata.isSymbolicLink() || !manifestMetadata.isFile()) {
+    abort(options.fail, `${options.rel(manifest)} must be a regular, non-symlink Cargo manifest`);
+  }
+  const targetManifest = path.join(destination, "Cargo.toml");
+  copyFileSync(manifest, targetManifest);
+  chmodSync(targetManifest, manifestMetadata.mode & 0o777);
+  return copied;
+}
+
+function requireExactCrateMembers(cratePath, packageRoot, expected, { fail, rel }) {
+  const prefix = `${packageRoot}/`;
+  const actual = [...readPortableArchiveEntries(cratePath).keys()].map((member) => {
+    if (!member.startsWith(prefix) || member.length === prefix.length) {
+      abort(fail, `${rel(cratePath)} contains member outside ${packageRoot}: ${member}`);
+    }
+    return member.slice(prefix.length);
+  }).sort(compareText);
+  const wanted = [...expected].sort(compareText);
+  if (actual.length !== wanted.length || actual.some((member, index) => member !== wanted[index])) {
+    const actualSet = new Set(actual);
+    const wantedSet = new Set(wanted);
+    const missing = wanted.filter((member) => !actualSet.has(member));
+    const unexpected = actual.filter((member) => !wantedSet.has(member));
+    abort(
+      fail,
+      `${rel(cratePath)} member set differs from Cargo's package selection: `
+        + `missing=${JSON.stringify(missing)}, unexpected=${JSON.stringify(unexpected)}`,
+    );
+  }
+}
+
+function requirePackagedCargoTargetSources(
+  packageMetadata,
+  stageDir,
+  expectedMembers,
+  stagedManifest,
+  options,
+) {
+  if (!Array.isArray(packageMetadata.targets)) {
+    abort(options.fail, `cargo metadata for ${options.rel(stagedManifest)} omitted package targets`);
+  }
+  const absoluteStage = path.resolve(stageDir);
+  for (const target of packageMetadata.targets) {
+    if (target === null || typeof target !== "object" || typeof target.src_path !== "string") {
+      abort(
+        options.fail,
+        `cargo metadata for ${options.rel(stagedManifest)} returned an invalid package target`,
+      );
+    }
+    if (!path.isAbsolute(target.src_path)) {
+      abort(
+        options.fail,
+        `cargo target ${JSON.stringify(target.name)} for ${options.rel(stagedManifest)} has a non-absolute source path`,
+      );
+    }
+    const relative = path.relative(absoluteStage, path.resolve(target.src_path));
+    if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      abort(
+        options.fail,
+        `cargo target ${JSON.stringify(target.name)} for ${options.rel(stagedManifest)} is outside the staged package`,
+      );
+    }
+    const normalized = relative.split(path.sep).join("/");
+    const parts = portablePackagePath(normalized, stagedManifest, options);
+    if (!expectedMembers.has(normalized)) {
+      abort(
+        options.fail,
+        `cargo target ${JSON.stringify(target.name)} source ${normalized} is absent from Cargo's package selection`,
+      );
+    }
+    sourceFileWithoutSymlinkComponents(stageDir, parts, stagedManifest, options);
+  }
 }
 
 function listFilesRecursive(directory) {
@@ -210,12 +409,11 @@ export function manualCargoPackageSource(
   },
 ) {
   const { name, version } = readCargoPackageNameVersion(manifest, { fail, rel });
-  const sourceDir = path.dirname(manifest);
   const packageRoot = `${name}-${version}`;
   const stageRoot = path.join(outputDir, "manual-package-stage");
   const stageDir = path.join(stageRoot, packageRoot);
   const cratePath = path.join(outputDir, `${packageRoot}.crate`);
-  copySourceTree(sourceDir, stageDir, new Set(["target", ".git", ".DS_Store"]));
+  const expectedMembers = copyCargoPackageSource(manifest, stageDir, { root, fail, rel });
 
   const stagedManifest = path.join(stageDir, "Cargo.toml");
   writeFileSync(stagedManifest, packagedCargoManifestText(readFileSync(stagedManifest, "utf8")));
@@ -223,10 +421,18 @@ export function manualCargoPackageSource(
   if (packageMetadata.name !== name || packageMetadata.version !== version) {
     abort(fail, `${rel(stagedManifest)} produced unexpected cargo metadata`);
   }
+  requirePackagedCargoTargetSources(
+    packageMetadata,
+    stageDir,
+    expectedMembers,
+    stagedManifest,
+    { fail, rel },
+  );
 
   mkdirSync(outputDir, { recursive: true });
   rmSync(cratePath, { force: true });
   writeFileSync(cratePath, gzipSync(createDeterministicTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
+  requireExactCrateMembers(cratePath, packageRoot, expectedMembers, { fail, rel });
   const size = statSync(cratePath).size;
   if (size > packageSizeLimitBytes) {
     abort(fail, `${rel(cratePath)} is ${size} bytes, above the crates.io 10 MiB package limit`);

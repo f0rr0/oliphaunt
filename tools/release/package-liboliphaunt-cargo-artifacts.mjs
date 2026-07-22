@@ -18,6 +18,7 @@ import {
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import {
   ROOT,
   allArtifactTargets,
@@ -29,6 +30,13 @@ import {
   rustNativeTargetCfg,
 } from "./rust-native-targets.mjs";
 import { localWindowsTarInvocation } from "./tar-command.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
 
 const PREFIX = "package-liboliphaunt-cargo-artifacts.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -39,6 +47,11 @@ const TOOLS_FACADE_TEMPLATE = path.join(ROOT, "src/runtimes/liboliphaunt/native/
 const SURFACE = "rust-native-direct";
 const CRATES_IO_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PART_BYTES = 7 * 1024 * 1024;
+export const NATIVE_CARGO_CARRIER_LICENSES = Object.freeze({
+  "native-runtime": releaseProfilePackageLicense("native-runtime").spdx,
+  "native-tools": releaseProfilePackageLicense("native-tools").spdx,
+  "code-facade": releaseProfilePackageLicense("code-facade").spdx,
+});
 
 const AGGREGATOR_BUILD_RS = String.raw`use std::collections::BTreeMap;
 use std::env;
@@ -325,6 +338,13 @@ function tomlString(value) {
   return JSON.stringify(value);
 }
 
+function cargoIncludeMembers(profile, baseMembers) {
+  return JSON.stringify([
+    ...baseMembers,
+    ...releaseNoticeRows({ profile }).map((row) => row.member),
+  ]);
+}
+
 function artifactAssetName(target, version) {
   return target.asset.replaceAll("{version}", version);
 }
@@ -404,6 +424,7 @@ function writePartCrate(
     packageBase,
     artifactProduct,
     artifactLabel,
+    noticeProfile,
   },
 ) {
   rmSync(crateDir, { recursive: true, force: true });
@@ -421,10 +442,10 @@ description = "Cargo payload part ${String(index).padStart(3, "0")} for the ${ta
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "${NATIVE_CARGO_CARRIER_LICENSES[noticeProfile]}"
 links = "${links}"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+include = ${cargoIncludeMembers(noticeProfile, ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"])}
 
 [lib]
 path = "src/lib.rs"
@@ -467,6 +488,8 @@ fn main() {
 }
 `,
   );
+  stageReleaseNotices(crateDir, { profile: noticeProfile });
+  assertReleaseNoticesInDirectory(crateDir, { profile: noticeProfile });
 }
 
 function writeAggregatorCrate(
@@ -508,10 +531,10 @@ description = "Cargo artifact crate for the ${target.target} ${artifactLabel}."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "${NATIVE_CARGO_CARRIER_LICENSES["code-facade"]}"
 links = "${links}"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**"]
+include = ${cargoIncludeMembers("code-facade", ["Cargo.toml", "README.md", "build.rs", "src/**"])}
 
 [lib]
 path = "src/lib.rs"
@@ -551,6 +574,8 @@ pub const LIBRARY_RELATIVE_PATH: &str = "${libraryRelativePath}";
       .replace("__PART_ROOTS__", partRoots.join("\n"))
       .replace("__FILE_SHA256__", payloadFiles.map(({ relative, sha256 }) => `    (${tomlString(relative)}, ${tomlString(sha256)}),`).join("\n")),
   );
+  stageReleaseNotices(crateDir, { profile: "code-facade" });
+  assertReleaseNoticesInDirectory(crateDir, { profile: "code-facade" });
 }
 
 function walkFiles(root) {
@@ -588,6 +613,7 @@ function nextPartDir(
     packageBase,
     artifactProduct,
     artifactLabel,
+    noticeProfile,
   },
 ) {
   const crateDir = path.join(sourceRoot, partPackageName(targetId, index, { packageBase }));
@@ -598,6 +624,7 @@ function nextPartDir(
     packageBase,
     artifactProduct,
     artifactLabel,
+    noticeProfile,
   });
   return crateDir;
 }
@@ -622,6 +649,7 @@ function buildPartCrates(
     packageBase,
     artifactProduct,
     artifactLabel,
+    noticeProfile,
   },
 ) {
   const partDirs = [];
@@ -636,6 +664,7 @@ function buildPartCrates(
       packageBase,
       artifactProduct,
       artifactLabel,
+      noticeProfile,
     });
     partDirs.push(partDir);
     return partDir;
@@ -684,7 +713,11 @@ function buildPartCrates(
   return partDirs;
 }
 
-function cargoPackage(crateDir, targetDir, { noVerify = false, index = null } = {}) {
+function cargoPackage(
+  crateDir,
+  targetDir,
+  { noVerify = false, index = null, noticeProfile = "code-facade" } = {},
+) {
   const manifest = path.join(crateDir, "Cargo.toml");
   const metadata = Bun.TOML.parse(readFileSync(manifest, "utf8"));
   const name = metadata?.package?.name;
@@ -713,10 +746,19 @@ function cargoPackage(crateDir, targetDir, { noVerify = false, index = null } = 
     );
   }
   run(command, { env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" } });
-  const cratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
-  if (!isFile(cratePath)) {
-    fail(`cargo package did not create ${rel(cratePath)}`);
+  const cargoCratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
+  if (!isFile(cargoCratePath)) {
+    fail(`cargo package did not create ${rel(cargoCratePath)}`);
   }
+  const cratePath = manualCargoPackageSource(
+    manifest,
+    path.join(targetDir, "strict-package", name),
+    { root: ROOT, fail, rel },
+  );
+  assertReleaseNoticesInArchive(cratePath, {
+    prefix: `${name}-${version}`,
+    profile: noticeProfile,
+  });
   return cratePath;
 }
 
@@ -784,7 +826,11 @@ function freezeSourceCrate(packageData, outputDir, cargoTargetDir, dependencyPac
     dependencyPackages,
     path.join(cargoTargetDir, "dependency-index", packageData.name),
   );
-  const generated = cargoPackage(path.dirname(packageData.manifestPath), cargoTargetDir, { noVerify: true, index });
+  const generated = cargoPackage(path.dirname(packageData.manifestPath), cargoTargetDir, {
+    noVerify: true,
+    index,
+    noticeProfile: packageData.noticeProfile,
+  });
   validateCrateSize(generated);
   const cratePath = path.join(outputDir, path.basename(generated));
   copyFileSync(generated, cratePath);
@@ -853,6 +899,8 @@ function writeToolsFacadeCrate(sourceRoot, { version, toolsTargets }) {
     libRs,
     `${readFileSync(libRs, "utf8").trimEnd()}\n\n// Generated release-only native target guard.\n${releaseOnlyGuard}\n`,
   );
+  stageReleaseNotices(crateDir, { profile: "code-facade" });
+  assertReleaseNoticesInDirectory(crateDir, { profile: "code-facade" });
   return {
     name: TOOLS_PRODUCT,
     version,
@@ -862,6 +910,7 @@ function writeToolsFacadeCrate(sourceRoot, { version, toolsTargets }) {
     product: TOOLS_PRODUCT,
     kind: TOOLS_KIND,
     role: "facade",
+    noticeProfile: "code-facade",
     index: null,
     links: "oliphaunt_artifact_oliphaunt_tools_relay",
     localDependencies: [...toolsTargets].map((target) => ({
@@ -885,6 +934,7 @@ function packagePayload(
     artifactProduct,
     artifactKind,
     artifactLabel,
+    noticeProfile,
   },
 ) {
   const partDirs = buildPartCrates(payloadRoot, sourceRoot, {
@@ -894,6 +944,7 @@ function packagePayload(
     packageBase,
     artifactProduct,
     artifactLabel,
+    noticeProfile,
   });
   const aggregatorDir = path.join(sourceRoot, cargoPackageName(target.target, { packageBase }));
   writeAggregatorCrate(aggregatorDir, {
@@ -911,7 +962,7 @@ function packagePayload(
   for (let offset = 0; offset < partDirs.length; offset += 1) {
     const partNumber = offset + 1;
     const partDir = partDirs[offset];
-    const cratePath = cargoPackage(partDir, cargoTargetDir);
+    const cratePath = cargoPackage(partDir, cargoTargetDir, { noticeProfile });
     validateCrateSize(cratePath);
     const output = path.join(outputDir, path.basename(cratePath));
     copyFileSync(cratePath, output);
@@ -924,6 +975,7 @@ function packagePayload(
       product: artifactProduct,
       kind: artifactKind,
       role: "part",
+      noticeProfile,
       index: partNumber,
       links: partLinksName(target.target, partNumber, { artifactProduct }),
       localDependencies: [],
@@ -937,6 +989,7 @@ function packagePayload(
     product: artifactProduct,
     kind: artifactKind,
     role: "aggregator",
+    noticeProfile: "code-facade",
     index: null,
     links: cargoLinksName(target.target, { artifactProduct }),
     localDependencies: Array.from({ length: partDirs.length }, (_, offset) => ({
@@ -969,6 +1022,8 @@ function packageTarget(
   if (!isFile(toolsArchive)) {
     fail(`missing oliphaunt-tools native release asset: ${rel(toolsArchive)}`);
   }
+  assertReleaseNoticesInArchive(archive, { profile: "native-runtime" });
+  assertReleaseNoticesInArchive(toolsArchive, { profile: "native-tools" });
   const extractedRoot = path.join(sourceRoot, `${target.target}-extracted`);
   extractArchive(archive, extractedRoot);
   const toolsRoot = path.join(sourceRoot, `${target.target}-tools-extracted`);
@@ -984,6 +1039,7 @@ function packageTarget(
       artifactProduct: PRODUCT,
       artifactKind: KIND,
       artifactLabel: "liboliphaunt native runtime",
+      noticeProfile: "native-runtime",
     }),
     ...packagePayload(toolsRoot, sourceRoot, outputDir, cargoTargetDir, {
       target: toolsTarget,
@@ -993,6 +1049,7 @@ function packageTarget(
       artifactProduct: TOOLS_PRODUCT,
       artifactKind: TOOLS_KIND,
       artifactLabel: "Oliphaunt native tools",
+      noticeProfile: "native-tools",
     }),
   ];
 }
@@ -1011,6 +1068,7 @@ function writePackagesManifest(packages, outputDir) {
       product: item.product,
       kind: item.kind,
       role: item.role,
+      noticeProfile: item.noticeProfile,
       index: item.index,
       manifestPath: rel(item.manifestPath),
       cratePath: rel(item.cratePath),

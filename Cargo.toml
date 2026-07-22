@@ -28,7 +28,7 @@ edition = "2024"
 rust-version = "1.93"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT"
 
 [profile.release]
 strip = "symbols"

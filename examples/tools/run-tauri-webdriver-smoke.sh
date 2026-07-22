@@ -41,15 +41,9 @@ fi
 
 source_app_relative="${source_app_path#"$root"/}"
 scratch="$root/target/e2e/tauri-apps/${source_app_relative//\//-}/$$"
-app_dir="$scratch/app"
 trap 'rm -rf "$scratch"' EXIT
 rm -rf "$scratch"
-mkdir -p "$app_dir"
-rsync -a --delete \
-  --exclude node_modules \
-  --exclude src-tauri/gen \
-  --exclude src-tauri/target \
-  "$source_app_path/" "$app_dir/"
+app_dir="$(examples/tools/stage-tauri-webdriver-app.sh "$source_app_path" "$scratch")"
 rm -f "$app_dir/src-tauri/Cargo.lock"
 
 examples/tools/with-local-registries.sh pnpm --dir "$app_dir" install --no-frozen-lockfile

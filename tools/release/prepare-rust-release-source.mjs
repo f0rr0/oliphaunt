@@ -7,7 +7,12 @@ import {
   currentProductVersionSync,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
+import { packagedCargoManifestText } from "./cargo-source-package.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
+import {
+  assertReleaseNoticesInDirectory,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
 import {
   assertSameNativeTargetSet,
   renderUnsupportedNativeTargetGuard,
@@ -20,6 +25,8 @@ const LIBOLIPHAUNT_TOOLS_PRODUCT = "oliphaunt-tools";
 const BROKER_PRODUCT = "oliphaunt-broker";
 const RUST_PRODUCT = "oliphaunt-rust";
 const DEFAULT_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt");
+const DEFAULT_BUILD_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt-build");
+const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
 
 function fail(message) {
   console.error(`${TOOL}: ${message}`);
@@ -207,6 +214,32 @@ export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = t
       + `${renderRustSdkNativeTargetGuard(artifactTargets.nativeTargets)}\n`,
     "utf8",
   );
+  stageReleaseNotices(outputDir, SOURCE_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(outputDir, SOURCE_NOTICE_OPTIONS);
+  if (log) console.log(rel(cargoToml));
+  return cargoToml;
+}
+
+export function prepareOliphauntBuildReleaseSource({
+  stageDir = DEFAULT_BUILD_STAGE_DIR,
+  log = true,
+} = {}) {
+  const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
+  const sourceDir = path.join(ROOT, "src/sdks/rust/crates/oliphaunt-build");
+  const outputDir = releaseStageDir(stageDir);
+  rmSync(outputDir, { recursive: true, force: true });
+  cpSync(sourceDir, outputDir, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== "target",
+  });
+  const cargoToml = path.join(outputDir, "Cargo.toml");
+  const rendered = packagedCargoManifestText(readFileSync(cargoToml, "utf8"));
+  writeFileSync(cargoToml, rendered, "utf8");
+  if (!packageSection(rendered).includes(`version = "${version}"`)) {
+    fail(`generated oliphaunt-build release source must keep SDK version ${version}`);
+  }
+  stageReleaseNotices(outputDir, SOURCE_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(outputDir, SOURCE_NOTICE_OPTIONS);
   if (log) console.log(rel(cargoToml));
   return cargoToml;
 }

@@ -151,16 +151,20 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     directories.push(root);
     const extensionRoot = aggregateFixture(root);
     const output = path.join(root, "output");
+    const work = path.join(root, "work");
     run("bun", [
       "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
       "--extensions-only",
       "--extension-artifact-root", extensionRoot,
       "--extension-part-bytes", "256",
       "--output-dir", output,
+      "--work-dir", work,
       "--version", "0.1.0",
     ]);
 
-    const sources = path.join(ROOT, "target/oliphaunt-wasix/cargo-package-sources");
+    const sources = path.join(work, "cargo-package-sources");
+    expect(statSync(path.join(work, "cargo-package-extracted")).isDirectory()).toBe(true);
+    expect(statSync(path.join(work, "cargo-package-target")).isDirectory()).toBe(true);
     const carrierName = "oliphaunt-extension-contrib-pg18-wasix";
     const carrierManifest = Bun.TOML.parse(readFileSync(path.join(sources, carrierName, "Cargo.toml"), "utf8"));
     const partNames = Object.keys(carrierManifest["build-dependencies"])

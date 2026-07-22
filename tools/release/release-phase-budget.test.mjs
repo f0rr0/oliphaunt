@@ -16,7 +16,7 @@ import {
 } from "./release-phase-budget.mjs";
 
 test("all three normal release phases retain explicit positive margins", () => {
-  const stage = assertReleasePhaseBudget("github-staged", { stageOperationSeconds: 14_370 });
+  const stage = assertReleasePhaseBudget("github-staged", { stageOperationSeconds: 14_430 });
   const registry = assertReleasePhaseBudget("registry-published");
   const finalize = assertReleasePhaseBudget("github-finalized");
   for (const report of [stage, registry, finalize]) {

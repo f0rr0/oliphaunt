@@ -15,17 +15,17 @@ inputs:
     required: false
     default: "36"
   native-ccache:
-    description: Whether to install and cache ccache for native Android C/C++ builds.
+    description: Whether to install and configure ccache for native Android C/C++ builds.
     required: false
     default: "false"
   gradle-cache:
-    description: Whether setup-java should restore and save the Gradle dependency cache.
+    description: Whether to restore the Gradle dependency cache.
     required: false
     default: "true"
-  gradle-cache-scope-file:
-    description: Optional repository-relative file whose contents isolate a Gradle cache consumer.
+  gradle-cache-save-if:
+    description: Whether this caller may save the Gradle dependency cache after a miss.
     required: false
-    default: ""
+    default: "false"
 
 runs:
   using: composite
@@ -34,25 +34,16 @@ runs:
       shell: bash
       env:
         GRADLE_CACHE_INPUT: ${{ inputs.gradle-cache }}
-        GRADLE_CACHE_SCOPE_FILE: ${{ inputs.gradle-cache-scope-file }}
+        GRADLE_CACHE_SAVE_IF_INPUT: ${{ inputs.gradle-cache-save-if }}
         NATIVE_CCACHE_INPUT: ${{ inputs.native-ccache }}
       run: |
         set -euo pipefail
         case "$GRADLE_CACHE_INPUT" in true|false) ;; *) echo "gradle-cache must be true or false" >&2; exit 1 ;; esac
+        case "$GRADLE_CACHE_SAVE_IF_INPUT" in true|false) ;; *) echo "gradle-cache-save-if must be true or false" >&2; exit 1 ;; esac
         case "$NATIVE_CCACHE_INPUT" in true|false) ;; *) echo "native-ccache must be true or false" >&2; exit 1 ;; esac
-        case "$GRADLE_CACHE_SCOPE_FILE" in
-          "") ;;
-          /*|../*|*/../*|*/..) echo "gradle-cache-scope-file must be repository-relative and cannot traverse parents" >&2; exit 1 ;;
-          *)
-            if [[ ! -f "$GITHUB_WORKSPACE/$GRADLE_CACHE_SCOPE_FILE" ]]; then
-              echo "gradle-cache-scope-file does not exist: $GRADLE_CACHE_SCOPE_FILE" >&2
-              exit 1
-            fi
-            ;;
-        esac
 
     - name: Set up Java with Gradle cache
-      if: ${{ inputs.gradle-cache == 'true' }}
+      if: ${{ inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if == 'true' }}
       uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
       with:
         distribution: temurin
@@ -65,14 +56,22 @@ runs:
           src/sdks/react-native/examples/expo/package.json
           src/sdks/react-native/package.json
           pnpm-lock.yaml
-          ${{ inputs.gradle-cache-scope-file }}
 
     - name: Set up Java without Gradle cache
-      if: ${{ inputs.gradle-cache != 'true' }}
+      if: ${{ inputs.gradle-cache != 'true' || inputs.gradle-cache-save-if != 'true' }}
       uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
       with:
         distribution: temurin
         java-version: "17"
+
+    - name: Restore Gradle dependency cache
+      if: ${{ inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if != 'true' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/sdks/kotlin/**/*.gradle*', 'src/sdks/kotlin/**/gradle-wrapper.properties', 'src/sdks/kotlin/**/libs.versions.toml', 'src/sdks/react-native/examples/expo/package.json', 'src/sdks/react-native/package.json', 'pnpm-lock.yaml') }}
 
     - name: Prepare native Android ccache directory
       if: ${{ inputs.native-ccache == 'true' }}
@@ -80,15 +79,6 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "$HOME/.cache/oliphaunt-ccache/android"
-
-    - name: Restore native Android ccache
-      if: ${{ inputs.native-ccache == 'true' }}
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-      with:
-        path: ~/.cache/oliphaunt-ccache/android
-        key: android-ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.ndk-version }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**') }}
-        restore-keys: |
-          android-ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.ndk-version }}-
 
     - name: Set up native Android ccache
       if: ${{ inputs.native-ccache == 'true' }}

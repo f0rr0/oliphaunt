@@ -5,14 +5,48 @@
   "ownershipManifest": "tools/release/release-semantic-inputs.toml",
   "rules": [
     {
-      "id": "sdk-package-producers",
+      "id": "canonical-release-notice-carrier-producer",
       "paths": [
-        "tools/release/build-sdk-ci-artifacts.mjs"
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
       ],
       "inputs": [
         {
-          "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
+      "id": "shared-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/shared.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "kotlin-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/kotlin.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/kotlin.mjs",
+          "sha256": "ca2977e2477732b755bf773fa6044a4d98e13c4e01de0e3008e6d17f43ad3e72"
         }
       ]
     },
@@ -29,5 +63,5 @@
       ]
     }
   ],
-  "sha256": "b28ffeb67722fa26603b2e1641582f7ca8057fe0a398d4396c49148d11a8a3c2"
+  "sha256": "ed0c6f8f05b2dca41d74fe57d0944eea0f9966d342e0a99cb56baee848691b84"
 }

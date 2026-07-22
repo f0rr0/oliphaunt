@@ -105,6 +105,9 @@ tools/release/check-linux-consumer-baseline.sh \
   --root "$tools_stage" \
   --library-root "$stage"
 
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$stage" --profile native-runtime
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$tools_stage" --profile native-tools
+
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \
   OLIPHAUNT_WORK_ROOT="$work_root" \
@@ -116,5 +119,7 @@ env \
 
 tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"
+tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$asset" --profile native-runtime
+tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$tools_asset" --profile native-tools
 echo "liboliphauntLinuxReleaseAsset=$out_dir/$asset"
 echo "oliphauntToolsLinuxReleaseAsset=$out_dir/$tools_asset"

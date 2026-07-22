@@ -49,6 +49,19 @@ import {
 } from "./npm-trusted-publishing.mjs";
 import { validateExtensionArtifactArchive } from "./extension-artifact-inventory.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  assertExtensionUpstreamLicensesInDirectory,
+  extensionRegistryLicense,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 // Keep the established diagnostic prefix for callers importing the public
@@ -64,6 +77,15 @@ const CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024;
 const CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024;
 const NPM_EXTENSION_CONTRACT_FILENAME = "extension-contract.json";
 const MAX_COMMAND_CAPTURE_BYTES = 32 * 1024 * 1024;
+const CONTRIB_PRODUCT = "oliphaunt-extension-contrib-pg18";
+const OPENSSL_EMBEDDED_NATIVE_TARGETS = new Set([
+  "android-arm64-v8a",
+  "android-x86_64",
+  "ios-xcframework",
+  "macos-arm64",
+  "macos-x64",
+  "windows-x64-msvc",
+]);
 
 function fail(tool, message) {
   throw new Error(`${tool}: ${message}`);
@@ -347,6 +369,76 @@ function tomlString(value) {
 
 function localFail(message) {
   fail(TOOL, message);
+}
+
+export function nativeExtensionCarrierLegal(product, members, { target = null, carriesPayload }) {
+  if (
+    typeof product !== "string"
+    || !Array.isArray(members)
+    || members.length === 0
+    || members.some((member) => typeof member !== "string" || !member)
+    || new Set(members).size !== members.length
+    || typeof carriesPayload !== "boolean"
+  ) {
+    throw new Error(`${TOOL}: native extension carrier legal lookup requires a product, unique members, and carriesPayload`);
+  }
+  if (!carriesPayload) {
+    return Object.freeze({
+      profile: "code-facade",
+      packageSpdx: releaseProfilePackageLicense("code-facade").spdx,
+      upstreamMembers: Object.freeze([]),
+    });
+  }
+  if (typeof target !== "string" || target.length === 0) {
+    throw new Error(`${TOOL}: a payload-bearing native extension carrier requires an exact target`);
+  }
+  if (product === CONTRIB_PRODUCT) {
+    const embedsOpenSsl = members.includes("pgcrypto") && OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target);
+    const profile = embedsOpenSsl ? "contrib-native-openssl" : "contrib-native";
+    return Object.freeze({
+      profile,
+      packageSpdx: releaseProfilePackageLicense(profile).spdx,
+      upstreamMembers: Object.freeze([]),
+    });
+  }
+  const registry = extensionRegistryLicense(product, members);
+  return Object.freeze({
+    profile: "external-native",
+    packageSpdx: registry.packageSpdx,
+    upstreamMembers: Object.freeze([...members]),
+  });
+}
+
+function carrierLegalMembers(legal) {
+  return [
+    ...releaseNoticeRows({ profile: legal.profile }).map((row) => row.member),
+    ...(legal.upstreamMembers.length > 0 ? ["share/licenses/**"] : []),
+  ];
+}
+
+function stageNativeExtensionCarrierLegal(directory, legal) {
+  stageReleaseNotices(directory, { profile: legal.profile });
+  const upstreamRoot = path.join(directory, "share/licenses");
+  if (legal.upstreamMembers.length > 0) {
+    for (const sqlName of legal.upstreamMembers) {
+      stageExtensionUpstreamLicenses(sqlName, directory);
+    }
+    assertExtensionUpstreamLicensesInDirectory(legal.upstreamMembers, directory);
+  } else if (existsSync(upstreamRoot)) {
+    const stat = lstatSync(upstreamRoot);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      fail(TOOL, `stale upstream license root must be a real directory: ${rel(upstreamRoot)}`);
+    }
+    rmSync(upstreamRoot, { recursive: true });
+  }
+  assertReleaseNoticesInDirectory(directory, { profile: legal.profile });
+}
+
+function assertNativeExtensionCarrierArchive(archive, legal, prefix) {
+  assertReleaseNoticesInArchive(archive, { profile: legal.profile, prefix });
+  if (legal.upstreamMembers.length > 0) {
+    assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, archive, { prefix });
+  }
 }
 
 function sha256File(file) {
@@ -832,6 +924,7 @@ function writeExtensionMetaPackage(packageDir, {
   iosCarrier,
   liboliphauntVersion,
   runtimeBound,
+  legal,
 }) {
   const bundle = members.length > 1;
   const packageName = extensionNpmPackageForProduct(product);
@@ -850,7 +943,7 @@ function writeExtensionMetaPackage(packageDir, {
     description: bundle
       ? `Oliphaunt PostgreSQL contrib extension bundle (${members.length} exact members).`
       : `Oliphaunt extension package for PostgreSQL ${members[0]}.`,
-    license: "MIT AND Apache-2.0 AND PostgreSQL",
+    license: legal.packageSpdx,
     type: "module",
     repository: { type: "git", url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
     optionalDependencies: Object.fromEntries(Object.values(targetPackageNames).map((name) => [name, version])),
@@ -865,7 +958,7 @@ function writeExtensionMetaPackage(packageDir, {
       runtimeBound,
     },
     publishConfig: { access: "public", provenance: true },
-    files: ["README.md", IOS_CARRIER_FILENAME],
+    files: ["README.md", IOS_CARRIER_FILENAME, ...carrierLegalMembers(legal)],
     exports: {
       "./ios-carriers": `./${IOS_CARRIER_FILENAME}`,
       "./package.json": "./package.json",
@@ -882,6 +975,7 @@ function writeExtensionTargetPackage(packageDir, {
   liboliphauntVersion,
   memberRuntimeRelativePaths = null,
   memberModuleRelativePaths = null,
+  legal,
 }) {
   const bundle = members.length > 1;
   if (
@@ -926,16 +1020,19 @@ function writeExtensionTargetPackage(packageDir, {
     description: bundle
       ? `${target} Oliphaunt runtime bundle for ${members.length} exact PostgreSQL contrib extensions.`
       : `${target} Oliphaunt extension runtime package for PostgreSQL ${members[0]}.`,
-    license: "MIT AND Apache-2.0 AND PostgreSQL",
+    license: legal.packageSpdx,
     type: "module",
     repository: { type: "git", url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
     ...npmPlatformConstraints(target),
     optional: true,
     oliphaunt: metadata,
     publishConfig: { access: "public", provenance: true },
-    files: bundle
-      ? ["extensions", "bundle-manifest.json", NPM_EXTENSION_CONTRACT_FILENAME, "README.md"]
-      : ["runtime", NPM_EXTENSION_CONTRACT_FILENAME, "README.md"],
+    files: [
+      ...(bundle
+        ? ["extensions", "bundle-manifest.json", NPM_EXTENSION_CONTRACT_FILENAME, "README.md"]
+        : ["runtime", NPM_EXTENSION_CONTRACT_FILENAME, "README.md"]),
+      ...carrierLegalMembers(legal),
+    ],
     exports: {
       ...(bundle ? { "./bundle-manifest": "./bundle-manifest.json" } : {}),
       "./extension-contract": `./${NPM_EXTENSION_CONTRACT_FILENAME}`,
@@ -1103,6 +1200,13 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
       baseCarrierManifest: options.baseCarrierManifest,
       extensionManifests: [manifestPath],
     });
+    const metaLegal = nativeExtensionCarrierLegal(product, members, {
+      carriesPayload: false,
+    });
+    const targetLegal = nativeExtensionCarrierLegal(product, members, {
+      carriesPayload: true,
+      target,
+    });
     writeExtensionMetaPackage(metaDir, {
       product,
       version,
@@ -1112,6 +1216,7 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
       iosCarrier,
       liboliphauntVersion,
       runtimeBound,
+      legal: metaLegal,
     });
     writeExtensionTargetPackage(targetDir, {
       product,
@@ -1122,12 +1227,17 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
       liboliphauntVersion,
       memberRuntimeRelativePaths: runtimeSet.bundle ? memberRuntimeRelativePaths : null,
       memberModuleRelativePaths: runtimeSet.bundle ? memberModuleRelativePaths : null,
+      legal: targetLegal,
     });
+    stageNativeExtensionCarrierLegal(metaDir, metaLegal);
+    stageNativeExtensionCarrierLegal(targetDir, targetLegal);
     const targetTarball = pnpmPackForNpmPublish(targetDir, tarballRoot);
+    assertNativeExtensionCarrierArchive(targetTarball, targetLegal, "package");
     if (!npmPackageSizeSafe(targetTarball, result)) {
       continue;
     }
     const metaTarball = pnpmPackForNpmPublish(metaDir, tarballRoot);
+    assertNativeExtensionCarrierArchive(metaTarball, metaLegal, "package");
     if (!npmPackageSizeSafe(metaTarball, result)) {
       rmSync(targetTarball, { force: true });
       continue;
@@ -1141,7 +1251,7 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
 }
 
 
-function writeNativeExtensionCargoPartCrate(crateDir, { product, version, members, target, index }) {
+function writeNativeExtensionCargoPartCrate(crateDir, { product, version, members, target, index, legal }) {
   const name = nativeExtensionCargoPartPackageName(product, target, index);
   const subject = members.length === 1 ? members[0] : `${members.length}-member bundle`;
   mkdirSync(path.join(crateDir, "src"), { recursive: true });
@@ -1156,8 +1266,8 @@ description = "Cargo payload part ${String(index).padStart(3, "0")} for the ${su
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
-include = ["Cargo.toml", "README.md", "src/**", "payload/**"]
+license = ${tomlString(legal.packageSpdx)}
+include = ${tomlString(["Cargo.toml", "README.md", "src/**", "payload/**", ...carrierLegalMembers(legal)])}
 
 [lib]
 path = "src/lib.rs"
@@ -1183,6 +1293,7 @@ pub const PART_INDEX: usize = ${index};
 pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");
 `,
   );
+  stageNativeExtensionCarrierLegal(crateDir, legal);
 }
 
 function writeChunk(file, data) {
@@ -1202,6 +1313,7 @@ function buildNativeExtensionPartCrates(runtimeDir, sourceRoot, {
   target,
   partBytes = CARGO_EXTENSION_PART_BYTES,
 }) {
+  const legal = nativeExtensionCarrierLegal(product, members, { target, carriesPayload: true });
   const partDirs = [];
   let currentDir = null;
   let currentSize = 0;
@@ -1212,7 +1324,7 @@ function buildNativeExtensionPartCrates(runtimeDir, sourceRoot, {
       throw new Error(`${product}@${version} requires more than 999 Cargo payload parts for ${target}`);
     }
     const partDir = path.join(sourceRoot, nativeExtensionCargoPartPackageName(product, target, index));
-    writeNativeExtensionCargoPartCrate(partDir, { product, version, members, target, index });
+    writeNativeExtensionCargoPartCrate(partDir, { product, version, members, target, index, legal });
     partDirs.push(partDir);
     return partDir;
   };
@@ -1567,6 +1679,7 @@ function writeNativeExtensionSplitAggregatorCrate(crateDir, {
   runtimeVersion,
   partDirs,
 }) {
+  const legal = nativeExtensionCarrierLegal(product, members, { carriesPayload: false });
   const name = nativeExtensionCargoPackageName(product, target);
   const links = nativeExtensionCargoLinksName(product, target);
   const subject = members.length === 1 ? members[0] : `${members.length}-member bundle`;
@@ -1591,10 +1704,10 @@ description = "Cargo artifact crate for the ${subject} Oliphaunt native extensio
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = ${tomlString(legal.packageSpdx)}
 links = "${links}"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**"]
+include = ${tomlString(["Cargo.toml", "README.md", "build.rs", "src/**", ...carrierLegalMembers(legal)])}
 
 [lib]
 path = "src/lib.rs"
@@ -1618,9 +1731,11 @@ ${dependencyLines.join("\n")}
       .replace("__EXTENSION_DEPENDENCIES__", dependencyRows.map(([member, dependencies]) => `    (${tomlString(member)}, &[${dependencies.map((dependency) => tomlString(dependency)).join(", ")}]),`).join("\n"))
       .replace("__PART_ROOTS__", partRoots.join("\n")),
   );
+  stageNativeExtensionCarrierLegal(crateDir, legal);
+  return legal;
 }
 
-function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
+function cargoPackage(crateDir, targetDir, legal, { noVerify = false } = {}) {
   const manifest = path.join(crateDir, "Cargo.toml");
   const { name, version } = readCargoPackageNameVersion(manifest, { fail: localFail, rel });
   const command = [
@@ -1648,16 +1763,45 @@ function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
   if (result.status !== 0) {
     fail(TOOL, `${command[0]} failed with exit code ${result.status ?? 1}`);
   }
-  const cratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
-  if (!isFile(cratePath)) {
-    fail(TOOL, `cargo package did not create ${rel(cratePath)}`);
+  const cargoCratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
+  if (!isFile(cargoCratePath)) {
+    fail(TOOL, `cargo package did not create ${rel(cargoCratePath)}`);
+  }
+  // Cargo's tar writer may choose GNU LongLink records for paths that fit in
+  // ustar's prefix/name fields. Re-materialize the already verified source as
+  // the repository's strict deterministic ustar so the final carrier can be
+  // parsed and validated without accepting link-like extension records.
+  let cratePath;
+  try {
+    cratePath = manualCargoPackageSource(
+      manifest,
+      path.join(targetDir, "strict-package", name),
+      {
+        root: ROOT,
+        fail: localFail,
+        rel,
+        // The caller uses the strict package's actual size to decide whether to
+        // split. Do not let the generic 10 MiB guard preempt that role-aware path.
+        packageSizeLimitBytes: Number.MAX_SAFE_INTEGER,
+      },
+    );
+    assertNativeExtensionCarrierArchive(cratePath, legal, `${name}-${version}`);
+  } finally {
+    // `cargo package` is the verifier here, while `cratePath` is the one
+    // deterministic archive eligible for publication. Cargo also retains a
+    // byte-distinct copy under package/tmp-crate in addition to its ordinary
+    // package archive and expanded verification tree. The complete package
+    // subtree is transient and dedicated to this target directory, so remove
+    // it rather than trying to enumerate Cargo's internal paths.
+    rmSync(path.join(targetDir, "package"), { recursive: true, force: true });
   }
   return cratePath;
 }
 
 function discardCargoPackageArtifact(cratePath) {
-  rmSync(cratePath, { force: true });
-  rmSync(path.join(path.dirname(cratePath), "tmp-crate", path.basename(cratePath)), { force: true });
+  // manualCargoPackageSource gives each generated crate a dedicated output
+  // directory containing the archive and its verification stage.
+  rmSync(path.dirname(cratePath), { recursive: true, force: true });
 }
 
 function stageNativeExtensionCargoPayload(crateDir, runtimeSet, { target, nativeRuntimeVersion }) {
@@ -1702,6 +1846,7 @@ function writeNativeExtensionCargoCrate(crateDir, {
   runtimeVersion,
   runtimeSet,
 }) {
+  const legal = nativeExtensionCarrierLegal(product, members, { target, carriesPayload: true });
   const name = nativeExtensionCargoPackageName(product, target);
   const links = nativeExtensionCargoLinksName(product, target);
   const subject = members.length === 1 ? members[0] : `${members.length}-member bundle`;
@@ -1732,10 +1877,10 @@ description = "Cargo artifact crate for the ${subject} Oliphaunt native extensio
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = ${tomlString(legal.packageSpdx)}
 links = "${links}"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+include = ${tomlString(["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**", ...carrierLegalMembers(legal)])}
 
 [lib]
 path = "src/lib.rs"
@@ -1876,6 +2021,8 @@ fn sha256_file(path: &Path) -> String {
 }
 `,
   );
+  stageNativeExtensionCarrierLegal(crateDir, legal);
+  return legal;
 }
 
 export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, strict, result) {
@@ -1906,7 +2053,8 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
   const outputs = [];
   const packageOptions = { root: ROOT, fail: localFail, rel };
   const stagedIdentities = new Map();
-  for (const manifestPath of manifests) {
+  try {
+    for (const manifestPath of manifests) {
     const manifest = readJsonFile(manifestPath);
     const extensionDir = path.dirname(manifestPath);
     const { product, version } = manifest;
@@ -1962,7 +2110,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
     const name = nativeExtensionCargoPackageName(product, target);
     const crateDir = path.join(sourceRoot, name);
     try {
-      writeNativeExtensionCargoCrate(crateDir, {
+      const crateLegal = writeNativeExtensionCargoCrate(crateDir, {
         product,
         version,
         members,
@@ -1973,7 +2121,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
         runtimeVersion,
         runtimeSet,
       });
-      let cratePath = cargoPackage(crateDir, cargoTargetDir);
+      let cratePath = cargoPackage(crateDir, cargoTargetDir, crateLegal);
       let size = statSync(cratePath).size;
       if (size > CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES) {
         discardCargoPackageArtifact(cratePath);
@@ -1984,7 +2132,8 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
           memberDependencies,
           target,
         });
-        writeNativeExtensionSplitAggregatorCrate(crateDir, {
+        const partLegal = nativeExtensionCarrierLegal(product, members, { target, carriesPayload: true });
+        const aggregatorLegal = writeNativeExtensionSplitAggregatorCrate(crateDir, {
           product,
           version,
           members,
@@ -1997,7 +2146,7 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
         });
         let partFailed = false;
         for (const partDir of partDirs) {
-          const partCratePath = cargoPackage(partDir, cargoTargetDir);
+          const partCratePath = cargoPackage(partDir, cargoTargetDir, partLegal);
           const partSize = statSync(partCratePath).size;
           if (partSize > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
             const message = `${rel(partCratePath)} is ${partSize} bytes, above the crates.io 10 MiB package limit`;
@@ -2019,6 +2168,11 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
           path.join(crateDir, "Cargo.toml"),
           path.join(cargoTargetDir, "manual-package"),
           packageOptions,
+        );
+        assertNativeExtensionCarrierArchive(
+          cratePath,
+          aggregatorLegal,
+          path.basename(cratePath, ".crate"),
         );
         size = statSync(cratePath).size;
         if (size > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
@@ -2046,7 +2200,16 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
         throw error;
       }
     }
+    }
+    result.staged.push(...outputs.map(rel));
+    return outputs;
+  } finally {
+    // Only native-extension-crates is a publication surface. Source and Cargo
+    // work roots can contain verifier-created .crate files, including
+    // package/tmp-crate copies whose bytes differ from the deterministic final
+    // carrier. Removing both work roots in finally keeps success and failure
+    // staging trees fail-closed for recursive artifact discovery.
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(cargoTargetDir, { recursive: true, force: true });
   }
-  result.staged.push(...outputs.map(rel));
-  return outputs;
 }

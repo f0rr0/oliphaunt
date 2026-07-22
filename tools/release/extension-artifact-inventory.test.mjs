@@ -19,6 +19,12 @@ import {
   EXTENSION_ARTIFACT_ARCHIVE_POLICY,
   validateExtensionArtifactArchivePlan,
 } from "./extension-artifact-archive-policy.mjs";
+import {
+  extensionCarrierLegalContract,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
+import { extensionProductForSqlName } from "./release-artifact-targets.mjs";
+import { stageReleaseNotices } from "./release-notices.mjs";
 
 const REPOSITORY = path.resolve(import.meta.dirname, "../..");
 
@@ -97,15 +103,26 @@ function canonicalArchive(entries, { mutateHeader = undefined, trailingZeroBlock
   return compressed;
 }
 
+function legalContract(sqlName, target) {
+  return extensionCarrierLegalContract(
+    extensionProductForSqlName(sqlName, "extension-artifact-inventory.test.mjs"),
+    [sqlName],
+    { family: "native", target },
+  );
+}
+
 function manifest(overrides = {}) {
+  const sqlName = overrides.sqlName ?? "pgtap";
+  const nativeTarget = overrides.nativeTarget ?? "linux-x64-gnu";
+  const legal = legalContract(sqlName, nativeTarget);
   const values = {
     packageLayout: "oliphaunt-extension-artifact-v1",
     pgMajor: "18",
-    sqlName: "pgtap",
+    sqlName,
     createsExtension: "yes",
     nativeModuleStem: "",
     nativeModuleFile: "",
-    nativeTarget: "linux-x64-gnu",
+    nativeTarget,
     nativeRuntimeProduct: "liboliphaunt-native",
     nativeRuntimeVersion: "1.2.3",
     dependencies: "",
@@ -118,10 +135,42 @@ function manifest(overrides = {}) {
     mobileStaticDependencyArchives: "",
     staticSymbolPrefix: "",
     staticSymbolAliases: "",
+    licenseFiles: legal.licenseFiles.join(","),
+    licenseProfile: legal.profile,
     files: "files",
     ...overrides,
   };
   return `${EXTENSION_ARTIFACT_PROPERTY_KEYS.map((key) => `${key}=${values[key]}`).join("\n")}\n`;
+}
+
+async function canonicalLegalEntries(root, sqlName, target = "linux-x64-gnu") {
+  const contract = legalContract(sqlName, target);
+  const stage = await fs.mkdtemp(path.join(root, `legal-${sqlName}-`));
+  try {
+    stageReleaseNotices(stage, { profile: contract.profile });
+    stageExtensionUpstreamLicenses(sqlName, path.join(stage, "files"));
+    const rows = [];
+    const visit = async (directory) => {
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+      for (const entry of entries) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(file);
+        } else {
+          assert.equal(entry.isFile(), true, `legal fixture contains a non-file entry: ${file}`);
+          rows.push([
+            path.relative(stage, file).split(path.sep).join("/"),
+            await fs.readFile(file),
+          ]);
+        }
+      }
+    };
+    await visit(stage);
+    return new Map(rows);
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+  }
 }
 
 const pgtapMetadata = {
@@ -191,12 +240,14 @@ async function main() {
   );
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "oliphaunt-extension-inventory-"));
   try {
+    const pgtapLegal = await canonicalLegalEntries(root, "pgtap");
     const legitimate = new Map([
       ["manifest.properties", manifest()],
       ["files/share/postgresql/extension/pgtap--1.3.5.sql", "install"],
       ["files/share/postgresql/extension/pgtap-core--fixture.sql", "owned prefix"],
       ["files/share/postgresql/extension/pgtap.control", "default_version = '1.3.5'\n"],
       ["files/share/postgresql/extension/uninstall_pgtap.sql", "owned exact"],
+      ...pgtapLegal,
     ]);
     const validFile = await writeArchive(root, "legitimate.tar.gz", legitimate);
     assert.equal((await fs.readFile(validFile)).subarray(0, 10).toString("hex"), "1f8b0800000000000003");
@@ -207,7 +258,97 @@ async function main() {
       nativeRuntimeVersion: "1.2.3",
       label: "legitimate",
     });
-    assert.equal(validated.runtimeFiles.length, 4);
+    assert.deepEqual(
+      validated.legalFiles.map(({ path: member }) => member),
+      [...pgtapLegal.keys()].sort(),
+    );
+    assert.equal(validated.runtimeFiles.length, 4 + legalContract("pgtap", "linux-x64-gnu").licenseFiles.length);
+
+    const pgtapUpstreamLegalMember = `files/${legalContract(
+      "pgtap",
+      "linux-x64-gnu",
+    ).licenseFiles[0]}`;
+    assert.equal(pgtapLegal.has(pgtapUpstreamLegalMember), true);
+    for (const [caseName, member] of [
+      ["root", "LICENSE"],
+      ["upstream", pgtapUpstreamLegalMember],
+    ]) {
+      const missingLegal = new Map(legitimate);
+      missingLegal.delete(member);
+      await expectArchiveFailure(
+        root,
+        `missing-${caseName}-legal.tar.gz`,
+        missingLegal,
+        pgtapMetadata,
+        new RegExp(`missing: ${member.replaceAll("/", "\\/").replaceAll(".", "\\.")}`, "u"),
+      );
+
+      const mutatedLegal = new Map(legitimate);
+      mutatedLegal.set(member, `mutated ${caseName} legal bytes`);
+      await expectArchiveFailure(
+        root,
+        `mutated-${caseName}-legal.tar.gz`,
+        mutatedLegal,
+        pgtapMetadata,
+        /legal member .* does not match canonical bytes/u,
+      );
+
+      const executableLegalFile = await writeArchive(
+        root,
+        `executable-${caseName}-legal.tar.gz`,
+        legitimate,
+        {
+          mutateHeader(header, name) {
+            if (name === member) writeOctal(header, 100, 8, 0o755);
+          },
+        },
+      );
+      assert.throws(
+        () => validateExtensionArtifactArchive({
+          file: executableLegalFile,
+          metadata: pgtapMetadata,
+          target: "linux-x64-gnu",
+          nativeRuntimeVersion: "1.2.3",
+          label: `executable ${caseName} legal member`,
+        }),
+        new RegExp(`legal member ${member.replaceAll("/", "\\/").replaceAll(".", "\\.")} must have mode 0644`, "u"),
+      );
+    }
+
+    const unexpectedLegal = new Map(legitimate);
+    unexpectedLegal.set("THIRD_PARTY_LICENSES/undeclared.txt", "not contracted");
+    await expectArchiveFailure(
+      root,
+      "unexpected-legal.tar.gz",
+      unexpectedLegal,
+      pgtapMetadata,
+      /undeclared: THIRD_PARTY_LICENSES\/undeclared[.]txt/u,
+    );
+
+    for (const [name, overrides, pattern] of [
+      ["license-files", { licenseFiles: "" }, /manifest licenseFiles must be/u],
+      ["license-profile", { licenseProfile: "contrib-native" }, /manifest licenseProfile must be/u],
+    ]) {
+      const driftedLegalProperty = new Map(legitimate);
+      driftedLegalProperty.set("manifest.properties", manifest(overrides));
+      await expectArchiveFailure(
+        root,
+        `drifted-${name}.tar.gz`,
+        driftedLegalProperty,
+        pgtapMetadata,
+        pattern,
+      );
+    }
+    assert.throws(
+      () => parseExtensionArtifactProperties(
+        manifest().replace(
+          /licenseFiles=([^\n]*)\nlicenseProfile=([^\n]*)\n/u,
+          "licenseProfile=$2\nlicenseFiles=$1\n",
+        ),
+        "reordered legal properties",
+      ),
+      /properties must use the canonical field order/u,
+    );
 
     const carrierSymlink = path.join(root, "carrier-symlink.tar.gz");
     await fs.symlink(validFile, carrierSymlink);
@@ -776,6 +917,7 @@ async function main() {
       extensionSqlFilePrefixes: ["postgis_comments"],
       sharedPreloadLibraries: [],
     };
+    const postgisLegal = await canonicalLegalEntries(root, "postgis");
     const postgis = new Map([
       ["manifest.properties", manifest({
         sqlName: "postgis",
@@ -795,15 +937,24 @@ async function main() {
         `files/share/postgresql/${dataFile}`,
         `declared data ${dataFile}`,
       ]),
+      ...postgisLegal,
     ]);
     const postgisFile = await writeArchive(root, "postgis-legitimate.tar.gz", postgis);
-    assert.equal(validateExtensionArtifactArchive({
+    const validatedPostgis = validateExtensionArtifactArchive({
       file: postgisFile,
       metadata: postgisMetadata,
       target: "linux-x64-gnu",
       nativeRuntimeVersion: "1.2.3",
       label: "postgis legitimate",
-    }).runtimeFiles.length, 15);
+    });
+    assert.equal(
+      validatedPostgis.runtimeFiles.length,
+      [...postgis.keys()].filter((member) => member.startsWith("files/")).length,
+    );
+    assert.deepEqual(
+      validatedPostgis.legalFiles.map(({ path: member }) => member),
+      [...postgisLegal.keys()].sort(),
+    );
 
     const missingEmbeddedPostgis = new Map(postgis);
     missingEmbeddedPostgis.delete("files/lib/modules/postgis-3.so");

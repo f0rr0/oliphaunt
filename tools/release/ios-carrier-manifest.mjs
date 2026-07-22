@@ -23,7 +23,15 @@ import {
   extensionProductForSqlName,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
+import {
+  extensionCarrierLegalContract,
+  extensionUpstreamLicenseRow,
+} from "./extension-upstream-licenses.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+} from "./release-notices.mjs";
 
 export const IOS_CARRIER_SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
 export const IOS_CARRIER_FILENAME = "oliphaunt-react-native-ios-carriers.json";
@@ -46,6 +54,23 @@ const IOS_CARRIER_ARCHIVE_LIMITS = Object.freeze({
   maxEntryBytes: MAX_ARCHIVE_BYTES,
   maxExpandedBytes: MAX_ARCHIVE_BYTES,
 });
+const BASE_LEGAL_PROFILES = Object.freeze([
+  Object.freeze({
+    assetRole: "base-xcframework",
+    memberPrefix: "liboliphaunt.xcframework",
+    profile: "native-runtime",
+  }),
+  Object.freeze({
+    assetRole: "runtime-resources",
+    memberPrefix: "",
+    profile: "native-runtime-resources",
+  }),
+  Object.freeze({
+    assetRole: "icu-data",
+    memberPrefix: "",
+    profile: "native-icu-data",
+  }),
+]);
 
 function error(message) {
   return new Error(`ios-carrier-manifest: ${message}`);
@@ -205,6 +230,7 @@ function archiveIndex(file, format, cache = new Map(), { includeDigests = false 
       ? { sha256: createHash("sha256").update(entry.data()).digest("hex") }
       : {}),
     name: entry.name,
+    mode: entry.mode,
     size: entry.size,
     type: entry.type,
   }));
@@ -291,6 +317,130 @@ function safeArchivePath(value, label) {
   return parts.join("/");
 }
 
+function legalKind(member, declared = undefined) {
+  if (declared !== undefined) return declared;
+  return path.posix.basename(member).includes("NOTICE") ? "notice" : "license";
+}
+
+function prefixedMember(prefix, member) {
+  return prefix ? `${prefix}/${member}` : member;
+}
+
+function canonicalLegalFileSpecs(profile, memberPrefix = "") {
+  return releaseNoticeRows({ profile }).map((row) => ({
+    bytes: statSync(row.source).size,
+    kind: legalKind(row.member),
+    member: prefixedMember(memberPrefix, row.member),
+    sha256: sha256(row.source),
+  }));
+}
+
+function legalGroupShape({ assetRole, files, profile, spdx }) {
+  const canonical = [...files].sort((left, right) => compareText(left.member, right.member));
+  if (new Set(canonical.map(({ member }) => member)).size !== canonical.length) {
+    throw error(`${assetRole} legal metadata repeats an archive member`);
+  }
+  return {
+    assetRole,
+    files: canonical,
+    profile,
+    spdx,
+  };
+}
+
+/**
+ * Canonical legal locators for the three native Apple base assets. The
+ * locators remain archive-relative; a consumer chooses the applicable groups
+ * (the ICU sidecar is optional) and never needs this repository to stage them.
+ */
+export function iosBaseLegalMetadata() {
+  return BASE_LEGAL_PROFILES.map(({ assetRole, memberPrefix, profile }) =>
+    legalGroupShape({
+      assetRole,
+      files: canonicalLegalFileSpecs(profile, memberPrefix),
+      profile,
+      spdx: releaseProfilePackageLicense(profile).spdx,
+    }));
+}
+
+function assertLegalGroupArchiveBytes(file, format, group, archiveCache, label) {
+  const index = archiveIndex(file, format, archiveCache, { includeDigests: true });
+  return legalGroupShape({
+    ...group,
+    files: group.files.map((expected) => {
+      const member = safeArchivePath(expected.member, `${label} legal member`);
+      const entry = index.byName.get(member);
+      if (entry?.type !== "file") {
+        throw error(`${label} is missing regular legal file ${member}`);
+      }
+      if ((entry.mode & 0o777) !== 0o644) {
+        throw error(`${label} legal file ${member} must have mode 0644`);
+      }
+      if (entry.sha256 !== expected.sha256) {
+        throw error(`${label} legal file ${member} does not match its canonical SHA-256`);
+      }
+      if (expected.bytes !== undefined && entry.size !== expected.bytes) {
+        throw error(`${label} legal file ${member} does not match its canonical byte count`);
+      }
+      if (entry.size <= 0) throw error(`${label} legal file ${member} must be non-empty`);
+      return {
+        bytes: entry.size,
+        kind: expected.kind,
+        member,
+        sha256: entry.sha256,
+      };
+    }),
+  });
+}
+
+function extensionLegalGroup({
+  archiveCache,
+  file,
+  format,
+  product,
+  sqlName,
+}) {
+  const contract = extensionCarrierLegalContract(product, [sqlName], {
+    family: "native",
+    target: "ios-xcframework",
+  });
+  const noticeFiles = canonicalLegalFileSpecs(contract.profile);
+  const upstreamFiles = contract.upstreamMembers.flatMap((member) =>
+    extensionUpstreamLicenseRow(member).files.map((row) => ({
+      kind: legalKind(row.destination, row.role),
+      member: `files/${row.destination}`,
+      sha256: row.sha256,
+    }))
+  );
+  const contractedDestinations = upstreamFiles
+    .map(({ member }) => member.replace(/^files\//u, ""))
+    .sort(compareText);
+  if (JSON.stringify(contractedDestinations) !== JSON.stringify([...contract.licenseFiles])) {
+    throw error(`${product}/${sqlName} iOS legal files disagree with the canonical upstream contract`);
+  }
+  return assertLegalGroupArchiveBytes(
+    file,
+    format,
+    legalGroupShape({
+      assetRole: "runtime-resources",
+      files: [...noticeFiles, ...upstreamFiles],
+      profile: contract.profile,
+      spdx: contract.packageSpdx,
+    }),
+    archiveCache,
+    `${product}/${sqlName} iOS runtime carrier`,
+  );
+}
+
+function validateFrozenBaseLegalMetadata(value, label) {
+  if (!Array.isArray(value)) throw error(`${label} must be an array`);
+  const expected = iosBaseLegalMetadata();
+  if (JSON.stringify(stable(value)) !== JSON.stringify(stable(expected))) {
+    throw error(`${label} does not match the canonical native Apple legal locators`);
+  }
+  return expected;
+}
+
 function assetUrl({ file, name, tag, repository, localUrls }) {
   if (localUrls) return pathToFileURL(file).href;
   return `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`;
@@ -345,11 +495,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
       member: "share/icu",
     },
   ];
-  return {
-    product,
-    version,
-    tag,
-    assets: rows.map((row) => asset({
+  const assets = rows.map((row) => asset({
       ...row,
       file: path.join(baseAssetDir, row.name),
       tag,
@@ -357,7 +503,21 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
       localUrls,
       verifyMembers,
       archiveCache,
-    })),
+    }));
+  const legal = iosBaseLegalMetadata().map((group) => {
+    const selected = rows.find(({ role }) => role === group.assetRole);
+    if (selected === undefined) throw error(`base legal group references unknown asset role ${group.assetRole}`);
+    return assertLegalGroupArchiveBytes(
+      path.join(baseAssetDir, selected.name),
+      archiveFormat(selected.name, `${selected.role} asset`),
+      group,
+      archiveCache,
+      `${product} ${selected.role}`,
+    );
+  });
+  return {
+    base: { product, version, tag, assets },
+    legal,
   };
 }
 
@@ -369,6 +529,7 @@ function frozenBaseCarrier(file) {
     throw error(`cannot read base carrier manifest ${file}: ${cause.message}`);
   }
   const base = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.base : manifest;
+  const legal = manifest?.schema === IOS_CARRIER_SCHEMA ? manifest.legal?.base : manifest?.legal;
   const product = "liboliphaunt-native";
   const version = currentProductVersionSync(product, "ios-carrier-manifest");
   const tag = `${tagPrefix(product, "ios-carrier-manifest")}${version}`;
@@ -395,7 +556,10 @@ function frozenBaseCarrier(file) {
       throw error(`${file} base asset ${index} name does not match its archive format`);
     }
   }
-  return stable(base);
+  return {
+    base: stable(base),
+    legal: validateFrozenBaseLegalMetadata(legal, `${file} base legal metadata`),
+  };
 }
 
 function validateRegistration(
@@ -442,7 +606,7 @@ function validateRegistration(
 function extensionCarrier(
   manifest,
   manifestPath,
-  { aggregateCarriers, repository, localUrls, release, verifyMembers, archiveCache },
+  { aggregateCarriers, repository, localUrls, release, verifyMembers, archiveCache, includeLegal },
 ) {
   if (
     typeof manifest.product !== "string"
@@ -607,6 +771,17 @@ function extensionCarrier(
   const registration = nativeModuleStem === null
     ? null
     : validateRegistration(manifest.iosRegistration, manifestPath, { nativeModuleStem, sqlName });
+  const runtimeRow = rows.find(({ row }) => row.kind === "runtime");
+  if (runtimeRow === undefined) throw error(`${manifestPath} lacks its iOS runtime legal carrier`);
+  const legal = includeLegal !== false
+    ? extensionLegalGroup({
+        archiveCache,
+        file: path.resolve(ROOT, runtimeRow.row.path),
+        format: runtimeRow.logicalFormat,
+        product: release.product,
+        sqlName,
+      })
+    : undefined;
   return {
     carriers: [...carriers.values()].sort((left, right) => compareText(left.name, right.name)),
     extension: {
@@ -625,6 +800,7 @@ function extensionCarrier(
       registration,
       assets,
     },
+    legal,
   };
 }
 
@@ -751,6 +927,11 @@ function extensionCarriers(manifestPath, options) {
     release,
   }));
   const rows = built.map(({ extension }) => extension);
+  const legal = options.includeLegal === false
+    ? []
+    : built
+      .map(({ extension, legal: group }) => ({ ...group, sqlName: extension.sqlName }))
+      .sort((left, right) => compareText(left.sqlName, right.sqlName));
   if (new Set(rows.map(({ sqlName }) => sqlName)).size !== rows.length) {
     throw error(`${manifestPath} repeats an extension SQL name`);
   }
@@ -770,6 +951,7 @@ function extensionCarriers(manifestPath, options) {
   return {
     carriers: [...carriers.values()].sort((left, right) => compareText(left.name, right.name)),
     nativeRuntimeVersion: document.compatibility.nativeRuntimeVersion,
+    legal,
     release,
     rows,
   };
@@ -815,6 +997,7 @@ export function buildSwiftExtensionCarrierManifest({
   const archiveCache = new Map();
   const resolved = extensionCarriers(path.resolve(extensionManifest), {
     archiveCache,
+    includeLegal: false,
     repository,
     localUrls,
     nativeRuntimeVersion,
@@ -864,7 +1047,7 @@ export function buildIosCarrierManifest({
 } = {}) {
   validateRepository(repository);
   const archiveCache = new Map();
-  const base = baseCarrierManifest === undefined
+  const frozenBase = baseCarrierManifest === undefined
     ? baseCarrier({
       archiveCache,
       baseAssetDir: path.resolve(baseAssetDir),
@@ -873,6 +1056,7 @@ export function buildIosCarrierManifest({
       verifyMembers,
     })
     : frozenBaseCarrier(baseCarrierManifest);
+  const { base, legal: baseLegal } = frozenBase;
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {
       archiveCache,
@@ -907,6 +1091,12 @@ export function buildIosCarrierManifest({
     base,
     carriers: [...carriers.values()].sort((left, right) => compareText(left.name, right.name)),
     extensions,
+    legal: {
+      base: baseLegal,
+      extensions: documents
+        .flatMap(({ legal }) => legal)
+        .sort((left, right) => compareText(left.sqlName, right.sqlName)),
+    },
   });
 }
 

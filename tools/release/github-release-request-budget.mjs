@@ -32,7 +32,6 @@ import {
   lockedProductArtifactPaths,
 } from "./publication-lock.mjs";
 import {
-  RELEASE_CURRENT_MAIN_REVALIDATION_TIMEOUT_SECONDS,
   RELEASE_FINALIZATION_CLEANUP_MARGIN_SECONDS,
   RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS,
   RELEASE_MINIMUM_FINALIZATION_SECONDS,
@@ -41,6 +40,10 @@ import {
   NORMAL_PUBLICATION_RECOVERY_GITHUB_CORE_REQUEST_MAX,
   NORMAL_PUBLICATION_RECOVERY_STEP_TIMEOUT_MS,
 } from "./normal-publication-recovery-contract.mjs";
+import {
+  RELEASE_TRANSPORT_REF_MAX_CORE_REQUESTS,
+  RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES,
+} from "./release-continuation-read-budget.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const GITHUB_ASSET_ROLES = new Set(["github-release-asset", "github-release-metadata"]);
@@ -63,6 +66,7 @@ export const FIRST_RELEASE_TRANSFER_REQUESTS = Object.freeze({
   artifactRunSnapshots: 12,
   normalPublicationRecovery: NORMAL_PUBLICATION_RECOVERY_GITHUB_CORE_REQUEST_MAX,
   qualificationGates: 9,
+  releaseTransportRefReads: RELEASE_TRANSPORT_REF_MAX_CORE_REQUESTS - 1,
   wasixRuntimeDownloadsAndGate: 11,
 });
 export const FIRST_RELEASE_TRANSFER_REQUEST_TOTAL = Object.values(
@@ -70,10 +74,12 @@ export const FIRST_RELEASE_TRANSFER_REQUEST_TOTAL = Object.values(
 ).reduce((total, count) => total + count, 0);
 export const FIRST_RELEASE_RELEASE_API_REQUESTS = 299;
 export const FIRST_RELEASE_ATTESTATION_API_REQUESTS = 6;
+export const FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS = 1;
 export const FIRST_RELEASE_NOMINAL_CORE_REQUESTS =
   FIRST_RELEASE_TRANSFER_REQUEST_TOTAL
   + FIRST_RELEASE_RELEASE_API_REQUESTS
-  + FIRST_RELEASE_ATTESTATION_API_REQUESTS;
+  + FIRST_RELEASE_ATTESTATION_API_REQUESTS
+  + FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS;
 
 export function pagesForRows(count) {
   if (!Number.isSafeInteger(count) || count < 0) fail("page row count must be a non-negative safe integer");
@@ -94,8 +100,15 @@ export function conservativeCoreRequestCount({
   attestationWrites,
   productCount,
   releasePageCount = 1,
+  transportTagWrites = 1,
 }) {
-  for (const [label, value] of Object.entries({ assetCount, attestationWrites, productCount, releasePageCount })) {
+  for (const [label, value] of Object.entries({
+    assetCount,
+    attestationWrites,
+    productCount,
+    releasePageCount,
+    transportTagWrites,
+  })) {
     if (!Number.isSafeInteger(value) || value < 0) fail(`${label} must be a non-negative safe integer`);
   }
   if (productCount < 1) fail("productCount must be positive");
@@ -130,7 +143,8 @@ export function conservativeCoreRequestCount({
     + draftManagementRequests
     + releaseAssetRequests
     + receiptRequests
-    + attestationWrites;
+    + attestationWrites
+    + transportTagWrites;
 }
 
 function fail(message) {
@@ -207,6 +221,7 @@ export function contentWriteBudgetFromCounts({
   releasePageCount = 1,
   rollingCoreRequestCount = 0,
   sourceTagWrites = 0,
+  transportTagWrites = 1,
 }) {
   for (const [label, value] of Object.entries({
     assetCount,
@@ -215,6 +230,7 @@ export function contentWriteBudgetFromCounts({
     releasePageCount,
     rollingCoreRequestCount,
     sourceTagWrites,
+    transportTagWrites,
   })) {
     if (!Number.isSafeInteger(value) || value < 0) fail(`${label} must be a non-negative safe integer`);
   }
@@ -223,7 +239,8 @@ export function contentWriteBudgetFromCounts({
     fail("cold-start remaining time must be between zero and one hour");
   }
   const preRegistryContentWrites =
-    (2 * productCount)
+    transportTagWrites
+    + (2 * productCount)
     + assetCount
     + attestationWrites
     + sourceTagWrites;
@@ -242,6 +259,7 @@ export function contentWriteBudgetFromCounts({
     attestationWrites,
     productCount,
     releasePageCount,
+    transportTagWrites,
   });
   const restContentWrites = totalContentWrites - sourceTagWrites;
   const futureNonContentRequests = conservativeCoreRequests
@@ -280,12 +298,13 @@ export function contentWriteBudgetFromCounts({
       + (sourceTagWrites * GITHUB_RELEASE_SWIFTPM_STEP_TIMEOUT_MS)
       + GITHUB_RELEASE_ATTESTATION_EVIDENCE_STEP_TIMEOUT_MS
       + NORMAL_PUBLICATION_RECOVERY_STEP_TIMEOUT_MS
-      + (RELEASE_CURRENT_MAIN_REVALIDATION_TIMEOUT_SECONDS * 1_000),
+      + (RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES * 60_000),
     productCount,
     projectedRollingCoreRequests,
     releasePageCount,
     rollingCoreRequestCount,
     sourceTagWrites,
+    transportTagWrites,
     totalContentWrites,
     totalPacingMs:
       coldStartRemainingMs

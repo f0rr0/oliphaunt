@@ -115,6 +115,7 @@ if (ROOT.length === 0) {
 process.chdir(ROOT);
 
 run("bash", ["examples/tools/check-lockfiles.sh", "--check"]);
+run("bash", ["examples/tools/stage-tauri-webdriver-app.test.sh"]);
 
 const allowedRootExamples =
   /^(examples\/moon\.yml|examples\/README\.md|examples\/tools\/[^/]+|examples\/(tauri|tauri-wasix|electron|electron-wasix)(\/.*)?)$/;
@@ -149,6 +150,8 @@ requireFile("examples/tools/with-local-registries.sh");
 requireText("examples/tools/with-local-registries.sh", String.raw`export CARGO_HOME="\$cargo_home"`);
 requireText("examples/tools/with-local-registries.sh", "--patch-candidates");
 requireFile("examples/tools/run-tauri-webdriver-smoke.sh");
+requireFile("examples/tools/stage-tauri-webdriver-app.sh");
+requireFile("examples/tools/stage-tauri-webdriver-app.test.sh");
 requireFile("examples/tools/tauri-webdriver-smoke.mjs");
 requireFile("examples/tools/run-electron-driver-smoke.sh");
 requireFile("examples/tools/electron-driver-smoke.mjs");

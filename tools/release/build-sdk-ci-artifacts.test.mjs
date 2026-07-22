@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parsePnpmPackOutput } from "./build-sdk-ci-artifacts.mjs";
+import { parsePnpmPackOutput } from "./sdk-artifacts/npm.mjs";
 
 test("parses object and single-entry array pnpm pack envelopes", () => {
   const object = parsePnpmPackOutput('{"filename":"oliphaunt.tgz","name":"@oliphaunt/sdk"}');

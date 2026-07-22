@@ -9,7 +9,14 @@ import {
   allArtifactTargets,
   currentProductVersionSync,
 } from "./release-artifact-targets.mjs";
-import { prepareRustReleaseSource } from "./prepare-rust-release-source.mjs";
+import {
+  prepareOliphauntBuildReleaseSource,
+  prepareRustReleaseSource,
+} from "./prepare-rust-release-source.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+} from "./release-notices.mjs";
 import { normalPublicationPlan } from "./normal-publication-plan.mjs";
 import { rustNativeTargetCfg } from "./rust-native-targets.mjs";
 
@@ -46,6 +53,8 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
       publishedOnly: true,
     }, "prepare-rust-release-source.test.mjs");
     assert.equal(targets.length, 4);
+    assert.match(manifest, /^license = "MIT"$/mu);
+    assertReleaseNoticesInDirectory(path.join(root, "source"), { profile: "source-sdk" });
 
     for (const target of targets) {
       const cfg = rustNativeTargetCfg(target);
@@ -67,6 +76,10 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     );
     assert.equal(path.basename(cratePath), `oliphaunt-${sdkVersion}.crate`);
     const packageRoot = `oliphaunt-${sdkVersion}`;
+    assertReleaseNoticesInArchive(cratePath, {
+      profile: "source-sdk",
+      prefix: packageRoot,
+    });
     const packedManifest = commandOutput("tar", ["-xOzf", cratePath, `${packageRoot}/Cargo.toml`]);
     const packedSource = commandOutput("tar", ["-xOzf", cratePath, `${packageRoot}/src/lib.rs`]);
     const packedNames = commandOutput("tar", ["-tzf", cratePath]);
@@ -117,6 +130,35 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
       assert.ok(positions.get(brokerId) < positions.get("cargo:oliphaunt"));
       assert.match(packedManifest, new RegExp(`^${brokerId.slice("cargo:".length)} = \\{ version = "=${brokerVersion}" \\}$`, "mu"));
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("freezes oliphaunt-build with truthful metadata and canonical notices", () => {
+  mkdirSync(path.join(ROOT, "target"), { recursive: true });
+  const root = mkdtempSync(path.join(ROOT, "target", "rust-build-release-source-test-"));
+  try {
+    const manifestPath = prepareOliphauntBuildReleaseSource({
+      stageDir: path.join(root, "source"),
+      log: false,
+    });
+    const manifest = readFileSync(manifestPath, "utf8");
+    const version = currentProductVersionSync("oliphaunt-rust", "prepare-rust-release-source.test.mjs");
+    assert.match(manifest, /^license = "MIT"$/mu);
+    assert.doesNotMatch(manifest, /\.workspace\s*=\s*true/u);
+    assertReleaseNoticesInDirectory(path.join(root, "source"), { profile: "source-sdk" });
+
+    const cratePath = manualCargoPackageSource(
+      manifestPath,
+      path.join(root, "crate"),
+      { root: ROOT, fail: (message) => assert.fail(message), rel: String },
+    );
+    assert.equal(path.basename(cratePath), `oliphaunt-build-${version}.crate`);
+    assertReleaseNoticesInArchive(cratePath, {
+      profile: "source-sdk",
+      prefix: `oliphaunt-build-${version}`,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

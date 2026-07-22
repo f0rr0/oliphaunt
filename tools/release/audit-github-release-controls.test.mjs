@@ -105,6 +105,49 @@ describe("GitHub release controls", () => {
     expect(findings.find(({ id }) => id === "environment.release-dry-run.secrets-isolated")?.status).toBe("FAIL");
   });
 
+  test("continuation environments allow only main and the deterministic transport-tag namespace", () => {
+    for (const environmentName of ["release-bootstrap", "release-publish"]) {
+      for (const branchPolicies of [
+        [{ name: "main", type: "branch" }],
+        [
+          { name: "main", type: "branch" },
+          { name: "*", type: "tag" },
+        ],
+        [
+          { name: "main", type: "branch" },
+          { name: "oliphaunt-release-transport/*", type: "branch" },
+        ],
+      ]) {
+        const snapshot = fixture("desired-solo");
+        snapshot.environments[environmentName].branchPolicies = branchPolicies;
+        const findings = auditGitHubReleaseControls(snapshot, {
+          bootstrapState: "ready",
+          governance: "solo",
+        });
+        const finding = findings.find(
+          ({ id }) => id === `environment.${environmentName}.branch-policy`,
+        );
+        expect(finding?.status).toBe("FAIL");
+        expect(finding?.message).toContain("oliphaunt-release-transport/*");
+      }
+    }
+
+    for (const environmentName of ["release-pr", "release-dry-run"]) {
+      const snapshot = fixture("desired-solo");
+      snapshot.environments[environmentName].branchPolicies.push({
+        name: "oliphaunt-release-transport/*",
+        type: "tag",
+      });
+      const findings = auditGitHubReleaseControls(snapshot, {
+        bootstrapState: "ready",
+        governance: "solo",
+      });
+      expect(findings.find(
+        ({ id }) => id === `environment.${environmentName}.branch-policy`,
+      )?.status).toBe("FAIL");
+    }
+  });
+
   test("accepts only the lock-required revocable registry credentials while bootstrap is ready", () => {
     for (const token of ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]) {
       const snapshot = fixture("desired-solo");

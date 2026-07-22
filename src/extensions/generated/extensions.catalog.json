@@ -140,7 +140,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/amcheck.tar.zst",
-        "module-sha256": "bf278ec30e1bb1abee705a74bed8d73df00ef0f93f0423dc36631fb5dc3ac283"
+        "module-sha256": "d56045d80ab6b7f324b03046b29c22082c053fde45aa2e5e11ee991fceab3e91"
       },
       "notes": []
     },
@@ -191,7 +191,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/auto_explain.tar.zst",
-        "module-sha256": "7753c981916345ff17fe1af012c25f1b669a09e2bef0707fd5b9186ebf1c3c63"
+        "module-sha256": "acfcf834e5500b8fede8e905c394e78a3eb6172c9b8ffeb45ca3507778ba1924"
       },
       "notes": []
     },
@@ -245,7 +245,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/bloom.tar.zst",
-        "module-sha256": "c579d5cf88563ede721ccea6c1fed87f8d6f768406e94527e4f45da9592f75d2"
+        "module-sha256": "61cf615937f48bd6b0fd5307d156a0e6f0ba063f1e19c5e975d651c7d502f743"
       },
       "notes": []
     },
@@ -299,7 +299,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/btree_gin.tar.zst",
-        "module-sha256": "5a968545bfaee911c613c942334ea2a3a33d35cff9c4b36b3f7c2f328680c0d1"
+        "module-sha256": "43f934fe1b181d92aca6e02955e0c94770d9ada08062ec701f034b00a4792f53"
       },
       "notes": []
     },
@@ -353,7 +353,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/btree_gist.tar.zst",
-        "module-sha256": "76680a643f9634d57baa1b653ea31758d9bb20fd689cf2675879f2e4a87d81e5"
+        "module-sha256": "0a291330d461217f0fdc8b8b2770d89a1b298eca0a0a81b615b889d76616c730"
       },
       "notes": []
     },
@@ -461,7 +461,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/cube.tar.zst",
-        "module-sha256": "23a003d739659616a7f79a4b119a24cdfd2cb55eca10779ba8e1d2a4619201c7"
+        "module-sha256": "d4d3cc0ca49b0118cf44ca504deae4f2b5374dc5235c742967b59cc3224b8553"
       },
       "notes": []
     },
@@ -515,7 +515,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/dict_int.tar.zst",
-        "module-sha256": "a7c56355a069fe86de74c225d35a080f031cc9dd01a32919431fb90d62a59da1"
+        "module-sha256": "804edf7a4f0dbb3299bb9cdfa8e3c86071a41e47243c6429f04b5ae9eaddab09"
       },
       "notes": []
     },
@@ -569,7 +569,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/dict_xsyn.tar.zst",
-        "module-sha256": "c7868984e329691c3135c2d1bc0c538bcdb3a04733a1f2ac08ce9f85d5bbaf5d"
+        "module-sha256": "fe395776d7206886ca1fa19e2d4a93d88258e611257569094e9f7bc313a02991"
       },
       "notes": []
     },
@@ -681,7 +681,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/file_fdw.tar.zst",
-        "module-sha256": "76408a7f107282951b0068638cd8739f6e065d2b7941becbc02e505e7f37a247"
+        "module-sha256": "bce5ebf8ab3bcdc6a99576f4a42c2cd7364e529bfd0533780dcbc7976758e52d"
       },
       "notes": []
     },
@@ -735,7 +735,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/fuzzystrmatch.tar.zst",
-        "module-sha256": "e1efa7136ae9845f34ef6079f124d305959af74233dc51f756ce21ba8f506959"
+        "module-sha256": "d38c63035ba62f21837de953318f6d1f4165bbf5da7024403636bd43a9c2d8fd"
       },
       "notes": []
     },
@@ -789,7 +789,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/hstore.tar.zst",
-        "module-sha256": "a78967a5a7c956720bc5498de4e3208de3c270df0951b6b25ff38eb3ce389fef"
+        "module-sha256": "0dc7c56c23353574a7871006121964f5c818c6f9764a92efe576e3d0e00bff29"
       },
       "notes": []
     },
@@ -843,7 +843,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/intarray.tar.zst",
-        "module-sha256": "f89d422a0830d63744c505103bcdd0271fd787c3c1c44a3ea1c3960701047db1"
+        "module-sha256": "da3aa37f4285208eb9b364d7996724274765105cfb747a10e405acd17d575ec7"
       },
       "notes": []
     },
@@ -897,7 +897,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/isn.tar.zst",
-        "module-sha256": "b3533bd943d666fe2464ed7d16b00c0a6d1daa86b9d8621eab033b04e29c7b41"
+        "module-sha256": "f53cb67dcfb6a4c47b1116e14d972929960a4ed422ff2ffe1a1a0710779ffa72"
       },
       "notes": []
     },
@@ -951,7 +951,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/lo.tar.zst",
-        "module-sha256": "b0192b73ef0615f88148ac83ec34be449c942f0d6c7550b9ebfc4bce92bcd1e3"
+        "module-sha256": "72b02bf7c1e9ef7f0cc7298df7d1b560b6cf57e1ce18696293a7cd39bcb84e43"
       },
       "notes": []
     },
@@ -1005,7 +1005,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/ltree.tar.zst",
-        "module-sha256": "be272de20224b03b301fc65231b4bb97ebaa1815129387ce446c3aa1df6079ec"
+        "module-sha256": "662f3dbf50eed39d6ccc448221d5736ec3f56f4e9cdf4c79d9a2799b31cf501f"
       },
       "notes": []
     },
@@ -1059,7 +1059,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pageinspect.tar.zst",
-        "module-sha256": "1fef5827902d161b1d55f87b4a4df390ced16b13150d4be59b45618b29f3bf9a"
+        "module-sha256": "7afa71cf11d2366037e5cabb7d6666fe59ba4ad09000cbac2c2ec073d04f789d"
       },
       "notes": []
     },
@@ -1113,7 +1113,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_buffercache.tar.zst",
-        "module-sha256": "cda0de1b917fc04b483a9c67dfce5f7b6e483a7cc306360e4c336b88f93c5e9c"
+        "module-sha256": "f91f0b59a285e3d7efbc5107bb60188275e9e66db0d8999cf18092ec1839b87b"
       },
       "notes": []
     },
@@ -1167,7 +1167,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_freespacemap.tar.zst",
-        "module-sha256": "e392cfd2bd06a2520bd09d8ecc7061e81c611dacfb413b590b081049347cbffc"
+        "module-sha256": "ce2ab5c845d217eaba3e838a86da3cf8088d220804bd1ea8be684eabd9eb10cf"
       },
       "notes": []
     },
@@ -1274,7 +1274,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_ivm.tar.zst",
-        "module-sha256": "b9180a0a82d92f522a30ef4490286db90bf53b641bdada594f60023f69cea8ba"
+        "module-sha256": "52503a5e35e6c09ff3d04ff1bdbbe98fd09c2cc34633f1a15630cd43008a619a"
       },
       "notes": []
     },
@@ -1328,7 +1328,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_surgery.tar.zst",
-        "module-sha256": "45c9750f40fece7b5532c953d66253aa35a37d13a52f0acc5e1050ceaf196e5d"
+        "module-sha256": "bcb0af2199605de28e05fc12e2f14e62bdd3fce42b4d18f1eb216efbabb4e661"
       },
       "notes": []
     },
@@ -1382,7 +1382,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_textsearch.tar.zst",
-        "module-sha256": "6c7e6a948fd00c065070b60bc804b417dff384a6af4783589f735a0474cbefb3"
+        "module-sha256": "e60486a4a5ccc6bd16da8f3d13b6218975606a9ff896eec7e63af97b56b6052c"
       },
       "notes": []
     },
@@ -1436,7 +1436,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_trgm.tar.zst",
-        "module-sha256": "d48f1d8a6c338d945c4bd11789751cb5c36035bc90ea7d61d6505bec0ae48972"
+        "module-sha256": "9a99d4535d3a17d86f75896add4df3c3fc50a91133ca2559f8798b589d8c7309"
       },
       "notes": []
     },
@@ -1543,7 +1543,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_visibility.tar.zst",
-        "module-sha256": "adbb9fedcfad207ee2f5e9b37c625bfb964e946df4715f360ce6fa52cf26e99d"
+        "module-sha256": "bd32a56f3cb6917d48cf178c74395e8ccabd2c563071ba1a0315255d0b9c2742"
       },
       "notes": []
     },
@@ -1597,7 +1597,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_walinspect.tar.zst",
-        "module-sha256": "916b8a98aab6e1d3b2f36ea4027822186786ed72ad8a2cc306c52db4b1c5f369"
+        "module-sha256": "8b5a918c64c03c82227bff80c68ead920d4a75efdeb6b2dd11ae2655abddeb8d"
       },
       "notes": []
     },
@@ -1652,7 +1652,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pgcrypto.tar.zst",
-        "module-sha256": "426bf253c5f4385eb0cfabe0b6b149d28f87f3417c729a2650381d16261ce93f"
+        "module-sha256": "94eb7fc39eba66128093e5f50da1cf25f43e3328c27fc1c8609ed0ece80628a4"
       },
       "notes": []
     },
@@ -1768,7 +1768,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/postgis.tar.zst",
-        "module-sha256": "251f7115009a45f528eacf870a65bb26025714ba374f51e210c5ec1ed8a4f4bf"
+        "module-sha256": "2a0d7432348cfae67e7736687e4638d60f2df05ddcbc870ef44921940feb35d4"
       },
       "notes": []
     },
@@ -1822,7 +1822,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/seg.tar.zst",
-        "module-sha256": "8de6090da8f297b49b1183102b8f4200e11b79251fac001ce165c1fdc1f9dfc4"
+        "module-sha256": "870e5c91c89d9698b7d2632112a31bfe7182989ff7b164ac9a821f5c898a113d"
       },
       "notes": []
     },
@@ -1876,7 +1876,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/tablefunc.tar.zst",
-        "module-sha256": "2664083fc238d5dda4204ef3f0bf689feb0406e78caca9aa0195d6610459e4b0"
+        "module-sha256": "081fb164fffdd204701352472eb2aed658a034d6838b01c17e7d859337fd12b7"
       },
       "notes": []
     },
@@ -1930,7 +1930,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/tcn.tar.zst",
-        "module-sha256": "1d6a19a4b684fd1d0443a31220afe2ed7f401a55e13ba5cca3b0015dbfee020e"
+        "module-sha256": "5f6832e7b571d1e3906f86ea8b23fb65afdc447613387f134f4e91311a0bc698"
       },
       "notes": []
     },
@@ -1984,7 +1984,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/tsm_system_rows.tar.zst",
-        "module-sha256": "7f271afd0574aa6cba5b85b103140c2cbf84143d113ff43f26aab1754e26b645"
+        "module-sha256": "7248972e6cf7d6b6cc1a118f9367797d7c74a81309b6f66204e330a6064f3dd7"
       },
       "notes": []
     },
@@ -2038,7 +2038,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/tsm_system_time.tar.zst",
-        "module-sha256": "b1c1898ab13d905f2b05f4137b74f4747d14a20959bbc20c7ab0150b81355e4e"
+        "module-sha256": "12fea34d15535b054679a783c3431ef284f66bec8e39e7c1fd729e4cbac53a01"
       },
       "notes": []
     },
@@ -2092,7 +2092,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/unaccent.tar.zst",
-        "module-sha256": "9a873164201fe57e351999559446f788a5206bc870d6375ad989c554631307a1"
+        "module-sha256": "0be032500fc80cd9838cacb930a1c0f3112fadfb833609f291d2c875ca88d8a7"
       },
       "notes": []
     },
@@ -2146,7 +2146,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/uuid-ossp.tar.zst",
-        "module-sha256": "2b323b7a442dba7f751744e3fa207bd04dab9be0dbc310b704ed03a2e2d6085e"
+        "module-sha256": "cff691abacd7c038cd539188515df74b161ad3710ec33dc59514e7df89a0e4de"
       },
       "notes": []
     },
@@ -2199,7 +2199,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/vector.tar.zst",
-        "module-sha256": "f6bb2e87d2c23513ace39cd3b0f77f727031cdb65b7c9a945e7c395d92595937"
+        "module-sha256": "4b361e27f7723010c00cc4b32be78cd91343d8efed494ee9012f3872359f86f6"
       },
       "notes": []
     }

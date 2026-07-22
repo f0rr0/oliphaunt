@@ -10,10 +10,11 @@ homepage = "https://oliphaunt.dev"
 documentation = "https://docs.rs/oliphaunt-wasix"
 keywords = ["postgres", "oliphaunt", "wasm", "database", "embedded"]
 categories = ["database-implementations", "wasm", "development-tools::testing"]
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT"
 links = "oliphaunt_artifact_wasix_relay"
 build = "build.rs"
 exclude = [
+  ".release-semantic-inputs.json",
   "Cargo.toml.orig",
   "release.toml",
 ]

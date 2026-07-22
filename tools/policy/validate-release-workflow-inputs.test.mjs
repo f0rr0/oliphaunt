@@ -17,12 +17,19 @@ function validate({
   releaseCommit = "",
   continuationPointer = "",
   workflowSha = SHA,
+  workflowRef,
 } = {}) {
+  const resolvedWorkflowRef = workflowRef ?? (
+    continuationPointer === ""
+      ? "refs/heads/main"
+      : `refs/tags/oliphaunt-release-transport/${workflowSha.toLowerCase()}`
+  );
   const result = spawnSync(BASH, [SCRIPT], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
       ...process.env,
+      GITHUB_REF: resolvedWorkflowRef,
       GITHUB_SHA: workflowSha,
       RELEASE_OPERATION: operation,
       RELEASE_COMMIT: releaseCommit,
@@ -86,6 +93,39 @@ test("accepts continuations only for publish operations with the exact commit as
     assert.notEqual(result.status, 0, `${operation} unexpectedly accepted a continuation`);
     assert.match(result.output, /continuation_pointer is not valid/u);
   }
+});
+
+test("root operations are main-only and continuations are exact transport-ref-only", () => {
+  const rootOnTag = validate({
+    operation: "publish",
+    workflowRef: `refs/tags/oliphaunt-release-transport/${SHA}`,
+  });
+  assert.notEqual(rootOnTag.status, 0, rootOnTag.output);
+  assert.match(rootOnTag.output, /root release operations must execute from refs\/heads\/main/u);
+
+  for (const workflowRef of [
+    "refs/heads/main",
+    `refs/tags/oliphaunt-release-transport/${"1".repeat(40)}`,
+    `refs/tags/unrelated/${SHA}`,
+  ]) {
+    const continuation = validate({
+      continuationPointer: "verified-pointer",
+      operation: "publish",
+      releaseCommit: SHA,
+      workflowRef,
+    });
+    assert.notEqual(continuation.status, 0, `${workflowRef} unexpectedly accepted`);
+    assert.match(continuation.output, /exact immutable transport ref/u);
+  }
+
+  const uppercaseIdentity = validate({
+    continuationPointer: "verified-pointer",
+    operation: "publish-bootstrap",
+    releaseCommit: SHA.toUpperCase(),
+    workflowRef: `refs/tags/oliphaunt-release-transport/${SHA}`,
+    workflowSha: SHA.toUpperCase(),
+  });
+  assert.equal(uppercaseIdentity.status, 0, uppercaseIdentity.output);
 });
 
 test("rejects a continuation without an explicit exact commit assertion", () => {

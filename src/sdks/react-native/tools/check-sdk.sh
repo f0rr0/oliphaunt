@@ -133,9 +133,18 @@ JSON
   # @oliphaunt/* packages and should not be fetched by the SDK package check.
   rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/fixtures"
+  mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
-  rsync -a --delete tools/test/ "$scratch_root/tools/test/"
+  # The copied SDK tools retain repository-relative imports. Materialize their
+  # shared command transport inside the same isolated repository topology.
+  cp \
+    "$root/tools/dev/capture-command-output.mjs" \
+    "$scratch_root/tools/dev/capture-command-output.mjs"
+  cp \
+    "$root/tools/test/fd-backed-spawn-sync.mjs" \
+    "$root/tools/test/run-js-tests.mjs" \
+    "$scratch_root/tools/test/"
   rsync -a --delete \
     --exclude node_modules \
     --exclude lib \
@@ -288,6 +297,7 @@ if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/expo-runner-android-device.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
   exit 0
@@ -413,12 +423,15 @@ if command -v ruby >/dev/null 2>&1; then
   run ruby -c "$package_dir/ios/podspecs/Oliphaunt.podspec"
 fi
 
+run node "$package_dir/tools/verify-ios-package.mjs" --package-dir "$package_dir"
+run node tools/release/source-only-sdk-package.mjs prepare-npm react-native "$package_dir"
+
 mkdir -p "$scratch_root"
 tmp_pack="$scratch_root/react-native-npm-pack.json"
 rm -f "$tmp_pack"
 printf '\n==> pnpm --dir %s pack --dry-run --json\n' "$package_dir"
-# The source-shape listing does not need lifecycle scripts. The real pack below
-# runs the fail-closed verifier and must remain selection-neutral.
+# The verifier runs explicitly before publish metadata is sanitized. Neither
+# the dry-run nor final consumer tarball may depend on lifecycle scripts.
 PNPM_CONFIG_IGNORE_SCRIPTS=true pnpm --dir "$package_dir" pack --dry-run --json >"$tmp_pack"
 cat "$tmp_pack"
 
@@ -504,6 +517,8 @@ case "$mode" in
       echo "React Native clean-install package test did not produce an npm tarball" >&2
       exit 1
     fi
+    run node tools/release/source-only-sdk-package.mjs \
+      check-npm-archive react-native "$ios_fixture_tarball"
     run tar -xzf "$ios_fixture_tarball" -C "$ios_clean_install" --strip-components=1
     run node "$ios_clean_install/tools/verify-ios-package.mjs" \
       --package-dir "$ios_clean_install"

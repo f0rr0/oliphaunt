@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:2fea0868333e011c3790e19ced69f995cc3e9fbf58c4b065f213f0a9f03d6920",
+  "source-digest": "sha256:4274aa6e094dd8960094f34fc0f9a080dc84f05cb185531c116e19959d136531",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1378,14 +1378,18 @@
     "src/extensions/external/README.md",
     "src/extensions/external/age/moon.yml",
     "src/extensions/external/pg_hashids/moon.yml",
+    "src/extensions/external/pg_hashids/upstream-license-data.json",
     "src/extensions/external/pg_ivm/moon.yml",
     "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
+    "src/extensions/external/pg_ivm/upstream-license-data.json",
     "src/extensions/external/pg_textsearch/moon.yml",
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/smoke.sql",
     "src/extensions/external/pg_textsearch/tests/upstream.toml",
+    "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/moon.yml",
+    "src/extensions/external/pg_uuidv7/upstream-license-data.json",
     "src/extensions/external/pgtap/moon.yml",
     "src/extensions/external/pgtap/recipe.toml",
     "src/extensions/external/pgtap/targets/native-static-registry.toml",
@@ -1393,6 +1397,7 @@
     "src/extensions/external/pgtap/targets/wasix.toml",
     "src/extensions/external/pgtap/tests/smoke.sql",
     "src/extensions/external/pgtap/tests/upstream.toml",
+    "src/extensions/external/pgtap/upstream-license-data.json",
     "src/extensions/external/postgis/blockers.toml",
     "src/extensions/external/postgis/deps.toml",
     "src/extensions/external/postgis/moon.yml",
@@ -1405,6 +1410,8 @@
     "src/extensions/external/postgis/tests/smoke.sql",
     "src/extensions/external/postgis/tests/upstream.toml",
     "src/extensions/external/postgis/tools/build_wasix.sh",
-    "src/extensions/external/vector/moon.yml"
+    "src/extensions/external/postgis/upstream-license-data.json",
+    "src/extensions/external/vector/moon.yml",
+    "src/extensions/external/vector/upstream-license-data.json"
   ]
 }

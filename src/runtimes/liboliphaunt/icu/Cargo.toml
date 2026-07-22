@@ -8,10 +8,20 @@ readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 documentation = "https://docs.rs/oliphaunt-icu"
-license = "MIT AND Apache-2.0 AND PostgreSQL AND Unicode-3.0"
+license = "MIT AND Unicode-3.0"
 links = "oliphaunt_artifact_oliphaunt_icu"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+include = [
+  "Cargo.toml",
+  "README.md",
+  "build.rs",
+  "src/**",
+  "payload/**",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
+  "THIRD_PARTY_LICENSES/ICU-LICENSE",
+]
 
 [lib]
 path = "src/lib.rs"

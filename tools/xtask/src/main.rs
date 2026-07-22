@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 mod aot_serializer;
 mod asset_checks;
+mod asset_fingerprint;
 mod asset_io;
 mod asset_manifest;
 mod asset_pipeline;

@@ -141,8 +141,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: "true"
 
       - name: Validate release metadata
         run: |
@@ -285,13 +283,6 @@ jobs:
       actions: read
       contents: read
     steps: &release_candidate_steps
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
       - name: Record bounded GitHub staging job deadline
         id: github_stage_job_deadline
         if: ${{ inputs.operation == 'publish' }}
@@ -339,8 +330,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: "true"
 
       - name: Configure macOS release toolchains
         run: |
@@ -387,6 +376,7 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         env:
           RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
       - name: Prove workflow HEAD is the release-bump commit
@@ -1122,11 +1112,17 @@ jobs:
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve \
             --label "release mutation cold-start admission"
 
-      - name: Revalidate current main immediately before release mutation
-        id: revalidate_release_mutation
+      - name: Admit or recover exact immutable release transport ref
+        id: ensure_release_transport_ref
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 1
-        run: bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish
+          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
+          RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: pre-reserved
+        run: node .github/scripts/release-transport-ref.mjs ensure "$RELEASE_HEAD_SHA"
 
       - name: Stage exact-SHA product tags and draft releases
         id: stage_github_releases
@@ -1422,13 +1418,6 @@ jobs:
       continuation_artifact_digest: ${{ steps.preserve_deferred_registry_recovery.outputs.artifact-digest }}
       continuation_contract_digest: ${{ steps.prepare_registry_continuation.outputs.contract_digest }}
     steps:
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
       - name: Record bounded registry job deadline
         id: registry_job_deadline
         run: |
@@ -1660,8 +1649,6 @@ jobs:
       - name: Set up Rust
         timeout-minutes: 10
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: "true"
 
       - name: Configure macOS registry toolchains
         timeout-minutes: 1
@@ -1706,6 +1693,7 @@ jobs:
         timeout-minutes: 2
         env:
           RELEASE_OPERATION: publish
+          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
       - name: Recheck registry credentials and trust links
@@ -1760,11 +1748,6 @@ jobs:
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
           RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
         run: tools/dev/bun.sh .github/scripts/download-normal-publication-checkpoint.mjs
-
-      - name: Revalidate current main immediately before registry mutation
-        id: revalidate_registry_mutation
-        timeout-minutes: 1
-        run: bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"
 
       - name: Establish bounded capacity-inspection deadline
         id: registry_capacity_deadline
@@ -2015,13 +1998,6 @@ jobs:
       actions: read
       contents: write
     steps:
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
       - name: Record bounded finalization job deadline
         id: finalize_job_deadline
         run: |
@@ -2104,8 +2080,6 @@ jobs:
       - name: Set up Rust
         timeout-minutes: 15
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: "true"
 
       - name: Set up pinned npm
         id: setup_finalize_npm
@@ -2203,11 +2177,10 @@ jobs:
           overwrite: true
           retention-days: 90
 
-      - name: Reverify exact main and publication lock before promotion
+      - name: Reverify exact publication lock before promotion
         id: reverify_publication_lock
         timeout-minutes: 2
         run: |
-          bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"
           tools/dev/bun.sh tools/release/publication-lock.mjs \
             verify \
             --lock "$PUBLICATION_LOCK_PATH" \
@@ -2251,7 +2224,7 @@ jobs:
     environment: release-bootstrap
     permissions:
       actions: read
-      contents: read
+      contents: write
       id-token: write
     outputs:
       continuation_required: ${{ steps.require_bootstrap_execution_decision.outputs.deferred }}
@@ -2259,13 +2232,6 @@ jobs:
       continuation_artifact_digest: ${{ steps.preserve_deferred_bootstrap_ledger.outputs.artifact-digest }}
       continuation_contract_digest: ${{ steps.prepare_bootstrap_continuation.outputs.contract_digest }}
     steps:
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-
       - name: Record bounded bootstrap job deadline
         id: bootstrap_job_deadline
         run: |
@@ -2356,6 +2322,7 @@ jobs:
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           RELEASE_OPERATION: publish-bootstrap
+          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
       - name: Prove workflow HEAD is the release-bump commit
@@ -2549,12 +2516,6 @@ jobs:
           RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
         run: node .github/scripts/download-bootstrap-ledger.mjs
 
-      - name: Revalidate current main immediately before bootstrap mutation
-        id: revalidate_bootstrap_mutation
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        timeout-minutes: 1
-        run: bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"
-
       - name: Require bootstrap credentials before mutation
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
@@ -2571,6 +2532,18 @@ jobs:
             echo 'selected products require NPM_BOOTSTRAP_TOKEN in the release-bootstrap environment' >&2
             exit 1
           fi
+
+      - name: Admit or recover exact immutable release transport ref
+        id: ensure_bootstrap_transport_ref
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish-bootstrap
+          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
+          RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: isolated-bootstrap
+        run: node .github/scripts/release-transport-ref.mjs ensure "$RELEASE_HEAD_SHA"
 
       - name: Start bounded bootstrap mutation window
         id: bootstrap_mutation_deadline

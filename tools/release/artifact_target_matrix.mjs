@@ -2,6 +2,11 @@
 import { appendFileSync } from "node:fs";
 
 import {
+  extensionQualificationCandidates,
+  qualificationCandidateTargets,
+} from "./extension-qualification-candidates.mjs";
+
+import {
   allArtifactTargets,
   compareText,
   exactExtensionProducts,
@@ -270,9 +275,16 @@ export function extensionArtifactsNativeMatrix(
   const include = [...byTarget.values()].map((group) => {
     const extensions = [...group.extensions].sort(compareText);
     const sqlNames = [...group.sqlNames].sort(compareText);
+    const qualificationSqlNames = extensionQualificationCandidates()
+      .filter((candidate) => qualificationCandidateTargets(candidate).some(
+        (target) => target.family === "native" && target.target === group.target,
+      ))
+      .map((candidate) => candidate.sqlName)
+      .sort(compareText);
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
+      qualification_sql_names_csv: qualificationSqlNames.join(","),
       extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,
@@ -330,9 +342,16 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
   const include = [...byTarget.values()].map((group) => {
     const extensions = [...group.extensions].sort(compareText);
     const sqlNames = [...group.sqlNames].sort(compareText);
+    const qualificationSqlNames = extensionQualificationCandidates()
+      .filter((candidate) => qualificationCandidateTargets(candidate).some(
+        (target) => target.family === "wasix" && target.target === group.target,
+      ))
+      .map((candidate) => candidate.sqlName)
+      .sort(compareText);
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
+      qualification_sql_names_csv: qualificationSqlNames.join(","),
       extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,

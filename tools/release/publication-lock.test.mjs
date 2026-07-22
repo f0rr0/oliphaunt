@@ -30,6 +30,7 @@ import {
 } from "./release-artifact-targets.mjs";
 import {
   buildSwiftExtensionCarrierManifest,
+  iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
 
@@ -61,6 +62,7 @@ function selectionNeutralSwiftSourceCarrier(version = "1.2.3") {
     base: { assets, product, tag, version },
     carriers: [],
     extensions: [],
+    legal: { base: iosBaseLegalMetadata(), extensions: [] },
     schema: "oliphaunt-react-native-ios-carrier-v1",
   };
 }
@@ -429,6 +431,8 @@ describe("canonical publication catalog", () => {
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
     }), {})).toEqual({ cargo: 103, npm: 59, maven: 23, jsr: 1 });
+    expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
+    expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(17);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);
     expect(catalog.carriers.every((carrier) => carrier.declared && carrier.product && carrier.version)).toBe(true);
   });

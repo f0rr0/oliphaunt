@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+
+import { stageBrokerDependencyLicenses } from '../release/broker-dependency-license-contract.mjs';
+import { stageReleaseNotices } from '../release/release-notices.mjs';
 
 import {
   elfFixture,
@@ -25,8 +29,36 @@ function brokerBinary(target) {
   throw new Error(`unsupported broker release fixture target ${target}`);
 }
 
-function brokerEntries(target, executable) {
+async function carrierLegalEntries(target) {
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'oliphaunt-broker-fixture-legal-'));
+  await fs.chmod(stage, 0o755);
+  try {
+    stageReleaseNotices(stage, { profile: 'broker' });
+    stageBrokerDependencyLicenses(stage, target);
+    const entries = {};
+    async function walk(directory, relative = '') {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        const member = relative ? `${relative}/${entry.name}` : entry.name;
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await walk(file, member);
+        } else if (entry.isFile()) {
+          entries[member] = await fs.readFile(file);
+        } else {
+          throw new Error(`unexpected broker legal fixture entry ${file}`);
+        }
+      }
+    }
+    await walk(stage);
+    return entries;
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+  }
+}
+
+async function brokerEntries(target, executable) {
   return {
+    ...await carrierLegalEntries(target),
     [executable]: brokerBinary(target),
     'manifest.properties': [
       'schema=oliphaunt-broker-release-assets-v1',
@@ -38,12 +70,13 @@ function brokerEntries(target, executable) {
   };
 }
 
-function windowsBrokerEntries() {
+async function windowsBrokerEntries() {
   const runtimeName = 'vcruntime140.dll';
   const executable = windowsPeFixture({ imports: ['VCRUNTIME140.dll'] });
   const runtime = windowsPeFixture({ imports: ['KERNEL32.dll'] });
   const digest = createHash('sha256').update(runtime).digest('hex');
   return {
+    ...await carrierLegalEntries('windows-x64-msvc'),
     'bin/oliphaunt-broker.exe': executable,
     [`bin/${runtimeName}`]: runtime,
     'bin/windows-vc-runtime.sha256': `${digest}  ${runtimeName}\n`,
@@ -68,14 +101,14 @@ async function writeFixtureAssets(assetDir, version) {
   for (const target of ['macos-arm64', 'linux-x64-gnu', 'linux-arm64-gnu']) {
     await writeEntriesArchive(
       path.join(assetDir, `oliphaunt-broker-${version}-${target}.tar.gz`),
-      brokerEntries(target, 'bin/oliphaunt-broker'),
+      await brokerEntries(target, 'bin/oliphaunt-broker'),
       executableModes,
     );
   }
 
   await writeEntriesArchive(
     path.join(assetDir, `oliphaunt-broker-${version}-windows-x64-msvc.zip`),
-    windowsBrokerEntries(),
+    await windowsBrokerEntries(),
     executableModes,
   );
   await writeChecksumManifest(assetDir, `oliphaunt-broker-${version}-release-assets.sha256`);

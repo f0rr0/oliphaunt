@@ -1,4 +1,5 @@
 use super::*;
+use crate::asset_fingerprint::asset_input_fingerprint;
 use crate::source_spine::source_checkout_path;
 
 pub(crate) fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<()> {
@@ -231,188 +232,13 @@ pub(crate) fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> 
     )
 }
 
-const ASSET_INPUT_PATHS: &[&str] = &[
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-    ".github/actions/setup-wasmer-llvm",
-    "src/postgres/versions/18",
-    "src/sources/third-party",
-    "src/sources/toolchains/wasix.toml",
-    "src/shared/extension-runtime-contract",
-    "src/extensions/catalog/extensions.promoted.toml",
-    "src/extensions/contrib",
-    "src/extensions/external",
-    WASIX_BUILD_SOURCE_ROOT,
-    "src/runtimes/liboliphaunt/native/portable-uuid",
-    "src/runtimes/liboliphaunt/wasix/moon.yml",
-    "src/runtimes/liboliphaunt/wasix/tools",
-    "src/runtimes/liboliphaunt/wasix/crates/assets",
-    "src/runtimes/liboliphaunt/wasix/crates/aot",
-    "src/runtimes/liboliphaunt/wasix/crates/tools",
-    "src/runtimes/liboliphaunt/wasix/crates/tools-aot",
-    "tools/xtask/Cargo.toml",
-    "tools/xtask/src",
-];
-
-fn asset_input_fingerprint() -> Result<String> {
-    let mut git_arguments = vec!["ls-files", "--cached", "--others", "--exclude-standard"];
-    git_arguments.extend_from_slice(ASSET_INPUT_PATHS);
-    let tracked = command_output("git", &git_arguments, Path::new("."))?;
-    let mut files = tracked
-        .lines()
-        .filter(|line| {
-            Path::new(line).exists()
-                && is_asset_binary_semantic_input(line)
-                && !line.starts_with("src/runtimes/liboliphaunt/wasix/assets/build/build/")
-                && !line.starts_with("src/runtimes/liboliphaunt/wasix/assets/build/work/")
-        })
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    files.sort();
-    files.dedup();
-    if files.is_empty() {
-        bail!("no tracked asset input files found");
-    }
-
-    let mut hasher = Sha256::new();
-    for file in files {
-        let bytes = asset_input_fingerprint_bytes(&file)?;
-        hasher.update(file.as_bytes());
-        hasher.update([0]);
-        hasher.update(sha256_bytes(&bytes).as_bytes());
-        hasher.update([0]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-/// Return whether a tracked candidate can change the produced WASIX binary bytes.
-///
-/// Product versions, changelogs, registry coordinates, package descriptions, and
-/// smoke-test expectations belong to the release envelope. They are intentionally
-/// verified by the publication lock instead of invalidating the expensive portable
-/// and AOT build cache. Source pins, patches, build recipes, compiler/toolchain
-/// inputs, and producer code remain in this binary-semantic fingerprint.
-fn is_asset_binary_semantic_input(file: &str) -> bool {
-    if file == "src/runtimes/liboliphaunt/wasix/moon.yml" {
-        return true;
-    }
-    if file.starts_with("src/sources/toolchains/") && file != "src/sources/toolchains/wasix.toml" {
-        return false;
-    }
-    if file == "tools/xtask/src/asset_io.rs"
-        || file.contains("/testdata/")
-        || file.ends_with(".test.sh")
-        || file.ends_with(".test.mjs")
-    {
-        return false;
-    }
-
-    let name = Path::new(file)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-
-    !matches!(
-        name,
-        ".release-semantic-inputs.json"
-            | "CHANGELOG.md"
-            | "VERSION"
-            | "artifacts.toml"
-            | "release.toml"
-            | "README.md"
-            | "moon.yml"
-            | "smoke.sql"
-            | "regression.sql"
-            | "blockers.toml"
-    )
-}
-
-fn asset_input_fingerprint_bytes(file: &str) -> Result<Vec<u8>> {
-    let bytes = fs::read(file).with_context(|| format!("read {file}"))?;
-    if file == "Cargo.lock" {
-        let text = String::from_utf8(bytes).context("read Cargo.lock as UTF-8")?;
-        return Ok(normalize_workspace_lockfile(&text).into_bytes());
-    }
-    if !file.ends_with("/Cargo.toml") && file != "Cargo.toml" {
-        return Ok(bytes);
-    }
-
-    let text = String::from_utf8(bytes).with_context(|| format!("read {file} as UTF-8"))?;
-    Ok(normalize_internal_asset_package_manifest(&text).into_bytes())
-}
-
-fn normalize_internal_asset_package_manifest(text: &str) -> String {
-    let mut normalized = String::with_capacity(text.len());
-    let mut in_package = false;
-
-    for chunk in text.split_inclusive('\n') {
-        let line = chunk.strip_suffix('\n').unwrap_or(chunk);
-        let logical = line.strip_suffix('\r').unwrap_or(line);
-        let trimmed = logical.trim();
-        if trimmed.starts_with('[') {
-            in_package = trimmed == "[package]";
-        }
-
-        if in_package && is_toml_key(logical, "version") {
-            let indent_len = logical.len() - logical.trim_start().len();
-            normalized.push_str(&logical[..indent_len]);
-            normalized.push_str("version = \"<release-version>\"");
-            if line.ends_with('\r') {
-                normalized.push('\r');
-            }
-            if chunk.ends_with('\n') {
-                normalized.push('\n');
-            }
-        } else {
-            normalized.push_str(chunk);
-        }
-    }
-
-    normalized
-}
-
-fn normalize_workspace_lockfile(text: &str) -> String {
-    let mut normalized = String::with_capacity(text.len());
-    let mut chunks = text.split("[[package]]");
-    normalized.push_str(chunks.next().unwrap_or_default());
-    for chunk in chunks {
-        normalized.push_str("[[package]]");
-        if chunk.lines().any(|line| is_toml_key(line, "source")) {
-            normalized.push_str(chunk);
-            continue;
-        }
-
-        for line in chunk.split_inclusive('\n') {
-            let logical = line
-                .strip_suffix('\n')
-                .unwrap_or(line)
-                .strip_suffix('\r')
-                .unwrap_or_else(|| line.strip_suffix('\n').unwrap_or(line));
-            if is_toml_key(logical, "version") {
-                let indent_len = logical.len() - logical.trim_start().len();
-                normalized.push_str(&logical[..indent_len]);
-                normalized.push_str("version = \"<release-version>\"");
-                if line.ends_with("\r\n") {
-                    normalized.push('\r');
-                }
-                if line.ends_with('\n') {
-                    normalized.push('\n');
-                }
-            } else {
-                normalized.push_str(line);
-            }
-        }
-    }
-    normalized
-}
-
 #[cfg(test)]
 mod asset_fingerprint_tests {
     use std::path::Path;
 
-    use super::{
-        ASSET_INPUT_PATHS, aot_target_specs, is_asset_binary_semantic_input,
+    use super::aot_target_specs;
+    use crate::asset_fingerprint::{
+        ASSET_INPUT_PATHS, WASIX_XTASK_BINARY_PRODUCER_INPUTS, is_asset_binary_semantic_input,
         normalize_internal_asset_package_manifest, normalize_workspace_lockfile,
     };
 
@@ -444,6 +270,34 @@ mod asset_fingerprint_tests {
             let path = format!("src/runtimes/liboliphaunt/wasix/crates/{name}");
             assert!(ASSET_INPUT_PATHS.contains(&path.as_str()), "{path}");
         }
+
+        for path in [
+            "tools/xtask/Cargo.toml",
+            "tools/xtask/src/aot_serializer.rs",
+            "tools/xtask/src/asset_fingerprint.rs",
+            "tools/xtask/src/asset_manifest.rs",
+            "tools/xtask/src/asset_pipeline.rs",
+            "tools/xtask/src/extension_catalog.rs",
+            "tools/xtask/src/fs_utils.rs",
+            "tools/xtask/src/main.rs",
+            "tools/xtask/src/postgres_guard.rs",
+            "tools/xtask/src/template_runner.rs",
+        ] {
+            assert!(WASIX_XTASK_BINARY_PRODUCER_INPUTS.contains(&path), "{path}");
+        }
+        for path in [
+            "tools/xtask/src",
+            "tools/xtask/src/asset_checks.rs",
+            "tools/xtask/src/asset_io.rs",
+            "tools/xtask/src/release_workspace.rs",
+            "tools/xtask/src/source_spine.rs",
+        ] {
+            assert!(!ASSET_INPUT_PATHS.contains(&path), "{path}");
+            assert!(
+                !WASIX_XTASK_BINARY_PRODUCER_INPUTS.contains(&path),
+                "{path}"
+            );
+        }
     }
 
     #[test]
@@ -453,7 +307,9 @@ mod asset_fingerprint_tests {
             "src/extensions/external/vector/CHANGELOG.md",
             "src/extensions/external/vector/VERSION",
             "src/extensions/external/vector/targets/artifacts.toml",
+            "src/extensions/external/example_deferred/publication-blocker.toml",
             "src/extensions/external/vector/release.toml",
+            "src/extensions/external/vector/upstream-license-data.json",
             "src/extensions/external/vector/moon.yml",
             "src/extensions/external/vector/smoke.sql",
             "src/sources/toolchains/android-emulator-runner.toml",
@@ -463,7 +319,10 @@ mod asset_fingerprint_tests {
             "src/postgres/versions/18/fetch-source.test.sh",
             "src/postgres/versions/18/testdata/curl",
             "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh",
+            "tools/xtask/src/asset_checks.rs",
             "tools/xtask/src/asset_io.rs",
+            "tools/xtask/src/release_workspace.rs",
+            "tools/xtask/src/source_spine.rs",
         ] {
             assert!(!is_asset_binary_semantic_input(file), "{file}");
         }
@@ -545,12 +404,6 @@ mod asset_fingerprint_tests {
             );
         }
     }
-}
-
-fn is_toml_key(line: &str, key: &str) -> bool {
-    line.trim_start()
-        .strip_prefix(key)
-        .is_some_and(|rest| rest.trim_start().starts_with('='))
 }
 
 pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {

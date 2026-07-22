@@ -19,6 +19,7 @@ require() {
 
 source "$root/src/runtimes/liboliphaunt/native/bin/mobile-static-extensions.sh"
 packager="src/extensions/artifacts/native/tools/extension-artifact-packager.mjs"
+observed_phase="src/extensions/artifacts/native/tools/run-observed-phase.sh"
 native_asset_index_contract="tools/release/native-extension-asset-index-contract.mjs"
 
 target_id="${OLIPHAUNT_EXTENSION_TARGET:-${1:-}}"
@@ -36,6 +37,11 @@ esac
 require awk
 require bun
 native_extension_runtime_kind="$(bun "$native_asset_index_contract" runtime-kind)"
+qualification_only="${OLIPHAUNT_EXTENSION_QUALIFICATION_ONLY:-0}"
+case "$qualification_only" in
+  0|1) ;;
+  *) fail "OLIPHAUNT_EXTENSION_QUALIFICATION_ONLY must be 0 or 1" ;;
+esac
 
 case "$target_id" in
   windows-x64-msvc) ;;
@@ -55,14 +61,45 @@ if [ -n "$extension_product" ]; then
   fi
 fi
 selected_sql_names=""
-if [ -n "$extension_products" ]; then
+if [ "$qualification_only" = "1" ]; then
+  [ -z "$extension_product" ] && [ -z "$extension_products" ] ||
+    fail "qualification-only builds select SQL names from deferred candidate policy, not release products"
+  selected_sql_names="$(bun tools/release/extension-qualification-candidates.mjs --target "$target_id" --family native --format csv)"
+  if [ -z "$selected_sql_names" ]; then
+    echo "no deferred native extension candidates target $target_id"
+    exit 0
+  fi
+  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
+elif [ -n "$extension_products" ]; then
   selected_sql_names="$(bun "$packager" selected-sql-names "$extension_products")"
+else
+  selected_sql_names="$({
+    bun "$packager" list-catalog | awk -F '\t' 'NR > 1 { print $1 }'
+  } | LC_ALL=C sort -u | paste -sd ',' -)"
+  [ -n "$selected_sql_names" ] || fail "the public extension catalog selected no SQL names"
+fi
+qualification_sql_names="$(bun tools/release/extension-qualification-candidates.mjs --target "$target_id" --family native --format csv)"
+if [ "${OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES+x}" = "x" ] &&
+   [ "$qualification_sql_names" != "$OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES" ]; then
+  fail "CI matrix qualification candidates '$OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES' do not match canonical target candidates '$qualification_sql_names'"
+fi
+build_sql_names="$({
+  printf '%s\n' "$selected_sql_names" | tr ',' '\n'
+  printf '%s\n' "$qualification_sql_names" | tr ',' '\n'
+} | sed '/^$/d' | LC_ALL=C sort -u | paste -sd ',' -)"
+if [ -n "$qualification_sql_names" ]; then
+  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
 fi
 
 version="${OLIPHAUNT_EXTENSION_RELEASE_VERSION:-$(bun "$packager" product-version liboliphaunt-native)}"
 native_runtime_version="$(tr -d '[:space:]' < "$root/src/runtimes/liboliphaunt/native/VERSION")"
-default_out_dir="$root/target/extensions/native/release-assets/$target_id"
-default_stage_root="$root/target/extensions/native/release-stage/$target_id"
+if [ "$qualification_only" = "1" ]; then
+  default_out_dir="$root/target/extensions/native/qualification-only/$target_id"
+  default_stage_root="$root/target/extensions/native/qualification-stage/$target_id"
+else
+  default_out_dir="$root/target/extensions/native/release-assets/$target_id"
+  default_stage_root="$root/target/extensions/native/release-stage/$target_id"
+fi
 if [ -n "$extension_product" ] && [ -z "${OLIPHAUNT_EXTENSION_PRODUCTS:-}" ]; then
   default_out_dir="$default_out_dir/$extension_product"
   default_stage_root="$default_stage_root/$extension_product"
@@ -72,6 +109,29 @@ stage_root="${OLIPHAUNT_EXTENSION_RELEASE_STAGE_ROOT:-$default_stage_root}"
 catalog_file="$stage_root/extension-catalog.tsv"
 legacy_extension_index="$out_dir/liboliphaunt-${version}-extension-assets.tsv"
 native_asset_index="$out_dir/liboliphaunt-${version}-native-extension-assets.tsv"
+mobile_extension_work_root="${OLIPHAUNT_MOBILE_EXTENSION_WORK_ROOT:-$root/target/liboliphaunt-mobile-extension-$([ "$qualification_only" = "1" ] && printf qualification || printf release)}"
+
+if [ "$qualification_only" = "1" ]; then
+  case "$target_id" in
+    macos-arm64)
+      export OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-extension-qualification-$target_id}"
+      ;;
+    linux-x64-gnu|linux-arm64-gnu)
+      export OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-qualification}"
+      ;;
+    windows-x64-msvc)
+      export OLIPHAUNT_WINDOWS_WORK_ROOT="${OLIPHAUNT_WINDOWS_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-qualification}"
+      ;;
+    ios-xcframework)
+      export OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-qualification-$target_id}"
+      export OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT:-$OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT/install}"
+      ;;
+    android-*)
+      export OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu-extension-qualification}"
+      export OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT:-$OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT/install}"
+      ;;
+  esac
+fi
 
 rm -rf "$stage_root"
 mkdir -p "$out_dir" "$stage_root"
@@ -85,7 +145,19 @@ catalog_rows() {
 }
 
 mobile_module_extensions_csv() {
-  catalog_rows | awk -F '\t' -v selected="$selected_sql_names" '
+  if [ "$qualification_only" = "1" ]; then
+    local extension
+    IFS=',' read -r -a qualification_extensions <<<"$selected_sql_names"
+    for extension in "${qualification_extensions[@]}"; do
+      [ -n "$extension" ] || continue
+      oliphaunt_mobile_static_extension_spec "$extension" >/dev/null ||
+        fail "deferred candidate $extension has no generated mobile qualification spec"
+    done
+    printf '%s\n' "$selected_sql_names"
+    return 0
+  fi
+  {
+    catalog_rows | awk -F '\t' -v selected="$selected_sql_names" '
     function selected_match(sql_name, selected, parts, count, i) {
       if (selected == "") {
         return 1
@@ -99,7 +171,9 @@ mobile_module_extensions_csv() {
       return 0
     }
     $8 == "yes" && $9 == "yes" && $4 != "-" && selected_match($1, selected) { print $1 }
-  ' | csv_join
+    '
+    printf '%s\n' "$qualification_sql_names" | tr ',' '\n' | sed '/^$/d'
+  } | LC_ALL=C sort -u | csv_join
 }
 
 selected_sql_name_matches() {
@@ -203,7 +277,10 @@ fetch_extension_source_assets() {
     return 0
   fi
   echo "==> Fetching pinned native runtime and extension source assets"
-  bun tools/policy/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-extension-assets-fetch.log
+  "$observed_phase" \
+    --label "fetch pinned native extension sources" \
+    --log /tmp/liboliphaunt-release-extension-assets-fetch.log \
+    -- bun tools/policy/fetch-sources.mjs native-runtime
 }
 
 archive_swiftpm_xcframework() {
@@ -329,27 +406,36 @@ build_desktop_extension_runtime() {
   case "$target_id" in
     macos-arm64)
       [ "$(uname -s)" = "Darwin" ] || fail "$target_id extension artifacts must be built on macOS"
-      env \
+      "$observed_phase" \
+        --label "build macOS exact-extension runtime" \
+        --log /tmp/liboliphaunt-release-"$target_id"-extensions.log \
+        -- env \
         OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
-        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected_sql_names" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id"-extensions.log
+        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
       ;;
     linux-x64-gnu|linux-arm64-gnu)
       [ "$(uname -s)" = "Linux" ] || fail "$target_id extension artifacts must be built on Linux"
-      env \
+      "$observed_phase" \
+        --label "build $target_id exact-extension runtime" \
+        --log /tmp/liboliphaunt-release-"$target_id"-extensions.log \
+        -- env \
         OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
-        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected_sql_names" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaunt-release-"$target_id"-extensions.log
+        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh
       ;;
     windows-x64-msvc)
-      env \
+      "$observed_phase" \
+        --label "build Windows exact-extension runtime" \
+        --log /tmp/liboliphaunt-release-"$target_id"-extensions.log \
+        -- env \
         OLIPHAUNT_WINDOWS_WORK_ROOT="${OLIPHAUNT_WINDOWS_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
-        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected_sql_names" \
+        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
         pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass \
-          -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 >/tmp/liboliphaunt-release-"$target_id"-extensions.log
+          -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1
       ;;
     *)
       fail "desktop extension runtime builder called for non-desktop target $target_id"
@@ -361,19 +447,25 @@ build_mobile_host_extension_runtime() {
   case "$target_id" in
     ios-xcframework)
       [ "$(uname -s)" = "Darwin" ] || fail "$target_id host extension runtime must be built on macOS"
-      env \
+      "$observed_phase" \
+        --label "build macOS host runtime for iOS exact extensions" \
+        --log /tmp/liboliphaunt-release-mobile-host-extensions.log \
+        -- env \
         OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
-        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected_sql_names" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-mobile-host-extensions.log
+        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
       ;;
     android-*)
       [ "$(uname -s)" = "Linux" ] || fail "$target_id host extension runtime must be built on Linux"
-      env \
+      "$observed_phase" \
+        --label "build Linux host runtime for Android exact extensions" \
+        --log /tmp/liboliphaunt-release-mobile-host-extensions.log \
+        -- env \
         OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu-extension-release}" \
         OLIPHAUNT_BUILD_EXTENSIONS=1 \
-        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$selected_sql_names" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaunt-release-mobile-host-extensions.log
+        OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$build_sql_names" \
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh
       ;;
     *)
       fail "mobile host extension runtime requested for non-mobile target $target_id"
@@ -388,42 +480,60 @@ build_mobile_static_artifacts() {
   case "$target_id" in
     ios-xcframework)
       [ "$(uname -s)" = "Darwin" ] || fail "$target_id extension artifacts must be built on macOS"
-      env \
-        OLIPHAUNT_IOS_SIMULATOR_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-simulator" \
+      "$observed_phase" \
+        --label "build iOS simulator exact-extension archives" \
+        --log /tmp/liboliphaunt-release-ios-simulator-extensions.log \
+        -- env \
+        OLIPHAUNT_IOS_SIMULATOR_ROOT="$mobile_extension_work_root/$target_id/ios-simulator" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh >/tmp/liboliphaunt-release-ios-simulator-extensions.log
-      env \
-        OLIPHAUNT_IOS_DEVICE_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device" \
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh
+      "$observed_phase" \
+        --label "build iOS device exact-extension archives" \
+        --log /tmp/liboliphaunt-release-ios-device-extensions.log \
+        -- env \
+        OLIPHAUNT_IOS_DEVICE_ROOT="$mobile_extension_work_root/$target_id/ios-device" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh >/tmp/liboliphaunt-release-ios-device-extensions.log
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh
       macos_runtime_root="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}"
-      macos_archive_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/macos-extension-archives"
-      env \
+      macos_archive_root="$mobile_extension_work_root/$target_id/macos-extension-archives"
+      "$observed_phase" \
+        --label "build macOS exact-extension static archives" \
+        --log /tmp/liboliphaunt-release-macos-extension-archives.log \
+        -- env \
         OLIPHAUNT_MACOS_RUNTIME_ROOT="$macos_runtime_root" \
         OLIPHAUNT_MACOS_EXTENSION_ARCHIVE_ROOT="$macos_archive_root" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh >/tmp/liboliphaunt-release-macos-extension-archives.log
-      env \
-        OLIPHAUNT_IOS_SIMULATOR_OUT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-simulator/out" \
-        OLIPHAUNT_IOS_DEVICE_OUT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device/out" \
+        src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh
+      "$observed_phase" \
+        --label "assemble iOS exact-extension XCFrameworks" \
+        --log /tmp/liboliphaunt-release-ios-extension-xcframeworks.log \
+        -- env \
+        OLIPHAUNT_IOS_SIMULATOR_OUT="$mobile_extension_work_root/$target_id/ios-simulator/out" \
+        OLIPHAUNT_IOS_DEVICE_OUT="$mobile_extension_work_root/$target_id/ios-device/out" \
         OLIPHAUNT_MACOS_EXTENSION_OUT="$macos_archive_root/out" \
-        OLIPHAUNT_IOS_EXTENSION_XCFRAMEWORK_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-extension-xcframeworks" \
+        OLIPHAUNT_IOS_EXTENSION_XCFRAMEWORK_ROOT="$mobile_extension_work_root/$target_id/ios-extension-xcframeworks" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh >/tmp/liboliphaunt-release-ios-extension-xcframeworks.log
+        src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh
       ;;
     android-arm64-v8a)
-      env \
-        OLIPHAUNT_ANDROID_ARM64_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/android-arm64" \
+      "$observed_phase" \
+        --label "build Android arm64 exact-extension archives" \
+        --log /tmp/liboliphaunt-release-android-arm64-extensions.log \
+        -- env \
+        OLIPHAUNT_ANDROID_ARM64_ROOT="$mobile_extension_work_root/$target_id/android-arm64" \
         OLIPHAUNT_ANDROID_ABI=arm64-v8a \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh >/tmp/liboliphaunt-release-android-arm64-extensions.log
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh
       ;;
     android-x86_64)
-      env \
-        OLIPHAUNT_ANDROID_X86_64_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/android-x86_64" \
+      "$observed_phase" \
+        --label "build Android x86_64 exact-extension archives" \
+        --log /tmp/liboliphaunt-release-android-x86_64-extensions.log \
+        -- env \
+        OLIPHAUNT_ANDROID_X86_64_ROOT="$mobile_extension_work_root/$target_id/android-x86_64" \
         OLIPHAUNT_ANDROID_ABI=x86_64 \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
-        src/runtimes/liboliphaunt/native/bin/build-postgres18-android-x86_64.sh >/tmp/liboliphaunt-release-android-x86_64-extensions.log
+        src/runtimes/liboliphaunt/native/bin/build-postgres18-android-x86_64.sh
       ;;
   esac
 }
@@ -497,16 +607,28 @@ package_desktop_target() {
       --root "$runtime" \
       --profile provider \
       --search-root "$runtime/bin"
-    binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"
     tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
       --target "$target_id" \
-      --root "$binary_contract_runtime" \
+      --root "$runtime" \
       --windows-vc-runtime-profile provider
+    if [ "$qualification_only" = "0" ]; then
+      binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"
+      tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
+        --target "$target_id" \
+        --root "$binary_contract_runtime" \
+        --windows-vc-runtime-profile provider
+    fi
   else
     tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$runtime"
   fi
   if [[ "$target_id" == linux-*-gnu ]]; then
     tools/release/check-linux-consumer-baseline.sh --target "$target_id" --root "$runtime"
+  fi
+  if [ -n "$qualification_sql_names" ]; then
+    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
+  fi
+  if [ "$qualification_only" = "1" ]; then
+    return 0
   fi
 
   local module_suffix
@@ -548,10 +670,21 @@ package_ios_target() {
   require_dir "$source_runtime" "mobile host extension runtime"
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target macos-arm64 --root "$runtime"
-  ios_sim_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-simulator"
-  ios_device_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device"
-  macos_archive_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/macos-extension-archives"
-  ios_xcframework_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-extension-xcframeworks"
+  ios_sim_root="$mobile_extension_work_root/$target_id/ios-simulator"
+  ios_device_root="$mobile_extension_work_root/$target_id/ios-device"
+  macos_archive_root="$mobile_extension_work_root/$target_id/macos-extension-archives"
+  ios_xcframework_root="$mobile_extension_work_root/$target_id/ios-extension-xcframeworks"
+  require_dir "$ios_xcframework_root/out" "iOS extension XCFramework output"
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
+    --target "$target_id" \
+    --root "$ios_xcframework_root/out" \
+    --required-apple-platforms macos,ios,ios-simulator
+  if [ -n "$qualification_sql_names" ]; then
+    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
+  fi
+  if [ "$qualification_only" = "1" ]; then
+    return 0
+  fi
 
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact ios_artifact static_prefix registration_artifact dependency dependency_xcframework dependency_artifact
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
@@ -650,16 +783,22 @@ package_android_target() {
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target linux-x64-gnu --root "$runtime"
   case "$target_id" in
     android-arm64-v8a)
-      android_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/android-arm64"
+      android_root="$mobile_extension_work_root/$target_id/android-arm64"
       android_static_target="android-arm64-v8a"
       ;;
     android-x86_64)
-      android_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/android-x86_64"
+      android_root="$mobile_extension_work_root/$target_id/android-x86_64"
       android_static_target="android-x86_64"
       ;;
     *) fail "Android target packager called for $target_id" ;;
   esac
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$android_root/out"
+  if [ -n "$qualification_sql_names" ]; then
+    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
+  fi
+  if [ "$qualification_only" = "1" ]; then
+    return 0
+  fi
 
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
@@ -694,9 +833,11 @@ package_android_target() {
 }
 
 fetch_extension_source_assets
-echo "==> Reading exact extension catalog"
-bun "$packager" list-catalog >"$catalog_file"
-write_indexes
+if [ "$qualification_only" = "0" ]; then
+  echo "==> Reading exact extension catalog"
+  bun "$packager" list-catalog >"$catalog_file"
+  write_indexes
+fi
 
 case "$target_id" in
   macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc)
@@ -709,6 +850,8 @@ case "$target_id" in
     package_android_target
     ;;
 esac
+
+[ "$qualification_only" = "1" ] && exit 0
 
 [ "$(wc -l <"$native_asset_index" | awk '{ print $1 }')" -gt 1 ] ||
   fail "no native exact-extension artifacts were produced for target $target_id${extension_product:+ product $extension_product}"

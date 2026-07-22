@@ -18,11 +18,79 @@
         },
         {
           "path": "Cargo.toml",
-          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
         },
         {
           "path": "rust-toolchain.toml",
           "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
+      "id": "native-product-notice",
+      "paths": [
+        "src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md",
+          "sha256": "ca1c6626873f715f1ee4cebd4be93cb5dd6886df7e246332819aad26a8358372"
+        }
+      ]
+    },
+    {
+      "id": "postgresql-release-license-snapshot",
+      "paths": [
+        "src/postgres/versions/18/source.toml",
+        "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      ],
+      "inputs": [
+        {
+          "path": "src/postgres/versions/18/source.toml",
+          "sha256": "b8ac2717620c295521243fe1f663562293335b8ff9a3a759b92a3e3fb95df1a2"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT",
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+        }
+      ]
+    },
+    {
+      "id": "icu-release-license-snapshot",
+      "paths": [
+        "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+        "src/sources/third-party/shared/icu.toml"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+          "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+        },
+        {
+          "path": "src/sources/third-party/shared/icu.toml",
+          "sha256": "14b9c3dde24abaa3fb6338f27e44415eb18875b484d60bcfce12bb84629f6a8d"
         }
       ]
     },
@@ -34,7 +102,7 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "9cc53ea61be01cb18248e465f3e0bdaf1fb1ed5850f4d7b58fa404eaac4c9716"
+          "sha256": "e2d3a552352b8b48aa9b10c6657359b5e320686d15fc5e12130963974248061d"
         }
       ]
     },
@@ -47,11 +115,11 @@
       "inputs": [
         {
           "path": "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-          "sha256": "a6e9408e637862ff161232f90339e86e1a53ec3816084e3f7d047e9ab67dea1d"
+          "sha256": "1de14caa77d97b9d3b92b225b5befbfbeb609c0e90e081d6146b54dfd5b33922"
         },
         {
           "path": "tools/release/build_maven_artifact_manifest.mjs",
-          "sha256": "5fe0406a26e99e38b37e8d2c95e002bdbf7241fe8be6404088af0a60099a0f3b"
+          "sha256": "85e8b55bc6280e8ad1007557c62e88b8cf414d614d04a9883223e543d09b6129"
         }
       ]
     },
@@ -63,7 +131,19 @@
       "inputs": [
         {
           "path": "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
-          "sha256": "652dd7f4d7977a3d86cbaba0687dbd5320cdfddd95996a37b252e64444a88b75"
+          "sha256": "124eb22f45c1567bfa2e790cbabf27b25ba112435068eee23987670b864a14cc"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
         }
       ]
     },
@@ -125,23 +205,23 @@
         },
         {
           "path": "tools/release/package-liboliphaunt-icu-data.sh",
-          "sha256": "8474b4702d55af74fb275da27b4f27e7a1f6a83daf69d1f90edc816bae7a9b86"
+          "sha256": "9564647d8e9258dd5eb2e2e239813b0894362694eee3611952ea2773422e8a10"
         },
         {
           "path": "tools/release/package-liboliphaunt-linux-assets.sh",
-          "sha256": "5c243a8a7142834a8f093cbf90e7c05b962e079b0748fd4737dee5402cf3a287"
+          "sha256": "2ebae29ecd542e2f9355f99c1d7459ec1c3b0fc28e269fd2849f4cb3b4ba869c"
         },
         {
           "path": "tools/release/package-liboliphaunt-macos-assets.sh",
-          "sha256": "f0752106095406fbf06f9f9c50482815560e88c53d9cd81f2d8c12c15e73036b"
+          "sha256": "4fe9b19f0db9d7089f079d339c4b2a12f154518258d70f73d5fa190f0d33d96d"
         },
         {
           "path": "tools/release/package-liboliphaunt-mobile-assets.sh",
-          "sha256": "9faaac43df76e0748adf339fb09c6573d726bc02569b11cdf44ea633387eaf89"
+          "sha256": "7ebe4bb182fe79c7a761052594c3fb3f72703ca66fbdeca79026fd2cbcefef2a"
         },
         {
           "path": "tools/release/package-liboliphaunt-windows-assets.ps1",
-          "sha256": "0192720359b4e961206867a18bd3b255cd4297bbf47a539bba31551f5d30b65b"
+          "sha256": "a941352065fffbb44809cf7c9420039b7c66de06f954c444ff9c510241480609"
         }
       ]
     },
@@ -316,5 +396,5 @@
       ]
     }
   ],
-  "sha256": "16a33c2e7c2975b45603bf1f6a61cfd82e52430cc43cc1550f71377f24d0cb80"
+  "sha256": "506537af4790373a7ba4796523738b6ab3882c93b71edd3321e1e04524505cad"
 }

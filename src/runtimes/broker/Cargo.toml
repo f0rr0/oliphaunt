@@ -7,7 +7,7 @@ description = "Oliphaunt broker helper process for process-isolated embedded Pos
 readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT"
 publish = false
 
 [[bin]]

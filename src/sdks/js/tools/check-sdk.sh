@@ -71,7 +71,7 @@ JSON
   mkdir -p "$scratch_root/fixtures"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
-  rsync -a --delete tools/test/ "$scratch_root/tools/test/"
+  cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/packages"
   rsync -a --delete \
     src/runtimes/liboliphaunt/native/packages/ \
@@ -153,6 +153,7 @@ if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
 fi
 
 if [ "$mode" != "check-static" ]; then
+  run node tools/release/source-only-sdk-package.mjs prepare-npm js "$package_dir"
   pack_dir="$(mktemp -d "$scratch_root/pack.XXXXXX")"
   pack_json="$(pnpm --dir "$package_dir" pack --pack-destination "$pack_dir" --json)"
   printf '%s\n' "$pack_json"
@@ -217,6 +218,8 @@ process.stdin.on('end', () => {
   }
 });
 " "$package_dir/package.json"
+  run node tools/release/source-only-sdk-package.mjs check-npm-archive js "$pack_file"
+  run node tools/release/source-only-sdk-package.mjs check-jsr-directory "$package_dir"
   if [ "$mode" != "package-shape" ] && [ "${OLIPHAUNT_JS_SKIP_REGISTRY_DRY_RUN:-0}" != "1" ]; then
     run pnpm --dir "$package_dir" exec jsr publish --dry-run --allow-dirty
   fi

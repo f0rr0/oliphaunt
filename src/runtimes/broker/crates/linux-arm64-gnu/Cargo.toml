@@ -7,10 +7,10 @@ description = "Cargo artifact crate for the linux-arm64-gnu oliphaunt-broker hel
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT AND Apache-2.0 AND BSD-3-Clause AND CC-BY-3.0 AND ISC AND Unicode-3.0"
 links = "oliphaunt_artifact_broker_linux_arm64_gnu"
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**", "LICENSE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES/**"]
 
 [lib]
 path = "src/lib.rs"

@@ -491,6 +491,7 @@ async function main() {
     base: await base(),
     carriers: carrierized.carriers,
     extensions: carrierized.extensions,
+    legal: { base: [], extensions: [] },
   };
   const carrier = path.join(root, "oliphaunt-react-native-ios-carriers.json");
   await fs.writeFile(carrier, `${JSON.stringify(manifest, null, 2)}\n`);

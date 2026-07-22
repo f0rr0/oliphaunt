@@ -54,6 +54,7 @@ console.log([
     exit 1
   fi
   rewrite_parent="${rewrite_commit_and_parents[1]}"
+  rewrite_subject="$(git show -s --format=%s "${head_ref}^{commit}")"
 
   candidate_bootstrap_sha="$(
     git show "${head_ref}:release-please-config.json" |
@@ -74,17 +75,42 @@ process.stdout.write(String(versions.length > 0 && versions.every((version) => v
 '
   )"
 
+  repair_trailers="$(git show -s --format=%B "${head_ref}^{commit}" | git interpret-trailers --parse)"
+  repair_candidate_lines="$(
+    printf '%s\n' "${repair_trailers}" |
+      grep -Ei '^Oliphaunt-History-Repair-Candidate:' || true
+  )"
+  repair_candidate_count="$(
+    printf '%s\n' "${repair_candidate_lines}" |
+      awk 'NF { count += 1 } END { print count + 0 }'
+  )"
+  history_repair_candidate_sha=""
+  if [[ "${repair_candidate_count}" == "1" ]]; then
+    history_repair_candidate_sha="${repair_candidate_lines#Oliphaunt-History-Repair-Candidate: }"
+  fi
+
   if [[ "${event_name}" != "push" ]] ||
     [[ "${full_ref}" != "refs/heads/main" ]] ||
     [[ "${head_branch}" != "main" ]] ||
     [[ "${base_ref}" != "${repair_before_sha}" ]] ||
     [[ "${subject}" != "${introduction_subject}" ]] ||
+    [[ "${rewrite_subject}" != "${introduction_subject}" ]] ||
     [[ "${rewrite_parent}" != "${canonical_bootstrap_sha}" ]] ||
     [[ "${candidate_bootstrap_sha}" != "${canonical_bootstrap_sha}" ]] ||
-    [[ "${candidate_manifest_unreleased}" != "true" ]]; then
+    [[ "${candidate_manifest_unreleased}" != "true" ]] ||
+    [[ "${repair_candidate_count}" != "1" ]] ||
+    [[ "${repair_candidate_lines}" != "Oliphaunt-History-Repair-Candidate: ${history_repair_candidate_sha}" ]] ||
+    [[ ! "${history_repair_candidate_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+    [[ "${history_repair_candidate_sha}" == "${rewrite_commit_and_parents[0]}" ]]; then
     echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
     echo "non-fast-forward main updates are allowed only for the exact current introduction repair" >&2
     exit 1
+  fi
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    {
+      echo "history_repair=true"
+      echo "history_repair_candidate_sha=${history_repair_candidate_sha}"
+    } >> "${GITHUB_OUTPUT}"
   fi
   echo "authorized current main history repair; comparing ${head_ref} to its exact introduction parent" >&2
   base_ref="${head_ref}^{commit}^"

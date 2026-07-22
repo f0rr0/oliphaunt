@@ -2,7 +2,7 @@
   "name": "@oliphaunt/icu",
   "version": "0.0.0",
   "description": "Portable ICU data files for Oliphaunt runtimes.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL AND Unicode-3.0",
+  "license": "MIT AND Unicode-3.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -26,7 +26,11 @@
   "files": [
     "share",
     "OliphauntICU.podspec",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE"
   ],
   "exports": {
     "./package.json": "./package.json"

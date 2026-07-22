@@ -18,7 +18,7 @@
         },
         {
           "path": "Cargo.toml",
-          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
         },
         {
           "path": "rust-toolchain.toml",
@@ -27,11 +27,49 @@
       ]
     },
     {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
+      "id": "extension-upstream-license-carrier-producer",
+      "paths": [
+        "tools/release/extension-upstream-licenses.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/extension-upstream-licenses.mjs",
+          "sha256": "baadc122b962ca961c3573489be17215c4231a1e93fbe5979e6be60e141f8fc0"
+        }
+      ]
+    },
+    {
       "id": "extension-artifact-carrier-producers",
       "paths": [
-        "src/extensions/artifacts/native/tools/**",
-        "src/extensions/artifacts/packages/tools/**",
-        "src/extensions/artifacts/wasix/tools/**",
+        "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
+        "src/extensions/artifacts/native/tools/package-release-assets.sh",
+        "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
+        "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh",
+        "src/extensions/artifacts/packages/tools/package-release-assets.sh",
+        "src/extensions/artifacts/wasix/tools/package-release-assets.mjs",
+        "src/extensions/artifacts/wasix/tools/package-release-assets.sh",
         "src/sdks/rust/extension-artifact-archive-policy.properties",
         "tools/release/bounded-gunzip-to-file.mjs",
         "tools/release/build-extension-ci-artifacts.mjs",
@@ -45,16 +83,12 @@
       ],
       "inputs": [
         {
-          "path": "src/extensions/artifacts/native/tools/check-release-artifacts.sh",
-          "sha256": "fb373917ccf7646131061c9d7e07c0de003e6bd20f026b4935a86c8bb1840846"
-        },
-        {
           "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
-          "sha256": "8324ff71e67fb658709bb54a7df0cac94e03cd9156fbcae0db512272210b7916"
+          "sha256": "50b8c7e0d02382ac8c22512743146b02b8ab20eec54e70360881fec564baaca7"
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "d96fcee3a760f7893cfb8aa59a820eb6456cfb9b8e4b4a8b3187adfca8ab6676"
+          "sha256": "f3d4cfd8d757d5839791576c9b7a4ca7c1be1bbd569cfe6f645d29211936f8a6"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -86,7 +120,7 @@
         },
         {
           "path": "tools/release/build-extension-ci-artifacts.mjs",
-          "sha256": "c79912531e264220d9e7497a10f1cd759a892878bf306d01f388deda61bc55ef"
+          "sha256": "b38d8323141cc57f0e20b77f18ebe524285a05bb2205b81a2d6634e4cf2389e3"
         },
         {
           "path": "tools/release/extension-artifact-archive-policy.mjs",
@@ -94,11 +128,11 @@
         },
         {
           "path": "tools/release/extension-artifact-inventory.mjs",
-          "sha256": "e21776fac0b571573c2d19dd218986c5cadb506d650118ff898cf854ddf3e37a"
+          "sha256": "de4cf08f4e84a7eb1f487e1aef3d1fbe647fbc46c87402fb1e19743c6ec1a938"
         },
         {
           "path": "tools/release/extension-registry-carrier-materializer.mjs",
-          "sha256": "d0760e5ba4dbb46f80421457326a63faf168805edca57eb648d1916f0594db55"
+          "sha256": "280300abe3fb9288d1932ec3ef1f85c9917431e9cec0274d6bc0f75b3bd479ac"
         },
         {
           "path": "tools/release/extension-registry-packages.mjs",
@@ -114,7 +148,7 @@
         },
         {
           "path": "tools/release/package-extension-cargo-facades.mjs",
-          "sha256": "946811a2afbd8524c21aea42698ba24ef8247587357ccc01dfbcd79f5c1cffd3"
+          "sha256": "9e7aa270978876a8661d3aad7851c02a9a12a1247d3a297a6491c45546ec5491"
         }
       ]
     },
@@ -126,7 +160,7 @@
       "inputs": [
         {
           "path": "tools/release/ios-carrier-manifest.mjs",
-          "sha256": "b3885fca2811345ad5d31dbaf04312db1945f959498027ef0aa00e302d5e1f2c"
+          "sha256": "880e4394073f414cfcc911ea903d0e255325de473f40ccf1273093ca976ed150"
         }
       ]
     },
@@ -151,11 +185,11 @@
       "inputs": [
         {
           "path": "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-          "sha256": "a6e9408e637862ff161232f90339e86e1a53ec3816084e3f7d047e9ab67dea1d"
+          "sha256": "1de14caa77d97b9d3b92b225b5befbfbeb609c0e90e081d6146b54dfd5b33922"
         },
         {
           "path": "tools/release/build_maven_artifact_manifest.mjs",
-          "sha256": "5fe0406a26e99e38b37e8d2c95e002bdbf7241fe8be6404088af0a60099a0f3b"
+          "sha256": "85e8b55bc6280e8ad1007557c62e88b8cf414d614d04a9883223e543d09b6129"
         }
       ]
     },
@@ -167,7 +201,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4302e5b9819ce04b966a5acf2287793cd58a5ce7a3f812e22e7545f37c000d64"
+          "sha256": "e13ba613e310fd042604c4b0a2614101af5630698b4fa36b10f92b8519b5884a"
         }
       ]
     },
@@ -179,7 +213,7 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "34d06fda9fb682f54a228a8602ea6f06fa281ec834f1ddb478e052af1272174b"
+          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
         }
       ]
     },
@@ -261,5 +295,5 @@
       ]
     }
   ],
-  "sha256": "e98332c20f1fd1697a2dbff9c86a2ef4264435d5cc7483b2961c23efa61f537b"
+  "sha256": "8b70c30aa14792f5bfee9b611f5b7dc53044571b16fa64713bf4574b1f05325e"
 }

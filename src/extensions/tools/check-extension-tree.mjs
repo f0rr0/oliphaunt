@@ -66,6 +66,19 @@ async function checkExternal(path) {
   }
 
   const release = resolve(path, 'release.toml');
+  const publicationBlocker = resolve(path, 'publication-blocker.toml');
+  if (existsSync(publicationBlocker)) {
+    for (const forbidden of [release, resolve(path, 'VERSION'), resolve(path, 'CHANGELOG.md'), resolve(path, '.release-semantic-inputs.json')]) {
+      if (existsSync(forbidden)) {
+        fail(`${rel(forbidden)} is release-product metadata and is forbidden while publication-blocker.toml is present`);
+      }
+    }
+    const artifactTargets = resolve(path, 'targets', 'artifacts.toml');
+    if (!existsSync(artifactTargets)) {
+      fail(`${rel(path)} must retain qualification target evidence while publication is deferred`);
+    }
+    await checkArtifactTargetOverride(artifactTargets);
+  }
   if (existsSync(release)) {
     const releaseData = await parseToml(release);
     if (releaseData.kind === 'exact-extension-artifact') {

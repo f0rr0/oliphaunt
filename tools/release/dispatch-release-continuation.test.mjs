@@ -10,6 +10,7 @@ import {
   parseDispatchResponse,
   validateDispatchResponse,
 } from "../../.github/scripts/dispatch-release-continuation.mjs";
+import { releaseTransportTagName } from "../../.github/scripts/release-transport-ref.mjs";
 import {
   RELEASE_CONTINUATION_DISPATCH_DELAY_DEADLINE_MS,
   RELEASE_CONTINUATION_DISPATCH_METADATA_READ_COUNT,
@@ -46,12 +47,12 @@ test("dispatch delay is bounded and honors a past not-before time", () => {
 
 test("dispatch metadata reads remain inside the declared shared retry envelope", () => {
   const ghJsonCallSites = [...DISPATCH_SOURCE.matchAll(/\bghJson\s*\(/gu)].length - 1;
-  const currentMainCalls = [...DISPATCH_SOURCE.matchAll(/\brequireCurrentMain\s*\(/gu)].length - 1;
-  const runtimeMetadataReads = ghJsonCallSites - 1 + currentMainCalls;
+  const transportRefCalls = [...DISPATCH_SOURCE.matchAll(/\brequireReleaseTransportRef\s*\(/gu)].length - 1;
+  const runtimeMetadataReads = ghJsonCallSites - 1 + transportRefCalls;
   assert.equal(
     runtimeMetadataReads,
     RELEASE_CONTINUATION_DISPATCH_METADATA_READ_COUNT,
-    "count direct reads plus both calls through the current-main helper",
+    "count direct reads plus both calls through the immutable-transport helper",
   );
   assert.match(
     DISPATCH_SOURCE,
@@ -113,11 +114,14 @@ test("dispatch opts into the 2026 Actions response contract and one canonical po
   assert.ok(request.args.includes("X-GitHub-Api-Version: 2026-03-10"));
   assert.equal(request.args.includes("X-GitHub-Api-Version: 2022-11-28"), false);
   assert.deepEqual(JSON.parse(request.payload), {
-    ref: "main",
+    ref: releaseTransportTagName(pointer.releaseCommit),
+    return_run_details: true,
     inputs: {
       operation: "publish",
       release_commit: "a".repeat(40),
       continuation_pointer: JSON.stringify(pointer),
     },
   });
+  assert.doesNotMatch(DISPATCH_SOURCE, /git\/ref\/heads\/main|ref:\s*["']main["']/u);
+  assert.match(DISPATCH_SOURCE, /validateReleaseTransportRef\(ref, releaseCommit\)/u);
 });

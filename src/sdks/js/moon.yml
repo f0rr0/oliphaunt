@@ -68,7 +68,7 @@ tasks:
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
-      - "/tools/test/**/*"
+      - "/tools/test/run-js-tests.mjs"
       - "/tools/runtime/**/*"
     options:
       cache: true
@@ -107,6 +107,8 @@ tasks:
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:package"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
       - "/package.json"
@@ -117,9 +119,11 @@ tasks:
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/test/**/*"
+      - "/tools/test/run-js-tests.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"
@@ -138,6 +142,8 @@ tasks:
     deps:
       - "oliphaunt-js:package"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
       - "/package.json"
@@ -146,10 +152,29 @@ tasks:
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/sdk-artifacts/js.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/ios-carrier-manifest.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/portable-archive.mjs"
+      - "/tools/release/prepare-rust-release-source.mjs"
+      - "/tools/release/prepare-swift-release-consumer.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-cli-utils.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-semantic-inputs.mjs"
+      - "/tools/release/rust-native-targets.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
+      - "/tools/release/swift-source-carrier-contract.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/test/**/*"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/test/run-js-tests.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-js/**/*"
@@ -173,7 +198,7 @@ tasks:
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/**/*"
-      - "/tools/test/**/*"
+      - "/tools/test/run-js-tests.mjs"
       - "/tools/runtime/**/*"
     options:
       cache: local
@@ -230,7 +255,7 @@ tasks:
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/coverage/**/*"
-      - "/tools/test/**/*"
+      - "/tools/test/run-js-tests.mjs"
     outputs:
       - "/target/coverage/oliphaunt-js/**/*"
     options:

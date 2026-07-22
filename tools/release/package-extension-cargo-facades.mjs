@@ -19,6 +19,15 @@ import {
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from "./rust-native-targets.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+
+const FACADE_NOTICE_OPTIONS = Object.freeze({ profile: "code-facade" });
 
 function fail(message) {
   throw new Error(`package-extension-cargo-facades: ${message}`);
@@ -120,6 +129,7 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
     targets.nativeCargoTargets,
     nativeCfgs,
   );
+  const legalMembers = releaseNoticeRows(FACADE_NOTICE_OPTIONS).map((row) => row.member);
   writeFileSync(path.join(sourceDir, "Cargo.toml"), `[package]
 name = ${JSON.stringify(product)}
 version = ${JSON.stringify(version)}
@@ -129,10 +139,10 @@ description = ${JSON.stringify(`Target-selecting Cargo facade for ${sqlNames.len
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = ${JSON.stringify(releaseProfilePackageLicense("code-facade").spdx)}
 links = ${JSON.stringify(facadeLinksName(product))}
 build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**"]
+include = ${JSON.stringify(["Cargo.toml", "README.md", "build.rs", "src/**", ...legalMembers])}
 
 [lib]
 path = "src/lib.rs"
@@ -165,6 +175,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const EXTENSION_SQL_NAMES: &[&str] = &[${sqlNames.map((sqlName) => JSON.stringify(sqlName)).join(", ")}];
 ${sqlNames.length === 1 ? `pub const EXTENSION_SQL_NAME: &str = ${JSON.stringify(sqlNames[0])};` : ""}
 `);
+  stageReleaseNotices(sourceDir, FACADE_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(sourceDir, FACADE_NOTICE_OPTIONS);
   return { product, version, sourceDir };
 }
 
@@ -183,6 +195,10 @@ export function packageExtensionCargoFacades(products, outputRoot) {
       path.join(outputRoot, "crates"),
       { root: ROOT, fail: (_prefix, message) => { throw new Error(message); }, rel: String },
     );
+    assertReleaseNoticesInArchive(cratePath, {
+      ...FACADE_NOTICE_OPTIONS,
+      prefix: path.basename(cratePath, ".crate"),
+    });
     packages.push({
       product,
       name: product,

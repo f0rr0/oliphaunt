@@ -5,10 +5,10 @@ edition = "2024"
 rust-version = "1.93"
 description = "Wasmer AOT pg_dump and psql artifacts for oliphaunt-wasix on aarch64-unknown-linux-gnu"
 repository = "https://github.com/f0rr0/oliphaunt"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
 publish = false
 links = "oliphaunt_artifact_oliphaunt_wasix_tools_aot_linux_arm64_gnu"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**"]
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**", "LICENSE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.oliphaunt-wasix.md", "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT", "THIRD_PARTY_LICENSES/ICU-LICENSE"]
 
 [lib]
 path = "src/lib.rs"

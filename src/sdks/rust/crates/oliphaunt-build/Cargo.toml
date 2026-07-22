@@ -7,7 +7,7 @@ description = "Cargo build-script integration for staging Oliphaunt runtime arti
 readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT"
 
 [lib]
 name = "oliphaunt_build"

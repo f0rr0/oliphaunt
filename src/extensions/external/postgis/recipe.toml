@@ -44,13 +44,22 @@ data_files = [
 ]
 headers = []
 licenses = [
-  "share/licenses/postgis/COPYING",
   "share/licenses/geos/COPYING",
+  "share/licenses/geos/src/deps/ryu/LICENSE",
+  "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+  "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+  "share/licenses/json-c/COPYING",
+  "share/licenses/libcharset/COPYING.LIB",
+  "share/licenses/libiconv/COPYING.LIB",
+  "share/licenses/libxml2/Copyright",
+  "share/licenses/postgis/COPYING",
+  "share/licenses/postgis/LICENSE.TXT",
+  "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+  "share/licenses/postgis/deps/ryu/LICENSE",
+  "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+  "share/licenses/postgis/deps/ryu/LICENSE-Boost",
   "share/licenses/proj/COPYING",
   "share/licenses/sqlite/LICENSE.md",
-  "share/licenses/libxml2/Copyright",
-  "share/licenses/json-c/COPYING",
-  "share/licenses/libiconv/COPYING",
 ]
 
 [[runtime_environment]]

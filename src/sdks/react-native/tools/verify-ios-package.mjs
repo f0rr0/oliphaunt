@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -180,6 +181,160 @@ function requirePortableSelectionId(value, label) {
   return value;
 }
 
+function safeRelative(value, label) {
+  if (
+    typeof value !== "string" || value.length === 0 || value.includes("\\") ||
+    value.startsWith("/") || /^[A-Za-z]:/u.test(value) || /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    fail(`${label} must be a safe relative path`);
+  }
+  const parts = value.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) {
+    fail(`${label} must be a safe relative path`);
+  }
+  return value;
+}
+
+function renderLegalNotice(spdx, files) {
+  return [
+    "# Oliphaunt app-owned iOS payload legal notices",
+    "",
+    `SPDX-License-Identifier: ${spdx}`,
+    "",
+    "This file indexes the exact legal files materialized from the selected frozen carriers.",
+    "",
+    ...files.map((row) => `- \`${row.destination}\` (${row.kind}; SHA-256 \`${row.sha256}\`)`),
+    "",
+  ].join("\n");
+}
+
+async function validateLegalSelection(payloadDir, selection, frozenSelected) {
+  const legal = selection?.legal;
+  if (legal === null || Array.isArray(legal) || typeof legal !== "object") {
+    fail(`${payloadDir}/selection.json legal must be an object`);
+  }
+  const keys = Object.keys(legal).sort(compareText);
+  if (JSON.stringify(keys) !== JSON.stringify(["file", "files", "spdx"])) {
+    fail(`${payloadDir}/selection.json legal fields must be exactly file,files,spdx`);
+  }
+  if (legal.file !== "licenses/NOTICE.md") {
+    fail(`${payloadDir}/selection.json legal.file must be licenses/NOTICE.md`);
+  }
+  if (
+    typeof legal.spdx !== "string" ||
+    legal.spdx.split(" AND ").some((term) => !/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(term))
+  ) {
+    fail(`${payloadDir}/selection.json legal.spdx must be a safe SPDX conjunction`);
+  }
+  if (!Array.isArray(legal.files) || legal.files.length === 0) {
+    fail(`${payloadDir}/selection.json legal.files must be non-empty`);
+  }
+  if (typeof selection.icu !== "boolean") {
+    fail(`${payloadDir}/selection.json icu must be boolean`);
+  }
+  const legalEntries = await walk(path.join(payloadDir, "licenses"));
+  const unsafeEntries = legalEntries.filter(
+    ({ entry }) => !entry.isDirectory() && !entry.isFile(),
+  );
+  if (unsafeEntries.length > 0) {
+    fail(
+      `${payloadDir} legal namespace contains symbolic links or special files: ` +
+        unsafeEntries.map(({ file }) => file).join(", "),
+    );
+  }
+  const selected = new Set(frozenSelected);
+  const expectedFiles = [];
+  const baseScopes = new Set();
+  const extensionScopes = new Set();
+  for (const [index, row] of legal.files.entries()) {
+    const label = `${payloadDir}/selection.json legal.files[${index}]`;
+    if (row === null || Array.isArray(row) || typeof row !== "object") fail(`${label} must be an object`);
+    const rowKeys = Object.keys(row).sort(compareText);
+    if (JSON.stringify(rowKeys) !== JSON.stringify(["bytes", "destination", "kind", "member", "sha256", "source"])) {
+      fail(`${label} fields must be exactly bytes,destination,kind,member,sha256,source`);
+    }
+    const destination = safeRelative(row.destination, `${label}.destination`);
+    safeRelative(row.member, `${label}.member`);
+    if (!destination.startsWith("licenses/base/") && !destination.startsWith("licenses/extensions/")) {
+      fail(`${label}.destination is outside the selected legal namespaces`);
+    }
+    const baseRole = /^licenses\/base\/([^/]+)\//u.exec(destination)?.[1];
+    if (baseRole !== undefined) {
+      requirePortableSelectionId(baseRole, `${label} base legal role`);
+      if (!new Set(["base-xcframework", "runtime-resources", "icu-data"]).has(baseRole)) {
+        fail(`${label}.destination carries unknown base legal role ${baseRole}`);
+      }
+      if (row.source !== "base") fail(`${label}.source must be base for a base legal destination`);
+      baseScopes.add(baseRole);
+    }
+    const extension = /^licenses\/extensions\/([^/]+)\//u.exec(destination)?.[1];
+    if (baseRole === undefined && extension === undefined) {
+      fail(`${label}.destination must name a file below one exact legal scope`);
+    }
+    if (extension !== undefined && !selected.has(extension)) {
+      fail(`${label}.destination leaks unselected extension ${extension}`);
+    }
+    if (extension !== undefined) {
+      requirePortableSelectionId(extension, `${label} extension legal scope`);
+      if (row.source !== "extension") {
+        fail(`${label}.source must be extension for an extension legal destination`);
+      }
+      extensionScopes.add(extension);
+    }
+    if (destination.startsWith("licenses/base/icu-data/") && selection.icu !== true) {
+      fail(`${label}.destination carries unselected ICU legal material`);
+    }
+    if (!new Set(["license", "notice"]).has(row.kind) || !new Set(["base", "extension"]).has(row.source)) {
+      fail(`${label} has an invalid legal kind/source`);
+    }
+    if (!Number.isSafeInteger(row.bytes) || row.bytes <= 0 || !/^[0-9a-f]{64}$/u.test(row.sha256)) {
+      fail(`${label} has an invalid byte count or SHA-256`);
+    }
+    const file = path.join(payloadDir, ...destination.split("/"));
+    const stat = await fs.lstat(file).catch((error) => {
+      fail(`${label} is missing from the payload: ${error.message}`);
+    });
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== row.bytes) {
+      fail(`${label} is not the frozen regular legal file`);
+    }
+    const digest = createHash("sha256").update(await fs.readFile(file)).digest("hex");
+    if (digest !== row.sha256) fail(`${label} checksum differs from selection.json`);
+    expectedFiles.push(destination);
+  }
+  const canonical = [...expectedFiles].sort(compareText);
+  if (new Set(expectedFiles).size !== expectedFiles.length || JSON.stringify(canonical) !== JSON.stringify(expectedFiles)) {
+    fail(`${payloadDir}/selection.json legal.files must be unique and sorted by destination`);
+  }
+  const expectedBaseScopes = [
+    "base-xcframework",
+    ...(selection.icu ? ["icu-data"] : []),
+    "runtime-resources",
+  ].sort(compareText);
+  requireExactDomain([...baseScopes].sort(compareText), expectedBaseScopes, `${payloadDir} base legal scopes`);
+  requireExactDomain(
+    [...extensionScopes].sort(compareText),
+    frozenSelected,
+    `${payloadDir} extension legal scopes`,
+  );
+  const actualFiles = legalEntries
+    .filter(({ entry }) => entry.isFile())
+    .map(({ file }) => path.relative(payloadDir, file).split(path.sep).join("/"))
+    .filter((relative) => relative !== legal.file)
+    .sort(compareText);
+  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+    fail(`${payloadDir} legal namespace contains missing or uncontracted files`);
+  }
+  const notice = await fs.readFile(path.join(payloadDir, ...legal.file.split("/")), "utf8");
+  if (notice !== renderLegalNotice(legal.spdx, legal.files)) {
+    fail(`${legal.file} does not exactly index the frozen legal selection`);
+  }
+  const podspec = await fs.readFile(path.join(payloadDir, "OliphauntReactNativePayload.podspec"), "utf8");
+  const licenseLine = `  s.license = { :type => ${JSON.stringify(legal.spdx)}, :file => ${JSON.stringify(legal.file)} }\n`;
+  if (!podspec.includes(licenseLine) || !podspec.includes('  s.preserve_paths = "licenses/**/*"\n')) {
+    fail(`${payloadDir} Podspec does not reference its exact staged legal closure`);
+  }
+}
+
 async function validatePackageAllowlist(packageDir) {
   const packageJsonFile = path.join(packageDir, "package.json");
   await requireFile(packageJsonFile, "React Native package manifest");
@@ -337,6 +492,7 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
   });
   const frozenSelected = frozenRows.map(({ sqlName }) => sqlName);
   requireExactDomain(frozenSelected, frozenSelected, `${selectionFile} extension SQL names`);
+  await validateLegalSelection(payloadDir, selection, frozenSelected);
   const frozenCreateable = frozenRows
     .filter(({ createsExtension }) => createsExtension)
     .map(({ sqlName }) => sqlName);

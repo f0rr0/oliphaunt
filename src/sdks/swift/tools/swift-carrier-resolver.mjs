@@ -1048,7 +1048,7 @@ export async function resolveSwiftCarrierSelection({
   let document;
   try { document = JSON.parse(await fs.readFile(carrierFile, "utf8")); } catch (error) { fail(`could not read carrier ${carrierFile}: ${error.message}`); }
   const root = object(document, carrierFile);
-  exactKeys(root, ["base", "carriers", "extensions", "schema"], carrierFile);
+  exactKeys(root, ["base", "carriers", "extensions", "legal", "schema"], carrierFile);
   if (root.schema !== SCHEMA) fail(`${carrierFile} has unsupported schema`);
   const base = validateBase(root.base, `${carrierFile}.base`, allowFileUrls);
   const rootCarriers = carrierEnvelopes(root.carriers, `${carrierFile}.carriers`, allowFileUrls);

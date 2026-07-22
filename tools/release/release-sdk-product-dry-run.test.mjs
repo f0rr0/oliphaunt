@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { validateStagedSwiftSourceCarrier } from "./release-sdk-product-dry-run.mjs";
 import { validateSwiftSourceReleaseContract } from "./swift-source-carrier-contract.mjs";
+import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
 
 const temporaryDirectories = [];
 
@@ -36,6 +37,7 @@ function selectionNeutralCarrier(version = "1.2.3") {
     base: { assets, product, tag, version },
     carriers: [],
     extensions: [],
+    legal: { base: iosBaseLegalMetadata(), extensions: [] },
     schema: "oliphaunt-react-native-ios-carrier-v1",
   };
 }

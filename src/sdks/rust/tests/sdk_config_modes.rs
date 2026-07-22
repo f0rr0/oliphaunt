@@ -597,11 +597,11 @@ fn rust_sdk_mode_support_is_explicit_and_complete() {
 
 #[test]
 fn shared_sdk_capability_fixture_matches_rust_support() {
-    // Mirrors the cross-SDK supportedModes fixture consumed by the peer SDK test suites.
-    let fixture: SharedCapabilityFixture = serde_json::from_str(include_str!(
-        "../../../shared/fixtures/sdk-capabilities/mode-support.json"
-    ))
-    .expect("parse shared SDK capability fixture");
+    // Staged from src/shared/fixtures/sdk-capabilities/mode-support.json so the
+    // published-source test remains hermetic while proving the shared contract.
+    let fixture: SharedCapabilityFixture =
+        serde_json::from_str(include_str!("fixtures/sdk-mode-support.json"))
+            .expect("parse shared SDK capability fixture");
     let support = EngineCapabilities::rust_sdk_support();
 
     assert_eq!(fixture.schema_version, 1);

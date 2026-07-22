@@ -129,9 +129,11 @@ common_flags="-std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_n
 
 case "$platform" in
   macos)
+    # shellcheck disable=SC2086 # common_flags is an intentional POSIX argument list.
     "$cxx" $common_flags -fPIC "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup "$src" -o "$addon"
     ;;
   linux)
+    # shellcheck disable=SC2086 # common_flags is an intentional POSIX argument list.
     "$cxx" $common_flags -fPIC -shared "$src" -ldl -o "$addon"
     ;;
   windows)
@@ -207,6 +209,7 @@ asset_stage="$root/target/oliphaunt-node-direct/release-stage/$target"
 rm -rf "$asset_stage"
 mkdir -p "$asset_stage"
 cp "$addon_file" "$asset_stage/oliphaunt_node.node"
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$asset_stage" --profile source-sdk
 tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target" --root "$asset_stage"
 if [ "$platform" = "linux" ]; then
   tools/release/check-linux-consumer-baseline.sh --target "$target" --root "$asset_stage"
@@ -242,7 +245,6 @@ tools/release/write_checksum_manifest.mjs \
   --pattern 'oliphaunt-node-direct-*.zip'
 
 printf 'Node direct addon smoke passed: %s\n' "$addon"
-bun tools/release/check-node-direct-release-assets.mjs --asset-dir "$asset_dir" --allow-partial
 case "$target" in
   macos-arm64) optional_package="darwin-arm64" ;;
   linux-x64-gnu) optional_package="linux-x64-gnu" ;;
@@ -258,6 +260,7 @@ cp -R "$package_source/." "$package_work/"
 rm -rf "$package_work/prebuilds"
 mkdir -p "$package_work/prebuilds"
 cp "$addon_file" "$package_work/prebuilds/oliphaunt_node.node"
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$package_work" --profile source-sdk
 pack_json="$(pnpm --dir "$package_work" pack --pack-destination "$npm_package_dir" --json)"
 printf '%s\n' "$pack_json" >"$npm_package_dir/$optional_package.pnpm-pack.json"
 tarball="$(
@@ -280,5 +283,9 @@ if ! tar_list_gzip "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node
   echo "Node direct optional npm package is missing prebuilds/oliphaunt_node.node: $tarball" >&2
   exit 1
 fi
+tools/dev/bun.sh tools/release/check-node-direct-release-assets.mjs \
+  --asset-dir "$asset_dir" \
+  --allow-partial \
+  --npm-package "$tarball"
 printf 'Node direct optional npm package staged: %s\n' "$tarball"
 printf '%s\n' "$asset_dir/$asset"

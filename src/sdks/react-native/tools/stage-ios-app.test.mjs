@@ -18,6 +18,10 @@ const GENERATED_EXTENSION_BY_SQL_NAME = new Map(
   GENERATED_EXTENSION_CATALOG.extensions.map((row) => [row["sql-name"], row]),
 );
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" });
   assert.equal(
@@ -86,6 +90,10 @@ function retainReferencedCarriers(document) {
     document.extensions.flatMap((extension) => extension.assets.map(({ carrier }) => carrier)),
   );
   document.carriers = document.carriers.filter(({ name }) => referenced.has(name));
+  if (document.legal?.extensions) {
+    const selected = new Set(document.extensions.map(({ sqlName }) => sqlName));
+    document.legal.extensions = document.legal.extensions.filter(({ sqlName }) => selected.has(sqlName));
+  }
   return document;
 }
 
@@ -118,6 +126,30 @@ function replaceExtensionRuntimeAsset(document, sqlName, replacement) {
 async function tarDirectory(source, archive, member = ".") {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   run("tar", ["-czf", archive, "-C", source, member]);
+}
+
+async function tarMembers(source, archive, members) {
+  await fs.mkdir(path.dirname(archive), { recursive: true });
+  run("tar", ["-czf", archive, "-C", source, ...members]);
+}
+
+async function legalFile(root, member, kind, contents = undefined) {
+  const file = path.join(root, ...member.split("/"));
+  await write(file, contents ?? `${member} fixture legal text\n`);
+  const stat = await fs.stat(file);
+  return {
+    bytes: stat.size,
+    kind,
+    member,
+    sha256: await sha256(file),
+  };
+}
+
+async function legalGroup(root, { assetRole, files, profile, spdx }) {
+  const rows = await Promise.all(files.map(({ kind, member, contents }) =>
+    legalFile(root, member, kind, contents)));
+  rows.sort((left, right) => compareText(left.member, right.member));
+  return { assetRole, files: rows, profile, spdx };
 }
 
 async function removeTarDirectorySlash(archive, member) {
@@ -199,11 +231,11 @@ async function maliciousZip(archive, entry, kind) {
   run("python3", ["-c", script, archive, entry, kind]);
 }
 
-async function metadataZip(archive, creator) {
+async function metadataZip(archive, creator, legalRoot = "") {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
-    "import sys, zipfile",
-    "archive, creator = sys.argv[1:]",
+    "import os, sys, zipfile",
+    "archive, creator, legal_root = sys.argv[1:]",
     "host = 0 if creator == 'fat' else 3",
     "ambiguous = creator == 'ambiguous-unix'",
     "root = zipfile.ZipInfo('liboliphaunt.xcframework/')",
@@ -216,8 +248,27 @@ async function metadataZip(archive, creator) {
     "with zipfile.ZipFile(archive, 'w') as output:",
     "  output.writestr(root, b'')",
     "  output.writestr(payload, b'<plist><dict/></plist>\\n')",
+    "  if legal_root:",
+    "    legal_files = []",
+    "    for directory, _, names in os.walk(legal_root):",
+    "      for leaf in sorted(names):",
+    "        source = os.path.join(directory, leaf)",
+    "        relative = os.path.relpath(source, legal_root).replace(os.sep, '/')",
+    "        if relative == 'Info.plist' or ('LICENSE' not in relative and 'NOTICE' not in relative and 'COPYRIGHT' not in relative): continue",
+    "        legal_files.append((relative, source))",
+    "    parents = sorted({relative.rsplit('/', 1)[0] for relative, _ in legal_files if '/' in relative})",
+    "    for parent in parents:",
+    "      info = zipfile.ZipInfo('liboliphaunt.xcframework/' + parent + '/')",
+    "      info.create_system = host",
+    "      info.external_attr = ((0o40755 << 16) | 0x10) if host == 3 else 0x10",
+    "      output.writestr(info, b'')",
+    "    for relative, source in legal_files:",
+    "        info = zipfile.ZipInfo('liboliphaunt.xcframework/' + relative)",
+    "        info.create_system = host",
+    "        info.external_attr = ((0o100644 << 16) | 0x20) if host == 3 else 0x20",
+    "        output.writestr(info, open(source, 'rb').read())",
   ].join("\n");
-  run("python3", ["-c", script, archive, creator]);
+  run("python3", ["-c", script, archive, creator, legalRoot]);
 }
 
 async function addUnsupportedZipFlag(archive) {
@@ -249,11 +300,11 @@ async function craftedTar(archive, entries) {
   run("python3", ["-c", script, archive, JSON.stringify(entries)]);
 }
 
-async function highCardinalityIcuTar(archive, localeCount) {
+async function highCardinalityIcuTar(archive, localeCount, legalRoot) {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
-    "import io, sys, tarfile",
-    "archive, encoded_count = sys.argv[1:]",
+    "import io, os, sys, tarfile",
+    "archive, encoded_count, legal_root = sys.argv[1:]",
     "with tarfile.open(archive, 'w:gz', format=tarfile.USTAR_FORMAT) as output:",
     "  for name in ['share/icu/icudt77l.dat'] + [f'share/icu/locale-{index:04d}.res' for index in range(int(encoded_count))]:",
     "    data = b'fixture'",
@@ -261,8 +312,18 @@ async function highCardinalityIcuTar(archive, localeCount) {
     "    info.mode = 0o644",
     "    info.size = len(data)",
     "    output.addfile(info, io.BytesIO(data))",
+    "  for directory, _, names in os.walk(legal_root):",
+    "    for leaf in sorted(names):",
+    "      source = os.path.join(directory, leaf)",
+    "      name = os.path.relpath(source, legal_root).replace(os.sep, '/')",
+    "      if name.startswith('share/icu/'): continue",
+    "      data = open(source, 'rb').read()",
+    "      info = tarfile.TarInfo(name)",
+    "      info.mode = 0o644",
+    "      info.size = len(data)",
+    "      output.addfile(info, io.BytesIO(data))",
   ].join("\n");
-  run("python3", ["-c", script, archive, String(localeCount)]);
+  run("python3", ["-c", script, archive, String(localeCount), legalRoot]);
 }
 
 async function rewriteFirstTarSize(archive, size) {
@@ -335,21 +396,88 @@ async function baseAssets(root) {
   const icu = path.join(source, "icu", "share", "icu");
   await write(path.join(icu, "icudt77l.dat"), "fixture icu\n");
 
+  const baseLegalSpecs = [
+    {
+      assetRole: "base-xcframework",
+      root: path.dirname(baseFramework),
+      profile: "native-runtime",
+      spdx: "MIT AND PostgreSQL AND Unicode-3.0",
+      files: [
+        "liboliphaunt.xcframework/LICENSE",
+        "liboliphaunt.xcframework/THIRD_PARTY_LICENSES/ICU-LICENSE",
+        "liboliphaunt.xcframework/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+        "liboliphaunt.xcframework/THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+        "liboliphaunt.xcframework/THIRD_PARTY_NOTICES.md",
+      ],
+    },
+    {
+      assetRole: "runtime-resources",
+      root: path.dirname(runtime),
+      profile: "native-runtime-resources",
+      spdx: "MIT AND PostgreSQL",
+      files: [
+        "LICENSE",
+        "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+        "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+        "THIRD_PARTY_NOTICES.md",
+      ],
+    },
+    {
+      assetRole: "icu-data",
+      root: path.join(source, "icu"),
+      profile: "native-icu-data",
+      spdx: "MIT AND Unicode-3.0",
+      files: [
+        "LICENSE",
+        "THIRD_PARTY_LICENSES/ICU-LICENSE",
+        "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+        "THIRD_PARTY_NOTICES.md",
+      ],
+    },
+  ];
+  const legal = [];
+  for (const spec of baseLegalSpecs) {
+    legal.push(await legalGroup(spec.root, {
+      assetRole: spec.assetRole,
+      files: spec.files.map((member) => ({
+        kind: member.includes("NOTICE") ? "notice" : "license",
+        member,
+      })),
+      profile: spec.profile,
+      spdx: spec.spdx,
+    }));
+  }
+
   const archiveRoot = path.join(root, "archives");
   const runtimeArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-runtime-resources.tar.gz");
   const frameworkArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-apple-spm-xcframework.zip");
   const icuArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-icu-data.tar.gz");
-  await tarDirectory(path.dirname(runtime), runtimeArchive, path.basename(runtime));
+  await tarMembers(path.dirname(runtime), runtimeArchive, [
+    path.basename(runtime),
+    "LICENSE",
+    "THIRD_PARTY_LICENSES",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_NOTICES.md",
+  ]);
   // POSIX typeflag 5 is authoritative even when an older producer omitted the
   // conventional slash. This is the exact archive shape from the failed run.
   await removeTarDirectorySlash(runtimeArchive, `${path.basename(runtime)}/`);
   await zipMember(path.dirname(baseFramework), path.basename(baseFramework), frameworkArchive);
-  await tarDirectory(path.join(source, "icu"), icuArchive, "share/icu");
-  return [
-    await asset("base-xcframework", frameworkArchive, "zip", "liboliphaunt.xcframework"),
-    await asset("runtime-resources", runtimeArchive, "tar.gz", "oliphaunt"),
-    await asset("icu-data", icuArchive, "tar.gz", "share/icu"),
-  ];
+  await tarMembers(path.join(source, "icu"), icuArchive, [
+    "share/icu",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_NOTICES.md",
+  ]);
+  return {
+    assets: [
+      await asset("base-xcframework", frameworkArchive, "zip", "liboliphaunt.xcframework"),
+      await asset("runtime-resources", runtimeArchive, "tar.gz", "oliphaunt"),
+      await asset("icu-data", icuArchive, "tar.gz", "share/icu"),
+    ],
+    legal,
+  };
 }
 
 async function extensionRow(root, config) {
@@ -383,6 +511,41 @@ async function extensionRow(root, config) {
         `${target}:${dependency}:mobile-static/${target}/dependencies/${dependency}/` +
         `${productionDependencyArchiveNames.get(dependency) ?? `lib${dependency}.a`}`,
     ));
+  const externalLicenseMembers = config.sqlName === "pgtap"
+    ? ["files/share/licenses/pgtap/LICENSE"]
+    : config.sqlName === "postgis"
+      ? ["files/share/licenses/postgis/COPYING"]
+      : [];
+  const profile = externalLicenseMembers.length > 0
+    ? "external-native"
+    : config.sqlName === "pgcrypto"
+      ? "contrib-native-openssl"
+      : "contrib-native";
+  const spdx = config.sqlName === "postgis"
+    ? "MIT AND Apache-2.0 AND GPL-2.0-or-later AND LGPL-2.1-or-later AND blessing"
+    : config.sqlName === "pgcrypto"
+      ? "MIT AND PostgreSQL AND Apache-2.0"
+      : "MIT AND PostgreSQL";
+  const legal = await legalGroup(source, {
+    assetRole: "runtime-resources",
+    files: [
+      { kind: "license", member: "LICENSE" },
+      ...(externalLicenseMembers.length === 0
+        ? [{ kind: "license", member: "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT" }]
+        : []),
+      ...(config.sqlName === "pgcrypto"
+        ? [{ kind: "license", member: "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt" }]
+        : []),
+      { kind: "notice", member: "THIRD_PARTY_NOTICES.md" },
+      ...externalLicenseMembers.map((member) => ({ kind: "license", member })),
+    ],
+    profile,
+    spdx,
+  });
+  const licenseFiles = legal.files
+    .map(({ member }) => /^files\/(share\/licenses\/.+)$/u.exec(member)?.[1])
+    .filter((member) => member !== undefined)
+    .sort();
   await write(
     path.join(source, "manifest.properties"),
     [
@@ -405,6 +568,8 @@ async function extensionRow(root, config) {
       `mobileStaticDependencyArchives=${mobileStaticDependencyArchives.join(",")}`,
       `staticSymbolPrefix=${nativeSymbolStem ? `oliphaunt_static_${nativeSymbolStem}` : ""}`,
       `staticSymbolAliases=${staticSymbolAliases.join(",")}`,
+      `licenseFiles=${licenseFiles.join(",")}`,
+      `licenseProfile=${profile}`,
       "files=files",
       "",
     ].join("\n"),
@@ -546,6 +711,7 @@ async function extensionRow(root, config) {
   const product = generated["release-product"];
   return {
     carriers: logicalAssets.map(({ envelope }) => envelope),
+    legal,
     extension: {
       assets: logicalAssets.map(({ locator }) => locator),
       createsExtension,
@@ -614,14 +780,16 @@ async function mutatedExtensionRuntime(root, sqlName, archiveName, mutate) {
 }
 
 async function createFixture(root) {
+  const builtBase = await baseAssets(root);
   const base = {
-    assets: await baseAssets(root),
+    assets: builtBase.assets,
     product: "liboliphaunt-native",
     tag: "liboliphaunt-native-v1.0.0",
     version: "1.0.0",
   };
   const carriers = [];
   const extensions = [];
+  const extensionLegal = [];
   for (const fixture of [
     { sqlName: "auto_explain" },
     { sqlName: "cube" },
@@ -664,8 +832,16 @@ async function createFixture(root) {
     const built = await extensionRow(root, config);
     carriers.push(...built.carriers);
     extensions.push(built.extension);
+    extensionLegal.push({ ...built.legal, sqlName: built.extension.sqlName });
   }
-  const carrier = { base, carriers, extensions, schema: SCHEMA };
+  extensionLegal.sort((left, right) => compareText(left.sqlName, right.sqlName));
+  const carrier = {
+    base,
+    carriers,
+    extensions,
+    legal: { base: builtBase.legal, extensions: extensionLegal },
+    schema: SCHEMA,
+  };
   const carrierFile = path.join(root, "oliphaunt-react-native-ios-carriers.json");
   await write(carrierFile, `${JSON.stringify(carrier, null, 2)}\n`);
   return { carrier, carrierFile };
@@ -674,6 +850,7 @@ async function createFixture(root) {
 async function bundledCarrierDocument(root, sourceDocument, sqlNames, archiveName, tamperSqlName) {
   const document = structuredClone(sourceDocument);
   document.extensions = document.extensions.filter(({ sqlName }) => sqlNames.includes(sqlName));
+  document.legal.extensions = document.legal.extensions.filter(({ sqlName }) => sqlNames.includes(sqlName));
   const sourceRoot = path.join(root, "bundle-source", archiveName.replace(/\.tar\.gz$/u, ""));
   await fs.rm(sourceRoot, { force: true, recursive: true });
   const sourceCarriers = new Map(sourceDocument.carriers.map((row) => [row.name, row]));
@@ -761,6 +938,11 @@ async function main() {
     );
     assert.match(
       payloadPodspec,
+      /^  s[.]license = \{ :type => "MIT AND PostgreSQL AND Unicode-3[.]0 AND Apache-2[.]0 AND GPL-2[.]0-or-later AND LGPL-2[.]1-or-later AND blessing", :file => "licenses\/NOTICE[.]md" \}$/mu,
+    );
+    assert.match(payloadPodspec, /^  s[.]preserve_paths = "licenses\/\*\*\/\*"$/mu);
+    assert.match(
+      payloadPodspec,
       /s\.resources = "resources\/OliphauntReactNativeResources\.bundle"/u,
     );
     assert.match(
@@ -776,6 +958,10 @@ async function main() {
       "frameworks/base",
       "frameworks/extensions",
       "generated/static-registry",
+      "licenses/base/base-xcframework",
+      "licenses/base/icu-data",
+      "licenses/base/runtime-resources",
+      "licenses/extensions/postgis",
     ]) {
       await fs.access(path.join(output, relativeRoot));
     }
@@ -873,6 +1059,16 @@ async function main() {
     const selection = JSON.parse(await fs.readFile(path.join(output, "selection.json"), "utf8"));
     assert.equal(selection.icu, true);
     assert.equal(
+      selection.legal.spdx,
+      "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0 AND GPL-2.0-or-later AND LGPL-2.1-or-later AND blessing",
+    );
+    assert.equal(selection.legal.file, "licenses/NOTICE.md");
+    assert.ok(selection.legal.files.every(({ destination }) => destination.startsWith("licenses/")));
+    assert.match(
+      await fs.readFile(path.join(output, selection.legal.file), "utf8"),
+      /^SPDX-License-Identifier: MIT AND PostgreSQL AND Unicode-3[.]0/mu,
+    );
+    assert.equal(
       selection.extensions.find(({ sqlName }) => sqlName === "auto_explain").createsExtension,
       false,
     );
@@ -951,6 +1147,38 @@ async function main() {
       /mobileStaticRegistryRegistered must match the exact canonical domain/u,
     );
 
+    const tamperedLegalNoticeOutput = path.join(root, "tampered-legal-notice-output");
+    await fs.cp(output, tamperedLegalNoticeOutput, { recursive: true });
+    await fs.appendFile(
+      path.join(tamperedLegalNoticeOutput, "licenses", "NOTICE.md"),
+      "unfrozen notice text\n",
+    );
+    runFailure(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, "verify-ios-package.mjs"),
+        "--payload-dir",
+        tamperedLegalNoticeOutput,
+      ],
+      /does not exactly index the frozen legal selection/u,
+    );
+
+    const unselectedLegalOutput = path.join(root, "unselected-legal-output");
+    await fs.cp(output, unselectedLegalOutput, { recursive: true });
+    await write(
+      path.join(unselectedLegalOutput, "licenses", "extensions", "unselected", "LICENSE"),
+      "unselected legal payload\n",
+    );
+    runFailure(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, "verify-ios-package.mjs"),
+        "--payload-dir",
+        unselectedLegalOutput,
+      ],
+      /legal namespace contains missing or uncontracted files/u,
+    );
+
     const contribBundle = await bundledCarrierDocument(
       root,
       carrier,
@@ -992,6 +1220,10 @@ async function main() {
         ),
       ),
     );
+    await fs.access(path.join(bundleOutput, "licenses", "extensions", "pgtap", "files", "share", "licenses", "pgtap", "LICENSE"));
+    await assert.rejects(fs.access(path.join(bundleOutput, "licenses", "extensions", "auto_explain")));
+    await assert.rejects(fs.access(path.join(bundleOutput, "licenses", "extensions", "postgis")));
+    await assert.rejects(fs.access(path.join(bundleOutput, "licenses", "base", "icu-data")));
 
     // An independently versioned external extension is validated against the
     // immutable carrier contract that shipped with that extension version, not
@@ -1197,7 +1429,27 @@ async function main() {
       "missing-root-envelope-field",
       missingRootEnvelopeField,
       [],
-      /fields must be exactly base,carriers,extensions,schema; got base,extensions,schema/u,
+      /fields must be exactly base,carriers,extensions,legal,schema; got base,extensions,legal,schema/u,
+    );
+
+    const traversingLegalMember = structuredClone(carrier);
+    traversingLegalMember.legal.base[0].files[0].member = "../outside-license";
+    await expectCarrierFailure(
+      "traversing-legal-member",
+      traversingLegalMember,
+      [],
+      /not a safe archive-relative path/u,
+    );
+
+    const collidingLegalMember = structuredClone(carrier);
+    const collidingFiles = collidingLegalMember.legal.base[0].files;
+    collidingFiles.at(-1).member = collidingFiles[0].member.toLowerCase();
+    collidingFiles.sort((left, right) => compareText(left.member, right.member));
+    await expectCarrierFailure(
+      "colliding-legal-member",
+      collidingLegalMember,
+      [],
+      /colliding legal members/u,
     );
 
     const missingCarrierEnvelopeField = structuredClone(carrier);
@@ -1611,7 +1863,11 @@ async function main() {
       "archives",
       "liboliphaunt-1.0.0-high-cardinality-icu-data.tar.gz",
     );
-    await highCardinalityIcuTar(highCardinalityIcuArchive, 4098);
+    await highCardinalityIcuTar(
+      highCardinalityIcuArchive,
+      4098,
+      path.join(root, "source", "base", "icu"),
+    );
     const highCardinalityIcu = structuredClone(carrier);
     highCardinalityIcu.base.assets = await Promise.all(
       highCardinalityIcu.base.assets.map(async (row) => row.role === "icu-data"
@@ -1685,7 +1941,11 @@ async function main() {
     await expectCarrierFailure("ambiguous-unix-types", ambiguousUnix, [], /ambiguous Unix member type/u);
 
     const fatArchive = path.join(root, "archives", "fat-types.zip");
-    await metadataZip(fatArchive, "fat");
+    await metadataZip(
+      fatArchive,
+      "fat",
+      path.join(root, "source", "base", "framework", "liboliphaunt.xcframework"),
+    );
     const fat = structuredClone(carrier);
     fat.base.assets = await Promise.all(fat.base.assets.map(async (row) => row.role === "base-xcframework"
       ? asset("base-xcframework", fatArchive, "zip", "liboliphaunt.xcframework")
@@ -1841,6 +2101,10 @@ async function main() {
             .find(({ sqlName }) => sqlName === "earthdistance")
             .assets.some(({ carrier: carrierName }) => carrierName === name)),
         extensions: carrier.extensions.filter(({ sqlName }) => sqlName === "earthdistance"),
+        legal: {
+          base: carrier.legal.base,
+          extensions: carrier.legal.extensions.filter(({ sqlName }) => sqlName === "earthdistance"),
+        },
         schema: SCHEMA,
       }, null, 2)}\n`,
     );

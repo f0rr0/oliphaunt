@@ -439,6 +439,7 @@ const ACTIVE_COMMAND_BOUNDARY = String.raw`(?:^|[\n;|&()])\s*`;
 const OPTIONAL_COMMAND_PREFIX = String.raw`(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)|command|sudo)\s+)*`;
 const MUTATION_PATTERNS = new Map([
   ["release_pr_push", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*normalize-release-please-pr[.]mjs\\s+push\\b`, "mu")],
+  ["release_transport", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*release-transport-ref[.]mjs\\s+ensure\\b`, "mu")],
   ["github_stage", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*manage-release-drafts[.]mjs\\s+stage\\b`, "mu")],
   ["github_promote", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*manage-release-drafts[.]mjs\\s+promote\\b`, "mu")],
   ["release_publish", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*release-publish[.]mjs\\s+publish(?:\\s|\\\\$)`, "mu")],

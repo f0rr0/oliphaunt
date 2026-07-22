@@ -51,6 +51,9 @@ rsync -a --delete "$source_dir/" "$stage/share/icu/"
 oliphaunt_icu_files_data_ready "$stage/share/icu" ||
   fail "staged portable ICU data payload is incomplete"
 
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$stage" --profile native-icu-data
+
 tools/release/archive_dir.mjs "$stage" "$partial"
+tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$partial" --profile native-icu-data
 mv -f "$partial" "$out_dir/$asset"
 echo "liboliphauntIcuDataReleaseAsset=$out_dir/$asset"

@@ -11,8 +11,10 @@ packaging notices live next to the product that ships the relevant artifacts:
 
 Shared PostgreSQL source pins, third-party source pins, and extension metadata
 are maintained in `src/postgres/versions/18/`, `src/sources/third-party/`, and
-`src/extensions/`. Generated release artifacts must include the notices for
-every product they ship.
+`src/extensions/`. Generated release artifacts must include the notices and
+exact pinned license bytes for every product and third-party component they
+ship.
 
-- PostgreSQL license: https://www.postgresql.org/about/licence/
-- ICU / Unicode License v3: https://github.com/unicode-org/icu/blob/main/LICENSE
+Canonical runtime license snapshots live in
+`src/runtimes/liboliphaunt/licenses/`; their source pins and digests are
+enforced by `tools/release/release-notices.mjs`.

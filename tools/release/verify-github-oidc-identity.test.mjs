@@ -11,6 +11,7 @@ import {
   verifyGithubOidcIdentity,
   verifyOidcClaims,
 } from "../../.github/scripts/verify-github-oidc-identity.mjs";
+import { releaseTransportFullRef } from "../../.github/scripts/release-transport-ref.mjs";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -22,6 +23,7 @@ function environment(operation = "publish") {
     GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REF: "refs/heads/main",
     GITHUB_SHA: SHA,
+    RELEASE_CONTINUATION_POINTER: "",
     RELEASE_OPERATION: operation,
   };
 }
@@ -44,6 +46,45 @@ test("models the direct release workflow identity", () => {
   assert.equal(Object.hasOwn(publish, "job_workflow_sha"), false);
   assert.equal(publish.environment, "release-publish");
   assert.equal(expectedOidcIdentity(environment("publish-bootstrap")).environment, "release-bootstrap");
+});
+
+test("models continuations only on the exact SHA-derived transport tag", () => {
+  for (const operation of ["publish", "publish-bootstrap"]) {
+    const continuation = expectedOidcIdentity({
+      ...environment(operation),
+      GITHUB_REF: releaseTransportFullRef(SHA),
+      RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+    });
+    assert.equal(continuation.ref, releaseTransportFullRef(SHA));
+    assert.equal(continuation.ref_type, "tag");
+    assert.equal(
+      continuation.workflow_ref,
+      `f0rr0/oliphaunt/.github/workflows/release.yml@${releaseTransportFullRef(SHA)}`,
+    );
+  }
+
+  assert.throws(
+    () => expectedOidcIdentity({
+      ...environment(),
+      RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+    }),
+    /trusted publication ref mismatch/u,
+  );
+  assert.throws(
+    () => expectedOidcIdentity({
+      ...environment(),
+      GITHUB_REF: releaseTransportFullRef(SHA),
+    }),
+    /trusted publication ref mismatch/u,
+  );
+  assert.throws(
+    () => expectedOidcIdentity({
+      ...environment(),
+      GITHUB_REF: releaseTransportFullRef("f".repeat(40)),
+      RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+    }),
+    /trusted publication ref mismatch/u,
+  );
 });
 
 test("requires the exact direct workflow, environment, SHA, and hosted runner claims", () => {
@@ -84,7 +125,7 @@ test("rejects unsupported events, refs, operations, and malformed SHAs", () => {
   );
   assert.throws(
     () => expectedOidcIdentity({ ...environment(), GITHUB_REF: "refs/heads/release" }),
-    /must run from refs\/heads\/main/u,
+    /trusted publication ref mismatch/u,
   );
   assert.throws(
     () => expectedOidcIdentity({ ...environment(), RELEASE_OPERATION: "publish-dry-run" }),

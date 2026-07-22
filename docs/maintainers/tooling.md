@@ -1,6 +1,6 @@
 # Tooling Decisions
 
-Status: normative tooling decision record. Last verified: 2026-07-16. Owner: repository maintainers.
+Status: normative tooling decision record. Last verified: 2026-07-22. Owner: repository maintainers.
 
 Oliphaunt is a polyglot product monorepo. Tooling has to make product work
 predictable without hiding ecosystem-native behavior.
@@ -12,9 +12,11 @@ predictable without hiding ecosystem-native behavior.
 - Release Please manifest mode owns release PRs, versions, and changelogs.
 - The protected release workflow owns exact-SHA product tags and draft GitHub
   releases.
-- Product-local `release.toml` files own package metadata release-please does
-  not model: owner, kind, publish targets, registry packages, release
-  artifacts, compatibility-version files, and derived version files.
+- Product-local `release.toml` files activate a public product and own package
+  metadata Release Please does not model: owner, kind, publish targets,
+  registry packages, release artifacts, compatibility-version files, and
+  derived version files. A build-only or publication-deferred extension must
+  not have one.
 - Runtime products select published target presets in Moon
   `project.release.artifactTargets`; exact extension products own explicit
   support and evidence in `targets/artifacts.toml`.
@@ -119,8 +121,17 @@ plugin, component, mode inventory, and complete package tree is revalidated
 before its path is exported. Moon plugins are copied into a fresh private
 `MOON_HOME`, and `MOON_TOOLCHAIN_FORCE_GLOBALS=true` prevents Moon from
 silently hydrating another runtime. On Windows, composite actions convert
-Git-Bash paths back to native paths before writing `GITHUB_PATH`; pnpm store
-creation converts the native path to POSIX only for the Bash filesystem call.
+Git-Bash paths back to native paths before writing `GITHUB_PATH`.
+
+Verified Node.js, Moon, pnpm, and npm-publisher archives use explicit cache
+restore and save actions with one exact key per runner OS and architecture.
+Every save happens only after complete payload verification, only after an
+exact-key miss, and only under CI's main-branch `HEAVY_CACHE_SAVE_IF` gate;
+cache-save failures are non-blocking. Release and mobile workflows are
+restore-only. Do not use the monolithic `actions/cache` action in reachable
+workflows or composites, and do not cache the pnpm content-addressable store:
+the standalone setup action runs before caller dependency installation, so it
+cannot produce a complete store entry.
 
 Android command-line-tools are byte-pinned. Packages installed through
 `sdkmanager` are not immutable repository blobs: the bootstrap requests the
@@ -130,20 +141,20 @@ their installed `source.properties` and build-critical executables/resources.
 unversioned moving Android repository package and is validated by the presence
 of an executable `adb`; do not describe it as byte-reproducible.
 
-The Android setup action enables the Gradle cache only for Gradle/Expo
-consumers. Native-only Android artifact jobs pass `gradle-cache: "false"`, so
-`actions/setup-java` does not register an irrelevant Gradle post-cache step.
-When native ccache is enabled, its directory is created before cache restore so
-an empty first run does not emit a cache path-validation warning.
+The Android setup action restores the Gradle dependency cache only for
+Gradle/Expo consumers. It uses the same dependency-derived key and paths as
+`actions/setup-java`, but defaults to an explicit restore-only action. The
+fixed Linux `kotlin-sdk-package` job is the sole caller allowed to enable
+setup-java's cache writer, and only under CI's bounded main-branch heavy-cache
+policy. Native-only Android artifact jobs pass `gradle-cache: "false"` and do
+not restore or write Gradle state. Do not add a per-consumer Gradle cache scope
+unless the bounded producer is also designed to populate that exact key;
+restore-only keys with no producer remain permanently cold.
 
-The Linux Kotlin/Native test lane has a dedicated setup-java Gradle cache
-identity selected by
-`src/sdks/kotlin/gradle/cache-scopes/linux-native-tests.txt`. The shared
-dependency inputs are not sufficient for this lane: another Gradle consumer
-can populate the same immutable setup-java key without the host-native test
-variants, and a successful job is required before setup-java can save a more
-complete entry. Change the marker only when intentionally invalidating this
-lane's cache, and qualify that change with a cold `linuxX64Test` run.
+When native ccache is enabled, the Android action creates and configures a
+target-owned directory for reuse within the job. Native runtime build trees
+and compiler caches are not restored across runs, because stale generated
+files and mtimes are build correctness inputs rather than dependency caches.
 
 Kotlin plugin and dependency resolution try Google Cloud's fixed, hosted Maven
 Central mirror before canonical Maven Central. The mirror is an availability

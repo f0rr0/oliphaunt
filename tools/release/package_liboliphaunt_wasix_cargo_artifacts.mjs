@@ -20,7 +20,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createDeterministicTar } from "./cargo-source-package.mjs";
+import {
+  createDeterministicTar,
+  manualCargoPackageSource,
+} from "./cargo-source-package.mjs";
 import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { compareText } from "./release-graph.mjs";
 import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
@@ -44,6 +47,19 @@ import {
 } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
 import { localWindowsTarInvocation } from "./tar-command.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  releaseProfilePackageLicense,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  assertExtensionUpstreamLicensesInDirectory,
+  extensionRegistryLicense,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PRODUCT = "liboliphaunt-wasix";
@@ -543,11 +559,35 @@ function patchToolsAotTemplate(crateDir, target) {
   writeFileSync(buildRs, text);
 }
 
-function rewriteCargoManifest(manifest, { packageName, version, extensionSources, extensionAotSources }) {
+function noticeProfileForSpec(spec) {
+  if (spec.kind === "icu-data") return "wasix-icu-data";
+  if (spec.kind === "wasix-runtime") return "wasix-runtime";
+  if (spec.kind === "wasix-tools") return "wasix-tools";
+  if (spec.kind === "wasix-aot" || spec.kind === "wasix-tools-aot") return "wasix-aot";
+  fail(`WASIX Cargo package ${spec.name} has no release notice profile for kind ${spec.kind}`);
+}
+
+function injectCargoNoticeIncludes(text, profile) {
+  const members = releaseNoticeRows({ profile }).map((row) => row.member);
+  const match = text.match(/^include = \[(?<body>[\s\S]*?)^\]$/mu)
+    ?? text.match(/^include = \[(?<body>[^\n]*?)\]$/mu);
+  if (!match?.groups) fail("Cargo package template must declare one include array");
+  const existing = [...match.groups.body.matchAll(/"([^"]+)"/gu)].map((item) => item[1]);
+  const values = [...new Set([...existing, ...members])];
+  const replacement = `include = [\n${values.map((value) => `  ${JSON.stringify(value)},`).join("\n")}\n]`;
+  return text.slice(0, match.index) + replacement + text.slice(match.index + match[0].length);
+}
+
+function rewriteCargoManifest(manifest, { packageName, version, extensionSources, extensionAotSources, noticeProfile }) {
   let text = readFileSync(manifest, "utf8");
   text = text.replace(/^name = "[^"]+"$/mu, `name = "${packageName}"`);
   text = text.replace(/^version = "[^"]+"$/mu, `version = "${version}"`);
   text = text.replace(/^publish = false\n?/gmu, "");
+  text = text.replace(
+    /^license = "[^"]+"$/mu,
+    `license = ${JSON.stringify(releaseProfilePackageLicense(noticeProfile).spdx)}`,
+  );
+  text = injectCargoNoticeIncludes(text, noticeProfile);
   if (packageName === RUNTIME_PACKAGE && extensionSources.length > 0) {
     text = injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources);
   }
@@ -650,12 +690,16 @@ function copyPackageSource(spec, sourceRoot, version, extensionSources, extensio
     patchToolsAotTemplate(crateDir, spec.target);
   }
   cpSync(spec.payloadRoot, path.join(crateDir, spec.payloadDirName), { recursive: true });
+  const noticeProfile = noticeProfileForSpec(spec);
+  stageReleaseNotices(crateDir, { profile: noticeProfile });
   rewriteCargoManifest(path.join(crateDir, "Cargo.toml"), {
     packageName: spec.name,
     version,
     extensionSources,
     extensionAotSources,
+    noticeProfile,
   });
+  assertReleaseNoticesInDirectory(crateDir, { profile: noticeProfile });
   return crateDir;
 }
 
@@ -689,11 +733,15 @@ function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
   run(command, {
     env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },
   });
-  const cratePath = path.join(targetDir, "package", `${packageData.name}-${packageData.version}.crate`);
-  if (!isFile(cratePath)) {
-    fail(`cargo package did not create ${rel(cratePath)}`);
+  const cargoCratePath = path.join(targetDir, "package", `${packageData.name}-${packageData.version}.crate`);
+  if (!isFile(cargoCratePath)) {
+    fail(`cargo package did not create ${rel(cargoCratePath)}`);
   }
-  return cratePath;
+  return manualCargoPackageSource(
+    manifest,
+    path.join(targetDir, "strict-package", packageData.name),
+    { root: ROOT, fail, rel },
+  );
 }
 
 function packagedManifestText(text) {
@@ -739,6 +787,11 @@ function packageSpec(spec, { version, sourceRoot, outputDir, cargoTargetDir, ext
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
   copyFileSync(cratePath, output);
+  const noticeProfile = noticeProfileForSpec(spec);
+  assertReleaseNoticesInArchive(output, {
+    prefix: `${spec.name}-${version}`,
+    profile: noticeProfile,
+  });
   return {
     name: spec.name,
     manifestPath: path.join(crateDir, "Cargo.toml"),
@@ -761,7 +814,41 @@ function rustCrateIdent(packageName) {
   return packageName.replaceAll("-", "_");
 }
 
-function writeExtensionPayloadPartSources({ parentName, product, version, target, subject, files, sourceRoot, partBytes }) {
+function extensionCarrierLegal(spec, carriesBytes) {
+  if (!carriesBytes) {
+    return { profile: "code-facade", packageSpdx: "MIT", upstreamMembers: [] };
+  }
+  const sqlNames = spec.members.map((member) => member.sqlName);
+  const registry = extensionRegistryLicense(spec.product, sqlNames);
+  const contrib = spec.product === "oliphaunt-extension-contrib-pg18";
+  const profile = contrib
+    ? sqlNames.includes("pgcrypto") ? "contrib-wasix-openssl" : "contrib-wasix"
+    : "external-wasix";
+  return {
+    profile,
+    packageSpdx: contrib ? releaseProfilePackageLicense(profile).spdx : registry.packageSpdx,
+    upstreamMembers: contrib ? [] : sqlNames,
+  };
+}
+
+function stageExtensionCarrierLegal(crateDir, spec, carriesBytes) {
+  const legal = extensionCarrierLegal(spec, carriesBytes);
+  stageReleaseNotices(crateDir, { profile: legal.profile });
+  if (legal.upstreamMembers.length > 0) {
+    for (const sqlName of legal.upstreamMembers) stageExtensionUpstreamLicenses(sqlName, crateDir);
+    assertExtensionUpstreamLicensesInDirectory(legal.upstreamMembers, crateDir);
+  }
+  assertReleaseNoticesInDirectory(crateDir, { profile: legal.profile });
+  return legal;
+}
+
+function extensionCargoIncludes(crateDir, profile, values) {
+  const legal = releaseNoticeRows({ profile }).map((row) => row.member);
+  if (isDirectory(path.join(crateDir, "share/licenses"))) legal.push("share/licenses/**");
+  return [...new Set([...values, ...legal])];
+}
+
+function writeExtensionPayloadPartSources({ parentName, product, version, target, subject, members, files, sourceRoot, partBytes }) {
   if (!Number.isSafeInteger(partBytes) || partBytes < 1 || partBytes > DEFAULT_EXTENSION_PART_BYTES) {
     fail(`extension Cargo --part-bytes must be an integer in 1..${DEFAULT_EXTENSION_PART_BYTES}, got ${JSON.stringify(partBytes)}`);
   }
@@ -810,6 +897,11 @@ function writeExtensionPayloadPartSources({ parentName, product, version, target
   }
   if (parts.length > 999) fail(`${product}@${version} requires more than 999 Cargo payload parts for ${target}`);
   for (const part of parts) {
+    const spec = { product, members };
+    const legal = stageExtensionCarrierLegal(part.sourceDir, spec, true);
+    part.noticeProfile = legal.profile;
+    part.upstreamMembers = legal.upstreamMembers;
+    const includes = extensionCargoIncludes(part.sourceDir, legal.profile, ["Cargo.toml", "README.md", "src/**", "payload/**"]);
     writeFileSync(path.join(part.sourceDir, "README.md"), [
       `# ${part.name}`,
       "",
@@ -826,8 +918,8 @@ function writeExtensionPayloadPartSources({ parentName, product, version, target
       `description = ${JSON.stringify(`Cargo payload part for the ${subject} on ${target}`)}`,
       'repository = "https://github.com/f0rr0/oliphaunt"',
       'homepage = "https://oliphaunt.dev"',
-      'license = "MIT AND Apache-2.0 AND PostgreSQL"',
-      'include = ["Cargo.toml", "README.md", "src/**", "payload/**"]',
+      `license = ${JSON.stringify(legal.packageSpdx)}`,
+      `include = [${includes.map((value) => JSON.stringify(value)).join(", ")}]`,
       "",
       "[lib]",
       'path = "src/lib.rs"',
@@ -1281,6 +1373,7 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
         version: spec.version,
         target: "portable",
         subject: `${subject} Oliphaunt WASIX extension carrier`,
+        members: spec.members,
         files,
         sourceRoot,
         partBytes,
@@ -1293,6 +1386,12 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
       copyFileSync(file.source, destination);
     }
   }
+  const legal = stageExtensionCarrierLegal(crateDir, spec, !split);
+  const includes = extensionCargoIncludes(
+    crateDir,
+    legal.profile,
+    ["Cargo.toml", "README.md", "build.rs", "src/**", ...(split ? [] : ["payload/**"])],
+  );
   const links = `oliphaunt_artifact_extension_${spec.product.replace(/^oliphaunt-extension-/u, "").replaceAll("-", "_")}_wasix`;
   writeFileSync(path.join(crateDir, "README.md"), [
     `# ${spec.name}`,
@@ -1309,10 +1408,10 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
     `description = "Oliphaunt WASIX artifact package for the ${subject}"`,
     'repository = "https://github.com/f0rr0/oliphaunt"',
     'homepage = "https://oliphaunt.dev"',
-    'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+    `license = ${JSON.stringify(legal.packageSpdx)}`,
     `links = "${links}"`,
     'build = "build.rs"',
-    `include = ["Cargo.toml", "README.md", "build.rs", "src/**"${split ? "" : ', "payload/**"'}]`,
+    `include = [${includes.map((value) => JSON.stringify(value)).join(", ")}]`,
     "",
     "[lib]",
     'path = "src/lib.rs"',
@@ -1346,7 +1445,13 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
     "",
   ].join("\n"));
   writeFileSync(path.join(crateDir, "build.rs"), extensionArtifactBuildRs({ ...spec, target: "portable" }, files, partSources));
-  return { spec, sourceDir: crateDir, partSources };
+  return {
+    spec,
+    sourceDir: crateDir,
+    partSources,
+    noticeProfile: legal.profile,
+    upstreamMembers: legal.upstreamMembers,
+  };
 }
 
 function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
@@ -1394,6 +1499,7 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
         version: spec.version,
         target: spec.target,
         subject: `${spec.members.length}-member Oliphaunt WASIX extension AOT carrier`,
+        members: spec.members,
         files: artifacts,
         sourceRoot,
         partBytes,
@@ -1406,6 +1512,12 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
       copyFileSync(artifact.source, destination);
     }
   }
+  const legal = stageExtensionCarrierLegal(crateDir, spec, !split);
+  const includes = extensionCargoIncludes(
+    crateDir,
+    legal.profile,
+    ["Cargo.toml", "README.md", "build.rs", "src/**", "manifests/**", ...(split ? [] : ["payload/**"])],
+  );
   const subject = spec.members.length === 1 ? spec.members[0].sqlName : `${spec.members.length}-member bundle`;
   const links = `oliphaunt_artifact_extension_${spec.product.replace(/^oliphaunt-extension-/u, "").replaceAll("-", "_")}_aot_${spec.target.replaceAll("-", "_")}`;
   writeFileSync(path.join(crateDir, "README.md"), [
@@ -1423,10 +1535,10 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
     `description = "Oliphaunt WASIX AOT artifact package for the ${subject} on ${spec.target}"`,
     'repository = "https://github.com/f0rr0/oliphaunt"',
     'homepage = "https://oliphaunt.dev"',
-    'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+    `license = ${JSON.stringify(legal.packageSpdx)}`,
     `links = ${JSON.stringify(links)}`,
     'build = "build.rs"',
-    `include = ["Cargo.toml", "README.md", "build.rs", "src/**", "manifests/**"${split ? "" : ', "payload/**"'}]`,
+    `include = [${includes.map((value) => JSON.stringify(value)).join(", ")}]`,
     "",
     "[lib]",
     'path = "src/lib.rs"',
@@ -1461,7 +1573,24 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
     "",
   ].join("\n"));
   writeFileSync(path.join(crateDir, "build.rs"), extensionArtifactBuildRs(spec, artifacts, partSources));
-  return { spec, sourceDir: crateDir, partSources };
+  return {
+    spec,
+    sourceDir: crateDir,
+    partSources,
+    noticeProfile: legal.profile,
+    upstreamMembers: legal.upstreamMembers,
+  };
+}
+
+function assertPackedExtensionLegal(output, carrier) {
+  const prefix = `${carrier.name ?? carrier.spec.name}-${carrier.version ?? carrier.spec.version}`;
+  assertReleaseNoticesInArchive(output, {
+    prefix,
+    profile: carrier.noticeProfile,
+  });
+  if (carrier.upstreamMembers.length > 0) {
+    assertExtensionUpstreamLicensesInArchive(carrier.upstreamMembers, output, { prefix });
+  }
 }
 
 function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
@@ -1471,6 +1600,7 @@ function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
     validateCrateSize(cratePath);
     const output = path.join(outputDir, path.basename(cratePath));
     copyFileSync(cratePath, output);
+    assertPackedExtensionLegal(output, part);
     packages.push({
       name: part.name,
       manifestPath: path.join(part.sourceDir, "Cargo.toml"),
@@ -1489,6 +1619,7 @@ function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
   copyFileSync(cratePath, output);
+  assertPackedExtensionLegal(output, source);
   packages.push({
     name: source.spec.name,
     manifestPath: path.join(source.sourceDir, "Cargo.toml"),
@@ -1510,6 +1641,7 @@ function packageExtensionAotSource(source, { outputDir, cargoTargetDir }) {
     validateCrateSize(cratePath);
     const output = path.join(outputDir, path.basename(cratePath));
     copyFileSync(cratePath, output);
+    assertPackedExtensionLegal(output, part);
     packages.push({
       name: part.name,
       manifestPath: path.join(part.sourceDir, "Cargo.toml"),
@@ -1528,6 +1660,7 @@ function packageExtensionAotSource(source, { outputDir, cargoTargetDir }) {
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
   copyFileSync(cratePath, output);
+  assertPackedExtensionLegal(output, source);
   packages.push({
     name: source.spec.name,
     manifestPath: path.join(source.sourceDir, "Cargo.toml"),
@@ -1647,6 +1780,7 @@ function parseArgs(argv) {
     assetDir: "target/oliphaunt-wasix/release-assets",
     extensionsOnly: false,
     outputDir: "target/oliphaunt-wasix/cargo-artifacts",
+    workDir: "target/oliphaunt-wasix",
     version: null,
     extensionArtifactRoots: [],
     extensionPartBytes: DEFAULT_EXTENSION_PART_BYTES,
@@ -1654,7 +1788,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--help" || value === "-h") {
-      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--extensions-only] [--extension-part-bytes BYTES] [--output-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
+      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--extensions-only] [--extension-part-bytes BYTES] [--output-dir DIR] [--work-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
       process.exit(0);
     } else if (value === "--asset-dir") {
       args.assetDir = requiredValue(argv, ++index, value);
@@ -1666,6 +1800,10 @@ function parseArgs(argv) {
       args.outputDir = requiredValue(argv, ++index, value);
     } else if (value.startsWith("--output-dir=")) {
       args.outputDir = value.slice("--output-dir=".length);
+    } else if (value === "--work-dir") {
+      args.workDir = requiredValue(argv, ++index, value);
+    } else if (value.startsWith("--work-dir=")) {
+      args.workDir = value.slice("--work-dir=".length);
     } else if (value === "--version") {
       args.version = requiredValue(argv, ++index, value);
     } else if (value.startsWith("--version=")) {
@@ -1708,14 +1846,15 @@ function main(argv) {
   const args = parseArgs(argv);
   const assetDir = repoPath(args.assetDir);
   const outputDir = repoPath(args.outputDir);
+  const workDir = repoPath(args.workDir);
   const extensionRoots = args.extensionArtifactRoots.map(repoPath);
   if (!args.extensionsOnly && !isDirectory(assetDir)) {
     fail(`WASIX release asset directory does not exist: ${rel(assetDir)}`);
   }
 
-  const sourceRoot = path.join(ROOT, "target/oliphaunt-wasix/cargo-package-sources");
-  const extractRoot = path.join(ROOT, "target/oliphaunt-wasix/cargo-package-extracted");
-  const cargoTargetDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-package-target");
+  const sourceRoot = path.join(workDir, "cargo-package-sources");
+  const extractRoot = path.join(workDir, "cargo-package-extracted");
+  const cargoTargetDir = path.join(workDir, "cargo-package-target");
   rmSync(sourceRoot, { recursive: true, force: true });
   rmSync(extractRoot, { recursive: true, force: true });
   rmSync(outputDir, { recursive: true, force: true });

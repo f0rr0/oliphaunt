@@ -10,12 +10,21 @@ import {
   assertReleaseEntryWorkflow,
   assertReleaseOperationWorkflow,
   assertReleaseWorkflow,
+  assertReachableCachePolicy,
+  assertSetupAndroidCachePolicy,
+  parseReachableLocalActions,
   parseWorkflow,
 } from "./workflow-semantics.mjs";
 
 const CANONICAL = parseWorkflow(process.cwd(), ".github/workflows/release.yml");
 const CI = parseWorkflow(process.cwd(), ".github/workflows/ci.yml");
 const MOBILE = parseWorkflow(process.cwd(), ".github/workflows/mobile-e2e.yml");
+const LOCAL_ACTIONS = parseReachableLocalActions(process.cwd(), {
+  ci: CI,
+  mobile: MOBILE,
+  release: CANONICAL,
+});
+const SETUP_ANDROID = LOCAL_ACTIONS["./.github/actions/setup-android"];
 
 function candidate() {
   return structuredClone(CANONICAL);
@@ -33,6 +42,22 @@ function mobileCandidate() {
   return structuredClone(MOBILE);
 }
 
+function setupAndroidCandidate() {
+  return structuredClone(SETUP_ANDROID);
+}
+
+function localActionsCandidate() {
+  return structuredClone(LOCAL_ACTIONS);
+}
+
+function workflowSetCandidate() {
+  return {
+    ci: ciCandidate(),
+    mobile: mobileCandidate(),
+    release: candidate(),
+  };
+}
+
 function step(workflow, jobId, stepId) {
   const matches = workflow.jobs[jobId].steps.filter((entry) => entry.id === stepId);
   assert.equal(matches.length, 1, `${jobId}.${stepId} fixture identity`);
@@ -42,6 +67,12 @@ function step(workflow, jobId, stepId) {
 function namedStep(workflow, jobId, name) {
   const matches = workflow.jobs[jobId].steps.filter((entry) => entry.name === name);
   assert.equal(matches.length, 1, `${jobId} ${name} fixture identity`);
+  return matches[0];
+}
+
+function namedActionStep(action, name) {
+  const matches = action.runs.steps.filter((entry) => entry.name === name);
+  assert.equal(matches.length, 1, `composite action ${name} fixture identity`);
   return matches[0];
 }
 
@@ -344,6 +375,425 @@ test("the exact TypeScript consumer preserves an upload-safe emergency timeout e
   );
 });
 
+test("heavy cache writers stay within the primary-builder budget", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const defaultOn = ciCandidate();
+  defaultOn.on.workflow_dispatch.inputs.save_heavy_caches.default = true;
+  assert.throws(
+    () => assertCiWorkflow(defaultOn, { builderJobs: BUILDER_JOBS }),
+    /false-by-default boolean opt-in/u,
+  );
+
+  const branchWritable = ciCandidate();
+  branchWritable.env.HEAVY_CACHE_SAVE_IF =
+    "${{ github.event_name == 'workflow_dispatch' && inputs.save_heavy_caches }}";
+  assert.throws(
+    () => assertCiWorkflow(branchWritable, { builderJobs: BUILDER_JOBS }),
+    /manual main runs/u,
+  );
+
+  const downstreamRustWriter = ciCandidate();
+  namedStep(downstreamRustWriter, "wasix-release-regression", "Set up Rust").with = {
+    "cache-save-if": "${{ env.HEAVY_CACHE_SAVE_IF }}",
+  };
+  assert.throws(
+    () => assertCiWorkflow(downstreamRustWriter, { builderJobs: BUILDER_JOBS }),
+    /Rust heavy-cache writer inventory/u,
+  );
+
+  const crossPlatformLlvmWriters = ciCandidate();
+  namedStep(
+    crossPlatformLlvmWriters,
+    "liboliphaunt-wasix-aot",
+    "Install Wasmer LLVM 22.1 for AOT generation",
+  ).with["cache-save-if"] = "${{ env.HEAVY_CACHE_SAVE_IF }}";
+  assert.throws(
+    () => assertCiWorkflow(crossPlatformLlvmWriters, { builderJobs: BUILDER_JOBS }),
+    /Wasmer LLVM heavy-cache writer inventory/u,
+  );
+
+  const secondGradleWriter = ciCandidate();
+  namedStep(secondGradleWriter, "policy-targets", "Set up Android").with = {
+    "gradle-cache-save-if": "${{ env.HEAVY_CACHE_SAVE_IF }}",
+  };
+  assert.throws(
+    () => assertCiWorkflow(secondGradleWriter, { builderJobs: BUILDER_JOBS }),
+    /Gradle heavy-cache writer inventory/u,
+  );
+
+  const deadConsumerScope = ciCandidate();
+  namedStep(deadConsumerScope, "test-targets", "Set up Android").with = {
+    "gradle-cache-scope-file": "dead-scope.txt",
+  };
+  assert.throws(
+    () => assertCiWorkflow(deadConsumerScope, { builderJobs: BUILDER_JOBS }),
+    /must not select unwritable per-consumer cache scopes/u,
+  );
+
+  const matrixGradleWriter = ciCandidate();
+  matrixGradleWriter.jobs["kotlin-sdk-package"].strategy = {
+    matrix: { shard: ["one", "two"] },
+  };
+  assert.throws(
+    () => assertCiWorkflow(matrixGradleWriter, { builderJobs: BUILDER_JOBS }),
+    /one fixed Linux x64 package job/u,
+  );
+
+  const implicitDownstreamWriter = ciCandidate();
+  implicitDownstreamWriter.jobs["kotlin-sdk-package"].steps.push({
+    name: "Implicit downstream cache writer",
+    uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    with: { key: "forbidden", path: "target" },
+  });
+  assert.throws(
+    () => assertCiWorkflow(implicitDownstreamWriter, { builderJobs: BUILDER_JOBS }),
+    /implicit writers/u,
+  );
+
+  const releaseWriter = candidate();
+  namedStep(releaseWriter, "publish-finalize", "Set up Rust").with = {
+    "cache-save-if": "true",
+  };
+  assert.throws(
+    () => assertReleaseOperationWorkflow(releaseWriter),
+    /restore but never write Rust caches/u,
+  );
+});
+
+test("setup-android exposes one false-by-default Gradle writer and no native cache writer", () => {
+  assert.doesNotThrow(() => assertSetupAndroidCachePolicy(setupAndroidCandidate()));
+
+  const writableByDefault = setupAndroidCandidate();
+  writableByDefault.inputs["gradle-cache-save-if"].default = "true";
+  assert.throws(
+    () => assertSetupAndroidCachePolicy(writableByDefault),
+    /false by default/u,
+  );
+
+  const deadScopeInput = setupAndroidCandidate();
+  deadScopeInput.inputs["gradle-cache-scope-file"] = {
+    required: false,
+    default: "",
+  };
+  assert.throws(
+    () => assertSetupAndroidCachePolicy(deadScopeInput),
+    /must not expose an unwritable per-consumer Gradle cache scope/u,
+  );
+
+  const unguardedWriter = setupAndroidCandidate();
+  namedActionStep(unguardedWriter, "Set up Java with Gradle cache").if =
+    "${{ inputs.gradle-cache == 'true' }}";
+  assert.throws(
+    () => assertSetupAndroidCachePolicy(unguardedWriter),
+    /explicitly authorized setup-java Gradle cache writer/u,
+  );
+
+  const implicitGradleWriter = setupAndroidCandidate();
+  const gradleRestore = implicitGradleWriter.runs.steps.find(
+    ({ name }) => name === "Restore Gradle dependency cache",
+  );
+  gradleRestore.uses = gradleRestore.uses.replace("actions/cache/restore@", "actions/cache@");
+  assert.throws(
+    () => assertSetupAndroidCachePolicy(implicitGradleWriter),
+    /must not hide implicit or direct cache writers/u,
+  );
+
+  const nativeWriter = setupAndroidCandidate();
+  nativeWriter.runs.steps.push({
+    name: "Restore native Android ccache",
+    uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    with: { key: "forbidden", path: "~/.cache/oliphaunt-ccache/android" },
+  });
+  assert.throws(
+    () => assertSetupAndroidCachePolicy(nativeWriter),
+    /must not hide implicit or direct cache writers/u,
+  );
+});
+
+test("reachable composite caches expose only bounded main writers and writable exact keys", () => {
+  assert.doesNotThrow(() =>
+    assertReachableCachePolicy(workflowSetCandidate(), localActionsCandidate()));
+
+  const hiddenMonolithicWriter = localActionsCandidate();
+  namedActionStep(
+    hiddenMonolithicWriter["./.github/actions/setup-node-runtime"],
+    "Restore verified Node.js archive",
+  ).uses = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), hiddenMonolithicWriter),
+    /must not hide monolithic cache writers/u,
+  );
+
+  const unguardedArchiveWriter = localActionsCandidate();
+  namedActionStep(
+    unguardedArchiveWriter["./.github/actions/setup-moon"],
+    "Save verified tool archives",
+  ).if = "${{ steps.restore_verified_moon_toolchain.outputs.cache-hit != 'true' }}";
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), unguardedArchiveWriter),
+    /verified archive save must be main-gated/u,
+  );
+
+  const blockingArchiveWriter = localActionsCandidate();
+  namedActionStep(
+    blockingArchiveWriter["./.github/actions/setup-node-pnpm"],
+    "Save verified pnpm archive",
+  )["continue-on-error"] = false;
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), blockingArchiveWriter),
+    /verified archive save must be main-gated/u,
+  );
+
+  const mismatchedArchiveWriter = localActionsCandidate();
+  namedActionStep(
+    mismatchedArchiveWriter["./.github/actions/setup-npm-publisher"],
+    "Save verified npm publisher archive",
+  ).with.key += "-mismatch";
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), mismatchedArchiveWriter),
+    /non-blocking, and match its restore/u,
+  );
+
+  const releaseWriter = workflowSetCandidate();
+  releaseWriter.release.env.HEAVY_CACHE_SAVE_IF = "true";
+  assert.throws(
+    () => assertReachableCachePolicy(releaseWriter, localActionsCandidate()),
+    /Release must remain restore-only/u,
+  );
+
+  const deadPnpmStore = localActionsCandidate();
+  deadPnpmStore["./.github/actions/setup-node-pnpm"].runs.steps.push({
+    name: "Restore pnpm store",
+    uses: "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    with: { key: "pnpm-store-dead", path: "~/.pnpm-store" },
+  });
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), deadPnpmStore),
+    /explicit cache restore inventory changed/u,
+  );
+
+  const hiddenSetupJavaWriter = localActionsCandidate();
+  hiddenSetupJavaWriter["./.github/actions/setup-moon"].runs.steps.push({
+    name: "Hidden setup-java writer",
+    uses: "actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a",
+    with: { cache: "gradle", distribution: "temurin", "java-version": "17" },
+  });
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), hiddenSetupJavaWriter),
+    /setup-java writer inventory changed/u,
+  );
+
+  const hiddenRustWriter = localActionsCandidate();
+  hiddenRustWriter["./.github/actions/setup-moon"].runs.steps.push({
+    name: "Hidden Rust writer",
+    uses: "Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32",
+    with: { "save-if": "true" },
+  });
+  assert.throws(
+    () => assertReachableCachePolicy(workflowSetCandidate(), hiddenRustWriter),
+    /Rust cache writer inventory changed/u,
+  );
+
+  const hiddenBuildkitWriter = workflowSetCandidate();
+  hiddenBuildkitWriter.ci.jobs.affected.steps.push({
+    name: "Hidden BuildKit writer",
+    uses: "docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f",
+    with: { "cache-to": "type=gha,mode=max" },
+  });
+  assert.throws(
+    () => assertReachableCachePolicy(hiddenBuildkitWriter, localActionsCandidate()),
+    /BuildKit cache writer inventory changed/u,
+  );
+});
+
+test("native exact-extension builds are bounded and hash compiler inputs only", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const unbounded = ciCandidate();
+  delete namedStep(
+    unbounded,
+    "extension-artifacts-native",
+    "Build native exact-extension artifacts",
+  )["timeout-minutes"];
+  assert.throws(
+    () => assertCiWorkflow(unbounded, { builderJobs: BUILDER_JOBS }),
+    /120-minute step bound below a 135-minute job bound/u,
+  );
+
+  const broadExtensionHash = ciCandidate();
+  namedStep(
+    broadExtensionHash,
+    "extension-artifacts-native",
+    "Restore native compiler cache",
+  ).with.key += ", 'src/extensions/**'";
+  assert.throws(
+    () => assertCiWorkflow(broadExtensionHash, { builderJobs: BUILDER_JOBS }),
+    /exclude policy\/release input 'src\/extensions\/[*][*]'/u,
+  );
+
+  const missingSourcePin = ciCandidate();
+  const restore = namedStep(
+    missingSourcePin,
+    "extension-artifacts-native",
+    "Restore native compiler cache",
+  );
+  restore.with.key = restore.with.key.replace("'src/extensions/external/*/source.toml', ", "");
+  assert.throws(
+    () => assertCiWorkflow(missingSourcePin, { builderJobs: BUILDER_JOBS }),
+    /must hash src\/extensions\/external\/[*]\/source[.]toml/u,
+  );
+
+  const missingQualificationSpec = ciCandidate();
+  const qualificationRestore = namedStep(
+    missingQualificationSpec,
+    "extension-artifacts-native",
+    "Restore native compiler cache",
+  );
+  qualificationRestore.with.key = qualificationRestore.with.key.replace(
+    "'src/extensions/generated/mobile/qualification-static-extensions.tsv', ",
+    "",
+  );
+  assert.throws(
+    () => assertCiWorkflow(missingQualificationSpec, { builderJobs: BUILDER_JOBS }),
+    /must hash src\/extensions\/generated\/mobile\/qualification-static-extensions[.]tsv/u,
+  );
+
+  const uncheckedQualificationSelection = ciCandidate();
+  delete namedStep(
+    uncheckedQualificationSelection,
+    "extension-artifacts-native",
+    "Build native exact-extension artifacts",
+  ).env.OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES;
+  assert.throws(
+    () => assertCiWorkflow(uncheckedQualificationSelection, { builderJobs: BUILDER_JOBS }),
+    /matrix-provided deferred qualification selection/u,
+  );
+
+  const implicitCompilerWriter = ciCandidate();
+  namedStep(
+    implicitCompilerWriter,
+    "extension-artifacts-native",
+    "Restore native compiler cache",
+  ).uses = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+  assert.throws(
+    () => assertCiWorkflow(implicitCompilerWriter, { builderJobs: BUILDER_JOBS }),
+    /implicit writers/u,
+  );
+
+  const unguardedSave = ciCandidate();
+  step(unguardedSave, "extension-artifacts-native", "save_ios_extension_ccache").if =
+    "${{ matrix.target == 'ios-xcframework' }}";
+  assert.throws(
+    () => assertCiWorkflow(unguardedSave, { builderJobs: BUILDER_JOBS }),
+    /direct heavy-cache save must use the bounded heavy-cache policy/u,
+  );
+
+  const blockingSave = ciCandidate();
+  step(
+    blockingSave,
+    "extension-artifacts-native",
+    "save_ios_extension_ccache",
+  )["continue-on-error"] = false;
+  assert.throws(
+    () => assertCiWorkflow(blockingSave, { builderJobs: BUILDER_JOBS }),
+    /direct heavy-cache save must not fail qualification/u,
+  );
+
+  const cancellationBlind = ciCandidate();
+  step(
+    cancellationBlind,
+    "extension-artifacts-native",
+    "upload_native_extension_logs",
+  ).if = "${{ failure() }}";
+  assert.throws(
+    () => assertCiWorkflow(cancellationBlind, { builderJobs: BUILDER_JOBS }),
+    /after failure or cancellation/u,
+  );
+
+  const unboundedDiagnostics = ciCandidate();
+  step(
+    unboundedDiagnostics,
+    "extension-artifacts-native",
+    "upload_native_extension_logs",
+  )["timeout-minutes"] = 10;
+  assert.throws(
+    () => assertCiWorkflow(unboundedDiagnostics, { builderJobs: BUILDER_JOBS }),
+    /five-minute warn-only envelope/u,
+  );
+
+  const strictDiagnostics = ciCandidate();
+  step(
+    strictDiagnostics,
+    "extension-artifacts-native",
+    "upload_native_extension_logs",
+  ).with["if-no-files-found"] = "error";
+  assert.throws(
+    () => assertCiWorkflow(strictDiagnostics, { builderJobs: BUILDER_JOBS }),
+    /five-minute warn-only envelope/u,
+  );
+
+  const missingCancellationLog = ciCandidate();
+  const upload = step(
+    missingCancellationLog,
+    "extension-artifacts-native",
+    "upload_native_extension_logs",
+  );
+  upload.with.path = upload.with.path.replace(
+    "target/liboliphaunt-mobile-extension-ci/**/*.log\n",
+    "",
+  );
+  assert.throws(
+    () => assertCiWorkflow(missingCancellationLog, { builderJobs: BUILDER_JOBS }),
+    /must retain target\/liboliphaunt-mobile-extension-ci/u,
+  );
+});
+
+test("WASIX deferred candidates are qualified before public extension packaging", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const bypassed = ciCandidate();
+  namedStep(
+    bypassed,
+    "extension-artifacts-wasix",
+    "Verify publication-deferred WASIX candidate build outputs",
+  ).run = "true";
+  assert.throws(
+    () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+    /must invoke tools\/dev\/bun[.]sh tools\/release\/verify-extension-qualification-build[.]mjs/u,
+  );
+
+  const reordered = ciCandidate();
+  const wasixSteps = reordered.jobs["extension-artifacts-wasix"].steps;
+  const verifierIndex = wasixSteps.findIndex(
+    ({ name }) => name === "Verify publication-deferred WASIX candidate build outputs",
+  );
+  const [verifier] = wasixSteps.splice(verifierIndex, 1);
+  const packagerIndex = wasixSteps.findIndex(
+    ({ name }) => name === "Build WASIX exact-extension artifacts",
+  );
+  wasixSteps.splice(packagerIndex + 1, 0, verifier);
+  assert.throws(
+    () => assertCiWorkflow(reordered, { builderJobs: BUILDER_JOBS }),
+    /after the runtime download and before public packaging/u,
+  );
+});
+
+test("native runtime jobs do not restore stale cross-run build state", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const staleBuildTree = ciCandidate();
+  staleBuildTree.jobs["liboliphaunt-native-ios"].steps.push({
+    name: "Restore stale native iOS build tree",
+    uses: "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    with: { key: "forbidden", path: "target/liboliphaunt-native-ios" },
+  });
+  assert.throws(
+    () => assertCiWorkflow(staleBuildTree, { builderJobs: BUILDER_JOBS }),
+    /must not restore cross-run native runtime build trees or compiler caches/u,
+  );
+});
+
 test("affected target-matrix inventory runs under pinned Node", () => {
   assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
 
@@ -398,7 +848,7 @@ test("generated release readiness blocks CI fanout until normalization", () => {
     [releaseIntentSteps[readinessIndex], releaseIntentSteps[verifierIndex]];
   assert.throws(
     () => assertCiWorkflow(reordered, { builderJobs: BUILDER_JOBS }),
-    /release_intent must precede generated_release_readiness/u,
+    /release_intent must precede setup_history_repair_node/u,
   );
 
   const detached = ciCandidate();
@@ -406,6 +856,62 @@ test("generated release readiness blocks CI fanout until normalization", () => {
   assert.throws(
     () => assertCiWorkflow(detached, { builderJobs: BUILDER_JOBS }),
     /affected[.]needs must be/u,
+  );
+});
+
+test("history repair is bound to one exact qualified transport tree before CI fanout", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const missingGate = ciCandidate();
+  missingGate.jobs["release-intent"].steps = missingGate.jobs["release-intent"].steps
+    .filter((entry) => entry.id !== "history_repair_qualification");
+  assert.throws(
+    () => assertCiWorkflow(missingGate, { builderJobs: BUILDER_JOBS }),
+    /history_repair_qualification|history-repair transport qualification/u,
+  );
+
+  const broadenedEvent = ciCandidate();
+  step(broadenedEvent, "release-intent", "history_repair_qualification").run =
+    step(broadenedEvent, "release-intent", "history_repair_qualification").run
+      .replace("--event workflow_dispatch", "--event push");
+  assert.throws(
+    () => assertCiWorkflow(broadenedEvent, { builderJobs: BUILDER_JOBS }),
+    /must actively bind --event workflow_dispatch/u,
+  );
+
+  const driftingDownload = ciCandidate();
+  step(driftingDownload, "release-intent", "history_repair_candidate_download").run =
+    step(driftingDownload, "release-intent", "history_repair_candidate_download").run
+      .replace(/\s+--artifact-metadata-json "\$HISTORY_REPAIR_ARTIFACT_METADATA"/u, "");
+  assert.throws(
+    () => assertCiWorkflow(driftingDownload, { builderJobs: BUILDER_JOBS }),
+    /must actively bind --artifact-metadata-json/u,
+  );
+
+  const missingTreeProof = ciCandidate();
+  missingTreeProof.jobs["release-intent"].steps = missingTreeProof.jobs["release-intent"].steps
+    .filter((entry) => entry.id !== "history_repair_candidate_binding");
+  assert.throws(
+    () => assertCiWorkflow(missingTreeProof, { builderJobs: BUILDER_JOBS }),
+    /history_repair_candidate_binding|candidate tree verifier/u,
+  );
+
+  const reordered = ciCandidate();
+  const steps = reordered.jobs["release-intent"].steps;
+  const downloadIndex = steps.findIndex((entry) => entry.id === "history_repair_candidate_download");
+  const verifyIndex = steps.findIndex((entry) => entry.id === "history_repair_candidate_binding");
+  [steps[downloadIndex], steps[verifyIndex]] = [steps[verifyIndex], steps[downloadIndex]];
+  assert.throws(
+    () => assertCiWorkflow(reordered, { builderJobs: BUILDER_JOBS }),
+    /history_repair_candidate_download must precede history_repair_candidate_binding/u,
+  );
+
+  const branchQualificationDisabled = ciCandidate();
+  branchQualificationDisabled.jobs.qualified.if =
+    "${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}";
+  assert.throws(
+    () => assertCiWorkflow(branchQualificationDisabled, { builderJobs: BUILDER_JOBS }),
+    /qualified condition/u,
   );
 });
 
@@ -485,6 +991,26 @@ test("automatic continuations use GitHub serialization and an exact child author
     () => assertReleaseEntryWorkflow(wrongRegistryParent),
     /dispatch-publish-continuation[.]needs must be/u,
   );
+
+  for (const [jobId, expectedOperation] of [
+    ["dispatch-bootstrap-continuation", "publish-bootstrap"],
+    ["dispatch-publish-continuation", "publish"],
+  ]) {
+    for (const [name, value] of [
+      ["EXTRA", "unexpected"],
+      ["GH_REPO", "attacker/repository"],
+      ["GH_TOKEN", "untrusted-token"],
+      ["RELEASE_HEAD_SHA", "0000000000000000000000000000000000000000"],
+      ["RELEASE_OPERATION", `${expectedOperation}-wrong`],
+    ]) {
+      const widened = entryCandidate();
+      step(widened, jobId, "dispatch_continuation").env[name] = value;
+      assert.throws(
+        () => assertReleaseEntryWorkflow(widened),
+        new RegExp(`${jobId} must reserve a bounded exact dispatched-child authorization receipt`, "u"),
+      );
+    }
+  }
 
   const missingAuthorization = entryCandidate();
   missingAuthorization.jobs["dispatch-publish-continuation"].steps =
@@ -1093,21 +1619,35 @@ test("dry-run evidence cannot be relabeled as publish evidence or omit the capsu
   );
 });
 
-test("exact-main revalidation and recovery failure blocking cannot be skipped", () => {
-  const skippedMain = candidate();
-  step(skippedMain, "publish-registry", "revalidate_registry_mutation").run = "echo assumed-current";
+test("root-admitted immutable transport and recovery blocking cannot be skipped", () => {
+  const skippedTransport = candidate();
+  step(skippedTransport, "publish", "ensure_release_transport_ref").run = "echo assumed-transport";
   assert.throws(
-    () => assertReleaseOperationWorkflow(skippedMain),
-    /must actively invoke the pre-registry current-main proof/u,
+    () => assertReleaseOperationWorkflow(skippedTransport),
+    /must actively invoke the immutable exact-SHA continuation transport/u,
   );
 
-  const skippedFinalMain = candidate();
-  step(skippedFinalMain, "publish-finalize", "reverify_publication_lock").run =
-    step(skippedFinalMain, "publish-finalize", "reverify_publication_lock").run
-      .replace('bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"', "echo assumed-current");
+  const downstreamMainDependency = candidate();
+  step(downstreamMainDependency, "publish-finalize", "reverify_publication_lock").run =
+    `bash .github/scripts/require-current-main.sh "$RELEASE_HEAD_SHA"\n${step(
+      downstreamMainDependency,
+      "publish-finalize",
+      "reverify_publication_lock",
+    ).run}`;
   assert.throws(
-    () => assertReleaseOperationWorkflow(skippedFinalMain),
-    /must actively invoke the pre-promotion current-main proof/u,
+    () => assertReleaseOperationWorkflow(downstreamMainDependency),
+    /publish-finalize must keep current-main proof inside the idempotent transport boundary or remain bound to the exact release SHA/u,
+  );
+
+  const continuationCanCreateTransport = candidate();
+  step(
+    continuationCanCreateTransport,
+    "publish-bootstrap",
+    "ensure_bootstrap_transport_ref",
+  ).if = "${{ steps.bootstrap_scope.outputs.required == 'true' }}";
+  assert.throws(
+    () => assertReleaseOperationWorkflow(continuationCanCreateTransport),
+    /condition does not guarantee.*continuation_pointer/u,
   );
 
   const swallowedFailure = candidate();

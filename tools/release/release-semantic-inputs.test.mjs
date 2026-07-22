@@ -146,6 +146,45 @@ test("release-semantic repository inventory rejects a successful partial record"
 
 test("real shared shipped-byte inputs have exact declarative product owners", () => {
   const cases = [
+    ["LICENSE", allProducts],
+    ["THIRD_PARTY_NOTICES.md", allProducts],
+    ["tools/release/release-notices.mjs", allProducts],
+    ["src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md", ["liboliphaunt-native"]],
+    ["src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md", ["liboliphaunt-wasix"]],
+    [
+      "src/postgres/versions/18/source.toml",
+      ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-extension-contrib-pg18"],
+    ],
+    [
+      "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT",
+      ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-extension-contrib-pg18"],
+    ],
+    [
+      "src/sources/third-party/shared/icu.toml",
+      ["liboliphaunt-native", "liboliphaunt-wasix"],
+    ],
+    [
+      "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+      ["liboliphaunt-native", "liboliphaunt-wasix"],
+    ],
+    ["src/sources/third-party/shared/openssl.toml", ["oliphaunt-extension-contrib-pg18"]],
+    [
+      "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt",
+      ["oliphaunt-extension-contrib-pg18"],
+    ],
+    ["tools/release/extension-upstream-licenses.mjs", extensionProducts],
+    ["tools/release/source-only-sdk-package.mjs", ["oliphaunt-js", "oliphaunt-react-native"]],
+    [
+      "tools/release/cargo-source-package.mjs",
+      [
+        "liboliphaunt-native",
+        "liboliphaunt-wasix",
+        "oliphaunt-broker",
+        "oliphaunt-rust",
+        "oliphaunt-wasix-rust",
+        ...extensionProducts,
+      ],
+    ],
     ["src/extensions/artifacts/native/tools/extension-artifact-packager.mjs", extensionProducts],
     ["src/extensions/artifacts/wasix/tools/package-release-assets.mjs", extensionProducts],
     ["tools/release/bounded-gunzip-to-file.mjs", extensionProducts],
@@ -161,7 +200,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["tools/release/release-product-dry-run.mjs", releaseProductDryRunDirectByteProducts],
     ["tools/xtask/Cargo.toml", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/aot_serializer.rs", ["liboliphaunt-wasix"]],
-    ["tools/xtask/src/asset_checks.rs", ["liboliphaunt-wasix"]],
+    ["tools/xtask/src/asset_fingerprint.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/asset_manifest.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/asset_pipeline.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/extension_catalog.rs", ["liboliphaunt-wasix"]],
@@ -169,7 +208,6 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["tools/xtask/src/main.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/postgres_guard.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/release_workspace.rs", ["liboliphaunt-wasix"]],
-    ["tools/xtask/src/source_spine.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/template_runner.rs", ["liboliphaunt-wasix"]],
     ["src/extensions/generated/extensions.catalog.json", ["liboliphaunt-wasix"]],
     [
@@ -184,11 +222,24 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts", ["liboliphaunt-native", ...extensionProducts]],
     ["tools/release/package-liboliphaunt-cargo-artifacts.mjs", ["liboliphaunt-native"]],
     ["tools/release/package_broker_cargo_artifacts.mjs", ["oliphaunt-broker"]],
+    ["tools/release/broker-dependency-license-contract.mjs", ["oliphaunt-broker"]],
+    ["src/runtimes/broker/dependency-licenses.json", ["oliphaunt-broker"]],
+    [
+      "src/runtimes/broker/dependency-license-blobs/0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594.base64",
+      ["oliphaunt-broker"],
+    ],
     [
       "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
       ["liboliphaunt-wasix", ...extensionProducts],
     ],
-    ["tools/release/build-sdk-ci-artifacts.mjs", sdkProducts],
+    ["tools/release/sdk-artifacts/shared.mjs", sdkProducts],
+    ["tools/release/sdk-artifacts/npm.mjs", ["oliphaunt-js", "oliphaunt-react-native"]],
+    ["tools/release/sdk-artifacts/rust.mjs", ["oliphaunt-rust"]],
+    ["tools/release/sdk-artifacts/swift.mjs", ["oliphaunt-swift"]],
+    ["tools/release/sdk-artifacts/kotlin.mjs", ["oliphaunt-kotlin"]],
+    ["tools/release/sdk-artifacts/js.mjs", ["oliphaunt-js"]],
+    ["tools/release/sdk-artifacts/react-native.mjs", ["oliphaunt-react-native"]],
+    ["tools/release/sdk-artifacts/wasix-rust.mjs", ["oliphaunt-wasix-rust"]],
     ["tools/release/release-artifact-targets.mjs", allProducts],
     [
       "tools/release/platform-compatibility-policy.mjs",
@@ -259,6 +310,59 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
   }
 });
 
+test("SDK artifact modules and their shared byte helpers retain exact product ownership", () => {
+  const entries = new Map([
+    ["oliphaunt-rust", "tools/release/sdk-artifacts/rust.mjs"],
+    ["oliphaunt-swift", "tools/release/sdk-artifacts/swift.mjs"],
+    ["oliphaunt-kotlin", "tools/release/sdk-artifacts/kotlin.mjs"],
+    ["oliphaunt-js", "tools/release/sdk-artifacts/js.mjs"],
+    ["oliphaunt-react-native", "tools/release/sdk-artifacts/react-native.mjs"],
+    ["oliphaunt-wasix-rust", "tools/release/sdk-artifacts/wasix-rust.mjs"],
+  ]);
+  const consumers = new Map();
+  for (const [product, entry] of entries) {
+    for (const candidate of localImportClosure(entry)) {
+      if (!candidate.startsWith("tools/release/sdk-artifacts/")) continue;
+      const products = consumers.get(candidate) ?? new Set();
+      products.add(product);
+      consumers.set(candidate, products);
+    }
+  }
+
+  assert.deepEqual(sorted(consumers.keys()), repositoryFiles("tools/release/sdk-artifacts"));
+  for (const [candidate, products] of consumers) {
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      sorted(products),
+      candidate,
+    );
+  }
+});
+
+test("product-local upstream license data preserves independent extension releases", () => {
+  const cases = [
+    ["pg_hashids", "oliphaunt-extension-pg-hashids"],
+    ["pg_ivm", "oliphaunt-extension-pg-ivm"],
+    ["pg_textsearch", "oliphaunt-extension-pg-textsearch"],
+    ["pg_uuidv7", "oliphaunt-extension-pg-uuidv7"],
+    ["pgtap", "oliphaunt-extension-pgtap"],
+    ["postgis", "oliphaunt-extension-postgis"],
+    ["vector", "oliphaunt-extension-vector"],
+  ];
+  for (const [sqlName, product] of cases) {
+    const candidate = `src/extensions/external/${sqlName}/upstream-license-data.json`;
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      [],
+      `${candidate} is product-local and must not be duplicated in the shared semantic manifest`,
+    );
+    const plan = buildPlan(graph, [candidate], "release-semantic-inputs.test");
+    assert.deepEqual(plan.semanticInputProducts, [], candidate);
+    assert.deepEqual(plan.directProducts, [product], candidate);
+    assert.deepEqual(plan.releaseProducts, [product], candidate);
+  }
+});
+
 test("the native runtime-resource Rust byte path has focused ownership", () => {
   const nativeProduct = "liboliphaunt-native";
   const semanticOwners = (candidate) =>
@@ -300,35 +404,54 @@ test("the native runtime-resource Rust byte path has focused ownership", () => {
   assert.equal(cacheKeyPlan.directProducts.includes("oliphaunt-rust"), true);
 });
 
-test("every file copied wholesale into the WASIX portable carrier has a WASIX semantic owner", () => {
+test("every public generated file copied into the WASIX portable carrier has a WASIX semantic owner", () => {
   const generatedFiles = repositoryFiles("src/extensions/generated");
   assert.ok(generatedFiles.length > 0);
   for (const candidate of generatedFiles) {
-    assert.equal(
-      releaseSemanticProductsForPath(manifest, candidate, {
-        prefix: "release-semantic-inputs.test",
-      }).includes("liboliphaunt-wasix"),
-      true,
-      candidate,
-    );
+    const ownedByWasix = releaseSemanticProductsForPath(manifest, candidate, {
+      prefix: "release-semantic-inputs.test",
+    }).includes("liboliphaunt-wasix");
+    if (candidate === "src/extensions/generated/mobile/qualification-static-extensions.tsv") {
+      assert.equal(ownedByWasix, false, "qualification-only metadata must not enter the public WASIX carrier");
+    } else {
+      assert.equal(ownedByWasix, true, candidate);
+    }
   }
 });
 
-test("the WASIX xtask producer closure excludes only download, install, and validation transport", () => {
+test("the WASIX xtask producer closure excludes validation, source fetch, and asset transport", () => {
   const unowned = repositoryFiles("tools/xtask/src").filter((candidate) =>
     !releaseSemanticProductsForPath(manifest, candidate, {
       prefix: "release-semantic-inputs.test",
     }).includes("liboliphaunt-wasix")
   );
-  assert.deepEqual(unowned, ["tools/xtask/src/asset_io.rs"]);
+  assert.deepEqual(unowned, [
+    "tools/xtask/src/asset_checks.rs",
+    "tools/xtask/src/asset_io.rs",
+    "tools/xtask/src/source_spine.rs",
+  ]);
+  for (const candidate of [
+    "tools/xtask/src/asset_fingerprint.rs",
+    "tools/xtask/src/release_workspace.rs",
+  ]) {
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      ["liboliphaunt-wasix"],
+      candidate,
+    );
+  }
 });
 
 test("validators, workflow ceremony, and test fixtures remain non-release semantic inputs", () => {
   for (const candidate of [
     ".github/workflows/release.yml",
+    "src/extensions/artifacts/native/tools/check-release-artifacts.sh",
+    "src/extensions/artifacts/native/tools/run-observed-phase.sh",
+    "src/extensions/artifacts/native/tools/run-observed-phase.test.sh",
     "src/extensions/tools/check-extension-model.py",
     "src/shared/fixtures/protocol/query-response-cases.json",
     "tools/release/extension-manifest-discovery-proof.mjs",
+    "tools/release/build-sdk-ci-artifacts.mjs",
     "tools/release/local-registry-publish.mjs",
     "tools/release/release-sdk-product-dry-run.mjs",
     "tools/policy/check-release-policy.mjs",
@@ -349,8 +472,46 @@ test("validators, workflow ceremony, and test fixtures remain non-release semant
   );
 });
 
+test("extension artifact tool inventory explicitly separates byte producers from transport and tests", () => {
+  const byteProducers = [
+    "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
+    "src/extensions/artifacts/native/tools/package-release-assets.sh",
+    "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
+    "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh",
+    "src/extensions/artifacts/packages/tools/package-release-assets.sh",
+    "src/extensions/artifacts/wasix/tools/package-release-assets.mjs",
+    "src/extensions/artifacts/wasix/tools/package-release-assets.sh",
+  ];
+  const nonByteTools = [
+    "src/extensions/artifacts/native/tools/check-release-artifacts.sh",
+    "src/extensions/artifacts/native/tools/run-observed-phase.sh",
+    "src/extensions/artifacts/native/tools/run-observed-phase.test.sh",
+  ];
+  const inventory = [
+    ...repositoryFiles("src/extensions/artifacts/native/tools"),
+    ...repositoryFiles("src/extensions/artifacts/packages/tools"),
+    ...repositoryFiles("src/extensions/artifacts/wasix/tools"),
+  ].sort();
+  assert.deepEqual(inventory, sorted([...byteProducers, ...nonByteTools]));
+  for (const candidate of byteProducers) {
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      extensionProducts,
+      candidate,
+    );
+  }
+  for (const candidate of nonByteTools) {
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      [],
+      candidate,
+    );
+  }
+});
+
 test("focused extension carrier byte imports fail closed on unowned transitive helpers", () => {
   assert.equal(extensionProducts.length, 8, "the exact-extension product inventory changed");
+  assert.equal(extensionProducts.includes("oliphaunt-extension-postgis"), true);
   const entry = "tools/release/extension-registry-carrier-materializer.mjs";
   const transport = "tools/release/local-registry-publish.mjs";
   assert.deepEqual(
@@ -372,6 +533,8 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
   const explicitNonByteImports = sorted([
     "tools/dev/moon-command.mjs",
     "tools/dev/capture-command-output.mjs",
+    "tools/policy/source-fetch-core.mjs",
+    "tools/release/extension-qualification-candidates.mjs",
     "tools/release/portable-archive.mjs",
     "tools/release/release-graph.mjs",
     "tools/release/release-semantic-inputs.mjs",
@@ -382,6 +545,10 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
     const owners = releaseSemanticProductsForPath(manifest, candidate, {
       prefix: "release-semantic-inputs.test",
     });
+    if (candidate === "tools/release/extension-upstream-licenses.mjs") {
+      assert.deepEqual(owners, extensionProducts);
+      continue;
+    }
     if (!extensionProducts.every((product) => owners.includes(product))) unowned.push(candidate);
   }
   assert.deepEqual(sorted(unowned), explicitNonByteImports);

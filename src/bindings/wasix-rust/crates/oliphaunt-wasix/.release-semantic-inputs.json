@@ -18,11 +18,33 @@
         },
         {
           "path": "Cargo.toml",
-          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
         },
         {
           "path": "rust-toolchain.toml",
           "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
         }
       ]
     },
@@ -34,19 +56,31 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "34d06fda9fb682f54a228a8602ea6f06fa281ec834f1ddb478e052af1272174b"
+          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
         }
       ]
     },
     {
-      "id": "sdk-package-producers",
+      "id": "shared-sdk-artifact-producer",
       "paths": [
-        "tools/release/build-sdk-ci-artifacts.mjs"
+        "tools/release/sdk-artifacts/shared.mjs"
       ],
       "inputs": [
         {
-          "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "wasix-rust-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/wasix-rust.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/wasix-rust.mjs",
+          "sha256": "2a23375c027a0033fed51fbde8cdf5e196a989b899e795cecb4444904cf4615f"
         }
       ]
     },
@@ -70,10 +104,10 @@
       "inputs": [
         {
           "path": "tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
-          "sha256": "a3352f7a2254395b722c571097ab065cfdc33f0c9b79af97b42db4ebb86deacb"
+          "sha256": "13f026579cce6c762ff8d56a42b6fbd5d439c67171b287b6ba9dfae6d160827b"
         }
       ]
     }
   ],
-  "sha256": "154a3b6f782679901bb7bf7e8d5fda9688b76555b51ac70d38c9fa41e2072f55"
+  "sha256": "bfe9b39a91873407180c8e49d1638f080331a753ee6647f47738644968dc7818"
 }

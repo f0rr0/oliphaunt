@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
+import { inflateRawSync, zstdDecompressSync } from "node:zlib";
 
 export const DEFAULT_PORTABLE_ARCHIVE_LIMITS = Object.freeze({
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -721,14 +721,34 @@ function strictGunzip(compressed, file, maxOutputLength) {
   return inflated.buffer;
 }
 
-function readTarEntries(file, archiveLimits) {
+function readTarEntries(file, archiveLimits, compression = "gzip") {
   const compressed = readFileSync(file);
   let tar;
   try {
-    tar = strictGunzip(compressed, file, archiveLimits.maxExpandedBytes);
+    if (compression === "gzip") {
+      tar = strictGunzip(compressed, file, archiveLimits.maxExpandedBytes);
+    } else {
+      if (
+        compressed.length < 4
+        || compressed[0] !== 0x28
+        || compressed[1] !== 0xb5
+        || compressed[2] !== 0x2f
+        || compressed[3] !== 0xfd
+      ) {
+        throw archiveError(file, "is not a Zstandard frame");
+      }
+      const decompressed = zstdDecompressSync(compressed, {
+        info: true,
+        maxOutputLength: archiveLimits.maxExpandedBytes,
+      });
+      if (decompressed.engine.bytesWritten !== compressed.length) {
+        throw archiveError(file, "contains trailing data or multiple Zstandard frames");
+      }
+      tar = decompressed.buffer;
+    }
   } catch (cause) {
     if (cause instanceof Error && cause.message.startsWith("portable-archive:")) throw cause;
-    throw archiveError(file, `is not a bounded readable gzip stream: ${cause.message}`);
+    throw archiveError(file, `is not a bounded readable ${compression} stream: ${cause.message}`);
   }
   if (tar.length === 0 || tar.length % 512 !== 0) {
     throw archiveError(file, "has a truncated or non-block-aligned ustar stream");
@@ -851,6 +871,7 @@ function inferredFormat(file) {
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz") || lower.endsWith(".crate")) {
     return "tar.gz";
   }
+  if (lower.endsWith(".tar.zst")) return "tar.zst";
   return undefined;
 }
 
@@ -860,5 +881,6 @@ export function readPortableArchiveEntries(file, options = {}) {
   const format = options.format ?? inferredFormat(file);
   if (format === "zip") return readZipEntries(file, archiveLimits);
   if (format === "tar.gz") return readTarEntries(file, archiveLimits);
+  if (format === "tar.zst") return readTarEntries(file, archiveLimits, "zstd");
   throw archiveError(file, `has an unsupported archive format ${JSON.stringify(format)}`);
 }

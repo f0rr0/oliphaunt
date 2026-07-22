@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { extensionReleasePropertiesText } from "./build-extension-ci-artifacts.mjs";
+import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
 import {
   expectedExtensionBundleManifest,
   findSdkRuntimePayloadViolation,
@@ -211,6 +212,7 @@ function selectionNeutralCarrier(version = "1.2.3") {
     base: { assets, product, tag, version },
     carriers: [],
     extensions: [],
+    legal: { base: iosBaseLegalMetadata(), extensions: [] },
     schema: "oliphaunt-react-native-ios-carrier-v1",
   };
 }
@@ -508,6 +510,8 @@ test("derives nested bundle compatibility from the staged bundle data", () => {
       compatibility,
       family: "native",
       target: "android-arm64-v8a",
+      licenseProfile: "contrib-native",
+      licenseFiles: [],
       members: [{
         sqlName: "cube",
         kind: "runtime",

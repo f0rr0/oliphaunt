@@ -689,13 +689,26 @@ archive_package_dir="$archive_work_dir/package"
 mkdir -p "$archive_package_dir"
 cp -R "$package_dir/." "$archive_package_dir/"
 rm -rf "$archive_package_dir/.build" "$archive_package_dir/.swiftpm"
+run "$root/tools/dev/bun.sh" \
+  "$root/tools/release/release-notices.mjs" \
+  stage \
+  "$archive_package_dir" \
+  --profile source-sdk
 swift_source_archive="$archive_work_dir/Oliphaunt-source.zip"
 run swift package --package-path "$archive_package_dir" archive-source --output "$swift_source_archive"
+run "$root/tools/dev/bun.sh" \
+  "$root/tools/release/release-notices.mjs" \
+  check-archive \
+  "$swift_source_archive" \
+  --prefix package \
+  --profile source-sdk
 archive_listing="$archive_work_dir/Oliphaunt-source-files.txt"
 unzip -Z -1 "$swift_source_archive" >"$archive_listing"
 for required in \
+  LICENSE \
   Package.swift \
   README.md \
+  THIRD_PARTY_NOTICES.md \
   Sources/COliphaunt/include/COliphaunt.h \
   Sources/COliphaunt/bridge.c \
   Sources/COliphaunt/empty.c \

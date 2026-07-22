@@ -58,7 +58,12 @@ test("packages the portable ICU payload deterministically outside platform relea
   expect(listing.status, listing.stderr).toBe(0);
   expect(listing.stdout.split(/\r?\n/u).filter(Boolean)).toEqual([
     ".",
+    "THIRD_PARTY_LICENSES/",
     "share/",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE",
     "share/icu/",
     "share/icu/icudt76l/",
     "share/icu/icudt76l/coll/",

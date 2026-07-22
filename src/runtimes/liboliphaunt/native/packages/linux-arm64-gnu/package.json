@@ -2,7 +2,7 @@
   "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
   "version": "0.0.0",
   "description": "Linux arm64 glibc liboliphaunt native library for Oliphaunt.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -36,7 +36,12 @@
   "files": [
     "lib",
     "runtime",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE"
   ],
   "exports": {
     "./package.json": "./package.json"

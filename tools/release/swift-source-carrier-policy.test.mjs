@@ -16,12 +16,8 @@ function workflowStep(name) {
 }
 
 test("Swift staging creates a selection-neutral embedded carrier", () => {
-  const builder = readFileSync(path.join(ROOT, "tools/release/build-sdk-ci-artifacts.mjs"), "utf8");
-  const stageStart = builder.indexOf("function stageSwiftArtifacts(");
-  const stageEnd = builder.indexOf("\nfunction ", stageStart + 1);
-  assert.notEqual(stageStart, -1);
-  const stageSwift = builder.slice(stageStart, stageEnd === -1 ? builder.length : stageEnd);
-  assert.match(stageSwift, /buildIosCarrierManifest\(\{[\s\S]*?extensionManifests: \[\],/u);
+  const builder = readFileSync(path.join(ROOT, "tools/release/sdk-artifacts/swift.mjs"), "utf8");
+  assert.match(builder, /buildIosCarrierManifest\(\{[\s\S]*?extensionManifests: \[\],/u);
 });
 
 test("the release workflow preserves the embedded carrier and validates independent extension carriers", () => {

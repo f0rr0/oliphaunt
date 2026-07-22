@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
@@ -9,15 +9,28 @@ import {
   parseWindowsVcRuntimeReceipt,
 } from "./windows-vc-runtime-closure.mjs";
 import { localWindowsTarInvocation } from "./tar-command.mjs";
+import {
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+import {
+  BROKER_PAYLOAD_LICENSE,
+  assertBrokerDependencyLicensesInArchive,
+  assertBrokerDependencyLicensesInDirectory,
+  brokerDependencyLicenseMembers,
+  normalizeBrokerDependencyLicenseModes,
+} from "./broker-dependency-license-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PRODUCT = "oliphaunt-broker";
+const BROKER_CARRIER_LICENSE = BROKER_PAYLOAD_LICENSE;
+const BROKER_NOTICE_OPTIONS = Object.freeze({ profile: "broker" });
 const CRATES_IO_MAX_BYTES = 10 * 1024 * 1024;
 const TARGETS = ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"];
 
 function fail(message) {
-  console.error(`package_broker_cargo_artifacts.mjs: ${message}`);
-  process.exit(1);
+  throw new Error(`package_broker_cargo_artifacts.mjs: ${message}`);
 }
 
 function rel(file) {
@@ -27,7 +40,7 @@ function rel(file) {
 
 function usage() {
   fail(
-    "usage: package_broker_cargo_artifacts.mjs [--asset-dir DIR] [--output-dir DIR] [--target TARGET]... [--version VERSION]",
+    "usage: package_broker_cargo_artifacts.mjs [--asset-dir DIR] [--output-dir DIR] [--source-output-dir DIR] [--target TARGET]... [--version VERSION]",
   );
 }
 
@@ -43,6 +56,7 @@ async function parseArgs(argv) {
   const args = {
     assetDir: "target/oliphaunt-broker/release-assets",
     outputDir: "target/oliphaunt-broker/cargo-artifacts",
+    sourceOutputDir: undefined,
     targets: [],
     version: undefined,
   };
@@ -54,6 +68,9 @@ async function parseArgs(argv) {
       index += 2;
     } else if (arg === "--output-dir") {
       args.outputDir = optionValue(argv, index);
+      index += 2;
+    } else if (arg === "--source-output-dir") {
+      args.sourceOutputDir = optionValue(argv, index);
       index += 2;
     } else if (arg === "--target") {
       args.targets.push(optionValue(argv, index));
@@ -68,6 +85,7 @@ async function parseArgs(argv) {
   return {
     assetDir: repoPath(args.assetDir),
     outputDir: repoPath(args.outputDir),
+    sourceOutputDir: args.sourceOutputDir === undefined ? undefined : repoPath(args.sourceOutputDir),
     targets: args.targets,
     version: args.version ?? (await currentVersion()),
   };
@@ -138,7 +156,7 @@ function run(args, options = {}) {
     if (options.capture) {
       process.stderr.write(result.stderr);
     }
-    process.exit(result.status ?? 1);
+    fail(`${args.join(" ")} failed with status ${result.status ?? "signal"}`);
   }
   return result.stdout ?? "";
 }
@@ -198,14 +216,28 @@ async function copySourceCrate(target, crateDir, version) {
   if (metadata?.package?.version !== version) {
     fail(`${rel(path.join(target.sourceDir, "Cargo.toml"))} has package.version=${JSON.stringify(metadata?.package?.version)}, expected ${version}`);
   }
+  if (metadata?.package?.license !== BROKER_CARRIER_LICENSE) {
+    fail(
+      `${rel(path.join(target.sourceDir, "Cargo.toml"))} has package.license=${JSON.stringify(metadata?.package?.license)}, `
+      + `expected ${BROKER_CARRIER_LICENSE}`,
+    );
+  }
   if (metadata?.package?.links !== expectedLinks) {
     fail(`${rel(path.join(target.sourceDir, "Cargo.toml"))} has package.links=${JSON.stringify(metadata?.package?.links)}, expected ${expectedLinks}`);
   }
   if (metadata?.package?.build !== "build.rs") {
     fail(`${rel(path.join(target.sourceDir, "Cargo.toml"))} must declare build = "build.rs"`);
   }
-  if (!Array.isArray(metadata?.package?.include) || !metadata.package.include.includes("payload/**")) {
-    fail(`${rel(path.join(target.sourceDir, "Cargo.toml"))} must include "payload/**"`);
+  const requiredIncludes = [
+    "payload/**",
+    "THIRD_PARTY_LICENSES/**",
+    ...releaseNoticeRows(BROKER_NOTICE_OPTIONS).map((row) => row.member),
+  ];
+  if (
+    !Array.isArray(metadata?.package?.include)
+    || requiredIncludes.some((member) => !metadata.package.include.includes(member))
+  ) {
+    fail(`${rel(path.join(target.sourceDir, "Cargo.toml"))} must include ${requiredIncludes.join(", ")}`);
   }
 
   const libRsPath = path.join(crateDir, "src/lib.rs");
@@ -229,6 +261,8 @@ async function copySourceCrate(target, crateDir, version) {
     fail(`${rel(path.join(target.sourceDir, "src/lib.rs"))} must declare EXECUTABLE_RELATIVE_PATH`);
   }
   target.executableRelativePath = constants.EXECUTABLE_RELATIVE_PATH;
+  stageReleaseNotices(crateDir, BROKER_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(crateDir, BROKER_NOTICE_OPTIONS);
 }
 
 async function sha256File(file) {
@@ -239,7 +273,7 @@ async function sha256File(file) {
   return digest.digest("hex");
 }
 
-async function validateCrate(cratePath, packageName, version, payloadMembers) {
+async function validateCrate(cratePath, packageName, version, payloadMembers, targetId) {
   if (!(await isFile(cratePath))) {
     fail(`missing generated Cargo crate ${rel(cratePath)}`);
   }
@@ -253,6 +287,8 @@ async function validateCrate(cratePath, packageName, version, payloadMembers) {
     `${packageName}-${version}/build.rs`,
     `${packageName}-${version}/src/lib.rs`,
     `${packageName}-${version}/payload/sha256`,
+    ...releaseNoticeRows(BROKER_NOTICE_OPTIONS).map((row) => `${packageName}-${version}/${row.member}`),
+    ...brokerDependencyLicenseMembers(targetId, { prefix: `${packageName}-${version}` }),
     ...payloadMembers.map((member) => `${packageName}-${version}/payload/${member}`),
   ]);
   const names = new Set(run(["tar", "-tzf", cratePath], { capture: true }).split(/\r?\n/).filter(Boolean));
@@ -260,6 +296,10 @@ async function validateCrate(cratePath, packageName, version, payloadMembers) {
   if (missing.length > 0) {
     fail(`${rel(cratePath)} is missing package members: ${missing.join(", ")}`);
   }
+  assertBrokerDependencyLicensesInArchive(cratePath, {
+    target: targetId,
+    prefix: `${packageName}-${version}`,
+  });
 }
 
 async function packageTarget(target, { version, assetDir, sourceRoot, outputDir, cargoTargetDir }) {
@@ -269,6 +309,14 @@ async function packageTarget(target, { version, assetDir, sourceRoot, outputDir,
   if (!(await isFile(archive))) {
     fail(`missing broker release asset: ${rel(archive)}`);
   }
+  assertBrokerDependencyLicensesInArchive(archive, { target: target.target });
+  for (const member of brokerDependencyLicenseMembers(target.target)) {
+    const destination = path.join(crateDir, ...member.split("/"));
+    await extractMember(archive, member, destination);
+    await chmod(destination, 0o644);
+  }
+  normalizeBrokerDependencyLicenseModes(crateDir, target.target);
+  assertBrokerDependencyLicensesInDirectory(crateDir, { target: target.target });
   const payload = path.join(crateDir, "payload", target.executableRelativePath);
   await extractMember(archive, target.executableRelativePath, payload);
   if ((await stat(payload)).size <= 0) {
@@ -315,7 +363,7 @@ async function packageTarget(target, { version, assetDir, sourceRoot, outputDir,
   const packaged = path.join(cargoTargetDir, "package", `${target.packageName}-${version}.crate`);
   const output = path.join(outputDir, path.basename(packaged));
   await copyFile(packaged, output);
-  await validateCrate(output, target.packageName, version, payloadMembers);
+  await validateCrate(output, target.packageName, version, payloadMembers, target.target);
   return output;
 }
 
@@ -324,42 +372,55 @@ async function main() {
   if (!(await isDirectory(args.assetDir))) {
     fail(`broker release asset directory does not exist: ${rel(args.assetDir)}`);
   }
-  const sourceRoot = path.join(ROOT, "target/oliphaunt-broker/cargo-package-sources");
-  const cargoTargetDir = path.join(ROOT, "target/oliphaunt-broker/cargo-package-target");
-  await rm(sourceRoot, { recursive: true, force: true });
-  await rm(args.outputDir, { recursive: true, force: true });
-  await rm(cargoTargetDir, { recursive: true, force: true });
-  await mkdir(sourceRoot, { recursive: true });
-  await mkdir(args.outputDir, { recursive: true });
-
-  let targets = TARGETS.map((target) => targetFromSource(target, args.version));
-  if (args.targets.length > 0) {
-    const selected = new Set(args.targets);
-    const known = new Set(TARGETS);
-    const unknown = [...selected].filter((target) => !known.has(target)).sort();
-    if (unknown.length > 0) {
-      fail(`unsupported broker target(s): ${unknown.join(", ")}`);
+  const runParent = path.join(ROOT, "target/oliphaunt-broker/cargo-package-runs");
+  await mkdir(runParent, { recursive: true });
+  const workRoot = await mkdtemp(path.join(runParent, "run-"));
+  const sourceRoot = args.sourceOutputDir ?? path.join(workRoot, "sources");
+  const cargoTargetDir = path.join(workRoot, "cargo-target");
+  try {
+    await rm(args.outputDir, { recursive: true, force: true });
+    if (args.sourceOutputDir !== undefined) {
+      await rm(args.sourceOutputDir, { recursive: true, force: true });
     }
-    targets = targets.filter((target) => selected.has(target.target));
-  }
+    await mkdir(sourceRoot, { recursive: true });
+    await mkdir(args.outputDir, { recursive: true });
 
-  const outputs = [];
-  for (const target of targets) {
-    outputs.push(
-      await packageTarget(target, {
-        version: args.version,
-        assetDir: args.assetDir,
-        sourceRoot,
-        outputDir: args.outputDir,
-        cargoTargetDir,
-      }),
-    );
-  }
+    let targets = TARGETS.map((target) => targetFromSource(target, args.version));
+    if (args.targets.length > 0) {
+      const selected = new Set(args.targets);
+      const known = new Set(TARGETS);
+      const unknown = [...selected].filter((target) => !known.has(target)).sort();
+      if (unknown.length > 0) {
+        fail(`unsupported broker target(s): ${unknown.join(", ")}`);
+      }
+      targets = targets.filter((target) => selected.has(target.target));
+    }
 
-  console.log("generated broker Cargo artifact crates:");
-  for (const output of outputs) {
-    console.log(rel(output));
+    const outputs = [];
+    for (const target of targets) {
+      outputs.push(
+        await packageTarget(target, {
+          version: args.version,
+          assetDir: args.assetDir,
+          sourceRoot,
+          outputDir: args.outputDir,
+          cargoTargetDir,
+        }),
+      );
+    }
+
+    console.log("generated broker Cargo artifact crates:");
+    for (const output of outputs) {
+      console.log(rel(output));
+    }
+  } finally {
+    await rm(workRoot, { recursive: true, force: true });
   }
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

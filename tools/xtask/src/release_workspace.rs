@@ -17,6 +17,43 @@ const RELEASE_RELEVANT_UNTRACKED_PATHS: &[&str] = &[
 ];
 const SPLIT_WASIX_TOOL_PAYLOAD_FILES: &[&str] = &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"];
 const SPLIT_WASIX_TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
+const QUALIFICATION_ONLY_EXTENSION_METADATA: &[&str] =
+    &["mobile/qualification-static-extensions.tsv"];
+
+fn stage_release_notices(staging: &Path, profile: &str) -> Result<()> {
+    let mut command = command_for_host("bun");
+    command
+        .arg("tools/release/release-notices.mjs")
+        .arg("stage")
+        .arg(staging)
+        .arg("--profile")
+        .arg(profile);
+    run_command(&mut command).with_context(|| {
+        format!(
+            "stage release notices with profile {profile} in {}",
+            staging.display()
+        )
+    })
+}
+
+fn check_release_notices(archive: &Path, profile: &str, prefix: Option<&Path>) -> Result<()> {
+    let mut command = command_for_host("bun");
+    command
+        .arg("tools/release/release-notices.mjs")
+        .arg("check-archive")
+        .arg(archive)
+        .arg("--profile")
+        .arg(profile);
+    if let Some(prefix) = prefix {
+        command.arg("--prefix").arg(prefix);
+    }
+    run_command(&mut command).with_context(|| {
+        format!(
+            "verify release notices with profile {profile} in {}",
+            archive.display()
+        )
+    })
+}
 
 pub(super) fn stage_release_workspace() -> Result<()> {
     let stage_root = Path::new(RELEASE_STAGE_DIR);
@@ -117,6 +154,24 @@ fn copy_core_wasix_asset_payload(
     }
     strip_core_asset_manifest_extensions(&destination.join("manifest.json"))?;
     ensure_core_wasix_asset_payload(destination, retain_split_tools)
+}
+
+fn copy_public_extension_generated_metadata(source: &Path, destination: &Path) -> Result<()> {
+    copy_dir_all(source, destination)?;
+    for relative in QUALIFICATION_ONLY_EXTENSION_METADATA {
+        let candidate = destination.join(relative);
+        if candidate.exists() {
+            fs::remove_file(&candidate).with_context(|| {
+                format!("remove qualification-only metadata {}", candidate.display())
+            })?;
+        }
+        ensure!(
+            !candidate.exists(),
+            "public WASIX runtime metadata must not contain qualification-only file {}",
+            candidate.display()
+        );
+    }
+    Ok(())
 }
 
 fn remove_split_wasix_tool_payload(root: &Path) -> Result<()> {
@@ -403,7 +458,7 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
     copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR), true)?;
-    copy_dir_all(
+    copy_public_extension_generated_metadata(
         Path::new("src/extensions/generated"),
         &staging.join("src/extensions/generated"),
     )?;
@@ -411,11 +466,13 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
         Path::new("src/runtimes/liboliphaunt/wasix/assets/generated"),
         &staging.join("src/runtimes/liboliphaunt/wasix/assets/generated"),
     )?;
+    stage_release_notices(&staging, "wasix-runtime")?;
 
     let output = output_dir.join(format!(
         "liboliphaunt-wasix-{version}-runtime-portable.tar.zst"
     ));
     deterministic_tar_zst(&staging, Path::new(""), &output)?;
+    check_release_notices(&output, "wasix-runtime", None)?;
     fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     Ok(output)
 }
@@ -426,8 +483,10 @@ fn package_release_icu_assets(output_dir: &Path, version: &str) -> Result<PathBu
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
     copy_wasix_icu_sidecar(&staging.join("target/oliphaunt-wasix/icu/share/icu"))?;
+    stage_release_notices(&staging, "wasix-icu-data")?;
     let output = output_dir.join(format!("liboliphaunt-wasix-{version}-icu-data.tar.zst"));
     deterministic_tar_zst(&staging, Path::new(""), &output)?;
+    check_release_notices(&output, "wasix-icu-data", None)?;
     fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     Ok(output)
 }
@@ -511,11 +570,10 @@ fn package_release_aot_assets(output_dir: &Path, target: &str, version: &str) ->
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
     copy_core_wasix_aot_payload(&generated_aot, &staging, true)?;
-    deterministic_tar_zst(
-        &staging,
-        &Path::new("target/oliphaunt-wasix/aot").join(target),
-        &output,
-    )?;
+    stage_release_notices(&staging, "wasix-aot")?;
+    let archive_prefix = Path::new("target/oliphaunt-wasix/aot").join(target);
+    deterministic_tar_zst(&staging, &archive_prefix, &output)?;
+    check_release_notices(&output, "wasix-aot", Some(&archive_prefix))?;
     fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     Ok(output)
 }
@@ -556,4 +614,67 @@ pub(super) fn run_in_release_workspace(command: &str, args: &[&str]) -> Result<(
         .current_dir(&workspace)
         .env("OLIPHAUNT_WASM_RELEASE_STAGED", "1");
     run_command(&mut command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "oliphaunt-release-workspace-{name}-{}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn public_wasix_payload_excludes_private_extension_bytes_and_metadata() -> Result<()> {
+        let root = fixture_root("deferred-extension-boundary");
+        if root.exists() {
+            fs::remove_dir_all(&root)?;
+        }
+        let raw_assets = root.join("raw-assets");
+        fs::create_dir_all(raw_assets.join("extensions"))?;
+        fs::write(
+            raw_assets.join("manifest.json"),
+            r#"{"extensions":[{"sql-name":"example_deferred"}],"pg-dump":{},"psql":{}}"#,
+        )?;
+        fs::write(
+            raw_assets.join("extensions/example_deferred.tar.zst"),
+            b"candidate",
+        )?;
+        fs::write(raw_assets.join("oliphaunt.wasix.tar.zst"), b"runtime")?;
+
+        let public_assets = root.join("public-assets");
+        copy_core_wasix_asset_payload(&raw_assets, &public_assets, false)?;
+        assert!(!public_assets.join("extensions").exists());
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(public_assets.join("manifest.json"))?)?;
+        assert_eq!(manifest["extensions"], serde_json::json!([]));
+        assert!(manifest.get("pg-dump").is_none());
+        assert!(manifest.get("psql").is_none());
+
+        let generated = root.join("generated");
+        fs::create_dir_all(generated.join("mobile"))?;
+        fs::write(generated.join("mobile/static-extensions.tsv"), b"public\n")?;
+        fs::write(
+            generated.join("mobile/qualification-static-extensions.tsv"),
+            b"example_deferred\n",
+        )?;
+        let public_generated = root.join("public-generated");
+        copy_public_extension_generated_metadata(&generated, &public_generated)?;
+        assert!(
+            public_generated
+                .join("mobile/static-extensions.tsv")
+                .is_file()
+        );
+        assert!(
+            !public_generated
+                .join("mobile/qualification-static-extensions.tsv")
+                .exists()
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
 }

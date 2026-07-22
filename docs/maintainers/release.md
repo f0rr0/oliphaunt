@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-21. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-22. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -29,6 +29,43 @@ The canonical model is composed from:
 
 Do not maintain a second hand-written package matrix. Query the catalog and inspect the lock. Dynamic package identities are forbidden except crates.io payload `part-N` carriers whose parent is declared and whose size requires splitting.
 
+A product-local `release.toml` activates an external extension as a public
+release product. It is not a harmless description of a build candidate. An
+extension deferred by `publication-blocker.toml` must remain absent from
+`release.toml`, Release Please, Moon release ownership, generated public SDK
+catalogs, the publication catalog, and every lock. Build recipes and target
+profiles may remain active solely for job-local qualification.
+
+## Carrier license and notice checks
+
+Legal material follows the bytes in each physical carrier, not merely the
+product name or source repository. Code-only and source-only facades carry the
+Oliphaunt MIT profile. A payload carrier carries its exact role profile plus
+the legal files for every component whose bytes it contains. The executable
+authorities are the publication catalog, `release-notices.mjs`,
+`extension-upstream-licenses.mjs`, and the broker dependency-license contract;
+do not maintain a separate handwritten carrier matrix.
+
+Every direct carrier, payload part, aggregate, and final registry archive must
+have the exact legal namespace, bytes, file types, and modes derived by those
+contracts. Missing files fail, but uncontracted files, directories, symlinks,
+and special entries fail as well. For Maven Central, this invariant applies to
+the primary artifact and its `sources` and `javadoc` companions; valid POM
+metadata is not a substitute for legal files inside each archive.
+
+Native runtime payloads carry Oliphaunt, PostgreSQL, and ICU; native tools carry
+Oliphaunt and PostgreSQL. Contrib carriers add the PostgreSQL profile, and add
+OpenSSL only on a target that actually embeds `pgcrypto` crypto bytes. External
+extensions derive their package expression and exact upstream file set from
+the pinned source contract. A broker source facade remains MIT-only, while
+each compiled broker target derives its dependency notices from the exact
+`Cargo.lock` and target dependency graph used to build that binary.
+
+Passing these checks proves only the repository-declared license and notice
+contents for the inspected carrier. It is not legal advice or certification of
+comprehensive legal compliance. PostGIS is an active public external product
+and participates in the same carrier checks as other public products.
+
 ## Version rules
 
 - New products remain `0.0.0` in source until their first generated release PR. The global first version is `0.1.0`.
@@ -38,7 +75,10 @@ Do not maintain a second hand-written package matrix. Query the catalog and insp
   `oliphaunt-extension-contrib-pg18` product. That product is `runtime-bound`
   and shares the runtime linked-version group; its 32 SQL members are not 32
   separately versioned release products.
-- external extensions are `upstream-bound` and own independent packaging SemVer. Their upstream version/commit and compatible runtime versions are separate metadata.
+- active external extension products are `upstream-bound` and own independent
+  packaging SemVer. Their upstream version/commit and compatible runtime
+  versions are separate metadata. A publication-deferred external extension
+  has no packaging version until it is promoted into the active product graph.
 - `feat`, `fix`, `perf`, `refactor`, and `revert` are release-impacting types because the Release Please `changelog-sections` catalog says so. A Conventional Commit `!` is breaking. Release-intent checks derive this set from config.
 - Product source PRs never edit versions. The generated release PR owns all version, compatibility, lockfile, and changelog changes.
 - While every product is still `0.0.0`, top-level `bootstrap-sha` is the full
@@ -127,7 +167,7 @@ byte-identical before derived synchronization; a moved PR head is never replaced
 
 ## Qualification contract
 
-Publication accepts only a current-main candidate with one non-cancelled CI run whose `head_sha` is exact and whose `Qualified` gate succeeded. That record covers required checks, tests, builds, policy, selected E2E, and named build artifacts. A successful `Builds` job alone is insufficient.
+Root publication admission accepts only a current-main candidate with one non-cancelled CI run whose `head_sha` is exact and whose `Qualified` gate succeeded. That record covers required checks, tests, builds, policy, selected E2E, and named build artifacts. A successful `Builds` job alone is insufficient. After the root job pins the immutable release transport tag, downstream phases continue that exact transaction without re-evaluating the moving main branch.
 
 The `macos-26` publication runner is ARM64, but its current runner-image
 contract exposes the installed Java 17 path as `JAVA_HOME_17_arm64` (including
@@ -186,8 +226,11 @@ approve itself or silently combine artifacts from different dry-runs.
 `.github/workflows/release.yml` is the one directly dispatched release
 workflow. Its operation jobs declare their own least-privilege permissions and
 protected environments: dry-run is repository-read-only, bootstrap adds OIDC
-to repository read, preparation receives only release-PR writes, and normal
-publication separates staging, registry, and finalization grants. Dry-run and
+and `contents: write`, preparation receives only release-PR writes, and normal
+publication separates staging, registry, and finalization grants. Bootstrap's
+content write exists solely for the root generation to create the immutable
+release transport tag immediately before its first registry mutation;
+continuation generations never create, update, or delete that tag. Dry-run and
 normal staging are separate jobs over one YAML-anchored step list, so this
 separation does not create two release implementations that can drift.
 
@@ -202,10 +245,14 @@ GitHub automatically provides each job's scoped `GITHUB_TOKEN`.
 
 Trusted publishers match `release.yml`: direct publication exposes that file
 through `workflow_ref`, together with the exact `workflow_sha` and the
-`release-publish` environment claim. There is no called-workflow
+`release-publish` environment claim. A root run has the `main` branch ref; an
+automatic continuation has only the deterministic
+`oliphaunt-release-transport/<full-sha>` tag ref and a `tag` ref type.
+There is no called-workflow
 `job_workflow_ref` in this topology. An unconditional, bounded,
 repository-read-only validation job checks the canonical repository, exact
-workflow commit, operation, optional exact commit, and continuation pointer
+workflow commit, operation, optional exact commit, continuation pointer, and
+the corresponding root-main or exact-transport ref
 before any operation job. Malformed or contradictory manual inputs therefore
 fail before release work begins.
 After bootstrap, derive the complete configuration inventory from the exact
@@ -238,14 +285,30 @@ or non-hosted use, binds HEAD to `RELEASE_HEAD_SHA`, and reruns the fixed
 candidate/plan/WASIX-evidence verifier before omitting mutation tests. Workflow
 policy rejects extra full invocations or replay before candidate verification.
 
-`release_commit`, when supplied, is an assertion that must equal the workflow commit. It cannot select historical code. A tooling fix is a new candidate and must pass new qualification.
+`release_commit`, when supplied, is an assertion that must equal the workflow
+commit. It cannot select historical code. A tooling fix is a new candidate and
+must pass new qualification. At the mutation boundary, a root
+`publish-bootstrap` or `publish` run first reads the lightweight
+`oliphaunt-release-transport/<full-sha>` tag and accepts only a direct commit
+ref at its exact release SHA. If the tag is absent, or this is the first run
+attempt, the helper proves current `main` before creating or accepting it;
+creating an absent append-only tag is the root generation's first mutation.
+Only a genuine rerun (`GITHUB_RUN_ATTEMPT > 1`) of the exact root operation,
+original `refs/heads/main` workflow SHA, and empty continuation may reuse an
+already exact tag after `main` advances. A missing tag still requires the proof
+on every attempt, while a wrong or annotated tag fails closed. The helper never
+updates or deletes the tag and never replays an ambiguous create. Continuation dispatch verifies the ref both
+before and after any bounded delay and dispatches the child from the tag rather
+than from moving `main`. Registry and finalization jobs remain exact-SHA and
+lock/handoff bound; they deliberately do not require `main` to remain frozen
+after the first mutation.
 
 ## Publish order
 
 Cross-registry publication cannot be atomic, so the workflow is resumable and state-driven:
 
 1. validate names, ownership, versions, auth mode, exact SHA, and registry collisions;
-2. create exact product tags and draft GitHub releases;
+2. create the exact immutable continuation transport, then exact product tags and draft GitHub releases;
 3. upload and attest selected GitHub assets and create the frozen Swift source tag outside the registry executor;
 4. execute the publication lock's dependency topology: payload parts/leaves before aggregators/façades and runtime carriers before dependent SDK carriers;
 5. prove public registry bytes, then run the exact public-consumer gate once and preserve its lock-bound evidence;
@@ -269,6 +332,8 @@ registry result flows from `publish-registry` to
 `dispatch-publish-continuation`. Each dispatcher has only Actions write and
 repository read, receives no release environment or registry secret, and may
 dispatch only the immutable exact-parent pointer emitted by its direct parent.
+It dispatches `release.yml` at the SHA-derived transport tag; the child input
+gate rejects `main`, another tag, or a tag name derived from any other SHA.
 
 The workflow does not encode a second product/ecosystem publish order. Before
 the first mutation it writes `normal-publication-plan.json` directly from the
@@ -364,13 +429,19 @@ a 350-minute hard window plus ten minutes for cleanup; the registry job also
 has a 350-minute hard window plus ten minutes for cleanup; finalization has a
 114-minute hard window plus six minutes for cleanup. The executable phase-budget table accounts for setup, exact-ID
 transfer, validation, mutation, evidence/handoff, and cleanup and requires a
-strictly positive margin in every phase. Bootstrap starts its registry window only after
-qualification, capsule/lock verification, checkpoint restoration, and
-current-main revalidation, and clamps it to the earlier of 5.5 hours from that
-point or the job hard deadline. Normal registry mutation starts only after the
+strictly positive margin in every phase. A bootstrap root starts its registry window only after
+qualification, capsule/lock verification, checkpoint restoration, and the
+root transport boundary described above; a bootstrap continuation instead
+proves the exact transport ref and parent authorization.
+The window is clamped to the earlier of 5.5 hours from that point or the job
+hard deadline. Normal registry mutation starts only after the
 approved capsule and GitHub-stage handoff have been independently verified,
-the exact staged releases and recovery checkpoint have been revalidated, and
-current `main` still equals the release SHA. It requires its complete
+and the exact staged releases and recovery checkpoint have been revalidated at
+the release SHA. Before beginning GitHub mutation, the root staging job either
+proved current `main` inside the transport boundary or, only on a genuine exact
+rerun, reused the tag that the prior attempt had already pinned; later
+registry and finalization jobs never substitute moving `main` for their exact
+checkout, handoff, tag, draft, and publication-lock proofs. Registry publication requires its complete
 rate-aware mutation allowance plus positive margin before the protected
 15-minute receipt/recovery handoff; a shortened residual window cannot admit a
 partial planned run unless the executor can close a dependency-safe checkpoint
@@ -622,13 +693,25 @@ solely as a reproducible ABI fixture: it is end-of-life and this check is not a
 claim that Fedora 39 is a security-supported production OS. Oliphaunt's public
 contract is the GNU architecture and symbol-version floor, not a distro name.
 
-Every exact extension has its own product and stable ecosystem façades. Each product's `targets/artifacts.toml` explicitly declares supported/unpublished targets and evidence. The runtime target matrix bounds possible values but never creates extension support by default.
+Every release-ready exact extension belongs to exactly one active product and
+stable ecosystem façades. PostgreSQL contrib members belong to their shared
+contrib product; each active external extension owns its independent product.
+A build-only or publication-deferred extension owns neither. Each active
+exact SQL member's `targets/artifacts.toml` explicitly declares
+supported/unpublished targets and evidence. The runtime target matrix bounds
+possible values but never creates extension support by default.
 
 ## Recovery and history repair
 
 On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Repository changes require a new version and candidate.
 
-History repair is allowed only before any affected product tag/package is public. Freeze main, archive and bundle the old tip, qualify the replacement tree on a temporary branch, bind the one-shot repair predecessor to that exact old tip, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. Temporary-branch success is not the protected-main `Qualified` record: run the complete non-cancelled graph again on the rewritten introduction SHA.
+A deferred extension is never a recoverable missing publication. If it appears
+in a release PR, dry-run artifact set, or lock, reject that candidate, remove
+the extension from the active public graph, and qualify a new exact SHA. Do not
+bootstrap its reserved identity, publish its job-local outputs, or bypass the
+declared blocker to resume another product.
+
+History repair is allowed only before any affected product tag/package is public. Freeze main, archive and bundle the old tip, then qualify the replacement tree with an all-target manual CI run on a retained temporary branch. The one tree-identical introduction commit must contain exactly one `Oliphaunt-History-Repair-Candidate: <lowercase-full-sha>` trailer naming that qualified branch commit. Bind the one-shot repair predecessor to the exact old tip, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. Rewritten-main CI selects the exact run and immutable artifacts named by the trailer, verifies the retained remote branch tip and equal Git tree before planning, and then runs the complete non-cancelled graph. Temporary-branch `Qualified` evidence is deliberately ineligible for publication; the rewritten main needs its own `Qualified` record.
 
 If that exact-main run exposes another defect, do not layer a fix commit onto the intended public history and do not prepare a release. Archive the superseded introduction separately, qualify a new replacement tree, and repeat the controlled rewrite. Rotate only `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` to the current main tip; the Release Please bootstrap boundary and displaced-main metadata baseline remain immutable, and every earlier repair predecessor must be rejected as a replay. The desired public bootstrap history remains one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
 

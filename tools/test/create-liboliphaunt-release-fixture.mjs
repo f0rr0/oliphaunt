@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import { releaseNoticeRows } from '../release/release-notices.mjs';
+
 import {
   elfFixture,
   machoFixture,
@@ -263,6 +265,14 @@ function xcframeworkModes() {
   };
 }
 
+async function writeProfiledArchive(output, entries, profile, modes = {}) {
+  const notices = {};
+  for (const row of releaseNoticeRows({ profile })) {
+    notices[row.member] = await fs.readFile(row.source);
+  }
+  await writeEntriesArchive(output, { ...entries, ...notices }, modes);
+}
+
 async function writeFixtureAssets(assetDir, version) {
   await fs.mkdir(assetDir, { recursive: true });
   const runtimeResources = runtimeResourceEntries();
@@ -273,68 +283,81 @@ async function writeFixtureAssets(assetDir, version) {
     'utf8',
   );
 
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-runtime-resources.tar.gz`),
     runtimeResources,
+    'native-runtime-resources',
   );
-  await writeEntriesArchive(path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`), {
-    'share/icu/icudt76l.dat': 'not-real-icu-data\n',
-  });
-  await writeEntriesArchive(
+  await writeProfiledArchive(
+    path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
+    { 'share/icu/icudt76l.dat': 'not-real-icu-data\n' },
+    'native-icu-data',
+  );
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-macos-arm64.tar.gz`),
     {
       'lib/liboliphaunt.dylib': nativeBinary('macos-arm64'),
       'lib/modules/plpgsql.dylib': nativeBinary('macos-arm64'),
       ...nativeRuntimeEntries('macos-arm64'),
     },
+    'native-runtime',
     nativeRuntimeModes('macos-arm64'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `oliphaunt-tools-${version}-macos-arm64.tar.gz`),
     nativeToolsEntries('macos-arm64'),
+    'native-tools',
     nativeToolsModes('macos-arm64'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-linux-x64-gnu.tar.gz`),
     {
       'lib/liboliphaunt.so': nativeBinary('linux-x64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-x64-gnu'),
       ...nativeRuntimeEntries('linux-x64-gnu'),
     },
+    'native-runtime',
     nativeRuntimeModes('linux-x64-gnu'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `oliphaunt-tools-${version}-linux-x64-gnu.tar.gz`),
     nativeToolsEntries('linux-x64-gnu'),
+    'native-tools',
     nativeToolsModes('linux-x64-gnu'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-linux-arm64-gnu.tar.gz`),
     {
       'lib/liboliphaunt.so': nativeBinary('linux-arm64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-arm64-gnu'),
       ...nativeRuntimeEntries('linux-arm64-gnu'),
     },
+    'native-runtime',
     nativeRuntimeModes('linux-arm64-gnu'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `oliphaunt-tools-${version}-linux-arm64-gnu.tar.gz`),
     nativeToolsEntries('linux-arm64-gnu'),
+    'native-tools',
     nativeToolsModes('linux-arm64-gnu'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-ios-xcframework.tar.gz`),
     xcframeworkEntries(),
+    'native-runtime',
     xcframeworkModes(),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-android-arm64-v8a.tar.gz`),
     { 'jni/arm64-v8a/liboliphaunt.so': nativeBinary('android-arm64-v8a') },
+    'native-runtime',
   );
-  await writeEntriesArchive(path.join(assetDir, `liboliphaunt-${version}-android-x86_64.tar.gz`), {
-    'jni/x86_64/liboliphaunt.so': nativeBinary('android-x86_64'),
-  });
-  await writeEntriesArchive(
+  await writeProfiledArchive(
+    path.join(assetDir, `liboliphaunt-${version}-android-x86_64.tar.gz`),
+    { 'jni/x86_64/liboliphaunt.so': nativeBinary('android-x86_64') },
+    'native-runtime',
+  );
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-windows-x64-msvc.zip`),
     {
       'bin/oliphaunt.dll': nativeBinary('windows-x64-msvc', { provider: true }),
@@ -343,16 +366,19 @@ async function writeFixtureAssets(assetDir, version) {
       ...nativeRuntimeEntries('windows-x64-msvc'),
       ...windowsVcRuntimeEntries(),
     },
+    'native-runtime',
     nativeRuntimeModes('windows-x64-msvc'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `oliphaunt-tools-${version}-windows-x64-msvc.zip`),
     nativeToolsEntries('windows-x64-msvc'),
+    'native-tools',
     nativeToolsModes('windows-x64-msvc'),
   );
-  await writeEntriesArchive(
+  await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-apple-spm-xcframework.zip`),
     xcframeworkEntries(),
+    'native-runtime',
     xcframeworkModes(),
   );
 

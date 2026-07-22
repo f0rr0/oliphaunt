@@ -41,6 +41,19 @@ import {
 } from "./ios-carrier-manifest.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import {
+  assertReleaseNoticesInArchive,
+  releaseNoticeRows,
+} from "./release-notices.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  extensionCarrierLegalContract,
+} from "./extension-upstream-licenses.mjs";
+import {
+  assertSourceOnlyJsrDirectory,
+  assertSourceOnlyNpmArchive,
+  SOURCE_ONLY_NPM_PROFILES,
+} from "./source-only-sdk-package.mjs";
+import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
   validateSwiftSourceReleaseContract,
@@ -382,6 +395,46 @@ function cargoCrateManifest(file) {
   return data;
 }
 
+const CARGO_VIRTUAL_PACKAGE_FILES = new Set([
+  ".cargo_vcs_info.json",
+  "Cargo.lock",
+  "Cargo.toml.orig",
+]);
+
+function requireCrateMatchesCargoListing(
+  crate,
+  listing,
+  packageName,
+  packageVersion,
+  { generatedMembers = [] } = {},
+) {
+  if (!isFile(listing)) {
+    fail(`missing Cargo package listing: ${rel(listing)}`);
+  }
+  const listed = readFileSync(listing, "utf8")
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (new Set(listed).size !== listed.length) {
+    fail(`${rel(listing)} repeats a Cargo package entry`);
+  }
+  const expected = [
+    ...listed.filter((entry) => !CARGO_VIRTUAL_PACKAGE_FILES.has(entry)),
+    ...generatedMembers,
+  ];
+  if (new Set(expected).size !== expected.length) {
+    fail(`${rel(listing)} and its generated-member contract repeat a Cargo package entry`);
+  }
+  const prefix = `${packageName}-${packageVersion}/`;
+  const actual = archiveTarNames(crate).map((entry) => {
+    if (!entry.startsWith(prefix) || entry.length === prefix.length) {
+      fail(`${rel(crate)} contains member outside ${prefix.slice(0, -1)}: ${entry}`);
+    }
+    return entry.slice(prefix.length);
+  });
+  exactSortedStrings(`${rel(crate)} Cargo-selected package members`, actual, expected);
+}
+
 function readZipEntries(file) {
   return strictArchiveEntries(file, "zip");
 }
@@ -552,6 +605,17 @@ async function validateRustSdkCrate(crate) {
   const sdkVersion = await currentProductVersion("oliphaunt-rust", PREFIX);
   if (packageConfig.version !== sdkVersion) {
     fail(`${rel(crate)} package ${packageName} must use oliphaunt-rust version ${sdkVersion}`);
+  }
+  if (packageConfig.license !== "MIT") {
+    fail(`${rel(crate)} source-only package ${packageName} must declare license MIT`);
+  }
+  try {
+    assertReleaseNoticesInArchive(crate, {
+      profile: "source-sdk",
+      prefix: `${packageName}-${sdkVersion}`,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   if (packageName === "oliphaunt-build") {
     return packageName;
@@ -983,6 +1047,16 @@ async function checkSdkProduct(product, { require }) {
     for (const tarball of tarballs) {
       const names = archiveTarNames(tarball);
       rejectSdkRuntimePayload(product, tarball, names);
+      try {
+        assertSourceOnlyNpmArchive(
+          tarball,
+          product === "oliphaunt-js"
+            ? SOURCE_ONLY_NPM_PROFILES.js
+            : SOURCE_ONLY_NPM_PROFILES["react-native"],
+        );
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
       if (product === "oliphaunt-react-native") {
         const carrierEvidence = path.join(root, "ios-carriers", IOS_CARRIER_FILENAME);
         const carrierMember = `package/${IOS_CARRIER_FILENAME}`;
@@ -1010,6 +1084,13 @@ async function checkSdkProduct(product, { require }) {
         }
       }
       checked = true;
+    }
+    if (product === "oliphaunt-js" && tarballs.length > 0) {
+      try {
+        assertSourceOnlyJsrDirectory(path.join(root, "jsr-source"));
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
     }
   } else if (product === "oliphaunt-swift") {
     const archives = readdirSync(root).filter((name) => name.endsWith(".zip")).map((name) => path.join(root, name)).sort(compareText);
@@ -1103,9 +1184,12 @@ async function checkSdkProduct(product, { require }) {
       fail(`${product} must stage a Cargo crate under ${rel(root)}`);
     }
     const packageNames = [];
+    const cratesByPackage = new Map();
     for (const crate of crates) {
       rejectSdkRuntimePayload(product, crate, archiveTarNames(crate));
-      packageNames.push(await validateRustSdkCrate(crate));
+      const packageName = await validateRustSdkCrate(crate);
+      packageNames.push(packageName);
+      cratesByPackage.set(packageName, crate);
       checked = true;
     }
     if (crates.length > 0) {
@@ -1113,6 +1197,14 @@ async function checkSdkProduct(product, { require }) {
         `${product} staged Cargo packages`,
         packageNames,
         ["oliphaunt", "oliphaunt-build"],
+      );
+      const version = await currentProductVersion("oliphaunt-rust", PREFIX);
+      requireCrateMatchesCargoListing(
+        cratesByPackage.get("oliphaunt"),
+        path.join(root, "cargo-package-files.txt"),
+        "oliphaunt",
+        version,
+        { generatedMembers: ["LICENSE", "THIRD_PARTY_NOTICES.md"] },
       );
     }
   } else if (product === "oliphaunt-wasix-rust") {
@@ -1123,6 +1215,13 @@ async function checkSdkProduct(product, { require }) {
     for (const crate of crates) {
       rejectSdkRuntimePayload(product, crate, archiveTarNames(crate));
       await validateWasixSdkCrate(crate);
+      const version = await currentProductVersion("oliphaunt-wasix-rust", PREFIX);
+      requireCrateMatchesCargoListing(
+        crate,
+        path.join(root, "cargo-package-files.txt"),
+        "oliphaunt-wasix",
+        version,
+      );
       checked = true;
     }
     const listing = path.join(root, "cargo-package-files.txt");
@@ -1235,6 +1334,11 @@ function publicExtensionBundleCarrier(asset) {
 }
 
 export function expectedExtensionBundleManifest({ product, version, data, carrier, rows }) {
+  const legal = extensionCarrierLegalContract(
+    product,
+    [...new Set(rows.map(({ member }) => member.sqlName))].sort(compareText),
+    { family: carrier.family, target: carrier.target },
+  );
   return {
     schema: "oliphaunt-extension-bundle-v1",
     product,
@@ -1242,6 +1346,8 @@ export function expectedExtensionBundleManifest({ product, version, data, carrie
     compatibility: data.compatibility,
     family: carrier.family,
     target: carrier.target,
+    licenseProfile: legal.profile,
+    licenseFiles: legal.licenseFiles,
     members: rows.map(({ member, asset }) => ({
       sqlName: member.sqlName,
       kind: asset.kind,
@@ -1370,6 +1476,7 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
   }
   const carriersByName = new Map();
   const carrierEntries = new Map();
+  const carrierLegal = new Map();
   const seenCarrierRoles = new Set();
   const stagedTargets = new Set();
   for (const carrier of data.carrierAssets) {
@@ -1405,6 +1512,18 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
     if (!isFile(carrierPath) || statSync(carrierPath).size !== bytes || sha256File(carrierPath) !== sha256) {
       fail(`${rel(manifest)} aggregate carrier ${name} is missing or does not match its outer size/digest`);
     }
+    const legal = extensionCarrierLegalContract(product, expectedSqlNames, { family, target });
+    const carrierRoot = name.replace(/\.tar\.gz$/u, "");
+    assertReleaseNoticesInArchive(carrierPath, {
+      prefix: carrierRoot,
+      profile: legal.profile,
+    });
+    if (legal.upstreamMembers.length > 0) {
+      assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, carrierPath, {
+        prefix: carrierRoot,
+      });
+    }
+    carrierLegal.set(name, legal);
     carrierEntries.set(name, canonicalBundleTarEntries(carrierPath));
   }
   if (requireFullTargets) {
@@ -1523,6 +1642,10 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
     const expectedArchiveNames = [
       manifestName,
       ...rows.map(({ asset }) => `${carrierRoot}/${asset.memberPath}`),
+      ...releaseNoticeRows({ profile: carrierLegal.get(carrier.name).profile })
+        .map(({ member }) => `${carrierRoot}/${member}`),
+      ...carrierLegal.get(carrier.name).licenseFiles
+        .map((member) => `${carrierRoot}/${member}`),
     ].sort(compareText);
     const actualArchiveNames = [...entries.keys()].sort(compareText);
     if (JSON.stringify(actualArchiveNames) !== JSON.stringify(expectedArchiveNames)) {

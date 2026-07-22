@@ -958,7 +958,7 @@ END $$;
             mode,
             extension,
             "functional postgis coverage",
-            include_str!("../../../extensions/external/postgis/tests/smoke.sql"),
+            include_str!("fixtures/postgis-smoke.sql"),
         )
         .map(|_| ()),
         Extension::UuidOssp => exec_extension_sql(

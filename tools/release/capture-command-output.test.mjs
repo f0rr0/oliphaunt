@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -241,6 +242,50 @@ function fixtureScript(body) {
   writeFileSync(script, body);
   chmodSync(script, 0o755);
   return { root, script };
+}
+
+function relativeModuleClosure(entryFiles) {
+  const closure = new Set(entryFiles.map((file) => path.resolve(file)));
+  const queue = [...closure];
+  while (queue.length > 0) {
+    const importer = queue.pop();
+    const source = readFileSync(importer, "utf8");
+    for (const match of source.matchAll(
+      /(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)["'](?<specifier>[.]{1,2}\/[^"']+)["']/gu,
+    )) {
+      const base = path.resolve(path.dirname(importer), match.groups.specifier);
+      const sourceBase = /[.](?:cjs|js|mjs)$/u.test(base)
+        ? base.replace(/[.](?:cjs|js|mjs)$/u, "")
+        : base;
+      const candidates = [
+        base,
+        ...[".cjs", ".js", ".mjs", ".ts", ".tsx"].map(
+          (extension) => `${sourceBase}${extension}`,
+        ),
+        ...[".cjs", ".js", ".mjs", ".ts", ".tsx"].map((extension) => `${base}${extension}`),
+        ...[".cjs", ".js", ".mjs", ".ts", ".tsx"].map(
+          (extension) => path.join(base, `index${extension}`),
+        ),
+      ];
+      const imported = candidates.find((candidate) => {
+        try {
+          return statSync(candidate).isFile();
+        } catch {
+          return false;
+        }
+      });
+      assert.notEqual(
+        imported,
+        undefined,
+        `${path.relative(ROOT, importer)} has an unresolved relative import ${match.groups.specifier}`,
+      );
+      if (!closure.has(imported)) {
+        closure.add(imported);
+        queue.push(imported);
+      }
+    }
+  }
+  return closure;
 }
 
 test("sync child binding audit recognizes ESM and CommonJS import forms", () => {
@@ -537,6 +582,52 @@ test("Bun-owned modules and mutation tests never parse synchronous child pipes",
   assert.match(configPlugin, /rmSync\(directory, \{ force: true, recursive: true \}\)/u);
   assert.match(configPlugin, /spawnSyncImpl = undefined/u);
   assert.doesNotMatch(configPlugin, /capture-command-output[.]mjs/u);
+});
+
+test("isolated React Native SDK worktrees materialize their external module closure", () => {
+  const packageRoot = path.join(ROOT, "src/sdks/react-native");
+  const packagePrefix = `${packageRoot}${path.sep}`;
+  const copiedModules = productionModules(packageRoot).filter(
+    (file) => path.relative(packageRoot, file).split(path.sep)[0] !== "lib",
+  );
+  const externalModules = [...relativeModuleClosure(copiedModules)]
+    .filter((file) => !file.startsWith(packagePrefix))
+    .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
+    .sort();
+  assert.deepEqual(externalModules, [
+    "tools/dev/capture-command-output.mjs",
+    "tools/test/fd-backed-spawn-sync.mjs",
+  ]);
+
+  const worktreeBuilder = readFileSync(
+    path.join(packageRoot, "tools/check-sdk.sh"),
+    "utf8",
+  );
+  for (const required of [
+    'mkdir -p "$scratch_root/tools/dev"',
+    'mkdir -p "$scratch_root/tools/test"',
+    '"$root/tools/dev/capture-command-output.mjs"',
+    '"$scratch_root/tools/dev/capture-command-output.mjs"',
+    '"$root/tools/test/fd-backed-spawn-sync.mjs"',
+    '"$root/tools/test/run-js-tests.mjs"',
+    '"$scratch_root/tools/test/"',
+    'test "$package_dir/tools/ios-app-transport.test.mjs"',
+    'test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"',
+  ]) {
+    assert.ok(worktreeBuilder.includes(required), `missing isolated-worktree contract: ${required}`);
+  }
+  assert.doesNotMatch(worktreeBuilder, /rsync[^\n]*tools\/test/u);
+
+  const jsWorktreeBuilder = readFileSync(
+    path.join(ROOT, "src/sdks/js/tools/check-sdk.sh"),
+    "utf8",
+  );
+  assert.ok(
+    jsWorktreeBuilder.includes(
+      'cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"',
+    ),
+  );
+  assert.doesNotMatch(jsWorktreeBuilder, /rsync[^\n]*tools\/test/u);
 });
 
 test("binary capture preserves exact non-UTF-8 bytes without a pipe", () => {

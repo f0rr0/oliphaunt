@@ -309,20 +309,107 @@ function mavenArtifact(file) {
   };
 }
 
+const MAVEN_MANIFEST_TOKEN = /^[A-Za-z0-9_.-]+$/u;
+const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+function requiredMavenManifestText(value, label) {
+  if (typeof value !== "string" || value.length === 0 || CONTROL_CHARACTER.test(value)) {
+    throw error(`${label} must be a non-empty string without control characters`);
+  }
+  return value;
+}
+
+function mavenManifestLicenses(value, label) {
+  let licenses;
+  try {
+    licenses = JSON.parse(value);
+  } catch (cause) {
+    throw error(`${label} must be valid JSON: ${cause.message}`);
+  }
+  if (!Array.isArray(licenses) || licenses.length === 0) {
+    throw error(`${label} must be a non-empty JSON array`);
+  }
+  const expectedKeys = ["name", "url", "distribution"];
+  for (const [index, license] of licenses.entries()) {
+    const entryLabel = `${label} entry ${index + 1}`;
+    if (license === null || Array.isArray(license) || typeof license !== "object") {
+      throw error(`${entryLabel} must be an object`);
+    }
+    if (stableJson(Object.keys(license)) !== stableJson(expectedKeys)) {
+      throw error(`${entryLabel} must contain exactly ${expectedKeys.join(", ")} in canonical order`);
+    }
+    requiredMavenManifestText(license.name, `${entryLabel}.name`);
+    const url = requiredMavenManifestText(license.url, `${entryLabel}.url`);
+    if (!url.startsWith("https://")) {
+      throw error(`${entryLabel}.url must use HTTPS`);
+    }
+    if (license.distribution !== "repo") {
+      throw error(`${entryLabel}.distribution must be repo`);
+    }
+  }
+  if (value !== JSON.stringify(licenses)) {
+    throw error(`${label} must use canonical compact JSON`);
+  }
+  return licenses;
+}
+
 function mavenManifestArtifacts(file) {
   if (!rel(file).includes("/maven-artifacts/")) {
     return [];
   }
   const records = [];
+  const coordinates = new Set();
   for (const [index, line] of readFileSync(file, "utf8").split(/\r?\n/u).filter(Boolean).entries()) {
     const values = line.split("\t");
-    if (values.length !== 8) {
-      throw error(`${rel(file)} line ${index + 1} must contain eight Maven publication fields`);
+    const label = `${rel(file)} line ${index + 1}`;
+    if (values.length !== 10) {
+      throw error(`${label} must contain ten Maven publication fields`);
     }
-    const [group, name, version, artifactPath] = values;
+    const [
+      group,
+      name,
+      version,
+      artifactPath,
+      displayName,
+      description,
+      runtimeProduct,
+      runtimeVersion,
+      licenseSpdx,
+      licensesJson,
+    ] = values;
+    for (const [field, value] of [["groupId", group], ["artifactId", name], ["version", version]]) {
+      requiredMavenManifestText(value, `${label} ${field}`);
+      if (!MAVEN_MANIFEST_TOKEN.test(value)) {
+        throw error(`${label} ${field} contains non-portable Maven characters`);
+      }
+    }
+    requiredMavenManifestText(artifactPath, `${label} artifact path`);
+    requiredMavenManifestText(displayName, `${label} display name`);
+    requiredMavenManifestText(description, `${label} description`);
+    if ((runtimeProduct.length === 0) !== (runtimeVersion.length === 0)) {
+      throw error(`${label} must declare both runtime product and version or neither`);
+    }
+    if (runtimeProduct.length > 0) {
+      requiredMavenManifestText(runtimeProduct, `${label} runtime product`);
+      requiredMavenManifestText(runtimeVersion, `${label} runtime version`);
+    }
+    requiredMavenManifestText(licenseSpdx, `${label} SPDX expression`);
+    mavenManifestLicenses(licensesJson, `${label} licenses`);
+    if (
+      group === "dev.oliphaunt.extensions"
+      && (runtimeProduct !== "liboliphaunt-native" || !STABLE_SEMVER.test(runtimeVersion))
+    ) {
+      throw error(`${label} extension carrier must bind an exact stable liboliphaunt-native runtime version`);
+    }
+    const coordinate = `${group}:${name}:${version}`;
+    if (coordinates.has(coordinate)) {
+      throw error(`${rel(file)} contains duplicate Maven coordinate ${coordinate}`);
+    }
+    coordinates.add(coordinate);
     const artifact = path.resolve(ROOT, artifactPath);
-    if (!isFile(artifact)) {
-      throw error(`${rel(file)} line ${index + 1} references missing Maven artifact ${artifactPath}`);
+    if (!artifactPath.endsWith(".tar.gz") || !isFile(artifact)) {
+      throw error(`${label} references a missing or non-tar.gz Maven artifact ${artifactPath}`);
     }
     records.push({
       ecosystem: "maven",
@@ -388,7 +475,12 @@ function mergeArtifactRecord(records, record) {
         .map((artifact) => [`${artifact.sha256}:${artifact.size}`, artifact]),
     );
     if (variants.size !== 1) {
-      throw error(`duplicate artifact identity ${id} has conflicting candidate bytes`);
+      const candidates = [...existing.artifacts, ...record.artifacts]
+        .map((artifact) => `${artifact.path} (${artifact.sha256}, ${artifact.size} bytes)`)
+        .sort(compareText);
+      throw error(
+        `duplicate artifact identity ${id} has conflicting candidate bytes: ${candidates.join(", ")}`,
+      );
     }
     existing.artifacts = [[...variants.values()][0], ...existing.artifacts, ...record.artifacts]
       .sort((left, right) => compareText(left.path, right.path))

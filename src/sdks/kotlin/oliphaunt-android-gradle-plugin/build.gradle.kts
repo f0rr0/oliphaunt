@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+
 plugins {
     `java-gradle-plugin`
     `maven-publish`
@@ -6,6 +8,26 @@ plugins {
 
 group = providers.gradleProperty("GROUP").orElse("dev.oliphaunt").get()
 version = providers.gradleProperty("VERSION_NAME").orElse("0.0.0").get()
+
+val baseReleaseNoticeFiles =
+    files(
+        rootProject.file("../../../LICENSE"),
+        rootProject.file("../../../THIRD_PARTY_NOTICES.md"),
+    )
+val publishedArchiveTaskNames = setOf("jar", "plainJavadocJar", "sourcesJar")
+
+tasks.withType<AbstractArchiveTask>().configureEach {
+    if (name in publishedArchiveTaskNames) {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+        from(baseReleaseNoticeFiles) {
+            into("META-INF")
+            filePermissions {
+                unix("0644")
+            }
+        }
+    }
+}
 
 java {
     toolchain {
@@ -64,8 +86,8 @@ mavenPublishing {
         url.set("https://github.com/f0rr0/oliphaunt")
         licenses {
             license {
-                name.set("MIT AND Apache-2.0 AND PostgreSQL")
-                url.set("https://github.com/f0rr0/oliphaunt/blob/main/LICENSE")
+                name.set("MIT License")
+                url.set("https://github.com/f0rr0/oliphaunt/blob/oliphaunt-kotlin-v${project.version}/LICENSE")
                 distribution.set("repo")
             }
         }

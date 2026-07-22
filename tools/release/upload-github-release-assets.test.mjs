@@ -460,6 +460,8 @@ test("the complete aggregate-extension asset path leaves bounded API headroom", 
     // addition to the base target payloads and three metadata files.
     assetCount: expectedExtensionGithubReleaseAssetCount(product),
   }));
+  assert.equal(products.length, 8);
+  assert.equal(products.includes("oliphaunt-extension-postgis"), true);
   assert.equal(catalog.reduce((total, { assetCount }) => total + assetCount, 0), 108);
   assert.equal(MAX_SAFE_EMBEDDED_RELEASE_ASSETS, 0);
   let requests = 0;

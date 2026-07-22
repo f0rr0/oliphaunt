@@ -127,6 +127,24 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  broker-dependency-license-audit:
+    tags: ["policy", "assertion", "quality", "static", "ci-rust"]
+    command: "tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs audit-contract"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/benchmarks/**/Cargo.toml"
+      - "/examples/**/Cargo.toml"
+      - "/src/**/Cargo.toml"
+      - "/tools/**/Cargo.toml"
+      - "/src/runtimes/broker/dependency-licenses.json"
+      - "/src/runtimes/broker/dependency-license-blobs/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
     command: "true"

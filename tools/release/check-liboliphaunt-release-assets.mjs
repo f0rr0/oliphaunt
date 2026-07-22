@@ -23,6 +23,10 @@ import {
 } from "./release-artifact-targets.mjs";
 import { inspectPlatformBinaryTree } from "./platform-binary-contract.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  releaseNoticeRows,
+} from "./release-notices.mjs";
 
 const PREFIX = "check-liboliphaunt-release-assets.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -185,6 +189,18 @@ function readArchiveEntries(file) {
 
 function archiveMemberNames(file) {
   return new Set(readArchiveEntries(file).keys());
+}
+
+function releaseNoticeNamespaceNames(profile) {
+  const names = new Set();
+  for (const { member } of releaseNoticeRows({ profile })) {
+    names.add(member);
+    const parts = member.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      names.add(parts.slice(0, index).join("/"));
+    }
+  }
+  return names;
 }
 
 function archiveText(entries, file, memberName) {
@@ -389,6 +405,7 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
 }
 
 function validateIcuDataArtifactContents(file) {
+  assertReleaseNoticesInArchive(file, { profile: "native-icu-data" });
   const names = archiveMemberNames(file);
   const icuEntries = [...names]
     .filter((name) => {
@@ -402,11 +419,37 @@ function validateIcuDataArtifactContents(file) {
   if (icuEntries.length === 0) {
     fail(`${file} must contain ICU data files under share/icu/icudt*`);
   }
+  const legalNames = releaseNoticeNamespaceNames("native-icu-data");
   const unexpected = [...names]
-    .filter((name) => name !== "." && name !== "share" && name !== "share/icu" && !name.startsWith("share/icu/"))
+    .filter((name) =>
+      name !== "."
+      && name !== "share"
+      && name !== "share/icu"
+      && !name.startsWith("share/icu/")
+      && !legalNames.has(name))
     .sort(compareText);
   if (unexpected.length > 0) {
     fail(`${file} must contain only share/icu data, found: ${unexpected.slice(0, 5).join(", ")}`);
+  }
+}
+
+function validateReleaseNoticeClosure(assetDir, version) {
+  const profileByKind = new Map([
+    ["native-runtime", "native-runtime"],
+    ["native-tools", "native-tools"],
+    ["apple-swiftpm-binary", "native-runtime"],
+    ["runtime-resources", "native-runtime-resources"],
+    ["icu-data", "native-icu-data"],
+  ]);
+  for (const target of allArtifactTargets({
+    product: PRODUCT,
+    surface: "github-release",
+    publishedOnly: true,
+  })) {
+    const profile = profileByKind.get(target.kind);
+    if (profile !== undefined) {
+      assertReleaseNoticesInArchive(path.join(assetDir, assetName(target, version)), { profile });
+    }
   }
 }
 
@@ -510,6 +553,7 @@ async function validate(assetDir) {
   for (const filename of required) {
     requireFile(path.join(assetDir, filename), `liboliphaunt release artifact ${filename}`);
   }
+  validateReleaseNoticeClosure(assetDir, version);
   const leakedExtensionAssets = [...actual]
     .filter((name) => name.includes("extension") && !name.endsWith("-release-assets.sha256"))
     .sort(compareText);

@@ -49,6 +49,8 @@ tasks:
       - "extension-artifacts-wasix:check"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
@@ -58,8 +60,19 @@ tasks:
       - "!/src/extensions/evidence"
       - "!/src/extensions/evidence/**"
       - "/src/postgres/versions/18/**/*"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/tools/policy/source-fetch-core.mjs"
+      # These tools execute in the same hosted qualification job before this
+      # public-only packager. Keep their affected edge here without making
+      # either tool part of a release product's semantic identity.
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-target-profiles.toml"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/verify-extension-qualification-build.mjs"
       - "/tools/xtask/**/*"
     outputs:
       - "/target/extensions/wasix/release-assets/**/*"

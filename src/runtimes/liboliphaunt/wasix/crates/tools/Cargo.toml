@@ -7,7 +7,7 @@ description = "WASIX pg_dump and psql assets for oliphaunt-wasix"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
 documentation = "https://docs.rs/oliphaunt-wasix-tools"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
 publish = false
 links = "oliphaunt_artifact_oliphaunt_wasix_tools"
 include = [
@@ -16,6 +16,11 @@ include = [
   "README.md",
   "src/**",
   "payload/**",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
+  "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+  "THIRD_PARTY_LICENSES/ICU-LICENSE",
 ]
 
 [package.metadata.oliphaunt-wasix-tools.assets]

@@ -7,11 +7,16 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  NATIVE_CARGO_CARRIER_LICENSES,
   nativePayloadPlatformCommand,
   renderUnsupportedToolsTargetGuard,
 } from "./package-liboliphaunt-cargo-artifacts.mjs";
 import { assertLockedArtifactSet, discoverPublicationArtifacts } from "./publication-lock.mjs";
 import { elfFixture } from "../test/release-fixture-utils.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -77,6 +82,8 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     for (const name of ["pg_dump", "psql"]) {
       writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);
     }
+    stageReleaseNotices(runtime, { profile: "native-runtime" });
+    stageReleaseNotices(tools, { profile: "native-tools" });
     mkdirSync(assets, { recursive: true });
     archiveFixture(runtime, path.join(assets, "liboliphaunt-9.8.7-linux-x64-gnu.tar.gz"));
     archiveFixture(tools, path.join(assets, "oliphaunt-tools-9.8.7-linux-x64-gnu.tar.gz"));
@@ -88,7 +95,7 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
       "--work-dir", work,
       "--version", "9.8.7",
       "--target", "linux-x64-gnu",
-      "--part-bytes", "1024",
+      "--part-bytes", "65536",
     ];
     run(process.execPath, packageArgs, {
       env: {
@@ -103,6 +110,24 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.deepEqual(new Set(manifest.packages.map(({ role }) => role)), new Set(["part", "aggregator", "facade"]));
     assert.ok(manifest.packages.every(({ cratePath }) => typeof cratePath === "string" && cratePath.endsWith(".crate")));
     assert.equal(readdirSync(output).filter((name) => name.endsWith(".crate")).length, manifest.packages.length);
+    for (const item of manifest.packages) {
+      const expectedProfile = item.role === "part" ? item.kind : "code-facade";
+      assert.equal(item.noticeProfile, expectedProfile, `${item.name} must freeze its carrier notice profile`);
+      const packedManifest = commandOutput("tar", [
+        "-xOzf",
+        path.resolve(ROOT, item.cratePath),
+        `${item.name}-9.8.7/Cargo.toml`,
+      ]);
+      assert.equal(
+        Bun.TOML.parse(packedManifest).package.license,
+        NATIVE_CARGO_CARRIER_LICENSES[expectedProfile],
+        `${item.name} must declare its exact role license closure`,
+      );
+      assertReleaseNoticesInArchive(path.resolve(ROOT, item.cratePath), {
+        prefix: `${item.name}-9.8.7`,
+        profile: expectedProfile,
+      });
+    }
 
     const records = discoverPublicationArtifacts([output]);
     assert.equal(records.length, manifest.packages.length);

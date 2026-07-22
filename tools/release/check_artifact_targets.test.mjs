@@ -107,11 +107,10 @@ describe("extension and CI exact-set projections", () => {
     expect(stats.run).toContain("ccache --show-stats");
   });
 
-  test("persists target-scoped ccache directories for desktop and iOS runtimes", () => {
+  test("keeps target-scoped compiler state job-local for desktop and iOS runtimes", () => {
     for (const jobId of ["liboliphaunt-native-desktop", "liboliphaunt-native-ios"]) {
       const job = ci.jobs[jobId];
-      const prepare = job.steps.find(({ name }) => name === "Prepare native compiler cache paths");
-      const cache = job.steps.find(({ name }) => name === "Restore native compiler cache");
+      const prepare = job.steps.find(({ name }) => name === "Prepare native build paths");
 
       expect(job.env.CCACHE_DIR).toBe(
         "${{ github.workspace }}/.ci-cache/ccache/native-runtime/${{ matrix.target }}",
@@ -120,20 +119,13 @@ describe("extension and CI exact-set projections", () => {
       expect(job.env.CCACHE_COMPILERCHECK).toBe("content");
       expect(job.env.CCACHE_COMPRESS).toBe("true");
       expect(job.env.OLIPHAUNT_CCACHE_ZERO_STATS).toBe("1");
-      expect(cache.with.path).toContain("${{ env.CCACHE_DIR }}");
-      expect(cache.with.path).toContain("${{ matrix.build-root }}");
-      expect(cache.with.path).not.toContain("~/.ccache");
-      expect(cache.with.key).toContain("liboliphaunt-native-ccache-v2-");
+      expect(job.steps.some(({ uses }) => String(uses ?? "").startsWith("actions/cache/"))).toBe(false);
+      expect(prepare.env.NATIVE_BUILD_ROOT).toBe("${{ matrix.build-root }}");
+      expect(prepare.run).toContain('mkdir -p');
+      expect(prepare.run).toContain('$NATIVE_BUILD_ROOT');
       if (jobId === "liboliphaunt-native-desktop") {
-        const windowsCache = job.steps.find(({ name }) => name === "Restore native Windows build cache");
-        expect(prepare.run).toContain('mkdir -p "$NATIVE_BUILD_ROOT"');
         expect(prepare.run).toContain('if [[ "$RUNNER_OS" != "Windows" ]]');
         expect(prepare.run).toContain('mkdir -p "$CCACHE_DIR"');
-        expect(cache.if).toBe("${{ runner.os != 'Windows' }}");
-        expect(windowsCache.if).toBe("${{ runner.os == 'Windows' }}");
-        expect(windowsCache.with.path).toBe("${{ matrix.build-root }}");
-        expect(windowsCache.with.path).not.toContain("CCACHE_DIR");
-        expect(windowsCache.with.key).toContain("liboliphaunt-native-build-v2-");
       } else {
         expect(prepare.run).toContain('mkdir -p "$CCACHE_DIR" "$NATIVE_BUILD_ROOT"');
       }

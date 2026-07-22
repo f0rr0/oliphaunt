@@ -12,6 +12,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.jetbrains.dokka.gradle.engine.parameters.VisibilityModifier
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import java.nio.file.Files
@@ -174,8 +175,8 @@ mavenPublishing {
         url.set("https://github.com/f0rr0/oliphaunt")
         licenses {
             license {
-                name.set("MIT AND Apache-2.0 AND PostgreSQL")
-                url.set("https://github.com/f0rr0/oliphaunt/blob/main/LICENSE")
+                name.set("MIT License")
+                url.set("https://github.com/f0rr0/oliphaunt/blob/oliphaunt-kotlin-v${project.version}/LICENSE")
                 distribution.set("repo")
             }
         }
@@ -1043,6 +1044,31 @@ kotlin {
 
 val supportedMavenPublication = "androidRelease"
 val supportedMavenPublicationTaskToken = "AndroidRelease"
+val baseReleaseNoticeFiles =
+    files(
+        rootProject.file("../../../LICENSE"),
+        rootProject.file("../../../THIRD_PARTY_NOTICES.md"),
+    )
+val publishedArchiveTaskNames =
+    setOf(
+        "androidReleaseDokkaJavadocJar",
+        "androidReleaseSourcesJar",
+        "bundleReleaseAar",
+    )
+
+tasks.withType<AbstractArchiveTask>().configureEach {
+    if (name in publishedArchiveTaskNames) {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+        from(baseReleaseNoticeFiles) {
+            into("META-INF")
+            filePermissions {
+                unix("0644")
+            }
+        }
+    }
+}
+
 val publicationTaskName =
     Regex(
         "^(?:publish|sign|generatePomFileFor|generateMetadataFileFor)" +

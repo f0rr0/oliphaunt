@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import test from "node:test";
-import { deflateRawSync, gunzipSync, gzipSync } from "node:zlib";
+import { deflateRawSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
 
 import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
@@ -282,6 +282,33 @@ test("rejects trailing bytes, concatenated gzip members, and corrupt gzip traile
   corrupt[corrupt.length - 8] ^= 1;
   const corruptTrailer = fixtureFile(t, "corrupt-trailer.tar.gz", corrupt).file;
   assert.throws(() => readPortableArchiveEntries(corruptTrailer), /gzip payload CRC-32/u);
+});
+
+test("reads one Zstandard frame and rejects trailing bytes or concatenated frames", (t) => {
+  const tar = gunzipForTest(tarArchive([{ name: "root/file", data: "payload" }]));
+  const valid = zstdCompressSync(tar);
+  const archive = fixtureFile(t, "valid.tar.zst", valid).file;
+  assert.equal(readPortableArchiveEntries(archive).get("root/file").data().toString(), "payload");
+
+  const trailing = fixtureFile(
+    t,
+    "trailing.tar.zst",
+    Buffer.concat([valid, Buffer.from("trailing")]),
+  ).file;
+  assert.throws(
+    () => readPortableArchiveEntries(trailing),
+    /trailing data or multiple Zstandard frames/u,
+  );
+
+  const concatenated = fixtureFile(
+    t,
+    "concatenated.tar.zst",
+    Buffer.concat([valid, valid]),
+  ).file;
+  assert.throws(
+    () => readPortableArchiveEntries(concatenated),
+    /trailing data or multiple Zstandard frames/u,
+  );
 });
 
 test("rejects symlink archive inputs before parsing", (t) => {

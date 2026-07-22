@@ -1,5 +1,12 @@
 const MINUTE_MS = 60_000;
 
+// The root transport helper performs one exact-ref read, at most one
+// non-replayed create, and at most one read-only ambiguous-result
+// reconciliation. Its workflow step also covers bounded response parsing and
+// local journal admission without pretending the mutation itself is retryable.
+export const RELEASE_TRANSPORT_REF_MAX_CORE_REQUESTS = 3;
+export const RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES = 3;
+
 // The inspector performs two immutable ZIP downloads, waits for the parent and
 // its child-authorization artifact, and may make three standalone metadata
 // reads (continuation artifact, lineage root, and current run). Keep these
@@ -33,10 +40,11 @@ export const RELEASE_CONTINUATION_PREPARATION_RETRY_ENVELOPE_MS =
   * RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS;
 export const RELEASE_CONTINUATION_PREPARATION_STEP_TIMEOUT_MINUTES = 3;
 
-// A continuation dispatcher performs four standalone metadata reads, one
-// immutable artifact download, at most one bounded not-before wait, and one
-// non-replayed workflow-dispatch POST. Keep the full transport envelope below
-// the step timeout, then reserve separate job time for pinned setup, the
+// A continuation dispatcher performs four standalone metadata reads (artifact,
+// parent run, and the exact immutable transport ref before and after any
+// not-before wait), one immutable artifact download, at most one bounded wait,
+// and one non-replayed workflow-dispatch POST. Keep the full transport envelope
+// below the step timeout, then reserve separate job time for pinned setup, the
 // authorization upload, runner transitions, and cleanup.
 export const RELEASE_CONTINUATION_DISPATCH_METADATA_READ_COUNT = 4;
 export const RELEASE_CONTINUATION_DISPATCH_DELAY_DEADLINE_MS = 15 * MINUTE_MS;

@@ -2,7 +2,7 @@
   "name": "@oliphaunt/node-direct",
   "version": "0.0.0",
   "description": "Node-API native direct adapter for Oliphaunt.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "repository": {
@@ -18,7 +18,9 @@
     "packages",
     "tools",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "tools/build-node-addon.sh",

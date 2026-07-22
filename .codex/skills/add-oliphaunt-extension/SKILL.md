@@ -14,28 +14,41 @@ Make support claims fail closed. A runtime target existing does not prove an ext
   `src/extensions/contrib/`; that product is `runtime-bound` and is linked to
   both liboliphaunt runtimes. A contrib member does not own a leaf `VERSION`,
   changelog, `release.toml`, tag, or registry identity.
-- external: source uses an immutable upstream commit, packaging versioning is `upstream-bound`, and runtime versions are compatibility metadata rather than release coupling.
-- blocked: keep it out of promoted/public catalogs and record the concrete blocker.
+- external-public: source uses an immutable upstream commit, packaging versioning is `upstream-bound`, and runtime versions are compatibility metadata rather than release coupling. `release.toml` is the active public-product boundary.
+- external-deferred: keep `build = true` and `stable = false`, record the concrete blocker in both promotion metadata and `publication-blocker.toml`, and qualify the declared target profiles without creating or retaining `release.toml`, `VERSION`, `CHANGELOG.md`, registry carriers, public SDK entries, or release assets.
+- blocked and not buildable: keep it out of both the requested build set and promoted/public catalogs, and record the concrete blocker.
 
 Keep the SQL extension name distinct from the release product id and upstream project name.
 
 ## Implement
 
 1. Add or update source pins, checksums, patches/dependency recipes, and Moon
-   metadata. For an external extension, also maintain its product-local
-   `release.toml`, `VERSION`, and empty first-release `CHANGELOG.md`. For a
-   contrib member, update the canonical `postgres18.toml` inventory and the
+   metadata. For a public external extension, also maintain its product-local
+   `release.toml`, `VERSION`, and empty first-release `CHANGELOG.md`. Every
+   public or deferred external extension must own
+   `upstream-license-data.json` beside that metadata. Freeze exactly the source
+   identities and license/notice rows used by that extension, include only the
+   referenced content-addressed blobs, and audit those bytes against the clean
+   pinned checkout. Never put independently versioned extensions into one
+   shared legal-data file. For a deferred external extension, omit all three
+   release files and retain a validated `publication-blocker.toml`; candidate
+   outputs must remain job-local and absent from publication catalogs and
+   locks. Promotion must retain the product-local legal closure while adding
+   release state; removal must remove the closure only when neither public nor
+   deferred qualification still consumes it. For a contrib member, update the canonical `postgres18.toml` inventory and the
    shared contrib product metadata; never create leaf release state. Check
    whether the upstream project operates an authoritative HTTPS Git mirror.
    When it does, record that reviewed endpoint as `mirror_url` and prove that
    it serves the exact pinned commit; never infer a mirror or use a community
    fork merely for availability.
 2. Declare every supported and intentionally unsupported carrier in `targets/artifacts.toml`. Include evidence references; never rely on derived defaults.
-3. Declare the stable Cargo façade plus native, mobile, WASIX portable/AOT, npm,
-   and Maven carriers actually required by the owning release product. Contrib
-   members use the shared bundle carriers and retain exact nested member
-   paths/checksums; external extensions use their independent carriers. Let
-   size-required Cargo package parts remain dynamic implementation carriers.
+3. For an active public product, declare the stable Cargo façade plus native,
+   mobile, WASIX portable/AOT, npm, and Maven carriers actually required by the
+   owning release product. Contrib members use the shared bundle carriers and
+   retain exact nested member paths/checksums; public external extensions use
+   their independent carriers. Deferred extensions declare qualification
+   target profiles, not carrier identities. Let size-required Cargo package
+   parts remain dynamic implementation carriers.
 4. Regenerate the shared extension model:
 
 ```sh
@@ -68,8 +81,10 @@ the durable origin and every transport must resolve to the same immutable pin.
    are staged even though one target carrier contains all contrib bytes. Also
    combine one contrib member with an independently versioned external member.
    Confirm target selection fetches only the expected carriers and an
-   unsupported target fails with a useful error.
+   unsupported target fails with a useful error. Verify each carrier's derived
+   license and notice profile; a passing profile check is not legal advice or
+   certification of comprehensive legal compliance.
 
 ## Review
 
-Reject the change if a declared target lacks a produced artifact/evidence row, an actual package lacks a declared identity, an external extension is runtime-version-coupled, or generated SDK support tables disagree. Report upstream source identity separately from Oliphaunt package version.
+Reject the change if a declared target lacks a produced artifact/evidence row, an actual package lacks a declared identity, an external extension is runtime-version-coupled, or generated SDK support tables disagree. Also reject a deferred extension if it appears in Release Please, release semantic product ownership, the publication graph or lock, a public SDK/runtime feature, or an uploaded artifact. Report upstream source identity separately from Oliphaunt package version.

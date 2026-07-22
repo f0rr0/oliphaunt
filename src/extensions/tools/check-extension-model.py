@@ -36,6 +36,7 @@ EXTENSION_ENVELOPE_FILENAMES = {
     "CHANGELOG.md",
     "VERSION",
     "artifacts.toml",
+    "publication-blocker.toml",
     "release.toml",
 }
 GENERATED_SDKS = {
@@ -57,6 +58,9 @@ GENERATED_RN_SDK_MODULE = ROOT / "src/sdks/react-native/src/generated/extensions
 GENERATED_RN_PLUGIN_METADATA = ROOT / "src/sdks/react-native/src/generated/extensions.json"
 GENERATED_MOBILE_REGISTRY = ROOT / "src/extensions/generated/mobile/static-registry.json"
 GENERATED_MOBILE_STATIC_SPECS = ROOT / "src/extensions/generated/mobile/static-extensions.tsv"
+GENERATED_MOBILE_QUALIFICATION_STATIC_SPECS = (
+    ROOT / "src/extensions/generated/mobile/qualification-static-extensions.tsv"
+)
 GENERATED_WASIX_METADATA = ROOT / "src/extensions/generated/wasix/extensions.json"
 BIOME_VERSION = "2.4.16"
 CHECK_EXTENSION_MODEL_PATH = "src/extensions/tools/check-extension-model.mjs"
@@ -1830,14 +1834,49 @@ def generated_mobile_registry(catalog: dict) -> dict:
     }
 
 
-def generated_mobile_static_specs(catalog: dict, build_plan: dict) -> str:
+def generated_mobile_qualification_modules(catalog: dict) -> list[dict]:
+    rows = []
+    for extension in catalog.get("extensions", []):
+        promotion = extension.get("promotion") or {}
+        # Qualification-only metadata is reserved for explicitly requested,
+        # publication-deferred candidates. Public products already live in
+        # static-extensions.tsv and must not be duplicated into this private
+        # projection merely because they are requested for the normal build.
+        if (
+            promotion.get("requested") is not True
+            or promotion.get("stable") is not False
+            or not isinstance(promotion.get("blocker"), str)
+            or not promotion["blocker"].strip()
+        ):
+            continue
+        stem = native_module_stem(extension)
+        if stem is None:
+            continue
+        rows.append(
+            {
+                "id": extension.get("id"),
+                "sql-name": extension.get("sql-name", extension.get("id")),
+                "native-module-stem": stem,
+            }
+        )
+    rows.sort(key=lambda row: (str(row["sql-name"]), str(row["id"])))
+    return rows
+
+
+def generated_mobile_static_specs(
+    catalog: dict,
+    build_plan: dict,
+    *,
+    modules: list[dict] | None = None,
+) -> str:
     plan_by_sql_name = {
         row.get("sql-name", row.get("id")): row
         for row in build_plan.get("extensions", [])
         if isinstance(row, dict)
     }
     rows = []
-    for module in generated_mobile_registry(catalog)["modules"]:
+    selected_modules = generated_mobile_registry(catalog)["modules"] if modules is None else modules
+    for module in selected_modules:
         sql_name = module["sql-name"]
         plan = plan_by_sql_name.get(sql_name)
         if plan is None:
@@ -1992,6 +2031,15 @@ def validate_generated_sdk_metadata(catalog: dict, build_plan: dict, write: bool
     validate_generated_text_file(
         GENERATED_MOBILE_STATIC_SPECS,
         generated_mobile_static_specs(catalog, build_plan),
+        write,
+    )
+    validate_generated_text_file(
+        GENERATED_MOBILE_QUALIFICATION_STATIC_SPECS,
+        generated_mobile_static_specs(
+            catalog,
+            build_plan,
+            modules=generated_mobile_qualification_modules(catalog),
+        ),
         write,
     )
     validate_generated_file(GENERATED_WASIX_METADATA, generated_wasix_metadata(catalog), write)
@@ -2697,7 +2745,10 @@ def main() -> None:
         write_evidence_files(catalog)
     elif args.observed_at:
         fail("--observed-at requires --record-wasix-evidence-run")
-    if args.write_evidence:
+    # A public-set transition changes the evidence claim matrix and every
+    # public SDK/support projection together.  Keep --write a one-command
+    # fixed point while preserving immutable observed evidence run JSON.
+    if args.write or args.write_evidence:
         write_evidence_files(catalog)
     validate_extension_release_metadata()
     validate_contrib_recipe(build_plan)

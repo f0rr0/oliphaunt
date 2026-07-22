@@ -24,6 +24,7 @@ tasks:
       - "/src/sources/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
@@ -32,6 +33,10 @@ tasks:
       - "/tools/policy/fetch-sources.mjs"
       - "/tools/policy/source-fetch-core.mjs"
       - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -43,9 +48,14 @@ tasks:
       - "/src/sources/third-party/native/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
       - "/tools/policy/fetch-sources.mjs"
       - "/tools/policy/source-fetch-core.mjs"
       - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -58,6 +68,7 @@ tasks:
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
@@ -66,6 +77,10 @@ tasks:
       - "/tools/policy/fetch-sources.mjs"
       - "/tools/policy/source-fetch-core.mjs"
       - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -75,9 +90,14 @@ tasks:
     inputs:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
       - "/tools/policy/fetch-sources.mjs"
       - "/tools/policy/source-fetch-core.mjs"
       - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true

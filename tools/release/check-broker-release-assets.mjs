@@ -23,6 +23,7 @@ import {
   inspectPortableExecutable,
   windowsVcRuntimeImports,
 } from "./windows-vc-runtime-closure.mjs";
+import { assertBrokerDependencyLicensesInEntries } from "./broker-dependency-license-contract.mjs";
 
 const PREFIX = "check-broker-release-assets.mjs";
 const PRODUCT = "oliphaunt-broker";
@@ -53,6 +54,14 @@ function parseArgs(argv) {
 
 async function validateArchive(file, target) {
   const entries = await readArchiveEntries(file, fail, PREFIX, "broker");
+  try {
+    assertBrokerDependencyLicensesInEntries(entries, {
+      target: target.target,
+      label: path.basename(file),
+    });
+  } catch (error) {
+    fail(PREFIX, error instanceof Error ? error.message : String(error));
+  }
   const executable = target.executableRelativePath;
   if (!entries.has(executable)) {
     fail(PREFIX, `${path.basename(file)} is missing ${executable}`);

@@ -45,7 +45,10 @@ function liveAssetCounts() {
 
 describe("bounded concurrent GitHub release asset upload plan", () => {
   test("admits the exact 18-product/141-asset topology as three bounded five-lane waves", () => {
-    const plan = concurrentGithubReleaseAssetUploadPlan(liveAssetCounts());
+    const counts = liveAssetCounts();
+    expect(counts.size).toBe(18);
+    expect(counts.has("oliphaunt-extension-postgis")).toBe(true);
+    const plan = concurrentGithubReleaseAssetUploadPlan(counts);
     expect(plan.productCount).toBe(12);
     expect(plan.assetCount).toBe(141);
     expect(plan.waves).toHaveLength(3);

@@ -20,12 +20,12 @@ if grep -Eq 'uses:[[:space:]]+actions/setup-node@|corepack([[:space:]]|$)|instal
 fi
 grep -Fq 'uses: ./.github/actions/setup-node-runtime' "$action" ||
   fail "standalone action does not compose the verified Node runtime"
+# shellcheck disable=SC2016 # The assertion intentionally matches literal shell syntax in the action.
 grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action" ||
   fail "standalone action does not export a native Windows pnpm path"
-grep -Fq 'mkdir_path="$(cygpath -u "$store_path")"' "$action" ||
-  fail "standalone action does not normalize the Windows pnpm store for Bash"
-grep -Fq 'cache_path="$(cygpath -w "$mkdir_path")"' "$action" ||
-  fail "standalone action does not return a native Windows pnpm cache path"
+if grep -Eq 'pnpm[ -]store|pnpm-store-|steps\.pnpm-store' "$action"; then
+  fail "standalone setup must not cache a pnpm store before caller dependency installation"
+fi
 
 fixture="$tmp/pnpm-11.5.0.tgz"
 manifest="$tmp/pnpm.toml"

@@ -45,6 +45,7 @@ check_static() {
   require_file "$package_dir/native/node-addon/oliphaunt_node.cc"
   require_file "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
   require_file "$package_dir/tools/build-node-addon.sh"
+  require_file "$package_dir/tools/check-package-metadata.mjs"
   require_file "$package_dir/tools/install-node-fallback.sh"
   require_file "$package_dir/tools/extract-node-headers.mjs"
   require_file "src/sources/toolchains/node.toml"
@@ -60,6 +61,7 @@ check_static() {
     "Node direct build must load-smoke the compiled addon before publishing an artifact"
   require_text "$package_dir/tools/build-node-addon.sh" 'require pnpm' \
     "Node direct packaging must require the pinned workspace package manager"
+  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
   require_text "$package_dir/tools/build-node-addon.sh" 'pnpm --dir "$package_work" pack --pack-destination "$npm_package_dir" --json' \
     "Node direct packaging must use pinned pnpm for deterministic package staging"
   reject_text "$package_dir/tools/build-node-addon.sh" 'require npm' \
@@ -68,6 +70,7 @@ check_static() {
     "Node direct build must use the pinned fallback installer for missing Node headers"
   require_text "$package_dir/tools/build-node-addon.sh" "install-node-fallback.sh windows-lib" \
     "Node direct build must use the pinned fallback installer for missing Windows import libraries"
+  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
   require_text "$package_dir/tools/build-node-addon.sh" '"-I$node_include" "-I$oliphaunt_include" "$src"' \
     "Node direct MSVC build must include both Node and canonical liboliphaunt ABI headers"
   reject_text "$package_dir/tools/build-node-addon.sh" "https://nodejs.org" \
@@ -94,6 +97,7 @@ check_static() {
   reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     "dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL)" \
     "Node direct must not hide embedded PostgreSQL symbols from extension DSOs"
+  tools/dev/bun.sh "$package_dir/tools/check-package-metadata.mjs"
 }
 
 check_platform_packages() {

@@ -20,10 +20,16 @@ import { gzipSync } from "node:zlib";
 
 import * as extensionMaterializer from "./extension-registry-carrier-materializer.mjs";
 import {
+  extensionCarrierLegalContract,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
+import {
   WINDOWS_STANDARD_USER_EXTENSION_DISCOVERY_PROOF,
 } from "./extension-manifest-discovery-proof.mjs";
 import * as localRegistryCompatibility from "./local-registry-publish.mjs";
 import { publicExtensionReleaseAsset } from "./build-extension-ci-artifacts.mjs";
+import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
+import { stageReleaseNotices } from "./release-notices.mjs";
 import {
   canonicalExtensionNpmTargets,
   cargoMetadataForCrate,
@@ -43,8 +49,12 @@ import {
   extensionNpmTargetPackage,
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
-import { currentProductVersionSync } from "./release-artifact-targets.mjs";
+import {
+  currentProductVersionSync,
+  extensionProductForSqlName,
+} from "./release-artifact-targets.mjs";
 import { tagPrefix } from "./release-graph.mjs";
+import { discoverPublicationArtifacts } from "./publication-lock.mjs";
 import {
   WINDOWS_VC_RUNTIME_RECEIPT,
   windowsVcRuntimeProfileNames,
@@ -76,6 +86,8 @@ const EXTENSION_ARTIFACT_PROPERTY_KEYS = [
   "mobileStaticDependencyArchives",
   "staticSymbolPrefix",
   "staticSymbolAliases",
+  "licenseFiles",
+  "licenseProfile",
   "files",
 ];
 
@@ -137,6 +149,11 @@ function writeExactExtensionArtifact(asset, {
   sharedPreloadLibraries = [],
   extraEntries = [],
 }) {
+  const legal = extensionCarrierLegalContract(
+    extensionProductForSqlName(sqlName, "local-registry-publish.test.mjs"),
+    [sqlName],
+    { family: "native", target },
+  );
   const inventory = {
     sqlName,
     createsExtension: true,
@@ -167,6 +184,8 @@ function writeExactExtensionArtifact(asset, {
     mobileStaticDependencyArchives: "",
     staticSymbolPrefix: "",
     staticSymbolAliases: "",
+    licenseFiles: legal.licenseFiles.join(","),
+    licenseProfile: legal.profile,
     files: "files",
   };
   const entries = new Map([
@@ -186,8 +205,14 @@ function writeExactExtensionArtifact(asset, {
   for (const [name, bytes] of dataFiles) {
     entries.set(`files/share/postgresql/${name}`, bytes);
   }
+  const legalRoot = `${asset}.legal`;
+  rmSync(legalRoot, { recursive: true, force: true });
+  for (const [name, bytes] of exactExtensionLegalEntries(legalRoot, sqlName, legal.profile)) {
+    entries.set(name, bytes);
+  }
   for (const [name, bytes] of extraEntries) entries.set(name, bytes);
   writeFileSync(asset, canonicalExtensionArchive(entries));
+  rmSync(legalRoot, { recursive: true, force: true });
   return inventory;
 }
 
@@ -227,6 +252,15 @@ function filesUnder(root) {
     else files.push(file);
   }
   return files;
+}
+
+function exactExtensionLegalEntries(root, sqlName, profile) {
+  stageReleaseNotices(root, { profile });
+  stageExtensionUpstreamLicenses(sqlName, path.join(root, "files"));
+  return filesUnder(root).map((file) => [
+    path.relative(root, file).split(path.sep).join("/"),
+    readFileSync(file),
+  ]);
 }
 
 test("keeps the local-registry compatibility exports bound to the focused extension materializer", () => {
@@ -747,6 +781,20 @@ test("keeps the full canonical desktop target map in locally staged extension me
   ]);
 });
 
+test("local Cargo staging uses the same prepared legal source as qualified SDK artifacts", () => {
+  const implementation = readFileSync(
+    path.join(ROOT, "tools/release/local-registry-publish.mjs"),
+    "utf8",
+  );
+  expect(implementation).toContain("prepareOliphauntBuildReleaseSource({");
+  expect(implementation).toContain("prepareRustReleaseSource({");
+  expect(implementation).toContain('stageDir: path.join(releaseSourceRoot, "oliphaunt-build")');
+  expect(implementation).toContain('stageDir: path.join(releaseSourceRoot, "oliphaunt")');
+  expect(implementation).not.toContain(
+    'path.join(ROOT, "src/sdks/rust/crates/oliphaunt-build/Cargo.toml")',
+  );
+});
+
 function candidate(carrier, checksum = carrier.name) {
   return {
     cratePath: `/tmp/${carrier.name}-${carrier.version}.crate`,
@@ -858,6 +906,33 @@ test("requires an exact native extension member dependency map", () => {
   )).toThrow('missing=[], extra=["postgis_raster"]');
 });
 
+test("derives extension carrier licenses from physical payload and target semantics", () => {
+  expect(extensionMaterializer.nativeExtensionCarrierLegal(
+    "oliphaunt-extension-contrib-pg18",
+    ["hstore", "pgcrypto"],
+    { carriesPayload: false },
+  )).toEqual({ profile: "code-facade", packageSpdx: "MIT", upstreamMembers: [] });
+  expect(extensionMaterializer.nativeExtensionCarrierLegal(
+    "oliphaunt-extension-contrib-pg18",
+    ["hstore", "pgcrypto"],
+    { target: "linux-x64-gnu", carriesPayload: true },
+  ).packageSpdx).toBe("MIT AND PostgreSQL");
+  expect(extensionMaterializer.nativeExtensionCarrierLegal(
+    "oliphaunt-extension-contrib-pg18",
+    ["hstore", "pgcrypto"],
+    { target: "windows-x64-msvc", carriesPayload: true },
+  ).packageSpdx).toBe("MIT AND PostgreSQL AND Apache-2.0");
+  expect(extensionMaterializer.nativeExtensionCarrierLegal(
+    "oliphaunt-extension-vector",
+    ["vector"],
+    { target: "linux-x64-gnu", carriesPayload: true },
+  )).toEqual({
+    profile: "external-native",
+    packageSpdx: "MIT AND PostgreSQL",
+    upstreamMembers: ["vector"],
+  });
+});
+
 test("native extension Cargo carrier assembly preserves target-qualified module bytes", {
   timeout: 30_000,
 }, async () => {
@@ -944,6 +1019,15 @@ test("native extension Cargo carrier assembly preserves target-qualified module 
     expect(outputs).toHaveLength(1);
     expect(result.skipped).toEqual([]);
     expect(existsSync(stripTrap)).toBe(false);
+    const staging = path.join(root, "staging");
+    expect(existsSync(path.join(staging, "native-extension-sources"))).toBe(false);
+    expect(existsSync(path.join(staging, "native-extension-cargo-target"))).toBe(false);
+    expect(filesUnder(staging).filter((file) => file.endsWith(".crate"))).toEqual(outputs);
+    const discovered = discoverPublicationArtifacts([staging]);
+    expect(discovered.map(({ ecosystem, name, version: artifactVersion }) =>
+      `${ecosystem}:${name}@${artifactVersion}`)).toEqual([
+      `cargo:${nativeExtensionCargoPackageName(product, target)}@${version}`,
+    ]);
 
     const crateName = nativeExtensionCargoPackageName(product, target);
     const packedModule = spawnSync("tar", [
@@ -1158,6 +1242,13 @@ test("split native extension Cargo carrier preserves exact member dependencies",
     const parts = outputs.filter((output) => path.basename(output).startsWith(`${crateName}-part-`));
     expect(parent).toBeDefined();
     expect(parts.length).toBeGreaterThan(1);
+    const staging = path.join(root, "staging");
+    expect(existsSync(path.join(staging, "native-extension-sources"))).toBe(false);
+    expect(existsSync(path.join(staging, "native-extension-cargo-target"))).toBe(false);
+    expect(filesUnder(staging).filter((file) => file.endsWith(".crate"))).toEqual(
+      [...outputs].sort(),
+    );
+    expect(discoverPublicationArtifacts([staging])).toHaveLength(outputs.length);
 
     const packedBuildScript = spawnSync("tar", [
       "-xOzf",
@@ -1331,6 +1422,7 @@ test("native extension npm carrier assembly preserves exact target-qualified run
         { role: "runtime-resources", name: "runtime.tar.gz", url: "https://example.invalid/runtime.tar.gz", sha256: "1".repeat(64), bytes: 1, format: "tar.gz", member: "oliphaunt" },
         { role: "icu-data", name: "icu.tar.gz", url: "https://example.invalid/icu.tar.gz", sha256: "2".repeat(64), bytes: 1, format: "tar.gz", member: "share/icu" },
       ],
+      legal: iosBaseLegalMetadata(),
     })}\n`);
 
     const fakeBin = path.join(root, "fake-bin");

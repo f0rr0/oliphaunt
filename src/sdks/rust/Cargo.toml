@@ -7,8 +7,10 @@ description = "Native-first Rust SDK surface for embedded PostgreSQL through lib
 readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
-license = "MIT AND Apache-2.0 AND PostgreSQL"
+license = "MIT"
 exclude = [
+  ".gitignore",
+  ".release-semantic-inputs.json",
   "crates/oliphaunt-build/**",
   "moon.yml",
   "release.toml",

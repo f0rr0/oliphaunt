@@ -5,6 +5,16 @@ import path from "node:path";
 
 import { runMoon } from "../policy/moon.mjs";
 import { currentVersion } from "./product-version.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  releaseProfileMavenLicenses,
+  releaseProfilePackageLicense,
+} from "./release-notices.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  extensionMavenLicenses,
+  extensionRegistryLicense,
+} from "./extension-upstream-licenses.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "build_maven_artifact_manifest.mjs";
@@ -35,6 +45,18 @@ function fail(message) {
 
 function rel(file) {
   return path.relative(ROOT, file).split(path.sep).join("/");
+}
+
+function assertMavenPayloadLegal(file, profile, sqlNames = []) {
+  try {
+    assertReleaseNoticesInArchive(file, { profile });
+    if (sqlNames.length > 0) {
+      assertExtensionUpstreamLicensesInArchive(sqlNames, file);
+    }
+  } catch (error) {
+    fail(`${rel(file)} failed Maven payload legal closure: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return file;
 }
 
 function repoPath(value) {
@@ -210,12 +232,14 @@ function runtimeMavenArtifactMetadata(target) {
     return {
       name: "Oliphaunt runtime resources",
       description: "Package-managed Oliphaunt PostgreSQL runtime resources for Android app builds.",
+      licenseProfile: "native-runtime-resources",
     };
   }
   if (target.kind === "icu-data") {
     return {
       name: "Oliphaunt ICU data",
       description: "Package-managed optional ICU data files for Oliphaunt app builds.",
+      licenseProfile: "native-icu-data",
     };
   }
   if (target.kind === "native-runtime" && target.target.startsWith("android-")) {
@@ -223,6 +247,7 @@ function runtimeMavenArtifactMetadata(target) {
     return {
       name: `Oliphaunt Android runtime ${abi}`,
       description: `Package-managed liboliphaunt Android runtime for ${abi} app builds.`,
+      licenseProfile: "native-runtime",
     };
   }
   fail(`unsupported liboliphaunt-native Maven artifact target ${target.id}`);
@@ -278,8 +303,23 @@ function tsvRow({
   description,
   runtimeProduct = "",
   runtimeVersion = "",
+  licenseSpdx,
+  licenses,
 }) {
-  const values = [groupId, artifactId, version, rel(file), name, description, runtimeProduct, runtimeVersion];
+  if (typeof licenseSpdx !== "string" || !licenseSpdx) fail(`Maven artifact ${groupId}:${artifactId} has no package SPDX expression`);
+  if (!Array.isArray(licenses) || licenses.length === 0) fail(`Maven artifact ${groupId}:${artifactId} has no structured license entries`);
+  const values = [
+    groupId,
+    artifactId,
+    version,
+    rel(file),
+    name,
+    description,
+    runtimeProduct,
+    runtimeVersion,
+    licenseSpdx,
+    JSON.stringify(licenses),
+  ];
   if (values.some((value) => value.includes("\t") || value.includes("\n"))) {
     fail(`Maven artifact manifest value contains a tab or newline: ${JSON.stringify(values)}`);
   }
@@ -299,14 +339,21 @@ async function runtimeRows(assetRoot) {
     if (artifact === undefined) {
       fail(`liboliphaunt-native Maven artifact ${coordinate} has no release asset mapping`);
     }
+    const file = await requireFile(path.join(assetRoot, artifact.filename), artifactId);
+    assertMavenPayloadLegal(file, artifact.licenseProfile);
     rows.push(
       tsvRow({
         groupId,
         artifactId,
         version,
-        file: await requireFile(path.join(assetRoot, artifact.filename), artifactId),
+        file,
         name: artifact.name,
         description: artifact.description,
+        licenseSpdx: releaseProfilePackageLicense(artifact.licenseProfile).spdx,
+        licenses: releaseProfileMavenLicenses(artifact.licenseProfile, {
+          product: "liboliphaunt-native",
+          version,
+        }),
       }),
     );
   }
@@ -374,17 +421,23 @@ async function extensionArtifactTargets(product) {
   const defaultRows = defaultExtensionTargetRows(product);
   let rows;
   let sourceLabel;
-  const hasOverride = existsSync(overridePath);
-  if (hasOverride) {
+  let hasOverride = false;
+  if (existsSync(overridePath)) {
     const data = await readToml(overridePath);
     if (data.schema !== EXTENSION_ARTIFACT_SCHEMA) {
       fail(`${rel(overridePath)} must use schema = ${JSON.stringify(EXTENSION_ARTIFACT_SCHEMA)}`);
     }
-    if (!Array.isArray(data.targets) || data.targets.length === 0) {
-      fail(`${rel(overridePath)} must define [[targets]] rows`);
+    if (data.targets !== undefined && (!Array.isArray(data.targets) || data.targets.length === 0)) {
+      fail(`${rel(overridePath)} targets must be a non-empty [[targets]] array when supplied`);
     }
-    rows = data.targets;
-    sourceLabel = rel(overridePath);
+    if (Array.isArray(data.targets)) {
+      hasOverride = true;
+      rows = data.targets;
+      sourceLabel = rel(overridePath);
+    } else {
+      rows = defaultRows;
+      sourceLabel = `${productPath}/release.toml`;
+    }
   } else {
     rows = defaultRows;
     sourceLabel = `${productPath}/release.toml`;
@@ -480,6 +533,7 @@ async function extensionRows(extensionRoot, selectedProducts) {
       fail(`${product} release metadata must declare a sorted, unique exact extension member set`);
     }
     const version = await currentVersion(product);
+    const registryLicense = extensionRegistryLicense(product, sqlNames);
     const compatibility = config.extension?.compatibility;
     const runtimeProduct = compatibility?.native_runtime_product;
     const runtimeVersion = compatibility?.native_runtime_version;
@@ -507,16 +561,34 @@ async function extensionRows(extensionRoot, selectedProducts) {
       const memberLabel = sqlNames.length === 1
         ? `the ${sqlNames[0]} PostgreSQL extension`
         : `the PostgreSQL 18 contrib bundle (${sqlNames.length} exact extension members)`;
+      const file = await requireFile(
+        path.join(productRoot, filename),
+        `${product} ${target.target} Maven artifact`,
+      );
+      const licenseProfile = product === "oliphaunt-extension-contrib-pg18"
+        ? "contrib-native-openssl"
+        : "external-native";
+      assertMavenPayloadLegal(
+        file,
+        licenseProfile,
+        product === "oliphaunt-extension-contrib-pg18" ? [] : sqlNames,
+      );
       rows.push(
         tsvRow({
           groupId: "dev.oliphaunt.extensions",
           artifactId: `${product}-${target.target}`,
           version,
-          file: await requireFile(path.join(productRoot, filename), `${product} ${target.target} Maven artifact`),
+          file,
           name: `Oliphaunt ${sqlNames.length === 1 ? `extension ${sqlNames[0]}` : "PostgreSQL 18 contrib extensions"} ${target.target}`,
           description: `Package-managed Oliphaunt Android runtime and static-link artifacts for ${memberLabel} on ${target.target}.`,
           runtimeProduct,
           runtimeVersion,
+          licenseSpdx: product === "oliphaunt-extension-contrib-pg18"
+            ? releaseProfilePackageLicense(licenseProfile).spdx
+            : registryLicense.packageSpdx,
+          licenses: product === "oliphaunt-extension-contrib-pg18"
+            ? releaseProfileMavenLicenses("contrib-native-openssl", { product, version })
+            : extensionMavenLicenses(product, sqlNames, { version }),
         }),
       );
     }

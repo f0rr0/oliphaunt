@@ -82,7 +82,10 @@
           "custom_branch_policies": true
         }
       },
-      "branchPolicies": [{ "name": "main", "type": "branch" }],
+      "branchPolicies": [
+        { "name": "main", "type": "branch" },
+        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+      ],
       "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
     },
     "release-publish": {
@@ -94,7 +97,10 @@
           "custom_branch_policies": true
         }
       },
-      "branchPolicies": [{ "name": "main", "type": "branch" }],
+      "branchPolicies": [
+        { "name": "main", "type": "branch" },
+        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+      ],
       "secretNames": [
         "MAVEN_CENTRAL_PASSWORD",
         "MAVEN_CENTRAL_USERNAME",

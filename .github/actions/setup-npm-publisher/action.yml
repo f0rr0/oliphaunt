@@ -21,7 +21,8 @@ runs:
   using: composite
   steps:
     - name: Restore verified npm publisher archive
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      id: restore_verified_npm_publisher
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-npm-publisher
         key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}
@@ -75,3 +76,11 @@ runs:
           echo "npm-cli=$output_npm_cli"
           echo "execution-envelope=$output_envelope"
         } >> "$GITHUB_OUTPUT"
+
+    - name: Save verified npm publisher archive
+      if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_npm_publisher.outputs.cache-hit != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/oliphaunt-npm-publisher
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}

@@ -1,6 +1,6 @@
 # Extensions
 
-Status: normative extension packaging policy. Last verified: 2026-07-16.
+Status: normative extension packaging policy. Last verified: 2026-07-22.
 Owner: repository maintainers.
 
 Oliphaunt uses exact, opt-in PostgreSQL extension selection. App developers
@@ -29,6 +29,14 @@ source identity, and compatibility metadata live with that product. A catalog
 entry with `build = false` or `stable = false` is not a release member/product
 and must retain a concrete blocker until it qualifies; it must not acquire
 packages merely because its source pin exists.
+
+For an external extension, `release.toml` is the active-public-product
+boundary, not general build metadata. A deferred extension must have no
+`release.toml`, `VERSION`, `CHANGELOG.md`, release-semantic fingerprint,
+Release Please component, or Moon release-product metadata. Its source pin,
+recipe, target profiles, build tasks, and qualification evidence remain so CI
+can continue proving the implementation without reserving or publishing a
+package identity.
 
 Each exact SQL member has an explicit `targets/artifacts.toml`. The file opts
 into named target profiles and may add member-specific target rows; the expanded
@@ -69,6 +77,37 @@ exact contract schema and uses it—not the SDK's current catalog snapshot—to
 qualify the installed package's runtime leaf inventory. The SDK catalog remains
 authoritative for selection, release/package ownership, and dependency
 compatibility.
+
+## Carrier license and notice contract
+
+Extension legal material is derived from the physical payload role. A
+code-only Cargo or npm facade carries only the Oliphaunt MIT profile. A contrib
+native or WASIX payload carries the PostgreSQL profile and carries OpenSSL only
+for an exact target whose selected `pgcrypto` member embeds OpenSSL bytes. An
+external payload carries the exact upstream license and notice files whose
+source identities, paths, URLs, SHA-256 digests, and content-addressed bytes are
+frozen in that product's canonical
+`src/extensions/external/<sql_name>/upstream-license-data.json`. Keeping this
+closure product-local preserves independent extension versioning: a legal-data
+change for one extension cannot bump unrelated external products. Final
+packaging verifies every digest and never depends on ambient source checkouts
+or an implicit network fetch. Source qualification separately proves that the
+committed blobs still match the clean, pinned upstream trees.
+
+The same derived contract applies at every boundary: direct runtime archives,
+mobile dependency archives, nested bundle members, physical aggregates,
+payload-part packages, expanded npm packages, Maven primary artifacts and
+their `sources` and `javadoc` companions, and final Cargo archives. Every final
+archive is checked for an exact root notice profile and exact
+`share/licenses/` namespace, including entry type and mode. Do not copy this
+target/package mapping into documentation; the extension catalog, target
+manifests, release-notice profiles, and upstream-license helper are the
+executable authority.
+
+These checks verify the repository-declared license and notice contents of each
+carrier. Passing them is not legal advice or certification of comprehensive
+legal compliance. PostGIS is an active public external product and follows the
+same carrier checks as every other public external extension.
 
 ## Rust
 
@@ -450,11 +489,11 @@ for release packages. A row enters this catalog only when the product's
 explicit target manifest and current evidence declare that desktop target
 published. There is no contrib/default fallback.
 Rows can be first-party inventory without being desktop release-ready. PostGIS
-is target-specific rather than a blanket exception: native desktop, mobile, and
-WASIX readiness are controlled by their target metadata and build recipes.
-PostGIS mobile metadata is target-owned: a mobile row remains candidate until the selected iOS and Android static
-dependency archives, hash-dependency sets, runtime data, and smoke evidence are
-present.
+is target-specific rather than a blanket exception: native desktop, mobile,
+and WASIX readiness are controlled by its target metadata and build recipes.
+PostGIS mobile release readiness is target-owned and requires the selected iOS
+and Android static dependency archives, hash-dependency sets, runtime data, and
+smoke evidence.
 
 External candidates such as pgGraph and ParadeDB remain internal metadata until
 they have pinned artifacts, redistribution clearance, and direct, broker,
@@ -475,8 +514,8 @@ OpenSSL checkout and links `pgcrypto` against the staged static `libcrypto`.
 `uuid-ossp` is mobile-prebuilt through the first-party portable UUID static
 `libuuid` archive. The Windows native producer links the same portable UUID
 source directly into the `uuid-ossp` module and installs the matching
-control/SQL files. The Windows native PostGIS producer builds the pinned
-GEOS, PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
+control/SQL files. The Windows native PostGIS producer builds the pinned GEOS,
+PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
 `postgis-3` module against those static archives, and stages the matching
 extension SQL plus `proj/proj.db`.
 

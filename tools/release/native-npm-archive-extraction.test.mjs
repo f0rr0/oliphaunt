@@ -18,6 +18,13 @@ import { ROOT } from "./release-cli-utils.mjs";
 
 const ARCHIVER = path.join(ROOT, "tools/release/archive_dir.mjs");
 const NATIVE_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/packages");
+const REQUIRED_LEGAL_FILES = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+  "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+  "THIRD_PARTY_LICENSES/ICU-LICENSE",
+];
 
 function writeFixtureFile(root, relativePath, contents) {
   const file = path.join(root, ...relativePath.split("/"));
@@ -82,7 +89,9 @@ test("native npm descriptors publish every staged payload root", () => {
     const packageJson = JSON.parse(readFileSync(descriptor, "utf8"));
     const libraryRoot = packageJson.oliphaunt?.libraryRelativePath?.split("/")[0];
     const runtimeRoot = packageJson.oliphaunt?.runtimeRelativePath?.split("/")[0];
-    const expected = [...new Set([libraryRoot, "lib", runtimeRoot, "README.md"])].sort();
+    const expected = [
+      ...new Set([libraryRoot, "lib", runtimeRoot, "README.md", ...REQUIRED_LEGAL_FILES]),
+    ].sort();
     expect(packageJson.files?.slice().sort(), descriptor).toEqual(expected);
   }
 });

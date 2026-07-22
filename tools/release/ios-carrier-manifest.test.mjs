@@ -18,11 +18,13 @@ import path from "node:path";
 import test from "node:test";
 
 import { currentProductVersionSync, extensionSqlNames } from "./release-artifact-targets.mjs";
+import { stageExtensionUpstreamLicenses } from "./extension-upstream-licenses.mjs";
 import {
   buildIosCarrierManifest,
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
+import { stageReleaseNotices } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -30,16 +32,23 @@ function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-function archive(root, name, member, format) {
+function archive(root, name, member, format, legal = undefined) {
   const staging = path.join(root, `stage-${name}`);
   const leaf = path.join(staging, member);
-  mkdirSync(path.extname(member) ? path.dirname(leaf) : leaf, { recursive: true });
-  writeFileSync(path.extname(member) ? leaf : path.join(leaf, "payload.txt"), `${name}\n`);
+  mkdirSync(leaf, { recursive: true });
+  writeFileSync(path.join(leaf, "payload.txt"), `${name}\n`);
+  if (legal !== undefined) {
+    const noticeRoot = legal.insideMember ? leaf : staging;
+    stageReleaseNotices(noticeRoot, { profile: legal.profile });
+    if (legal.sqlName !== undefined) {
+      stageExtensionUpstreamLicenses(legal.sqlName, path.join(noticeRoot, "files"));
+    }
+  }
   const output = path.join(root, name);
   if (format === "zip") {
-    execFileSync("zip", ["-qry", output, member], { cwd: staging });
+    execFileSync("zip", ["-qry", output, legal?.insideMember === false ? "." : member], { cwd: staging });
   } else {
-    execFileSync("tar", ["-czf", output, "-C", staging, member]);
+    execFileSync("tar", ["-czf", output, "-C", staging, legal?.insideMember === false ? "." : member]);
   }
   return output;
 }
@@ -145,11 +154,24 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
     const version = currentProductVersionSync("liboliphaunt-native", "ios-carrier-manifest.test");
     const base = path.join(root, "base");
     mkdirSync(base, { recursive: true });
-    archive(base, `liboliphaunt-${version}-apple-spm-xcframework.zip`, "liboliphaunt.xcframework", "zip");
-    archive(base, `liboliphaunt-${version}-runtime-resources.tar.gz`, "oliphaunt", "tar.gz");
-    archive(base, `liboliphaunt-${version}-icu-data.tar.gz`, "share/icu", "tar.gz");
+    archive(base, `liboliphaunt-${version}-apple-spm-xcframework.zip`, "liboliphaunt.xcframework", "zip", {
+      insideMember: true,
+      profile: "native-runtime",
+    });
+    archive(base, `liboliphaunt-${version}-runtime-resources.tar.gz`, "oliphaunt", "tar.gz", {
+      insideMember: false,
+      profile: "native-runtime-resources",
+    });
+    archive(base, `liboliphaunt-${version}-icu-data.tar.gz`, "share/icu", "tar.gz", {
+      insideMember: false,
+      profile: "native-icu-data",
+    });
 
-    const pgtapRuntime = archive(root, "pgtap-runtime.tar.gz", "oliphaunt", "tar.gz");
+    const pgtapRuntime = archive(root, "pgtap-runtime.tar.gz", "oliphaunt", "tar.gz", {
+      insideMember: false,
+      profile: "external-native",
+      sqlName: "pgtap",
+    });
     const pgtap = writeManifest(root, "oliphaunt-extension-pgtap", {
       sqlName: "pgtap",
       extensionSqlFileNames: ["uninstall_pgtap.sql"],
@@ -160,7 +182,11 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       assets: [assetRow(pgtapRuntime, "runtime")],
     });
 
-    const postgisRuntime = archive(root, "postgis-runtime.tar.gz", "oliphaunt", "tar.gz");
+    const postgisRuntime = archive(root, "postgis-runtime.tar.gz", "oliphaunt", "tar.gz", {
+      insideMember: false,
+      profile: "external-native",
+      sqlName: "postgis",
+    });
     const postgisPrimary = archive(root, "postgis-primary.zip", "liboliphaunt_extension_postgis-3.xcframework", "zip");
     const postgisGeos = archive(root, "postgis-geos.zip", "liboliphaunt_dependency_geos.xcframework", "zip");
     const postgis = writeManifest(root, "oliphaunt-extension-postgis", {
@@ -188,7 +214,16 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       localUrls: true,
     }));
     assert.deepEqual(local.base.assets.map(({ role }) => role), ["base-xcframework", "runtime-resources", "icu-data"]);
+    assert.deepEqual(local.legal.base.map(({ assetRole }) => assetRole), ["base-xcframework", "runtime-resources", "icu-data"]);
+    assert.deepEqual(local.legal.base.map(({ spdx }) => spdx), [
+      "MIT AND PostgreSQL AND Unicode-3.0",
+      "MIT AND PostgreSQL",
+      "MIT AND Unicode-3.0",
+    ]);
     assert.deepEqual(local.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);
+    assert.deepEqual(local.legal.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);
+    assert.ok(local.legal.extensions.every(({ files }) => files.every(({ bytes, sha256 }) => bytes > 0 && /^[0-9a-f]{64}$/u.test(sha256))));
+    assert.ok(local.legal.extensions.find(({ sqlName }) => sqlName === "postgis").files.some(({ member }) => member === "files/share/licenses/postgis/COPYING"));
     const sqlOnly = local.extensions[0];
     assert.equal(sqlOnly.nativeModuleStem, null);
     assert.equal(sqlOnly.registration, null);
@@ -330,7 +365,10 @@ test("bundle carriers verify exact nested bytes without consulting truncated tar
       const logicalRoot = path.join(root, "logical", sqlName);
       mkdirSync(logicalRoot, { recursive: true });
       const logicalName = `${product}-${version}-native-ios-runtime.tar.gz`;
-      const logicalFile = archive(logicalRoot, logicalName, "oliphaunt", "tar.gz");
+      const logicalFile = archive(logicalRoot, logicalName, "oliphaunt", "tar.gz", {
+        insideMember: false,
+        profile: "contrib-native",
+      });
       const memberPath = `extensions/${sqlName}/${logicalName}`;
       const nested = path.join(carrierStage, ...memberPath.split("/"));
       mkdirSync(path.dirname(nested), { recursive: true });

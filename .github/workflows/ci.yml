@@ -45,6 +45,11 @@ on:
           - android
           - ios
           - both
+      save_heavy_caches:
+        description: Write the bounded heavy build caches when manually qualifying main
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -66,7 +71,7 @@ env:
   WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
   WASMER_LLVM_LINUX_X64_SHA256: 5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906
   WASMER_LLVM_LINUX_X64_BYTES: 741670068
-  RUST_CACHE_SAVE_IF: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+  HEAVY_CACHE_SAVE_IF: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.save_heavy_caches) }}
   MOON_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
   MOON_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
@@ -160,6 +165,9 @@ jobs:
   release-intent:
     name: Validate commit and PR title
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -190,6 +198,59 @@ jobs:
             subject="$(git log -1 --pretty=%s "$HEAD_REF")"
           fi
           .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF"
+
+      - name: Set up pinned Node.js for history-repair proof
+        id: setup_history_repair_node
+        if: ${{ steps.release_intent.outputs.history_repair == 'true' }}
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Select exact qualified history-repair candidate
+        id: history_repair_qualification
+        if: ${{ steps.release_intent.outputs.history_repair == 'true' }}
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          HISTORY_REPAIR_CANDIDATE_SHA: ${{ steps.release_intent.outputs.history_repair_candidate_sha }}
+        run: |
+          bash .github/scripts/require-workflow-success.sh \
+            CI "$HISTORY_REPAIR_CANDIDATE_SHA" 0 \
+            --event workflow_dispatch \
+            --job Builds \
+            --job Required \
+            --job Qualified \
+            --artifact artifact-build-plan \
+            --artifact oliphaunt-release-candidate
+
+      - name: Download exact qualified history-repair candidate
+        id: history_repair_candidate_download
+        if: ${{ steps.release_intent.outputs.history_repair == 'true' }}
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          HISTORY_REPAIR_ARTIFACT_METADATA: ${{ steps.history_repair_qualification.outputs.artifact_metadata_json }}
+          HISTORY_REPAIR_CANDIDATE_SHA: ${{ steps.release_intent.outputs.history_repair_candidate_sha }}
+          HISTORY_REPAIR_RUN_ID: ${{ steps.history_repair_qualification.outputs.run_id }}
+        run: |
+          node .github/scripts/download-build-artifacts.mjs \
+            CI "$HISTORY_REPAIR_CANDIDATE_SHA" target/history-repair-candidate \
+            --run-id "$HISTORY_REPAIR_RUN_ID" \
+            --artifact-metadata-json "$HISTORY_REPAIR_ARTIFACT_METADATA" \
+            --artifact artifact-build-plan \
+            --artifact oliphaunt-release-candidate
+
+      - name: Verify qualified history-repair tree binding
+        id: history_repair_candidate_binding
+        if: ${{ steps.release_intent.outputs.history_repair == 'true' }}
+        env:
+          CI_RUN_ID: ${{ steps.history_repair_qualification.outputs.run_id }}
+          HISTORY_REPAIR_CANDIDATE_SHA: ${{ steps.release_intent.outputs.history_repair_candidate_sha }}
+          HISTORY_REPAIR_HEAD_SHA: ${{ github.sha }}
+        run: |
+          node .github/scripts/verify-history-repair-candidate.mjs \
+            target/history-repair-candidate/oliphaunt-release-candidate.json \
+            --plan target/history-repair-candidate/ci-plan.json
 
       - name: Require normalized generated release
         id: generated_release_readiness
@@ -222,8 +283,6 @@ jobs:
       - name: Set up Rust
         if: ${{ matrix.requires_rust }}
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up Android
         if: ${{ matrix.requires_android_sdk }}
@@ -260,8 +319,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up Android
         if: ${{ needs.affected.outputs.policy_requires_android_sdk == 'true' }}
@@ -334,13 +391,10 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up Android
         if: ${{ matrix.requires_android_sdk }}
         uses: ./.github/actions/setup-android
-        with:
-          gradle-cache-scope-file: ${{ matrix.target == 'oliphaunt-kotlin:test' && 'src/sdks/kotlin/gradle/cache-scopes/linux-native-tests.txt' || '' }}
 
       - name: Install pinned maintainer tools
         if: ${{ matrix.requires_maintainer_tools }}
@@ -390,7 +444,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.extension_artifacts_native_matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 135
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache/native-extension/${{ matrix.target }}
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -434,19 +488,18 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Prepare native compiler cache path
         if: ${{ matrix.target == 'ios-xcframework' }}
         run: mkdir -p "$CCACHE_DIR"
 
       - name: Restore native compiler cache
+        id: restore_ios_extension_ccache
         if: ${{ matrix.target == 'ios-xcframework' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/**', 'src/runtimes/liboliphaunt/native/**', 'tools/xtask/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
+          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/deps.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/extensions.build-plan.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/qualification-static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
           restore-keys: |
             liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
 
@@ -454,9 +507,11 @@ jobs:
         run: .github/scripts/setup-native-build-tools.sh
 
       - name: Build native exact-extension artifacts
+        timeout-minutes: 120
         env:
           OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}
           OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
+          OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES: ${{ matrix.qualification_sql_names_csv }}
           OLIPHAUNT_BISON: /opt/homebrew/opt/bison/bin/bison
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native
 
@@ -464,6 +519,15 @@ jobs:
         id: validate_ios_extension_carriers
         if: ${{ matrix.target == 'ios-xcframework' }}
         run: node tools/release/validate-ios-carrier-zips.mjs --root target/extensions/native/release-assets/ios-xcframework
+
+      - name: Save bounded iOS exact-extension compiler cache
+        id: save_ios_extension_ccache
+        if: ${{ matrix.target == 'ios-xcframework' && env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_ios_extension_ccache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/deps.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/extensions.build-plan.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/qualification-static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
 
       - name: Show native compiler cache stats
         if: ${{ always() && runner.os != 'Windows' }}
@@ -482,22 +546,27 @@ jobs:
           if-no-files-found: error
 
       - name: Upload native exact-extension build logs
-        if: ${{ failure() }}
+        id: upload_native_extension_logs
+        if: ${{ failure() || cancelled() }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: liboliphaunt-native-extension-logs-${{ matrix.target }}
           path: |
             target/liboliphaunt-mobile-extension-ci/**/*.log
             target/liboliphaunt-mobile-extension-release/**/*.log
+            target/liboliphaunt-mobile-extension-qualification/**/*.log
             target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-simulator/*.log
             target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-device/*.log
             target/liboliphaunt-pg18-extension-release/**/*.log
             target/liboliphaunt-pg18-*-extension-release/**/*.log
+            target/liboliphaunt-pg18-extension-qualification*/**/*.log
+            target/liboliphaunt-pg18-*-extension-qualification/**/*.log
             /tmp/liboliphaunt-ci-*-extensions.log
             /tmp/liboliphaunt-release-*-extensions.log
             /tmp/liboliphaunt-ci-extension-assets-fetch.log
             /tmp/liboliphaunt-release-extension-assets-fetch.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   extension-artifacts-wasix:
     name: Builds / extension-wasix (${{ matrix.target }})
@@ -523,14 +592,19 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download portable WASIX runtime outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-wasix-runtime-portable
           path: .
+
+      - name: Verify publication-deferred WASIX candidate build outputs
+        run: >-
+          tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs
+          --family wasix
+          --target '${{ matrix.target }}'
+          --asset-root target/oliphaunt-wasix/assets
 
       - name: Build WASIX exact-extension artifacts
         env:
@@ -568,8 +642,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download native exact-extension artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -625,8 +697,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download native exact-extension artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -682,14 +752,12 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
         uses: ./.github/actions/setup-msvc
 
-      - name: Prepare native compiler cache paths
+      - name: Prepare native build paths
         env:
           NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
         run: |
@@ -697,26 +765,6 @@ jobs:
           if [[ "$RUNNER_OS" != "Windows" ]]; then
             mkdir -p "$CCACHE_DIR"
           fi
-
-      - name: Restore native compiler cache
-        if: ${{ runner.os != 'Windows' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ${{ env.CCACHE_DIR }}
-            ${{ matrix.build-root }}
-          key: liboliphaunt-native-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**', 'tools/xtask/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            liboliphaunt-native-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Restore native Windows build cache
-        if: ${{ runner.os == 'Windows' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ matrix.build-root }}
-          key: liboliphaunt-native-build-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**', 'tools/xtask/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            liboliphaunt-native-build-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure native compiler cache
         run: .github/scripts/setup-native-build-tools.sh 2G
@@ -814,8 +862,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up Android
         uses: ./.github/actions/setup-android
@@ -823,18 +869,10 @@ jobs:
           gradle-cache: "false"
           native-ccache: "true"
 
-      - name: Prepare native build cache path
+      - name: Prepare native build path
         env:
           NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
         run: mkdir -p "$NATIVE_BUILD_ROOT"
-
-      - name: Restore native compiler cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ matrix.build-root }}
-          key: liboliphaunt-native-ccache-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**', 'tools/xtask/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            liboliphaunt-native-ccache-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure native compiler cache
         run: .github/scripts/setup-native-build-tools.sh 2G
@@ -921,23 +959,11 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
-      - name: Prepare native compiler cache paths
+      - name: Prepare native build paths
         env:
           NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
         run: mkdir -p "$CCACHE_DIR" "$NATIVE_BUILD_ROOT"
-
-      - name: Restore native compiler cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ${{ env.CCACHE_DIR }}
-            ${{ matrix.build-root }}
-          key: liboliphaunt-native-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**', 'tools/xtask/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            liboliphaunt-native-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure native compiler cache
         run: .github/scripts/setup-native-build-tools.sh 2G
@@ -1016,8 +1042,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download liboliphaunt target release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1058,7 +1082,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: clippy,llvm-tools-preview
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
           tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
 
       - name: Build Rust SDK package artifacts
@@ -1110,8 +1133,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
@@ -1210,8 +1231,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
@@ -1263,8 +1282,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download Apple liboliphaunt release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1344,11 +1361,11 @@ jobs:
 
       - name: Set up Android
         uses: ./.github/actions/setup-android
+        with:
+          gradle-cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Build Kotlin SDK package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh kotlin-sdk-package
@@ -1383,8 +1400,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download Apple liboliphaunt release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1426,8 +1441,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
@@ -1626,7 +1639,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
           tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
 
       - name: Install Tauri Linux dependencies
@@ -1679,7 +1691,7 @@ jobs:
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Verify source-controlled asset inputs
         run: cargo run -p xtask -- assets verify-committed
@@ -1716,7 +1728,7 @@ jobs:
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
 
       - name: Build WASIX builder image and save cache
-        if: ${{ env.RUST_CACHE_SAVE_IF == 'true' }}
+        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: src/runtimes/liboliphaunt/wasix/assets/build/docker
@@ -1727,7 +1739,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=wasix-builder,ignore-error=true
 
       - name: Build WASIX builder image
-        if: ${{ env.RUST_CACHE_SAVE_IF != 'true' }}
+        if: ${{ env.HEAVY_CACHE_SAVE_IF != 'true' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: src/runtimes/liboliphaunt/wasix/assets/build/docker
@@ -1743,7 +1755,7 @@ jobs:
           sha256: ${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}
           bytes: ${{ env.WASMER_LLVM_LINUX_X64_BYTES }}
           version: ${{ env.WASMER_LLVM_VERSION }}
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Build and validate portable WASIX runtime
         env:
@@ -1751,7 +1763,8 @@ jobs:
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-runtime
 
       - name: Save WASIX compilation cache
-        if: ${{ env.RUST_CACHE_SAVE_IF == 'true' && steps.wasix-build-cache.outputs.cache-hit != 'true' }}
+        id: save_wasix_build_cache
+        if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.wasix-build-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1815,8 +1828,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Set up MSVC
         if: ${{ runner.os == 'Windows' }}
@@ -1835,7 +1846,6 @@ jobs:
           sha256: ${{ matrix.llvm_sha256 }}
           bytes: ${{ matrix.llvm_bytes }}
           version: ${{ env.WASMER_LLVM_VERSION }}
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Build, validate, and smoke target AOT artifacts
         env:
@@ -1896,8 +1906,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download portable WASIX runtime outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2100,8 +2108,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download same-run Rust SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2195,8 +2201,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download same-run WASIX Rust SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2312,7 +2316,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download same-run portable WASIX outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2438,8 +2441,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Reclaim Android mobile build disk
         run: bun .github/scripts/reclaim-android-mobile-build-disk.mjs
@@ -2533,8 +2534,6 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-        with:
-          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download iOS liboliphaunt target
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2997,7 +2996,7 @@ jobs:
 
   qualified:
     name: Qualified
-    if: ${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
     needs:
       - affected
       - required

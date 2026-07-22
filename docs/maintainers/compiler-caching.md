@@ -1,5 +1,7 @@
 # Compiler Caching
 
+Status: normative cache policy. Last verified: 2026-07-21. Owner: repository maintainers.
+
 Oliphaunt uses three separate cache layers. Keep them separate:
 
 - Moon caches deterministic task outputs.
@@ -18,12 +20,15 @@ iOS-simulator/device, and Android host builds when the build runs from a Unix
 shell. These lanes compile PostgreSQL and liboliphaunt through clang or gcc, and
 the build scripts already route `CC`/`CXX` through ccache when it is available.
 
-Use Cargo cache actions for Rust dependencies and `target` reuse. Do not enable
-`sccache` by default yet.
+Use Cargo cache actions for Rust dependencies and `target` reuse only in the
+bounded primary WASIX producer. Do not enable `sccache` by default yet.
 
-Use normal Gradle, SwiftPM, pnpm, Moon, and GitHub Actions caches for their
-ecosystems. Do not put simulator state, device state, registry responses,
-PostgreSQL source checkouts, or release artifacts into Moon's cache.
+Gradle consumers may restore the one Kotlin package-producer cache; only that
+producer may write it. Use normal local SwiftPM, pnpm, and Moon caches, but do
+not add repository-wide GitHub cache writers for them without measured evidence
+and an explicit storage budget. Do not put simulator state, device state,
+registry responses, PostgreSQL source checkouts, or release artifacts into
+Moon's cache.
 
 Do not share native build roots across targets. Sharing object caches can be
 reasonable when the compiler cache understands the compiler identity and flags,
@@ -84,35 +89,56 @@ Use a per-workstation cache directory only when you need to isolate experiments:
 CCACHE_DIR="$HOME/.cache/oliphaunt-ccache" src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh
 ```
 
+## CI Cache Writer Budget
+
+Cross-run cache writes are allowed automatically only on a push to `main`. A
+manual CI run may write them only when it targets `main` and explicitly enables
+`save_heavy_caches`. Pull requests, branch qualification runs, release entry
+jobs, and publish/finalization jobs are restore-only.
+
+The bounded writer inventory is executable policy, not a convention:
+
+- the primary Linux x64 WASIX runtime producer may write its Rust, Wasmer LLVM,
+  BuildKit, and exact WASIX compilation caches;
+- the iOS exact-extension producer may write one 512 MiB ccache entry after a
+  miss;
+- the Kotlin SDK package producer may let `actions/setup-java` write the Gradle
+  dependency cache used by read-only consumers.
+
+Every other Rust, LLVM, Gradle, and native lane is restore-only or uses only
+ephemeral job-local state. Cache saves are best-effort and cannot fail
+qualification. The workflow policy rejects implicit `actions/cache` writers,
+additional composite-action writers, branch-writable conditions, and unbounded
+native cache paths.
+
+This is a storage and correctness boundary. A cache hit is never release
+evidence, and deleting all repository caches must not change published bytes.
+
 ## CI Native Builds
 
-Native extension jobs give each target an explicit local ccache directory under
-`.ci-cache/ccache/native-extension/<target>`. Keeping that directory outside the
-native work roots prevents source preparation or stale-root cleanup from
-deleting compiler objects. `CCACHE_BASEDIR` anchors paths to the checkout,
-`compiler_check=content` binds hits to the actual compiler, and compression is
-enabled. CI scopes compiler caches by runtime target:
+Native jobs give each target an explicit local ccache directory under
+`.ci-cache/ccache/native-extension/<target>` or
+`.ci-cache/ccache/native-runtime/<target>`. Keeping that directory outside the
+native work roots prevents source preparation from deleting compiler objects.
+`CCACHE_BASEDIR` anchors paths to the checkout, `compiler_check=content` binds
+hits to the actual compiler, and compression is enabled.
+
+Only the iOS exact-extension ccache crosses job boundaries. Its key is:
 
 ```text
-liboliphaunt-native-ccache-v2-<target>-<runner.os>-<runner.arch>-<input-hash>
 liboliphaunt-native-extension-ccache-v2-<target>-<runner.os>-<runner.arch>-<input-hash>
-release-native-assets-ccache-<target>-<runner.os>-<runner.arch>-<input-hash>
 ```
 
-The desktop and iOS jobs explicitly point `CCACHE_DIR` at
-`.ci-cache/ccache/native-runtime/<target>` and persist that directory alongside
-the target-specific build root on Unix targets. The Windows desktop row creates
-and restores only its relative target build root; it neither creates nor passes
-the workspace-style `CCACHE_DIR` to the cache action. This keeps Git Bash path
-conversion and Windows drive/backslash paths outside the Windows cache contract,
-where ccache is disabled for the MSVC build. Do not use `~/.ccache`: current
-ccache defaults use platform-specific cache directories, so that legacy path silently misses
-the actual compiler objects. The target id is part of the key because the
-cached build root is target specific. A Linux x64 build tree, Linux arm64 build
-tree, macOS build tree, iOS build tree, Android build tree, and Windows build
-tree must not share the same build-root cache. `ccache` itself is designed to
-key on compiler inputs, but the surrounding build tree is not a generic object
-cache.
+Desktop, Android, base-iOS, and non-iOS extension jobs still use ccache within
+the job, but do not restore or save it across jobs. No native lane restores or
+saves a build root. Build systems use timestamps and partially generated state;
+a broad prefix restore can therefore make an old output look newer than changed
+source and publish stale bytes. Exact keys reduce that risk but do not make a
+multi-build tree a safe compiler cache.
+
+Do not use `~/.ccache`: current ccache defaults use platform-specific cache
+directories, so that legacy path can silently miss the actual compiler objects.
+Do not combine a ccache directory and a native build root in one cache action.
 
 The repository cache is already close to GitHub's 10 GiB budget, and WASIX/LLVM
 entries are the largest high-value caches. Persist only the iOS extension
@@ -125,22 +151,23 @@ consume multiple GiB, and are not safe to reuse through broad restore prefixes.
 The ccache restore prefix is safe because ccache independently keys objects by
 compiler content, source content, and compilation options.
 
-The input hash must track the same source domains that drive the Moon native
-runtime tasks: PostgreSQL pins, third-party pins, extension metadata, all
-`src/runtimes/liboliphaunt/native/**` sources and scripts, `tools/xtask/**`, `Cargo.toml`,
-`Cargo.lock`, and `rust-toolchain.toml`. A cache hit across any of those changes
-is treated as stale build-root reuse, not an acceptable optimization.
+The iOS extension ccache input hash tracks compiler-affecting inputs only:
+PostgreSQL and third-party pins, extension source/build metadata and patches,
+generated build plans, Apple/toolchain setup, and the exact native runtime
+sources and build scripts used by that target. It deliberately excludes
+versions, changelogs, evidence prose, notices, and release orchestration that do
+not alter compiler output. ccache still validates compiler content, source
+content, and flags before returning an object.
 
 CI prints `ccache --show-stats` after native builds. Treat those stats as the
 first signal before changing cache size, keys, or storage.
 
 ## Windows
 
-The Windows liboliphaunt lane uses MSVC and Meson/Ninja. It currently gets
-target-scoped build-root reuse through GitHub Actions cache but not object-code
-reuse. `ccache` is not the right default there; if Windows object caching becomes
-necessary, use `sccache` for MSVC in a dedicated CI experiment before promoting
-it to the release path.
+The Windows liboliphaunt lane uses MSVC and Meson/Ninja without cross-run build
+root reuse. `ccache` is not the right default there; if Windows object caching
+becomes necessary, use `sccache` for MSVC in a dedicated CI experiment before
+promoting it to the release path.
 
 Use a native Windows Perl for PostgreSQL's MSVC build, such as Strawberry Perl.
 Do not let Meson discover Git/MSYS Perl for this lane: MSYS path rewriting can
@@ -163,7 +190,8 @@ also a bigger operational choice:
 
 Recommended adoption path:
 
-1. Keep current `ccache` plus Cargo cache as the release path.
+1. Keep ephemeral native `ccache`, the one bounded iOS extension ccache, and the
+   bounded primary WASIX Cargo cache as the release path.
 2. Add a manual `workflow_dispatch` experiment that enables
    `mozilla-actions/sccache-action`, `SCCACHE_GHA_ENABLED=true`, and
    `RUSTC_WRAPPER=sccache` for Rust-heavy lanes only. Set `CARGO_INCREMENTAL=0`

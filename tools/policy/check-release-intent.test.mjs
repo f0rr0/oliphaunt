@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -15,6 +15,7 @@ import {
 const ROOT = path.resolve(import.meta.dir, "../..");
 const SCRIPT = path.join(ROOT, ".github/scripts/check-release-intent.sh");
 const SUBJECT = RELEASE_PLEASE_INTRODUCTION_SUBJECT;
+const QUALIFIED_CANDIDATE_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
 
 function command(commandName, args, options = {}) {
   const result = spawnSync(commandName, args, {
@@ -95,11 +96,12 @@ const INTRODUCTION_TREE = command("git", ["rev-parse", `${INTRODUCTION_COMMIT}^{
 function commitTree(subject, timestamp, {
   parent = RELEASE_PLEASE_BOOTSTRAP_SHA,
   tree = INTRODUCTION_TREE,
+  trailers = [`Oliphaunt-History-Repair-Candidate: ${QUALIFIED_CANDIDATE_SHA}`],
 } = {}) {
   return isolatedGit(
     ["commit-tree", tree, "-p", parent],
     {
-      input: `${subject}\n`,
+      input: `${[subject, ...(trailers.length > 0 ? ["", ...trailers] : [])].join("\n")}\n`,
       env: {
         ...gitEnvironment,
         GIT_AUTHOR_NAME: "Release Intent Test",
@@ -144,25 +146,59 @@ function releaseIntent({
   head = rewriteCandidate,
   subject = SUBJECT,
 } = {}) {
+  const outputFile = path.join(isolatedObjects, `github-output-${releaseIntent.sequence += 1}`);
+  writeFileSync(outputFile, "");
   const result = spawnSync(
     "bash",
     [SCRIPT, subject, base, head, branch, eventName, fullRef],
     {
       cwd: ROOT,
       encoding: "utf8",
-      env: gitEnvironment,
+      env: { ...gitEnvironment, GITHUB_OUTPUT: outputFile },
     },
   );
   return {
     status: result.status,
     output: `${result.stdout}${result.stderr}`,
+    stepOutput: readFileSync(outputFile, "utf8"),
   };
 }
+releaseIntent.sequence = 0;
 
 test("accepts only the exact current protected-main introduction repair", { timeout: 20_000 }, () => {
   const result = releaseIntent();
   assert.equal(result.status, 0, result.output);
   assert.match(result.output, /authorized current main history repair; comparing .* to its exact introduction parent/u);
+  assert.match(result.stepOutput, /^history_repair=true$/mu);
+  assert.match(result.stepOutput, new RegExp(`^history_repair_candidate_sha=${QUALIFIED_CANDIDATE_SHA}$`, "mu"));
+});
+
+test("rejects a history repair without one qualified-candidate trailer", () => {
+  const head = commitTree(SUBJECT, "2026-01-01T00:00:01Z", { trailers: [] });
+  const result = releaseIntent({ head });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /exact current introduction repair/u);
+});
+
+test("rejects duplicate qualified-candidate trailers", () => {
+  const trailer = `Oliphaunt-History-Repair-Candidate: ${QUALIFIED_CANDIDATE_SHA}`;
+  const head = commitTree(SUBJECT, "2026-01-01T00:00:01Z", { trailers: [trailer, trailer] });
+  const result = releaseIntent({ head });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /exact current introduction repair/u);
+});
+
+test("rejects malformed or noncanonical qualified-candidate trailers", () => {
+  for (const trailer of [
+    "Oliphaunt-History-Repair-Candidate: not-a-sha",
+    `oliphaunt-history-repair-candidate: ${QUALIFIED_CANDIDATE_SHA}`,
+    `Oliphaunt-History-Repair-Candidate: ${QUALIFIED_CANDIDATE_SHA.toUpperCase()}`,
+  ]) {
+    const head = commitTree(SUBJECT, "2026-01-01T00:00:01Z", { trailers: [trailer] });
+    const result = releaseIntent({ head });
+    assert.equal(result.status, 1, `${trailer}\n${result.output}`);
+    assert.match(result.output, /exact current introduction repair/u);
+  }
 });
 
 test("keeps the immutable introduction fixture after a later release commit becomes HEAD", () => {
@@ -258,6 +294,13 @@ test("rejects a rewrite after any product has left the unreleased manifest state
 
 test("rejects any other subject on the authorized before SHA", () => {
   const result = releaseIntent({ subject: "feat: replay history repair" });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /exact current introduction repair/u);
+});
+
+test("rejects a spoofed canonical argument when the repair commit subject differs", () => {
+  const head = commitTree("feat: hidden replacement", "2026-01-01T00:00:07Z");
+  const result = releaseIntent({ head, subject: SUBJECT });
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /exact current introduction repair/u);
 });

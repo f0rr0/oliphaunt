@@ -35,7 +35,6 @@ tasks:
       - "/.github/actions/setup-npm-publisher/**/*"
       - "/docs/maintainers/tooling.md"
       - "/src/sdks/kotlin/settings.gradle.kts"
-      - "/src/sdks/kotlin/gradle/cache-scopes/**/*"
       - "/src/sources/toolchains/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"

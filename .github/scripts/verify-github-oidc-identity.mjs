@@ -2,6 +2,8 @@
 
 import process from "node:process";
 
+import { releaseTransportFullRef } from "./release-transport-ref.mjs";
+
 const TOOL = "verify-github-oidc-identity";
 const OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const OIDC_AUDIENCE = "oliphaunt-release-identity-preflight";
@@ -42,11 +44,18 @@ export function expectedOidcIdentity(environment = process.env) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
     throw new Error(`CANONICAL_RELEASE_REPOSITORY must be owner/repository; got ${repository}`);
   }
-  const ref = required(environment, "GITHUB_REF");
-  if (ref !== "refs/heads/main") {
-    throw new Error(`trusted publication must run from refs/heads/main; got ${ref}`);
-  }
   const sha = requireFullSha(required(environment, "GITHUB_SHA"), "GITHUB_SHA");
+  const continuationPointer = environment.RELEASE_CONTINUATION_POINTER ?? "";
+  if (typeof continuationPointer !== "string") {
+    throw new Error("RELEASE_CONTINUATION_POINTER must be a string");
+  }
+  const ref = required(environment, "GITHUB_REF");
+  const expectedRef = continuationPointer === "" ? "refs/heads/main" : releaseTransportFullRef(sha);
+  if (ref !== expectedRef) {
+    throw new Error(
+      `trusted publication ref mismatch: expected ${expectedRef}, got ${ref}`,
+    );
+  }
   const eventName = required(environment, "GITHUB_EVENT_NAME");
   if (eventName !== "workflow_dispatch") {
     throw new Error(`trusted publication must originate from workflow_dispatch; got ${eventName}`);
@@ -58,7 +67,7 @@ export function expectedOidcIdentity(environment = process.env) {
     event_name: eventName,
     iss: OIDC_ISSUER,
     ref,
-    ref_type: "branch",
+    ref_type: continuationPointer === "" ? "branch" : "tag",
     repository,
     runner_environment: "github-hosted",
     sha,

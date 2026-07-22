@@ -59,6 +59,26 @@ function requireText(path, text) {
   }
 }
 
+function requireMoonTaskInputs(path, taskId, requiredInputs) {
+  requireFile(path);
+  let project;
+  try {
+    project = Bun.YAML.parse(readFileSync(path, 'utf8'));
+  } catch (cause) {
+    fail(`${path} must be valid YAML: ${cause.message}`);
+  }
+  const inputs = project?.tasks?.[taskId]?.inputs;
+  if (!Array.isArray(inputs)) {
+    fail(`${path} task ${taskId} must declare inputs`);
+  }
+  const actual = new Set(inputs);
+  for (const input of requiredInputs) {
+    if (!actual.has(input)) {
+      fail(`${path} task ${taskId} must own qualification input ${input}`);
+    }
+  }
+}
+
 function rejectText(path, text) {
   requireFile(path);
   const contents = readFileSync(path, 'utf8');
@@ -134,7 +154,12 @@ function checkSourceAcquisitionSpine() {
     requireFile(path);
   }
   requireText('tools/policy/fetch-sources.mjs', "from './source-fetch-core.mjs'");
+  requireText(
+    'tools/policy/fetch-sources.mjs',
+    "from '../release/extension-upstream-licenses.mjs'",
+  );
   requireText('tools/policy/fetch-sources.mjs', "arg === '--verify-only'");
+  requireText('tools/policy/fetch-sources.mjs', 'auditExtensionUpstreamLicenseSources()');
   for (const token of [
     "'--max-time'",
     "'--speed-limit'",
@@ -411,7 +436,12 @@ function checkToolchains() {
     rejectText(action, 'actions/setup-node@');
     rejectText(action, 'moonrepo/setup-toolchain@');
     rejectText(action, 'corepack');
-    requireText(action, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+    rejectText(action, 'uses: actions/cache@');
+    requireText(action, 'uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+    requireText(action, 'uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+    requireText(action, "env.HEAVY_CACHE_SAVE_IF == 'true'");
+    requireText(action, "outputs.cache-hit != 'true'");
+    requireText(action, 'continue-on-error: true');
   }
   requireText(
     '.github/actions/setup-npm-publisher/action.yml',
@@ -871,27 +901,30 @@ function checkToolchains() {
   }
   for (const text of [
     'gradle-cache:',
-    "inputs.gradle-cache == 'true'",
-    "inputs.gradle-cache != 'true'",
+    'gradle-cache-save-if:',
+    "inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if == 'true'",
+    "inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if != 'true'",
     'Prepare native Android ccache directory',
   ]) {
     if (!androidAction.includes(text)) fail(`.github/actions/setup-android/action.yml must contain ${text}`);
   }
   const androidActionYaml = Bun.YAML.parse(androidAction);
-  const gradleCacheScopeInput = androidActionYaml?.inputs?.['gradle-cache-scope-file'];
-  if (gradleCacheScopeInput?.required !== false || gradleCacheScopeInput?.default !== '') {
-    fail('setup-android gradle-cache-scope-file must remain an optional empty-by-default cache-key input');
+  const gradleCacheSaveInput = androidActionYaml?.inputs?.['gradle-cache-save-if'];
+  if (gradleCacheSaveInput?.required !== false || gradleCacheSaveInput?.default !== 'false') {
+    fail('setup-android gradle-cache-save-if must remain an optional false-by-default cache-writer capability');
   }
   const androidActionSteps = androidActionYaml?.runs?.steps ?? [];
   const cachedJavaStep = androidActionSteps.find(({name}) => name === 'Set up Java with Gradle cache');
   const cacheDependencyPaths = String(cachedJavaStep?.with?.['cache-dependency-path'] ?? '');
-  if (!cacheDependencyPaths.includes('${{ inputs.gradle-cache-scope-file }}')) {
-    fail('setup-android must bind gradle-cache-scope-file into the setup-java dependency cache key');
+  if (cacheDependencyPaths.includes('gradle-cache-scope-file')) {
+    fail('setup-android must not retain an unwritable per-consumer Gradle cache scope');
   }
-  const prepareCcacheIndex = androidActionSteps.findIndex(({name}) => name === 'Prepare native Android ccache directory');
-  const restoreCcacheIndex = androidActionSteps.findIndex(({name}) => name === 'Restore native Android ccache');
-  if (prepareCcacheIndex < 0 || restoreCcacheIndex < 0 || prepareCcacheIndex >= restoreCcacheIndex) {
-    fail('Android ccache directory must be created before actions/cache restore');
+  const restoreGradleStep = androidActionSteps.find(({name}) => name === 'Restore Gradle dependency cache');
+  if (!String(restoreGradleStep?.uses ?? '').startsWith('actions/cache/restore@')) {
+    fail('setup-android read-only Gradle consumers must use the explicit restore action');
+  }
+  if (androidActionSteps.some(({name}) => name === 'Restore native Android ccache')) {
+    fail('setup-android must not retain a dead or implicit native Android cache writer');
   }
   const ciWorkflow = Bun.YAML.parse(readFileSync('.github/workflows/ci.yml', 'utf8'));
   const androidStep = (job) => {
@@ -914,24 +947,11 @@ function checkToolchains() {
       fail(`Gradle/Expo CI job ${job} must retain setup-java Gradle caching`);
     }
   }
-  const nativeTestCacheScopePath = 'src/sdks/kotlin/gradle/cache-scopes/linux-native-tests.txt';
-  requireFile(nativeTestCacheScopePath);
-  if (readFileSync(nativeTestCacheScopePath, 'utf8') !== 'oliphaunt-kotlin-linux-native-tests-v1\n') {
-    fail(`${nativeTestCacheScopePath} must retain its stable, dedicated cache identity`);
-  }
-  const scopedAndroidSteps = Object.entries(ciWorkflow?.jobs ?? {})
-    .flatMap(([job, definition]) => (definition?.steps ?? [])
-      .filter(({uses, with: inputs}) =>
-        uses === './.github/actions/setup-android'
-        && Object.hasOwn(inputs ?? {}, 'gradle-cache-scope-file'))
-      .map((step) => ({job, step})));
-  const expectedNativeTestScope = "${{ matrix.target == 'oliphaunt-kotlin:test' && 'src/sdks/kotlin/gradle/cache-scopes/linux-native-tests.txt' || '' }}";
   if (
-    scopedAndroidSteps.length !== 1
-    || scopedAndroidSteps[0].job !== 'test-targets'
-    || scopedAndroidSteps[0].step.with['gradle-cache-scope-file'] !== expectedNativeTestScope
+    Object.hasOwn(androidActionYaml?.inputs ?? {}, 'gradle-cache-scope-file')
+    || JSON.stringify(ciWorkflow).includes('gradle-cache-scope-file')
   ) {
-    fail('only the oliphaunt-kotlin:test matrix entry may select the dedicated Linux-native Gradle cache scope');
+    fail('Gradle restore consumers must share the sole writable Kotlin package-producer key');
   }
 
   const kotlinSettingsPath = 'src/sdks/kotlin/settings.gradle.kts';
@@ -953,33 +973,36 @@ function checkToolchains() {
   ) {
     fail(`${kotlinSettingsPath} must route plugin and dependency resolution through the fixed Google Cloud Maven Central mirror before canonical Central`);
   }
-  const requirePreparedCache = (job, prepareName, restoreName, expectedPath) => {
-    const steps = ciWorkflow?.jobs?.[job]?.steps ?? [];
-    const prepareIndex = steps.findIndex(({name}) => name === prepareName);
-    const restoreIndex = steps.findIndex(({name}) => name === restoreName);
-    if (prepareIndex < 0 || restoreIndex < 0 || prepareIndex >= restoreIndex) {
-      fail(`${job} must prepare its compiler cache path before restore`);
-    }
-    const cachePath = String(steps[restoreIndex]?.with?.path ?? '');
-    if (!cachePath.includes(expectedPath) || cachePath.includes('~/.ccache')) {
-      fail(`${job} cache restore must use configured path ${expectedPath}, never unused ~/.ccache`);
-    }
-    return cachePath;
-  };
-  requirePreparedCache(
-    'extension-artifacts-native',
-    'Prepare native compiler cache path',
-    'Restore native compiler cache',
-    '${{ env.CCACHE_DIR }}',
-  );
-  const androidOuterCache = requirePreparedCache(
-    'liboliphaunt-native-android',
-    'Prepare native build cache path',
-    'Restore native compiler cache',
-    '${{ matrix.build-root }}',
-  );
-  if (androidOuterCache.includes('oliphaunt-ccache')) {
-    fail('liboliphaunt-native-android outer cache must leave configured ccache ownership to setup-android');
+  const extensionNativeSteps = ciWorkflow?.jobs?.['extension-artifacts-native']?.steps ?? [];
+  const extensionCachePrepareIndex = extensionNativeSteps
+    .findIndex(({name}) => name === 'Prepare native compiler cache path');
+  const extensionCacheRestoreIndex = extensionNativeSteps
+    .findIndex(({name}) => name === 'Restore native compiler cache');
+  if (
+    extensionCachePrepareIndex < 0
+    || extensionCacheRestoreIndex < 0
+    || extensionCachePrepareIndex >= extensionCacheRestoreIndex
+  ) {
+    fail('extension-artifacts-native must prepare the exact iOS compiler cache before restore');
+  }
+  const extensionCacheRestore = extensionNativeSteps[extensionCacheRestoreIndex];
+  if (
+    !String(extensionCacheRestore?.uses ?? '').startsWith('actions/cache/restore@')
+    || extensionCacheRestore?.with?.path !== '${{ env.CCACHE_DIR }}'
+    || String(extensionCacheRestore?.with?.path ?? '').includes('build-root')
+  ) {
+    fail('extension-artifacts-native may restore only its configured exact iOS ccache directory');
+  }
+
+  const nativeRuntimeAndroidSteps = ciWorkflow?.jobs?.['liboliphaunt-native-android']?.steps ?? [];
+  if (androidStep('liboliphaunt-native-android').with?.['native-ccache'] !== 'true') {
+    fail('liboliphaunt-native-android must retain intra-job compiler caching');
+  }
+  if (
+    !nativeRuntimeAndroidSteps.some(({name}) => name === 'Prepare native build path')
+    || nativeRuntimeAndroidSteps.some(({uses}) => String(uses ?? '').startsWith('actions/cache'))
+  ) {
+    fail('liboliphaunt-native-android must prepare its build path without restoring a cross-run build tree');
   }
   for (const job of ['liboliphaunt-native-desktop', 'liboliphaunt-native-ios']) {
     const nativeJob = ciWorkflow?.jobs?.[job] ?? {};
@@ -996,40 +1019,26 @@ function checkToolchains() {
         fail(`${job} must configure ${name}=${expected}`);
       }
     }
-    const nativeCache = requirePreparedCache(
-      job,
-      'Prepare native compiler cache paths',
-      'Restore native compiler cache',
-      '${{ env.CCACHE_DIR }}',
-    );
-    if (!nativeCache.includes('${{ matrix.build-root }}')) {
-      fail(`${job} cache must retain its target-scoped native build root`);
+    const nativeSteps = nativeJob.steps ?? [];
+    const prepare = nativeSteps.find(({name}) => name === 'Prepare native build paths');
+    const prepareRun = String(prepare?.run ?? '');
+    if (
+      !prepareRun.includes('mkdir -p')
+      || !prepareRun.includes('$NATIVE_BUILD_ROOT')
+      || !prepareRun.includes('$CCACHE_DIR')
+    ) {
+      fail(`${job} must prepare its target-scoped build and intra-job compiler-cache paths`);
     }
-    const restore = (nativeJob.steps ?? []).find(({name}) => name === 'Restore native compiler cache');
-    if (!String(restore?.with?.key ?? '').startsWith('liboliphaunt-native-ccache-v2-${{ matrix.target }}-')) {
-      fail(`${job} cache key must use the corrected v2 compiler-cache namespace`);
+    if (nativeSteps.some(({uses}) => String(uses ?? '').startsWith('actions/cache'))) {
+      fail(`${job} must not restore or save a cross-run native build tree`);
     }
     if (job === 'liboliphaunt-native-desktop') {
-      const prepare = (nativeJob.steps ?? []).find(({name}) => name === 'Prepare native compiler cache paths');
-      const prepareRun = String(prepare?.run ?? '');
       if (
         !prepareRun.includes('mkdir -p "$NATIVE_BUILD_ROOT"') ||
         !prepareRun.includes('if [[ "$RUNNER_OS" != "Windows" ]]') ||
         !prepareRun.includes('mkdir -p "$CCACHE_DIR"')
       ) {
         fail('liboliphaunt-native-desktop must prepare its relative build root on every target and CCACHE_DIR only outside Windows');
-      }
-      if (restore?.if !== "${{ runner.os != 'Windows' }}") {
-        fail('liboliphaunt-native-desktop compiler-cache restore must exclude Windows');
-      }
-      const windowsRestore = (nativeJob.steps ?? []).find(({name}) => name === 'Restore native Windows build cache');
-      if (
-        windowsRestore?.if !== "${{ runner.os == 'Windows' }}" ||
-        String(windowsRestore?.with?.path ?? '') !== '${{ matrix.build-root }}' ||
-        String(windowsRestore?.with?.path ?? '').includes('CCACHE_DIR') ||
-        !String(windowsRestore?.with?.key ?? '').startsWith('liboliphaunt-native-build-v2-${{ matrix.target }}-')
-      ) {
-        fail('liboliphaunt-native-desktop Windows cache must persist only the relative target build root');
       }
     }
   }
@@ -1050,6 +1059,37 @@ function checkToolchains() {
   runFaultTest('tools/dev/extract-pinned-zip.test.sh');
   runFaultTest('tools/dev/install-pinned-js-runtime.test.sh');
   runFaultTest('tools/dev/setup-android-sdk.test.sh');
+  runFaultTest('src/extensions/artifacts/native/tools/run-observed-phase.test.sh');
+  const observedPhase = readFileSync(
+    'src/extensions/artifacts/native/tools/run-observed-phase.sh',
+    'utf8',
+  );
+  for (const token of [
+    'OLIPHAUNT_PHASE_HEARTBEAT_SECONDS',
+    'phase-start timestamp=',
+    'phase-heartbeat timestamp=',
+    'phase-complete timestamp=',
+    'phase-failed timestamp=',
+  ]) {
+    if (!observedPhase.includes(token)) {
+      fail(`native extension observed-phase wrapper must retain ${token}`);
+    }
+  }
+  const nativeExtensionPackager = readFileSync(
+    'src/extensions/artifacts/native/tools/package-release-assets.sh',
+    'utf8',
+  );
+  for (const label of [
+    'build macOS host runtime for iOS exact extensions',
+    'build iOS simulator exact-extension archives',
+    'build iOS device exact-extension archives',
+    'build macOS exact-extension static archives',
+    'assemble iOS exact-extension XCFrameworks',
+  ]) {
+    if (!nativeExtensionPackager.includes(`--label "${label}"`)) {
+      fail(`native iOS exact-extension packaging must observe phase ${label}`);
+    }
+  }
   requireText('src/sources/toolchains/android-emulator-runner.toml', 'repository = "ReactiveCircus/android-emulator-runner"');
   requireText('src/sources/toolchains/android-emulator-runner.toml', 'sha = "70f4dee990796918b78d040e3278474bdbd348a7"');
   requireText('src/sources/toolchains/android-emulator-runner.toml', 'cloud_required = false');
@@ -1094,12 +1134,29 @@ function checkExtensions() {
     'src/sdks/react-native/src/generated/extensions.json',
     'src/extensions/generated/mobile/static-registry.json',
     'src/extensions/generated/mobile/static-extensions.tsv',
+    'src/extensions/generated/mobile/qualification-static-extensions.tsv',
     'src/extensions/generated/wasix/extensions.json',
     'src/extensions/tools/check-extension-model.mjs',
     'src/extensions/tools/check-extension-model.py',
+    'tools/release/extension-qualification-candidates.mjs',
+    'tools/release/verify-extension-qualification-build.mjs',
   ]) {
     requireFile(path);
   }
+
+  requireMoonTaskInputs('src/extensions/artifacts/native/moon.yml', 'release-check', [
+    '/tools/release/extension-qualification-candidates.mjs',
+    '/tools/release/extension-target-profiles.toml',
+  ]);
+  requireMoonTaskInputs('src/extensions/artifacts/native/moon.yml', 'build-target', [
+    '/tools/release/extension-qualification-candidates.mjs',
+    '/tools/release/extension-target-profiles.toml',
+  ]);
+  requireMoonTaskInputs('src/extensions/artifacts/wasix/moon.yml', 'build-target', [
+    '/tools/release/extension-qualification-candidates.mjs',
+    '/tools/release/extension-target-profiles.toml',
+    '/tools/release/verify-extension-qualification-build.mjs',
+  ]);
 
   const result = runBun(['src/extensions/tools/check-extension-model.mjs', '--check']);
   if (result.error !== undefined) {

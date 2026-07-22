@@ -143,7 +143,8 @@ tasks:
       - "!/src/sdks/react-native/**/build/**"
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
-      - "/tools/test/**/*"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+      - "/tools/test/run-js-tests.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -520,6 +521,8 @@ tasks:
       - "oliphaunt-react-native:check"
       - "oliphaunt-react-native:test"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
       - "/package.json"
@@ -538,6 +541,8 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
     outputs:
@@ -551,6 +556,8 @@ tasks:
     deps:
       - "oliphaunt-react-native:package"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/shared/fixtures/**/*"
@@ -574,10 +581,17 @@ tasks:
       - "/target/liboliphaunt/release-assets/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/react-native.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/ios-carrier-manifest.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/prepare-rust-release-source.mjs"
@@ -592,6 +606,7 @@ tasks:
       - "/tools/release/rust-native-targets.mjs"
       - "/tools/release/swift-source-carrier-contract.mjs"
       - "/tools/release/wasix-cargo-artifact-contract.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
     options:
@@ -628,7 +643,8 @@ tasks:
       - "!/src/sdks/swift/.build/**"
       - "/tools/policy/run-gradle-lint-checked.sh"
       - "/tools/release/**/*"
-      - "/tools/test/**/*"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+      - "/tools/test/run-js-tests.mjs"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -693,7 +709,8 @@ tasks:
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
       - "/tools/policy/run-gradle-lint-checked.sh"
-      - "/tools/test/**/*"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+      - "/tools/test/run-js-tests.mjs"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -719,7 +736,8 @@ tasks:
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/coverage/**/*"
-      - "/tools/test/**/*"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+      - "/tools/test/run-js-tests.mjs"
     outputs:
       - "/target/coverage/oliphaunt-react-native/**/*"
     options:

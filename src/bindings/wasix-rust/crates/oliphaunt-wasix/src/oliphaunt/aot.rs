@@ -1015,7 +1015,7 @@ struct AotCacheReceipt {
 mod tests {
     use super::*;
 
-    const WASIX_TOOLCHAIN: &str = include_str!("../../../../../../sources/toolchains/wasix.toml");
+    const WASIX_TOOLCHAIN: &str = include_str!("../testdata/wasix-toolchain.toml");
 
     #[test]
     fn runtime_aot_versions_match_asset_toolchain() {

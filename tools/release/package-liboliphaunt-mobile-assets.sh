@@ -41,9 +41,13 @@ mkdir -p "$out_dir" "$stage_root"
 
 archive_staged_dir() {
   local staged="$1"
+  local profile="$2"
   local name
   name="$(basename "$staged")"
   tools/release/archive_dir.mjs "$staged" "$out_dir/${name}.tar.gz"
+  tools/dev/bun.sh tools/release/release-notices.mjs check-archive \
+    "$out_dir/${name}.tar.gz" \
+    --profile "$profile"
 }
 
 archive_swiftpm_xcframework() {
@@ -72,7 +76,10 @@ package_android() {
   tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage"
   echo "==> Verifying staged liboliphaunt Android $abi binary compatibility"
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage"
-  archive_staged_dir "$stage"
+  tools/dev/bun.sh tools/release/release-notices.mjs stage \
+    "$stage" \
+    --profile native-runtime
+  archive_staged_dir "$stage" native-runtime
 }
 
 package_ios() {
@@ -113,15 +120,32 @@ package_ios() {
   echo "==> Verifying staged liboliphaunt iOS binary compatibility"
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage_ios"
 
-  archive_staged_dir "$stage_ios"
+  tools/dev/bun.sh tools/release/release-notices.mjs stage \
+    "$stage_ios" \
+    --profile native-runtime
+  tools/dev/bun.sh tools/release/release-notices.mjs stage \
+    "$stage_ios/liboliphaunt.xcframework" \
+    --profile native-runtime
+
+  archive_staged_dir "$stage_ios" native-runtime
   archive_swiftpm_xcframework \
     "$stage_ios/liboliphaunt.xcframework" \
     "$out_dir/liboliphaunt-${version}-apple-spm-xcframework.zip"
-  archive_staged_dir "$runtime_stage"
+  tools/dev/bun.sh tools/release/release-notices.mjs check-archive \
+    "$out_dir/liboliphaunt-${version}-apple-spm-xcframework.zip" \
+    --prefix liboliphaunt.xcframework \
+    --profile native-runtime
+  tools/dev/bun.sh tools/release/release-notices.mjs stage \
+    "$runtime_stage" \
+    --profile native-runtime-resources
+  archive_staged_dir "$runtime_stage" native-runtime-resources
 
   mkdir -p "$icu_stage/share/icu"
   rsync -a --delete "$icu_source/" "$icu_stage/share/icu/"
-  archive_staged_dir "$icu_stage"
+  tools/dev/bun.sh tools/release/release-notices.mjs stage \
+    "$icu_stage" \
+    --profile native-icu-data
+  archive_staged_dir "$icu_stage" native-icu-data
 }
 
 case "$target_id" in

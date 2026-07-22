@@ -18,11 +18,33 @@
         },
         {
           "path": "Cargo.toml",
-          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
         },
         {
           "path": "rust-toolchain.toml",
           "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
         }
       ]
     },
@@ -34,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "9cc53ea61be01cb18248e465f3e0bdaf1fb1ed5850f4d7b58fa404eaac4c9716"
+          "sha256": "e2d3a552352b8b48aa9b10c6657359b5e320686d15fc5e12130963974248061d"
         }
       ]
     },
@@ -46,7 +68,273 @@
       "inputs": [
         {
           "path": "tools/release/package_broker_cargo_artifacts.mjs",
-          "sha256": "f7c8ed66cf3cb8864320946ae022e3d17d6927959205abfc9ae789617e34dbe2"
+          "sha256": "8da7ee7d93cc77121d54847791afc2a7a6586eaf5864e2643691c89fb59c2ae8"
+        }
+      ]
+    },
+    {
+      "id": "broker-compiled-dependency-license-carrier-producer",
+      "paths": [
+        "src/runtimes/broker/dependency-license-blobs/**",
+        "src/runtimes/broker/dependency-licenses.json",
+        "tools/release/broker-dependency-license-contract.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/018b1cb87efdf7a04c2fcc13d57ed63f62149113fb207b27ea13430d64f13513.base64",
+          "sha256": "6d28d93eaa466476dd28db3c59e6ffb4c0606e984d00d795256f57cb210f2754"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f.base64",
+          "sha256": "e466569a5618afd9cfccd5ef69427012b913a300ce92f3978ef0a518b4a3cc9b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/025436edff4cfcdde17a5811fdea78892d8482efd1abdec5a17872d07a4f2112.base64",
+          "sha256": "aad58fe868bd0633df2df97b8d31009ece0e2e953e839e7915c9adced568f4ef"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/04dc52136d82400b11df5f474949863a70a5d05d2278dec45b99c479494450a6.base64",
+          "sha256": "c480afd543cdefe27f24f9ad42ab451cda364a99dfc8abf11768e1e36a92f631"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/0a54e647fe54104658b5e563c04c6f9edf251710e47bce692e0bd990a4ddaa39.base64",
+          "sha256": "43d774e8375d90f1a408f7e3bc5a2800662272b628745d08ccdf65d91af16554"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594.base64",
+          "sha256": "367ed4caee3db0a8673fb0524676175adb3f475610b33852a4fe7732ddbe710e"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f.base64",
+          "sha256": "e4a464e1b9f268769379d980895fcf345223afb491079e1c635c48f1989d20ca"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/123a331b5dbf04c30097fa43b8f858bc85df671fe776de498d01f3d6b7c1f69e.base64",
+          "sha256": "7d52e0475c8ae9c3cb6cd6520d41bf14dd27e92cd8f00414849faecfcafedb9a"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8.base64",
+          "sha256": "1636135e4201f4d5619f772cdc3f49fb6da559113f30e2e29a4dfbdd555b523d"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3.base64",
+          "sha256": "3c326065e969aafa024858c5b844b1a223ee2d7c8f53c0537589f9ab3cdba80e"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5.base64",
+          "sha256": "b0fcc1cae5b168a112bb1cee99f2f3a18883f8208ef08adee19bb794882cb2f1"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/29e9fe5074bd27e0e5d5d110394fbbcd841baee2651a3c4b4560a632702cede4.base64",
+          "sha256": "9594f1991de6a2d768fdd5a7219a74eb66509c893f318c3a939c1e27d44f6d12"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/3290ae0fbc9ddb77d2239121d710f0bb9d31b3b4744e6d97fe01e652b4c1870b.base64",
+          "sha256": "b79bb49d7f3605951f3199cb98ea6373ab63dc908f55672037ca359990dee77a"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897.base64",
+          "sha256": "094c0a3c3db1935ebe683d81cbf5ac5ca9e45926719aee19784919215d3edaa3"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9.base64",
+          "sha256": "651b1138dd6c61e1c101b0ff9def89881f13bd5e0f5d7756be15c4c7fdfb7fbd"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397.base64",
+          "sha256": "c5876300709c4d35df0d201859fcbdf2f1ad4c76bbf6cd25af098d1cb894bfec"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/4108245a1f2df9d4e94df8abed5b4ba0759bb2f9b40a6b939f1be141077ae50b.base64",
+          "sha256": "9b952cc82a2412265da39b988cec6f3c4bfef766963ee5c928361fef4a84f1cc"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/42a35170233e83e18856792e748de4c1ce4a63b2afce9a370c89ef3fe23f9f2d.base64",
+          "sha256": "72b20307fdc2133b86112d4c16fb1128f364f97502edf93c1575ea5251fb4905"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/48341f685c87304089aa099b23c386f8bacc519ef555aa7a13e239908907b3fd.base64",
+          "sha256": "e5ea93e123741c4f114df626b1c6f61219c5e2a6c2993e9705bd0a8897d5b13b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406.base64",
+          "sha256": "6df310a159c42f8c184f49886ec7f77aa2a5c4ebdfef4a97a818ea805f22bbf3"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab.base64",
+          "sha256": "c1feaa24f455b9777f43c118f968acc1e167129ffb0c7d2fddce373353991b25"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/61d383b05b87d78f94d2937e2580cce47226d17823c0430fbcad09596537efcf.base64",
+          "sha256": "0019ec209c59f3192b52dfe6aab4904a286c2c4552d10b463c26f52428fbf4f0"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a.base64",
+          "sha256": "a4b238a5e6bdef4f1d670d334a1bed4681122347aef4922a694fd4a7c9909172"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb.base64",
+          "sha256": "34ae54f9f529dea543bdcea305c5177fd57763c09d4bcb9bed939a2acd8aeb5b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/65f94e99ddaf4f5d1782a6dae23f35d4293a9a01444a13135a6887017d353cee.base64",
+          "sha256": "bf095c16dc37072c21fd3e7e288ebb292c14e468ac5e1688238444d7520dc217"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.base64",
+          "sha256": "b91e69a4403fcdb6cec9ebead05556bbf55302f36bc83569fbde60a27f6fc8f8"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8.base64",
+          "sha256": "808ae114bd19c437d68a50b2a7e7a3828fece8feabf726c656def00defa7479d"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/7365cc8878a1d7ce155a58c4ca09c3d7a6be413efa5334a80ea842912b669349.base64",
+          "sha256": "21d04504a8a8aa9946008a456e1260eb279ef03a2eed19f8f3e5d02c8cd3e300"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d.base64",
+          "sha256": "c5bcb1bf62a47c114738ae523df96f3d1651e5a5379214227e0a076425485f1f"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0.base64",
+          "sha256": "e5528217ab131ae2ec6d45a7db7f332306e6aa3b1cc98e15b55f4c5de29bdf6a"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c.base64",
+          "sha256": "e07017d2324029937fb60a2b68e89c6a4860cac3503450ef016e14da7069ed3f"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/861399f8c21c042b110517e76dc6b63a2b334276c8cf17412fc3c8908ca8dc17.base64",
+          "sha256": "3c3d7c0514f33214a67623ed0b21a553dfe515cda9c3071e8ea8a3dd473c508b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/8764a597675778ddfd4e25f81b08a05dbcf089ac05662df7613fe67f150e3aa2.base64",
+          "sha256": "ef4b0efed9d0a2685e7452d525d6429b3b50fddf5394bca651833fdbbdfd69bb"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb.base64",
+          "sha256": "3cf50ec28d7013e193c8740379fbfd3ccb3a15a013a847527c195840245a01de"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36.base64",
+          "sha256": "891cf7b620bfe99726f416e6c27a9c63f63e3f756950883d7bfc997d255feb76"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/8ca6b96cea9e67c6c5c63f452c31bd396db8bd2406231fdea5d48ef462b48077.base64",
+          "sha256": "3e2479f12d2adda1aa66a480cc6102042e9833e2c39dabf2c1351e2c738aa18d"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba.base64",
+          "sha256": "1867bb3d9de63d78bac82e857de283c9636e89c5a2acbdfb8bf29fc29f24bec9"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.base64",
+          "sha256": "caccfbab11587d08840842b4c3ae7bdd9bb11eec9d10b9fd9a440a8a6f6be12d"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/a77b7cfeaf911ed410ffbe76f0cb2b24ad8a4d94e7ead5727e914425c416cc63.base64",
+          "sha256": "c2b582b1cf6c26d99edbd99036045fe8e7182b31c24669db9f076df90125c891"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f.base64",
+          "sha256": "d65727dbff4c15ef07e9b80b57ec7b279df58a77ce765f1d12bc7d65301b6fe5"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5.base64",
+          "sha256": "c50a085e4f17afa2553ad4d1437ca3fd9e994c2a295ac517e34ef1be94679173"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf.base64",
+          "sha256": "13d7ea28ea8a530db9684f710d5214f6a335dffdb690b17542f9ef38784eb0c0"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/ae9baa7beea910273c2f384c2a6b721fb7bd02bda3436074a1072e4ee689f985.base64",
+          "sha256": "5a23c60fca42477888faab04d52e1faeff9c56764b0832e7ca401151c3dda4c8"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/b16db96b93b1d7cf7bea533f572091ec6bca3234fbe0a83038be772ff391a44c.base64",
+          "sha256": "9cbc949369c83fda9911562ff65f1fea3f0ff6ea9f4e71676f5a312883d46d7d"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f.base64",
+          "sha256": "35f9a9edb64d5d75b863db00128ed3562baf71e933733b8e68d00ca7448705db"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1.base64",
+          "sha256": "ba7a2382e6b074ad609276da1f45e2ba931884fc641c81bb2d9210b4c6384943"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/b4eb00df6e2a4d22518fcaa6a2b4646f249b3a3c9814509b22bd2091f1392ff1.base64",
+          "sha256": "1e792281e1ed1cd0b18001181910f19d0204e1db9fd6a255890ac834d11be8bc"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/c09aae9d3c77b531f56351a9947bc7446511d6b025b3255312d3e3442a9a7583.base64",
+          "sha256": "2b8360d5462282c3d6f9ea1c85ffdeed56d5175c837632ed26a7d79576177043"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b.base64",
+          "sha256": "08d6c6d57ff870d42567c914e7f21a129ba0d3d76b508671fba17205f1497567"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.base64",
+          "sha256": "32ab0bb2dd8a7f57af83ba3181a2d2c900b1b9ab02e3fa55a6fb004c4371b3d7"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08.base64",
+          "sha256": "0cd8601ce937ba26dadb7093c393dcbc12ebd1279d42e3e9071c9df7f6211a8a"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/cb5aedb296c5246d1f22e9099f925a65146f9f0d6b4eebba97fd27a6cdbbab2d.base64",
+          "sha256": "a67574d1d7dc133de584ea5e4b7618145beb4e87a6b24d5eb923a81e1d68fa19"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b.base64",
+          "sha256": "67a89e7bbf6923ce1f653e48e1c6edf89226efb1cfdb097bf870f26811100a7b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef.base64",
+          "sha256": "2012d903ef96a66e6ca043355070443ee55b7b6be3a5866ae33930570277830b"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/db11fec9946737df39ca3898d9cd8c10ec6f6c3a884a6802b0ad0b81b4e8f23a.base64",
+          "sha256": "7c19b5e8b9c66a5815faa0a67a9f33d3fe518fb23ebb2b9e34dcae5ee6b1205e"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055.base64",
+          "sha256": "6d347a625e72b06e5c55b52591454de2d7e7552eb9bd20c3eb65a6b4015fc5e3"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1.base64",
+          "sha256": "f37de1e0e1dab729be7f1b8d2694b6a2635dd55e2258cb5dce39e5570b1b19cf"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505.base64",
+          "sha256": "51824b1ae69fe28ab3d9f8fbff9a8bc21a9d765d4d5162ca46f4f8f65c49e24e"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-license-blobs/ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2.base64",
+          "sha256": "562dde96c7b8e6dc8cff609a74f3417b5fbfce4b77086bc05d11ecb115b12966"
+        },
+        {
+          "path": "src/runtimes/broker/dependency-licenses.json",
+          "sha256": "f17926f7f40712bb3430bcb63effa81f155068a0f1c7f3df2d9719c842f45e45"
+        },
+        {
+          "path": "tools/release/broker-dependency-license-contract.mjs",
+          "sha256": "5d17eea587cfdfb5176de5d1ab54839ec3e2ebec0d5c6976d94605431d6c6869"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
         }
       ]
     },
@@ -99,7 +387,7 @@
         },
         {
           "path": "tools/release/package-broker-assets.sh",
-          "sha256": "b2b7b45cf84b77e2a6eeda19dcc241d5e5112b2503b40e2d9b81144850606e65"
+          "sha256": "2065dfed034f416d4a09769cba35023a8ce731497bb3e2b8a13af3a79951764c"
         }
       ]
     },
@@ -157,5 +445,5 @@
       ]
     }
   ],
-  "sha256": "5810068700be6a0aada4b6d0f21b9b08dbbd16be616b2e58f51a348f30bdc9a9"
+  "sha256": "64bbd679a6be4cb0f25bad61ad28191cbc2078232e458f3b3299487daff81acc"
 }

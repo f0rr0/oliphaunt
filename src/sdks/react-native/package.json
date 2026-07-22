@@ -2,7 +2,7 @@
   "name": "@oliphaunt/react-native",
   "version": "0.0.0",
   "description": "React Native New Architecture SDK for Oliphaunt.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/f0rr0/oliphaunt.git",
@@ -30,6 +30,8 @@
     "ios",
     "lib",
     "src",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "tools/codegen-check.cjs",
     "tools/stage-ios-app.mjs",
     "tools/verify-ios-package.mjs",

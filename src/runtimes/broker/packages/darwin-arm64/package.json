@@ -2,7 +2,7 @@
   "name": "@oliphaunt/broker-darwin-arm64",
   "version": "0.0.0",
   "description": "macOS arm64 oliphaunt-broker helper binary.",
-  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "license": "MIT AND Apache-2.0 AND BSD-3-Clause AND CC-BY-3.0 AND ISC AND Unicode-3.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -30,7 +30,10 @@
   },
   "files": [
     "bin",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_LICENSES"
   ],
   "exports": {
     "./package.json": "./package.json"

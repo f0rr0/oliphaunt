@@ -14,6 +14,18 @@ import {
   wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 
+test("the live publication catalog includes the independently versioned PostGIS product", () => {
+  const catalog = loadPublicationCatalog("publication-catalog.test");
+  expect(catalog.products).toHaveLength(18);
+  expect(catalog.carriers).toHaveLength(186);
+  expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
+  expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(17);
+
+  const extensionProducts = exactExtensionProducts("publication-catalog.test");
+  expect(extensionProducts).toHaveLength(8);
+  expect(extensionProducts).toContain("oliphaunt-extension-postgis");
+});
+
 describe("WASIX extension portable publication carriers", () => {
   test("assigns every independently versioned portable carrier an explicit canonical target", () => {
     const products = exactExtensionProducts("publication-catalog.test");

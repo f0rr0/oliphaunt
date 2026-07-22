@@ -24,7 +24,7 @@
   <a href="https://crates.io/crates/oliphaunt-wasix"><img src="https://img.shields.io/crates/v/oliphaunt-wasix.svg" alt="crates.io"></a>
   <a href="https://docs.rs/oliphaunt-wasix"><img src="https://docs.rs/oliphaunt-wasix/badge.svg" alt="docs.rs"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/msrv-1.93-blue" alt="MSRV"></a>
-  <a href="https://github.com/f0rr0/oliphaunt#license"><img src="https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0%20AND%20PostgreSQL-blue" alt="License"></a>
+  <a href="https://github.com/f0rr0/oliphaunt#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
 `oliphaunt-wasix` brings the WASIX Oliphaunt/Postgres runtime to Rust with a

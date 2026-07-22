@@ -36,6 +36,9 @@ const MAX_ARCHIVE_ENTRIES = 4096;
 const MAX_ICU_ARCHIVE_ENTRIES = 8192;
 const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
+const MAX_LEGAL_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_LEGAL_FILES = 1024;
+const SPDX_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]*$/u;
 const ALLOWED_ZIP_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
 const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
   "packageLayout",
@@ -57,6 +60,8 @@ const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
   "mobileStaticDependencyArchives",
   "staticSymbolPrefix",
   "staticSymbolAliases",
+  "licenseFiles",
+  "licenseProfile",
   "files",
 ]);
 const GENERATED_EXTENSION_CATALOG = JSON.parse(
@@ -236,6 +241,72 @@ function safeRelative(value, label) {
     fail(`${label} is not a safe archive-relative path: ${JSON.stringify(value)}`);
   }
   return normalized;
+}
+
+function spdxConjunction(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    fail(`${label} must be a non-empty SPDX conjunction`);
+  }
+  const terms = value.split(" AND ");
+  if (terms.some((term) => !SPDX_ID_RE.test(term))) {
+    fail(`${label} must contain only SPDX identifiers joined by AND`);
+  }
+  if (new Set(terms).size !== terms.length) fail(`${label} repeats an SPDX identifier`);
+  return value;
+}
+
+function validateLegalFiles(value, label) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_LEGAL_FILES) {
+    fail(`${label} must contain between 1 and ${MAX_LEGAL_FILES} legal file locators`);
+  }
+  const rows = value.map((raw, index) => {
+    const row = object(raw, `${label}[${index}]`);
+    exactKeys(row, ["bytes", "kind", "member", "sha256"], `${label}[${index}]`);
+    const member = safeRelative(row.member, `${label}[${index}].member`);
+    if (member === ".") fail(`${label}[${index}].member must name a file`);
+    if (!Number.isSafeInteger(row.bytes) || row.bytes <= 0 || row.bytes > MAX_LEGAL_FILE_BYTES) {
+      fail(`${label}[${index}].bytes must be between 1 and ${MAX_LEGAL_FILE_BYTES}`);
+    }
+    if (!new Set(["license", "notice"]).has(row.kind)) {
+      fail(`${label}[${index}].kind must be license or notice`);
+    }
+    if (typeof row.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.sha256)) {
+      fail(`${label}[${index}].sha256 must be a lowercase SHA-256 digest`);
+    }
+    return { bytes: row.bytes, kind: row.kind, member, sha256: row.sha256 };
+  });
+  const canonical = [...rows].sort((left, right) => compareText(left.member, right.member));
+  if (JSON.stringify(rows) !== JSON.stringify(canonical)) {
+    fail(`${label} must be sorted by archive member in ordinal order`);
+  }
+  const folded = new Map();
+  for (const row of rows) {
+    const key = row.member.normalize("NFC").toLowerCase();
+    const prior = folded.get(key);
+    if (prior !== undefined) {
+      fail(`${label} has colliding legal members ${prior} and ${row.member}`);
+    }
+    folded.set(key, row.member);
+  }
+  return rows;
+}
+
+function validateLegalGroup(value, label, { sqlName = undefined } = {}) {
+  const row = object(value, label);
+  const keys = sqlName === undefined
+    ? ["assetRole", "files", "profile", "spdx"]
+    : ["assetRole", "files", "profile", "spdx", "sqlName"];
+  exactKeys(row, keys, label);
+  if (sqlName !== undefined && row.sqlName !== sqlName) {
+    fail(`${label}.sqlName must be ${sqlName}`);
+  }
+  return {
+    assetRole: portable(row.assetRole, `${label}.assetRole`),
+    files: validateLegalFiles(row.files, `${label}.files`),
+    profile: portable(row.profile, `${label}.profile`),
+    spdx: spdxConjunction(row.spdx, `${label}.spdx`),
+    ...(sqlName === undefined ? {} : { sqlName }),
+  };
 }
 
 function portableAssetName(value, label) {
@@ -685,6 +756,54 @@ function validateExtension(value, label, carriers) {
   };
 }
 
+function validateLegalDocument(value, label, base, extensions) {
+  const legal = object(value, label);
+  exactKeys(legal, ["base", "extensions"], label);
+  if (!Array.isArray(legal.base)) fail(`${label}.base must be an array`);
+  const baseGroups = legal.base.map((row, index) =>
+    validateLegalGroup(row, `${label}.base[${index}]`));
+  const expectedBaseRoles = ["base-xcframework", "runtime-resources", "icu-data"];
+  if (JSON.stringify(baseGroups.map(({ assetRole }) => assetRole)) !== JSON.stringify(expectedBaseRoles)) {
+    fail(`${label}.base asset roles must be exactly ${expectedBaseRoles.join(",")}`);
+  }
+  const baseAssets = new Map([
+    [base.assets.framework.role, base.assets.framework],
+    [base.assets.runtime.role, base.assets.runtime],
+    [base.assets.icu.role, base.assets.icu],
+  ]);
+  for (const group of baseGroups) {
+    if (!baseAssets.has(group.assetRole)) {
+      fail(`${label}.base legal group references missing asset role ${group.assetRole}`);
+    }
+  }
+
+  if (!Array.isArray(legal.extensions)) fail(`${label}.extensions must be an array`);
+  const extensionByName = new Map(extensions.map((extension) => [extension.sqlName, extension]));
+  const extensionGroups = legal.extensions.map((row, index) => {
+    const raw = object(row, `${label}.extensions[${index}]`);
+    const sqlName = portable(raw.sqlName, `${label}.extensions[${index}].sqlName`);
+    const extension = extensionByName.get(sqlName);
+    if (extension === undefined) {
+      fail(`${label}.extensions[${index}] references undeclared extension ${sqlName}`);
+    }
+    const group = validateLegalGroup(raw, `${label}.extensions[${index}]`, { sqlName });
+    if (group.assetRole !== "runtime-resources" || extension.assets.runtime.role !== group.assetRole) {
+      fail(`${label}.extensions[${index}] legal bytes must come from its runtime-resources asset`);
+    }
+    return group;
+  });
+  const expectedNames = [...extensionByName.keys()].sort(compareText);
+  const actualNames = extensionGroups.map(({ sqlName }) => sqlName);
+  if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+    fail(`${label}.extensions must exactly cover carrier extensions in ordinal order`);
+  }
+  const legalByName = new Map(extensionGroups.map((group) => [group.sqlName, group]));
+  return {
+    base: baseGroups,
+    extensions: legalByName,
+  };
+}
+
 function assertExactCarrierCoverage(carriers, extensions, label) {
   const referenced = new Set(
     extensions.flatMap((extension) => [
@@ -712,7 +831,7 @@ async function readCarrierDocument(file, allowFileUrls) {
   }
   const root = object(value, file);
   if (root.schema !== SCHEMA) fail(`${file} schema must be ${SCHEMA}`);
-  exactKeys(root, ["base", "carriers", "extensions", "schema"], file);
+  exactKeys(root, ["base", "carriers", "extensions", "legal", "schema"], file);
   if (!Array.isArray(root.extensions)) fail(`${file}.extensions must be an array`);
   const base = validateBase(root.base, `${file}.base`, allowFileUrls);
   const carriers = validateCarrierEnvelopes(
@@ -724,6 +843,9 @@ async function readCarrierDocument(file, allowFileUrls) {
     validateExtension(extension, `${file}.extensions[${index}]`, carriers));
   const names = extensions.map(({ sqlName }) => sqlName);
   if (new Set(names).size !== names.length) fail(`${file}.extensions repeats an exact extension row`);
+  const legal = validateLegalDocument(root.legal, `${file}.legal`, base, extensions);
+  base.legal = legal.base;
+  for (const extension of extensions) extension.legal = legal.extensions.get(extension.sqlName);
   assertExactCarrierCoverage(carriers, extensions, file);
   const releases = new Map();
   for (const extension of extensions) {
@@ -1528,9 +1650,13 @@ async function extractedAsset(asset, archive, cacheDir) {
   }
 }
 
-async function resolveAsset(asset, cacheDir) {
+async function resolveAssetArchiveRoot(asset, cacheDir) {
   const archive = await materializeAsset(asset, cacheDir);
-  const extracted = await extractedAsset(asset, archive, cacheDir);
+  return extractedAsset(asset, archive, cacheDir);
+}
+
+async function resolveAsset(asset, cacheDir) {
+  const extracted = await resolveAssetArchiveRoot(asset, cacheDir);
   const member = asset.member === "."
     ? extracted
     : path.join(extracted, ...asset.member.split("/"));
@@ -1539,7 +1665,7 @@ async function resolveAsset(asset, cacheDir) {
   return member;
 }
 
-async function resolveLogicalAsset(locator, cacheDir, carrierMemberCache) {
+async function resolveLogicalArchiveRoot(locator, cacheDir, carrierMemberCache) {
   const carrierFile = await materializeAsset(locator.envelope, cacheDir);
   const archive = await materializeLogicalPayload(
     locator,
@@ -1551,13 +1677,17 @@ async function resolveLogicalAsset(locator, cacheDir, carrierMemberCache) {
     ...locator,
     name: locator.path === "." ? locator.envelope.name : path.posix.basename(locator.path),
   };
-  const extracted = await extractedAsset(logicalAsset, archive, cacheDir);
+  return extractedAsset(logicalAsset, archive, cacheDir);
+}
+
+async function resolveLogicalAsset(locator, cacheDir, carrierMemberCache) {
+  const extracted = await resolveLogicalArchiveRoot(locator, cacheDir, carrierMemberCache);
   const member = locator.member === "."
     ? extracted
     : path.join(extracted, ...locator.member.split("/"));
   const stat = await statOrUndefined(member);
   if (stat?.isDirectory() !== true) {
-    fail(`${logicalAsset.name} member is not a directory: ${locator.member}`);
+    fail(`${locator.envelope.name} logical member is not a directory: ${locator.member}`);
   }
   return member;
 }
@@ -1601,6 +1731,201 @@ async function mergeTree(source, destination) {
   await fs.mkdir(path.dirname(destination), { recursive: true });
   await fs.copyFile(source, destination);
   await fs.chmod(destination, stat.mode & 0o111 ? 0o755 : 0o644);
+}
+
+function legalRelativeMember(group, asset, member) {
+  const prefix = asset.member === "." ? "" : `${asset.member}/`;
+  if (prefix && member.startsWith(prefix)) return member.slice(prefix.length);
+  return member;
+}
+
+function checkedLegalDestinations(rows) {
+  const exact = new Set();
+  const portable = new Map();
+  for (const row of rows) {
+    const destination = safeRelative(row.destination, "staged legal destination");
+    if (destination === "." || exact.has(destination)) {
+      fail(`staged legal destination is repeated or invalid: ${destination}`);
+    }
+    const folded = destination.normalize("NFC").toLowerCase();
+    const prior = portable.get(folded);
+    if (prior !== undefined) {
+      fail(`staged legal destinations collide across case or Unicode normalization: ${prior}, ${destination}`);
+    }
+    exact.add(destination);
+    portable.set(folded, destination);
+  }
+  for (const destination of exact) {
+    let separator = destination.indexOf("/");
+    while (separator >= 0) {
+      const parent = destination.slice(0, separator);
+      if (exact.has(parent)) {
+        fail(`staged legal file ${parent} is also used as a directory`);
+      }
+      separator = destination.indexOf("/", separator + 1);
+    }
+  }
+}
+
+async function readVerifiedLegalFile(root, row, label) {
+  const rootStat = await fs.lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    fail(`${label} archive root must be a real directory`);
+  }
+  const parts = row.member.split("/");
+  let cursor = root;
+  for (const part of parts.slice(0, -1)) {
+    cursor = path.join(cursor, part);
+    const stat = await fs.lstat(cursor).catch((error) => {
+      fail(`${label} legal parent is missing: ${row.member} (${error.message})`);
+    });
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      fail(`${label} legal parent must be a real directory: ${row.member}`);
+    }
+  }
+  const file = path.join(cursor, parts.at(-1));
+  const leaf = await fs.lstat(file).catch((error) => {
+    fail(`${label} legal file is missing: ${row.member} (${error.message})`);
+  });
+  if (!leaf.isFile() || leaf.isSymbolicLink()) {
+    fail(`${label} legal member must be a regular non-symlink file: ${row.member}`);
+  }
+  const handle = await fs.open(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.size !== row.bytes) {
+      fail(`${label} legal member has the wrong type or byte count: ${row.member}`);
+    }
+    const bytes = await handle.readFile();
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (digest !== row.sha256) {
+      fail(`${label} legal member checksum mismatch: ${row.member}`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeSafeLegalFile(root, relative, bytes) {
+  const parts = relative.split("/");
+  let cursor = root;
+  for (const part of parts.slice(0, -1)) {
+    cursor = path.join(cursor, part);
+    await fs.mkdir(cursor, { mode: 0o755 }).catch((error) => {
+      if (error?.code !== "EEXIST") throw error;
+    });
+    const stat = await fs.lstat(cursor);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      fail(`staged legal parent must be a real directory: ${cursor}`);
+    }
+    await fs.chmod(cursor, 0o755);
+  }
+  const destination = path.join(root, ...parts);
+  await fs.writeFile(destination, bytes, { flag: "wx", mode: 0o644 });
+  await fs.chmod(destination, 0o644);
+}
+
+function combinedSpdx(groups) {
+  const terms = [];
+  const seen = new Set();
+  for (const group of groups) {
+    for (const term of group.spdx.split(" AND ")) {
+      if (!seen.has(term)) {
+        seen.add(term);
+        terms.push(term);
+      }
+    }
+  }
+  return terms.join(" AND ");
+}
+
+function renderLegalNotice(spdx, files) {
+  return [
+    "# Oliphaunt app-owned iOS payload legal notices",
+    "",
+    `SPDX-License-Identifier: ${spdx}`,
+    "",
+    "This file indexes the exact legal files materialized from the selected frozen carriers.",
+    "",
+    ...files.map((row) => `- \`${row.destination}\` (${row.kind}; SHA-256 \`${row.sha256}\`)`),
+    "",
+  ].join("\n");
+}
+
+async function stageSelectedLegalFiles({
+  args,
+  base,
+  carrierMemberCache,
+  selected,
+  temporary,
+}) {
+  const baseAssets = new Map([
+    [base.assets.framework.role, base.assets.framework],
+    [base.assets.runtime.role, base.assets.runtime],
+    [base.assets.icu.role, base.assets.icu],
+  ]);
+  const groups = [];
+  for (const group of base.legal) {
+    if (group.assetRole === "icu-data" && !args.icu) continue;
+    const asset = baseAssets.get(group.assetRole);
+    if (asset === undefined) fail(`base legal group references missing ${group.assetRole} asset`);
+    groups.push({
+      asset,
+      group,
+      label: `base ${group.assetRole}`,
+      scope: `base/${group.assetRole}`,
+      source: "base",
+    });
+  }
+  for (const extension of [...selected].sort((left, right) => compareText(left.sqlName, right.sqlName))) {
+    groups.push({
+      asset: extension.assets.runtime,
+      group: extension.legal,
+      label: `extension ${extension.sqlName}`,
+      scope: `extensions/${extension.sqlName}`,
+      source: "extension",
+    });
+  }
+  const planned = groups
+    .flatMap(({ asset, group, label, scope, source }) =>
+      group.files.map((row) => ({
+        ...row,
+        asset,
+        destination: `licenses/${scope}/${legalRelativeMember(group, asset, row.member)}`,
+        label,
+        source,
+      })))
+    .sort((left, right) => compareText(left.destination, right.destination));
+  checkedLegalDestinations(planned);
+  const legalRoot = path.join(temporary, "licenses");
+  await fs.mkdir(legalRoot, { recursive: true, mode: 0o755 });
+  await fs.chmod(legalRoot, 0o755);
+  for (const row of planned) {
+    const sourceRoot = row.source === "base"
+      ? await resolveAssetArchiveRoot(row.asset, args.cacheDir)
+      : await resolveLogicalArchiveRoot(row.asset, args.cacheDir, carrierMemberCache);
+    const bytes = await readVerifiedLegalFile(sourceRoot, row, row.label);
+    await writeSafeLegalFile(temporary, row.destination, bytes);
+  }
+  const spdx = combinedSpdx(groups.map(({ group }) => group));
+  const notice = "licenses/NOTICE.md";
+  await writeSafeLegalFile(temporary, notice, Buffer.from(renderLegalNotice(spdx, planned), "utf8"));
+  return {
+    file: notice,
+    files: planned.map(({ bytes, destination, kind, member, sha256, source }) => ({
+      bytes,
+      destination,
+      kind,
+      member,
+      sha256,
+      source,
+    })),
+    spdx,
+  };
 }
 
 function parseProperties(text, source) {
@@ -1850,6 +2175,7 @@ async function validateExactExtensionArtifactInventory(
     actualEntries.filter(({ type }) => type === "file").map(({ path: entry }) => entry),
   );
   const expectedFiles = new Set(["manifest.properties"]);
+  for (const legalFile of carrier.legal.files) expectedFiles.add(legalFile.member);
   if (carrier.createsExtension) {
     const extensionRoot = "files/share/postgresql/extension";
     const control = `${extensionRoot}/${carrier.sqlName}.control`;
@@ -1982,6 +2308,12 @@ async function extensionResourceRoot(carrier, base, cacheDir, carrierMemberCache
     manifestFile,
   );
   requireProperty(manifest, "mobilePrebuilt", carrier.nativeModuleStem === null ? "no" : "yes", manifestFile);
+  requireProperty(manifest, "licenseProfile", carrier.legal.profile, manifestFile);
+  const expectedUpstreamLicenses = carrier.legal.files
+    .map(({ member }) => /^files\/(share\/licenses\/.+)$/u.exec(member)?.[1])
+    .filter((member) => member !== undefined)
+    .sort(compareText);
+  requireProperty(manifest, "licenseFiles", expectedUpstreamLicenses.join(","), manifestFile);
   requireProperty(manifest, "files", "files", manifestFile);
   const filesRoot = path.join(root, "files");
   if ((await statOrUndefined(filesRoot))?.isDirectory() !== true) {
@@ -2121,18 +2453,19 @@ async function treeSize(root) {
   return { bytes, files };
 }
 
-function renderPayloadPodspec(version, hasNative, baseFrameworkName) {
+function renderPayloadPodspec(version, hasNative, baseFrameworkName, legal) {
   const baseFramework = JSON.stringify(`frameworks/base/${baseFrameworkName}`);
   return `Pod::Spec.new do |s|\n` +
     `  s.name = "OliphauntReactNativePayload"\n` +
     `  s.version = ${JSON.stringify(version)}\n` +
     `  s.summary = "Generated app-owned Oliphaunt iOS runtime payload."\n` +
-    `  s.license = { :type => "MIT AND Apache-2.0 AND PostgreSQL" }\n` +
+    `  s.license = { :type => ${JSON.stringify(legal.spdx)}, :file => ${JSON.stringify(legal.file)} }\n` +
     `  s.homepage = "https://oliphaunt.dev"\n` +
     `  s.authors = { "Oliphaunt" => "opensource@oliphaunt.dev" }\n` +
     `  s.source = { :git => "https://github.com/f0rr0/oliphaunt.git", :tag => "app-owned-payload" }\n` +
     `  s.platforms = { :ios => "17.0" }\n` +
     `  s.resources = "resources/OliphauntReactNativeResources.bundle"\n` +
+    `  s.preserve_paths = "licenses/**/*"\n` +
     `  s.vendored_frameworks = ${baseFramework}, "frameworks/extensions/**/*.xcframework"\n` +
     (hasNative
       ? `  s.source_files = "generated/static-registry/*.c"\n  s.user_target_xcconfig = { "OTHER_LDFLAGS" => "$(inherited) -u _liboliphaunt_selected_static_extensions" }\n`
@@ -2216,6 +2549,14 @@ async function stage(args, base, selected) {
         }
       }
     }
+
+    const legal = await stageSelectedLegalFiles({
+      args,
+      base,
+      carrierMemberCache,
+      selected,
+      temporary,
+    });
 
     const selectedExtensions = selected.map(({ sqlName }) => sqlName).sort(compareText);
     const createExtensions = selected.filter(({ createsExtension }) => createsExtension).map(({ sqlName }) => sqlName).sort(compareText);
@@ -2303,12 +2644,13 @@ async function stage(args, base, selected) {
       })),
       requestedExtensions: args.extensions,
       icu: args.icu,
+      legal,
       schema: OUTPUT_SCHEMA,
     };
     await fs.writeFile(path.join(temporary, "selection.json"), `${JSON.stringify(frozen, null, 2)}\n`);
     await fs.writeFile(
       path.join(temporary, "OliphauntReactNativePayload.podspec"),
-      renderPayloadPodspec(base.version, nativeCarriers.length > 0, baseFrameworkName),
+      renderPayloadPodspec(base.version, nativeCarriers.length > 0, baseFrameworkName, legal),
     );
     await fs.rm(args.outputDir, { force: true, recursive: true });
     await fs.rename(temporary, args.outputDir);

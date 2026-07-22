@@ -29,6 +29,10 @@ import {
   RELEASE_CONTINUATION_DISPATCH_REQUEST_DEADLINE_MS,
   RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS,
 } from "../../tools/release/release-continuation-read-budget.mjs";
+import {
+  releaseTransportTagName,
+  validateReleaseTransportRef,
+} from "./release-transport-ref.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
@@ -184,16 +188,16 @@ export function parseDispatchResponse(raw) {
   return json(body, "workflow dispatch response");
 }
 
-function requireCurrentMain(repo, releaseCommit) {
-  const ref = ghJson(repo, "git/ref/heads/main", "current main ref");
-  if (ref?.ref !== "refs/heads/main" || ref.object?.type !== "commit" || ref.object?.sha !== releaseCommit) {
-    throw error("main moved away from the exact release commit before continuation dispatch");
-  }
+function requireReleaseTransportRef(repo, releaseCommit) {
+  const tag = releaseTransportTagName(releaseCommit);
+  const ref = ghJson(repo, `git/ref/tags/${tag}`, `exact release transport ref ${tag}`);
+  validateReleaseTransportRef(ref, releaseCommit);
 }
 
 export function buildDispatchRequest(repo, pointer) {
   const payload = JSON.stringify({
-    ref: "main",
+    ref: releaseTransportTagName(pointer.releaseCommit),
+    return_run_details: true,
     inputs: {
       operation: pointer.operation,
       release_commit: pointer.releaseCommit,
@@ -280,13 +284,13 @@ export async function main(environment = process.env) {
   if (JSON.stringify(pointer).length > 32 * 1024) {
     throw error("canonical continuation pointer exceeds the bounded workflow input size");
   }
-  requireCurrentMain(repo, releaseCommit);
+  requireReleaseTransportRef(repo, releaseCommit);
   const delay = continuationDelaySeconds(contract.outcome.notBeforeEpochSeconds, Math.floor(Date.now() / 1000));
   if (delay > 0) {
     console.log(`waiting ${delay}s for the registry-authoritative continuation not-before time`);
     await new Promise((resolve) => setTimeout(resolve, delay * 1000));
   }
-  requireCurrentMain(repo, releaseCommit);
+  requireReleaseTransportRef(repo, releaseCommit);
   const response = validateDispatchResponse(dispatch(repo, pointer), { repo, parentRunId });
   const authorizationPath = required("CONTINUATION_AUTHORIZATION_PATH", environment);
   const authorization = createReleaseContinuationAuthorization({

@@ -71,6 +71,22 @@ import {
   parseWindowsVcRuntimeReceipt,
   windowsVcRuntimeProfileNames,
 } from "./windows-vc-runtime-closure.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+import {
+  prepareOliphauntBuildReleaseSource,
+  prepareRustReleaseSource,
+} from "./prepare-rust-release-source.mjs";
+import {
+  assertBrokerDependencyLicensesInArchive,
+  assertBrokerDependencyLicensesInDirectory,
+  brokerDependencyLicenseMembers,
+  normalizeBrokerDependencyLicenseModes,
+} from "./broker-dependency-license-contract.mjs";
 
 const TOOL = "local-registry-publish.mjs";
 const DEFAULT_REPO = "f0rr0/oliphaunt";
@@ -1441,6 +1457,7 @@ function stageLiboliphauntNpmPayloads(version, stageRoot, assetDir, { targetSet 
       fail(TOOL, `${target.id} must declare libraryRelativePath for npm artifact package publication`);
     }
     const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    stageReleaseNotices(stage, { profile: "native-runtime" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     extractArchiveMember(archive, target.libraryRelativePath, path.join(stage, target.libraryRelativePath));
     extractArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
@@ -1454,6 +1471,7 @@ function stageLiboliphauntNpmPayloads(version, stageRoot, assetDir, { targetSet 
     ];
     ensureNativeToolsAbsentFromRuntime(stage, target.target);
     runNativePayloadOptimizer(stage, target.target, "runtime");
+    assertReleaseNoticesInDirectory(stage, { profile: "native-runtime" });
     stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
@@ -1472,6 +1490,7 @@ function stageLiboliphauntToolsNpmPayloads(version, stageRoot, assetDir, { targe
       continue;
     }
     const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    stageReleaseNotices(stage, { profile: "native-tools" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     for (const tool of requiredToolsPackageTools(target.target)) {
       const member = `runtime/bin/${tool}`;
@@ -1479,6 +1498,7 @@ function stageLiboliphauntToolsNpmPayloads(version, stageRoot, assetDir, { targe
     }
     const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin");
     runNativePayloadOptimizer(stage, target.target, "tools");
+    assertReleaseNoticesInDirectory(stage, { profile: "native-tools" });
     stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
@@ -1498,6 +1518,8 @@ function stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir) {
     "share/icu",
     path.join(stage, "share/icu"),
   );
+  stageReleaseNotices(stage, { profile: "native-icu-data" });
+  assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
   return stage;
 }
 
@@ -1527,15 +1549,15 @@ function liboliphauntNpmTarballs(
       embeddedCoreModuleMember(target.target, "package/lib/modules"),
       ...runtimeMembers,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+      ...releaseNoticeRows({ profile: "native-runtime" }).map((row) => `package/${row.member}`),
     ];
-    packages.push([
-      packageName,
-      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
-        requiredMembers,
-        executableMembers: runtimeMembers,
-        target: target.target,
-      }),
-    ]);
+    const tarball = npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
+      requiredMembers,
+      executableMembers: runtimeMembers,
+      target: target.target,
+    });
+    assertReleaseNoticesInArchive(tarball, { profile: "native-runtime", prefix: "package" });
+    packages.push([packageName, tarball]);
   }
   for (const [packageName, , target] of artifactNpmPackageTargets(
     "liboliphaunt-native",
@@ -1548,23 +1570,24 @@ function liboliphauntNpmTarballs(
     }
     const payload = toolsStages.get(packageName);
     const runtimeMembers = requiredToolsMemberPaths(target.target, "package/runtime/bin");
-    packages.push([
-      packageName,
-      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
-        requiredMembers: [
-          ...runtimeMembers,
-          ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
-        ],
-        executableMembers: runtimeMembers,
-        target: target.target,
-      }),
-    ]);
+    const tarball = npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
+      requiredMembers: [
+        ...runtimeMembers,
+        ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+        ...releaseNoticeRows({ profile: "native-tools" }).map((row) => `package/${row.member}`),
+      ],
+      executableMembers: runtimeMembers,
+      target: target.target,
+    });
+    assertReleaseNoticesInArchive(tarball, { profile: "native-tools", prefix: "package" });
+    packages.push([packageName, tarball]);
   }
   if (includeIcu) {
     const packageName = "@oliphaunt/icu";
     const stage = stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir);
     const tarball = pnpmPackForNpmPublish(stage, tarballRoot);
     packedIcuPackageContains(tarball, packageName, version);
+    assertReleaseNoticesInArchive(tarball, { profile: "native-icu-data", prefix: "package" });
     packages.push([packageName, tarball]);
   }
   return packages;
@@ -1586,17 +1609,27 @@ function stageBrokerNpmPayloads(version, stageRoot, assetDir, { targetSet = null
       fail(TOOL, `${target.id} must declare executableRelativePath for npm artifact package publication`);
     }
     const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    stageReleaseNotices(stage, { profile: "broker" });
+    assertReleaseNoticesInDirectory(stage, { profile: "broker" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    assertBrokerDependencyLicensesInArchive(archive, { target: target.target });
     extractArchiveMember(archive, target.executableRelativePath, path.join(stage, target.executableRelativePath), {
       mode: archive.endsWith(".zip") ? 0o755 : null,
     });
+    extractArchiveTree(
+      archive,
+      "THIRD_PARTY_LICENSES/rust",
+      path.join(stage, "THIRD_PARTY_LICENSES/rust"),
+    );
+    normalizeBrokerDependencyLicenseModes(stage, target.target);
+    assertBrokerDependencyLicensesInDirectory(stage, { target: target.target });
     const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin");
     stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
 
-function brokerNpmTarballs(version, stageRoot, tarballRoot, assetDir, { targetSet = null } = {}) {
+export function brokerNpmTarballs(version, stageRoot, tarballRoot, assetDir, { targetSet = null } = {}) {
   const packages = [];
   const stages = stageBrokerNpmPayloads(version, stageRoot, assetDir, { targetSet });
   for (const [packageName, , target] of artifactNpmPackageTargets(
@@ -1613,15 +1646,16 @@ function brokerNpmTarballs(version, stageRoot, tarballRoot, assetDir, { targetSe
     const requiredMembers = [
       executableMember,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+      ...releaseNoticeRows({ profile: "broker" }).map((row) => `package/${row.member}`),
+      ...brokerDependencyLicenseMembers(target.target, { prefix: "package" }),
     ];
-    packages.push([
-      packageName,
-      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
-        requiredMembers,
-        executableMembers: [executableMember],
-        target: target.target,
-      }),
-    ]);
+    const tarball = npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
+      requiredMembers,
+      executableMembers: [executableMember],
+      target: target.target,
+    });
+    assertBrokerDependencyLicensesInArchive(tarball, { target: target.target, prefix: "package" });
+    packages.push([packageName, tarball]);
   }
   return packages;
 }
@@ -2442,17 +2476,22 @@ async function stageCargoSourceCrates(roots, registryRoot, result, strict) {
 
   const generated = [];
   const packageOptions = { root: ROOT, fail: localFail, rel };
-  const buildManifest = path.join(ROOT, "src/sdks/rust/crates/oliphaunt-build/Cargo.toml");
-  generated.push(manualCargoPackageSource(buildManifest, outputDir, packageOptions));
+  const releaseSourceRoot = path.join(registryRoot, "cargo-generated", "release-sources");
+  const buildManifest = prepareOliphauntBuildReleaseSource({
+    stageDir: path.join(releaseSourceRoot, "oliphaunt-build"),
+    log: false,
+  });
+  const buildCrate = manualCargoPackageSource(buildManifest, outputDir, packageOptions);
+  assertReleaseNoticesInArchive(buildCrate, {
+    profile: "source-sdk",
+    prefix: path.basename(buildCrate, ".crate"),
+  });
+  generated.push(buildCrate);
 
-  const preparedRustSource = commandOutput([
-    process.execPath,
-    "tools/release/prepare-rust-release-source.mjs",
-  ]).trim().split(/\r?\n/u).filter(Boolean).at(-1);
-  if (preparedRustSource === undefined) {
-    fail(TOOL, "prepare-rust-release-source.mjs did not print a generated Cargo.toml path");
-  }
-  const oliphauntManifest = path.resolve(ROOT, preparedRustSource);
+  const oliphauntManifest = prepareRustReleaseSource({
+    stageDir: path.join(releaseSourceRoot, "oliphaunt"),
+    log: false,
+  });
   const availablePackageNames = cargoPackageNamesFromRoots(roots);
   const nativeSourceRoot = path.join(ROOT, "target/liboliphaunt/cargo-package-sources");
   const nativeRuntimePublicManifests = nativeRuntimeArtifactManifests(nativeSourceRoot);
@@ -2461,7 +2500,12 @@ async function stageCargoSourceCrates(roots, registryRoot, result, strict) {
     availablePackageNames.add(readCargoPackageNameVersion(manifest, { fail: localFail, rel }).name);
   }
   pruneMissingLocalArtifactTargetDependencies(oliphauntManifest, availablePackageNames, result, strict);
-  generated.push(manualCargoPackageSource(oliphauntManifest, outputDir, packageOptions));
+  const oliphauntCrate = manualCargoPackageSource(oliphauntManifest, outputDir, packageOptions);
+  assertReleaseNoticesInArchive(oliphauntCrate, {
+    profile: "source-sdk",
+    prefix: path.basename(oliphauntCrate, ".crate"),
+  });
+  generated.push(oliphauntCrate);
 
   const wasixManifest = await prepareOliphauntWasixReleaseSource(await currentOliphauntWasixSdkVersion());
   pruneMissingLocalArtifactTargetDependencies(wasixManifest, availablePackageNames, result, strict);

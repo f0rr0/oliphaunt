@@ -86,7 +86,15 @@ if [ -n "$vc_runtime_dlls" ]; then
   printf 'windowsVcRuntimeDlls=%s\n' "$vc_runtime_dlls" >>"$stage/manifest.properties"
 fi
 
+tools/dev/bun.sh tools/release/release-notices.mjs stage "$stage" --profile broker
+tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs stage \
+  "$stage" \
+  --target "$target_id"
+
 tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
+tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs check-archive \
+  "$out_dir/$asset" \
+  --target "$target_id"
 
 input_dirs="${OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then

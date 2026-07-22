@@ -18,7 +18,7 @@
         },
         {
           "path": "Cargo.toml",
-          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
         },
         {
           "path": "rust-toolchain.toml",
@@ -27,11 +27,79 @@
       ]
     },
     {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
+      "id": "wasix-product-notice",
+      "paths": [
+        "src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"
+      ],
+      "inputs": [
+        {
+          "path": "src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md",
+          "sha256": "ad377797934d8579007c95f66f3b60cb26d992ec58a6b8c429778c453c9cc003"
+        }
+      ]
+    },
+    {
+      "id": "postgresql-release-license-snapshot",
+      "paths": [
+        "src/postgres/versions/18/source.toml",
+        "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      ],
+      "inputs": [
+        {
+          "path": "src/postgres/versions/18/source.toml",
+          "sha256": "b8ac2717620c295521243fe1f663562293335b8ff9a3a759b92a3e3fb95df1a2"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT",
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+        }
+      ]
+    },
+    {
+      "id": "icu-release-license-snapshot",
+      "paths": [
+        "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+        "src/sources/third-party/shared/icu.toml"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+          "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+        },
+        {
+          "path": "src/sources/third-party/shared/icu.toml",
+          "sha256": "14b9c3dde24abaa3fb6338f27e44415eb18875b484d60bcfce12bb84629f6a8d"
+        }
+      ]
+    },
+    {
       "id": "wasix-release-asset-rust-producers",
       "paths": [
         "tools/xtask/Cargo.toml",
         "tools/xtask/src/aot_serializer.rs",
-        "tools/xtask/src/asset_checks.rs",
+        "tools/xtask/src/asset_fingerprint.rs",
         "tools/xtask/src/asset_manifest.rs",
         "tools/xtask/src/asset_pipeline.rs",
         "tools/xtask/src/extension_catalog.rs",
@@ -39,7 +107,6 @@
         "tools/xtask/src/main.rs",
         "tools/xtask/src/postgres_guard.rs",
         "tools/xtask/src/release_workspace.rs",
-        "tools/xtask/src/source_spine.rs",
         "tools/xtask/src/template_runner.rs"
       ],
       "inputs": [
@@ -52,8 +119,8 @@
           "sha256": "d74b8c24bd978bc2d69ed2f43f78aca08682fe01a0b9a17145361cb5dde0f72e"
         },
         {
-          "path": "tools/xtask/src/asset_checks.rs",
-          "sha256": "0037857a236b7ae251bad46a8bb621ae72cd314ff9cc5f0b634c4e0e87689e24"
+          "path": "tools/xtask/src/asset_fingerprint.rs",
+          "sha256": "e7eb15342326c2480fdf991b2de271114ac2d336aff7ac81291c9fe4aa15dad6"
         },
         {
           "path": "tools/xtask/src/asset_manifest.rs",
@@ -73,7 +140,7 @@
         },
         {
           "path": "tools/xtask/src/main.rs",
-          "sha256": "1817a0f40228f574e0a499916a0a9007ff2c4c17a54d1097be55707b3a1a1824"
+          "sha256": "64524e528b897474bf33faebcecece397795621dcae2297a70e6f622064ecbf2"
         },
         {
           "path": "tools/xtask/src/postgres_guard.rs",
@@ -81,11 +148,7 @@
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
-          "sha256": "a7a8b9e19c2922ecf0b28f1e598cfe08d539b5259521fbeb14079b8bc289e1ca"
-        },
-        {
-          "path": "tools/xtask/src/source_spine.rs",
-          "sha256": "2d74279db2f03e3e8915e029e7496d99416c102be03e5599413c3e12630e2787"
+          "sha256": "189a674874f1803e99b6f3bc0b84d5e4a7be70de437ee26cbc12137b37333038"
         },
         {
           "path": "tools/xtask/src/template_runner.rs",
@@ -100,7 +163,8 @@
         "src/extensions/generated/docs/**",
         "src/extensions/generated/extensions.build-plan.json",
         "src/extensions/generated/extensions.catalog.json",
-        "src/extensions/generated/mobile/**",
+        "src/extensions/generated/mobile/static-extensions.tsv",
+        "src/extensions/generated/mobile/static-registry.json",
         "src/extensions/generated/pgxs-build.tsv",
         "src/extensions/generated/sdk/js.json",
         "src/extensions/generated/sdk/react-native.json",
@@ -114,7 +178,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "ea65a4f943712e89054fbf6b9bf0983b3dad591e6172a90be1e361ee8c4d4a6a"
+          "sha256": "d4a81bc69693240ac9c7581666a6e7d7089728a29b6a466cbfee31ed08c1e321"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -126,7 +190,7 @@
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "ee8ca99d350f1ea6ea89a855c2837a291db04e6a0fa7cc63ffc2221b6cd90a8e"
+          "sha256": "f80b3ee2d7c5b9a030ecdc54c00f830e72701f765cffa04f4c5f9f6fe252e1a1"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
@@ -190,7 +254,19 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4302e5b9819ce04b966a5acf2287793cd58a5ce7a3f812e22e7545f37c000d64"
+          "sha256": "e13ba613e310fd042604c4b0a2614101af5630698b4fa36b10f92b8519b5884a"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
         }
       ]
     },
@@ -243,5 +319,5 @@
       ]
     }
   ],
-  "sha256": "4334891cff5c49a2ea6d848f152dff1752a61e7fad2031d0b86d3b1782791a47"
+  "sha256": "4866242bc6a7373f670d1e0aeef3201decc9ca941054b6a8bbab5c413bcca689"
 }

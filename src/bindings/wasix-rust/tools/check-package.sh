@@ -40,6 +40,17 @@ require_source_text() {
   fi
 }
 
+require_exact_package_fixture() {
+  local package_fixture="$1"
+  local canonical_fixture="$2"
+  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
+    echo "oliphaunt-wasix package fixture must exactly match its canonical repository source:" >&2
+    echo "  package:   $package_fixture" >&2
+    echo "  canonical: $canonical_fixture" >&2
+    exit 1
+  fi
+}
+
 require_cfg_tools_line() {
   local file="$1"
   local line="$2"
@@ -68,12 +79,22 @@ require_entry "src/bin/oliphaunt_wasix_proxy.rs"
 require_entry "src/oliphaunt/aot.rs"
 require_entry "src/oliphaunt/assets.rs"
 require_entry "src/protocol/parser.rs"
+require_entry "src/testdata/postgis-smoke.sql"
+require_entry "src/testdata/wasix-toolchain.toml"
+
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgis-smoke.sql \
+  src/extensions/external/postgis/tests/smoke.sql
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
+  src/sources/toolchains/wasix.toml
 
 reject_pattern '(^|/)(payload|artifacts|target)(/|$)'
 reject_pattern '(^|/)assets/generated(/|$)'
 reject_pattern '^src/runtimes/'
 reject_pattern '^src/extensions/generated/'
-reject_pattern '^release.toml$'
+reject_pattern '^(\.gitignore|\.release-semantic-inputs\.json|moon.yml|release.toml)$'
+reject_pattern '^tools/'
 
 if ! awk '
   /^\[\[bin\]\]/ {
@@ -109,6 +130,8 @@ fi
 
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"dep:oliphaunt-wasix-tools",' \
   "oliphaunt-wasix tools feature must select the split oliphaunt-wasix-tools crate"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml 'license = "MIT"' \
+  "oliphaunt-wasix is a source-only facade and must declare exactly MIT; payload crates carry their own licenses"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",' \
   "oliphaunt-wasix tools feature must select the Linux x64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",' \

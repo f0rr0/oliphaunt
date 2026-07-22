@@ -29,7 +29,8 @@ runs:
         node-version: ${{ inputs.node-version }}
 
     - name: Restore verified pnpm archive
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      id: restore_verified_pnpm_runtime
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/oliphaunt-pnpm-runtime
         key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/pnpm.toml', 'tools/dev/curl-platform-flags.sh') }}
@@ -64,30 +65,10 @@ runs:
         echo "$export_dir" >> "$GITHUB_PATH"
         echo "execution-envelope=$output_envelope" >> "$GITHUB_OUTPUT"
 
-    - name: Resolve pnpm store
-      id: pnpm-store
-      shell: bash
-      run: |
-        set -euo pipefail
-        store_path="$(pnpm store path --silent)"
-        if [[ -z "$store_path" || "$store_path" == *$'\n'* || "$store_path" == *$'\r'* ]]; then
-          echo "pnpm returned an invalid store path" >&2
-          exit 1
-        fi
-        mkdir_path="$store_path"
-        cache_path="$store_path"
-        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
-          command -v cygpath >/dev/null 2>&1
-          mkdir_path="$(cygpath -u "$store_path")"
-          cache_path="$(cygpath -w "$mkdir_path")"
-        fi
-        mkdir -p "$mkdir_path"
-        echo "path=$cache_path" >> "$GITHUB_OUTPUT"
-
-    - name: Restore pnpm store
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+    - name: Save verified pnpm archive
+      if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_pnpm_runtime.outputs.cache-hit != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: ${{ steps.pnpm-store.outputs.path }}
-        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('pnpm-lock.yaml', 'tools/release/verdaccio-runtime/pnpm-lock.yaml') }}
-        restore-keys: |
-          pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-
+        path: ${{ runner.temp }}/oliphaunt-pnpm-runtime
+        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/pnpm.toml', 'tools/dev/curl-platform-flags.sh') }}

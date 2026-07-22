@@ -5,6 +5,28 @@
   "ownershipManifest": "tools/release/release-semantic-inputs.toml",
   "rules": [
     {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "4168f1abd156fa9b670026ab23409276ba492c3602f5e61ae7d86a94dac92138"
+        }
+      ]
+    },
+    {
       "id": "apple-carrier-manifest-producer",
       "paths": [
         "tools/release/ios-carrier-manifest.mjs"
@@ -12,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/ios-carrier-manifest.mjs",
-          "sha256": "b3885fca2811345ad5d31dbaf04312db1945f959498027ef0aa00e302d5e1f2c"
+          "sha256": "880e4394073f414cfcc911ea903d0e255325de473f40ccf1273093ca976ed150"
         }
       ]
     },
@@ -29,14 +51,26 @@
       ]
     },
     {
-      "id": "sdk-package-producers",
+      "id": "shared-sdk-artifact-producer",
       "paths": [
-        "tools/release/build-sdk-ci-artifacts.mjs"
+        "tools/release/sdk-artifacts/shared.mjs"
       ],
       "inputs": [
         {
-          "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "swift-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/swift.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/swift.mjs",
+          "sha256": "5c4e4aebcfea478b968197b070ba1cde31d9113d3c98493f5401e99495a7863c"
         }
       ]
     },
@@ -65,5 +99,5 @@
       ]
     }
   ],
-  "sha256": "072cc25682cef579d15124afa19786d4dc2c9918d8b65f8b129b496bb84c2fdb"
+  "sha256": "368c00a0a99c8efceb6b1433a2080c3ae7c7ad0c91af5ce1002dd1a5c59ecad7"
 }

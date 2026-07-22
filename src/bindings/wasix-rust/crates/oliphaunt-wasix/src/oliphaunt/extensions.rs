@@ -660,8 +660,7 @@ mod candidate_tests {
         files
     }
 
-    const POSTGIS_SMOKE_SQL: &str =
-        include_str!("../../../../../../extensions/external/postgis/tests/smoke.sql");
+    const POSTGIS_SMOKE_SQL: &str = include_str!("../testdata/postgis-smoke.sql");
 
     enum SmokeSql {
         Inline(&'static [&'static str]),

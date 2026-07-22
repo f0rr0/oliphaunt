@@ -8,8 +8,14 @@ import {
   manualCargoPackageSource,
   packagedCargoManifestText,
 } from './cargo-source-package.mjs';
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  stageReleaseNotices,
+} from './release-notices.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 
 function fail(message) {
   console.error(`package_oliphaunt_wasix_sdk_crate.mjs: ${message}`);
@@ -149,6 +155,8 @@ export async function prepareOliphauntWasixReleaseSource(version) {
     registryPackages,
   );
   await fs.writeFile(cargoToml, rendered);
+  stageReleaseNotices(stageDir, SOURCE_NOTICE_OPTIONS);
+  assertReleaseNoticesInDirectory(stageDir, SOURCE_NOTICE_OPTIONS);
   return cargoToml;
 }
 
@@ -176,5 +184,9 @@ if (import.meta.main) {
   const version = await currentOliphauntWasixSdkVersion();
   const manifest = await prepareOliphauntWasixReleaseSource(version);
   const cratePath = manualCargoPackageSource(manifest, outputDir, { root, fail, rel });
+  assertReleaseNoticesInArchive(cratePath, {
+    ...SOURCE_NOTICE_OPTIONS,
+    prefix: path.basename(cratePath, '.crate'),
+  });
   console.log(rel(cratePath));
 }

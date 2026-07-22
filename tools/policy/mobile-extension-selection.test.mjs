@@ -132,6 +132,10 @@ test("the exact planner selection keeps SQL-only pgtap out of native static regi
   const expectedStems = expectedStatic.map((sqlName) => bySqlName.get(sqlName)["native-module-stem"]);
 
   assert(selected.includes("pgtap"), "the canonical planner fixture must cover SQL-only pgtap");
+  assert(selected.includes("postgis"), "the public planner must include PostGIS");
+  assert(bySqlName.has("postgis"), "the public React Native SDK metadata must include PostGIS");
+  const registry = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"));
+  assert(registry.modules.some((row) => row["sql-name"] === "postgis"));
   assert.equal(bySqlName.get("pgtap")?.["mobile-release-ready"], true);
   assert.equal(bySqlName.get("pgtap")?.["native-module-stem"], null);
 

@@ -214,6 +214,15 @@ if ($LASTEXITCODE -ne 0) {
     Fail "staged Windows liboliphaunt release smoke failed"
 }
 
+bun tools/release/release-notices.mjs stage $Stage --profile native-runtime
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to stage release notices in the Windows liboliphaunt asset"
+}
+bun tools/release/release-notices.mjs stage $ToolsStage --profile native-tools
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to stage release notices in the Windows tools asset"
+}
+
 bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
@@ -221,6 +230,14 @@ if ($LASTEXITCODE -ne 0) {
 bun tools/release/archive_dir.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows oliphaunt-tools asset"
+}
+bun tools/release/release-notices.mjs check-archive (Join-Path $OutDir $Asset) --profile native-runtime
+if ($LASTEXITCODE -ne 0) {
+    Fail "Windows liboliphaunt asset release notices failed validation"
+}
+bun tools/release/release-notices.mjs check-archive (Join-Path $OutDir $ToolsAsset) --profile native-tools
+if ($LASTEXITCODE -ne 0) {
+    Fail "Windows tools asset release notices failed validation"
 }
 Write-Output "liboliphauntWindowsReleaseAsset=$(Join-Path $OutDir $Asset)"
 Write-Output "oliphauntToolsWindowsReleaseAsset=$(Join-Path $OutDir $ToolsAsset)"

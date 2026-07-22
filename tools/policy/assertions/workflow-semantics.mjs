@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { RELEASE_TRANSPORT_STEP_TIMEOUT_MINUTES } from "../../../.github/scripts/release-transport-ref.mjs";
+
 import {
   GITHUB_RELEASE_ATTESTATION_EVIDENCE_STEP_TIMEOUT_MS,
   GITHUB_RELEASE_ATTESTATION_STEP_TIMEOUT_MS,
@@ -15,7 +17,6 @@ import {
   RELEASE_FINALIZATION_RESERVE_SECONDS,
   RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS,
   RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES,
-  RELEASE_CURRENT_MAIN_STEP_TIMEOUT_MINUTES,
   RELEASE_JOB_CLEANUP_RESERVE_SECONDS,
   RELEASE_JOB_HARD_WINDOW_SECONDS,
   RELEASE_JOB_TIMEOUT_MINUTES,
@@ -352,8 +353,663 @@ function assertPlannerConsumer(workflow, jobId, plannerJobId, producers) {
   ]);
 }
 
+const HEAVY_CACHE_SAVE_EXPRESSION = "${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.save_heavy_caches) }}";
+const PRIMARY_HEAVY_CACHE_WRITER = "liboliphaunt-wasix-runtime";
+const PRIMARY_GRADLE_CACHE_WRITER = "kotlin-sdk-package:Set up Android";
+const SETUP_ANDROID_GRADLE_CACHE_DEPENDENCY_PATH = `src/sdks/kotlin/**/*.gradle*
+src/sdks/kotlin/**/gradle-wrapper.properties
+src/sdks/kotlin/**/libs.versions.toml
+src/sdks/react-native/examples/expo/package.json
+src/sdks/react-native/package.json
+pnpm-lock.yaml`;
+const SETUP_ANDROID_GRADLE_CACHE_KEY = "setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/sdks/kotlin/**/*.gradle*', 'src/sdks/kotlin/**/gradle-wrapper.properties', 'src/sdks/kotlin/**/libs.versions.toml', 'src/sdks/react-native/examples/expo/package.json', 'src/sdks/react-native/package.json', 'pnpm-lock.yaml') }}";
+
+function enqueueLocalActions(queue, steps) {
+  for (const step of steps ?? []) {
+    const uses = String(step.uses ?? "");
+    if (uses.startsWith("./.github/actions/")) queue.push(uses);
+  }
+}
+
+export function parseReachableLocalActions(root, workflows) {
+  const queue = [];
+  for (const workflow of Object.values(workflows)) {
+    for (const job of Object.values(workflow.jobs ?? {})) {
+      enqueueLocalActions(queue, job.steps);
+    }
+  }
+  const actions = {};
+  while (queue.length > 0) {
+    const uses = queue.shift();
+    if (Object.hasOwn(actions, uses)) continue;
+    const relative = `${uses.slice(2)}/action.yml`;
+    let action;
+    try {
+      action = Bun.YAML.parse(readFileSync(path.join(root, relative), "utf8"));
+    } catch (cause) {
+      throw new Error(`workflow policy: cannot parse reachable local action ${relative}: ${cause.message}`);
+    }
+    invariant(
+      object(action) && action.runs?.using === "composite" && Array.isArray(action.runs.steps),
+      `${relative} must remain a composite action`,
+    );
+    actions[uses] = action;
+    enqueueLocalActions(queue, action.runs.steps);
+  }
+  return actions;
+}
+
+function cacheInventoryEntries(workflows, actions) {
+  const entries = [];
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    for (const [jobId, job] of Object.entries(workflow.jobs ?? {})) {
+      for (const step of job.steps ?? []) {
+        entries.push({
+          location: `${workflowName}:${jobId}:${step.id ?? step.name ?? "unnamed"}`,
+          step,
+        });
+      }
+    }
+  }
+  for (const [uses, action] of Object.entries(actions)) {
+    for (const step of action.runs.steps) {
+      entries.push({
+        location: `action:${uses}:${step.id ?? step.name ?? "unnamed"}`,
+        step,
+      });
+    }
+  }
+  return entries;
+}
+
+function actionStepByName(actions, uses, name) {
+  const matches = (actions[uses]?.runs?.steps ?? []).filter((step) => step.name === name);
+  invariant(matches.length === 1, `${uses} must contain exactly one ${name} step`);
+  return matches[0];
+}
+
+function assertVerifiedArchiveCache(actions, {
+  uses,
+  restoreName,
+  restoreId,
+  verifiedName,
+  saveName,
+  keyPrefix,
+}) {
+  const steps = actions[uses]?.runs?.steps ?? [];
+  const restore = actionStepByName(actions, uses, restoreName);
+  const verified = actionStepByName(actions, uses, verifiedName);
+  const save = actionStepByName(actions, uses, saveName);
+  invariant(
+    restore.id === restoreId
+      && String(restore.uses ?? "").startsWith("actions/cache/restore@")
+      && restore.with?.["restore-keys"] === undefined,
+    `${uses} must use one exact-key verified archive restore`,
+  );
+  invariant(
+    String(save.uses ?? "").startsWith("actions/cache/save@")
+      && save["continue-on-error"] === true
+      && normalized(save.if) === normalized(
+        `\${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.${restoreId}.outputs.cache-hit != 'true' }}`,
+      )
+      && save.with?.path === restore.with?.path
+      && save.with?.key === restore.with?.key,
+    `${uses} verified archive save must be main-gated, miss-only, non-blocking, and match its restore`,
+  );
+  invariant(
+    String(restore.with?.key ?? "").startsWith(`${keyPrefix}-\${{ runner.os }}-\${{ runner.arch }}-`),
+    `${uses} verified archive cache must have one exact key per runner OS and architecture`,
+  );
+  invariant(
+    steps.indexOf(restore) < steps.indexOf(verified) && steps.indexOf(verified) < steps.indexOf(save),
+    `${uses} must verify its archive payload before cache save`,
+  );
+}
+
+function assertNoWorkflowHeavyCacheOverride(workflow, label, { allowRoot = false } = {}) {
+  invariant(
+    allowRoot || !JSON.stringify(workflow).includes("HEAVY_CACHE_SAVE_IF"),
+    `${label} must remain restore-only and must not define the CI heavy-cache writer gate`,
+  );
+  for (const [jobId, job] of Object.entries(workflow.jobs ?? {})) {
+    invariant(
+      !Object.hasOwn(job.env ?? {}, "HEAVY_CACHE_SAVE_IF"),
+      `${label} job ${jobId} must not override the heavy-cache writer gate`,
+    );
+    for (const step of job.steps ?? []) {
+      invariant(
+        !Object.hasOwn(step.env ?? {}, "HEAVY_CACHE_SAVE_IF"),
+        `${label} job ${jobId} must not override the heavy-cache writer gate in a step`,
+      );
+    }
+  }
+}
+
+export function assertReachableCachePolicy(workflows, actions) {
+  const { ci, mobile, release } = workflows;
+  assertNoWorkflowHeavyCacheOverride(ci, "CI", { allowRoot: true });
+  assertNoWorkflowHeavyCacheOverride(mobile, "Mobile E2E");
+  assertNoWorkflowHeavyCacheOverride(release, "Release");
+
+  const entries = cacheInventoryEntries(workflows, actions);
+  const monolithic = entries.filter(({ step }) =>
+    String(step.uses ?? "").startsWith("actions/cache@"));
+  invariant(
+    monolithic.length === 0,
+    `reachable workflows and local composites must not hide monolithic cache writers; entries=${monolithic.map(({ location }) => location).join(",")}`,
+  );
+
+  const restores = entries.filter(({ step }) =>
+    String(step.uses ?? "").startsWith("actions/cache/restore@"));
+  const expectedRestores = [
+    "action:./.github/actions/setup-android:Restore Gradle dependency cache",
+    "action:./.github/actions/setup-moon:restore_verified_moon_toolchain",
+    "action:./.github/actions/setup-node-pnpm:restore_verified_pnpm_runtime",
+    "action:./.github/actions/setup-node-runtime:restore_verified_node_runtime",
+    "action:./.github/actions/setup-npm-publisher:restore_verified_npm_publisher",
+    "action:./.github/actions/setup-wasmer-llvm:cache",
+    "ci:extension-artifacts-native:restore_ios_extension_ccache",
+    "ci:liboliphaunt-wasix-runtime:wasix-build-cache",
+  ];
+  invariant(
+    restores.length === expectedRestores.length
+      && sameSet(restores.map(({ location }) => location), expectedRestores),
+    `reachable explicit cache restore inventory changed; entries=${restores.map(({ location }) => location).join(",")}`,
+  );
+
+  const saves = entries.filter(({ step }) =>
+    String(step.uses ?? "").startsWith("actions/cache/save@"));
+  const expectedSaves = [
+    "action:./.github/actions/setup-moon:Save verified tool archives",
+    "action:./.github/actions/setup-node-pnpm:Save verified pnpm archive",
+    "action:./.github/actions/setup-node-runtime:Save verified Node.js archive",
+    "action:./.github/actions/setup-npm-publisher:Save verified npm publisher archive",
+    "action:./.github/actions/setup-wasmer-llvm:Save Wasmer LLVM cache",
+    "ci:extension-artifacts-native:save_ios_extension_ccache",
+    "ci:liboliphaunt-wasix-runtime:save_wasix_build_cache",
+  ];
+  invariant(
+    saves.length === expectedSaves.length
+      && sameSet(saves.map(({ location }) => location), expectedSaves),
+    `reachable explicit cache writer inventory changed; entries=${saves.map(({ location }) => location).join(",")}`,
+  );
+
+  const setupJavaWriters = entries.filter(({ step }) =>
+    String(step.uses ?? "").startsWith("actions/setup-java@") && step.with?.cache !== undefined);
+  invariant(
+    setupJavaWriters.length === 1
+      && setupJavaWriters[0].location
+        === "action:./.github/actions/setup-android:Set up Java with Gradle cache",
+    `reachable setup-java writer inventory changed; entries=${setupJavaWriters.map(({ location }) => location).join(",")}`,
+  );
+
+  const rustCacheWriters = entries.filter(({ step }) =>
+    String(step.uses ?? "").startsWith("Swatinem/rust-cache@"));
+  invariant(
+    rustCacheWriters.length === 1
+      && rustCacheWriters[0].location
+        === "action:./.github/actions/setup-rust-tools:Cache Cargo output",
+    `reachable Rust cache writer inventory changed; entries=${rustCacheWriters.map(({ location }) => location).join(",")}`,
+  );
+
+  const buildkitWriters = entries.filter(({ step }) =>
+    String(step.with?.["cache-to"] ?? "").includes("type=gha"));
+  invariant(
+    buildkitWriters.length === 1
+      && buildkitWriters[0].location
+        === "ci:liboliphaunt-wasix-runtime:Build WASIX builder image and save cache",
+    `reachable BuildKit cache writer inventory changed; entries=${buildkitWriters.map(({ location }) => location).join(",")}`,
+  );
+
+  for (const spec of [
+    {
+      uses: "./.github/actions/setup-node-runtime",
+      restoreName: "Restore verified Node.js archive",
+      restoreId: "restore_verified_node_runtime",
+      verifiedName: "Install verified Node.js runtime",
+      saveName: "Save verified Node.js archive",
+      keyPrefix: "verified-node-runtime-v1",
+    },
+    {
+      uses: "./.github/actions/setup-moon",
+      restoreName: "Restore verified tool archives",
+      restoreId: "restore_verified_moon_toolchain",
+      verifiedName: "Verify toolchain",
+      saveName: "Save verified tool archives",
+      keyPrefix: "verified-moon-toolchain-v1",
+    },
+    {
+      uses: "./.github/actions/setup-node-pnpm",
+      restoreName: "Restore verified pnpm archive",
+      restoreId: "restore_verified_pnpm_runtime",
+      verifiedName: "Install verified pnpm",
+      saveName: "Save verified pnpm archive",
+      keyPrefix: "verified-pnpm-runtime-v1",
+    },
+    {
+      uses: "./.github/actions/setup-npm-publisher",
+      restoreName: "Restore verified npm publisher archive",
+      restoreId: "restore_verified_npm_publisher",
+      verifiedName: "Install exact npm publisher",
+      saveName: "Save verified npm publisher archive",
+      keyPrefix: "verified-npm-publisher-v1",
+    },
+  ]) {
+    assertVerifiedArchiveCache(actions, spec);
+  }
+  invariant(
+    !JSON.stringify(actions).includes("pnpm-store-"),
+    "reachable composites must not restore or write a pnpm store with no post-install producer",
+  );
+
+  const setupRust = actions["./.github/actions/setup-rust"];
+  const setupRustTools = actions["./.github/actions/setup-rust-tools"];
+  const rustForwarder = actionStepByName(
+    actions,
+    "./.github/actions/setup-rust",
+    "Set up Rust tooling",
+  );
+  invariant(
+    setupRust?.inputs?.["cache-save-if"]?.default === "false"
+      && setupRustTools?.inputs?.["cache-save-if"]?.default === "false"
+      && rustForwarder.with?.["cache-save-if"] === "${{ inputs.cache-save-if }}"
+      && rustCacheWriters[0].step.with?.["save-if"] === "${{ inputs.cache-save-if }}",
+    "reachable Rust cache writes must remain false by default and explicitly forwarded",
+  );
+  invariant(
+    actions["./.github/actions/setup-wasmer-llvm"]?.inputs?.["cache-save-if"]?.default
+      === "false",
+    "reachable Wasmer LLVM cache writes must remain false by default",
+  );
+}
+
+export function assertSetupAndroidCachePolicy(action) {
+  invariant(
+    object(action) && action.runs?.using === "composite" && Array.isArray(action.runs.steps),
+    "setup-android must remain a composite action",
+  );
+  const saveInput = action.inputs?.["gradle-cache-save-if"];
+  invariant(
+    saveInput?.required === false && saveInput.default === "false",
+    "setup-android Gradle cache writes must be false by default",
+  );
+  invariant(
+    !Object.hasOwn(action.inputs ?? {}, "gradle-cache-scope-file"),
+    "setup-android must not expose an unwritable per-consumer Gradle cache scope",
+  );
+
+  const steps = action.runs.steps;
+  const validation = steps.filter((step) => step.name === "Validate Android setup capabilities");
+  invariant(
+    validation.length === 1
+      && validation[0].env?.GRADLE_CACHE_SAVE_IF_INPUT === "${{ inputs.gradle-cache-save-if }}"
+      && String(validation[0].run ?? "").includes('case "$GRADLE_CACHE_SAVE_IF_INPUT" in true|false)'),
+    "setup-android must validate gradle-cache-save-if as a boolean capability",
+  );
+
+  const javaSteps = steps.filter((step) =>
+    String(step.uses ?? "").startsWith("actions/setup-java@"));
+  const javaWriters = javaSteps.filter((step) => step.with?.cache !== undefined);
+  invariant(
+    javaSteps.length === 2
+      && javaWriters.length === 1
+      && javaWriters[0].name === "Set up Java with Gradle cache"
+      && javaWriters[0].with.cache === "gradle"
+      && normalized(javaWriters[0].if)
+        === normalized("${{ inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if == 'true' }}")
+      && String(javaWriters[0].with["cache-dependency-path"] ?? "").trim()
+        === SETUP_ANDROID_GRADLE_CACHE_DEPENDENCY_PATH,
+    "setup-android must expose exactly one explicitly authorized setup-java Gradle cache writer",
+  );
+  const javaConsumers = javaSteps.filter((step) => step.with?.cache === undefined);
+  invariant(
+    javaConsumers.length === 1
+      && javaConsumers[0].name === "Set up Java without Gradle cache"
+      && normalized(javaConsumers[0].if)
+        === normalized("${{ inputs.gradle-cache != 'true' || inputs.gradle-cache-save-if != 'true' }}"),
+    "setup-android non-writers must install Java without enabling setup-java cache writes",
+  );
+
+  const monolithicCaches = steps.filter((step) =>
+    String(step.uses ?? "").startsWith("actions/cache@"));
+  const cacheSaves = steps.filter((step) =>
+    String(step.uses ?? "").startsWith("actions/cache/save@"));
+  const cacheRestores = steps.filter((step) =>
+    String(step.uses ?? "").startsWith("actions/cache/restore@"));
+  invariant(
+    monolithicCaches.length === 0 && cacheSaves.length === 0,
+    "setup-android must not hide implicit or direct cache writers",
+  );
+  invariant(
+    cacheRestores.length === 1
+      && cacheRestores[0].name === "Restore Gradle dependency cache"
+      && normalized(cacheRestores[0].if)
+        === normalized("${{ inputs.gradle-cache == 'true' && inputs.gradle-cache-save-if != 'true' }}")
+      && String(cacheRestores[0].with?.path ?? "").trim()
+        === "~/.gradle/caches\n~/.gradle/wrapper"
+      && cacheRestores[0].with?.key === SETUP_ANDROID_GRADLE_CACHE_KEY,
+    "setup-android consumers must use the setup-java-compatible Gradle restore without a native cache restore",
+  );
+}
+
+function enabledCacheSaveInput(step) {
+  const value = step.with?.["cache-save-if"];
+  return value !== undefined && value !== false && value !== "false";
+}
+
+function assertCiHeavyCacheBudget(workflow) {
+  const input = workflow.on.workflow_dispatch?.inputs?.save_heavy_caches;
+  invariant(
+    input?.type === "boolean" && input.required === true && input.default === false,
+    "CI manual heavy-cache writes must be an explicit false-by-default boolean opt-in",
+  );
+  invariant(
+    workflow.env?.HEAVY_CACHE_SAVE_IF === HEAVY_CACHE_SAVE_EXPRESSION,
+    "CI heavy-cache writes must be automatic only on main pushes and explicit only on manual main runs",
+  );
+  invariant(
+    !JSON.stringify(workflow).includes("RUST_CACHE_SAVE_IF"),
+    "CI must not retain the former broad Rust cache-writer switch",
+  );
+
+  const rustWriters = [];
+  const llvmWriters = [];
+  const directCacheWriters = [];
+  const implicitCacheWriters = [];
+  const buildkitWriters = [];
+  const gradleWriters = [];
+  const gradleScopes = [];
+  for (const [jobId, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      if (step.uses === "./.github/actions/setup-rust" && enabledCacheSaveInput(step)) {
+        rustWriters.push(jobId);
+        invariant(
+          step.with["cache-save-if"] === "${{ env.HEAVY_CACHE_SAVE_IF }}",
+          `${jobId} Rust cache writer must use the bounded heavy-cache policy`,
+        );
+      }
+      if (step.uses === "./.github/actions/setup-wasmer-llvm" && enabledCacheSaveInput(step)) {
+        llvmWriters.push(jobId);
+        invariant(
+          step.with["cache-save-if"] === "${{ env.HEAVY_CACHE_SAVE_IF }}",
+          `${jobId} Wasmer LLVM cache writer must use the bounded heavy-cache policy`,
+        );
+      }
+      if (String(step.uses ?? "").startsWith("actions/cache/save@")) {
+        const location = `${jobId}:${step.id ?? step.name ?? "unnamed"}`;
+        directCacheWriters.push(location);
+        invariant(
+          normalized(step.if).includes("env.HEAVY_CACHE_SAVE_IF == 'true'"),
+          `${jobId} direct heavy-cache save must use the bounded heavy-cache policy`,
+        );
+        invariant(
+          step["continue-on-error"] === true,
+          `${jobId} direct heavy-cache save must not fail qualification`,
+        );
+      }
+      if (String(step.uses ?? "").startsWith("actions/cache@")) {
+        implicitCacheWriters.push(`${jobId}:${step.id ?? step.name ?? "unnamed"}`);
+      }
+      if (String(step.with?.["cache-to"] ?? "").includes("type=gha")) {
+        buildkitWriters.push(jobId);
+        invariant(
+          normalized(step.if) === normalized("${{ env.HEAVY_CACHE_SAVE_IF == 'true' }}"),
+          `${jobId} BuildKit cache writer must use the bounded heavy-cache policy`,
+        );
+      }
+      if (
+        step.uses === "./.github/actions/setup-android"
+        && step.with?.["gradle-cache-save-if"] !== undefined
+        && step.with["gradle-cache-save-if"] !== false
+        && step.with["gradle-cache-save-if"] !== "false"
+      ) {
+        gradleWriters.push(`${jobId}:${step.name ?? "unnamed"}`);
+        invariant(
+          step.with["gradle-cache-save-if"] === "${{ env.HEAVY_CACHE_SAVE_IF }}",
+          `${jobId} Gradle cache writer must use the bounded heavy-cache policy`,
+        );
+      }
+      if (
+        step.uses === "./.github/actions/setup-android"
+        && Object.hasOwn(step.with ?? {}, "gradle-cache-scope-file")
+      ) {
+        gradleScopes.push(`${jobId}:${step.name ?? "unnamed"}`);
+      }
+    }
+  }
+  for (const [writers, label] of [
+    [rustWriters, "Rust"],
+    [llvmWriters, "Wasmer LLVM"],
+    [buildkitWriters, "BuildKit"],
+  ]) {
+    invariant(
+      writers.length === 1 && sameSet(writers, [PRIMARY_HEAVY_CACHE_WRITER]),
+      `CI ${label} heavy-cache writer inventory must contain only ${PRIMARY_HEAVY_CACHE_WRITER}`,
+    );
+  }
+  invariant(
+    sameSet(directCacheWriters, [
+      "extension-artifacts-native:save_ios_extension_ccache",
+      "liboliphaunt-wasix-runtime:save_wasix_build_cache",
+    ]) && directCacheWriters.length === 2,
+    `CI direct heavy-cache writer inventory must contain only the WASIX primary and bounded exact-iOS producers; writers=${directCacheWriters.join(",")}`,
+  );
+  invariant(
+    implicitCacheWriters.length === 0,
+    `CI source/build caches must use explicit restore/save actions; implicit writers=${implicitCacheWriters.join(",")}`,
+  );
+  invariant(
+    gradleWriters.length === 1 && sameSet(gradleWriters, [PRIMARY_GRADLE_CACHE_WRITER]),
+    `CI Gradle heavy-cache writer inventory must contain only ${PRIMARY_GRADLE_CACHE_WRITER}; writers=${gradleWriters.join(",")}`,
+  );
+  invariant(
+    gradleScopes.length === 0,
+    `CI Gradle consumers must not select unwritable per-consumer cache scopes; callers=${gradleScopes.join(",")}`,
+  );
+  invariant(
+    workflow.jobs["kotlin-sdk-package"]?.["runs-on"] === "ubuntu-24.04"
+      && workflow.jobs["kotlin-sdk-package"]?.strategy?.matrix === undefined,
+    "the sole Gradle cache writer must remain one fixed Linux x64 package job",
+  );
+  invariant(
+    workflow.jobs[PRIMARY_HEAVY_CACHE_WRITER]?.["runs-on"] === "ubuntu-24.04",
+    "the sole heavy-cache writer must remain the common Linux x64 primary builder",
+  );
+}
+
+function assertNoNativeRuntimeCrossRunCaches(workflow) {
+  for (const jobId of [
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-ios",
+  ]) {
+    const caches = workflowSteps(workflow, jobId).filter((step) =>
+      /^actions\/cache(?:\/restore|\/save)?@/u.test(String(step.uses ?? "")));
+    invariant(
+      caches.length === 0,
+      `${jobId} must not restore cross-run native runtime build trees or compiler caches`,
+    );
+  }
+}
+
+function assertReleaseDoesNotWriteRustCaches(workflow) {
+  const writers = [];
+  for (const [jobId, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      if (step.uses === "./.github/actions/setup-rust" && enabledCacheSaveInput(step)) {
+        writers.push(jobId);
+      }
+    }
+  }
+  invariant(
+    writers.length === 0,
+    `release consumer/finalization jobs must restore but never write Rust caches; writers=${writers.join(",")}`,
+  );
+}
+
+function assertNativeExtensionBuildBudget(workflow) {
+  const job = workflow.jobs["extension-artifacts-native"];
+  const builds = workflowSteps(workflow, "extension-artifacts-native")
+    .filter((step) => step.name === "Build native exact-extension artifacts");
+  invariant(
+    job?.["timeout-minutes"] === 135
+      && builds.length === 1
+      && builds[0]["timeout-minutes"] === 120,
+    "native exact-extension builds must retain a 120-minute step bound below a 135-minute job bound",
+  );
+  invariant(
+    builds[0].env?.OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES
+      === "${{ matrix.qualification_sql_names_csv }}",
+    "native exact-extension builds must verify the matrix-provided deferred qualification selection",
+  );
+
+  const restores = workflowSteps(workflow, "extension-artifacts-native")
+    .filter((step) => step.name === "Restore native compiler cache");
+  invariant(restores.length === 1, "native exact-extension CI must restore one compiler cache");
+  invariant(
+    restores[0].id === "restore_ios_extension_ccache"
+      && String(restores[0].uses ?? "").startsWith("actions/cache/restore@"),
+    "native exact-extension compiler cache must use the stable explicit restore action",
+  );
+  const key = String(restores[0].with?.key ?? "");
+  for (const input of [
+    ".github/actions/setup-apple/**",
+    ".github/scripts/setup-native-build-tools.sh",
+    "src/postgres/versions/18/**",
+    "src/sources/third-party/shared/**",
+    "src/sources/third-party/native/**",
+    "src/shared/extension-runtime-contract/**",
+    "src/extensions/catalog/extensions.source.json",
+    "src/extensions/contrib/postgres18.toml",
+    "src/extensions/external/*/source.toml",
+    "src/extensions/external/*/recipe.toml",
+    "src/extensions/external/*/deps.toml",
+    "src/extensions/external/*/dependencies/**/source.toml",
+    "src/extensions/external/*/patches/**",
+    "src/extensions/external/*/dependencies/**/patches/**",
+    "src/extensions/generated/extensions.catalog.json",
+    "src/extensions/generated/extensions.build-plan.json",
+    "src/extensions/generated/contrib-build.tsv",
+    "src/extensions/generated/pgxs-build.tsv",
+    "src/extensions/generated/mobile/static-extensions.tsv",
+    "src/extensions/generated/mobile/qualification-static-extensions.tsv",
+    "src/extensions/generated/mobile/static-registry.json",
+    "src/runtimes/liboliphaunt/native/bin/build-*.sh",
+    "!src/runtimes/liboliphaunt/native/bin/*.test.sh",
+    "src/runtimes/liboliphaunt/native/patches/**",
+    "src/runtimes/liboliphaunt/native/src/**",
+  ]) {
+    invariant(key.includes(`'${input}'`), `native extension compiler-cache key must hash ${input}`);
+  }
+  for (const excluded of [
+    "'src/extensions/**'",
+    "'src/runtimes/liboliphaunt/native/**'",
+    ".release-semantic-inputs.json",
+    "/CHANGELOG",
+    "/VERSION",
+    "/release.toml",
+    "/targets/",
+    "/evidence/",
+    "/generated/docs/",
+    "'tools/xtask/**'",
+  ]) {
+    invariant(
+      !key.includes(excluded),
+      `native extension compiler-cache key must exclude policy/release input ${excluded}`,
+    );
+  }
+  invariant(
+    String(restores[0].with?.["restore-keys"] ?? "").trim()
+      === "liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-",
+    "native extension compiler cache must preserve its compatible restore prefix",
+  );
+  invariant(
+    job?.env?.OLIPHAUNT_CCACHE_MAX_SIZE === "${{ matrix.target == 'ios-xcframework' && '512M' || '2G' }}",
+    "native exact-extension iOS compiler cache must remain bounded to 512M",
+  );
+
+  const saves = workflowSteps(workflow, "extension-artifacts-native")
+    .filter((step) => step.id === "save_ios_extension_ccache");
+  invariant(saves.length === 1, "native exact-extension CI must declare one stable compiler-cache save");
+  const save = saves[0];
+  invariant(
+    String(save.uses ?? "").startsWith("actions/cache/save@")
+      && save["continue-on-error"] === true
+      && save.with?.path === restores[0].with?.path
+      && save.with?.key === restores[0].with?.key,
+    "native exact-extension compiler cache save must be non-blocking and exactly match its restore",
+  );
+  for (const token of [
+    "matrix.target == 'ios-xcframework'",
+    "env.HEAVY_CACHE_SAVE_IF == 'true'",
+    "steps.restore_ios_extension_ccache.outputs.cache-hit != 'true'",
+  ]) {
+    invariant(
+      normalized(save.if).includes(token),
+      `native exact-extension compiler cache save must require ${token}`,
+    );
+  }
+
+  const diagnostics = workflowSteps(workflow, "extension-artifacts-native")
+    .filter((step) => step.id === "upload_native_extension_logs");
+  invariant(diagnostics.length === 1, "native exact-extension CI must declare one stable diagnostics upload");
+  const diagnostic = diagnostics[0];
+  invariant(
+    normalized(diagnostic.if) === normalized("${{ failure() || cancelled() }}")
+      && diagnostic["timeout-minutes"] === 5
+      && diagnostic.with?.["if-no-files-found"] === "warn",
+    "native exact-extension diagnostics must run after failure or cancellation within a five-minute warn-only envelope",
+  );
+  const diagnosticPaths = String(diagnostic.with?.path ?? "");
+  for (const required of [
+    "target/liboliphaunt-mobile-extension-ci/**/*.log",
+    "target/liboliphaunt-mobile-extension-release/**/*.log",
+    "/tmp/liboliphaunt-release-*-extensions.log",
+    "/tmp/liboliphaunt-release-extension-assets-fetch.log",
+  ]) {
+    invariant(
+      diagnosticPaths.includes(required),
+      `native exact-extension diagnostics must retain ${required}`,
+    );
+  }
+}
+
+function assertWasixExtensionQualification(workflow) {
+  const steps = workflowSteps(workflow, "extension-artifacts-wasix");
+  const named = (name) => steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.name === name);
+  const downloads = named("Download portable WASIX runtime outputs");
+  const verifiers = named("Verify publication-deferred WASIX candidate build outputs");
+  const packagers = named("Build WASIX exact-extension artifacts");
+  invariant(
+    downloads.length === 1 && verifiers.length === 1 && packagers.length === 1,
+    "WASIX exact-extension CI must download, qualify deferred candidates, and package public artifacts exactly once",
+  );
+  invariant(
+    downloads[0].index < verifiers[0].index && verifiers[0].index < packagers[0].index,
+    "WASIX deferred-candidate qualification must run after the runtime download and before public packaging",
+  );
+  const command = normalized(verifiers[0].step.run);
+  for (const token of [
+    "tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs",
+    "--family wasix",
+    "--target '${{ matrix.target }}'",
+    "--asset-root target/oliphaunt-wasix/assets",
+  ]) {
+    invariant(
+      command.includes(token),
+      `WASIX deferred-candidate qualification must invoke ${token}`,
+    );
+  }
+}
+
 export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   assertWorkflowFoundation(workflow, "CI");
+  assertCiHeavyCacheBudget(workflow);
+  assertNoNativeRuntimeCrossRunCaches(workflow);
+  assertNativeExtensionBuildBudget(workflow);
+  assertWasixExtensionQualification(workflow);
   invariant(
     workflow.env?.NPM_VERSION === RELEASE_NPM_PUBLISHER_VERSION,
     `CI must pin npm ${RELEASE_NPM_PUBLISHER_VERSION}`,
@@ -376,6 +1032,11 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     cancel: "${{ github.event_name == 'pull_request' }}",
   }, "CI");
   assertPermissions(workflow.permissions, { contents: "read" }, "CI workflow");
+  assertPermissions(
+    workflow.jobs["release-intent"].permissions,
+    { actions: "read", contents: "read" },
+    "CI history-repair intent gate",
+  );
   for (const [jobId, job] of Object.entries(workflow.jobs)) {
     invariant(
       job.permissions === undefined
@@ -473,6 +1134,98 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
       && releaseIntent.step.env?.CI_FULL_REF === "${{ github.ref }}",
     "release intent must receive immutable event and full-ref context",
   );
+  const historyRepairNode = assertActionStep(
+    workflow,
+    "release-intent",
+    "setup_history_repair_node",
+    "./.github/actions/setup-node-runtime",
+  );
+  assertConditionRequires(
+    historyRepairNode.step.if,
+    ["steps.release_intent.outputs.history_repair == 'true'"],
+    "release-intent.setup_history_repair_node",
+  );
+  invariant(
+    historyRepairNode.step.with?.["node-version"] === "${{ env.NODE_VERSION }}",
+    "history-repair proof must use the pinned CI Node version",
+  );
+  const historyRepairQualification = assertRunInvocation(
+    workflow,
+    "release-intent",
+    "history_repair_qualification",
+    commandPattern("bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b"),
+    "the exact history-repair transport qualification selector",
+  );
+  assertConditionRequires(
+    historyRepairQualification.step.if,
+    ["steps.release_intent.outputs.history_repair == 'true'"],
+    "release-intent.history_repair_qualification",
+  );
+  invariant(
+    historyRepairQualification.step.env?.HISTORY_REPAIR_CANDIDATE_SHA
+      === "${{ steps.release_intent.outputs.history_repair_candidate_sha }}"
+      && historyRepairQualification.step.env?.GH_REPO === "${{ github.repository }}"
+      && historyRepairQualification.step.env?.GH_TOKEN === "${{ github.token }}",
+    "history-repair qualification must bind the trailer SHA and read-only repository identity",
+  );
+  assertActiveTokens(historyRepairQualification, [
+    "CI \"$HISTORY_REPAIR_CANDIDATE_SHA\" 0",
+    "--event workflow_dispatch",
+    "--job Builds",
+    "--job Required",
+    "--job Qualified",
+    "--artifact artifact-build-plan",
+    "--artifact oliphaunt-release-candidate",
+  ], "history-repair qualification selector");
+  const historyRepairDownload = assertRunInvocation(
+    workflow,
+    "release-intent",
+    "history_repair_candidate_download",
+    commandPattern("node\\s+[.]github/scripts/download-build-artifacts[.]mjs\\b"),
+    "the exact history-repair artifact downloader",
+  );
+  assertConditionRequires(
+    historyRepairDownload.step.if,
+    ["steps.release_intent.outputs.history_repair == 'true'"],
+    "release-intent.history_repair_candidate_download",
+  );
+  invariant(
+    historyRepairDownload.step.env?.HISTORY_REPAIR_RUN_ID
+      === "${{ steps.history_repair_qualification.outputs.run_id }}"
+      && historyRepairDownload.step.env?.HISTORY_REPAIR_ARTIFACT_METADATA
+        === "${{ steps.history_repair_qualification.outputs.artifact_metadata_json }}",
+    "history-repair artifact download must bind the selected run and immutable artifact metadata",
+  );
+  assertActiveTokens(historyRepairDownload, [
+    "--run-id",
+    "--artifact-metadata-json",
+    "--artifact artifact-build-plan",
+    "--artifact oliphaunt-release-candidate",
+  ], "history-repair artifact downloader");
+  const historyRepairBinding = assertRunInvocation(
+    workflow,
+    "release-intent",
+    "history_repair_candidate_binding",
+    commandPattern("node\\s+[.]github/scripts/verify-history-repair-candidate[.]mjs\\b"),
+    "the history-repair candidate tree verifier",
+  );
+  assertConditionRequires(
+    historyRepairBinding.step.if,
+    ["steps.release_intent.outputs.history_repair == 'true'"],
+    "release-intent.history_repair_candidate_binding",
+  );
+  invariant(
+    historyRepairBinding.step.env?.CI_RUN_ID
+      === "${{ steps.history_repair_qualification.outputs.run_id }}"
+      && historyRepairBinding.step.env?.HISTORY_REPAIR_CANDIDATE_SHA
+        === "${{ steps.release_intent.outputs.history_repair_candidate_sha }}"
+      && historyRepairBinding.step.env?.HISTORY_REPAIR_HEAD_SHA === "${{ github.sha }}",
+    "history-repair tree verification must bind the selected run, trailer SHA, and introduction SHA",
+  );
+  assertActiveTokens(historyRepairBinding, [
+    "target/history-repair-candidate/oliphaunt-release-candidate.json",
+    "--plan target/history-repair-candidate/ci-plan.json",
+  ], "history-repair candidate tree verifier");
   const generatedReleaseReadiness = assertRunInvocation(
     workflow,
     "release-intent",
@@ -491,7 +1244,14 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
       === "tools/dev/bun.sh tools/release/sync-release-pr.mjs --check-generated-release",
     "generated release readiness must contain only the cheap fixed-point check after the existing structural verifier",
   );
-  assertStepOrder(workflow, "release-intent", ["release_intent", "generated_release_readiness"]);
+  assertStepOrder(workflow, "release-intent", [
+    "release_intent",
+    "setup_history_repair_node",
+    "history_repair_qualification",
+    "history_repair_candidate_download",
+    "history_repair_candidate_binding",
+    "generated_release_readiness",
+  ]);
 
   for (const [jobId, plannerJobId, producers] of [
     ["mobile-extension-packages", "mobile-extension-packages", ["extension-artifacts-native"]],
@@ -651,7 +1411,7 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   assertStepOrder(workflow, "qualified", ["require_full_ci", "qualification_record", "qualification_evidence"]);
   assertConditionBranches(workflow.jobs.qualified.if, [
     ["always()", "github.event_name == 'push'", "github.ref == 'refs/heads/main'"],
-    ["always()", "github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/main'"],
+    ["always()", "github.event_name == 'workflow_dispatch'"],
   ], "qualified");
   const candidate = assertRunInvocation(
     workflow,
@@ -763,6 +1523,7 @@ export function assertMobileWorkflow(workflow) {
 
 export function assertReleaseEntryWorkflow(workflow) {
   assertWorkflowFoundation(workflow, "Release entry");
+  assertReleaseDoesNotWriteRustCaches(workflow);
   invariant(
     sameSet(Object.keys(workflow.on), ["workflow_dispatch"]),
     "Release entry must be manual only",
@@ -800,8 +1561,14 @@ export function assertReleaseEntryWorkflow(workflow) {
     "publish-bootstrap",
   ];
   const dispatchers = {
-    "dispatch-bootstrap-continuation": "publish-bootstrap",
-    "dispatch-publish-continuation": "publish-registry",
+    "dispatch-bootstrap-continuation": {
+      operation: "publish-bootstrap",
+      parent: "publish-bootstrap",
+    },
+    "dispatch-publish-continuation": {
+      operation: "publish",
+      parent: "publish-registry",
+    },
   };
   invariant(
     sameSet(Object.keys(workflow.jobs), ["validate-inputs", ...operationJobIds, ...Object.keys(dispatchers)]),
@@ -842,7 +1609,7 @@ export function assertReleaseEntryWorkflow(workflow) {
       `${jobId} must be implemented directly in the protected release workflow`,
     );
   }
-  for (const [jobId, parent] of Object.entries(dispatchers)) {
+  for (const [jobId, { operation, parent }] of Object.entries(dispatchers)) {
     const job = workflow.jobs[jobId];
     assertExactNeeds(workflow, jobId, [parent]);
     invariant(
@@ -889,6 +1656,16 @@ export function assertReleaseEntryWorkflow(workflow) {
       dispatch.step["timeout-minutes"] === RELEASE_CONTINUATION_DISPATCH_STEP_TIMEOUT_MINUTES
         && dispatch.step["timeout-minutes"] * 60_000
           >= RELEASE_CONTINUATION_DISPATCH_RETRY_ENVELOPE_MS
+        && sameSet(Object.keys(dispatch.step.env ?? {}), [
+          "CONTINUATION_ARTIFACT_DIGEST",
+          "CONTINUATION_ARTIFACT_ID",
+          "CONTINUATION_AUTHORIZATION_PATH",
+          "CONTINUATION_CONTRACT_DIGEST",
+          "GH_REPO",
+          "GH_TOKEN",
+          "RELEASE_HEAD_SHA",
+          "RELEASE_OPERATION",
+        ])
         && dispatch.step.env?.CONTINUATION_AUTHORIZATION_PATH
           === "${{ runner.temp }}/release-continuation-authorization.json"
         && dispatch.step.env?.CONTINUATION_ARTIFACT_ID
@@ -896,7 +1673,11 @@ export function assertReleaseEntryWorkflow(workflow) {
         && dispatch.step.env?.CONTINUATION_ARTIFACT_DIGEST
           === `\${{ needs.${parent}.outputs.continuation_artifact_digest }}`
         && dispatch.step.env?.CONTINUATION_CONTRACT_DIGEST
-          === `\${{ needs.${parent}.outputs.continuation_contract_digest }}`,
+          === `\${{ needs.${parent}.outputs.continuation_contract_digest }}`
+        && dispatch.step.env?.GH_REPO === "${{ github.repository }}"
+        && dispatch.step.env?.GH_TOKEN === "${{ github.token }}"
+        && dispatch.step.env?.RELEASE_HEAD_SHA === "${{ github.sha }}"
+        && dispatch.step.env?.RELEASE_OPERATION === operation,
       `${jobId} must reserve a bounded exact dispatched-child authorization receipt`,
     );
     const authorization = assertUploadById(
@@ -955,7 +1736,7 @@ const GITHUB_STAGE_PHASES = [
   "freeze_bootstrap_capsule",
   "preserve_publication_lock",
   "preserve_bootstrap_capsule",
-  "revalidate_release_mutation",
+  "ensure_release_transport_ref",
   "stage_github_releases",
   "verify_product_tags",
   "verify_github_staging",
@@ -989,7 +1770,6 @@ const REGISTRY_PHASES = [
   "verify_registry_maven_signing",
   "verify_registry_github_staging",
   "restore_normal_publication_checkpoint",
-  "revalidate_registry_mutation",
   "registry_capacity_deadline",
   "reprove_registry_capacity",
   "registry_mutation_deadline",
@@ -1035,7 +1815,7 @@ const BOOTSTRAP_PHASES = [
   "verify_bootstrap_capsule",
   "verify_bootstrap_lock",
   "restore_bootstrap_checkpoint",
-  "revalidate_bootstrap_mutation",
+  "ensure_bootstrap_transport_ref",
   "bootstrap_mutation_deadline",
   "bootstrap_registry_identities",
   "require_bootstrap_execution_decision",
@@ -1055,7 +1835,7 @@ function assertNormalStageConditions(workflow) {
       "preflight_maven_bundle",
       "preflight_swift_source_tag",
       "github_request_budget",
-      "revalidate_release_mutation",
+      "ensure_release_transport_ref",
       "stage_github_releases",
       "verify_product_tags",
       "verify_github_staging",
@@ -1098,7 +1878,7 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish-dry-run", "freeze_bootstrap_capsule", "tools/dev/bun[.]sh\\s+tools/release/bootstrap-publication-capsule[.]mjs\\s+pack\\b", "the dry-run bootstrap capsule freezer"],
     ["publish", "github_request_budget", "tools/dev/bun[.]sh\\s+tools/release/github-release-request-budget[.]mjs\\b", "the request-budget admission"],
     ["publish", "github_stage_phase_budget", "tools/dev/bun[.]sh\\s+tools/release/release-phase-budget[.]mjs\\b", "the staging phase budget proof"],
-    ["publish", "revalidate_release_mutation", "bash\\s+[.]github/scripts/require-current-main[.]sh\\b", "the pre-release current-main proof"],
+    ["publish", "ensure_release_transport_ref", "node\\s+[.]github/scripts/release-transport-ref[.]mjs\\s+ensure\\b", "the immutable exact-SHA continuation transport"],
     ["publish", "stage_github_releases", "bun\\s+[.]github/scripts/manage-release-drafts[.]mjs\\s+stage\\b", "draft staging"],
     ["publish", "verify_product_tags", "tools/dev/bun[.]sh\\s+tools/release/verify_product_tags[.]mjs\\b", "exact tag verification"],
     ["publish", "verify_github_staging", "bun\\s+[.]github/scripts/manage-release-drafts[.]mjs\\s+verify\\b", "draft verification"],
@@ -1116,7 +1896,6 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish-registry", "verify_registry_maven_signing", "tools/dev/bun[.]sh\\s+tools/release/verify-maven-signing-readiness[.]mjs\\b", "the registry Maven signing verifier"],
     ["publish-registry", "verify_registry_github_staging", "tools/dev/bun[.]sh\\s+tools/release/verify_product_tags[.]mjs\\b", "registry pre-mutation staging verification"],
     ["publish-registry", "restore_normal_publication_checkpoint", "tools/dev/bun[.]sh\\s+[.]github/scripts/download-normal-publication-checkpoint[.]mjs\\b", "normal-publication recovery"],
-    ["publish-registry", "revalidate_registry_mutation", "bash\\s+[.]github/scripts/require-current-main[.]sh\\b", "the pre-registry current-main proof"],
     ["publish-registry", "reprove_registry_capacity", "bun\\s+[.]github/scripts/check-crates-io-publish-capacity[.]mjs\\b", "registry capacity admission"],
     ["publish-registry", "exact_registry_publish", "tools/dev/bun[.]sh\\s+tools/release/release-publish[.]mjs\\s+publish\\b", "the exact-lock registry executor"],
     ["publish-registry", "prepare_registry_continuation", "bun\\s+[.]github/scripts/prepare-release-continuation[.]mjs\\b", "the exact normal-publication continuation sealer"],
@@ -1127,12 +1906,33 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish-finalize", "verify_final_github_staging", "tools/dev/bun[.]sh\\s+tools/release/verify_product_tags[.]mjs\\b", "final staging verification"],
     ["publish-finalize", "verify_published_release", "tools/dev/bun[.]sh\\s+tools/release/release-verify[.]mjs\\b", "published release verification"],
     ["publish-finalize", "public_consumer_smoke", "tools/dev/bun[.]sh\\s+tools/release/public-consumer-smoke[.]mjs\\b", "anonymous public consumers"],
-    ["publish-finalize", "reverify_publication_lock", "bash\\s+[.]github/scripts/require-current-main[.]sh\\b", "the pre-promotion current-main proof"],
     ["publish-finalize", "reverify_publication_lock", "tools/dev/bun[.]sh\\s+tools/release/publication-lock[.]mjs\\s+verify\\b", "final lock verification"],
     ["publish-finalize", "promote_github_releases", "bun\\s+[.]github/scripts/manage-release-drafts[.]mjs\\s+promote\\b", "draft promotion"],
   ];
   for (const [jobId, id, command, description] of commands) {
     assertRunInvocation(workflow, jobId, id, commandPattern(command), description);
+  }
+  const releaseTransport = stepById(workflow, "publish", "ensure_release_transport_ref");
+  const releaseReservation = workflowSteps(workflow, "publish")[releaseTransport.index - 1];
+  invariant(
+    commandPattern(
+        "tools/dev/bun[.]sh\\s+tools/release/github-content-write-pacer[.]mjs\\s+reserve\\b",
+      ).test(executableShell(releaseReservation?.run))
+      && releaseTransport.step.env?.GH_TOKEN === "${{ github.token }}"
+      && releaseTransport.step.env?.GH_REPO === "${{ github.repository }}"
+      && releaseTransport.step.env?.RELEASE_OPERATION === "publish"
+      && releaseTransport.step.env?.RELEASE_CONTINUATION_POINTER
+        === "${{ inputs.continuation_pointer }}"
+      && releaseTransport.step.env?.RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION
+        === "pre-reserved",
+    "normal publication must reserve immediately before its root-admitted, rerun-safe exact transport",
+  );
+  for (const jobId of ["publish", "publish-registry", "publish-finalize", "publish-bootstrap"]) {
+    invariant(
+      workflowSteps(workflow, jobId).every((step) =>
+        !/[.]github\/scripts\/require-current-main[.]sh\b/u.test(executableShell(step.run))),
+      `${jobId} must keep current-main proof inside the idempotent transport boundary or remain bound to the exact release SHA`,
+    );
   }
   for (const [jobId, stepId, condition] of [
     [
@@ -1564,17 +2364,13 @@ function assertReleaseTiming(workflow) {
     "publish-registry.prepare_registry_continuation timeout must retain its local sealing margin",
   );
   for (const [jobId, id] of [
-    ["publish", "revalidate_release_mutation"],
-    ["publish-registry", "revalidate_registry_mutation"],
-    ["publish-finalize", "reverify_publication_lock"],
-    ["publish-bootstrap", "revalidate_bootstrap_mutation"],
+    ["publish", "ensure_release_transport_ref"],
+    ["publish-bootstrap", "ensure_bootstrap_transport_ref"],
   ]) {
-    const timeout = stepById(workflow, jobId, id).step["timeout-minutes"];
     invariant(
-      id === "reverify_publication_lock"
-        ? timeout === RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES.reverifyPublicationLock
-        : timeout === RELEASE_CURRENT_MAIN_STEP_TIMEOUT_MINUTES,
-      `${jobId}.${id} must retain its bounded current-main revalidation timeout`,
+      stepById(workflow, jobId, id).step["timeout-minutes"]
+        === RELEASE_TRANSPORT_STEP_TIMEOUT_MINUTES,
+      `${jobId}.${id} must retain its bounded immutable-transport timeout`,
     );
   }
 }
@@ -2211,8 +3007,10 @@ function assertOidcBoundaries(workflow) {
         const location = `${jobId}.${step.id ?? "<missing-id>"}`;
         observed.push(location);
         invariant(
-          expected.get(location) === step.env?.RELEASE_OPERATION,
-          `${location} must verify the direct-workflow OIDC identity for its exact operation`,
+          expected.get(location) === step.env?.RELEASE_OPERATION
+            && step.env?.RELEASE_CONTINUATION_POINTER
+              === "${{ inputs.continuation_pointer }}",
+          `${location} must verify the direct-workflow OIDC identity for its exact operation and root/transport ref`,
         );
       }
     }
@@ -2239,12 +3037,15 @@ function assertBootstrapJob(workflow) {
     "verify_bootstrap_capsule",
     "verify_bootstrap_lock",
     "restore_bootstrap_checkpoint",
-    "revalidate_bootstrap_mutation",
     "bootstrap_mutation_deadline",
     "bootstrap_registry_identities",
   ]) {
     assertStepCondition(workflow, "publish-bootstrap", id, [BOOTSTRAP_REQUIRED]);
   }
+  assertStepCondition(workflow, "publish-bootstrap", "ensure_bootstrap_transport_ref", [
+    BOOTSTRAP_REQUIRED,
+    "inputs.continuation_pointer == ''",
+  ]);
   for (const [id, command, description] of [
     ["release_head", "[.]github/scripts/resolve-release-head[.]sh\\b", "the release-head resolver"],
     ["verify_bootstrap_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the bootstrap direct-workflow OIDC verifier"],
@@ -2254,10 +3055,22 @@ function assertBootstrapJob(workflow) {
     ["approved_bootstrap_capsule", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the approved capsule selector"],
     ["verify_bootstrap_capsule", "tools/dev/bun[.]sh\\s+tools/release/bootstrap-publication-capsule[.]mjs\\s+verify-extract\\b", "capsule verification"],
     ["restore_bootstrap_checkpoint", "node\\s+[.]github/scripts/download-bootstrap-ledger[.]mjs\\b", "bootstrap checkpoint recovery"],
-    ["revalidate_bootstrap_mutation", "bash\\s+[.]github/scripts/require-current-main[.]sh\\b", "current-main verification"],
+    ["ensure_bootstrap_transport_ref", "node\\s+[.]github/scripts/release-transport-ref[.]mjs\\s+ensure\\b", "the immutable exact-SHA bootstrap continuation transport"],
     ["bootstrap_registry_identities", "bun\\s+[.]github/scripts/bootstrap-registry-identities[.]mjs\\b", "registry identity bootstrap"],
     ["prepare_bootstrap_continuation", "bun\\s+[.]github/scripts/prepare-release-continuation[.]mjs\\b", "the exact bootstrap continuation sealer"],
   ]) assertRunInvocation(workflow, "publish-bootstrap", id, commandPattern(command), description);
+
+  const bootstrapTransport = stepById(workflow, "publish-bootstrap", "ensure_bootstrap_transport_ref");
+  invariant(
+    bootstrapTransport.step.env?.GH_TOKEN === "${{ github.token }}"
+      && bootstrapTransport.step.env?.GH_REPO === "${{ github.repository }}"
+      && bootstrapTransport.step.env?.RELEASE_OPERATION === "publish-bootstrap"
+      && bootstrapTransport.step.env?.RELEASE_CONTINUATION_POINTER
+        === "${{ inputs.continuation_pointer }}"
+      && bootstrapTransport.step.env?.RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION
+        === "isolated-bootstrap",
+    "bootstrap root must use its rerun-safe immutable transport with isolated admission",
+  );
 
   const capsule = stepById(workflow, "publish-bootstrap", "verify_bootstrap_capsule");
   const lock = stepById(workflow, "publish-bootstrap", "verify_bootstrap_lock");
@@ -2426,6 +3239,7 @@ function assertBootstrapJob(workflow) {
 
 export function assertReleaseOperationWorkflow(workflow) {
   assertWorkflowFoundation(workflow, "Release");
+  assertReleaseDoesNotWriteRustCaches(workflow);
   invariant(
     sameSet(Object.keys(workflow.on), ["workflow_dispatch"]),
     "Release jobs must execute directly from the manual release workflow",
@@ -2516,7 +3330,7 @@ export function assertReleaseOperationWorkflow(workflow) {
   }, "publish finalize");
   assertPermissions(workflow.jobs["publish-bootstrap"].permissions, {
     actions: "read",
-    contents: "read",
+    contents: "write",
     "id-token": "write",
   }, "publish bootstrap");
   invariant(
@@ -2680,6 +3494,10 @@ export function assertReleaseOperationWorkflow(workflow) {
   assertMutationBoundary(mutationWorkflow, {
     release_please: ["prepare-release-pr.release_please"],
     release_pr_push: ["prepare-release-pr.sync_release_pr"],
+    release_transport: [
+      "publish.ensure_release_transport_ref",
+      "publish-bootstrap.ensure_bootstrap_transport_ref",
+    ],
     github_stage: ["publish.stage_github_releases"],
     release_publish: [
       "publish.publish_github_assets",
@@ -2709,8 +3527,11 @@ export function assertStableWorkflowInvariants(root, { builderJobs = [] } = {}) 
   const ci = parseWorkflow(root, ".github/workflows/ci.yml");
   const mobile = parseWorkflow(root, ".github/workflows/mobile-e2e.yml");
   const release = parseWorkflow(root, ".github/workflows/release.yml");
+  const localActions = parseReachableLocalActions(root, { ci, mobile, release });
   assertCiWorkflow(ci, { builderJobs });
+  assertSetupAndroidCachePolicy(localActions["./.github/actions/setup-android"]);
+  assertReachableCachePolicy({ ci, mobile, release }, localActions);
   assertMobileWorkflow(mobile);
   assertReleaseWorkflow(release);
-  return { ci, mobile, release };
+  return { ci, localActions, mobile, release };
 }

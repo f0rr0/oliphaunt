@@ -5,6 +5,7 @@ import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 import {assertHttpsUrl, createSourceFetcher} from './source-fetch-core.mjs';
+import {auditExtensionUpstreamLicenseSources} from '../release/extension-upstream-licenses.mjs';
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 process.chdir(workspaceRoot);
@@ -450,6 +451,7 @@ function validateSourcePin(source) {
 }
 
 async function fetchManifestSources(manifest, selectedScope, verifyOnly) {
+  let selectedExtensionSources = 0;
   for (const source of manifest.sources) {
     if (!scopeIncludes(selectedScope, source.origin)) {
       console.error(`skipping source '${source.name}' for selected source lane`);
@@ -465,6 +467,18 @@ async function fetchManifestSources(manifest, selectedScope, verifyOnly) {
     } else {
       await sourceFetcher.materialize(source, checkoutPath);
     }
+    if (source.origin === sourceOrigins.extension) {
+      selectedExtensionSources += 1;
+    }
+  }
+  if (selectedExtensionSources > 0) {
+    const auditedFiles = auditExtensionUpstreamLicenseSources();
+    if (!Number.isSafeInteger(auditedFiles) || auditedFiles < 1) {
+      throw new Error('extension upstream legal source audit did not inspect any pinned files');
+    }
+    console.error(
+      `audited ${auditedFiles} pinned extension legal source files after qualifying ${selectedExtensionSources} extension source checkouts`,
+    );
   }
 }
 

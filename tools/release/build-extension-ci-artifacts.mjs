@@ -15,6 +15,16 @@ import {
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
+import {
+  assertReleaseNoticesInArchive,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  extensionCarrierLegalContract,
+  stageExtensionUpstreamLicenses,
+} from "./extension-upstream-licenses.mjs";
+
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import {
@@ -596,6 +606,21 @@ function bundleCarrierAssets(product, version, productRoot, members, compatibili
       row.asset.carrierRoot = archiveRoot;
       row.asset.memberPath = memberPath;
     }
+    const externalLicenseFiles = [];
+    for (const sqlName of memberNames) {
+      externalLicenseFiles.push(...stageExtensionUpstreamLicenses(sqlName, stageDir));
+    }
+    const legal = extensionCarrierLegalContract(product, memberNames, {
+      family: group.family,
+      target: group.target,
+    });
+    const stagedLicenseFiles = [...new Set(externalLicenseFiles)].sort(compareText);
+    if (JSON.stringify(stagedLicenseFiles) !== JSON.stringify(legal.licenseFiles)) {
+      fail(
+        `${product} ${group.family}/${group.target} staged upstream licenses differ from its legal contract: `
+        + `expected ${legal.licenseFiles.join(",")}, got ${stagedLicenseFiles.join(",")}`,
+      );
+    }
     const bundleManifest = path.join(stageDir, "bundle-manifest.json");
     writeFileSync(bundleManifest, `${JSON.stringify(sortValue({
       schema: "oliphaunt-extension-bundle-v1",
@@ -604,11 +629,23 @@ function bundleCarrierAssets(product, version, productRoot, members, compatibili
       compatibility,
       family: group.family,
       target: group.target,
+      licenseProfile: legal.profile,
+      licenseFiles: legal.licenseFiles,
       members: manifestMembers,
     }), null, 2)}\n`, "utf8");
     chmodSync(bundleManifest, 0o644);
+    stageReleaseNotices(stageDir, { profile: legal.profile });
     const output = path.join(assetDir, `${archiveRoot}.tar.gz`);
     writeFileSync(output, gzipSync(createDeterministicTar(stageDir, archiveRoot, { fail }), { mtime: 0 }));
+    assertReleaseNoticesInArchive(output, {
+      prefix: archiveRoot,
+      profile: legal.profile,
+    });
+    if (legal.upstreamMembers.length > 0) {
+      assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, output, {
+        prefix: archiveRoot,
+      });
+    }
     carrierAssets.push({
       name: path.basename(output),
       path: rel(output),

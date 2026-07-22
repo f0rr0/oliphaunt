@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
 oliphaunt_mobile_static_specs_tsv() {
+  if [ -n "${OLIPHAUNT_MOBILE_STATIC_SPECS_TSV:-}" ]; then
+    printf '%s\n' "$OLIPHAUNT_MOBILE_STATIC_SPECS_TSV"
+    return 0
+  fi
   local script_dir
   script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   printf '%s\n' "$script_dir/../../../../../src/extensions/generated/mobile/static-extensions.tsv"

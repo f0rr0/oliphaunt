@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
@@ -8,6 +9,12 @@ plugins {
     alias(libs.plugins.maven.publish)
 }
 
+data class OliphauntMavenLicense(
+    val name: String,
+    val url: String,
+    val distribution: String,
+)
+
 data class OliphauntMavenArtifact(
     val groupId: String,
     val artifactId: String,
@@ -17,6 +24,8 @@ data class OliphauntMavenArtifact(
     val description: String,
     val runtimeProduct: String?,
     val runtimeVersion: String?,
+    val licenseSpdx: String,
+    val licenses: List<OliphauntMavenLicense>,
 )
 
 val manifestPath =
@@ -24,10 +33,45 @@ val manifestPath =
         .gradleProperty("oliphauntMavenArtifactsManifest")
         .orElse(providers.environmentVariable("OLIPHAUNT_MAVEN_ARTIFACTS_MANIFEST"))
 val repositoryRoot = rootDir.toPath().resolve("../../..").normalize().toFile()
+val baseReleaseNoticeFiles =
+    files(
+        repositoryRoot.resolve("LICENSE"),
+        repositoryRoot.resolve("THIRD_PARTY_NOTICES.md"),
+    )
 
 fun manifestFilePath(value: String): File {
     val path = File(value)
     return if (path.isAbsolute) path else repositoryRoot.resolve(value)
+}
+
+fun parseLicenses(value: String, label: String): List<OliphauntMavenLicense> {
+    val parsed =
+        try {
+            JsonSlurper().parseText(value)
+        } catch (cause: Exception) {
+            throw GradleException("$label must be valid JSON", cause)
+        }
+    if (parsed !is List<*> || parsed.isEmpty()) {
+        throw GradleException("$label must be a non-empty JSON array")
+    }
+    return parsed.mapIndexed { index, raw ->
+        if (raw !is Map<*, *>) {
+            throw GradleException("$label entry ${index + 1} must be a JSON object")
+        }
+        val expectedKeys = setOf("name", "url", "distribution")
+        val actualKeys = raw.keys.map { it?.toString() }.toSet()
+        if (actualKeys != expectedKeys) {
+            throw GradleException("$label entry ${index + 1} must contain exactly $expectedKeys")
+        }
+        fun requiredString(key: String): String =
+            (raw[key] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw GradleException("$label entry ${index + 1}.$key must be a non-empty string")
+        OliphauntMavenLicense(
+            name = requiredString("name"),
+            url = requiredString("url"),
+            distribution = requiredString("distribution"),
+        )
+    }
 }
 
 fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
@@ -43,9 +87,9 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
     val artifacts =
         rows.mapIndexed { index, line ->
             val parts = line.split('\t')
-            if (parts.size != 8) {
+            if (parts.size != 10) {
                 throw GradleException(
-                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 8 tab-separated fields",
+                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 10 tab-separated fields",
                 )
             }
             val file = manifestFilePath(parts[3])
@@ -58,6 +102,8 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
                 description = parts[5],
                 runtimeProduct = parts[6].ifBlank { null },
                 runtimeVersion = parts[7].ifBlank { null },
+                licenseSpdx = parts[8],
+                licenses = parseLicenses(parts[9], "Oliphaunt Maven artifact manifest line ${index + 1} licenses"),
             )
         }
     val duplicateCoordinates =
@@ -129,6 +175,12 @@ publishing {
                     isPreserveFileTimestamps = false
                     isReproducibleFileOrder = true
                     from(placeholderSources)
+                    from(baseReleaseNoticeFiles) {
+                        into("META-INF")
+                        filePermissions {
+                            unix("0644")
+                        }
+                    }
                 }
             val javadocJar =
                 tasks.register<Jar>("${publicationName}JavadocJar") {
@@ -140,6 +192,12 @@ publishing {
                     isPreserveFileTimestamps = false
                     isReproducibleFileOrder = true
                     from(placeholderJavadocs)
+                    from(baseReleaseNoticeFiles) {
+                        into("META-INF")
+                        filePermissions {
+                            unix("0644")
+                        }
+                    }
                 }
             create<MavenPublication>(publicationName) {
                 groupId = artifact.groupId
@@ -153,21 +211,21 @@ publishing {
                 pom {
                     name.set(artifact.name)
                     description.set(artifact.description)
+                    val publicationProperties = mutableMapOf("oliphaunt.license.spdx" to artifact.licenseSpdx)
                     if (artifact.runtimeProduct != null && artifact.runtimeVersion != null) {
-                        properties.set(
-                            mapOf(
-                                "oliphaunt.runtime.product" to artifact.runtimeProduct,
-                                "oliphaunt.runtime.version" to artifact.runtimeVersion,
-                            ),
-                        )
+                        publicationProperties["oliphaunt.runtime.product"] = artifact.runtimeProduct
+                        publicationProperties["oliphaunt.runtime.version"] = artifact.runtimeVersion
                     }
+                    properties.set(publicationProperties)
                     inceptionYear.set("2026")
                     url.set("https://github.com/f0rr0/oliphaunt")
                     licenses {
-                        license {
-                            name.set("MIT AND Apache-2.0 AND PostgreSQL")
-                            url.set("https://github.com/f0rr0/oliphaunt/blob/main/LICENSE")
-                            distribution.set("repo")
+                        artifact.licenses.forEach { declaredLicense ->
+                            license {
+                                name.set(declaredLicense.name)
+                                url.set(declaredLicense.url)
+                                distribution.set(declaredLicense.distribution)
+                            }
                         }
                     }
                     developers {
@@ -221,6 +279,28 @@ tasks.register("validateOliphauntMavenArtifacts") {
                 throw GradleException(
                     "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} must declare both runtime product and version or neither",
                 )
+            }
+            if (artifact.licenseSpdx.isBlank() || artifact.licenseSpdx.any { it.isISOControl() }) {
+                throw GradleException(
+                    "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} must declare a non-empty SPDX expression",
+                )
+            }
+            for (license in artifact.licenses) {
+                if (license.name.isBlank() || license.name.any { it.isISOControl() }) {
+                    throw GradleException(
+                        "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} has an invalid license name",
+                    )
+                }
+                if (!license.url.startsWith("https://") || license.url.any { it.isISOControl() }) {
+                    throw GradleException(
+                        "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} license URLs must use HTTPS",
+                    )
+                }
+                if (license.distribution != "repo") {
+                    throw GradleException(
+                        "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} licenses must use distribution=repo",
+                    )
+                }
             }
             if (artifact.groupId == "dev.oliphaunt.extensions" &&
                 (artifact.runtimeProduct != "liboliphaunt-native" ||

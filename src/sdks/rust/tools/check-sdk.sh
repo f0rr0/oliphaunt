@@ -81,6 +81,17 @@ reject_cargo_package_entry_pattern() {
   fi
 }
 
+require_exact_package_fixture() {
+  package_fixture="$1"
+  canonical_fixture="$2"
+  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
+    echo "Rust SDK package fixture must exactly match its canonical repository source:" >&2
+    echo "  package:   $package_fixture" >&2
+    echo "  canonical: $canonical_fixture" >&2
+    exit 1
+  fi
+}
+
 check_release_asset_fixture() {
   liboliphaunt_version="$(cat src/runtimes/liboliphaunt/native/VERSION)"
   fixture_assets="$(prepare_scratch_dir liboliphaunt-release-assets)"
@@ -179,9 +190,11 @@ check_broker_cargo_relay_fixture() {
     --part-bytes 1048576
 
   cargo_artifacts="$(prepare_scratch_dir broker-cargo-artifacts)"
+  broker_cargo_sources="$(prepare_scratch_dir broker-cargo-sources)"
   run tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
     --asset-dir "$fixture_assets" \
     --output-dir "$cargo_artifacts" \
+    --source-output-dir "$broker_cargo_sources" \
     --version "$broker_version"
 
   run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
@@ -215,10 +228,10 @@ EOF
     "$root" \
     "$liboliphaunt_cargo_artifacts/packages.json" >>"$smoke/Cargo.toml"
   cat >>"$smoke/Cargo.toml" <<EOF
-oliphaunt-broker-linux-arm64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-arm64-gnu" }
-oliphaunt-broker-linux-x64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-x64-gnu" }
-oliphaunt-broker-macos-arm64 = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-macos-arm64" }
-oliphaunt-broker-windows-x64-msvc = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-windows-x64-msvc" }
+oliphaunt-broker-linux-arm64-gnu = { path = "$broker_cargo_sources/oliphaunt-broker-linux-arm64-gnu" }
+oliphaunt-broker-linux-x64-gnu = { path = "$broker_cargo_sources/oliphaunt-broker-linux-x64-gnu" }
+oliphaunt-broker-macos-arm64 = { path = "$broker_cargo_sources/oliphaunt-broker-macos-arm64" }
+oliphaunt-broker-windows-x64-msvc = { path = "$broker_cargo_sources/oliphaunt-broker-windows-x64-msvc" }
 EOF
   cat >"$smoke/build.rs" <<'EOF'
 use std::env;
@@ -392,6 +405,17 @@ if [ "$mode" = "test-unit" ]; then
   exit 0
 fi
 
+require_exact_package_fixture \
+  src/sdks/rust/tests/fixtures/postgis-smoke.sql \
+  src/extensions/external/postgis/tests/smoke.sql
+require_exact_package_fixture \
+  src/sdks/rust/tests/fixtures/sdk-mode-support.json \
+  src/shared/fixtures/sdk-capabilities/mode-support.json
+require_text src/sdks/rust/Cargo.toml 'license = "MIT"' \
+  "Rust SDK source-only Cargo package must declare its MIT license truthfully"
+require_text src/sdks/rust/crates/oliphaunt-build/Cargo.toml 'license = "MIT"' \
+  "oliphaunt-build source-only Cargo package must declare its MIT license truthfully"
+
 package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
 mkdir -p "$(dirname "$package_listing")"
 printf '\n==> cargo package -p oliphaunt --locked --allow-dirty --list\n'
@@ -413,13 +437,15 @@ for required in \
   tests/sdk_shape.rs \
   tests/sdk_extensions.rs \
   tests/sdk_native_smoke.rs \
-  tests/native_sql_regression.rs
+  tests/native_sql_regression.rs \
+  tests/fixtures/postgis-smoke.sql \
+  tests/fixtures/sdk-mode-support.json
 do
   require_cargo_package_entry "$package_listing" "$required"
 done
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^crates/oliphaunt-build/'
-reject_cargo_package_entry_pattern "$package_listing" '^(moon.yml|release.toml|tools/)'
+reject_cargo_package_entry_pattern "$package_listing" '^(\.gitignore|\.release-semantic-inputs\.json|moon.yml|release.toml|tools/)'
 
 build_package_listing="$root/target/liboliphaunt-sdk-check/oliphaunt-build-cargo-package-list.txt"
 printf '\n==> cargo package -p oliphaunt-build --locked --allow-dirty --list\n'

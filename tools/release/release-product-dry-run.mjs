@@ -54,6 +54,18 @@ import {
   parseWindowsVcRuntimeReceipt,
   windowsVcRuntimeProfileNames,
 } from "./windows-vc-runtime-closure.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInDirectory,
+  releaseNoticeRows,
+  stageReleaseNotices,
+} from "./release-notices.mjs";
+import {
+  assertBrokerDependencyLicensesInArchive,
+  assertBrokerDependencyLicensesInDirectory,
+  brokerDependencyLicenseMembers,
+  normalizeBrokerDependencyLicenseModes,
+} from "./broker-dependency-license-contract.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -886,6 +898,7 @@ function stageLiboliphauntNpmPayloads(version) {
       fail(`${target.id} must declare library_relative_path for npm artifact package publication`);
     }
     const stage = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
+    stageReleaseNotices(stage, { profile: "native-runtime" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     extractReleaseArchiveFile(archive, libraryRelativePath, path.join(stage, libraryRelativePath));
     extractReleaseArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
@@ -899,6 +912,7 @@ function stageLiboliphauntNpmPayloads(version) {
     ];
     ensureNativeToolsAbsentFromRuntime(stage, target.target);
     runNativePayloadOptimizer(stage, target.target, "runtime");
+    assertReleaseNoticesInDirectory(stage, { profile: "native-runtime" });
     stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
@@ -909,6 +923,7 @@ function stageLiboliphauntToolsNpmPayloads(version) {
   const stages = new Map();
   for (const [packageName, packageDir, target] of liboliphauntToolsNpmPackageTargets(version)) {
     const stage = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
+    stageReleaseNotices(stage, { profile: "native-tools" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     for (const member of requiredToolsMemberPaths(target.target, "runtime/bin")) {
       extractReleaseArchiveFile(archive, member, path.join(stage, member), {
@@ -917,6 +932,7 @@ function stageLiboliphauntToolsNpmPayloads(version) {
     }
     const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin");
     runNativePayloadOptimizer(stage, target.target, "tools");
+    assertReleaseNoticesInDirectory(stage, { profile: "native-tools" });
     stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
@@ -937,6 +953,8 @@ function stageLiboliphauntIcuNpmPayload(version) {
     "share/icu",
     path.join(stage, "share/icu"),
   );
+  stageReleaseNotices(stage, { profile: "native-icu-data" });
+  assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
   return stage;
 }
 
@@ -988,6 +1006,7 @@ function validatePackedIcuPackage(packageName, version, tarball) {
   if (!hasIcuData) {
     fail(`${rel(tarball)} is missing package/share/icu/icudt* data files`);
   }
+  assertReleaseNoticesInArchive(tarball, { profile: "native-icu-data", prefix: "package" });
 }
 
 export function liboliphauntNpmTarballs(version) {
@@ -1003,6 +1022,7 @@ export function liboliphauntNpmTarballs(version) {
       embeddedCoreModuleMember(target.target, "package/lib/modules"),
       ...runtimeMembers,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+      ...releaseNoticeRows({ profile: "native-runtime" }).map((row) => `package/${row.member}`),
     ];
     const tarball = pnpmPackForNpmPublish(payload.stage);
     validatePackedNpmPackage({
@@ -1012,6 +1032,7 @@ export function liboliphauntNpmTarballs(version) {
       requiredMembers,
       executableMembers: runtimeMembers,
     });
+    assertReleaseNoticesInArchive(tarball, { profile: "native-runtime", prefix: "package" });
     packages.push([packageName, tarball]);
   }
   for (const [packageName, , target] of liboliphauntToolsNpmPackageTargets(version)) {
@@ -1025,9 +1046,11 @@ export function liboliphauntNpmTarballs(version) {
       requiredMembers: [
         ...runtimeMembers,
         ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+        ...releaseNoticeRows({ profile: "native-tools" }).map((row) => `package/${row.member}`),
       ],
       executableMembers: runtimeMembers,
     });
+    assertReleaseNoticesInArchive(tarball, { profile: "native-tools", prefix: "package" });
     packages.push([packageName, tarball]);
   }
   const icuStage = stageLiboliphauntIcuNpmPayload(version);
@@ -1037,22 +1060,36 @@ export function liboliphauntNpmTarballs(version) {
   return packages;
 }
 
-export function brokerNpmTarballs(version) {
+export function brokerNpmTarballs(
+  version,
+  { assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets") } = {},
+) {
   const tarballs = [];
-  const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
   for (const [packageName, packageDir, target] of brokerNpmPackageTargets(version)) {
     const executableRelativePath = target.executable_relative_path;
     if (typeof executableRelativePath !== "string" || executableRelativePath.length === 0) {
       fail(`${target.id} must declare executable_relative_path for npm artifact package publication`);
     }
     const stageDir = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
+    stageReleaseNotices(stageDir, { profile: "broker" });
+    assertReleaseNoticesInDirectory(stageDir, { profile: "broker" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    assertBrokerDependencyLicensesInArchive(archive, { target: target.target });
     extractReleaseArchiveFile(archive, executableRelativePath, path.join(stageDir, executableRelativePath), { mode: 0o755 });
+    extractReleaseArchiveTree(
+      archive,
+      "THIRD_PARTY_LICENSES/rust",
+      path.join(stageDir, "THIRD_PARTY_LICENSES/rust"),
+    );
+    normalizeBrokerDependencyLicenseModes(stageDir, target.target);
+    assertBrokerDependencyLicensesInDirectory(stageDir, { target: target.target });
     const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stageDir, target.target, "bin");
     const tarball = pnpmPackForNpmPublish(stageDir);
     const requiredMembers = [
       `package/${executableRelativePath}`,
       ...vcRuntimeMembers.map((member) => `package/${member}`),
+      ...releaseNoticeRows({ profile: "broker" }).map((row) => `package/${row.member}`),
+      ...brokerDependencyLicenseMembers(target.target, { prefix: "package" }),
     ];
     validatePackedNpmPackage({
       packageName,
@@ -1061,6 +1098,7 @@ export function brokerNpmTarballs(version) {
       requiredMembers,
       executableMembers: [`package/${executableRelativePath}`],
     });
+    assertBrokerDependencyLicensesInArchive(tarball, { target: target.target, prefix: "package" });
     tarballs.push([packageName, tarball]);
   }
   return tarballs;
