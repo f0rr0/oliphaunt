@@ -5,17 +5,20 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import {
   cargoPackageRelativePathParts,
+  createDeterministicTar,
   manualCargoPackageSource,
 } from "./cargo-source-package.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
@@ -71,7 +74,56 @@ test("uses Cargo's file selection, preserves modes, and emits deterministic exac
     "selected-package-0.1.0/Cargo.toml",
     "selected-package-0.1.0/src/lib.rs",
   ]);
-  assert.equal(entries.get("selected-package-0.1.0/src/lib.rs").mode, 0o755);
+  const sourceMode = statSync(path.join(source, "src/lib.rs")).mode & 0o777;
+  assert.equal(entries.get("selected-package-0.1.0/src/lib.rs").mode, sourceMode);
+  if (process.platform !== "win32") {
+    assert.equal(sourceMode, 0o755);
+  }
+});
+
+test("fixed tar file mode is host-independent while the default preserves filesystem modes", (t) => {
+  const { root } = fixture(t, "deterministic-tar-modes");
+  const stage = path.join(root, "stage");
+  mkdirSync(stage);
+  const writable = path.join(stage, "writable.txt");
+  const executable = path.join(stage, "executable.sh");
+  writeFileSync(writable, "writable\n");
+  writeFileSync(executable, "#!/bin/sh\n");
+  chmodSync(writable, 0o666);
+  chmodSync(executable, 0o755);
+  assert.equal(statSync(writable).mode & 0o777, 0o666);
+
+  const fail = (message) => { throw new Error(message); };
+  const fixedArchive = path.join(root, "fixed.tar.gz");
+  writeFileSync(
+    fixedArchive,
+    gzipSync(createDeterministicTar(stage, "carrier", { fail, fixedFileMode: 0o644 }), { mtime: 0 }),
+  );
+  const fixedEntries = readPortableArchiveEntries(fixedArchive);
+  assert.deepEqual(
+    [...fixedEntries].map(([name, entry]) => [name, entry.mode]),
+    [
+      ["carrier/executable.sh", 0o644],
+      ["carrier/writable.txt", 0o644],
+    ],
+  );
+
+  const defaultArchive = path.join(root, "default.tar.gz");
+  writeFileSync(
+    defaultArchive,
+    gzipSync(createDeterministicTar(stage, "cargo", { fail }), { mtime: 0 }),
+  );
+  const defaultEntries = readPortableArchiveEntries(defaultArchive);
+  assert.equal(defaultEntries.get("cargo/writable.txt").mode, statSync(writable).mode & 0o777);
+  assert.equal(defaultEntries.get("cargo/executable.sh").mode, statSync(executable).mode & 0o777);
+  if (process.platform !== "win32") {
+    assert.equal(defaultEntries.get("cargo/executable.sh").mode, 0o755);
+  }
+
+  assert.throws(
+    () => createDeterministicTar(stage, "invalid", { fail, fixedFileMode: 0o1000 }),
+    /fixed deterministic tar file mode/u,
+  );
 });
 
 test("rejects Cargo-selected symbolic links and special-file targets", (t) => {

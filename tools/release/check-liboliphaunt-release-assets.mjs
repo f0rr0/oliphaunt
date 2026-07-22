@@ -433,23 +433,39 @@ function validateIcuDataArtifactContents(file) {
   }
 }
 
+const RELEASE_NOTICE_OPTIONS_BY_KIND = new Map([
+  ["native-runtime", Object.freeze({ profile: "native-runtime" })],
+  ["native-tools", Object.freeze({ profile: "native-tools" })],
+  [
+    "apple-swiftpm-binary",
+    Object.freeze({
+      profile: "native-runtime",
+      prefix: "liboliphaunt.xcframework",
+    }),
+  ],
+  ["runtime-resources", Object.freeze({ profile: "native-runtime-resources" })],
+  ["icu-data", Object.freeze({ profile: "native-icu-data" })],
+]);
+
+export function assertLiboliphauntArtifactReleaseNotices(file, kind) {
+  const options = RELEASE_NOTICE_OPTIONS_BY_KIND.get(kind);
+  if (options === undefined) {
+    return false;
+  }
+  assertReleaseNoticesInArchive(file, options);
+  return true;
+}
+
 function validateReleaseNoticeClosure(assetDir, version) {
-  const profileByKind = new Map([
-    ["native-runtime", "native-runtime"],
-    ["native-tools", "native-tools"],
-    ["apple-swiftpm-binary", "native-runtime"],
-    ["runtime-resources", "native-runtime-resources"],
-    ["icu-data", "native-icu-data"],
-  ]);
   for (const target of allArtifactTargets({
     product: PRODUCT,
     surface: "github-release",
     publishedOnly: true,
   })) {
-    const profile = profileByKind.get(target.kind);
-    if (profile !== undefined) {
-      assertReleaseNoticesInArchive(path.join(assetDir, assetName(target, version)), { profile });
-    }
+    assertLiboliphauntArtifactReleaseNotices(
+      path.join(assetDir, assetName(target, version)),
+      target.kind,
+    );
   }
 }
 

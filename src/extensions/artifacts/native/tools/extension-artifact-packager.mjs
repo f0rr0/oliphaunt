@@ -20,6 +20,7 @@ import {
   stageReleaseNotices,
 } from '../../../../../tools/release/release-notices.mjs';
 import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
+import { qualificationCandidateSqlNamesForTarget } from '../../../../../tools/release/extension-qualification-candidates.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -32,6 +33,15 @@ const DESKTOP_NATIVE_TARGETS = new Set([
   'linux-arm64-gnu',
   'macos-arm64',
   'windows-x64-msvc',
+]);
+const MOBILE_NATIVE_TARGETS = new Set([
+  'android-arm64-v8a',
+  'android-x86_64',
+  'ios-xcframework',
+]);
+const NATIVE_TARGETS = new Set([
+  ...DESKTOP_NATIVE_TARGETS,
+  ...MOBILE_NATIVE_TARGETS,
 ]);
 
 function fail(message) {
@@ -235,24 +245,100 @@ async function desktopReleaseReady(sqlName, promotion) {
   return statuses.length === 0 || statuses.every((status) => status === 'supported');
 }
 
-async function catalogRows() {
+function canonicalQualificationSqlNames(values) {
+  if (!Array.isArray(values)) {
+    fail('qualification SQL names must be an array');
+  }
+  const names = values.map((value) => {
+    if (typeof value !== 'string') {
+      fail('qualification SQL names must contain only strings');
+    }
+    validatePortableId(value, 'qualification SQL name');
+    return value;
+  });
+  const canonical = [...new Set(names)].sort(compareText);
+  if (JSON.stringify(names) !== JSON.stringify(canonical)) {
+    fail('qualification SQL names must be sorted and unique');
+  }
+  return canonical;
+}
+
+export function selectCatalogExtensions(extensions, qualificationSqlNames = []) {
+  if (!Array.isArray(extensions)) {
+    fail('generated extension catalog must define an extensions array');
+  }
+  const qualificationNames = canonicalQualificationSqlNames(qualificationSqlNames);
+  const qualificationSet = new Set(qualificationNames);
+  const seen = new Set();
+  const normalized = [];
+  for (const extension of extensions) {
+    if (extension === null || Array.isArray(extension) || typeof extension !== 'object') {
+      fail('generated extension catalog rows must be objects');
+    }
+    const sqlName = extension['sql-name'] ?? extension.id;
+    if (typeof sqlName !== 'string') {
+      fail('generated extension catalog row must define a SQL name');
+    }
+    validatePortableId(sqlName, 'generated extension catalog SQL name');
+    if (seen.has(sqlName)) {
+      fail(`generated extension catalog repeats SQL name '${sqlName}'`);
+    }
+    seen.add(sqlName);
+    const promotion = extension.promotion ?? {};
+    normalized.push({ extension, promotion, sqlName });
+  }
+  const missing = qualificationNames.filter((sqlName) => !seen.has(sqlName));
+  if (missing.length > 0) {
+    fail(`qualification SQL names are absent from the generated extension catalog: ${missing.join(', ')}`);
+  }
+  const publicSqlNames = new Set(
+    normalized
+      .filter(({ promotion }) => promotion.promoted === true)
+      .map(({ sqlName }) => sqlName),
+  );
+  const selected = [];
+  for (const { extension, promotion, sqlName } of normalized) {
+    const publicStable = promotion.promoted === true && promotion.stable === true;
+    const qualification = qualificationSet.has(sqlName);
+    if (qualification && publicStable) {
+      fail(`public stable extension '${sqlName}' must not enter deferred qualification selection`);
+    }
+    if (publicStable || qualification) {
+      const allowedDependencies = qualification
+        ? new Set([...publicSqlNames, ...qualificationSet])
+        : publicSqlNames;
+      selected.push({
+        dependencies: stringList(extension.dependencies).filter((dependency) =>
+          allowedDependencies.has(dependency)),
+        extension,
+        qualification,
+        sqlName,
+      });
+    }
+  }
+  return selected;
+}
+
+export async function catalogRows({
+  qualificationSqlNames = [],
+  qualificationTarget = undefined,
+} = {}) {
+  if (qualificationTarget === undefined && qualificationSqlNames.length > 0) {
+    fail('qualification SQL names require a native qualification target');
+  }
+  if (qualificationTarget !== undefined && !NATIVE_TARGETS.has(qualificationTarget)) {
+    fail(`unsupported native qualification target '${qualificationTarget}'`);
+  }
   const catalog = await readJson(CATALOG_PATH);
   const contrib = await readToml(CONTRIB_RECIPE_PATH);
   const contribRows = Array.isArray(contrib.extensions) ? contrib.extensions : [];
   const extensions = Array.isArray(catalog.extensions) ? catalog.extensions : [];
-  const publicSqlNames = new Set(
-    extensions
-      .filter((extension) => extension.promotion?.promoted === true)
-      .map((extension) => extension['sql-name'] ?? extension.id),
-  );
   const rows = [];
-  for (const extension of extensions) {
+  for (const { dependencies, extension, qualification, sqlName } of selectCatalogExtensions(
+    extensions,
+    qualificationSqlNames,
+  )) {
     const promotion = extension.promotion ?? {};
-    if (!(promotion.promoted === true && promotion.stable === true)) {
-      continue;
-    }
-    const sqlName = extension['sql-name'] ?? extension.id;
-    const dependencies = stringList(extension.dependencies).filter((dependency) => publicSqlNames.has(dependency));
     const dataFiles = runtimeShareDataFiles(await extensionDataFiles(extension, contribRows));
     const stem = nativeModuleStem(extension);
     rows.push({
@@ -262,8 +348,12 @@ async function catalogRows() {
       stem,
       dependencies,
       sharedPreload: sharedPreloadLibraries(extension),
-      desktopPrebuilt: await desktopReleaseReady(sqlName, promotion),
-      mobilePrebuilt: await mobileReleaseReady(sqlName),
+      desktopPrebuilt: qualification
+        ? DESKTOP_NATIVE_TARGETS.has(qualificationTarget)
+        : await desktopReleaseReady(sqlName, promotion),
+      mobilePrebuilt: qualification
+        ? MOBILE_NATIVE_TARGETS.has(qualificationTarget)
+        : await mobileReleaseReady(sqlName),
       mobileStaticRequired: stem.length > 0,
       mobileStaticTargets: [],
       dataFiles,
@@ -288,7 +378,24 @@ async function catalogDefaultVersion(sqlName) {
   return version;
 }
 
-async function listCatalog() {
+function qualificationTargetArgument(args) {
+  if (args.length === 0) return undefined;
+  if (args.length !== 2 || args[0] !== '--qualification-target') {
+    fail('list-catalog accepts only --qualification-target <native-target>');
+  }
+  const target = args[1];
+  validatePortableId(target, 'native qualification target');
+  if (!NATIVE_TARGETS.has(target)) {
+    fail(`unsupported native qualification target '${target}'`);
+  }
+  return target;
+}
+
+async function listCatalog(args = []) {
+  const qualificationTarget = qualificationTargetArgument(args);
+  const qualificationSqlNames = qualificationTarget === undefined
+    ? []
+    : qualificationCandidateSqlNamesForTarget(qualificationTarget, { family: 'native' });
   const header = [
     'sql_name',
     'pg_major',
@@ -304,7 +411,7 @@ async function listCatalog() {
     'artifact',
   ];
   console.log(header.join('\t'));
-  for (const row of await catalogRows()) {
+  for (const row of await catalogRows({ qualificationSqlNames, qualificationTarget })) {
     console.log(
       [
         row.sqlName,
@@ -1177,7 +1284,7 @@ async function main() {
   const [command, ...args] = process.argv.slice(2);
   switch (command) {
     case 'list-catalog':
-      await listCatalog();
+      await listCatalog(args);
       break;
     case 'selected-sql-names':
       await selectedSqlNames(args[0] ?? '');

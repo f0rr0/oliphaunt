@@ -380,6 +380,13 @@ function tarHeader(relativePath, size, mode, options) {
 
 export function createDeterministicTar(stageDir, packageRoot, options) {
   const chunks = [];
+  const fixedFileMode = options.fixedFileMode;
+  if (
+    fixedFileMode !== undefined
+    && (!Number.isInteger(fixedFileMode) || fixedFileMode < 0 || fixedFileMode > 0o777)
+  ) {
+    abort(options.fail, "fixed deterministic tar file mode must be an integer between 0000 and 0777");
+  }
   const files = listFilesRecursive(stageDir);
   files.sort((left, right) => compareText(path.relative(stageDir, left), path.relative(stageDir, right)));
   for (const file of files) {
@@ -387,7 +394,8 @@ export function createDeterministicTar(stageDir, packageRoot, options) {
     const archivePath = `${packageRoot}/${relative}`;
     const stats = statSync(file);
     const data = readFileSync(file);
-    chunks.push(tarHeader(archivePath, data.length, stats.mode & 0o777, options));
+    const mode = fixedFileMode ?? (stats.mode & 0o777);
+    chunks.push(tarHeader(archivePath, data.length, mode, options));
     chunks.push(data);
     const remainder = data.length % 512;
     if (remainder !== 0) {

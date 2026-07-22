@@ -97,9 +97,17 @@ tasks:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
+      # The canonical release gate invokes graph.mjs directly. These inputs
+      # ensure graph-policy-only changes select its single hosted owner.
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
       - "/.github/**/*"
+      - "/benchmarks/moon.yml"
       - "/Cargo.lock"
       - "/Cargo.toml"
+      - "/coverage/baseline.toml"
+      - "/examples/moon.yml"
+      - "/moon.yml"
       - "/README.md"
       - "/docs/**/*"
       - "/package.json"
@@ -119,13 +127,17 @@ tasks:
       - "!/src/**/out/**"
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
       - "/tools/policy/**/*"
       - "/tools/release/**/*"
       - "/tools/test/create-broker-release-fixture.mjs"
       - "/tools/test/create-liboliphaunt-release-fixture.mjs"
       - "/tools/test/release-fixture-utils.mjs"
     options:
-      cache: true
+      # This task owns live repository-graph validation in hosted CI. Its graph
+      # read set includes dynamically declared paths and nested Moon queries.
+      cache: false
       runFromWorkspaceRoot: true
   broker-dependency-license-audit:
     tags: ["policy", "assertion", "quality", "static", "ci-rust"]

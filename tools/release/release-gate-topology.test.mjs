@@ -171,13 +171,16 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   const structureCommand = Bun.YAML.parse(read("moon.yml")).tasks?.structure?.command;
   assert.equal(structureCommand, "bash tools/policy/check-repo-structure.sh");
   const canonicalStructureInvocation = `run(TOOL, ["bash", "tools/policy/check-repo-structure.sh"]);`;
+  const canonicalGraphInvocation = `run(TOOL, [process.execPath, "tools/graph/graph.mjs", "check"]);`;
   assert.equal(occurrences(releaseCheck, canonicalStructureInvocation), 1);
+  assert.equal(occurrences(releaseCheck, canonicalGraphInvocation), 1);
   assert.match(releaseCheck, /release-metadata-check[.]mjs/u);
   const releaseMetadataCheck = read("tools/release/release-metadata-check.mjs");
   assert.match(releaseMetadataCheck, /src\/docs\/tools\/check-docs-product[.]mjs/u);
   assert(
-    releaseCheck.indexOf(canonicalStructureInvocation) < releaseCheck.indexOf("release-metadata-check.mjs"),
-    "the live hosted structure entrypoint must run before release metadata and mutation tests",
+    releaseCheck.indexOf(canonicalStructureInvocation) < releaseCheck.indexOf(canonicalGraphInvocation)
+      && releaseCheck.indexOf(canonicalGraphInvocation) < releaseCheck.indexOf("release-metadata-check.mjs"),
+    "live structure and graph entrypoints must run before release metadata and mutation tests",
   );
   assert.equal(MUTATION_TEST_TIMEOUT_MS, 30_000);
   assert.match(releaseCheck, /`--timeout=\$\{MUTATION_TEST_TIMEOUT_MS\}`/u);
@@ -189,6 +192,48 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   assert.match(publisher, /verify-release-candidate[.]mjs/u);
   assert.match(publisher, /target\/release-candidate\/oliphaunt-release-candidate[.]json/u);
   assert.match(publisher, /release-metadata-check[.]mjs/u);
+});
+
+test("the canonical release gate is the single hosted repository-graph validator", () => {
+  const graphProject = Bun.YAML.parse(read("tools/graph/moon.yml"));
+  const graphCheck = graphProject.tasks?.check;
+  const graphGenerate = graphProject.tasks?.generate;
+  assert.equal(graphCheck?.options?.cache, false);
+  assert.equal(graphCheck?.options?.runInCI, false);
+  assert.deepEqual(graphCheck?.outputs ?? [], []);
+  assert.equal(graphGenerate?.options?.cache, false);
+  assert.deepEqual(graphGenerate?.outputs, ["/target/graph/**/*"]);
+
+  const releaseProject = Bun.YAML.parse(read("tools/release/moon.yml"));
+  const releaseCheck = releaseProject.tasks?.check;
+  assert.equal(releaseCheck?.options?.cache, false);
+  const releaseInputs = new Set(releaseCheck?.inputs ?? []);
+  for (const required of [
+    "/.moon/workspace.yml",
+    "/.moon/toolchains.yml",
+    "/.github/**/*",
+    "/benchmarks/moon.yml",
+    "/coverage/baseline.toml",
+    "/examples/moon.yml",
+    "/moon.yml",
+    "/package.json",
+    "/pnpm-lock.yaml",
+    "/release-please-config.json",
+    "/.release-please-manifest.json",
+    "/src/**/*",
+    "/tools/**/moon.yml",
+    "/tools/graph/**/*",
+    "/tools/release/**/*",
+  ]) {
+    assert(releaseInputs.has(required), `${required} must select the hosted graph owner`);
+  }
+
+  const graphSource = read("tools/graph/graph.mjs");
+  assert.equal(
+    occurrences(graphSource, "writeGraph(graph);"),
+    1,
+    "only graph generation may write target/graph output",
+  );
 });
 
 test("nested Bun policy tests inherit the bounded repository timeout", () => {

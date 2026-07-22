@@ -88,15 +88,15 @@ const postgisRow = [
   "-",
   "first-party",
 ];
-const earthdistanceRow = [
-  "earthdistance",
+const deferredQualificationRow = [
+  "deferred_extension",
   "18",
   "yes",
-  "earthdistance",
-  "cube",
+  "deferred_extension",
+  "-",
   "-",
   "yes",
-  "yes",
+  "no",
   "yes",
   "-",
   "-",
@@ -267,7 +267,7 @@ describe("desktop exact-extension post-strip binary qualification", () => {
 });
 
 describe("Windows exact-extension binary-contract staging", () => {
-  test("validates only selected carrier binaries and excludes every development/archive class", async () => {
+  test("validates the public and deferred build union while excluding every development/archive class", async () => {
     const root = await fixture("selected");
     const runtime = path.join(root, "install");
     const output = path.join(root, "contract-view");
@@ -279,7 +279,7 @@ describe("Windows exact-extension binary-contract staging", () => {
     );
     await writeRuntimeFile(
       runtime,
-      "lib/postgresql/earthdistance.dll",
+      "lib/postgresql/deferred_extension.dll",
       pe({ imports: HOSTED_EARTHDISTANCE_IMPORTS }),
     );
     await writeRuntimeFile(
@@ -287,16 +287,30 @@ describe("Windows exact-extension binary-contract staging", () => {
       "lib/postgresql/postgis-3.dll",
       pe({ machine: 0xaa64 }),
     );
-    await writeRuntimeFile(
-      runtime,
+    const installedDevelopmentArchives = [
+      "lib/libpgport.a",
+      "lib/libpgport_shlib.a",
+      "lib/libpgcommon.a",
+      "lib/libpgcommon_shlib.a",
+      "lib/libpq.a",
+      "lib/libpgfeutils.a",
+      "lib/libpgtypes.a",
+      "lib/libecpg.a",
       "lib/libecpg_compat.a",
-      Buffer.from("!<arch>\n", "ascii"),
-    );
-    await writeRuntimeFile(
-      runtime,
+      "lib/libpq.lib",
+      "lib/postgres.lib",
+      "lib/postgresql/pgevent.lib",
+      "lib/libpgtypes.lib",
+      "lib/libecpg.lib",
       "lib/libecpg_compat.lib",
-      Buffer.from("!<arch>\n", "ascii"),
-    );
+    ];
+    for (const relative of installedDevelopmentArchives) {
+      await writeRuntimeFile(
+        runtime,
+        relative,
+        Buffer.from("!<arch>\n", "ascii"),
+      );
+    }
     await writeRuntimeFile(
       runtime,
       "lib/libpgcommon.la",
@@ -316,8 +330,8 @@ describe("Windows exact-extension binary-contract staging", () => {
 
     const result = await stageWindowsExtensionBinaryContract({
       runtimeRoot: runtime,
-      catalogText: catalog(vectorRow, postgisRow, earthdistanceRow),
-      selectedSqlNames: "vector,earthdistance",
+      catalogText: catalog(vectorRow, postgisRow, deferredQualificationRow),
+      selectedSqlNames: "vector,deferred_extension",
       outputRoot: output,
     });
 
@@ -327,17 +341,17 @@ describe("Windows exact-extension binary-contract staging", () => {
     expect(result.standaloneBackendProvider).toBe("postgres.exe");
     expect(result.forbiddenEmbeddedBackendProvider).toBe("oliphaunt.dll");
     expect(result.extensionModules).toEqual([
-      "earthdistance.dll",
+      "deferred_extension.dll",
       "vector.dll",
     ]);
     expect(result.serverBoundExtensionModules).toEqual(["vector.dll"]);
-    expect(result.hostNeutralServerModules).toEqual(["earthdistance.dll"]);
+    expect(result.hostNeutralServerModules).toEqual(["deferred_extension.dll"]);
     expect(result.providerRuntimeDlls).toEqual([...WINDOWS_VC_RUNTIME_DLLS]);
     expect(await relativeFiles(output)).toEqual(
       [
         ...WINDOWS_VC_RUNTIME_DLLS.map((name) => `bin/${name}`),
         "binary-contract-manifest.json",
-        "lib/postgresql/earthdistance.dll",
+        "lib/postgresql/deferred_extension.dll",
         "lib/postgresql/vector.dll",
       ].sort(),
     );
@@ -346,8 +360,11 @@ describe("Windows exact-extension binary-contract staging", () => {
       windowsVcRuntimeProfile: "provider",
     });
     expect(inspected.files).toContain("lib/postgresql/vector.dll");
-    expect(inspected.files).toContain("lib/postgresql/earthdistance.dll");
+    expect(inspected.files).toContain("lib/postgresql/deferred_extension.dll");
     expect(inspected.files).not.toContain("lib/postgresql/postgis-3.dll");
+    for (const relative of installedDevelopmentArchives) {
+      expect(inspected.files).not.toContain(relative);
+    }
     expect(inspected.binaries).toBe(WINDOWS_VC_RUNTIME_DLLS.length + 2);
   });
 
@@ -701,15 +718,76 @@ describe("Windows exact-extension binary-contract staging", () => {
       ),
       "utf8",
     );
-    const desktop = source.slice(source.indexOf("package_desktop_target()"));
+    const desktop = source.slice(
+      source.indexOf("package_desktop_target()"),
+      source.indexOf("package_ios_target()"),
+    );
     const closure = desktop.indexOf("windows-vc-runtime-closure.mjs verify");
     const stage = desktop.indexOf(
       'binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"',
     );
     const contract = desktop.indexOf('--root "$binary_contract_runtime"');
+    const qualificationReturn = desktop.indexOf(
+      'if [ "$qualification_only" = "1" ]; then',
+    );
+    const windowsBranch = desktop.slice(
+      desktop.indexOf('if [ "$target_id" = "windows-x64-msvc" ]; then'),
+      desktop.indexOf("  else\n"),
+    );
     expect(closure).toBeGreaterThan(-1);
     expect(stage).toBeGreaterThan(closure);
     expect(contract).toBeGreaterThan(stage);
+    expect(qualificationReturn).toBeGreaterThan(contract);
+    expect(windowsBranch.match(/--root "\$runtime"/gu)).toHaveLength(1);
+    expect(windowsBranch).toContain('--root "$binary_contract_runtime"');
+    const stageFunction = source.slice(
+      source.indexOf("prepare_windows_binary_contract_runtime()"),
+      source.indexOf("build_desktop_extension_runtime()"),
+    );
+    expect(stageFunction).toContain('--selected-sql-names "$build_sql_names"');
+    expect(stageFunction).not.toContain('--selected-sql-names "$selected_sql_names"');
+
+    for (const [start, end] of [
+      ["package_desktop_target()", "package_ios_target()"],
+      ["package_ios_target()", "package_android_target()"],
+      ["package_android_target()", "\nfetch_extension_source_assets\n"],
+    ]) {
+      const body = source.slice(source.indexOf(start), source.indexOf(end));
+      const qualificationOnlyReturn = body.indexOf(
+        'if [ "$qualification_only" = "1" ]; then',
+      );
+      const publicCatalogLoop = body.indexOf("while IFS=$'\\t' read -r sql_name");
+      const publicSelectionFilter = body.indexOf(
+        'selected_sql_name_matches "$sql_name" || continue',
+        publicCatalogLoop,
+      );
+      const artifactPackaging = body.indexOf(
+        "make_extension_artifact",
+        publicSelectionFilter,
+      );
+      expect(qualificationOnlyReturn).toBeGreaterThan(-1);
+      expect(publicCatalogLoop).toBeGreaterThan(qualificationOnlyReturn);
+      expect(publicSelectionFilter).toBeGreaterThan(publicCatalogLoop);
+      expect(artifactPackaging).toBeGreaterThan(publicSelectionFilter);
+    }
+
+    const fetch = source.lastIndexOf("\nfetch_extension_source_assets\n");
+    const listCatalog = source.indexOf(
+      'bun "$packager" list-catalog --qualification-target "$target_id" >"$catalog_file"',
+      fetch,
+    );
+    const releaseOnly = source.indexOf(
+      'if [ "$qualification_only" = "0" ]; then',
+      fetch,
+    );
+    const dispatch = source.indexOf('case "$target_id" in', releaseOnly);
+    expect(fetch).toBeGreaterThan(-1);
+    expect(listCatalog).toBeGreaterThan(fetch);
+    expect(releaseOnly).toBeGreaterThan(listCatalog);
+    expect(dispatch).toBeGreaterThan(releaseOnly);
+    expect(source).toContain('catalog_file="$stage_root/extension-catalog.tsv"');
+    expect(source.slice(releaseOnly, dispatch)).not.toContain("list-catalog");
+    expect(source.slice(releaseOnly, dispatch)).toContain("write_indexes");
 
     const packager = await readFile(
       path.join(
@@ -717,6 +795,12 @@ describe("Windows exact-extension binary-contract staging", () => {
         "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
       ),
       "utf8",
+    );
+    expect(packager).toContain(
+      "qualificationCandidateSqlNamesForTarget(qualificationTarget, { family: 'native' })",
+    );
+    expect(packager).toMatch(
+      /case 'list-catalog':\s+await listCatalog\(args\);/u,
     );
     expect(packager).toMatch(
       /copyRuntimeRelativeFile\(\s*args\.runtime,\s*filesRoot,\s*`lib\/postgresql\/\$\{metadata\.nativeModuleFile\}`\s*,?\s*\)/u,

@@ -265,10 +265,17 @@ function xcframeworkModes() {
   };
 }
 
-async function writeProfiledArchive(output, entries, profile, modes = {}) {
+async function writeProfiledArchive(
+  output,
+  entries,
+  profile,
+  modes = {},
+  noticePrefix = '',
+) {
   const notices = {};
   for (const row of releaseNoticeRows({ profile })) {
-    notices[row.member] = await fs.readFile(row.source);
+    const member = noticePrefix ? `${noticePrefix}/${row.member}` : row.member;
+    notices[member] = await fs.readFile(row.source);
   }
   await writeEntriesArchive(output, { ...entries, ...notices }, modes);
 }
@@ -380,6 +387,7 @@ async function writeFixtureAssets(assetDir, version) {
     xcframeworkEntries(),
     'native-runtime',
     xcframeworkModes(),
+    'liboliphaunt.xcframework',
   );
 
   await writeChecksumManifest(assetDir, `liboliphaunt-${version}-release-assets.sha256`);

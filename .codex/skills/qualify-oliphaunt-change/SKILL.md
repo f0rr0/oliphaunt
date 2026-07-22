@@ -25,9 +25,13 @@ cargo run -p xtask -- assets verify-committed
 tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check
 ```
 
-The canonical `release-check` runs the live repository-structure policy before
-release metadata and mutation tests. Do not substitute the policy unit tests:
-they prove the classifier but do not scan the candidate tree.
+The canonical `release-check` runs the live repository-structure and uncached
+repository-graph policies before release metadata and mutation tests. Its
+uncached `release-tools:check` Moon task is the single hosted graph-validation
+owner; `graph-tools:check` remains a focused local target and
+`graph-tools:generate` is the sole writer of `target/graph`. Do not substitute
+the policy unit tests: they prove the classifiers but do not scan the candidate
+tree.
 
 For source-acquisition policy or a source `mirror_url`, run
 `tools/dev/bun.sh test tools/policy/source-fetch-core.test.mjs` and

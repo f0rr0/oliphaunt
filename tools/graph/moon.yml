@@ -36,13 +36,19 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release_graph_query.mjs"
-    outputs:
-      - "/target/graph/**/*"
+      # graph.mjs executes release_graph_query.mjs. Its transitive release-tool
+      # imports and semantic-ownership manifest all affect the graph result.
+      - "/tools/release/**/*"
     options:
-      cache: true
+      # This task recursively asks Moon for the resolved repository graph and
+      # probes declarative paths. Do not let an evolving dynamic read set turn
+      # a warm local cache into a false qualification result.
+      cache: false
       runFromWorkspaceRoot: true
+      # release-tools:check invokes this validation as the single hosted owner.
+      # Keep the standalone target available for focused local qualification
+      # without running it concurrently against the same repository graph.
+      runInCI: false
   generate:
     tags: ["generated", "graph"]
     command: "bash tools/dev/bun.sh tools/graph/graph.mjs generate"
@@ -62,12 +68,14 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release_graph_query.mjs"
+      # Keep generation cache-equivalent to check so a newly imported release
+      # module cannot leave either task with a stale graph.
+      - "/tools/release/**/*"
     outputs:
       - "/target/graph/**/*"
     options:
-      cache: true
+      # Generation must observe the same live graph as the uncached checker.
+      cache: false
       runFromWorkspaceRoot: true
   cache-witness:
     tags: ["cache", "witness"]

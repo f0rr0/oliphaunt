@@ -56,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
+          "sha256": "c4e8fd46cd3da2c9a3c70b83501257c6f590e5eb0f6fd9054767d97774cc7078"
         }
       ]
     },
@@ -109,5 +109,5 @@
       ]
     }
   ],
-  "sha256": "fc2ada05cf03751274045e268abde3820298395fc06916e80919133e59ea214e"
+  "sha256": "f827b99be48e7d9bc32b7d0fa39eb8bb04ed9c5223360a6c72434c831f493d4d"
 }

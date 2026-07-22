@@ -84,11 +84,11 @@
       "inputs": [
         {
           "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
-          "sha256": "50b8c7e0d02382ac8c22512743146b02b8ab20eec54e70360881fec564baaca7"
+          "sha256": "a06e9c4bdf0c9f4114463301d689298ce4a8fc16015e25e9f8636119b549e1bf"
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "f3d4cfd8d757d5839791576c9b7a4ca7c1be1bbd569cfe6f645d29211936f8a6"
+          "sha256": "3bba3ae4486549321911a68c2e6e6ecd2d1c22640edc8253ec5079aaeb3fe657"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -120,7 +120,7 @@
         },
         {
           "path": "tools/release/build-extension-ci-artifacts.mjs",
-          "sha256": "b38d8323141cc57f0e20b77f18ebe524285a05bb2205b81a2d6634e4cf2389e3"
+          "sha256": "0f1b2c3ac14014cc37beedd802418b57ec888a2c4e9553f87e0a72a1bb0ef255"
         },
         {
           "path": "tools/release/extension-artifact-archive-policy.mjs",
@@ -213,7 +213,7 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "e87687d10135d721840481627758c0b3bdf607fb0c003238bca3264fe5291976"
+          "sha256": "c4e8fd46cd3da2c9a3c70b83501257c6f590e5eb0f6fd9054767d97774cc7078"
         }
       ]
     },
@@ -295,5 +295,5 @@
       ]
     }
   ],
-  "sha256": "9377b8dae9fbc774a7dae5a4fce9a786be8076740d412a1509fc4c5d9e2d0591"
+  "sha256": "2fa71c1cbb4529b78a67fd3f9b4f60907b61fb4ce53719e771ee6830b81c0e3a"
 }

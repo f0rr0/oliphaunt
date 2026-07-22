@@ -201,14 +201,18 @@ If the candidate changes a GitHub workflow or local action, also run
 `actionlint` and `zizmor` configuration plus workflow behavior tests;
 `actionlint` by itself is not equivalent.
 
-The default `release-check.mjs` invocation includes the release mutation unit
-suite. `release-metadata-check.mjs` is a distinct internal replay surface that
-still executes every live release-policy, Release Please, target, version,
-changelog, synchronization, and consumer-shape check. The workflow may call it
-only after the structured generated-release commit verifier succeeds, or after
-the exact hosted qualification record is reverified against a clean checkout
-at `RELEASE_HEAD_SHA`. Do not substitute it for the full local pre-dispatch
-gate.
+The default `release-check.mjs` invocation includes the live repository graph
+check and the release mutation unit suite. In Moon, the uncached
+`release-tools:check` task is the single hosted owner of that graph validation;
+the read-only `graph-tools:check` target is available for focused local use but
+is excluded from hosted selection, and only `graph-tools:generate` writes
+`target/graph`. `release-metadata-check.mjs` is a distinct internal replay
+surface that still executes every live release-policy, Release Please, target,
+version, changelog, synchronization, and consumer-shape check. The workflow may
+call it only after the structured generated-release commit verifier succeeds,
+or after the exact hosted qualification record is reverified against a clean
+checkout at `RELEASE_HEAD_SHA`. Do not substitute it for the full local
+pre-dispatch gate.
 
 The `Release` workflow has four operations:
 

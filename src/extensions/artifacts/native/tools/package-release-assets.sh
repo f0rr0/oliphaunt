@@ -397,7 +397,7 @@ prepare_windows_binary_contract_runtime() {
     src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs \
     --runtime "$source_runtime" \
     --catalog "$catalog_file" \
-    --selected-sql-names "$selected_sql_names" \
+    --selected-sql-names "$build_sql_names" \
     --output "$staged_runtime" >&2
   printf '%s\n' "$staged_runtime"
 }
@@ -607,17 +607,11 @@ package_desktop_target() {
       --root "$runtime" \
       --profile provider \
       --search-root "$runtime/bin"
+    binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"
     tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
       --target "$target_id" \
-      --root "$runtime" \
+      --root "$binary_contract_runtime" \
       --windows-vc-runtime-profile provider
-    if [ "$qualification_only" = "0" ]; then
-      binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"
-      tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
-        --target "$target_id" \
-        --root "$binary_contract_runtime" \
-        --windows-vc-runtime-profile provider
-    fi
   else
     tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$runtime"
   fi
@@ -833,9 +827,9 @@ package_android_target() {
 }
 
 fetch_extension_source_assets
+echo "==> Reading exact extension catalog"
+bun "$packager" list-catalog --qualification-target "$target_id" >"$catalog_file"
 if [ "$qualification_only" = "0" ]; then
-  echo "==> Reading exact extension catalog"
-  bun "$packager" list-catalog >"$catalog_file"
   write_indexes
 fi
 

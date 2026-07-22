@@ -5,6 +5,11 @@ $schema: "https://moonrepo.dev/schemas/tasks.json"
 # pnpm's directory symlinks, which Moon cannot hash as files.
 implicitInputs:
   - "/.moon/tasks/**/*"
+  # Moon resolves tool versions from this file before it evaluates tasks.
+  - "/.prototools"
+  # Git and Moon use ignore policy while constructing repository and affected
+  # inventories, so it is part of every task's interpreted input universe.
+  - "/.gitignore"
   # Checkout normalization affects every source byte seen by every task.
   - "/.gitattributes"
   # Command discovery participates in Moon graph, affected-plan, policy, and

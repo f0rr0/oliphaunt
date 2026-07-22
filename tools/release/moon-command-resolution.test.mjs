@@ -133,11 +133,13 @@ describe("Moon command resolution", () => {
     }
   });
 
-  test("shared execution policy is a global Moon cache and affected-plan input", async () => {
+  test("shared execution and repository interpretation policy are global Moon inputs", async () => {
     const config = Bun.YAML.parse(
       await readFile(path.join(ROOT, ".moon/tasks/inputs.yml"), "utf8"),
     );
     expect(config.implicitInputs).toContain("/.gitattributes");
+    expect(config.implicitInputs).toContain("/.gitignore");
+    expect(config.implicitInputs).toContain("/.prototools");
     expect(config.implicitInputs).toContain("/tools/dev/bun.sh");
     expect(config.implicitInputs).toContain("/tools/dev/capture-command-output.mjs");
     expect(config.implicitInputs).toContain("/tools/dev/moon-command.mjs");

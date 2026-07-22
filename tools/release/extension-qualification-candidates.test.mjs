@@ -15,6 +15,10 @@ import {
   qualificationCandidateSqlNamesForTarget,
   qualificationCandidateTargets,
 } from "./extension-qualification-candidates.mjs";
+import {
+  catalogRows,
+  selectCatalogExtensions,
+} from "../../src/extensions/artifacts/native/tools/extension-artifact-packager.mjs";
 import { loadPublicationCatalog } from "./publication-catalog.mjs";
 
 const POSTGIS_PRODUCT = "oliphaunt-extension-postgis";
@@ -60,6 +64,11 @@ id = "native-desktop-v1"
 family = "native"
 kind = "native-dynamic"
 target = "linux-x64-gnu"
+
+[[profiles.targets]]
+family = "native"
+kind = "native-dynamic"
+target = "windows-x64-msvc"
 
 [[profiles]]
 id = "native-mobile-v1"
@@ -143,6 +152,7 @@ test("derives a fixture candidate identity and all declared qualification target
     [
       "native:android-arm64-v8a:native-static-registry",
       "native:linux-x64-gnu:native-dynamic",
+      "native:windows-x64-msvc:native-dynamic",
       "wasix:wasix-portable:wasix-runtime",
     ],
   );
@@ -153,6 +163,121 @@ test("derives a fixture candidate identity and all declared qualification target
   assert.deepEqual(
     qualificationCandidateSqlNamesForTarget("wasix-portable", { family: "wasix", root }),
     ["fixture_extension"],
+  );
+  const windowsCandidates = qualificationCandidateSqlNamesForTarget(
+    "windows-x64-msvc",
+    { family: "native", root },
+  );
+  assert.deepEqual(windowsCandidates, ["fixture_extension"]);
+  assert.deepEqual(
+    selectCatalogExtensions(
+      [
+        {
+          id: "public_extension",
+          promotion: { promoted: true, stable: true },
+        },
+        {
+          id: "fixture_extension",
+          promotion: { promoted: false, stable: false },
+        },
+        {
+          id: "unrequested_extension",
+          promotion: { promoted: false, stable: false },
+        },
+      ],
+      windowsCandidates,
+    ).map(({ qualification, sqlName }) => ({ qualification, sqlName })),
+    [
+      { qualification: false, sqlName: "public_extension" },
+      { qualification: true, sqlName: "fixture_extension" },
+    ],
+  );
+});
+
+test("target-scoped catalog rows preserve the public default and expose only requested readiness", async () => {
+  const publicRows = await catalogRows();
+  assert.equal(publicRows.some(({ sqlName }) => sqlName === "age"), false);
+
+  const windowsRows = await catalogRows({
+    qualificationSqlNames: ["age"],
+    qualificationTarget: "windows-x64-msvc",
+  });
+  const windowsAge = windowsRows.find(({ sqlName }) => sqlName === "age");
+  assert.deepEqual(
+    {
+      desktopPrebuilt: windowsAge?.desktopPrebuilt,
+      mobilePrebuilt: windowsAge?.mobilePrebuilt,
+      stem: windowsAge?.stem,
+    },
+    { desktopPrebuilt: true, mobilePrebuilt: false, stem: "age" },
+  );
+  assert.deepEqual(
+    windowsRows.filter(({ sqlName }) => sqlName !== "age"),
+    publicRows,
+  );
+
+  const androidRows = await catalogRows({
+    qualificationSqlNames: ["age"],
+    qualificationTarget: "android-arm64-v8a",
+  });
+  const androidAge = androidRows.find(({ sqlName }) => sqlName === "age");
+  assert.deepEqual(
+    {
+      desktopPrebuilt: androidAge?.desktopPrebuilt,
+      mobilePrebuilt: androidAge?.mobilePrebuilt,
+    },
+    { desktopPrebuilt: false, mobilePrebuilt: true },
+  );
+});
+
+test("deferred catalog dependencies retain the exact qualified closure without entering public rows", () => {
+  const selected = selectCatalogExtensions(
+    [
+      {
+        id: "public_extension",
+        dependencies: ["deferred_b"],
+        promotion: { promoted: true, stable: true },
+      },
+      {
+        id: "deferred_a",
+        dependencies: ["deferred_b", "public_extension", "unrequested_extension"],
+        promotion: { promoted: false, stable: false },
+      },
+      {
+        id: "deferred_b",
+        dependencies: [],
+        promotion: { promoted: false, stable: false },
+      },
+      {
+        id: "unrequested_extension",
+        promotion: { promoted: false, stable: false },
+      },
+    ],
+    ["deferred_a", "deferred_b"],
+  );
+  assert.deepEqual(
+    selected.map(({ dependencies, qualification, sqlName }) => ({
+      dependencies,
+      qualification,
+      sqlName,
+    })),
+    [
+      {
+        dependencies: [],
+        qualification: false,
+        sqlName: "public_extension",
+      },
+      {
+        dependencies: ["deferred_b", "public_extension"],
+        qualification: true,
+        sqlName: "deferred_a",
+      },
+      {
+        dependencies: [],
+        qualification: true,
+        sqlName: "deferred_b",
+      },
+    ],
   );
 });
 

@@ -301,12 +301,20 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["pnpm-lock.yaml", ["oliphaunt-js", "oliphaunt-react-native"]],
   ];
   for (const [candidate, expected] of cases) {
+    const plan = buildPlan(graph, [candidate], "release-semantic-inputs.test");
     assert.deepEqual(
       releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
       sorted(expected),
       candidate,
     );
-    assert.deepEqual(buildPlan(graph, [candidate], "release-semantic-inputs.test").semanticInputProducts, sorted(expected));
+    assert.deepEqual(plan.semanticInputProducts, sorted(expected));
+    for (const product of expected) {
+      assert.equal(
+        plan.directProducts.includes(product),
+        true,
+        `${candidate}: semantic owner ${product} must remain a direct release product`,
+      );
+    }
   }
 });
 

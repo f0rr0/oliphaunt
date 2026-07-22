@@ -720,6 +720,57 @@ function checkGraph(graph) {
   const projects = graph.moonProjects;
   const releaseProductsConfig = releaseProducts(releaseGraph());
   const productProjects = releaseProductProjects();
+
+  for (const taskId of ["check", "generate"]) {
+    const config = taskConfig(graph, "graph-tools", taskId);
+    if (config.cache !== false) {
+      fail(
+        `graph-tools:${taskId} must remain uncached because it recursively queries Moon `
+          + "and validates dynamically declared repository paths",
+      );
+    }
+    const inputs = config.inputs ?? [];
+    const normalizedInputs = new Set(inputs.map((input) => input.replace(/^\/+/, "")));
+    for (const required of [
+      ".gitignore",
+      ".moon/tasks/**/*",
+      ".prototools",
+      "tools/dev/bun.sh",
+      "tools/dev/capture-command-output.mjs",
+      "tools/dev/moon-command.mjs",
+      "tools/release/**/*",
+    ]) {
+      if (!normalizedInputs.has(required)) {
+        fail(`graph-tools:${taskId} must track ${required} as interpreted graph policy`);
+      }
+    }
+  }
+
+  const graphCheckConfig = taskConfig(graph, "graph-tools", "check");
+  if (graphCheckConfig.runInCI !== false) {
+    fail(
+      "graph-tools:check must remain excluded from hosted selection; "
+        + "release-tools:check owns that validation",
+    );
+  }
+  if ((graphCheckConfig.outputs ?? []).length !== 0) {
+    fail(
+      "graph-tools:check must remain read-only; graph-tools:generate is the sole "
+        + "graph-output owner",
+    );
+  }
+  const graphGenerateConfig = taskConfig(graph, "graph-tools", "generate");
+  if (!(graphGenerateConfig.outputs ?? []).includes("/target/graph/**/*")) {
+    fail("graph-tools:generate must own /target/graph/**/*");
+  }
+  const releaseCheckConfig = taskConfig(graph, "release-tools", "check");
+  if (releaseCheckConfig.cache !== false) {
+    fail(
+      "release-tools:check must remain uncached because it invokes live "
+        + "repository-graph validation",
+    );
+  }
+
   for (const [product, config] of Object.entries(releaseProductsConfig)) {
     const projectId = productProjects[product];
     const project = projects[projectId];
@@ -940,11 +991,9 @@ function main(argv) {
     writeGraph(graph);
     console.log(`generated graph data in ${rel(GRAPH_ROOT)}`);
   } else if (args.command === "check") {
-    writeGraph(graph);
     checkGraph(graph);
     console.log(`graph checks passed (${Object.keys(graph.moonProjects).length} Moon projects, ${graph.productIds.length} release products)`);
   } else if (args.command === "explain") {
-    writeGraph(graph);
     printExplanation(explainPaths(args.paths, graph), args.format);
   }
 }

@@ -76,9 +76,9 @@ function parseArgs(argv) {
     if (arg === "-h" || arg === "--help") {
       console.log(`usage: tools/release/release-check.mjs [legacy passthrough args]
 
-Runs the live repository-structure and release metadata gates followed by
-release mutation unit tests. Current passthrough flags remain accepted for
-compatibility with release workflow and Moon callers.
+Runs the live repository-structure, repository-graph, and release metadata
+gates followed by release mutation unit tests. Current passthrough flags remain
+accepted for compatibility with release workflow and Moon callers.
 `);
       process.exit(0);
     }
@@ -88,6 +88,7 @@ compatibility with release workflow and Moon callers.
 function main(argv) {
   parseArgs(argv);
   run(TOOL, ["bash", "tools/policy/check-repo-structure.sh"]);
+  run(TOOL, [process.execPath, "tools/graph/graph.mjs", "check"]);
   run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...argv]);
   run(TOOL, [
     process.execPath,

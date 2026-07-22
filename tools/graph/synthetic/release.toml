@@ -2,7 +2,11 @@
 
 [cases.postgres18_source]
 path = "src/postgres/versions/18/source.toml"
-direct_products = []
+direct_products = [
+    "liboliphaunt-native",
+    "liboliphaunt-wasix",
+    "oliphaunt-extension-contrib-pg18",
+  ]
 release_products = [
     "liboliphaunt-native",
     "liboliphaunt-wasix",
@@ -20,7 +24,9 @@ docs_only = false
 
 [cases.shared_third_party_source]
 path = "src/sources/third-party/shared/openssl.toml"
-direct_products = []
+direct_products = [
+    "oliphaunt-extension-contrib-pg18",
+  ]
 release_products = [
     "liboliphaunt-native",
     "liboliphaunt-wasix",
