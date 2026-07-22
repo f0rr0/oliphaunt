@@ -36,7 +36,11 @@ const TARGET_MARKERS = [
   "win32-x64-msvc",
   "portable",
 ];
-const SPLITTABLE_CARGO_ROLES = new Set(["platform-leaf", "aot-leaf", "portable-leaf"]);
+const SPLITTABLE_CARGO_ROLES = new Set([
+  "platform-leaf",
+  "aot-leaf",
+  "portable-leaf",
+]);
 const EXTENSION_AOT_TARGET_SUFFIXES = Object.entries(EXTENSION_AOT_PACKAGE_SUFFIXES)
   .map(([target, suffix]) => ({ target, suffix: `-aot-${suffix}` }))
   .sort((left, right) => right.suffix.length - left.suffix.length || compareText(left.suffix, right.suffix));
@@ -117,6 +121,17 @@ function carrierRole(product, ecosystem, name, target) {
   return "facade";
 }
 
+function isSplittableCargoCarrier({ ecosystem, name, product, role }) {
+  return ecosystem === "cargo" && (
+    SPLITTABLE_CARGO_ROLES.has(role)
+    || (
+      product === "liboliphaunt-native"
+      && role === "tool-leaf"
+      && name.startsWith("oliphaunt-tools-")
+    )
+  );
+}
+
 function productDependencies(product, config, graph) {
   const dependencies = new Set();
   const compatibility = config.compatibility_versions ?? {};
@@ -191,7 +206,7 @@ export function loadPublicationCatalog(prefix = "publication-catalog", { product
       identities.set(id, product);
       const target = carrierTarget(product, ecosystem, name);
       const role = carrierRole(product, ecosystem, name, target);
-      if (ecosystem === "cargo" && SPLITTABLE_CARGO_ROLES.has(role) && `${name}-part-001`.length > 64) {
+      if (isSplittableCargoCarrier({ ecosystem, name, product, role }) && `${name}-part-001`.length > 64) {
         fail(prefix, `${product} splittable Cargo carrier ${JSON.stringify(name)} leaves no room for the required -part-001 suffix`);
       }
       carriers.push({
@@ -235,7 +250,7 @@ export function resolveActualCarrier(catalog, ecosystem, name, prefix = "publica
   if (parent === undefined) {
     fail(prefix, `Cargo payload part ${id} has no declared parent carrier cargo:${match[1]}`);
   }
-  if (!SPLITTABLE_CARGO_ROLES.has(parent.role)) {
+  if (!isSplittableCargoCarrier(parent)) {
     fail(prefix, `Cargo payload part ${id} has non-splittable parent role ${parent.role}`);
   }
   const part = Number.parseInt(match[2], 10);

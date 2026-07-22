@@ -375,6 +375,114 @@ test("the exact TypeScript consumer preserves an upload-safe emergency timeout e
   );
 });
 
+test("Kotlin Maven staging validation stays exact, product-owned, and same-run", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const bypassed = ciCandidate();
+  step(bypassed, "kotlin-maven-staging", "kotlin_maven_staging").run = "echo assumed-valid";
+  assert.throws(
+    () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+    /must run only the product-owned exact Kotlin Maven staging validator/u,
+  );
+
+  const crossRun = ciCandidate();
+  namedStep(
+    crossRun,
+    "kotlin-maven-staging",
+    "Download exact same-run Kotlin SDK package artifacts",
+  ).with["run-id"] = "123";
+  assert.throws(
+    () => assertCiWorkflow(crossRun, { builderJobs: BUILDER_JOBS }),
+    /must not select another run or a wildcard/u,
+  );
+
+  const moved = ciCandidate();
+  namedStep(
+    moved,
+    "kotlin-maven-staging",
+    "Download exact same-run Kotlin SDK package artifacts",
+  ).with.path = "target/elsewhere";
+  assert.throws(
+    () => assertCiWorkflow(moved, { builderJobs: BUILDER_JOBS }),
+    /must install the exact SDK artifact at its canonical release path/u,
+  );
+});
+
+test("aggregate jobs run credential-free registry-carrier qualification before handoff", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const missingNativeAggregate = ciCandidate();
+  missingNativeAggregate.jobs["extension-packages"].steps =
+    missingNativeAggregate.jobs["extension-packages"].steps.filter(
+      (step) => step.with?.name !== "liboliphaunt-native-release-assets",
+    );
+  assert.throws(
+    () => assertCiWorkflow(missingNativeAggregate, { builderJobs: BUILDER_JOBS }),
+    /must download exact same-run artifact liboliphaunt-native-release-assets once/u,
+  );
+
+  const unboundProducts = ciCandidate();
+  delete namedStep(
+    unboundProducts,
+    "extension-packages",
+    "Qualify exact-extension registry carriers",
+  ).env.OLIPHAUNT_REGISTRY_CARRIER_PRODUCTS_JSON;
+  assert.throws(
+    () => assertCiWorkflow(unboundProducts, { builderJobs: BUILDER_JOBS }),
+    /bind planner-owned exact product selections separately/u,
+  );
+
+  const bypassed = ciCandidate();
+  namedStep(
+    bypassed,
+    "liboliphaunt-native-release-assets",
+    "Package aggregate liboliphaunt release assets",
+  ).run = "true";
+  assert.throws(
+    () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+    /aggregate assembly target before local qualification/u,
+  );
+
+  const concurrent = ciCandidate();
+  const concurrentSteps = concurrent.jobs["extension-packages"].steps;
+  const assembly = concurrentSteps.findIndex(
+    (entry) => entry.name === "Assemble exact-extension product packages",
+  );
+  const qualification = concurrentSteps.findIndex(
+    (entry) => entry.name === "Qualify exact-extension registry carriers",
+  );
+  [concurrentSteps[assembly], concurrentSteps[qualification]] = [
+    concurrentSteps[qualification],
+    concurrentSteps[assembly],
+  ];
+  assert.throws(
+    () => assertCiWorkflow(concurrent, { builderJobs: BUILDER_JOBS }),
+    /sequence aggregate assembly, local carrier qualification, then artifact upload/u,
+  );
+
+  const gradleCoupled = ciCandidate();
+  gradleCoupled.jobs["extension-packages"].steps.splice(2, 0, {
+    name: "Set up Android unnecessarily",
+    uses: "./.github/actions/setup-android",
+  });
+  assert.throws(
+    () => assertCiWorkflow(gradleCoupled, { builderJobs: BUILDER_JOBS }),
+    /must not require Java, Android, or Gradle/u,
+  );
+
+  const prematureUpload = ciCandidate();
+  const steps = prematureUpload.jobs["extension-packages"].steps;
+  const qualificationIndex = steps.findIndex(
+    (entry) => entry.name === "Qualify exact-extension registry carriers",
+  );
+  const upload = steps.findIndex((entry) => String(entry.uses ?? "").startsWith("actions/upload-artifact@"));
+  [steps[qualificationIndex], steps[upload]] = [steps[upload], steps[qualificationIndex]];
+  assert.throws(
+    () => assertCiWorkflow(prematureUpload, { builderJobs: BUILDER_JOBS }),
+    /sequence aggregate assembly, local carrier qualification, then artifact upload/u,
+  );
+});
+
 test("heavy cache writers stay within the primary-builder budget", () => {
   assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
 
@@ -747,6 +855,41 @@ test("native exact-extension builds are bounded and hash compiler inputs only", 
     () => assertCiWorkflow(missingCancellationLog, { builderJobs: BUILDER_JOBS }),
     /must retain target\/liboliphaunt-mobile-extension-ci/u,
   );
+});
+
+test("native helper aggregate gates require their same-run matrix producers", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  for (const [aggregate, producer] of [
+    ["broker-release-assets", "broker-runtime"],
+    ["node-direct-release-assets", "node-direct"],
+  ]) {
+    const detached = ciCandidate();
+    detached.jobs[aggregate].needs = detached.jobs[aggregate].needs
+      .filter((job) => job !== producer);
+    assert.throws(
+      () => assertCiWorkflow(detached, { builderJobs: BUILDER_JOBS }),
+      new RegExp(`${aggregate}[.]needs is missing.*${producer}`, "u"),
+    );
+
+    const cancellationBlind = ciCandidate();
+    cancellationBlind.jobs[aggregate].if =
+      `\${{ contains(fromJson(needs.affected.outputs.jobs), '${aggregate}') }}`;
+    assert.throws(
+      () => assertCiWorkflow(cancellationBlind, { builderJobs: BUILDER_JOBS }),
+      new RegExp(`${aggregate} condition does not guarantee`, "u"),
+    );
+
+    const bypassed = ciCandidate();
+    const verifierId = aggregate === "broker-release-assets"
+      ? "verify_aggregate_broker_release_assets"
+      : "verify_aggregate_node_direct_release_assets";
+    step(bypassed, aggregate, verifierId).run = "true";
+    assert.throws(
+      () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+      /must run only its planner-selected aggregate verifier without rebuilding producers/u,
+    );
+  }
 });
 
 test("WASIX deferred candidates are qualified before public extension packaging", () => {

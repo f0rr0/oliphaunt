@@ -55,6 +55,22 @@ fn check_release_notices(archive: &Path, profile: &str, prefix: Option<&Path>) -
     })
 }
 
+fn check_release_asset_set(output_dir: &Path, version: &str) -> Result<()> {
+    let mut command = command_for_host("bun");
+    command
+        .arg("tools/release/check-liboliphaunt-wasix-release-assets.mjs")
+        .arg("--asset-dir")
+        .arg(output_dir)
+        .arg("--version")
+        .arg(version);
+    run_command(&mut command).with_context(|| {
+        format!(
+            "verify complete liboliphaunt-wasix release asset set in {}",
+            output_dir.display()
+        )
+    })
+}
+
 pub(super) fn stage_release_workspace() -> Result<()> {
     let stage_root = Path::new(RELEASE_STAGE_DIR);
     let workspace = stage_root.join("workspace");
@@ -421,6 +437,15 @@ pub(super) fn package_release_assets() -> Result<()> {
     for target in supported_aot_targets() {
         bundles.push(package_release_aot_assets(output_dir, target, &version)?);
     }
+    let staging_root = output_dir.join("staging");
+    if staging_root.exists() {
+        fs::remove_dir_all(&staging_root).with_context(|| {
+            format!(
+                "remove completed release staging root {}",
+                staging_root.display()
+            )
+        })?;
+    }
 
     let mut checksum_lines = Vec::new();
     for bundle in &bundles {
@@ -442,6 +467,7 @@ pub(super) fn package_release_assets() -> Result<()> {
     fs::write(&checksum_path, format!("{}\n", checksum_lines.join("\n")))
         .with_context(|| format!("write {}", checksum_path.display()))?;
 
+    check_release_asset_set(output_dir, &version)?;
     println!("packaged public release assets in {}", output_dir.display());
     Ok(())
 }
@@ -493,9 +519,15 @@ fn package_release_icu_assets(output_dir: &Path, version: &str) -> Result<PathBu
 
 fn copy_wasix_icu_sidecar(destination: &Path) -> Result<()> {
     let installed_icu = Path::new(WASIX_GENERATED_WORK_DIR).join("icu-wasix/share/icu");
+    let installed_type = portable_icu_entry_type(&installed_icu).with_context(|| {
+        format!(
+            "missing or unsafe WASIX ICU files data at {}; run src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh before packaging",
+            installed_icu.display()
+        )
+    })?;
     ensure!(
-        installed_icu.is_dir(),
-        "missing WASIX ICU files data at {}; run src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh before packaging",
+        installed_type.is_dir(),
+        "WASIX ICU files data root is not a directory: {}",
         installed_icu.display()
     );
     let source = canonical_icu_data_root(&installed_icu)?;
@@ -503,12 +535,46 @@ fn copy_wasix_icu_sidecar(destination: &Path) -> Result<()> {
         fs::remove_dir_all(destination)
             .with_context(|| format!("remove {}", destination.display()))?;
     }
-    copy_dir_all(&source, destination)
-        .with_context(|| format!("copy WASIX ICU data from {}", source.display()))?;
+    copy_wasix_icu_data_payload(&source, destination)
+        .with_context(|| format!("copy WASIX ICU files data from {}", source.display()))?;
     ensure!(
         icu_data_root_contains_data(destination)?,
         "staged WASIX ICU sidecar at {} does not contain icudt files",
         destination.display()
+    );
+    Ok(())
+}
+
+fn copy_wasix_icu_data_payload(source: &Path, destination: &Path) -> Result<()> {
+    let source_type = portable_icu_entry_type(source)?;
+    ensure!(
+        source_type.is_dir(),
+        "ICU data root is not a directory: {}",
+        source.display()
+    );
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    let mut copied = 0usize;
+    for child in sorted_children(source)? {
+        let name = child
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("ICU data path is not valid UTF-8: {}", child.display()))?;
+        let child_type = portable_icu_entry_type(&child)?;
+        if child_type.is_file() && name.starts_with("icudt") && name.ends_with(".dat") {
+            copy_file(&child, &destination.join(name))?;
+            copied += 1;
+        } else if child_type.is_dir() && name.starts_with("icudt") {
+            let file_count = validate_portable_icu_tree(&child)?;
+            if file_count > 0 {
+                copy_dir_all(&child, &destination.join(name))?;
+                copied += 1;
+            }
+        }
+    }
+    ensure!(
+        copied > 0,
+        "ICU data root {} has no icudt files-data payload",
+        source.display()
     );
     Ok(())
 }
@@ -520,7 +586,7 @@ fn canonical_icu_data_root(installed_icu: &Path) -> Result<PathBuf> {
 
     let mut candidates = Vec::new();
     for child in sorted_children(installed_icu)? {
-        if child.is_dir() && icu_data_root_contains_data(&child)? {
+        if portable_icu_entry_type(&child)?.is_dir() && icu_data_root_contains_data(&child)? {
             candidates.push(child);
         }
     }
@@ -533,18 +599,58 @@ fn canonical_icu_data_root(installed_icu: &Path) -> Result<PathBuf> {
     Ok(candidates.remove(0))
 }
 
+fn portable_icu_entry_type(path: &Path) -> Result<fs::FileType> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect ICU data path {}", path.display()))?;
+    let file_type = metadata.file_type();
+    ensure!(
+        !file_type.is_symlink(),
+        "ICU data tree must not contain a symbolic link: {}",
+        path.display()
+    );
+    ensure!(
+        file_type.is_file() || file_type.is_dir(),
+        "ICU data tree must contain only regular files and directories: {}",
+        path.display()
+    );
+    Ok(file_type)
+}
+
+fn validate_portable_icu_tree(root: &Path) -> Result<usize> {
+    ensure!(
+        portable_icu_entry_type(root)?.is_dir(),
+        "ICU data subtree is not a directory: {}",
+        root.display()
+    );
+    let mut file_count = 0usize;
+    for child in sorted_children(root)? {
+        let child_type = portable_icu_entry_type(&child)?;
+        if child_type.is_dir() {
+            file_count += validate_portable_icu_tree(&child)?;
+        } else {
+            file_count += 1;
+        }
+    }
+    Ok(file_count)
+}
+
 fn icu_data_root_contains_data(root: &Path) -> Result<bool> {
-    if !root.is_dir() {
+    let root_type = portable_icu_entry_type(root)?;
+    if !root_type.is_dir() {
         return Ok(false);
     }
     for child in sorted_children(root)? {
         let Some(name) = child.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if child.is_file() && name.starts_with("icudt") && name.ends_with(".dat") {
+        let child_type = portable_icu_entry_type(&child)?;
+        if child_type.is_file() && name.starts_with("icudt") && name.ends_with(".dat") {
             return Ok(true);
         }
-        if child.is_dir() && name.starts_with("icudt") && !sorted_files(&child)?.is_empty() {
+        if child_type.is_dir()
+            && name.starts_with("icudt")
+            && validate_portable_icu_tree(&child)? > 0
+        {
             return Ok(true);
         }
     }
@@ -672,6 +778,114 @@ mod tests {
             !public_generated
                 .join("mobile/qualification-static-extensions.tsv")
                 .exists()
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn wasix_icu_sidecar_contains_only_icudt_payload() -> Result<()> {
+        let root = fixture_root("icu-data-boundary");
+        if root.exists() {
+            fs::remove_dir_all(&root)?;
+        }
+        let source = root.join("source");
+        fs::create_dir_all(source.join("icudt76l/coll"))?;
+        fs::create_dir_all(source.join("config"))?;
+        fs::write(source.join("icudt76l/root.res"), b"root-data")?;
+        fs::write(source.join("icudt76l/coll/en.res"), b"collation-data")?;
+        fs::write(source.join("LICENSE"), b"upstream-license")?;
+        fs::write(source.join("config/mh-linux"), b"build-only-config")?;
+        fs::write(source.join("install-sh"), b"build-only-helper")?;
+
+        let destination = root.join("destination");
+        copy_wasix_icu_data_payload(&source, &destination)?;
+        assert!(destination.join("icudt76l/root.res").is_file());
+        assert!(destination.join("icudt76l/coll/en.res").is_file());
+        assert!(!destination.join("LICENSE").exists());
+        assert!(!destination.join("config").exists());
+        assert!(!destination.join("install-sh").exists());
+        assert!(icu_data_root_contains_data(&destination)?);
+
+        let empty = root.join("empty");
+        fs::create_dir_all(&empty)?;
+        let error = copy_wasix_icu_data_payload(&empty, &root.join("empty-output"))
+            .expect_err("empty ICU data roots must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("has no icudt files-data payload")
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wasix_icu_sidecar_rejects_symlinks_at_every_selected_payload_depth() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = fixture_root("icu-data-symlinks");
+        if root.exists() {
+            fs::remove_dir_all(&root)?;
+        }
+        fs::create_dir_all(&root)?;
+        let outside_file = root.join("outside.dat");
+        let outside_directory = root.join("outside-directory");
+        fs::write(&outside_file, b"outside")?;
+        fs::create_dir_all(&outside_directory)?;
+        fs::write(outside_directory.join("payload.res"), b"outside")?;
+
+        let linked_file_root = root.join("linked-file-root");
+        fs::create_dir_all(&linked_file_root)?;
+        symlink(&outside_file, linked_file_root.join("icudt76l.dat"))?;
+        let error =
+            copy_wasix_icu_data_payload(&linked_file_root, &root.join("linked-file-output"))
+                .expect_err("top-level ICU data symlinks must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("must not contain a symbolic link")
+        );
+
+        let linked_directory_root = root.join("linked-directory-root");
+        fs::create_dir_all(&linked_directory_root)?;
+        symlink(&outside_directory, linked_directory_root.join("icudt76l"))?;
+        let error = copy_wasix_icu_data_payload(
+            &linked_directory_root,
+            &root.join("linked-directory-output"),
+        )
+        .expect_err("top-level ICU directory symlinks must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("must not contain a symbolic link")
+        );
+
+        let nested_link_root = root.join("nested-link-root");
+        fs::create_dir_all(nested_link_root.join("icudt76l/coll"))?;
+        fs::write(nested_link_root.join("icudt76l/root.res"), b"root")?;
+        symlink(&outside_file, nested_link_root.join("icudt76l/coll/en.res"))?;
+        let error =
+            copy_wasix_icu_data_payload(&nested_link_root, &root.join("nested-link-output"))
+                .expect_err("nested ICU data symlinks must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("must not contain a symbolic link")
+        );
+
+        let canonical_link_root = root.join("canonical-link-root");
+        fs::create_dir_all(&canonical_link_root)?;
+        symlink(&outside_directory, canonical_link_root.join("76.1"))?;
+        let error = canonical_icu_data_root(&canonical_link_root)
+            .expect_err("canonical ICU root discovery must not follow symlinks");
+        assert!(
+            error
+                .to_string()
+                .contains("must not contain a symbolic link")
         );
 
         fs::remove_dir_all(root)?;

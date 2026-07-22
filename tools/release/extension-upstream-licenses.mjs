@@ -716,6 +716,18 @@ function expectedLicenseFiles(sqlNames) {
   return expected;
 }
 
+export function extensionUpstreamLicenseFileInventory(sqlNames) {
+  return Object.freeze(
+    [...expectedLicenseFiles(sqlNames).values()]
+      .sort((left, right) => compareText(left.destination, right.destination))
+      .map((file) => Object.freeze({
+        path: file.destination,
+        sha256: file.sha256,
+        mode: "0644",
+      })),
+  );
+}
+
 export function extensionCarrierLegalContract(
   product,
   sqlNames,
@@ -885,14 +897,14 @@ export function assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { pr
     if (member !== namespaceRoot && !member.startsWith(`${namespaceRoot}/`)) continue;
     const kind = archiveEntryKind(entry);
     if (expectedNames.includes(member)) {
-      if (kind !== "file" || (entry.mode & 0o777) !== 0o644) {
+      if (kind !== "file" || (entry.mode & 0o7777) !== 0o644) {
         fail(`packed upstream license must be a regular non-symlink mode-0644 file: ${member}`);
       }
       actualNames.push(member);
       continue;
     }
     if (expectedDirectories.has(member)) {
-      if (kind !== "directory" || (entry.mode & 0o777) !== 0o755) {
+      if (kind !== "directory" || (entry.mode & 0o7777) !== 0o755) {
         fail(`packed upstream license directory must be a real mode-0755 directory: ${member}`);
       }
       continue;
@@ -906,7 +918,7 @@ export function assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { pr
   for (const [destination, file] of expected) {
     const member = prefixed(normalizedPrefix, destination);
     const entry = entries.get(member);
-    if (archiveEntryKind(entry) !== "file" || (entry.mode & 0o777) !== 0o644) {
+    if (archiveEntryKind(entry) !== "file" || (entry.mode & 0o7777) !== 0o644) {
       fail(`packed upstream license must be a regular non-symlink mode-0644 file: ${member}`);
     }
     const actual = createHash("sha256").update(entry.data()).digest("hex");

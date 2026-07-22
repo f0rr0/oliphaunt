@@ -49,6 +49,18 @@
       ]
     },
     {
+      "id": "npm-extension-contract",
+      "paths": [
+        "src/sdks/js/src/native/extension-contract.ts"
+      ],
+      "inputs": [
+        {
+          "path": "src/sdks/js/src/native/extension-contract.ts",
+          "sha256": "a010de71754e015f302898180cf75819085475187a9237d42ad76c7ef6c97555"
+        }
+      ]
+    },
+    {
       "id": "source-only-sdk-package-producer",
       "paths": [
         "tools/release/source-only-sdk-package.mjs"
@@ -109,5 +121,5 @@
       ]
     }
   ],
-  "sha256": "d60731321fb9a22ba2662beee522c7bdec3e1afaa4acb93b3894863bf51a5892"
+  "sha256": "2b285b73c6a46fd7e7b2d4f5ec86612ac94e4ec30f717f6d5aab567681a3c6dc"
 }

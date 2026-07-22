@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 use zstd::stream::write::Encoder as ZstdEncoder;
@@ -132,6 +132,10 @@ fn append_tree<W: io::Write>(
     current: &Path,
     archive_root: &Path,
 ) -> Result<()> {
+    let metadata = fs::symlink_metadata(current)
+        .with_context(|| format!("inspect archive input {}", current.display()))?;
+    let file_type = metadata.file_type();
+    ensure_archive_input_type(current, &file_type)?;
     let relative = current
         .strip_prefix(root)
         .with_context(|| format!("strip {} from {}", root.display(), current.display()))?;
@@ -142,21 +146,29 @@ fn append_tree<W: io::Write>(
     };
 
     if !archive_path.as_os_str().is_empty() {
-        let mut header = tar::Header::new_gnu();
+        // The release verifier accepts only self-contained ustar members. A
+        // GNU header can silently add LongLink pseudo-members once a path is
+        // longer than 100 bytes, even when the same path fits in ustar's
+        // portable prefix/name fields.
+        let mut header = tar::Header::new_ustar();
         header.set_mtime(0);
         header.set_uid(0);
         header.set_gid(0);
         header.set_username("root").ok();
         header.set_groupname("root").ok();
-        if current.is_dir() {
+        if file_type.is_dir() {
             header.set_entry_type(tar::EntryType::Directory);
             header.set_mode(0o755);
             header.set_size(0);
             header.set_cksum();
+            // Keep the path marker and the authoritative tar type flag in
+            // agreement. The marker is significant to portable extractors and
+            // to tools/release/portable-archive.mjs on every host OS.
+            let directory_archive_path = archive_path.join("");
             builder
-                .append_data(&mut header, &archive_path, io::empty())
+                .append_data(&mut header, &directory_archive_path, io::empty())
                 .with_context(|| format!("append directory {}", archive_path.display()))?;
-        } else if current.is_file() {
+        } else if file_type.is_file() {
             let bytes = fs::read(current).with_context(|| format!("read {}", current.display()))?;
             header.set_entry_type(tar::EntryType::Regular);
             header.set_mode(if is_executable(current) { 0o755 } else { 0o644 });
@@ -168,11 +180,26 @@ fn append_tree<W: io::Write>(
         }
     }
 
-    if current.is_dir() {
+    if file_type.is_dir() {
         for child in sorted_children(current)? {
             append_tree(builder, root, &child, archive_root)?;
         }
     }
+    Ok(())
+}
+
+fn ensure_archive_input_type(path: &Path, file_type: &fs::FileType) -> Result<()> {
+    if file_type.is_symlink() {
+        bail!(
+            "deterministic archive input must not contain a symbolic link: {}",
+            path.display()
+        );
+    }
+    ensure!(
+        file_type.is_file() || file_type.is_dir(),
+        "deterministic archive input must contain only regular files and directories: {}",
+        path.display()
+    );
     Ok(())
 }
 
@@ -306,6 +333,181 @@ pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "oliphaunt-xtask-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("create test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct TarMember {
+        is_directory: bool,
+        mode: u32,
+        size: u64,
+    }
+
+    fn tar_zst_members(path: &Path) -> BTreeMap<String, TarMember> {
+        let file = fs::File::open(path).expect("open test archive");
+        let decoder = zstd::stream::read::Decoder::new(file).expect("decode test archive");
+        let mut archive = tar::Archive::new(decoder);
+        archive
+            .entries()
+            .expect("read test archive entries")
+            .map(|entry| {
+                let entry = entry.expect("read test archive entry");
+                let header = entry.header();
+                let name = String::from_utf8(header.path_bytes().into_owned())
+                    .expect("portable UTF-8 archive path");
+                assert_eq!(header.uid().expect("member uid"), 0, "{name}");
+                assert_eq!(header.gid().expect("member gid"), 0, "{name}");
+                assert_eq!(header.mtime().expect("member mtime"), 0, "{name}");
+                assert_eq!(
+                    header.username().expect("member username"),
+                    Some("root"),
+                    "{name}"
+                );
+                assert_eq!(
+                    header.groupname().expect("member groupname"),
+                    Some("root"),
+                    "{name}"
+                );
+                let is_directory = header.entry_type().is_dir();
+                assert_eq!(name.ends_with('/'), is_directory, "{name}");
+                (
+                    name,
+                    TarMember {
+                        is_directory,
+                        mode: header.mode().expect("member mode"),
+                        size: header.size().expect("member size"),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn deterministic_tar_zst_emits_portable_type_markers_and_ustar_paths() {
+        let fixture = TestDirectory::new("portable-tar");
+        let source = fixture.0.join("source");
+        let licenses = source.join("THIRD_PARTY_LICENSES");
+        let long_parent = source
+            .join("a-very-long-portable-directory-segment-used-to-cross-the-old-gnu-name-limit")
+            .join("another-portable-directory-segment");
+        fs::create_dir_all(&licenses).expect("create license fixture");
+        fs::create_dir_all(&long_parent).expect("create long-path fixture");
+        fs::write(licenses.join("PostgreSQL-COPYRIGHT"), b"license\n")
+            .expect("write license fixture");
+        fs::write(long_parent.join("payload.txt"), b"payload\n").expect("write long-path fixture");
+
+        let first = fixture.0.join("first.tar.zst");
+        let second = fixture.0.join("second.tar.zst");
+        deterministic_tar_zst(&source, Path::new(""), &first).expect("write first archive");
+        deterministic_tar_zst(&source, Path::new(""), &second).expect("write second archive");
+        assert_eq!(
+            fs::read(&first).expect("read first archive"),
+            fs::read(&second).expect("read second archive"),
+            "the same tree must produce byte-identical archives",
+        );
+
+        let members = tar_zst_members(&first);
+        assert_eq!(
+            members.get("THIRD_PARTY_LICENSES/"),
+            Some(&TarMember {
+                is_directory: true,
+                mode: 0o755,
+                size: 0,
+            })
+        );
+        assert_eq!(
+            members.get("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT"),
+            Some(&TarMember {
+                is_directory: false,
+                mode: 0o644,
+                size: 8,
+            })
+        );
+        let long_file = members
+            .iter()
+            .find(|(name, member)| name.ends_with("/payload.txt") && !member.is_directory)
+            .expect("long ustar file member");
+        assert!(
+            long_file.0.len() > 100,
+            "long path must exercise ustar prefix splitting"
+        );
+        assert_eq!(long_file.1.mode, 0o644);
+
+        let prefixed = fixture.0.join("prefixed.tar.zst");
+        deterministic_tar_zst(&source, Path::new("carrier"), &prefixed)
+            .expect("write prefixed archive");
+        let prefixed_members = tar_zst_members(&prefixed);
+        assert_eq!(
+            prefixed_members.get("carrier/"),
+            Some(&TarMember {
+                is_directory: true,
+                mode: 0o755,
+                size: 0,
+            })
+        );
+        assert!(prefixed_members.contains_key("carrier/THIRD_PARTY_LICENSES/"));
+        assert!(prefixed_members.contains_key("carrier/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT"));
+        assert!(prefixed_members.keys().all(|name| {
+            let directory = prefixed_members[name].is_directory;
+            name.ends_with('/') == directory && !name.contains('\\')
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deterministic_tar_zst_rejects_file_and_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = TestDirectory::new("portable-tar-symlinks");
+        let outside_file = fixture.0.join("outside.txt");
+        let outside_directory = fixture.0.join("outside-directory");
+        fs::write(&outside_file, b"outside\n").expect("write external file");
+        fs::create_dir(&outside_directory).expect("create external directory");
+        fs::write(outside_directory.join("payload"), b"outside\n")
+            .expect("write external directory payload");
+
+        for (name, target) in [
+            ("linked-file", outside_file.as_path()),
+            ("linked-directory", outside_directory.as_path()),
+        ] {
+            let source = fixture.0.join(format!("source-{name}"));
+            fs::create_dir(&source).expect("create symlink source");
+            symlink(target, source.join(name)).expect("create archive-input symlink");
+            let output = fixture.0.join(format!("{name}.tar.zst"));
+            let error = deterministic_tar_zst(&source, Path::new(""), &output)
+                .expect_err("archive-input symlinks must fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must not contain a symbolic link")
+            );
+            assert!(error.to_string().contains(name));
+        }
+    }
 
     #[test]
     fn sha256_text_file_lf_is_independent_of_crlf_checkout() {

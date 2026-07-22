@@ -26,6 +26,64 @@ test("the live publication catalog includes the independently versioned PostGIS 
   expect(extensionProducts).toContain("oliphaunt-extension-postgis");
 });
 
+test("native tool target leaves admit exact payload parts while facades remain non-splittable", () => {
+  const catalog = loadPublicationCatalog("publication-catalog.test");
+  const toolLeaves = catalog.carriers
+    .filter(({ ecosystem, name, role }) =>
+      ecosystem === "cargo" && name.startsWith("oliphaunt-tools-") && role === "tool-leaf")
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  expect(toolLeaves.map(({ name }) => name)).toEqual([
+    "oliphaunt-tools-linux-arm64-gnu",
+    "oliphaunt-tools-linux-x64-gnu",
+    "oliphaunt-tools-macos-arm64",
+    "oliphaunt-tools-windows-x64-msvc",
+  ]);
+  for (const parent of toolLeaves) {
+    expect(resolveActualCarrier(
+      catalog,
+      "cargo",
+      `${parent.name}-part-001`,
+      "publication-catalog.test",
+    )).toMatchObject({
+      declared: false,
+      parentCarrier: parent.id,
+      part: 1,
+      role: "payload-part",
+      target: parent.target,
+    });
+  }
+  expect(() => resolveActualCarrier(
+    catalog,
+    "cargo",
+    "oliphaunt-tools-part-001",
+    "publication-catalog.test",
+  )).toThrow(/non-splittable parent role tool-facade/u);
+
+  const otherToolLeaves = catalog.carriers
+    .filter(({ ecosystem, product, role }) =>
+      ecosystem === "cargo" && product !== "liboliphaunt-native" && role === "tool-leaf")
+    .map(({ name }) => name)
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  expect(otherToolLeaves).toEqual([
+    "oliphaunt-broker-linux-arm64-gnu",
+    "oliphaunt-broker-linux-x64-gnu",
+    "oliphaunt-broker-macos-arm64",
+    "oliphaunt-broker-windows-x64-msvc",
+    "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+    "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+    "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+    "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+  ]);
+  for (const name of otherToolLeaves) {
+    expect(() => resolveActualCarrier(
+      catalog,
+      "cargo",
+      `${name}-part-001`,
+      "publication-catalog.test",
+    )).toThrow(/non-splittable parent role tool-leaf/u);
+  }
+});
+
 describe("WASIX extension portable publication carriers", () => {
   test("assigns every independently versioned portable carrier an explicit canonical target", () => {
     const products = exactExtensionProducts("publication-catalog.test");

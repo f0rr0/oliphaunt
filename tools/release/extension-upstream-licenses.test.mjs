@@ -32,6 +32,7 @@ import {
   extensionQualificationLegalContract,
   extensionRegistryLicense,
   stageExtensionUpstreamLicenses,
+  extensionUpstreamLicenseFileInventory,
   extensionUpstreamLicenseRows,
   extensionUpstreamLicenseSources,
   validateExtensionUpstreamLicenseContract,
@@ -70,6 +71,29 @@ test("every active external release has an exact upstream license contract", () 
     "proj",
     "sqlite",
   ]);
+});
+
+test("npm extension legal inventory binds canonical paths, bytes, and modes", () => {
+  const row = extensionUpstreamLicenseRows().find(({ sqlName }) => sqlName === "pg_uuidv7");
+  assert.ok(row, "pg_uuidv7 must have canonical upstream legal metadata");
+  assert.deepEqual(
+    extensionUpstreamLicenseFileInventory(["pg_uuidv7"]),
+    row.files.map((file) => ({
+      path: file.destination,
+      sha256: file.sha256,
+      mode: "0644",
+    })),
+  );
+  const postgis = extensionUpstreamLicenseFileInventory(["postgis"]);
+  assert.deepEqual(postgis.map(({ path: member }) => member), [...postgis]
+    .map(({ path: member }) => member)
+    .sort());
+  assert.equal(Object.isFrozen(postgis), true);
+  assert.equal(postgis.every(Object.isFrozen), true);
+  assert.throws(
+    () => extensionUpstreamLicenseFileInventory([]),
+    /requires a non-empty unique extension member list/u,
+  );
 });
 
 test("each external product owns an exact self-contained legal-data closure", () => {
@@ -385,6 +409,17 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
     mode: 0o700,
   });
   assert.throws(() => assertion(wrongDirectoryMode), /directory must be a real mode-0755/u);
+
+  const privilegedFileMode = new Map(entries);
+  const licenseMember = "pg-hashids-0.1.0/share/licenses/pg_hashids/LICENSE";
+  privilegedFileMode.set(licenseMember, {
+    ...privilegedFileMode.get(licenseMember),
+    mode: 0o4644,
+  });
+  assert.throws(
+    () => assertion(privilegedFileMode),
+    /must be a regular non-symlink mode-0644 file/u,
+  );
 
   const missingAssertionRoot = path.join(root, "missing-parent", "missing-stage");
   assert.throws(

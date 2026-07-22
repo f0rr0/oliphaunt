@@ -206,6 +206,46 @@ describe("publication and workflow artifact handoff", () => {
     expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(/must depend on artifact producer liboliphaunt-native-ios/u);
   });
 
+  test("rejects a native helper aggregate detached from its matrix producer", () => {
+    const workflow = clone(ci);
+    workflow.jobs["broker-release-assets"].needs = workflow.jobs["broker-release-assets"].needs
+      .filter((job) => job !== "broker-runtime");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /broker-release-assets must depend on artifact producer broker-runtime/u,
+    );
+  });
+
+  test("rejects an incomplete Node direct aggregate handoff", () => {
+    const workflow = clone(ci);
+    workflow.jobs["node-direct-release-assets"].steps = workflow.jobs["node-direct-release-assets"].steps
+      .filter(({ with: options }) => options?.pattern !== "oliphaunt-node-direct-npm-package-*");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /node-direct-release-assets does not download required artifact oliphaunt-node-direct-npm-package-/u,
+    );
+  });
+
+  test("rejects a native helper aggregate download outside its canonical merged directory", () => {
+    const workflow = clone(ci);
+    const download = workflow.jobs["node-direct-release-assets"].steps
+      .find(({ with: options }) => options?.pattern === "oliphaunt-node-direct-release-assets-*");
+    download.with.path = "target/unverified-node-assets";
+    download.with["merge-multiple"] = false;
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must merge exact same-run artifacts into target[/]oliphaunt-node-direct[/]release-assets/u,
+    );
+  });
+
+  test("rejects duplicate product uploads from native helper aggregate gates", () => {
+    const workflow = clone(ci);
+    workflow.jobs["broker-release-assets"].steps.push({
+      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      with: { name: "duplicate-broker-release-assets", path: "target/oliphaunt-broker/release-assets" },
+    });
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /without uploading a duplicate product artifact/u,
+    );
+  });
+
   test("rejects a missing target-scoped consumer download", () => {
     const workflow = clone(ci);
     const downloads = workflow.jobs["liboliphaunt-native-release-assets"].steps.filter(({ uses }) => String(uses ?? "").startsWith("actions/download-artifact@"));

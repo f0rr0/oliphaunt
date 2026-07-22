@@ -14,6 +14,9 @@ import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { afterEach, test } from "node:test";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
+const TEST_BASH = process.env.OLIPHAUNT_TEST_BASH
+  ? path.resolve(ROOT, process.env.OLIPHAUNT_TEST_BASH)
+  : (process.platform === "darwin" ? "/bin/bash" : "bash");
 const PROJECT_FILE = "src/extensions/artifacts/packages/moon.yml";
 const RELEASE_SCRIPT = "src/extensions/artifacts/packages/tools/package-release-assets.sh";
 const MOBILE_SCRIPT = "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh";
@@ -80,7 +83,7 @@ fi
 `);
   chmodSync(bunShim, 0o755);
 
-  const execution = spawnSync("bash", [path.join(ROOT, script)], {
+  const execution = spawnSync(TEST_BASH, [path.join(ROOT, script)], {
     cwd: root,
     encoding: "utf8",
     env: {

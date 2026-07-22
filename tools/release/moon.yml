@@ -61,7 +61,9 @@ tasks:
       - "/tools/release/exact-candidate-command-watchdog.mjs"
       - "/tools/release/extension-manifest-discovery-proof.mjs"
       - "/tools/release/extension-registry-carrier-materializer.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/src/sdks/js/src/native/extension-contract.ts"
       - "/tools/release/run-windows-standard-user-exact-candidate.ps1"
       - "/tools/release/fixtures/js-exact-candidate-runtime.mjs"
       - "/tools/release/fixtures/js-exact-candidate-procsignal.mjs"
@@ -79,6 +81,7 @@ tasks:
     inputs:
       - "/tools/release/exact-cargo-candidate-consumer.mjs"
       - "/tools/release/wasix-rust-exact-candidate-consumer.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true

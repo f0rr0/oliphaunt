@@ -17,6 +17,10 @@ import {
   resolveExplicitRuntimeDirectory,
 } from './common.js';
 import {
+  parseNpmExtensionLicenseFiles,
+  type NpmExtensionLicenseFileContract,
+} from './extension-contract.js';
+import {
   nativeModuleSuffixForTarget,
   selectedExtensionClosure,
   type RuntimeFileHost,
@@ -112,6 +116,7 @@ type NpmExtensionMemberContract = {
   dataFiles: string[];
   extensionSqlFileNames: string[];
   extensionSqlFilePrefixes: string[];
+  licenseFiles: NpmExtensionLicenseFileContract[];
   sharedPreloadLibraries: string[];
 };
 
@@ -147,6 +152,7 @@ const NPM_EXTENSION_CONTRACT_MEMBER_FIELDS = [
   'dependencies',
   'extensionSqlFileNames',
   'extensionSqlFilePrefixes',
+  'licenseFiles',
   'nativeModuleStem',
   'sharedPreloadLibraries',
   'sqlName',
@@ -570,6 +576,54 @@ function parseExtensionContractStringList(value: unknown, field: string, label: 
   return rows;
 }
 
+function requirePortableExtensionContractPath(value: string, field: string, label: string): void {
+  const parts = value.split('/');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error(`${label}.${field} contains unsafe relative path ${value}`);
+  }
+  if (
+    value.includes('\\') ||
+    value !== value.normalize('NFC') ||
+    decoded !== value ||
+    value.startsWith('/') ||
+    /^[A-Za-z]:/u.test(value) ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    Buffer.byteLength(value, 'utf8') > 4096 ||
+    parts.some(
+      (part) =>
+        part === '' ||
+        part === '.' ||
+        part === '..' ||
+        Buffer.byteLength(part, 'utf8') > 255 ||
+        /[<>:"|?*]/u.test(part) ||
+        /[ .]$/u.test(part) ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(part),
+    )
+  ) {
+    throw new Error(`${label}.${field} contains unsafe relative path ${value}`);
+  }
+}
+
+function requirePortableExtensionContractPaths(
+  values: readonly string[],
+  field: string,
+  label: string,
+): void {
+  const portable = new Map<string, string>();
+  for (const value of values) {
+    requirePortableExtensionContractPath(value, field, label);
+    const key = value.toLowerCase();
+    const prior = portable.get(key);
+    if (prior !== undefined && prior !== value) {
+      throw new Error(`${label}.${field} contains case/NFC-colliding paths ${prior} and ${value}`);
+    }
+    portable.set(key, value);
+  }
+}
+
 function parseExtensionMemberContract(value: unknown, label: string): NpmExtensionMemberContract {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
@@ -604,18 +658,7 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     throw new Error(`${label}.dependencies contains an invalid or self dependency`);
   }
   const dataFiles = parseExtensionContractStringList(row.dataFiles, 'dataFiles', label);
-  for (const file of dataFiles) {
-    const parts = file.split('/');
-    if (
-      file.includes('\\') ||
-      file !== file.normalize('NFC') ||
-      file.startsWith('/') ||
-      /[\u0000-\u001f\u007f]/u.test(file) ||
-      parts.some((part) => part === '' || part === '.' || part === '..')
-    ) {
-      throw new Error(`${label}.dataFiles contains unsafe relative path ${file}`);
-    }
-  }
+  requirePortableExtensionContractPaths(dataFiles, 'dataFiles', label);
   const extensionSqlFileNames = parseExtensionContractStringList(
     row.extensionSqlFileNames,
     'extensionSqlFileNames',
@@ -636,6 +679,7 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
   if (extensionSqlFilePrefixes.some((prefix) => !/^[A-Za-z0-9_-]{1,128}$/u.test(prefix))) {
     throw new Error(`${label}.extensionSqlFilePrefixes must contain portable dot-free prefixes`);
   }
+  const licenseFiles = parseNpmExtensionLicenseFiles(row.licenseFiles, `${label}.licenseFiles`);
   const sharedPreloadLibraries = parseExtensionContractStringList(
     row.sharedPreloadLibraries,
     'sharedPreloadLibraries',
@@ -652,6 +696,7 @@ function parseExtensionMemberContract(value: unknown, label: string): NpmExtensi
     dataFiles,
     extensionSqlFileNames,
     extensionSqlFilePrefixes,
+    licenseFiles,
     sharedPreloadLibraries,
   };
 }
@@ -1133,6 +1178,7 @@ async function requireExactExtensionRuntimeInventory(config: {
 }): Promise<void> {
   const files = await exactRuntimeLeafPaths(config.runtimeDirectory, config.source);
   const dataFiles = new Set(config.contract.dataFiles.map((file) => `share/postgresql/${file}`));
+  const licenseFiles = new Map(config.contract.licenseFiles.map((file) => [file.path, file]));
   const moduleFile =
     config.contract.nativeModuleStem === null
       ? undefined
@@ -1154,7 +1200,14 @@ async function requireExactExtensionRuntimeInventory(config: {
       if (isCanonicalExtensionInstallSql(fileName, config.contract.sqlName)) hasSql = true;
       continue;
     }
-    if (dataFiles.has(file) || file === moduleFile || file === embeddedModuleFile) continue;
+    if (
+      dataFiles.has(file) ||
+      licenseFiles.has(file) ||
+      file === moduleFile ||
+      file === embeddedModuleFile
+    ) {
+      continue;
+    }
     throw new Error(`${config.source} contains undeclared runtime file ${file}`);
   }
   const missingDataFiles = [...dataFiles].filter((file) => !files.includes(file));
@@ -1163,11 +1216,44 @@ async function requireExactExtensionRuntimeInventory(config: {
       `${config.source} is missing declared data file(s): ${missingDataFiles.join(', ')}`,
     );
   }
+  const missingLicenseFiles = [...licenseFiles.keys()].filter((file) => !files.includes(file));
+  if (missingLicenseFiles.length > 0) {
+    throw new Error(
+      `${config.source} is missing declared license file(s): ${missingLicenseFiles.join(', ')}`,
+    );
+  }
+  for (const licenseFile of licenseFiles.values()) {
+    const licensePath = resolvePackageRelativePath(
+      config.runtimeDirectory,
+      licenseFile.path,
+      `${config.source} declared license file`,
+    );
+    const metadata = await lstat(licensePath);
+    const observedMode = metadata.mode & 0o7777;
+    const declaredMode = Number.parseInt(licenseFile.mode, 8);
+    if (
+      (platform() === 'win32' && (observedMode & 0o111) !== 0) ||
+      (platform() !== 'win32' &&
+        ((observedMode & ~declaredMode) !== 0 || (observedMode & 0o400) === 0))
+    ) {
+      throw new Error(
+        `${config.source} license file ${licenseFile.path} mode is not a safe installed representation of declared ${licenseFile.mode}`,
+      );
+    }
+    const identity = await fileSha256AndBytes(licensePath);
+    if (identity.sha256 !== licenseFile.sha256) {
+      throw new Error(
+        `${config.source} license file ${licenseFile.path} does not match declared SHA-256 ${licenseFile.sha256}`,
+      );
+    }
+  }
   if (moduleFile !== undefined && !files.includes(moduleFile)) {
     throw new Error(`${config.source} is missing declared native module ${moduleFile}`);
   }
   if (embeddedModuleFile !== undefined && !files.includes(embeddedModuleFile)) {
-    throw new Error(`${config.source} is missing declared embedded native module ${embeddedModuleFile}`);
+    throw new Error(
+      `${config.source} is missing declared embedded native module ${embeddedModuleFile}`,
+    );
   }
   if (config.contract.createsExtension && (!hasControl || !hasSql)) {
     throw new Error(

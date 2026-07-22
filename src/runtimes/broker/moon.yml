@@ -135,3 +135,44 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+
+  aggregate-release-assets:
+    tags: ["release", "artifact-package", "ci-broker-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

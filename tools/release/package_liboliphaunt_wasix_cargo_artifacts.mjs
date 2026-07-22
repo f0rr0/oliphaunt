@@ -3,14 +3,12 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
 import {
-  closeSync,
+  chmodSync,
   copyFileSync,
   cpSync,
-  constants,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   rmSync,
   statSync,
@@ -24,7 +22,10 @@ import {
   createDeterministicTar,
   manualCargoPackageSource,
 } from "./cargo-source-package.mjs";
-import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { RUST_BUILD_SCRIPT_SHA256 } from "./rust-build-script-sha256.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { assertWasixAotArtifactPayloads } from "./check-liboliphaunt-wasix-release-assets.mjs";
+import { portableMemberName, readPortableArchiveEntries, readPortableTarZstdBufferEntries } from "./portable-archive.mjs";
 import { compareText } from "./release-graph.mjs";
 import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
 import {
@@ -46,7 +47,6 @@ import {
   wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
-import { localWindowsTarInvocation } from "./tar-command.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
@@ -69,8 +69,7 @@ const DEFAULT_EXTENSION_PART_BYTES = 8 * 1024 * 1024;
 const EXPECTED_EXTENSION_AOT_TARGETS = new Set(expectedExtensionAotTargets());
 
 function fail(message) {
-  console.error(`${PREFIX}: ${message}`);
-  process.exit(1);
+  throw new Error(`${PREFIX}: ${message}`);
 }
 
 function rel(file) {
@@ -83,7 +82,8 @@ function rel(file) {
 
 function isFile(file) {
   try {
-    return statSync(file).isFile();
+    const metadata = lstatSync(file);
+    return metadata.isFile() && !metadata.isSymbolicLink();
   } catch {
     return false;
   }
@@ -91,28 +91,26 @@ function isFile(file) {
 
 function isDirectory(file) {
   try {
-    return statSync(file).isDirectory();
+    const metadata = lstatSync(file);
+    return metadata.isDirectory() && !metadata.isSymbolicLink();
   } catch {
     return false;
   }
 }
 
 function run(args, { cwd = ROOT, env = process.env, capture = false, label = args.join(" ") } = {}) {
-  const invocation = args[0] === "tar"
-    ? localWindowsTarInvocation(args.slice(1), { cwd })
-    : { args: args.slice(1), cwd };
   if (!capture) {
     console.log(`\n==> ${args.join(" ")}`);
   }
   const result = capture
-    ? captureCommandOutput(args[0], invocation.args, {
-        cwd: invocation.cwd,
+    ? captureCommandOutput(args[0], args.slice(1), {
+        cwd,
         env,
         label,
         maxOutputBytes: 200 * 1024 * 1024,
       })
-    : spawnSync(args[0], invocation.args, {
-        cwd: invocation.cwd,
+    : spawnSync(args[0], args.slice(1), {
+        cwd,
         env,
         stdio: "inherit",
       });
@@ -134,35 +132,86 @@ function sha256File(file) {
 }
 
 function checkedTarMember(name, archive) {
-  const normalized = String(name).replaceAll("\\", "/").replace(/\/+$/u, "");
-  const parts = normalized.split("/").filter((part) => part && part !== ".");
-  if (parts.length === 0 || normalized.startsWith("/") || parts.includes("..")) {
-    fail(`${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
+  if (typeof name !== "string" || name.length === 0) {
+    fail(`${rel(archive)} contains an empty archive member path`);
   }
-  return parts.join("/");
+  let normalized;
+  try {
+    normalized = portableMemberName(name, "file", rel(archive));
+  } catch (error) {
+    fail(error.message);
+  }
+  if (normalized !== name) {
+    fail(`${rel(archive)} archive member path must already be normalized: ${JSON.stringify(name)}`);
+  }
+  return normalized;
 }
 
 function tarZstdMembers(archive) {
-  const output = run(["tar", "--zstd", "-tf", archive], {
-    capture: true,
-    label: `list ${rel(archive)}`,
-  });
-  const members = output
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/\/+$/u, ""));
-  for (const member of members) {
-    checkedTarMember(member, archive);
+  try {
+    return [...readPortableArchiveEntries(archive, { format: "tar.zst" }).keys()];
+  } catch (error) {
+    fail(error.message);
   }
-  return members;
 }
 
-function extractTarZstd(archive, destination) {
+export function extractTarZstd(archive, destination) {
+  let entries;
+  try {
+    entries = readPortableArchiveEntries(archive, { format: "tar.zst" });
+  } catch (error) {
+    fail(error.message);
+  }
   rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
-  tarZstdMembers(archive);
-  run(["tar", "--zstd", "-xf", archive, "-C", destination]);
+  const root = path.resolve(destination);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  chmodSync(root, 0o700);
+
+  const outputPath = (member) => {
+    const output = path.resolve(root, ...member.split("/"));
+    if (!output.startsWith(`${root}${path.sep}`)) {
+      fail(`${rel(archive)} resolved outside its extraction destination: ${member}`);
+    }
+    return output;
+  };
+  const directoryModes = new Map();
+  for (const entry of entries.values()) {
+    const parts = entry.name.split("/");
+    const parentLength = entry.isDirectory ? parts.length : parts.length - 1;
+    for (let length = 1; length <= parentLength; length += 1) {
+      const member = parts.slice(0, length).join("/");
+      if (!directoryModes.has(member)) directoryModes.set(member, 0o755);
+    }
+    if (entry.isDirectory) directoryModes.set(entry.name, entry.mode & 0o777);
+  }
+  const directories = [...directoryModes].sort(([left], [right]) => {
+    const depth = left.split("/").length - right.split("/").length;
+    return depth || compareText(left, right);
+  });
+  for (const [member, finalMode] of directories) {
+    const output = outputPath(member);
+    mkdirSync(output, { recursive: true, mode: finalMode | 0o700 });
+    // Creation modes are filtered by the process umask. Keep the complete
+    // tree owner-writable/traversable until every descendant has been staged.
+    chmodSync(output, finalMode | 0o700);
+  }
+
+  const files = [...entries.values()]
+    .filter((entry) => !entry.isDirectory)
+    .sort((left, right) => compareText(left.name, right.name));
+  for (const entry of files) {
+    const output = outputPath(entry.name);
+    if (!entry.isFile || entry.isSymbolicLink) {
+      fail(`${rel(archive)} contains a non-regular extraction member ${entry.name}`);
+    }
+    writeFileSync(output, entry.data(), { flag: "wx", mode: 0o600 });
+    // chmod after creation makes the archive contract independent of umask.
+    chmodSync(output, entry.mode & 0o777);
+  }
+
+  for (const [member, finalMode] of directories.reverse()) {
+    chmodSync(outputPath(member), finalMode);
+  }
 }
 
 function writeTarZstdArchive(sourceRoot, output, archiveRoot) {
@@ -235,7 +284,7 @@ function validateCanonicalAotManifest(manifest, manifestPath, expectedTarget) {
   }
 }
 
-function validateRuntimePayload(root) {
+export function validateRuntimePayload(root) {
   const extensionRoot = path.join(root, "extensions");
   const extensionFiles = isDirectory(extensionRoot) ? payloadFiles(extensionRoot) : [];
   if (extensionFiles.length > 0) {
@@ -261,8 +310,36 @@ function validateRuntimePayload(root) {
       fail(`WASIX runtime Cargo payload is missing ${required}`);
     }
   }
-  const runtimeMembers = tarZstdMembers(path.join(root, "oliphaunt.wasix.tar.zst"));
-  const missingCoreRuntimeFiles = CORE_RUNTIME_ARCHIVE_FILES.filter((member) => !runtimeMembers.includes(member)).sort(compareText);
+  if (manifest.runtime === null || Array.isArray(manifest.runtime) || typeof manifest.runtime !== "object") {
+    fail(`${rel(manifestPath)} is missing runtime metadata`);
+  }
+  if (manifest.runtime.archive !== "oliphaunt.wasix.tar.zst") {
+    fail(`${rel(manifestPath)} runtime.archive must be oliphaunt.wasix.tar.zst`);
+  }
+  if (typeof manifest.runtime.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(manifest.runtime.sha256)) {
+    fail(`${rel(manifestPath)} runtime.sha256 must be a lowercase SHA-256 digest`);
+  }
+  const runtimeArchivePath = path.join(root, "oliphaunt.wasix.tar.zst");
+  const runtimeBytes = readFileSync(runtimeArchivePath);
+  const runtimeSha256 = createHash("sha256").update(runtimeBytes).digest("hex");
+  if (runtimeSha256 !== manifest.runtime.sha256) {
+    fail(
+      `${rel(manifestPath)} runtime.sha256 mismatch: expected ${manifest.runtime.sha256}, got ${runtimeSha256}`,
+    );
+  }
+  let runtimeEntries;
+  try {
+    runtimeEntries = readPortableTarZstdBufferEntries(runtimeBytes, {
+      label: `${rel(manifestPath)} runtime archive`,
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+  const runtimeMembers = [...runtimeEntries.keys()];
+  const missingCoreRuntimeFiles = CORE_RUNTIME_ARCHIVE_FILES.filter((member) => {
+    const entry = runtimeEntries.get(member);
+    return entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0;
+  }).sort(compareText);
   if (missingCoreRuntimeFiles.length > 0) {
     fail(`WASIX runtime Cargo payload must bundle postgres/initdb inside oliphaunt.wasix.tar.zst; missing ${missingCoreRuntimeFiles.join(", ")}`);
   }
@@ -456,33 +533,36 @@ function writeIcuPayloadArchive(root, payloadRoot) {
   return payloadRoot;
 }
 
-function validateAotPayload(root, expectedTarget) {
+export function validateAotPayload(root, expectedTarget) {
   const manifestPath = path.join(root, "manifest.json");
   const manifest = readJson(manifestPath);
   validateCanonicalAotManifest(manifest, manifestPath, expectedTarget);
-  const artifacts = manifest.artifacts;
-  if (!Array.isArray(artifacts) || artifacts.length === 0) {
-    fail(`${rel(manifestPath)} must contain AOT artifacts`);
+  let artifactRows;
+  try {
+    artifactRows = assertWasixAotArtifactPayloads(manifest, {
+      context: rel(manifestPath),
+      readArtifact(artifactPath) {
+        const file = path.join(root, ...artifactPath.split("/"));
+        if (!isFile(file) || statSync(file).size <= 0) {
+          throw new Error(`${rel(manifestPath)} AOT artifact ${artifactPath} must be a non-empty regular file`);
+        }
+        return readFileSync(file);
+      },
+    });
+  } catch (error) {
+    fail(error.message);
   }
-  const expected = new Set(["manifest.json"]);
-  for (const artifact of artifacts) {
-    const name = artifact?.name;
-    const artifactPath = artifact?.path;
-    if (typeof name !== "string" || !name) {
-      fail(`${rel(manifestPath)} contains an artifact without a name`);
+  const expected = new Set([
+    "manifest.json",
+    ...releaseNoticeRows({ profile: "wasix-aot" }).map((row) => row.member),
+  ]);
+  for (const row of artifactRows) {
+    if (row.name.startsWith("extension:")) {
+      fail(`WASIX AOT Cargo payload must not contain extension artifact ${row.name}`);
     }
-    if (name.startsWith("extension:")) {
-      fail(`WASIX AOT Cargo payload must not contain extension artifact ${name}`);
-    }
-    if (typeof artifactPath !== "string" || !artifactPath) {
-      fail(`AOT artifact ${name} is missing path`);
-    }
-    checkedTarMember(artifactPath, manifestPath);
-    if (!isFile(path.join(root, artifactPath))) {
-      fail(`AOT artifact ${name} file is missing: ${rel(path.join(root, artifactPath))}`);
-    }
-    expected.add(artifactPath);
+    expected.add(row.path);
   }
+  assertReleaseNoticesInDirectory(root, { profile: "wasix-aot" });
   const actual = new Set(payloadFiles(root).map((file) => relPath(root, file)));
   if (!sameSet(actual, expected)) {
     fail(`WASIX AOT Cargo payload file set mismatch for ${rel(root)}: expected ${JSON.stringify([...expected].sort(compareText))}, got ${JSON.stringify([...actual].sort(compareText))}`);
@@ -948,8 +1028,7 @@ function extensionArtifactBuildRs(spec, files, partSources) {
   const fileRows = files.map((file) =>
     `    (${JSON.stringify(file.sqlName)}, ${JSON.stringify(file.payloadRelative)}, ${JSON.stringify(file.artifactRelative)}, ${JSON.stringify(file.sha256)}),`).join("\n");
   const partRoots = partSources.map((part) => `    ${rustCrateIdent(part.name)}::PAYLOAD_ROOT,`).join("\n");
-  return `use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+  return `use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -1066,13 +1145,7 @@ fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(output)
 }
 
-fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 65536];
-    loop { let read = file.read(&mut buffer)?; if read == 0 { break; } digest.update(&buffer[..read]); }
-    Ok(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
-}
+${RUST_BUILD_SCRIPT_SHA256}
 `;
 }
 
@@ -1104,57 +1177,28 @@ function extensionManifestMembers(manifest) {
   return [];
 }
 
-function assertRegularArchiveMember(archive, member) {
-  checkedTarMember(member, archive);
-  const invocation = localWindowsTarInvocation(["-tvf", archive, member], { cwd: ROOT });
-  const result = captureCommandOutput("tar", invocation.args, {
-    cwd: invocation.cwd,
-    label: `inspect ${member} in ${rel(archive)}`,
-    maxOutputBytes: 16 * 1024 * 1024,
-  });
-  if (result.error || result.status !== 0) {
-    const detail = String(result.stderr ?? result.stdout ?? "").trim();
-    fail(`inspect ${member} in ${rel(archive)} failed${detail ? `: ${detail}` : ""}`);
-  }
-  const entries = String(result.stdout ?? "").split(/\r?\n/u).filter(Boolean);
-  if (entries.length !== 1 || !entries[0].startsWith("-")) {
-    fail(`${rel(archive)} member ${member} must be exactly one regular file`);
-  }
-}
-
 export function extractArchiveMemberToFile(archive, member, destination) {
-  assertRegularArchiveMember(archive, member);
-  mkdirSync(path.dirname(destination), { recursive: true });
-  const invocation = localWindowsTarInvocation(["-xOf", archive, member], { cwd: ROOT });
-  let descriptor;
-  let result;
+  const normalized = checkedTarMember(member, archive);
+  let entries;
   try {
-    descriptor = openSync(
-      destination,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
-    result = captureCommandBytes("tar", invocation.args, {
-      cwd: invocation.cwd,
-      label: `read ${member} from ${rel(archive)}`,
-      maxOutputBytes: 16 * 1024 * 1024,
-      // Binary member bytes go straight to the exclusively created file; the
-      // helper owns only its bounded stderr file and deliberately leaves this
-      // caller-owned descriptor open for the cleanup below.
-      stdoutDescriptor: descriptor,
-    });
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    entries = readPortableArchiveEntries(archive);
+  } catch (error) {
+    fail(error.message);
   }
-  if (result?.error || result?.status !== 0) {
-    const detail = Buffer.from(result?.stderr ?? "").toString("utf8").trim();
-    rmSync(destination, { force: true });
-    fail(`read ${member} from ${rel(archive)} failed${detail ? `: ${detail}` : ""}`);
+  const entry = entries.get(normalized);
+  if (entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0) {
+    fail(`${rel(archive)} member ${normalized} must be exactly one non-empty regular file`);
+  }
+  mkdirSync(path.dirname(destination), { recursive: true });
+  try {
+    writeFileSync(destination, entry.data(), { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    fail(`cannot materialize ${normalized} from ${rel(archive)}: ${error.message}`);
   }
   const metadata = lstatSync(destination);
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
     rmSync(destination, { force: true });
-    fail(`extracted ${member} from ${rel(archive)} is not a regular non-symlink file`);
+    fail(`extracted ${normalized} from ${rel(archive)} is not a regular non-symlink file`);
   }
   return destination;
 }
@@ -1258,21 +1302,27 @@ function extensionAotSpecs(extensionDir, { product, version, members, versioning
       }
       const data = readJson(manifestPath);
       validateCanonicalAotManifest(data, manifestPath, expectedTarget);
-      const artifacts = data.artifacts;
-      if (!Array.isArray(artifacts) || artifacts.length === 0) {
-        fail(`${rel(manifestPath)} must contain extension AOT artifacts`);
+      let artifactRows;
+      try {
+        artifactRows = assertWasixAotArtifactPayloads(data, {
+          context: rel(manifestPath),
+          readArtifact(artifactPath) {
+            const file = path.join(sourceDir, ...artifactPath.split("/"));
+            if (!isFile(file) || statSync(file).size <= 0) {
+              throw new Error(`${rel(manifestPath)} references missing or empty AOT artifact ${artifactPath}`);
+            }
+            return readFileSync(file);
+          },
+        });
+      } catch (error) {
+        fail(error.message);
       }
       const expectedPrefix = `extension:${member.sqlName}`;
-      for (const artifact of artifacts) {
-        const name = artifact?.name;
-        const artifactPath = artifact?.path;
+      for (const artifact of artifactRows) {
+        const { name, path: artifactPath } = artifact;
         if (typeof name !== "string" || !(name === expectedPrefix || name.startsWith(`${expectedPrefix}:`))) {
           fail(`${rel(manifestPath)} contains AOT artifact ${JSON.stringify(name)} for ${member.sqlName}`);
         }
-        if (typeof artifactPath !== "string" || !artifactPath || !isFile(path.join(sourceDir, artifactPath))) {
-          fail(`${rel(manifestPath)} references missing AOT artifact ${JSON.stringify(artifactPath)}`);
-        }
-        checkedTarMember(artifactPath, manifestPath);
       }
       aotMembers.push({
         sqlName: member.sqlName,
@@ -1417,7 +1467,6 @@ function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
     'path = "src/lib.rs"',
     "",
     "[build-dependencies]",
-    'sha2 = "0.10"',
     ...partSources.map((part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`),
     "",
     "[workspace]",
@@ -1544,7 +1593,6 @@ function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
     'path = "src/lib.rs"',
     "",
     "[build-dependencies]",
-    'sha2 = "0.10"',
     ...partSources.map((part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`),
     "",
     "[workspace]",
@@ -1684,6 +1732,7 @@ function packageSpecs(assetDir, extractRoot, version) {
   const runtimeExtract = path.join(extractRoot, "runtime-extracted");
   extractTarZstd(runtimeArchive, runtimeExtract);
   const runtimeRoot = targetAssetRoot(runtimeExtract);
+  validateRuntimePayload(runtimeRoot);
   const [runtimeCoreRoot, toolsRoot] = splitRuntimeToolsPayload(runtimeRoot, extractRoot);
   validateRuntimePayload(runtimeCoreRoot);
   validateToolsPayload(toolsRoot);
@@ -1890,5 +1939,11 @@ function main(argv) {
 }
 
 if (import.meta.main) {
-  main(Bun.argv.slice(2));
+  try {
+    main(Bun.argv.slice(2));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message.startsWith(`${PREFIX}:`) ? message : `${PREFIX}: ${message}`);
+    process.exitCode = 1;
+  }
 }

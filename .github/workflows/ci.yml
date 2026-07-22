@@ -627,8 +627,9 @@ jobs:
       - affected
       - extension-artifacts-native
       - extension-artifacts-wasix
+      - liboliphaunt-native-release-assets
       - liboliphaunt-wasix-aot
-    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-native.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-native-release-assets.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -644,6 +645,12 @@ jobs:
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
+
+      - name: Download aggregate liboliphaunt native release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-release-assets
+          path: target/liboliphaunt/release-assets
 
       - name: Download native exact-extension artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -666,10 +673,15 @@ jobs:
           path: target/extensions/wasix/aot-artifacts
           merge-multiple: true
 
-      - name: Build exact-extension product packages
+      - name: Assemble exact-extension product packages
         env:
           OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS: ${{ needs.affected.outputs.extension_package_products_csv }}
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-packages
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none extension-packages:assemble-release
+
+      - name: Qualify exact-extension registry carriers
+        env:
+          OLIPHAUNT_REGISTRY_CARRIER_PRODUCTS_JSON: ${{ needs.affected.outputs.extension_package_products }}
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none extension-packages:registry-carrier-qualification
 
       - name: Upload exact-extension package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1053,7 +1065,10 @@ jobs:
           merge-multiple: true
 
       - name: Package aggregate liboliphaunt release assets
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-release-assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-native:release-assets
+
+      - name: Qualify aggregate liboliphaunt registry carriers
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-native:registry-carrier-qualification
 
       - name: Upload aggregate liboliphaunt release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1255,6 +1270,73 @@ jobs:
           path: target/oliphaunt-node-direct/npm-packages/*.tgz
           if-no-files-found: error
 
+  broker-release-assets:
+    name: Builds / broker-release-assets
+    needs:
+      - affected
+      - broker-runtime
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.broker-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'broker-release-assets') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Download broker target release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-broker-release-assets-*
+          path: target/oliphaunt-broker/release-assets
+          merge-multiple: true
+
+      - name: Verify aggregate broker release assets
+        id: verify_aggregate_broker_release_assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh broker-release-assets
+
+  node-direct-release-assets:
+    name: Builds / node-direct-release-assets
+    needs:
+      - affected
+      - node-direct
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.node-direct.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'node-direct-release-assets') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Download Node direct target release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-node-direct-release-assets-*
+          path: target/oliphaunt-node-direct/release-assets
+          merge-multiple: true
+
+      - name: Download Node direct optional npm packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-node-direct-npm-package-*
+          path: target/oliphaunt-node-direct/npm-packages
+          merge-multiple: true
+
+      - name: Verify aggregate Node direct release assets
+        id: verify_aggregate_node_direct_release_assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh node-direct-release-assets
+
   swift-sdk-package:
     name: Builds / swift-sdk
     needs:
@@ -1378,6 +1460,35 @@ jobs:
           name: oliphaunt-kotlin-sdk-package-artifacts
           path: target/sdk-artifacts/oliphaunt-kotlin
           if-no-files-found: error
+
+  kotlin-maven-staging:
+    name: Builds / kotlin-maven-staging
+    needs:
+      - affected
+      - kotlin-sdk-package
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.kotlin-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'kotlin-maven-staging') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Download exact same-run Kotlin SDK package artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-kotlin-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-kotlin
+
+      - name: Validate exact Kotlin Maven Central staging closure
+        id: kotlin_maven_staging
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh kotlin-maven-staging
 
   react-native-sdk-package:
     name: Builds / react-native-sdk
@@ -2747,9 +2858,12 @@ jobs:
       - liboliphaunt-native-release-assets
       - rust-sdk-package
       - broker-runtime
+      - broker-release-assets
       - node-direct
+      - node-direct-release-assets
       - swift-sdk-package
       - kotlin-sdk-package
+      - kotlin-maven-staging
       - react-native-sdk-package
       - js-sdk-package
       - js-sdk-exact-candidate-consumer

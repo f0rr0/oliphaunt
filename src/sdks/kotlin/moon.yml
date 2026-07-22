@@ -135,6 +135,20 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
+  maven-staging:
+    tags: ["release", "artifact-package", "ci-kotlin-maven-staging"]
+    command: "tools/dev/bun.sh tools/release/kotlin-maven-staging.mjs"
+    deps:
+      - "oliphaunt-kotlin:package-artifacts"
+    inputs:
+      - "/src/sdks/kotlin/gradle.properties"
+      - "/tools/release/kotlin-maven-staging.mjs"
+      - "/tools/release/maven-central-contract.mjs"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
   release-check:
     tags: ["release", "package"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh release-check"

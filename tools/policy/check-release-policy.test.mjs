@@ -10,7 +10,9 @@ import {
 import {
   mobileE2eJobsForPlan,
   planForFullRun,
+  planJobsForAffected,
   renderPlanForFullRun,
+  renderPlanWithSelection,
 } from "../graph/ci_plan.mjs";
 import { loadPublicationCatalog } from "../release/publication-catalog.mjs";
 import { loadGraph } from "../release/release-graph.mjs";
@@ -43,6 +45,71 @@ test("the full CI plan cannot omit any selected downstream E2E proof", () => {
     "rust-sdk-exact-candidate-consumer",
     "wasix-rust-exact-candidate-consumer",
   ]);
+});
+
+test("native helper aggregate plans retain complete producers but focused diagnostics stay focused", () => {
+  const tasks = new Set([
+    "oliphaunt-broker:aggregate-release-assets",
+    "oliphaunt-node-direct:aggregate-release-assets",
+  ]);
+  const jobs = planJobsForAffected(new Set(["release-tools"]), tasks);
+  for (const job of [
+    "broker-release-assets",
+    "broker-runtime",
+    "node-direct",
+    "node-direct-release-assets",
+  ]) assert.equal(jobs.has(job), true, `aggregate plan is missing ${job}`);
+
+  const plan = renderPlanWithSelection({
+    jobs,
+    projects: new Set(["release-tools"]),
+    tasks,
+    reason: "native helper aggregate fixture",
+    selectedTargets: new Set(["linux-x64-gnu"]),
+    selectedExtensionProducts: null,
+    nativeTarget: "all",
+  });
+  const full = renderPlanForFullRun();
+  for (const matrix of ["broker_runtime_matrix", "node_direct_runtime_matrix"]) {
+    assert.deepEqual(
+      plan[matrix].include.map(({ target }) => target),
+      full[matrix].include.map(({ target }) => target),
+      `${matrix} must remain exhaustive for aggregate validation`,
+    );
+  }
+
+  for (const target of ["linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]) {
+    const focused = new Set(renderPlanForFullRun({ nativeTarget: target }).jobs);
+    assert.equal(focused.has("broker-release-assets"), false);
+    assert.equal(focused.has("node-direct-release-assets"), false);
+  }
+});
+
+test("Kotlin Maven staging plans always retain their same-run package producer", () => {
+  for (const task of ["oliphaunt-kotlin:package-artifacts", "oliphaunt-kotlin:maven-staging"]) {
+    const jobs = planJobsForAffected(new Set(["oliphaunt-kotlin"]), new Set([task]));
+    assert.equal(jobs.has("kotlin-sdk-package"), true, `${task} must select the Kotlin package producer`);
+    assert.equal(jobs.has("kotlin-maven-staging"), true, `${task} must select exact Maven staging validation`);
+  }
+
+  const android = new Set(renderPlanForFullRun({ mobileTarget: "android" }).jobs);
+  assert.equal(android.has("kotlin-sdk-package"), true);
+  assert.equal(android.has("kotlin-maven-staging"), true);
+});
+
+test("extension carrier qualification plans retain the complete same-run native aggregate", () => {
+  const jobs = planJobsForAffected(
+    new Set(["extension-packages"]),
+    new Set(["extension-packages:registry-carrier-qualification"]),
+  );
+  for (const producer of [
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "liboliphaunt-native-release-assets",
+  ]) {
+    assert.equal(jobs.has(producer), true, `extension carrier qualification is missing ${producer}`);
+  }
 });
 
 test("every focused dispatch closes consumers over exact producer matrices", () => {

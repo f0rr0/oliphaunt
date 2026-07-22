@@ -8,10 +8,27 @@ import { deflateRawSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zli
 
 import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
+  decompressSingleZstdFrame,
+  portableMemberName,
   readPortableArchiveEntries,
+  readPortableTarZstdBufferEntries,
 } from "./portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
+
+test("exposes the same portable member contract to nested carrier consumers", () => {
+  const archive = "/tmp/carrier.tar.gz";
+  const member = "carrier/extensions/postgis/postgis-ios-xcframework.tar.gz";
+  assert.equal(portableMemberName(member, "file", archive), member);
+  assert.throws(
+    () => portableMemberName("carrier/extensions/postgis/../escape", "file", archive),
+    /unsafe archive member/u,
+  );
+  assert.throws(
+    () => portableMemberName("carrier/extensions/postgis/file/", "file", archive),
+    /type\/path-marker mismatch/u,
+  );
+});
 
 let crcTable;
 function crc32(buffer) {
@@ -149,6 +166,32 @@ test("accepts an unambiguous FAT-origin ZIP member", (t) => {
   assert.equal(readPortableArchiveEntries(file).get("file.txt").isFile, true);
 });
 
+test("requires ZIP directory type flags and trailing path markers to agree", (t) => {
+  const valid = fixtureFile(
+    t,
+    "directory.zip",
+    zipArchive([
+      {
+        name: "root/",
+        data: "",
+        externalAttributes: ((0o040755 << 16) | 0x10) >>> 0,
+      },
+      { name: "root/file.txt", data: "ok" },
+    ]),
+  ).file;
+  const entries = readPortableArchiveEntries(valid);
+  assert.equal(entries.get("root").isDirectory, true);
+  assert.equal(entries.get("root/file.txt").isFile, true);
+
+  for (const [name, row] of [
+    ["missing-marker.zip", { name: "root", data: "", externalAttributes: ((0o040755 << 16) | 0x10) >>> 0 }],
+    ["file-with-marker.zip", { name: "root/", externalAttributes: 0o100644 << 16 }],
+  ]) {
+    const file = fixtureFile(t, name, zipArchive([row])).file;
+    assert.throws(() => readPortableArchiveEntries(file), /type\/path-marker|directory metadata/u);
+  }
+});
+
 test("rejects truncated ZIPs, duplicates, case collisions, and file-parent collisions", (t) => {
   const valid = zipArchive([{ name: "root/file.txt" }]);
   const truncated = fixtureFile(t, "truncated.zip", valid.subarray(0, valid.length - 1)).file;
@@ -270,6 +313,28 @@ test("reads strict ustar and rejects links, bad checksums, padding, and end mark
   assert.throws(() => readPortableArchiveEntries(linkField), /sets a link target on non-link/u);
 });
 
+test("requires ustar directory type flags and trailing path markers to agree", (t) => {
+  const valid = fixtureFile(
+    t,
+    "directory.tar.gz",
+    tarArchive([
+      { name: "root/", type: "5", mode: 0o755 },
+      { name: "root/file", data: "ok" },
+    ]),
+  ).file;
+  const entries = readPortableArchiveEntries(valid);
+  assert.equal(entries.get("root").isDirectory, true);
+  assert.equal(entries.get("root/file").isFile, true);
+
+  for (const [name, row] of [
+    ["missing-marker.tar.gz", { name: "root", type: "5", mode: 0o755 }],
+    ["file-with-marker.tar.gz", { name: "root/", type: "0", mode: 0o644 }],
+  ]) {
+    const file = fixtureFile(t, name, tarArchive([row])).file;
+    assert.throws(() => readPortableArchiveEntries(file), /type\/path-marker mismatch/u);
+  }
+});
+
 test("rejects trailing bytes, concatenated gzip members, and corrupt gzip trailers", (t) => {
   const valid = tarArchive([{ name: "file", data: "payload" }]);
   const concatenated = fixtureFile(t, "concatenated.tar.gz", Buffer.concat([valid, valid])).file;
@@ -308,6 +373,55 @@ test("reads one Zstandard frame and rejects trailing bytes or concatenated frame
   assert.throws(
     () => readPortableArchiveEntries(concatenated),
     /trailing data or multiple Zstandard frames/u,
+  );
+});
+
+test("strictly parses an in-memory tar.zst with the same bounded portable contract", () => {
+  const tar = gunzipForTest(tarArchive([
+    { name: "oliphaunt/", type: "5", mode: 0o755 },
+    { name: "oliphaunt/bin/", type: "5", mode: 0o755 },
+    { name: "oliphaunt/bin/postgres", data: "runtime" },
+  ]));
+  const compressed = zstdCompressSync(tar);
+  const entries = readPortableTarZstdBufferEntries(compressed, {
+    label: "nested oliphaunt.wasix.tar.zst",
+  });
+  assert.deepEqual([...entries.keys()], [
+    "oliphaunt",
+    "oliphaunt/bin",
+    "oliphaunt/bin/postgres",
+  ]);
+  assert.equal(entries.get("oliphaunt/bin/postgres").data().toString(), "runtime");
+  assert.equal(
+    decompressSingleZstdFrame(compressed, { label: "nested frame" }).equals(tar),
+    true,
+  );
+
+  for (const [label, rows, pattern] of [
+    ["duplicate", [{ name: "same", data: "one" }, { name: "same", data: "two" }], /repeats archive member/u],
+    ["traversal", [{ name: "../escape", data: "bad" }], /unsafe archive member/u],
+    ["symlink", [{ name: "link", type: "2" }], /link or special ustar entry/u],
+    ["special", [{ name: "device", type: "3" }], /link or special ustar entry/u],
+  ]) {
+    const candidate = zstdCompressSync(gunzipForTest(tarArchive(rows)));
+    assert.throws(
+      () => readPortableTarZstdBufferEntries(candidate, { label }),
+      pattern,
+      label,
+    );
+  }
+
+  assert.throws(
+    () => readPortableTarZstdBufferEntries(Buffer.concat([compressed, compressed])),
+    /trailing data or multiple Zstandard frames/u,
+  );
+  assert.throws(
+    () => readPortableTarZstdBufferEntries(compressed, { maxArchiveBytes: compressed.length - 1 }),
+    /no larger than/u,
+  );
+  assert.throws(
+    () => decompressSingleZstdFrame(compressed, { maxOutputBytes: tar.length - 1 }),
+    /bounded readable Zstandard stream/u,
   );
 });
 

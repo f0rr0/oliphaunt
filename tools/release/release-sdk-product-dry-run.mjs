@@ -5,6 +5,7 @@ import { gunzipSync } from "node:zlib";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
 import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
+import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from "./kotlin-maven-staging.mjs";
 import { currentProductVersionSync, registryPackageRows, releaseMetadata } from "./release-artifact-targets.mjs";
 import {
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -78,6 +79,12 @@ function rel(file) {
 
 export function validateStagedSwiftSourceCarrier(carrier) {
   return validateSelectionNeutralSwiftSourceCarrierFile(carrier, rel(carrier));
+}
+
+export function stagedKotlinMavenRepo() {
+  return validateStagedKotlinMavenRepo({
+    version: currentProductVersionSync("oliphaunt-kotlin", TOOL),
+  });
 }
 
 function requireStagedSdkArtifact(product, description, suffixes) {
@@ -193,57 +200,6 @@ export function prepareStagedSwiftReleaseManifest() {
   const outputManifest = path.join(outputDir, "Package.swift.release");
   cpSync(manifest, outputManifest);
   return outputManifest;
-}
-
-function walkFiles(root) {
-  const files = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    const child = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walkFiles(child));
-    } else if (entry.isFile()) {
-      files.push(child);
-    }
-  }
-  return files;
-}
-
-export function stagedKotlinMavenRepo() {
-  const root = path.join(sdkArtifactDir("oliphaunt-kotlin"), "maven");
-  requireDirectory(
-    root,
-    "oliphaunt-kotlin requires staged Maven repository artifacts under target/sdk-artifacts/oliphaunt-kotlin/maven; download the CI workflow Kotlin SDK package artifacts before release validation or publishing",
-  );
-  const version = currentProductVersionSync("oliphaunt-kotlin", TOOL);
-  const required = [
-    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.aar`,
-    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.pom`,
-    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.module`,
-    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}-sources.jar`,
-    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}-javadoc.jar`,
-    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.jar`,
-    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.pom`,
-    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.module`,
-    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}-sources.jar`,
-    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}-javadoc.jar`,
-    `dev/oliphaunt/android/dev.oliphaunt.android.gradle.plugin/${version}/dev.oliphaunt.android.gradle.plugin-${version}.pom`,
-  ];
-  const missing = required.filter((file) => !isFile(path.join(root, file)));
-  if (missing.length > 0) {
-    fail(`oliphaunt-kotlin staged Maven repository is missing: ${missing.map((file) => `target/sdk-artifacts/oliphaunt-kotlin/maven/${file}`).join(", ")}`);
-  }
-  for (const file of walkFiles(root)) {
-    const relative = path.relative(root, file).split(path.sep);
-    if (relative[0] !== "dev" || relative[1] !== "oliphaunt") {
-      fail(`oliphaunt-kotlin staged Maven repository contains unexpected path ${rel(file)}`);
-    }
-    const suffix = path.extname(file);
-    if (suffix === ".lastUpdated" || suffix === ".lock") {
-      fail(`oliphaunt-kotlin staged Maven repository contains local resolver state ${rel(file)}`);
-    }
-  }
-  console.log(`validated staged Kotlin Maven repository: ${rel(root)}`);
-  return root;
 }
 
 function safeNpmPackageFilenamePrefix(packageName) {

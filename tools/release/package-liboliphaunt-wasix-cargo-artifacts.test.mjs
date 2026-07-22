@@ -2,6 +2,7 @@
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
@@ -12,12 +13,16 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
+import { gzipSync, zstdCompressSync } from "node:zlib";
 
 import { extensionSqlNames } from "./release-artifact-targets.mjs";
 import {
   extractArchiveMemberToFile,
+  extractTarZstd,
   injectRuntimeExtensionDependencies,
+  validateRuntimePayload,
 } from "./package_liboliphaunt_wasix_cargo_artifacts.mjs";
+import { createDeterministicTar } from "./cargo-source-package.mjs";
 import {
   AOT_TARGET_TRIPLES,
   wasixExtensionAotPackageName,
@@ -45,6 +50,41 @@ function run(command, args, { cwd = ROOT, env = process.env } = {}) {
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function sha256Bytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function tarOctal(value, length) {
+  return Buffer.from(`${value.toString(8).padStart(length - 1, "0")}\0`, "ascii");
+}
+
+function adversarialTar(rows) {
+  const records = [];
+  for (const row of rows) {
+    const data = Buffer.from(row.data ?? "");
+    const header = Buffer.alloc(512);
+    Buffer.from(row.name).copy(header, 0);
+    tarOctal(row.mode ?? 0o644, 8).copy(header, 100);
+    tarOctal(0, 8).copy(header, 108);
+    tarOctal(0, 8).copy(header, 116);
+    tarOctal(data.length, 12).copy(header, 124);
+    tarOctal(0, 12).copy(header, 136);
+    header.fill(0x20, 148, 156);
+    header[156] = (row.type ?? "0").charCodeAt(0);
+    if (row.link) Buffer.from(`${row.link}\0`).copy(header, 157);
+    Buffer.from("ustar\0", "binary").copy(header, 257);
+    Buffer.from("00").copy(header, 263);
+    const checksum = header.reduce((sum, byte) => sum + byte, 0);
+    Buffer.from(`${checksum.toString(8).padStart(6, "0")}\0 `, "ascii").copy(header, 148);
+    records.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  return Buffer.concat([...records, Buffer.alloc(1024)]);
+}
+
+function adversarialTarGz(rows) {
+  return gzipSync(adversarialTar(rows), { mtime: 0 });
 }
 
 function aggregateFixture(root) {
@@ -84,7 +124,12 @@ function aggregateFixture(root) {
   }
   mkdirSync(releaseAssets, { recursive: true });
   const carrier = path.join(releaseAssets, carrierName);
-  run("tar", ["-czf", carrier, "-C", path.dirname(stage), archiveRoot]);
+  writeFileSync(carrier, gzipSync(createDeterministicTar(stage, archiveRoot, {
+    fail(message) {
+      throw new Error(message);
+    },
+    fixedFileMode: 0o644,
+  }), { mtime: 0 }));
   writeFileSync(path.join(productRoot, "extension-artifacts.json"), `${JSON.stringify({
     schema: "oliphaunt-extension-ci-artifacts-v2",
     product,
@@ -106,8 +151,13 @@ function aggregateFixture(root) {
       const directory = path.join(productRoot, "wasix-aot", targetId, sqlName);
       const artifactName = `${sqlName}.bin.zst`;
       const artifact = path.join(directory, artifactName);
+      const raw = Buffer.concat(Array.from(
+        { length: 64 },
+        (_, index) => createHash("sha256").update(`${targetTriple}:${sqlName}:${index}`).digest(),
+      ));
+      const compressed = zstdCompressSync(raw);
       mkdirSync(directory, { recursive: true });
-      writeFileSync(artifact, Buffer.from(`${targetTriple}:${sqlName}:`.repeat(30)));
+      writeFileSync(artifact, compressed);
       writeFileSync(path.join(directory, "manifest.json"), `${JSON.stringify({
         "format-version": 1,
         "source-lane": canonicalAot.sourceLane,
@@ -119,6 +169,10 @@ function aggregateFixture(root) {
           name: `extension:${sqlName}`,
           path: artifactName,
           sha256: sha256(artifact),
+          "raw-sha256": sha256Bytes(raw),
+          "raw-size": raw.length,
+          "module-sha256": sha256Bytes(Buffer.from(`module:${sqlName}`)),
+          compressed: true,
         }],
       }, null, 2)}\n`);
     }
@@ -144,6 +198,139 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     expect(readFileSync(destination)).toEqual(expected);
   });
 
+  test("rejects duplicate and symlink carrier entries before materializing a member", () => {
+    const root = mkdtempSync(path.join(ROOT, "target/wasix-aggregate-adversarial-test-"));
+    directories.push(root);
+
+    const duplicate = path.join(root, "duplicate.tar.gz");
+    writeFileSync(duplicate, adversarialTarGz([
+      { name: "payload.bin", data: "first\n" },
+      { name: "payload.bin", data: "second\n" },
+    ]));
+    const duplicateDestination = path.join(root, "duplicate-output.bin");
+    expect(() => extractArchiveMemberToFile(duplicate, "payload.bin", duplicateDestination))
+      .toThrow(/repeats archive member payload[.]bin/u);
+    expect(() => statSync(duplicateDestination)).toThrow();
+
+    const linked = path.join(root, "linked.tar.gz");
+    writeFileSync(linked, adversarialTarGz([
+      { name: "payload-link", type: "2", link: "payload.bin" },
+    ]));
+    const linkedDestination = path.join(root, "linked-output.bin");
+    expect(() => extractArchiveMemberToFile(linked, "payload-link", linkedDestination))
+      .toThrow(/link or special ustar entry/u);
+    expect(() => statSync(linkedDestination)).toThrow();
+  });
+
+  test("direct tar.zst materialization preserves exact modes despite umask and read-only directories", () => {
+    if (process.platform === "win32") return;
+    const root = mkdtempSync(path.join(ROOT, "target/wasix-materialization-mode-test-"));
+    directories.push(root);
+    const archive = path.join(root, "payload.tar.zst");
+    const expected = Buffer.from("executable payload\n");
+    writeFileSync(archive, zstdCompressSync(adversarialTar([
+      { name: "payload/", type: "5", mode: 0o555 },
+      { name: "payload/read-only/", type: "5", mode: 0o500 },
+      { name: "payload/read-only/tool", mode: 0o751, data: expected },
+    ])));
+
+    const destination = path.join(root, "extracted");
+    const previousUmask = process.umask(0o077);
+    try {
+      extractTarZstd(archive, destination);
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    const payload = path.join(destination, "payload");
+    const readOnly = path.join(payload, "read-only");
+    const executable = path.join(readOnly, "tool");
+    expect(statSync(payload).mode & 0o777).toBe(0o555);
+    expect(statSync(readOnly).mode & 0o777).toBe(0o500);
+    expect(statSync(executable).mode & 0o777).toBe(0o751);
+    expect(readFileSync(executable)).toEqual(expected);
+
+    // Restore cleanup access after proving the final archived modes.
+    chmodSync(payload, 0o755);
+    chmodSync(readOnly, 0o755);
+  });
+
+  test("package-side runtime validation binds the manifest to strict nested bytes", () => {
+    const root = mkdtempSync(path.join(ROOT, "target/wasix-runtime-validation-test-"));
+    directories.push(root);
+    const runtimeSource = path.join(root, "runtime-source", "oliphaunt");
+    mkdirSync(path.join(runtimeSource, "bin"), { recursive: true });
+    writeFileSync(path.join(runtimeSource, "bin/initdb"), "initdb\n");
+    writeFileSync(path.join(runtimeSource, "bin/postgres"), "postgres\n");
+    const runtimeBytes = zstdCompressSync(createDeterministicTar(runtimeSource, "oliphaunt", {
+      fail(message) {
+        throw new Error(message);
+      },
+      fixedFileMode: 0o644,
+    }));
+
+    const payload = path.join(root, "payload");
+    mkdirSync(path.join(payload, "bin"), { recursive: true });
+    mkdirSync(path.join(payload, "prepopulated"), { recursive: true });
+    writeFileSync(path.join(payload, "bin/initdb.wasix.wasm"), "initdb-wasm\n");
+    writeFileSync(path.join(payload, "prepopulated/pgdata-template.tar.zst"), "template\n");
+    writeFileSync(path.join(payload, "prepopulated/pgdata-template.json"), "{}\n");
+    writeFileSync(path.join(payload, "oliphaunt.wasix.tar.zst"), runtimeBytes);
+    const manifestPath = path.join(payload, "manifest.json");
+    const manifest = {
+      runtime: {
+        archive: "oliphaunt.wasix.tar.zst",
+        sha256: sha256Bytes(runtimeBytes),
+      },
+      extensions: [],
+    };
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    expect(() => validateRuntimePayload(payload)).not.toThrow();
+
+    manifest.runtime.sha256 = "0".repeat(64);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    expect(() => validateRuntimePayload(payload)).toThrow(/runtime[.]sha256 mismatch/u);
+
+    const concatenated = Buffer.concat([runtimeBytes, runtimeBytes]);
+    writeFileSync(path.join(payload, "oliphaunt.wasix.tar.zst"), concatenated);
+    manifest.runtime.sha256 = sha256Bytes(concatenated);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    expect(() => validateRuntimePayload(payload))
+      .toThrow(/trailing data or multiple Zstandard frames/u);
+  });
+
+  test("extension packaging rejects AOT raw-digest tampering before Cargo packaging", () => {
+    const root = mkdtempSync(path.join(ROOT, "target/wasix-extension-aot-tamper-test-"));
+    directories.push(root);
+    const extensionRoot = aggregateFixture(root);
+    const targetId = Object.keys(AOT_TARGET_TRIPLES).sort()[0];
+    const manifestPath = path.join(
+      extensionRoot,
+      "wasix-aot",
+      targetId,
+      "cube",
+      "manifest.json",
+    );
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.artifacts[0]["raw-sha256"] = "0".repeat(64);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const result = spawnSync("bun", [
+      "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+      "--extensions-only",
+      "--extension-artifact-root", extensionRoot,
+      "--output-dir", path.join(root, "output"),
+      "--work-dir", path.join(root, "work"),
+      "--version", "0.1.0",
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/raw SHA-256 mismatch/u);
+  });
+
   test("splits from part-001 and a single carrier feature selects earthdistance plus cube only", {
     timeout: 180_000,
   }, () => {
@@ -152,6 +339,8 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     const extensionRoot = aggregateFixture(root);
     const output = path.join(root, "output");
     const work = path.join(root, "work");
+    const cargoHome = path.join(root, "empty-cargo-home");
+    mkdirSync(cargoHome);
     run("bun", [
       "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
       "--extensions-only",
@@ -160,13 +349,23 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
       "--output-dir", output,
       "--work-dir", work,
       "--version", "0.1.0",
-    ]);
+    ], {
+      env: {
+        ...process.env,
+        CARGO_HOME: cargoHome,
+        CARGO_NET_OFFLINE: "true",
+      },
+    });
 
     const sources = path.join(work, "cargo-package-sources");
     expect(statSync(path.join(work, "cargo-package-extracted")).isDirectory()).toBe(true);
     expect(statSync(path.join(work, "cargo-package-target")).isDirectory()).toBe(true);
     const carrierName = "oliphaunt-extension-contrib-pg18-wasix";
     const carrierManifest = Bun.TOML.parse(readFileSync(path.join(sources, carrierName, "Cargo.toml"), "utf8"));
+    expect(carrierManifest["build-dependencies"].sha2).toBeUndefined();
+    const carrierBuildScript = readFileSync(path.join(sources, carrierName, "build.rs"), "utf8");
+    expect(carrierBuildScript).not.toContain("use sha2");
+    expect(carrierBuildScript).toContain("fn sha256_compress");
     const partNames = Object.keys(carrierManifest["build-dependencies"])
       .filter((name) => name.startsWith(`${carrierName}-part-`))
       .sort();

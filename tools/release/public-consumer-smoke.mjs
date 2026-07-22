@@ -843,7 +843,7 @@ ${probeRows}
     GRADLE_USER_HOME: path.join(root, "gradle-home"),
     HOME: path.join(root, "gradle-user-home"),
   });
-  const result = await runBoundedCommand("bash", [wrapper,
+  const result = await runBoundedCommand(wrapper, [
     "--no-daemon",
     "--console=plain",
     "--project-dir",

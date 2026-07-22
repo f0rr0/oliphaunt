@@ -4,8 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 function fail(message) {
-  console.error(`archive_dir.mjs: ${message}`);
-  process.exit(2);
+  throw new Error(`archive_dir.mjs: ${message}`);
 }
 
 function compareText(left, right) {
@@ -214,7 +213,7 @@ function zipName(entry) {
   return entry.isDirectory && entry.name !== '.' ? `${entry.name}/` : entry.name;
 }
 
-async function createZip(root, options) {
+export async function createDeterministicZip(root, options = {}) {
   const localChunks = [];
   const centralChunks = [];
   let offset = 0;
@@ -307,16 +306,27 @@ function parseArgs(argv) {
   };
 }
 
-const { keepParent, source, output } = parseArgs(Bun.argv.slice(2));
-const sourceStat = await fs.lstat(source).catch(() => null);
-if (!sourceStat?.isDirectory()) {
-  fail(`source is not a directory: ${source}`);
+async function main(argv) {
+  const { keepParent, source, output } = parseArgs(argv);
+  const sourceStat = await fs.lstat(source).catch(() => null);
+  if (!sourceStat?.isDirectory()) {
+    fail(`source is not a directory: ${source}`);
+  }
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  if (output.endsWith('.tar.gz')) {
+    await fs.writeFile(output, gzipSync(await createTar(source, { keepParent }), { mtime: 0 }));
+  } else if (path.extname(output) === '.zip') {
+    await fs.writeFile(output, await createDeterministicZip(source, { keepParent }));
+  } else {
+    fail(`unsupported archive extension: ${output}`);
+  }
 }
-await fs.mkdir(path.dirname(output), { recursive: true });
-if (output.endsWith('.tar.gz')) {
-  await fs.writeFile(output, gzipSync(await createTar(source, { keepParent }), { mtime: 0 }));
-} else if (path.extname(output) === '.zip') {
-  await fs.writeFile(output, await createZip(source, { keepParent }));
-} else {
-  fail(`unsupported archive extension: ${output}`);
+
+if (import.meta.main) {
+  try {
+    await main(Bun.argv.slice(2));
+  } catch (cause) {
+    console.error(cause instanceof Error ? cause.message : String(cause));
+    process.exit(2);
+  }
 }

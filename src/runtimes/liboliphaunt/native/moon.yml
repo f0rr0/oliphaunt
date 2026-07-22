@@ -291,6 +291,48 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
+  registry-carrier-qualification:
+    tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-release-assets"]
+    deps:
+      - "liboliphaunt-native:release-assets"
+    command: "tools/dev/bun.sh tools/release/offline-registry-carrier-qualification.mjs --scope native"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/runtimes/liboliphaunt/native/VERSION"
+      - "/src/runtimes/liboliphaunt/native/packages/**/*"
+      - "/src/runtimes/liboliphaunt/native/tools-packages/**/*"
+      - "/src/runtimes/liboliphaunt/native/icu-npm/**/*"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/archive_dir.mjs"
+      - "/tools/release/atomic-directory.mjs"
+      - "/tools/release/build_maven_artifact_manifest.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/check-liboliphaunt-release-assets.mjs"
+      - "/tools/release/extension-registry-carrier-materializer.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/src/sdks/js/src/native/extension-contract.ts"
+      - "/tools/release/local-registry-publish.mjs"
+      - "/tools/release/maven-artifact-staging.mjs"
+      - "/tools/release/maven-central-contract.mjs"
+      - "/tools/release/offline-registry-carrier-qualification.mjs"
+      - "/tools/release/optimize_native_runtime_payload.mjs"
+      - "/tools/release/package-liboliphaunt-cargo-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-product-dry-run.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
+      - "/target/liboliphaunt/release-assets/**/*"
+    outputs:
+      - "/target/liboliphaunt/cargo-artifacts/**/*"
+      - "/target/release/maven-staging/liboliphaunt-native-maven-dry-run/**/*"
+      - "/target/release/npm-packages/**/*"
+      - "/target/release-work/offline-registry-carrier-qualification/native.json"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
   build-ios-xcframework:
     tags: ["runtime", "artifact"]
     command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"

@@ -22,11 +22,13 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { parseNpmExtensionLicenseFiles } from "../../src/sdks/js/src/native/extension-contract.ts";
 import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   manualCargoPackageSource,
   readCargoPackageNameVersion,
 } from "./cargo-source-package.mjs";
+import { RUST_BUILD_SCRIPT_SHA256 } from "./rust-build-script-sha256.mjs";
 import {
   compareText,
   extensionRegistryPackageTargetSets,
@@ -52,14 +54,14 @@ import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contrac
 import {
   assertExtensionUpstreamLicensesInArchive,
   assertExtensionUpstreamLicensesInDirectory,
-  extensionRegistryLicense,
+  extensionCarrierLegalContract,
+  extensionUpstreamLicenseFileInventory,
   stageExtensionUpstreamLicenses,
 } from "./extension-upstream-licenses.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
   releaseNoticeRows,
-  releaseProfilePackageLicense,
   stageReleaseNotices,
 } from "./release-notices.mjs";
 
@@ -77,15 +79,6 @@ const CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024;
 const CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024;
 const NPM_EXTENSION_CONTRACT_FILENAME = "extension-contract.json";
 const MAX_COMMAND_CAPTURE_BYTES = 32 * 1024 * 1024;
-const CONTRIB_PRODUCT = "oliphaunt-extension-contrib-pg18";
-const OPENSSL_EMBEDDED_NATIVE_TARGETS = new Set([
-  "android-arm64-v8a",
-  "android-x86_64",
-  "ios-xcframework",
-  "macos-arm64",
-  "macos-x64",
-  "windows-x64-msvc",
-]);
 
 function fail(tool, message) {
   throw new Error(`${tool}: ${message}`);
@@ -382,31 +375,18 @@ export function nativeExtensionCarrierLegal(product, members, { target = null, c
   ) {
     throw new Error(`${TOOL}: native extension carrier legal lookup requires a product, unique members, and carriesPayload`);
   }
-  if (!carriesPayload) {
-    return Object.freeze({
-      profile: "code-facade",
-      packageSpdx: releaseProfilePackageLicense("code-facade").spdx,
-      upstreamMembers: Object.freeze([]),
+  try {
+    return extensionCarrierLegalContract(product, members, {
+      family: "native",
+      target,
+      carriesPayload,
     });
+  } catch (cause) {
+    throw new Error(
+      `${TOOL}: cannot derive the canonical native extension carrier legal contract: ${cause.message}`,
+      { cause },
+    );
   }
-  if (typeof target !== "string" || target.length === 0) {
-    throw new Error(`${TOOL}: a payload-bearing native extension carrier requires an exact target`);
-  }
-  if (product === CONTRIB_PRODUCT) {
-    const embedsOpenSsl = members.includes("pgcrypto") && OPENSSL_EMBEDDED_NATIVE_TARGETS.has(target);
-    const profile = embedsOpenSsl ? "contrib-native-openssl" : "contrib-native";
-    return Object.freeze({
-      profile,
-      packageSpdx: releaseProfilePackageLicense(profile).spdx,
-      upstreamMembers: Object.freeze([]),
-    });
-  }
-  const registry = extensionRegistryLicense(product, members);
-  return Object.freeze({
-    profile: "external-native",
-    packageSpdx: registry.packageSpdx,
-    upstreamMembers: Object.freeze([...members]),
-  });
 }
 
 function carrierLegalMembers(legal) {
@@ -438,6 +418,31 @@ function assertNativeExtensionCarrierArchive(archive, legal, prefix) {
   assertReleaseNoticesInArchive(archive, { profile: legal.profile, prefix });
   if (legal.upstreamMembers.length > 0) {
     assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, archive, { prefix });
+  }
+}
+
+function assertNpmExtensionRuntimeLegalArchive(archive, {
+  product,
+  members,
+  target,
+  bundle,
+  memberRuntimeRelativePaths,
+}) {
+  for (const sqlName of members) {
+    const legal = nativeExtensionCarrierLegal(product, [sqlName], {
+      carriesPayload: true,
+      target,
+    });
+    if (legal.upstreamMembers.length === 0) continue;
+    const runtimeRelativePath = bundle
+      ? memberRuntimeRelativePaths?.[sqlName]
+      : "runtime";
+    if (typeof runtimeRelativePath !== "string" || runtimeRelativePath.length === 0) {
+      fail(TOOL, `${product} ${target} is missing the runtime path for legal member ${sqlName}`);
+    }
+    assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, archive, {
+      prefix: `package/${runtimeRelativePath}`,
+    });
   }
 }
 
@@ -476,6 +481,39 @@ export function renderNpmExtensionBundleManifest({ product, version, target, mem
   };
 }
 
+export function npmExtensionMemberContract(product, version, target, member) {
+  const inventory = frozenExtensionMemberInventory(member, { product, version });
+  const legal = nativeExtensionCarrierLegal(product, [inventory.sqlName], {
+    target,
+    carriesPayload: true,
+  });
+  const licenseFiles = Object.freeze(parseNpmExtensionLicenseFiles(
+    legal.upstreamMembers.length === 0
+      ? []
+      : extensionUpstreamLicenseFileInventory([inventory.sqlName]),
+    `${product}@${version}/${inventory.sqlName} npm extension licenseFiles`,
+  ).map((file) => Object.freeze(file)));
+  if (
+    JSON.stringify(licenseFiles.map(({ path: file }) => file))
+    !== JSON.stringify([...legal.licenseFiles])
+  ) {
+    fail(
+      TOOL,
+      `${product}@${version}/${inventory.sqlName} license file integrity rows disagree with the canonical carrier legal contract`,
+    );
+  }
+  if (
+    Object.hasOwn(member, "licenseFiles")
+    && JSON.stringify(member.licenseFiles) !== JSON.stringify(licenseFiles)
+  ) {
+    fail(
+      TOOL,
+      `${product}@${version}/${inventory.sqlName} supplied licenseFiles disagree with the canonical carrier legal contract`,
+    );
+  }
+  return Object.freeze({ ...inventory, licenseFiles });
+}
+
 export function renderNpmExtensionContractManifest({ product, version, target, members }) {
   return {
     schema: "oliphaunt-npm-extension-contract-v1",
@@ -483,7 +521,7 @@ export function renderNpmExtensionContractManifest({ product, version, target, m
     version,
     family: "native",
     target,
-    members,
+    members: members.map((member) => npmExtensionMemberContract(product, version, target, member)),
   };
 }
 
@@ -1233,6 +1271,13 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
     stageNativeExtensionCarrierLegal(targetDir, targetLegal);
     const targetTarball = pnpmPackForNpmPublish(targetDir, tarballRoot);
     assertNativeExtensionCarrierArchive(targetTarball, targetLegal, "package");
+    assertNpmExtensionRuntimeLegalArchive(targetTarball, {
+      product,
+      members,
+      target,
+      bundle: runtimeSet.bundle,
+      memberRuntimeRelativePaths,
+    });
     if (!npmPackageSizeSafe(targetTarball, result)) {
       continue;
     }
@@ -1373,8 +1418,7 @@ function buildNativeExtensionPartCrates(runtimeDir, sourceRoot, {
   return partDirs;
 }
 
-const NATIVE_EXTENSION_AGGREGATOR_BUILD_RS = String.raw`use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+const NATIVE_EXTENSION_AGGREGATOR_BUILD_RS = String.raw`use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -1608,25 +1652,7 @@ fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> 
     Ok(())
 }
 
-fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 64];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    let digest = digest.finalize();
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    Ok(output)
-}
+${RUST_BUILD_SCRIPT_SHA256}
 `;
 
 export function exactNativeExtensionMemberDependencies(members, memberDependencies) {
@@ -1713,7 +1739,6 @@ include = ${tomlString(["Cargo.toml", "README.md", "build.rs", "src/**", ...carr
 path = "src/lib.rs"
 
 [build-dependencies]
-sha2 = "0.10"
 ${dependencyLines.join("\n")}
 
 [workspace]
@@ -1885,9 +1910,6 @@ include = ${tomlString(["Cargo.toml", "README.md", "build.rs", "src/**", "payloa
 [lib]
 path = "src/lib.rs"
 
-[build-dependencies]
-sha2 = "0.10"
-
 [workspace]
 `,
   );
@@ -1902,10 +1924,9 @@ pub const CARGO_TARGET: &str = "${triple}";
   );
   writeFileSync(
     path.join(crateDir, "build.rs"),
-    `use sha2::{Digest, Sha256};
-use std::env;
+    `use std::env;
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 const SCHEMA: &str = ${JSON.stringify(members.length > 1 ? "oliphaunt-artifact-manifest-v2" : "oliphaunt-artifact-manifest-v1")};
@@ -1979,7 +2000,7 @@ fn append_manifest_files(text: &mut String, root: &Path, table: &str) {
             .expect("payload file stays under member root")
             .to_string_lossy()
             .replace(std::path::MAIN_SEPARATOR, "/");
-        let sha256 = sha256_file(&file);
+        let sha256 = sha256_file(&file).expect("hash payload file");
         text.push_str(&format!(
             "\\n{table}\\nsource = {:?}\\nrelative = {:?}\\nsha256 = {sha256:?}\\nexecutable = false\\n",
             file.display().to_string(),
@@ -2006,19 +2027,7 @@ fn collect_payload_files(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn sha256_file(path: &Path) -> String {
-    let mut file = fs::File::open(path).expect("open payload file for hashing");
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = file.read(&mut buffer).expect("read payload file for hashing");
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    format!("{:x}", hasher.finalize())
-}
+${RUST_BUILD_SCRIPT_SHA256}
 `,
   );
   stageNativeExtensionCarrierLegal(crateDir, legal);

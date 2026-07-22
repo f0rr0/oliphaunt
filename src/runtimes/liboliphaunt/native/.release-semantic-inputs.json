@@ -102,24 +102,24 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "e2d3a552352b8b48aa9b10c6657359b5e320686d15fc5e12130963974248061d"
+          "sha256": "d92fff3be60c0acf1147a2d3a38847b2c2156439308267d54327fadc1448ec59"
         }
       ]
     },
     {
       "id": "maven-runtime-extension-carrier-producer",
       "paths": [
-        "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-        "tools/release/build_maven_artifact_manifest.mjs"
+        "tools/release/build_maven_artifact_manifest.mjs",
+        "tools/release/maven-artifact-staging.mjs"
       ],
       "inputs": [
         {
-          "path": "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-          "sha256": "1de14caa77d97b9d3b92b225b5befbfbeb609c0e90e081d6146b54dfd5b33922"
+          "path": "tools/release/build_maven_artifact_manifest.mjs",
+          "sha256": "d2ea07b635a520804af418f2c6b7e1d60549df77a311a5d765a3791b7f5536ee"
         },
         {
-          "path": "tools/release/build_maven_artifact_manifest.mjs",
-          "sha256": "85e8b55bc6280e8ad1007557c62e88b8cf414d614d04a9883223e543d09b6129"
+          "path": "tools/release/maven-artifact-staging.mjs",
+          "sha256": "e6eb63879ea3532c893d16272345792007e59c9cc07476c6daf423a04827e8d2"
         }
       ]
     },
@@ -179,7 +179,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "966442d967bbdb51591046309a0d687c9f2a8218763f51e80d0ae0ec7cab97e4"
+          "sha256": "4b94ea1e5d53d3f68f8073d386084dba14011333bda8aa3e1fc752e2a2b320fb"
         }
       ]
     },
@@ -396,5 +396,5 @@
       ]
     }
   ],
-  "sha256": "f1787d0e53024e2d58087129e7d39ebdbe07849df103dda78ca2ad3a76736dba"
+  "sha256": "3bf87740f9871bde9d2bce4e11490f34df2fb5c1b0a01779cd61c1d372d565b2"
 }

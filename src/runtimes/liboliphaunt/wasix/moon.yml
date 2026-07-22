@@ -197,6 +197,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/aot/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/release/check-liboliphaunt-wasix-release-assets.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/policy/verify-source-tree.py"

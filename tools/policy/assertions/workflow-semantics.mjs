@@ -1259,7 +1259,15 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   ]);
 
   for (const [jobId, plannerJobId, producers] of [
+    ["broker-release-assets", "broker-release-assets", ["broker-runtime"]],
+    [
+      "extension-packages",
+      "extension-packages",
+      ["extension-artifacts-native", "extension-artifacts-wasix", "liboliphaunt-native-release-assets", "liboliphaunt-wasix-aot"],
+    ],
+    ["kotlin-maven-staging", "kotlin-maven-staging", ["kotlin-sdk-package"]],
     ["mobile-extension-packages", "mobile-extension-packages", ["extension-artifacts-native"]],
+    ["node-direct-release-assets", "node-direct-release-assets", ["node-direct"]],
     [
       "js-sdk-exact-candidate-consumer",
       "js-sdk-exact-candidate-consumer",
@@ -1289,6 +1297,122 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     ["mobile-e2e-android", "mobile-build-android", ["mobile-build-android"]],
   ]) {
     assertPlannerConsumer(workflow, jobId, plannerJobId, producers);
+  }
+
+  assertSameRunDownload(
+    workflow,
+    "kotlin-maven-staging",
+    "oliphaunt-kotlin-sdk-package-artifacts",
+  );
+  assertSameRunDownload(
+    workflow,
+    "extension-packages",
+    "liboliphaunt-native-release-assets",
+  );
+  const extensionNativeAggregateDownload = workflowSteps(workflow, "extension-packages")
+    .find((step) => step.with?.name === "liboliphaunt-native-release-assets");
+  invariant(
+    extensionNativeAggregateDownload?.with?.path === "target/liboliphaunt/release-assets",
+    "extension-packages must install the exact native aggregate at its canonical release path",
+  );
+  const kotlinMavenDownload = workflowSteps(workflow, "kotlin-maven-staging")
+    .find((step) => step.with?.name === "oliphaunt-kotlin-sdk-package-artifacts");
+  invariant(
+    kotlinMavenDownload?.with?.path === "target/sdk-artifacts/oliphaunt-kotlin",
+    "Kotlin Maven staging validation must install the exact SDK artifact at its canonical release path",
+  );
+  const kotlinMavenStaging = stepById(
+    workflow,
+    "kotlin-maven-staging",
+    "kotlin_maven_staging",
+  ).step;
+  invariant(
+    normalized(kotlinMavenStaging.run) === normalized(
+      "OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh kotlin-maven-staging",
+    ),
+    "kotlin-maven-staging.kotlin_maven_staging must run only the product-owned exact Kotlin Maven staging validator without rebuilding its producer",
+  );
+
+  for (const {
+    assemblyName,
+    assemblyTarget,
+    jobId,
+    qualificationName,
+    qualificationTarget,
+  } of [
+    {
+      assemblyName: "Package aggregate liboliphaunt release assets",
+      assemblyTarget: "liboliphaunt-native:release-assets",
+      jobId: "liboliphaunt-native-release-assets",
+      qualificationName: "Qualify aggregate liboliphaunt registry carriers",
+      qualificationTarget: "liboliphaunt-native:registry-carrier-qualification",
+    },
+    {
+      assemblyName: "Assemble exact-extension product packages",
+      assemblyTarget: "extension-packages:assemble-release",
+      jobId: "extension-packages",
+      qualificationName: "Qualify exact-extension registry carriers",
+      qualificationTarget: "extension-packages:registry-carrier-qualification",
+    },
+  ]) {
+    const steps = workflowSteps(workflow, jobId);
+    const assemblyMatches = steps.filter((candidate) => candidate.name === assemblyName);
+    const qualificationMatches = steps.filter((candidate) => candidate.name === qualificationName);
+    invariant(assemblyMatches.length === 1, `${jobId} must contain exactly one aggregate assembly step`);
+    invariant(qualificationMatches.length === 1, `${jobId} must contain exactly one registry-carrier qualification step`);
+    const assembly = assemblyMatches[0];
+    const qualification = qualificationMatches[0];
+    invariant(
+      normalized(assembly.run) === normalized(
+        `OLIPHAUNT_CI_JOB_TARGETS_JSON='\${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none ${assemblyTarget}`,
+      ),
+      `${jobId} must run only its aggregate assembly target before local qualification`,
+    );
+    invariant(
+      normalized(qualification.run) === normalized(
+        `OLIPHAUNT_CI_JOB_TARGETS_JSON='\${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none ${qualificationTarget}`,
+      ),
+      `${jobId} must run only its local registry-carrier qualification target after assembly`,
+    );
+    invariant(
+      !steps.some((candidate) =>
+        candidate.uses === "./.github/actions/setup-android"
+        || String(candidate.uses ?? "").startsWith("actions/setup-java@")
+        || /(?:^|\s)(?:gradle|[.\/]gradlew)(?:\s|$)/u.test(String(candidate.run ?? ""))),
+      `${jobId} local registry-carrier qualification must not require Java, Android, or Gradle`,
+    );
+    const assemblyIndex = steps.indexOf(assembly);
+    const qualificationIndex = steps.indexOf(qualification);
+    const uploadIndex = steps.findIndex((candidate) =>
+      String(candidate.uses ?? "").startsWith("actions/upload-artifact@"));
+    invariant(
+      assemblyIndex >= 0 && qualificationIndex > assemblyIndex && uploadIndex > qualificationIndex,
+      `${jobId} must sequence aggregate assembly, local carrier qualification, then artifact upload`,
+    );
+  }
+  const extensionAssembly = workflowSteps(workflow, "extension-packages")
+    .find((candidate) => candidate.name === "Assemble exact-extension product packages");
+  const extensionCarrierQualification = workflowSteps(workflow, "extension-packages")
+    .find((candidate) => candidate.name === "Qualify exact-extension registry carriers");
+  invariant(
+    extensionAssembly?.env?.OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS
+      === "${{ needs.affected.outputs.extension_package_products_csv }}"
+      && extensionCarrierQualification?.env?.OLIPHAUNT_REGISTRY_CARRIER_PRODUCTS_JSON
+        === "${{ needs.affected.outputs.extension_package_products }}",
+    "extension-packages must bind planner-owned exact product selections separately to assembly and local carrier qualification",
+  );
+
+  for (const [jobId, stepId] of [
+    ["broker-release-assets", "verify_aggregate_broker_release_assets"],
+    ["node-direct-release-assets", "verify_aggregate_node_direct_release_assets"],
+  ]) {
+    const verification = stepById(workflow, jobId, stepId).step;
+    invariant(
+      normalized(verification.run) === normalized(
+        `OLIPHAUNT_CI_JOB_TARGETS_JSON='\${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh ${jobId}`,
+      ),
+      `${jobId}.${stepId} must run only its planner-selected aggregate verifier without rebuilding producers`,
+    );
   }
 
   invariant(

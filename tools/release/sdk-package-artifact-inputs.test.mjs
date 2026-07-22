@@ -170,3 +170,26 @@ test("Kotlin runtime smoke hashes its sourced Android artifact helper", () => {
     "oliphaunt-kotlin:smoke",
   );
 });
+
+test("Kotlin Maven staging validation owns its exact producer and validator closure", () => {
+  const task = project("src/sdks/kotlin/moon.yml").tasks["maven-staging"];
+  assert.equal(
+    task.command,
+    "tools/dev/bun.sh tools/release/kotlin-maven-staging.mjs",
+    "oliphaunt-kotlin:maven-staging must invoke the canonical release validator",
+  );
+  assert.deepEqual(task.deps, ["oliphaunt-kotlin:package-artifacts"]);
+  assert.ok(task.tags.includes("ci-kotlin-maven-staging"));
+  assert.equal(task.options.cache, false);
+  assert.equal(task.options.runInCI, true);
+  assertInputs(
+    task,
+    [
+      "/src/sdks/kotlin/gradle.properties",
+      "/tools/release/kotlin-maven-staging.mjs",
+      "/tools/release/maven-central-contract.mjs",
+      "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*",
+    ],
+    "oliphaunt-kotlin:maven-staging",
+  );
+});

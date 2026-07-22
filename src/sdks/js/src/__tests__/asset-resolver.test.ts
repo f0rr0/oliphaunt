@@ -53,8 +53,27 @@ type FixtureExtensionContract = {
   dataFiles: string[];
   extensionSqlFileNames: string[];
   extensionSqlFilePrefixes: string[];
+  licenseFiles: FixtureExtensionLicenseFile[];
   sharedPreloadLibraries: string[];
 };
+
+type FixtureExtensionLicenseFile = {
+  [key: string]: unknown;
+  path: string;
+  sha256: string;
+  mode: string;
+};
+
+function fixtureExtensionLicenseFile(
+  path: string,
+  contents: string | Uint8Array,
+): FixtureExtensionLicenseFile {
+  return {
+    path,
+    sha256: createHash('sha256').update(contents).digest('hex'),
+    mode: '0644',
+  };
+}
 
 function fixtureExtensionContract(
   extension: (typeof GENERATED_EXTENSION_METADATA)[number],
@@ -68,6 +87,7 @@ function fixtureExtensionContract(
     dataFiles: [...extension.runtimeShareDataFiles],
     extensionSqlFileNames: [...extension.extensionSqlFileNames],
     extensionSqlFilePrefixes: [...extension.extensionSqlFilePrefixes],
+    licenseFiles: [],
     sharedPreloadLibraries: [...extension.sharedPreloadLibraries],
     ...overrides,
   };
@@ -1233,7 +1253,11 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     (candidate) => candidate.sqlName === 'vector',
   );
   if (vectorMetadata === undefined) assert.fail('missing generated vector metadata');
-  const vectorContract = fixtureExtensionContract(vectorMetadata);
+  const vectorContract = fixtureExtensionContract(vectorMetadata, {
+    licenseFiles: [
+      fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', 'canonical vector license'),
+    ],
+  });
   const createdPackageRoots: string[] = [];
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-invalid-'));
   const libraryPath = join(root, 'lib/liboliphaunt.so');
@@ -1329,6 +1353,10 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       join(redirectedRuntime, 'lib/modules', `vector${nativeModuleSuffixForTarget(target.id)}`),
       'embedded module',
     );
+    const vectorLicense = join(redirectedRuntime, 'share/licenses/vector/LICENSE');
+    await mkdir(dirname(vectorLicense), { recursive: true });
+    await writeFile(vectorLicense, 'canonical vector license');
+    await chmod(vectorLicense, 0o644);
     await writeFile(
       join(targetRoot, 'package.json'),
       JSON.stringify({
@@ -1410,6 +1438,13 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       ),
       'frozen newer data',
     );
+    assert.equal(
+      await readFile(
+        join(independentlyVersionedInstall.runtimeDirectory, 'share/licenses/vector/LICENSE'),
+        'utf8',
+      ),
+      'canonical vector license',
+    );
     await rm(skewData);
     await assert.rejects(
       () =>
@@ -1420,6 +1455,159 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     );
     await mkdir(dirname(skewData), { recursive: true });
     await writeFile(skewData, 'frozen newer data');
+
+    const canonicalLicense = join(canonicalRuntime, 'share/licenses/vector/LICENSE');
+    const canonicalLicenseBytes = await readFile(canonicalLicense);
+    await rm(canonicalLicense);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /missing declared license file\(s\).*share\/licenses\/vector\/LICENSE/,
+    );
+    await writeFile(canonicalLicense, canonicalLicenseBytes);
+    await chmod(canonicalLicense, 0o644);
+
+    await writeFile(canonicalLicense, 'tampered vector license');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /license file share\/licenses\/vector\/LICENSE does not match declared SHA-256/,
+    );
+    await writeFile(canonicalLicense, canonicalLicenseBytes);
+
+    if (platform() !== 'win32') {
+      for (const unsafeMode of [0o664, 0o4644]) {
+        await chmod(canonicalLicense, unsafeMode);
+        await assert.rejects(
+          () =>
+            materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+              'vector',
+            ]),
+          /license file share\/licenses\/vector\/LICENSE mode is not a safe installed representation of declared 0644/,
+        );
+      }
+      await chmod(canonicalLicense, 0o600);
+      await materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+        'vector',
+      ]);
+      await chmod(canonicalLicense, 0o644);
+    }
+
+    const extraLicense = join(canonicalRuntime, 'share/licenses/vector/EXTRA');
+    await writeFile(extraLicense, 'undeclared legal material');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /undeclared runtime file.*share\/licenses\/vector\/EXTRA/,
+    );
+    await rm(extraLicense);
+
+    for (const [licenseFiles, expected] of [
+      [[], /undeclared runtime file.*share\/licenses\/vector\/LICENSE/],
+      [
+        [fixtureExtensionLicenseFile('share/licenses/vector/NOTICE', 'notice')],
+        /undeclared runtime file.*share\/licenses\/vector\/LICENSE/,
+      ],
+      [
+        [fixtureExtensionLicenseFile('share/licenses/vector/../escape', 'escape')],
+        /licenseFiles\[0\]\.path must be a portable path under share\/licenses\//,
+      ],
+      [
+        [
+          fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+          fixtureExtensionLicenseFile('share/licenses/vector/license', canonicalLicenseBytes),
+        ],
+        /licenseFiles contains case\/NFC-colliding paths/,
+      ],
+      [
+        [fixtureExtensionLicenseFile('share/licenses/vector/%2e%2e/escape', 'escape')],
+        /licenseFiles\[0\]\.path must be a portable path under share\/licenses\//,
+      ],
+      [
+        [fixtureExtensionLicenseFile('share/licenses/con/LICENSE', 'reserved')],
+        /licenseFiles\[0\]\.path must be a portable path under share\/licenses\//,
+      ],
+      [
+        [
+          fixtureExtensionLicenseFile('share/licenses/vector/NOTICE', 'notice'),
+          fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+        ],
+        /licenseFiles must be sorted by path with unique paths/,
+      ],
+      [
+        [
+          fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+          fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+        ],
+        /licenseFiles must be sorted by path with unique paths/,
+      ],
+      [
+        [
+          {
+            ...fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+            unexpected: true,
+          },
+        ],
+        /licenseFiles\[0\] fields must be exactly mode, path, sha256/,
+      ],
+      [
+        [
+          {
+            ...fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+            sha256: createHash('sha256').update(canonicalLicenseBytes).digest('hex').toUpperCase(),
+          },
+        ],
+        /licenseFiles\[0\]\.sha256 must be a lowercase SHA-256 digest/,
+      ],
+      [
+        [
+          {
+            ...fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+            sha256: '0'.repeat(64),
+          },
+        ],
+        /license file share\/licenses\/vector\/LICENSE does not match declared SHA-256/,
+      ],
+      [
+        [
+          {
+            ...fixtureExtensionLicenseFile('share/licenses/vector/LICENSE', canonicalLicenseBytes),
+            mode: '0755',
+          },
+        ],
+        /licenseFiles\[0\]\.mode must be 0644/,
+      ],
+    ] as const) {
+      await writeFile(
+        join(targetRoot, 'extension-contract.json'),
+        JSON.stringify(
+          fixtureExtensionContractManifest(product, extensionVersion, target.id, [
+            { ...independentlyVersionedContract, licenseFiles: [...licenseFiles] },
+          ]),
+        ),
+      );
+      await assert.rejects(
+        () =>
+          materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+            'vector',
+          ]),
+        expected,
+      );
+    }
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify(
+        fixtureExtensionContractManifest(product, extensionVersion, target.id, [
+          independentlyVersionedContract,
+        ]),
+      ),
+    );
     await rm(dirname(independentlyVersionedInstall.runtimeDirectory), {
       recursive: true,
       force: true,

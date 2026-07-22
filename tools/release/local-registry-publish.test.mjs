@@ -22,6 +22,7 @@ import { gzipSync } from "node:zlib";
 import * as extensionMaterializer from "./extension-registry-carrier-materializer.mjs";
 import {
   extensionCarrierLegalContract,
+  extensionUpstreamLicenseFileInventory,
   stageExtensionUpstreamLicenses,
 } from "./extension-upstream-licenses.mjs";
 import {
@@ -916,7 +917,12 @@ test("derives extension carrier licenses from physical payload and target semant
     "oliphaunt-extension-contrib-pg18",
     ["hstore", "pgcrypto"],
     { carriesPayload: false },
-  )).toEqual({ profile: "code-facade", packageSpdx: "MIT", upstreamMembers: [] });
+  )).toEqual({
+    profile: "code-facade",
+    packageSpdx: "MIT",
+    upstreamMembers: [],
+    licenseFiles: [],
+  });
   expect(extensionMaterializer.nativeExtensionCarrierLegal(
     "oliphaunt-extension-contrib-pg18",
     ["hstore", "pgcrypto"],
@@ -935,15 +941,23 @@ test("derives extension carrier licenses from physical payload and target semant
     profile: "external-native",
     packageSpdx: "MIT AND PostgreSQL",
     upstreamMembers: ["vector"],
+    licenseFiles: ["share/licenses/vector/LICENSE"],
   });
+  expect(extensionMaterializer.nativeExtensionCarrierLegal(
+    "oliphaunt-extension-pg-uuidv7",
+    ["pg_uuidv7"],
+    { target: "linux-x64-gnu", carriesPayload: true },
+  ).licenseFiles).toEqual(["share/licenses/pg_uuidv7/LICENSE"]);
 });
 
-test("native extension Cargo carrier assembly preserves target-qualified module bytes", {
-  timeout: 30_000,
+test("native extension Cargo carrier packages from a fresh offline Cargo home and preserves target-qualified module bytes", {
+  timeout: 60_000,
 }, async () => {
   const root = temporaryRoot("oliphaunt-extension-carrier-bytes-");
   const previousPath = process.env.PATH;
   const previousTrap = process.env.OLIPHAUNT_STRIP_TRAP;
+  const previousCargoHome = process.env.CARGO_HOME;
+  const previousCargoOffline = process.env.CARGO_NET_OFFLINE;
   try {
     const product = "oliphaunt-extension-vector";
     const version = "9.8.7";
@@ -1012,6 +1026,9 @@ test("native extension Cargo carrier assembly preserves target-qualified module 
     chmodSync(fakeStrip, 0o755);
     process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ""}`;
     process.env.OLIPHAUNT_STRIP_TRAP = stripTrap;
+    process.env.CARGO_HOME = path.join(root, "empty-cargo-home");
+    process.env.CARGO_NET_OFFLINE = "true";
+    mkdirSync(process.env.CARGO_HOME);
 
     const result = { staged: [], skipped: [] };
     const outputs = packageNativeExtensionCargoCrates(
@@ -1035,6 +1052,21 @@ test("native extension Cargo carrier assembly preserves target-qualified module 
     ]);
 
     const crateName = nativeExtensionCargoPackageName(product, target);
+    const packedCargoManifest = spawnSync("tar", [
+      "-xOzf",
+      outputs[0],
+      `${crateName}-${version}/Cargo.toml`,
+    ]);
+    expect(packedCargoManifest.status, packedCargoManifest.stderr?.toString()).toBe(0);
+    expect(packedCargoManifest.stdout.toString("utf8")).not.toContain("sha2");
+    const packedBuildScript = spawnSync("tar", [
+      "-xOzf",
+      outputs[0],
+      `${crateName}-${version}/build.rs`,
+    ]);
+    expect(packedBuildScript.status, packedBuildScript.stderr?.toString()).toBe(0);
+    expect(packedBuildScript.stdout.toString("utf8")).not.toContain("use sha2");
+    expect(packedBuildScript.stdout.toString("utf8")).toContain("fn sha256_compress");
     const packedModule = spawnSync("tar", [
       "-xOzf",
       outputs[0],
@@ -1061,6 +1093,10 @@ test("native extension Cargo carrier assembly preserves target-qualified module 
     else process.env.PATH = previousPath;
     if (previousTrap === undefined) delete process.env.OLIPHAUNT_STRIP_TRAP;
     else process.env.OLIPHAUNT_STRIP_TRAP = previousTrap;
+    if (previousCargoHome === undefined) delete process.env.CARGO_HOME;
+    else process.env.CARGO_HOME = previousCargoHome;
+    if (previousCargoOffline === undefined) delete process.env.CARGO_NET_OFFLINE;
+    else process.env.CARGO_NET_OFFLINE = previousCargoOffline;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -1477,7 +1513,8 @@ test("native extension npm carrier assembly preserves exact target-qualified run
       "package/extension-contract.json",
     ], { encoding: "utf8" });
     expect(packedContract.status, packedContract.stderr?.toString()).toBe(0);
-    expect(JSON.parse(packedContract.stdout)).toEqual(
+    const parsedContract = JSON.parse(packedContract.stdout);
+    expect(parsedContract).toEqual(
       extensionMaterializer.renderNpmExtensionContractManifest({
         product,
         version,
@@ -1485,6 +1522,15 @@ test("native extension npm carrier assembly preserves exact target-qualified run
         members: [inventory],
       }),
     );
+    expect(parsedContract.members[0].licenseFiles).toEqual(
+      extensionUpstreamLicenseFileInventory(["pgtap"]),
+    );
+    expect(() => extensionMaterializer.renderNpmExtensionContractManifest({
+      product,
+      version,
+      target,
+      members: [{ ...inventory, licenseFiles: [] }],
+    })).toThrow("supplied licenseFiles disagree with the canonical carrier legal contract");
     const packedModule = spawnSync("tar", [
       "-xOzf",
       tarball,
@@ -1494,6 +1540,12 @@ test("native extension npm carrier assembly preserves exact target-qualified run
     expect(createHash("sha256").update(packedModule.stdout).digest("hex")).toBe(
       createHash("sha256").update("install").digest("hex"),
     );
+    const packedRuntimeLicense = spawnSync("tar", [
+      "-xOzf",
+      tarball,
+      "package/runtime/share/licenses/pgtap/README.md",
+    ]);
+    expect(packedRuntimeLicense.status, packedRuntimeLicense.stderr?.toString()).toBe(0);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

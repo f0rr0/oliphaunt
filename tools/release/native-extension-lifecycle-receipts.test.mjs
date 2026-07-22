@@ -23,6 +23,7 @@ import {
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
 import {
+  assertExactFiles,
   selectedExtensionDependencies,
   stageExtensionCarrier,
 } from "./stage-native-extension-lifecycle.mjs";
@@ -139,6 +140,19 @@ test("native staging excludes built-in dependencies from packaged extension depe
     dependencies: ["plpgsql", "postgis"],
     "selected-extension-dependencies": ["postgis"],
   }), "postgis");
+});
+
+test("exact lifecycle input diagnostics report basenames without masking inventory drift", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-native-extension-inputs-"));
+  try {
+    writeFileSync(path.join(root, "unexpected.tar.gz"), "unexpected");
+    assert.throws(
+      () => assertExactFiles(root, [path.join(root, "expected.tar.gz")], "lifecycle input"),
+      /expected=expected\.tar\.gz; actual=unexpected\.tar\.gz/u,
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("native lifecycle staging flattens carrier envelopes and merges members by release product", () => {

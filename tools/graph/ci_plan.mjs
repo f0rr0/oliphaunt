@@ -36,12 +36,14 @@ const PREFIX = "ci_plan.mjs";
 export const BASE_JOBS = new Set(["affected"]);
 export const ALWAYS_JOBS = new Set(BASE_JOBS);
 export const BUILDER_JOBS = new Set([
+  "broker-release-assets",
   "broker-runtime",
   "extension-artifacts-native",
   "extension-artifacts-wasix",
   "extension-packages",
   "js-sdk-package",
   "js-sdk-exact-candidate-consumer",
+  "kotlin-maven-staging",
   "kotlin-sdk-package",
   "liboliphaunt-native-android",
   "liboliphaunt-native-desktop",
@@ -54,6 +56,7 @@ export const BUILDER_JOBS = new Set([
   "mobile-build-ios",
   "mobile-extension-packages",
   "node-direct",
+  "node-direct-release-assets",
   "react-native-sdk-package",
   "rust-sdk-package",
   "swift-sdk-package",
@@ -298,6 +301,12 @@ export function jobsForTargets(targets, { allowedJobs = undefined } = {}) {
 }
 
 export function addImpliedJobs(jobs, tasks) {
+  if (jobs.has("broker-release-assets")) {
+    jobs.add("broker-runtime");
+  }
+  if (jobs.has("node-direct-release-assets")) {
+    jobs.add("node-direct");
+  }
   if (
     intersects(
       jobs,
@@ -353,14 +362,20 @@ export function addImpliedJobs(jobs, tasks) {
     for (const job of WASM_RUNTIME_JOBS) jobs.add(job);
   }
 
+  if (intersects(jobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
+    jobs.add("extension-packages");
+  }
+
+  // Exact extension npm carriers freeze the same-run base iOS carrier, so the
+  // aggregate extension qualifier must consume the complete native aggregate.
+  if (jobs.has("extension-packages")) {
+    jobs.add("liboliphaunt-native-release-assets");
+  }
+
   if (jobs.has("liboliphaunt-native-release-assets")) {
     for (const job of NATIVE_RUNTIME_JOBS) {
       jobs.add(job);
     }
-  }
-
-  if (intersects(jobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
-    jobs.add("extension-packages");
   }
 
   if (intersects(jobs, EXTENSION_ARTIFACT_CONSUMER_JOBS)) {
@@ -387,6 +402,16 @@ export function addImpliedJobs(jobs, tasks) {
   }
   if (jobs.has("js-sdk-exact-candidate-consumer")) {
     jobs.add("extension-artifacts-native");
+  }
+
+  // The exact Maven staging gate consumes the Kotlin package artifact. Keep
+  // both halves together after every other implication has had a chance to
+  // select the Android SDK producer.
+  if (jobs.has("kotlin-maven-staging")) {
+    jobs.add("kotlin-sdk-package");
+  }
+  if (jobs.has("kotlin-sdk-package")) {
+    jobs.add("kotlin-maven-staging");
   }
 }
 
@@ -987,7 +1012,8 @@ export function renderPlanWithSelection({
       : emptyMatrix(),
     broker_runtime_matrix: jobs.has("broker-runtime")
       ? brokerRuntimeMatrix(
-          !jobs.has("js-sdk-exact-candidate-consumer")
+          !jobs.has("broker-release-assets")
+            && !jobs.has("js-sdk-exact-candidate-consumer")
             && jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
             && selectedTargets?.size === 1
             && selectedTargets.has("linux-x64-gnu")

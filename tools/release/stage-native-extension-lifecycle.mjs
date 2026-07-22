@@ -31,34 +31,12 @@ import {
 } from "./optimize_native_runtime_payload.mjs";
 import {
   isCanonicalExtensionInstallSql,
+  validateExtensionArtifactArchive,
   validateExtensionInstallSqlReachability,
 } from "./extension-artifact-inventory.mjs";
 
 const PREFIX = "stage-native-extension-lifecycle.mjs";
 const TARGET = "linux-x64-gnu";
-const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
-  "packageLayout",
-  "pgMajor",
-  "sqlName",
-  "createsExtension",
-  "nativeModuleStem",
-  "nativeModuleFile",
-  "nativeTarget",
-  "nativeRuntimeProduct",
-  "nativeRuntimeVersion",
-  "dependencies",
-  "dataFiles",
-  "extensionSqlFileNames",
-  "extensionSqlFilePrefixes",
-  "sharedPreloadLibraries",
-  "mobilePrebuilt",
-  "mobileStaticArchives",
-  "mobileStaticDependencyArchives",
-  "staticSymbolPrefix",
-  "staticSymbolAliases",
-  "files",
-]);
-
 function fail(message) {
   throw new Error(`${PREFIX}: ${message}`);
 }
@@ -110,13 +88,13 @@ function artifactRecord(identity, file) {
   };
 }
 
-function assertExactFiles(root, expected, label) {
+export function assertExactFiles(root, expected, label) {
   const actual = regularFiles(root).map((file) => path.resolve(file)).sort(compareText);
   const wanted = [...expected].map((file) => path.resolve(file)).sort(compareText);
   if (actual.join("\0") !== wanted.join("\0")) {
     fail(
-      `${label} has unindexed files: expected=${wanted.map(path.basename).join(",")}; ` +
-        `actual=${actual.map(path.basename).join(",")}`,
+      `${label} has unindexed files: expected=${wanted.map((file) => path.basename(file)).join(",")}; ` +
+        `actual=${actual.map((file) => path.basename(file)).join(",")}`,
     );
   }
 }
@@ -323,14 +301,6 @@ function parseProperties(data, label) {
   return properties;
 }
 
-function requireExactProperties(properties, expected, label) {
-  const actual = [...properties.keys()].sort(compareText);
-  const wanted = [...expected].sort(compareText);
-  if (actual.join("\0") !== wanted.join("\0")) {
-    fail(`${label} property fields must be exactly ${wanted.join(",")}; got ${actual.join(",")}`);
-  }
-}
-
 function parseTsv(file) {
   const lines = readFileSync(file, "utf8").split(/\r?\n/u).filter(Boolean);
   if (lines.length < 2) fail(`${file} has no artifact rows`);
@@ -480,10 +450,15 @@ function stageExtensions(extensionAssets, output, extensionRows) {
     if (statSync(archive).size !== Number(row.artifact_bytes)) fail(`artifact byte count drift for ${row.sql_name}`);
     referenced.add(archive);
     consumed.push(artifactRecord(`native-extension:${row.sql_name}`, archive));
-    const entries = readCanonicalTarGz(archive);
-    const manifest = parseProperties(requireArchiveFile(entries, "manifest.properties", archive).data, archive);
-    requireExactProperties(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, archive);
     const metadata = metadataByName.get(row.sql_name);
+    const validated = validateExtensionArtifactArchive({
+      file: archive,
+      metadata,
+      target: TARGET,
+      nativeRuntimeVersion: version,
+      label: archive,
+    });
+    const { entries, properties: manifest } = validated;
     const expectedDependencies = selectedExtensionDependencies(metadata);
     for (const [key, expected] of [
       ["packageLayout", "oliphaunt-extension-artifact-v1"],
@@ -531,7 +506,12 @@ function stageExtensions(extensionAssets, output, extensionRows) {
     if (expectedModuleFile !== "") {
       requireArchiveFile(entries, `files/lib/postgresql/${expectedModuleFile}`, archive);
     }
-    stageExtensionCarrier(entries, output, metadata, archive);
+    // Legal-envelope members are validated above but are not runtime resources.
+    // Flatten only manifest.properties + files/** into the lifecycle layout.
+    const runtimeEntries = new Map(
+      [...entries].filter(([name]) => name === "manifest.properties" || name.startsWith("files/")),
+    );
+    stageExtensionCarrier(runtimeEntries, output, metadata, archive);
   }
   const unreferenced = regularFiles(path.dirname(index))
     .filter((file) => file.endsWith(".tar.gz") && !referenced.has(file))

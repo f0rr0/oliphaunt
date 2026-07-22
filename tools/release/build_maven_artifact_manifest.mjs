@@ -6,15 +6,16 @@ import path from "node:path";
 import { runMoon } from "../policy/moon.mjs";
 import { currentVersion } from "./product-version.mjs";
 import {
-  assertReleaseNoticesInArchive,
+  assertReleaseNoticesInEntries,
   releaseProfileMavenLicenses,
   releaseProfilePackageLicense,
 } from "./release-notices.mjs";
 import {
-  assertExtensionUpstreamLicensesInArchive,
+  assertExtensionUpstreamLicensesInEntries,
   extensionMavenLicenses,
   extensionRegistryLicense,
 } from "./extension-upstream-licenses.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "build_maven_artifact_manifest.mjs";
@@ -47,11 +48,31 @@ function rel(file) {
   return path.relative(ROOT, file).split(path.sep).join("/");
 }
 
+function canonicalMavenPayloadPrefix(file, entries) {
+  if (entries.has("LICENSE")) return "";
+
+  const roots = new Set([...entries.keys()].map((member) => member.split("/", 1)[0]));
+  const expected = path.basename(file).slice(0, -".tar.gz".length);
+  if (roots.size !== 1 || !roots.has(expected)) {
+    throw new Error(
+      `${path.basename(file)} must stage release notices at the archive root or beneath its `
+      + `canonical single archive root ${expected}`,
+    );
+  }
+  return expected;
+}
+
 function assertMavenPayloadLegal(file, profile, sqlNames = []) {
   try {
-    assertReleaseNoticesInArchive(file, { profile });
+    const entries = readPortableArchiveEntries(file);
+    const prefix = canonicalMavenPayloadPrefix(file, entries);
+    assertReleaseNoticesInEntries(entries, { profile, prefix, label: path.basename(file) });
     if (sqlNames.length > 0) {
-      assertExtensionUpstreamLicensesInArchive(sqlNames, file);
+      // Native singleton payloads install upstream notices with runtime files
+      // below files/, while aggregate bundles stage their combined legal tree
+      // directly below the canonical archive root.
+      const upstreamPrefix = prefix === "" ? "files" : prefix;
+      assertExtensionUpstreamLicensesInEntries(sqlNames, entries, { prefix: upstreamPrefix });
     }
   } catch (error) {
     fail(`${rel(file)} failed Maven payload legal closure: ${error instanceof Error ? error.message : String(error)}`);

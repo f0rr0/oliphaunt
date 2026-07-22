@@ -136,7 +136,7 @@
         },
         {
           "path": "tools/xtask/src/fs_utils.rs",
-          "sha256": "09963e450b1c5edff3395b720f3fb5d3ee69f053225aa4969eae1dbfe02541b2"
+          "sha256": "d79e0cf095f3e0a6fd0b533afc17745c2929a21f58ed62f75fc99a1061db9e52"
         },
         {
           "path": "tools/xtask/src/main.rs",
@@ -148,7 +148,7 @@
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
-          "sha256": "189a674874f1803e99b6f3bc0b84d5e4a7be70de437ee26cbc12137b37333038"
+          "sha256": "68597581267918307468712578d3732a818e3511d3d2f08a0006843b0543d0f8"
         },
         {
           "path": "tools/xtask/src/template_runner.rs",
@@ -178,7 +178,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "d4a81bc69693240ac9c7581666a6e7d7089728a29b6a466cbfee31ed08c1e321"
+          "sha256": "79509df8d6eeedee03ad72cac013d8ac9d5f90a5473b924ddf40897804cbdf2c"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -254,7 +254,19 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "e13ba613e310fd042604c4b0a2614101af5630698b4fa36b10f92b8519b5884a"
+          "sha256": "13827441dc7f5894450220f90c04b493b22fd974a54ff43308a254db16ec247c"
+        }
+      ]
+    },
+    {
+      "id": "wasix-extension-cargo-build-script-hash-producer",
+      "paths": [
+        "tools/release/rust-build-script-sha256.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/rust-build-script-sha256.mjs",
+          "sha256": "0cdf9a4db3788e4987a466a01c2715957730431b63b5ea9e103ee20464d3dcf4"
         }
       ]
     },
@@ -319,5 +331,5 @@
       ]
     }
   ],
-  "sha256": "04e8c5677405689bee5be91172a7bee80c8e1e56640d8363aa360f91701755cd"
+  "sha256": "dce8f358d7ea364f84e309d7223ca1edcf9cf22af71f15674a5ea9976d1848ce"
 }

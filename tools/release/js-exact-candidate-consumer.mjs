@@ -46,6 +46,14 @@ import {
 } from "./native-extension-asset-index-contract.mjs";
 import { localWindowsTarInvocation } from "./tar-command.mjs";
 import { validateExtensionArtifactArchive } from "./extension-artifact-inventory.mjs";
+import {
+  assertReleaseNoticesInArchive,
+  releaseNoticeRows,
+} from "./release-notices.mjs";
+import {
+  assertExtensionUpstreamLicensesInArchive,
+  extensionCarrierLegalContract,
+} from "./extension-upstream-licenses.mjs";
 
 const TOOL = "js-exact-candidate-consumer.mjs";
 export const WINDOWS_STANDARD_USER_MODULE_LOAD_PROOF =
@@ -59,6 +67,10 @@ export const WINDOWS_STANDARD_USER_CONTROL_READ_FILES = Object.freeze([
   "tools/release/native-extension-asset-index-contract.mjs",
   "tools/release/tar-command.mjs",
   "tools/release/extension-artifact-inventory.mjs",
+  "tools/release/release-notices.mjs",
+  "tools/release/extension-upstream-licenses.mjs",
+  "tools/release/rust-build-script-sha256.mjs",
+  "src/sdks/js/src/native/extension-contract.ts",
   "tools/release/fixtures/js-exact-candidate-runtime.mjs",
   "tools/release/fixtures/js-exact-candidate-procsignal.mjs",
   "tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs",
@@ -2486,6 +2498,7 @@ export function validateStagedBundleCarrier({
   memberEvidence,
   outputRoot,
 }) {
+  const expectedCarrierName = `${group.product}-${group.version}-native-${contract.target}-bundle.tar.gz`;
   if (
     carrier === null
     || typeof carrier !== "object"
@@ -2493,8 +2506,7 @@ export function validateStagedBundleCarrier({
     || carrier.kind !== "extension-bundle"
     || carrier.target !== contract.target
     || carrier.memberCount !== group.members.length
-    || typeof carrier.name !== "string"
-    || !carrier.name.endsWith(".tar.gz")
+    || carrier.name !== expectedCarrierName
     || !Number.isSafeInteger(carrier.bytes)
     || carrier.bytes <= 0
     || !/^[0-9a-f]{64}$/u.test(carrier.sha256 ?? "")
@@ -2509,6 +2521,10 @@ export function validateStagedBundleCarrier({
   ) {
     throw error(`${group.product} staged bundle carrier bytes drifted`);
   }
+  const legal = extensionCarrierLegalContract(group.product, group.members, {
+    family: "native",
+    target: contract.target,
+  });
   const carrierRoot = carrier.name.slice(0, -".tar.gz".length);
   const bundleManifestMember = `${carrierRoot}/bundle-manifest.json`;
   let bundleManifest;
@@ -2526,6 +2542,8 @@ export function validateStagedBundleCarrier({
     || bundleManifest.family !== "native"
     || bundleManifest.target !== contract.target
     || !sameJson(bundleManifest.compatibility, compatibility)
+    || bundleManifest.licenseProfile !== legal.profile
+    || !sameJson(bundleManifest.licenseFiles, legal.licenseFiles)
     || !Array.isArray(bundleManifest.members)
   ) {
     throw error(`${group.product} bundle-manifest.json does not match the exact candidate contract`);
@@ -2533,6 +2551,9 @@ export function validateStagedBundleCarrier({
   const expectedArchiveFiles = [
     bundleManifestMember,
     ...memberEvidence.map(({ asset }) => `${carrierRoot}/${asset.memberPath}`),
+    ...releaseNoticeRows({ profile: legal.profile })
+      .map(({ member }) => `${carrierRoot}/${member}`),
+    ...legal.licenseFiles.map((member) => `${carrierRoot}/${member}`),
   ].sort(compareText);
   const archiveFiles = run("tar", ["-tzf", carrierFile], { capture: true })
     .split(/\r?\n/u)
@@ -2543,7 +2564,22 @@ export function validateStagedBundleCarrier({
     new Set(archiveFiles).size !== archiveFiles.length
     || !sameJson(archiveFiles, expectedArchiveFiles)
   ) {
-    throw error(`${group.product} bundle carrier must contain only its exact manifest and member files`);
+    throw error(
+      `${group.product} bundle carrier must contain only its exact manifest, member, and legal files`,
+    );
+  }
+  try {
+    assertReleaseNoticesInArchive(carrierFile, {
+      prefix: carrierRoot,
+      profile: legal.profile,
+    });
+    if (legal.upstreamMembers.length > 0) {
+      assertExtensionUpstreamLicensesInArchive(legal.upstreamMembers, carrierFile, {
+        prefix: carrierRoot,
+      });
+    }
+  } catch (cause) {
+    throw error(`${group.product} bundle carrier has invalid legal payload bytes: ${cause.message}`);
   }
   const nestedBySqlName = new Map();
   for (const nested of bundleManifest.members) {
@@ -2624,9 +2660,29 @@ function copyExactExtensionTargetInput(sourceDirectory, target, unionRoot) {
   }
 }
 
+export function prepareExactCandidateExtensionBuilderIsolation(candidateOutputRoot) {
+  const isolationRoot = path.join(
+    candidateOutputRoot,
+    "isolated-absent-wasix-extension-inputs",
+  );
+  const releaseAssetRoot = path.join(isolationRoot, "release-assets");
+  const aotArtifactRoot = path.join(isolationRoot, "aot-artifacts");
+  rmSync(isolationRoot, { recursive: true, force: true });
+  mkdirSync(releaseAssetRoot, { recursive: true });
+  mkdirSync(aotArtifactRoot, { recursive: true });
+  return Object.freeze({
+    OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_ROOT: releaseAssetRoot,
+    OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT: aotArtifactRoot,
+    OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT: "",
+  });
+}
+
 export function stageExtensionCandidates(options, contract, inputEvidence) {
   const outputRoot = path.join(options.outputRoot, "staged-extension-candidates");
   const unionRoot = path.join(options.outputRoot, "staged-native-extension-inputs");
+  const isolatedOptionalInputs = prepareExactCandidateExtensionBuilderIsolation(
+    options.outputRoot,
+  );
   const productGroups = exactCandidateExtensionProductGroups(contract.extensions);
   rmSync(unionRoot, { recursive: true, force: true });
   mkdirSync(unionRoot, { recursive: true });
@@ -2650,6 +2706,7 @@ export function stageExtensionCandidates(options, contract, inputEvidence) {
     env: cleanConsumerEnv({
       OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS: productGroups.map(({ product }) => product).join(","),
       OLIPHAUNT_NATIVE_EXTENSION_RELEASE_ASSET_ROOT: unionRoot,
+      ...isolatedOptionalInputs,
     }),
     timeout: 10 * 60_000,
   });

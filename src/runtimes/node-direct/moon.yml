@@ -125,3 +125,44 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+
+  aggregate-release-assets:
+    tags: ["release", "artifact-package", "ci-node-direct-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/node-direct/**/*"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/js/package.json"
+      - "/src/sources/toolchains/node.toml"
+      - "/tools/policy/moon.mjs"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/check-node-direct-release-assets.mjs"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

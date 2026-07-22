@@ -56,7 +56,19 @@
       "inputs": [
         {
           "path": "tools/release/extension-upstream-licenses.mjs",
-          "sha256": "b3c57f369bd16fc56741d56ffceb92c5d42103db5f51c0b191a0f08381f256c0"
+          "sha256": "7e244d286d71e842964e8b5a67dd6c12d81512e9b24439cf92eebce2699a4c46"
+        }
+      ]
+    },
+    {
+      "id": "npm-extension-contract",
+      "paths": [
+        "src/sdks/js/src/native/extension-contract.ts"
+      ],
+      "inputs": [
+        {
+          "path": "src/sdks/js/src/native/extension-contract.ts",
+          "sha256": "a010de71754e015f302898180cf75819085475187a9237d42ad76c7ef6c97555"
         }
       ]
     },
@@ -132,7 +144,7 @@
         },
         {
           "path": "tools/release/extension-registry-carrier-materializer.mjs",
-          "sha256": "280300abe3fb9288d1932ec3ef1f85c9917431e9cec0274d6bc0f75b3bd479ac"
+          "sha256": "a10c2448e1fc2dd21d80342517d2b9c49a0a4627c1ab386bfd8c91c018b9a0c8"
         },
         {
           "path": "tools/release/extension-registry-packages.mjs",
@@ -179,17 +191,17 @@
     {
       "id": "maven-runtime-extension-carrier-producer",
       "paths": [
-        "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-        "tools/release/build_maven_artifact_manifest.mjs"
+        "tools/release/build_maven_artifact_manifest.mjs",
+        "tools/release/maven-artifact-staging.mjs"
       ],
       "inputs": [
         {
-          "path": "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
-          "sha256": "1de14caa77d97b9d3b92b225b5befbfbeb609c0e90e081d6146b54dfd5b33922"
+          "path": "tools/release/build_maven_artifact_manifest.mjs",
+          "sha256": "d2ea07b635a520804af418f2c6b7e1d60549df77a311a5d765a3791b7f5536ee"
         },
         {
-          "path": "tools/release/build_maven_artifact_manifest.mjs",
-          "sha256": "85e8b55bc6280e8ad1007557c62e88b8cf414d614d04a9883223e543d09b6129"
+          "path": "tools/release/maven-artifact-staging.mjs",
+          "sha256": "e6eb63879ea3532c893d16272345792007e59c9cc07476c6daf423a04827e8d2"
         }
       ]
     },
@@ -201,7 +213,19 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "e13ba613e310fd042604c4b0a2614101af5630698b4fa36b10f92b8519b5884a"
+          "sha256": "13827441dc7f5894450220f90c04b493b22fd974a54ff43308a254db16ec247c"
+        }
+      ]
+    },
+    {
+      "id": "wasix-extension-cargo-build-script-hash-producer",
+      "paths": [
+        "tools/release/rust-build-script-sha256.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/rust-build-script-sha256.mjs",
+          "sha256": "0cdf9a4db3788e4987a466a01c2715957730431b63b5ea9e103ee20464d3dcf4"
         }
       ]
     },
@@ -238,6 +262,18 @@
         {
           "path": "tools/release/platform-compatibility-policy.mjs",
           "sha256": "2da411f95ccf11afa603605b5c15b3775073f9c1f157c70e5d0362902712564c"
+        }
+      ]
+    },
+    {
+      "id": "shared-native-archive-encoder",
+      "paths": [
+        "tools/release/archive_dir.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/archive_dir.mjs",
+          "sha256": "4b94ea1e5d53d3f68f8073d386084dba14011333bda8aa3e1fc752e2a2b320fb"
         }
       ]
     },
@@ -295,5 +331,5 @@
       ]
     }
   ],
-  "sha256": "8fc7642c8e10832fb80b03ed59700a7952ef1e8359e455cef76fb2c6ef529457"
+  "sha256": "e5d74145bfe27d6ec1c223c80cf897f9426909a5c8cdb5dd69c780d7f52ea9b2"
 }

@@ -157,6 +157,12 @@ function readToml(repoPath) {
   return value;
 }
 
+function readYaml(repoPath) {
+  const value = Bun.YAML.parse(readFileSync(path.join(ROOT, repoPath), "utf8"));
+  invariant(object(value), `${repoPath} must contain a YAML mapping`);
+  return value;
+}
+
 function repositoryFilesUnder(repoPath) {
   const result = [];
   const visit = (relative) => {
@@ -438,6 +444,61 @@ function checkCiWorkflowPolicy() {
   const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
   const modeledJobs = new Set(Object.keys(CI_JOB_TARGETS));
   invariant(modeledJobs.size > 0, "CI planner must expose Moon-tagged jobs");
+  assertSet(
+    new Set(CI_JOB_TARGETS["liboliphaunt-native-release-assets"] ?? []),
+    new Set([
+      "liboliphaunt-native:registry-carrier-qualification",
+      "liboliphaunt-native:release-assets",
+    ]),
+    "native aggregate artifact and local registry-carrier targets",
+  );
+  assertSet(
+    new Set(CI_JOB_TARGETS["extension-packages"] ?? []),
+    new Set([
+      "extension-packages:assemble-release",
+      "extension-packages:registry-carrier-qualification",
+    ]),
+    "extension aggregate artifact and local registry-carrier targets",
+  );
+  for (const [repoPath, dependency, command, evidence] of [
+    [
+      "src/runtimes/liboliphaunt/native/moon.yml",
+      "liboliphaunt-native:release-assets",
+      "tools/dev/bun.sh tools/release/offline-registry-carrier-qualification.mjs --scope native",
+      "/target/release-work/offline-registry-carrier-qualification/native.json",
+    ],
+    [
+      "src/extensions/artifacts/packages/moon.yml",
+      "extension-packages:assemble-release",
+      "tools/dev/bun.sh tools/release/offline-registry-carrier-qualification.mjs --scope extensions",
+      "/target/release-work/offline-registry-carrier-qualification/extensions.json",
+    ],
+  ]) {
+    const task = readYaml(repoPath).tasks?.["registry-carrier-qualification"];
+    invariant(object(task), `${repoPath} must define registry-carrier-qualification`);
+    assertSet(task.deps ?? [], new Set([dependency]), `${repoPath} carrier qualification dependency`);
+    invariant(task.command === command, `${repoPath} must invoke only the canonical offline carrier qualification`);
+    invariant(
+      Array.isArray(task.outputs) && task.outputs.includes(evidence),
+      `${repoPath} carrier qualification must declare its evidence output`,
+    );
+    invariant(
+      Array.isArray(task.inputs) && task.inputs.includes("/tools/release/rust-build-script-sha256.mjs"),
+      `${repoPath} carrier qualification must track its generated Rust SHA-256 import closure`,
+    );
+    invariant(
+      task.options?.cache === false && task.options?.runFromWorkspaceRoot === true && task.options?.runInCI === true,
+      `${repoPath} carrier qualification must run uncached from the workspace root in CI`,
+    );
+  }
+  const wasixExactCandidateTrigger = readYaml("tools/release/moon.yml")
+    .tasks?.["wasix-rust-exact-candidate-trigger"];
+  invariant(object(wasixExactCandidateTrigger), "release-tools must define wasix-rust-exact-candidate-trigger");
+  invariant(
+    Array.isArray(wasixExactCandidateTrigger.inputs)
+      && wasixExactCandidateTrigger.inputs.includes("/tools/release/rust-build-script-sha256.mjs"),
+    "WASIX Rust exact-candidate trigger must track its generated Rust SHA-256 import closure",
+  );
   invariant(!BUILDER_JOBS.has("liboliphaunt-wasix-aot-targets"), "WASIX AOT target planning must not be a builder job");
 
   const workflowJobs = new Set(Object.keys(ci.jobs));
@@ -596,6 +657,7 @@ function checkCiBuilderPlanning(expectations) {
     android: [
       "affected",
       "extension-artifacts-native",
+      "kotlin-maven-staging",
       "kotlin-sdk-package",
       "liboliphaunt-native-android",
       "liboliphaunt-native-ios",
@@ -726,7 +788,11 @@ function checkCiBuilderPlanning(expectations) {
       jobs: union(BASE_JOBS, new Set(["liboliphaunt-native-ios", "swift-sdk-package"])),
       targets: new Set(["ios-xcframework"]),
     },
-    { label: "Kotlin SDK", task: "oliphaunt-kotlin:package-artifacts", jobs: union(BASE_JOBS, new Set(["kotlin-sdk-package"])) },
+    {
+      label: "Kotlin SDK",
+      task: "oliphaunt-kotlin:package-artifacts",
+      jobs: union(BASE_JOBS, new Set(["kotlin-maven-staging", "kotlin-sdk-package"])),
+    },
     {
       label: "Rust SDK",
       task: "oliphaunt-rust:package-artifacts",

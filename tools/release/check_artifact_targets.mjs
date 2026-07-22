@@ -616,6 +616,22 @@ export function validateWorkflowConsumer(workflow, jobId, producerJobs, required
   for (const artifact of requiredArtifacts) invariant(specs.some((pattern) => globMatches(pattern, artifact)), `${jobId} does not download required artifact ${artifact}`);
 }
 
+function validateMergedSameRunDownload(workflow, jobId, pattern, artifactPath) {
+  const matches = actionSteps(workflow, jobId, "actions/download-artifact@")
+    .filter((step) => step.with?.pattern === pattern);
+  invariant(matches.length === 1, `${jobId} must download ${pattern} exactly once`);
+  const options = matches[0].with ?? {};
+  invariant(
+    options.path === artifactPath
+      && options["merge-multiple"] === true
+      && options.name === undefined
+      && options["run-id"] === undefined
+      && options.repository === undefined
+      && options["github-token"] === undefined,
+    `${jobId}/${pattern} must merge exact same-run artifacts into ${artifactPath}`,
+  );
+}
+
 function validateJsExactIosExtensionInput(workflow) {
   const jobId = "js-sdk-exact-candidate-consumer";
   const artifact = "liboliphaunt-native-extension-artifacts-ios-xcframework";
@@ -707,6 +723,45 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     ["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-runtime-portable"],
     ["liboliphaunt-wasix-release-assets", "liboliphaunt-wasix-release-assets"],
   ]) validateWorkflowProducer(workflow, jobId, artifact, [{}], [artifact]);
+  validateWorkflowConsumer(
+    workflow,
+    "broker-release-assets",
+    ["broker-runtime"],
+    releaseAssets("oliphaunt-broker", "broker-helper"),
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "node-direct-release-assets",
+    ["node-direct"],
+    [
+      ...releaseAssets("oliphaunt-node-direct", "node-direct-addon"),
+      ...npmPackages("oliphaunt-node-direct", "node-direct-addon"),
+    ],
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "broker-release-assets",
+    "oliphaunt-broker-release-assets-*",
+    "target/oliphaunt-broker/release-assets",
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "node-direct-release-assets",
+    "oliphaunt-node-direct-release-assets-*",
+    "target/oliphaunt-node-direct/release-assets",
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "node-direct-release-assets",
+    "oliphaunt-node-direct-npm-package-*",
+    "target/oliphaunt-node-direct/npm-packages",
+  );
+  for (const jobId of ["broker-release-assets", "node-direct-release-assets"]) {
+    invariant(
+      actionSteps(workflow, jobId, "actions/upload-artifact@").length === 0,
+      `${jobId} must validate same-run target artifacts without uploading a duplicate product artifact`,
+    );
+  }
   validateWorkflowConsumer(workflow, "liboliphaunt-native-release-assets", ["liboliphaunt-native-desktop", "liboliphaunt-native-android", "liboliphaunt-native-ios"], nativeRelease);
   validateWorkflowConsumer(workflow, "extension-artifacts-wasix", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);
   validateWorkflowConsumer(workflow, "liboliphaunt-wasix-aot", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);

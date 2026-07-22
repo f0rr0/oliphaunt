@@ -173,6 +173,10 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       ["oliphaunt-extension-contrib-pg18"],
     ],
     ["tools/release/extension-upstream-licenses.mjs", extensionProducts],
+    [
+      "src/sdks/js/src/native/extension-contract.ts",
+      ["oliphaunt-js", ...extensionProducts].sort(),
+    ],
     ["tools/release/source-only-sdk-package.mjs", ["oliphaunt-js", "oliphaunt-react-native"]],
     [
       "tools/release/cargo-source-package.mjs",
@@ -219,7 +223,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       ["liboliphaunt-wasix", "oliphaunt-swift"],
     ],
     ["tools/release/build_maven_artifact_manifest.mjs", ["liboliphaunt-native", ...extensionProducts]],
-    ["src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts", ["liboliphaunt-native", ...extensionProducts]],
+    ["tools/release/maven-artifact-staging.mjs", ["liboliphaunt-native", ...extensionProducts]],
     ["tools/release/package-liboliphaunt-cargo-artifacts.mjs", ["liboliphaunt-native"]],
     ["tools/release/package_broker_cargo_artifacts.mjs", ["oliphaunt-broker"]],
     ["tools/release/broker-dependency-license-contract.mjs", ["oliphaunt-broker"]],
@@ -232,6 +236,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
       ["liboliphaunt-wasix", ...extensionProducts],
     ],
+    ["tools/release/rust-build-script-sha256.mjs", ["liboliphaunt-wasix", ...extensionProducts]],
     ["tools/release/sdk-artifacts/shared.mjs", sdkProducts],
     ["tools/release/sdk-artifacts/npm.mjs", ["oliphaunt-js", "oliphaunt-react-native"]],
     ["tools/release/sdk-artifacts/rust.mjs", ["oliphaunt-rust"]],
@@ -253,7 +258,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ],
     [
       "tools/release/archive_dir.mjs",
-      ["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"],
+      ["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct", ...extensionProducts],
     ],
     [
       "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
@@ -527,6 +532,14 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
     extensionProducts,
   );
   assert.deepEqual(
+    releaseSemanticProductsForPath(
+      manifest,
+      "src/sdks/js/src/native/extension-contract.ts",
+      { prefix: "release-semantic-inputs.test" },
+    ),
+    ["oliphaunt-js", ...extensionProducts].sort(),
+  );
+  assert.deepEqual(
     releaseSemanticProductsForPath(manifest, transport, { prefix: "release-semantic-inputs.test" }),
     [],
   );
@@ -560,6 +573,27 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
     if (!extensionProducts.every((product) => owners.includes(product))) unowned.push(candidate);
   }
   assert.deepEqual(sorted(unowned), explicitNonByteImports);
+});
+
+test("every cached materializer task owns its shared contract import closure", () => {
+  const sharedInputs = [
+    "/src/sdks/js/src/native/extension-contract.ts",
+    "/tools/release/extension-registry-carrier-materializer.mjs",
+    "/tools/release/extension-runtime-asset-contract.mjs",
+    "/tools/release/rust-build-script-sha256.mjs",
+  ];
+  for (const [repoPath, taskName] of [
+    ["tools/release/moon.yml", "js-exact-candidate-trigger"],
+    ["src/extensions/artifacts/packages/moon.yml", "registry-carrier-qualification"],
+    ["src/runtimes/liboliphaunt/native/moon.yml", "registry-carrier-qualification"],
+  ]) {
+    const project = Bun.YAML.parse(readFileSync(path.join(ROOT, repoPath), "utf8"));
+    const inputs = project?.tasks?.[taskName]?.inputs;
+    assert.equal(Array.isArray(inputs), true, `${repoPath}:${taskName} must declare inputs`);
+    for (const input of sharedInputs) {
+      assert.equal(inputs.includes(input), true, `${repoPath}:${taskName} is missing ${input}`);
+    }
+  }
 });
 
 test("focused carrier import closure recognizes literal dynamic imports and rejects computed imports", () => {

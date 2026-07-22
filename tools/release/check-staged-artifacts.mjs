@@ -39,7 +39,10 @@ import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  portableMemberName,
+  readPortableArchiveEntries,
+} from "./portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
@@ -1608,7 +1611,13 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
         fail(`${rel(manifest)} member ${member.sqlName} asset ${name} has a noncanonical nested locator`);
       }
       const composedPath = `${carrierRoot}/${memberPath}`;
-      if (checkedArchiveMember(composedPath, path.join(root, "release-assets", carrierAsset)) !== composedPath) {
+      if (
+        portableMemberName(
+          composedPath,
+          "file",
+          path.join(root, "release-assets", carrierAsset),
+        ) !== composedPath
+      ) {
         fail(`${rel(manifest)} member ${member.sqlName} asset ${name} has an unsafe nested locator`);
       }
       const localPath = path.join(ROOT, pathValue);
@@ -1619,6 +1628,8 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
       if (!isFile(localPath) || statSync(localPath).size !== bytes || sha256File(localPath) !== sha256) {
         fail(`${rel(manifest)} member ${member.sqlName} local asset ${name} is missing or does not match its size/digest`);
       }
+      // canonicalBundleTarEntries also applies this contract to every key in
+      // the archive before any nested member is looked up.
       const inner = carrierEntries.get(carrierAsset)?.get(composedPath);
       if (inner === undefined || inner.length !== bytes || createHash("sha256").update(inner).digest("hex") !== sha256) {
         fail(`${rel(manifest)} member ${member.sqlName} asset ${name} is missing or has wrong bytes inside ${carrierAsset}`);

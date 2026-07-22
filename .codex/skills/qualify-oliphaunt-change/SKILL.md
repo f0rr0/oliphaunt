@@ -59,6 +59,11 @@ preservation of an existing checkout when every endpoint fails.
 
    ```sh
    bash3="${OLIPHAUNT_BASH3:-/bin/bash}"
+   case "$bash3" in
+     /*) ;;
+     */*) bash3="$(cd "$(dirname "$bash3")" && pwd -P)/$(basename "$bash3")" ;;
+     *) bash3="$(command -v "$bash3")" ;;
+   esac
    "$bash3" -c '((BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2))'
    PATH="$(dirname "$bash3"):$PATH" \
      OLIPHAUNT_TEST_BASH="$bash3" \

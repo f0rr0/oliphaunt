@@ -58,7 +58,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "966442d967bbdb51591046309a0d687c9f2a8218763f51e80d0ae0ec7cab97e4"
+          "sha256": "4b94ea1e5d53d3f68f8073d386084dba14011333bda8aa3e1fc752e2a2b320fb"
         }
       ]
     },
@@ -99,5 +99,5 @@
       ]
     }
   ],
-  "sha256": "6342f9cf9a9501e03dd7d040570664bcf31f9e79d23fc4490b451e7f14e26a3b"
+  "sha256": "4b70eeeaf04c1aec33108fb2f43db5e653e65cf8731bc4436652c5361f3578b1"
 }

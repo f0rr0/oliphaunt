@@ -66,6 +66,7 @@ import {
   brokerDependencyLicenseMembers,
   normalizeBrokerDependencyLicenseModes,
 } from "./broker-dependency-license-contract.mjs";
+import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -695,8 +696,8 @@ export function extractReleaseArchiveTree(archive, sourcePrefix, destination) {
   fail(`${rel(archive)} is missing ${prefix}`);
 }
 
-function runNativePayloadOptimizer(stage, target, toolSet) {
-  run(TOOL, [
+export function nativePayloadOptimizerArgs(stage, target, toolSet) {
+  return [
     process.execPath,
     "tools/release/optimize_native_runtime_payload.mjs",
     rel(stage),
@@ -704,7 +705,12 @@ function runNativePayloadOptimizer(stage, target, toolSet) {
     target,
     "--tool-set",
     toolSet,
-  ]);
+    "--check",
+  ];
+}
+
+function runNativePayloadOptimizer(stage, target, toolSet) {
+  run(TOOL, nativePayloadOptimizerArgs(stage, target, toolSet));
 }
 
 function ensureNativeToolsAbsentFromRuntime(stage, target) {
@@ -1315,15 +1321,14 @@ export function liboliphauntNativeCargoArtifactPackages(version = currentProduct
   return validateNativeCargoArtifacts(outputDir);
 }
 
-function runLiboliphauntNativeDryRun() {
+async function runLiboliphauntNativeDryRun() {
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   liboliphauntNativeCargoArtifactPackages(version);
   liboliphauntNpmTarballs(version);
   const manifest = buildMavenArtifactManifest("liboliphaunt-native-runtime", { runtime: true });
-  runMavenArtifactPublisher(
+  await stageMavenArtifactManifest(
     manifest,
-    ":oliphaunt-maven-artifacts:publishToMavenLocal",
-    "liboliphaunt-native-maven-dry-run",
+    path.join(ROOT, "target/release/maven-staging/liboliphaunt-native-maven-dry-run"),
   );
 }
 
@@ -1500,34 +1505,14 @@ export function buildMavenArtifactManifest(name, { runtime = false, extensions =
   return outputPath;
 }
 
-export function runMavenArtifactPublisher(manifest, task, cacheSlug) {
-  const args = [
-    "src/sdks/kotlin/gradlew",
-    "-p",
-    "src/sdks/kotlin",
-    task,
-    `-PoliphauntMavenArtifactsManifest=${manifest}`,
-    `-PoliphauntBuildRoot=${path.join(ROOT, "target/liboliphaunt-sdk-check/gradle", cacheSlug)}`,
-    "--project-cache-dir",
-    path.join(ROOT, "target/liboliphaunt-sdk-check/gradle-cache", cacheSlug),
-    "--configure-on-demand",
-    "--no-configuration-cache",
-  ];
-  if (task.endsWith("publishToMavenLocal")) {
-    args.splice(4, 0, `-Dmaven.repo.local=${path.join(ROOT, "target/release/maven-staging", cacheSlug)}`);
-  }
-  run(TOOL, args);
-}
-
-function runExtensionMavenArtifactDryRun(product) {
+async function runExtensionMavenArtifactDryRun(product) {
   const manifest = buildMavenArtifactManifest(product, {
     extensions: true,
     extensionProducts: [product],
   });
-  runMavenArtifactPublisher(
+  await stageMavenArtifactManifest(
     manifest,
-    ":oliphaunt-maven-artifacts:publishToMavenLocal",
-    `${product}-maven-dry-run`,
+    path.join(ROOT, "target/release/maven-staging", `${product}-maven-dry-run`),
   );
 }
 
@@ -1600,13 +1585,44 @@ function runExtensionWasixCargoArtifactDryRun(product) {
     fail(`${product} WASIX Cargo dry-run did not generate ${rel(manifestPath)}`);
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const packages = (manifest.packages ?? [])
-    .filter((pkg) => pkg?.kind === "wasix-extension" || pkg?.kind === "wasix-extension-aot")
-    .map((pkg) => pkg.name)
-    .sort(compareText);
-  if (packages.length === 0) {
-    fail(`${product} WASIX Cargo dry-run generated no extension packages`);
+  if (manifest?.schema !== WASIX_CARGO_ARTIFACT_SCHEMA || !Array.isArray(manifest.packages)) {
+    fail(`${product} WASIX Cargo dry-run generated an invalid package manifest`);
   }
+  const packages = manifest.packages.map((pkg) => {
+    if (
+      pkg === null
+      || Array.isArray(pkg)
+      || typeof pkg !== "object"
+      || typeof pkg.name !== "string"
+      || pkg.name.length === 0
+      || (pkg.kind !== "wasix-extension" && pkg.kind !== "wasix-extension-aot")
+    ) {
+      fail(`${product} WASIX Cargo dry-run generated an invalid extension package row`);
+    }
+    return pkg.name;
+  });
+  if (new Set(packages).size !== packages.length) {
+    fail(`${product} WASIX Cargo dry-run generated duplicate package identities`);
+  }
+  const expectedBases = registryPackageRows({ product, packageKind: "crates" }, TOOL)
+    .map(({ packageName }) => packageName)
+    .filter((name) => name === `${product}-wasix` || name.startsWith(`${product}-aot-`));
+  const expectedBaseSet = new Set(expectedBases);
+  const actualBases = packages.filter((name) => !/-part-[0-9]{3}$/u.test(name));
+  assertSameStringSet(`${product} WASIX Cargo base packages`, actualBases, expectedBases);
+  const invalidParts = packages.filter((name) => {
+    const match = name.match(/^(.*)-part-([0-9]{3})$/u);
+    return match !== null && (!expectedBaseSet.has(match[1]) || Number.parseInt(match[2], 10) < 1);
+  });
+  if (invalidParts.length > 0) {
+    fail(`${product} WASIX Cargo dry-run generated invalid payload part packages: ${invalidParts.sort(compareText).join(", ")}`);
+  }
+  const undeclared = packages.filter((name) =>
+    !expectedBaseSet.has(name) && !/-part-[0-9]{3}$/u.test(name));
+  if (undeclared.length > 0) {
+    fail(`${product} WASIX Cargo dry-run generated undeclared base packages: ${undeclared.sort(compareText).join(", ")}`);
+  }
+  packages.sort(compareText);
   console.log(`${product} WASIX Cargo dry-run packages: ${packages.join(", ")}`);
 }
 
@@ -1621,11 +1637,11 @@ function runExtensionCargoFacadeDryRun(product) {
   console.log(`${product} Cargo facade dry-run package: ${product}@${packages[0].version}`);
 }
 
-function runExtensionDryRun(product) {
+async function runExtensionDryRun(product) {
   for (const asset of extensionAssetPaths(product)) {
     console.log(`${product} release asset: ${asset}`);
   }
-  runExtensionMavenArtifactDryRun(product);
+  await runExtensionMavenArtifactDryRun(product);
   runExtensionNpmArtifactDryRun(product);
   runExtensionNativeCargoArtifactDryRun(product);
   runExtensionWasixCargoArtifactDryRun(product);
@@ -1638,7 +1654,7 @@ export async function runBunProductDryRun(product, { allowDirty = false } = {}) 
     return;
   }
   if (product === LIBOLIPHAUNT_NATIVE_PRODUCT) {
-    runLiboliphauntNativeDryRun();
+    await runLiboliphauntNativeDryRun();
     return;
   }
   if (product === BROKER_PRODUCT) {
@@ -1654,7 +1670,7 @@ export async function runBunProductDryRun(product, { allowDirty = false } = {}) 
     return;
   }
   if (exactExtensionProducts(TOOL).includes(product)) {
-    runExtensionDryRun(product);
+    await runExtensionDryRun(product);
     return;
   }
   fail(`no Bun publish dry-run handler for ${product}`, 2);

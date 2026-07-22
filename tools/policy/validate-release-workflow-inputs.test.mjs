@@ -10,7 +10,8 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const SCRIPT = path.join(ROOT, ".github/scripts/validate-release-workflow-inputs.sh");
 const SHA = "84d90b9853530ab72e48a1aa6fb616aaed7a0dc6";
 const BASH = process.env.OLIPHAUNT_TEST_BASH
-  ?? (process.platform === "darwin" ? "/bin/bash" : "bash");
+  ? path.resolve(ROOT, process.env.OLIPHAUNT_TEST_BASH)
+  : (process.platform === "darwin" ? "/bin/bash" : "bash");
 
 function validate({
   operation = "prepare-release-pr",

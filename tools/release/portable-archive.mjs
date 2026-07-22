@@ -97,7 +97,7 @@ function decodeUtf8(bytes, file, label, { requireAscii = false } = {}) {
   }
 }
 
-function portableMemberName(raw, type, file, { allowRoot = false } = {}) {
+export function portableMemberName(raw, type, file, { allowRoot = false } = {}) {
   if (allowRoot && type === "directory" && (raw === "." || raw === "./")) return null;
   const directoryMarker = raw.endsWith("/");
   if ((type === "directory") !== directoryMarker) {
@@ -721,30 +721,71 @@ function strictGunzip(compressed, file, maxOutputLength) {
   return inflated.buffer;
 }
 
-function readTarEntries(file, archiveLimits, compression = "gzip") {
-  const compressed = readFileSync(file);
+export function decompressSingleZstdFrame(
+  input,
+  {
+    label = "Zstandard payload",
+    maxInputBytes = DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxArchiveBytes,
+    maxOutputBytes = DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxExpandedBytes,
+  } = {},
+) {
+  const checkedMaxInputBytes = positiveLimit(
+    maxInputBytes,
+    DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxArchiveBytes,
+    "maxInputBytes",
+  );
+  const checkedMaxOutputBytes = positiveLimit(
+    maxOutputBytes,
+    DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxExpandedBytes,
+    "maxOutputBytes",
+  );
+  if (!Buffer.isBuffer(input) && !(input instanceof Uint8Array)) {
+    throw archiveError(label, "must be provided as a Buffer or Uint8Array");
+  }
+  const compressed = Buffer.isBuffer(input)
+    ? input
+    : Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  if (compressed.length === 0 || compressed.length > checkedMaxInputBytes) {
+    throw archiveError(
+      label,
+      `must be non-empty and no larger than ${checkedMaxInputBytes} bytes; got ${compressed.length}`,
+    );
+  }
+  if (
+    compressed.length < 4
+    || compressed[0] !== 0x28
+    || compressed[1] !== 0xb5
+    || compressed[2] !== 0x2f
+    || compressed[3] !== 0xfd
+  ) {
+    throw archiveError(label, "is not a Zstandard frame");
+  }
+  let decompressed;
+  try {
+    decompressed = zstdDecompressSync(compressed, {
+      info: true,
+      maxOutputLength: checkedMaxOutputBytes,
+    });
+  } catch (cause) {
+    throw archiveError(label, `is not a bounded readable Zstandard stream: ${cause.message}`);
+  }
+  if (decompressed.engine.bytesWritten !== compressed.length) {
+    throw archiveError(label, "contains trailing data or multiple Zstandard frames");
+  }
+  return decompressed.buffer;
+}
+
+function readTarBufferEntries(compressed, file, archiveLimits, compression = "gzip") {
   let tar;
   try {
     if (compression === "gzip") {
       tar = strictGunzip(compressed, file, archiveLimits.maxExpandedBytes);
     } else {
-      if (
-        compressed.length < 4
-        || compressed[0] !== 0x28
-        || compressed[1] !== 0xb5
-        || compressed[2] !== 0x2f
-        || compressed[3] !== 0xfd
-      ) {
-        throw archiveError(file, "is not a Zstandard frame");
-      }
-      const decompressed = zstdDecompressSync(compressed, {
-        info: true,
-        maxOutputLength: archiveLimits.maxExpandedBytes,
+      tar = decompressSingleZstdFrame(compressed, {
+        label: file,
+        maxInputBytes: archiveLimits.maxArchiveBytes,
+        maxOutputBytes: archiveLimits.maxExpandedBytes,
       });
-      if (decompressed.engine.bytesWritten !== compressed.length) {
-        throw archiveError(file, "contains trailing data or multiple Zstandard frames");
-      }
-      tar = decompressed.buffer;
     }
   } catch (cause) {
     if (cause instanceof Error && cause.message.startsWith("portable-archive:")) throw cause;
@@ -863,6 +904,10 @@ function readTarEntries(file, archiveLimits, compression = "gzip") {
   return checkedEntries(entries, file, archiveLimits);
 }
 
+function readTarEntries(file, archiveLimits, compression = "gzip") {
+  return readTarBufferEntries(readFileSync(file), file, archiveLimits, compression);
+}
+
 function inferredFormat(file) {
   const lower = file.toLowerCase();
   if (lower.endsWith(".zip") || lower.endsWith(".jar") || lower.endsWith(".aar") || lower.endsWith(".apk")) {
@@ -883,4 +928,22 @@ export function readPortableArchiveEntries(file, options = {}) {
   if (format === "tar.gz") return readTarEntries(file, archiveLimits);
   if (format === "tar.zst") return readTarEntries(file, archiveLimits, "zstd");
   throw archiveError(file, `has an unsupported archive format ${JSON.stringify(format)}`);
+}
+
+export function readPortableTarZstdBufferEntries(input, options = {}) {
+  const archiveLimits = limits(options);
+  if (!Buffer.isBuffer(input) && !(input instanceof Uint8Array)) {
+    throw archiveError(options.label ?? "nested.tar.zst", "must be provided as a Buffer or Uint8Array");
+  }
+  const buffer = Buffer.isBuffer(input)
+    ? input
+    : Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  const label = options.label ?? "nested.tar.zst";
+  if (buffer.length === 0 || buffer.length > archiveLimits.maxArchiveBytes) {
+    throw archiveError(
+      label,
+      `must be non-empty and no larger than ${archiveLimits.maxArchiveBytes} bytes; got ${buffer.length}`,
+    );
+  }
+  return readTarBufferEntries(buffer, label, archiveLimits, "zstd");
 }

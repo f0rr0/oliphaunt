@@ -93,6 +93,15 @@ products = [
 ]
 
 [[rules]]
+id = "npm-extension-contract"
+# This schema/parser is compiled into @oliphaunt/ts and is imported directly
+# by the npm extension carrier materializer, so one edit changes both sides of
+# the independently versioned package contract.
+paths = ["src/sdks/js/src/native/extension-contract.ts"]
+products = ["oliphaunt-js"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
 id = "source-only-sdk-package-producer"
 paths = ["tools/release/source-only-sdk-package.mjs"]
 products = ["oliphaunt-js", "oliphaunt-react-native"]
@@ -197,8 +206,8 @@ products = [
 [[rules]]
 id = "maven-runtime-extension-carrier-producer"
 paths = [
-  "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
   "tools/release/build_maven_artifact_manifest.mjs",
+  "tools/release/maven-artifact-staging.mjs",
 ]
 products = ["liboliphaunt-native"]
 product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
@@ -225,6 +234,12 @@ products = ["oliphaunt-broker"]
 [[rules]]
 id = "wasix-runtime-extension-cargo-carrier-producer"
 paths = ["tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"]
+products = ["liboliphaunt-wasix"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "wasix-extension-cargo-build-script-hash-producer"
+paths = ["tools/release/rust-build-script-sha256.mjs"]
 products = ["liboliphaunt-wasix"]
 product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 
@@ -316,6 +331,7 @@ product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 id = "shared-native-archive-encoder"
 paths = ["tools/release/archive_dir.mjs"]
 products = ["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 
 [[rules]]
 id = "canonical-native-c-abi-header"

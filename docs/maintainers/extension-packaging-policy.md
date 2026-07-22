@@ -72,9 +72,20 @@ Every direct or bundle npm platform package also carries and exports
 `extension-contract.json` with schema `oliphaunt-npm-extension-contract-v1`.
 That manifest freezes each member's `createsExtension`, native module stem,
 dependencies, data files, additional SQL names/prefixes, and preload libraries
-at the independently versioned extension release. JavaScript validates the
-exact contract schema and uses it—not the SDK's current catalog snapshot—to
-qualify the installed package's runtime leaf inventory. The SDK catalog remains
+at the independently versioned extension release. It also freezes the exact,
+sorted `share/licenses/` file inventory derived from that member's canonical
+carrier legal metadata. Every row binds the portable path, canonical SHA-256,
+and archive mode `0644`; contrib members therefore declare an explicit empty
+list. JavaScript validates the exact contract schema, rejects unsafe or
+colliding paths, verifies the declared bytes, and rejects installed modes that
+grant permissions beyond canonical mode `0644`; a consumer's restrictive
+umask may safely remove write/read permissions during installation. On
+Windows, where the installed filesystem does not preserve POSIX owner/group
+mode bits, the runtime enforces the representable non-executable mode. The
+packed carrier check proves exact mode `0644` on every platform. The runtime
+also requires every declared legal file and no undeclared runtime leaf. It uses
+this frozen contract—not the SDK's current catalog snapshot—to qualify the
+installed package's runtime leaf inventory. The SDK catalog remains
 authoritative for selection, release/package ownership, and dependency
 compatibility.
 

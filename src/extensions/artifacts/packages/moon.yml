@@ -132,3 +132,46 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
+
+  registry-carrier-qualification:
+    tags: ["release", "artifact-package", "ci-extension-packages"]
+    deps:
+      - "extension-packages:assemble-release"
+    command: "tools/dev/bun.sh tools/release/offline-registry-carrier-qualification.mjs --scope extensions"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/runtimes/liboliphaunt/wasix/packages/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/archive_dir.mjs"
+      - "/tools/release/atomic-directory.mjs"
+      - "/tools/release/build_maven_artifact_manifest.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-registry-carrier-materializer.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/src/sdks/js/src/native/extension-contract.ts"
+      - "/tools/release/maven-artifact-staging.mjs"
+      - "/tools/release/maven-central-contract.mjs"
+      - "/tools/release/offline-registry-carrier-qualification.mjs"
+      - "/tools/release/package-extension-cargo-facades.mjs"
+      - "/tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-product-dry-run.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
+      - "/target/liboliphaunt/release-assets/**/*"
+      - "/target/extension-artifacts/**/*"
+    outputs:
+      - "/target/release/extension-dry-run/**/*"
+      - "/target/release/maven-staging/oliphaunt-extension-*-maven-dry-run/**/*"
+      - "/target/release-work/offline-registry-carrier-qualification/extensions.json"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

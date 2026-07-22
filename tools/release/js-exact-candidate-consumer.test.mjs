@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 import {
   ExactCandidateCommandTimeoutError,
@@ -43,6 +44,7 @@ import {
   parseExactCandidateConsumerArgs,
   parseExactCandidateCommandWatchdogProtocol,
   persistExactCandidateImmutableInputPostRunProof,
+  prepareExactCandidateExtensionBuilderIsolation,
   removeExactCandidateRunRoot,
   runExactCandidateCommandToFileWithTimeout,
   runExactCandidateCommandWithTimeout,
@@ -60,6 +62,9 @@ import {
   jsExactCandidateConsumerMatrix,
 } from "./artifact_target_matrix.mjs";
 import { ROOT } from "./release-artifact-targets.mjs";
+import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { stageReleaseNotices } from "./release-notices.mjs";
+import { extensionCarrierLegalContract } from "./extension-upstream-licenses.mjs";
 import {
   addImpliedJobs,
   assertJsExactCandidatePlanClosure,
@@ -256,6 +261,24 @@ test("parses exactly six disjoint immutable roots and a target-scoped output", (
     "ABC",
     ...fixture.argv.slice(2),
   ])).toThrow("full lowercase Git commit SHA");
+});
+
+test("isolates exact desktop extension staging from ambient WASIX outputs", () => {
+  const root = mkdtempSync(path.join(ROOT, "target/js-exact-extension-isolation-"));
+  scratch.push(root);
+  const first = prepareExactCandidateExtensionBuilderIsolation(root);
+  const releaseRoot = first.OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_ROOT;
+  const aotRoot = first.OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT;
+  expect(releaseRoot.startsWith(`${root}${path.sep}`)).toBe(true);
+  expect(aotRoot.startsWith(`${root}${path.sep}`)).toBe(true);
+  expect(first.OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT).toBe("");
+  const stale = path.join(releaseRoot, "ambient-wasix.tar.zst");
+  writeFileSync(stale, "ambient output must not survive\n");
+  const second = prepareExactCandidateExtensionBuilderIsolation(root);
+  expect(second).toEqual(first);
+  expect(existsSync(stale)).toBe(false);
+  expect(existsSync(second.OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_ROOT)).toBe(true);
+  expect(existsSync(second.OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT)).toBe(true);
 });
 
 test("records the exact full immutable-input file, byte, and digest envelope", () => {
@@ -725,7 +748,7 @@ posixTest("proves pinned Bun async detached children own the Verdaccio process-g
   expect(processExistsForTest(pid)).toBe(false);
 });
 
-test("validates one staged contrib carrier for cube and pg_trgm with exact nested bytes", () => {
+test("validates one staged contrib carrier with exact nested and legal bytes", () => {
   const root = mkdtempSync(path.join(ROOT, "target/js-exact-staged-contrib-"));
   scratch.push(root);
   const outputRoot = path.join(root, "output");
@@ -743,6 +766,11 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
     wasixRuntimeProduct: "liboliphaunt-wasix",
     wasixRuntimeVersion: version,
   };
+  const memberNames = ["cube", "pg_trgm"];
+  const legal = extensionCarrierLegalContract(product, memberNames, {
+    family: "native",
+    target,
+  });
   const memberEvidence = ["cube", "pg_trgm"].map((sqlName) => {
     const name = `${sqlName}.tar.gz`;
     const memberPath = `extensions/${sqlName}/${name}`;
@@ -772,6 +800,7 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
       },
     };
   });
+  stageReleaseNotices(stageRoot, { profile: legal.profile });
   writeFileSync(path.join(stageRoot, "bundle-manifest.json"), `${JSON.stringify({
     schema: "oliphaunt-extension-bundle-v1",
     product,
@@ -779,6 +808,8 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
     compatibility,
     family: "native",
     target,
+    licenseProfile: legal.profile,
+    licenseFiles: legal.licenseFiles,
     members: memberEvidence.map(({ sqlName, asset }) => ({
       sqlName,
       kind: asset.kind,
@@ -790,10 +821,12 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
   }, null, 2)}\n`);
   mkdirSync(outputRoot, { recursive: true });
   const carrierFile = path.join(outputRoot, `${carrierRoot}.tar.gz`);
-  const tar = spawnSync("tar", ["-czf", carrierFile, "-C", stageParent, carrierRoot], {
-    encoding: "utf8",
-  });
-  expect(tar.status).toBe(0);
+  writeFileSync(carrierFile, gzipSync(createDeterministicTar(stageRoot, carrierRoot, {
+    fail: (message) => {
+      throw new Error(message);
+    },
+    fixedFileMode: 0o644,
+  }), { mtime: 0 }));
   const carrier = {
     name: path.basename(carrierFile),
     path: path.relative(ROOT, carrierFile),
@@ -808,7 +841,7 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
     carrier,
     compatibility,
     contract: { target },
-    group: { product, version, members: ["cube", "pg_trgm"] },
+    group: { product, version, members: memberNames },
     memberEvidence,
     outputRoot,
   })).toMatchObject({ memberCount: 2, target });
@@ -819,7 +852,7 @@ test("validates one staged contrib carrier for cube and pg_trgm with exact neste
     carrier,
     compatibility,
     contract: { target },
-    group: { product, version, members: ["cube", "pg_trgm"] },
+    group: { product, version, members: memberNames },
     memberEvidence: tampered,
     outputRoot,
   })).toThrow(/pg_trgm bundle member bytes drifted/u);
