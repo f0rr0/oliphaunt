@@ -14,8 +14,8 @@ legacy-oliphaunt = ["dep:directories", "dep:oliphaunt-wasix"]
 anyhow = "1"
 directories = { version = "6", optional = true }
 futures-util = "0.3"
-oliphaunt = { version = "0.1.0", path = "../../../src/sdks/rust" }
-oliphaunt-wasix = { version = "0.1.0", path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = ["extensions"], optional = true }
+oliphaunt = { version = "0.0.0", path = "../../../src/sdks/rust" }
+oliphaunt-wasix = { version = "0.0.0", path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = ["extensions"], optional = true }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

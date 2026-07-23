@@ -555,6 +555,7 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
     "tools/policy/source-fetch-core.mjs",
     "tools/release/extension-qualification-candidates.mjs",
     "tools/release/portable-archive.mjs",
+    "tools/release/release-directory-safety.mjs",
     "tools/release/release-graph.mjs",
     "tools/release/release-semantic-inputs.mjs",
     "tools/release/wasix-cargo-artifact-contract.mjs",

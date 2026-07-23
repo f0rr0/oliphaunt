@@ -8,7 +8,9 @@ export const RELEASE_PLEASE_DISPLACED_MAIN_SHA =
 // predecessor when an exact protected-main qualification exposes another
 // pre-publication defect; keep the metadata and bootstrap boundaries fixed.
 export const RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA =
-  "48d4acea4633e96c725377b5c0a0e4b466ee4f1e";
+  "eb90ff251e8863666f101de43577a10478944df3";
+export const RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH =
+  "f0rr0/history-repair-candidate-3";
 export const RELEASE_PLEASE_INTRODUCTION_SUBJECT = "feat: introduce oliphaunt";
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";
@@ -97,6 +99,124 @@ export function isExactReleasePleaseIntroductionCommit(config, manifest, parentS
     parentShas.length === 1 &&
     parentShas[0] === RELEASE_PLEASE_BOOTSTRAP_SHA
   );
+}
+
+/**
+ * Prove the one-shot transport that rolls the unpublished generated first
+ * release back to seed state before its replacement tree is qualified. The
+ * exact parent binds the released manifest bytes; the candidate must restore
+ * every configured package to 0.0.0 and restore the immutable bootstrap
+ * boundary. A different parent is not this transport. A near miss on the
+ * authorized parent is an error instead of a generic version regression.
+ */
+export function exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
+  config,
+  beforeManifest,
+  afterManifest,
+  parentShas,
+  { prefix = "release-please-bootstrap" } = {},
+) {
+  if (
+    !Array.isArray(parentShas) ||
+    parentShas.some((parentSha) => typeof parentSha !== "string")
+  ) {
+    throw new TypeError("release-please rollback transport parents must be an array of commit SHAs");
+  }
+  if (
+    parentShas.length !== 1 ||
+    parentShas[0] !== RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA
+  ) {
+    return null;
+  }
+  if (!isObject(config)) {
+    throw baselineError(prefix, "release-please config must contain a JSON object");
+  }
+  if (!isObject(beforeManifest)) {
+    throw baselineError(prefix, "first-release parent manifest must contain a JSON object");
+  }
+  if (!isObject(afterManifest)) {
+    throw baselineError(prefix, "rollback transport manifest must contain a JSON object");
+  }
+  if (config["bootstrap-sha"] !== RELEASE_PLEASE_BOOTSTRAP_SHA) {
+    throw baselineError(
+      prefix,
+      `the first-release rollback transport requires bootstrap-sha ${RELEASE_PLEASE_BOOTSTRAP_SHA}`,
+    );
+  }
+
+  const packages = config.packages;
+  if (!isObject(packages) || Object.keys(packages).length === 0) {
+    throw baselineError(prefix, "release-please config must declare a nonempty packages object");
+  }
+  const components = new Set();
+  for (const [packagePath, packageConfig] of Object.entries(packages)) {
+    if (!isObject(packageConfig)) {
+      throw baselineError(prefix, `release-please package ${packagePath} must contain an object`);
+    }
+    const component = packageConfig.component;
+    if (
+      typeof component !== "string" ||
+      component.length === 0 ||
+      components.has(component)
+    ) {
+      throw baselineError(
+        prefix,
+        `release-please package ${packagePath} must declare one unique component`,
+      );
+    }
+    components.add(component);
+  }
+
+  const currentPaths = Object.keys(packages);
+  if (
+    !sameStrings(Object.keys(beforeManifest), currentPaths) ||
+    !sameStrings(Object.keys(afterManifest), currentPaths)
+  ) {
+    throw baselineError(
+      prefix,
+      "the first-release rollback transport manifests must exactly match the configured package paths",
+    );
+  }
+  if (!isUnreleasedReleasePleaseManifest(afterManifest)) {
+    throw baselineError(
+      prefix,
+      "the first-release rollback transport must restore every package to unreleased 0.0.0",
+    );
+  }
+
+  const globalInitialVersion = config["initial-version"];
+  for (const packagePath of currentPaths) {
+    const expectedVersion = packages[packagePath]["initial-version"] ?? globalInitialVersion;
+    requireStableVersion(
+      expectedVersion,
+      `${packagePath} configured initial version`,
+      prefix,
+    );
+    if (expectedVersion === "0.0.0") {
+      throw baselineError(
+        prefix,
+        `${packagePath} configured initial version must advance beyond unreleased 0.0.0`,
+      );
+    }
+    const beforeVersion = beforeManifest[packagePath];
+    requireStableVersion(
+      beforeVersion,
+      `${packagePath} first-release parent manifest version`,
+      prefix,
+    );
+    if (beforeVersion !== expectedVersion) {
+      throw baselineError(
+        prefix,
+        `the first-release rollback transport requires ${packagePath} parent version ${expectedVersion}, got ${beforeVersion}`,
+      );
+    }
+  }
+
+  return {
+    kind: "unpublished-first-release-rollback-transport",
+    parentSha: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    normalizedBeforeManifest: { ...afterManifest },
+  };
 }
 
 /**

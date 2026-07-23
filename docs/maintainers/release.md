@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-22. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-23. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -86,7 +86,10 @@ and participates in the same carrier checks as other public products.
   Release Please considers only commits after that exclusive boundary. Derived
   release-PR sync removes the key in the first generated release-bump change;
   do not remove it before Release Please has consumed it or retain it after the
-  first bump.
+  first bump. The sole exception is the exact, still-unpublished first-release
+  rollback transport described under **Recovery and history repair**: that
+  direct child temporarily restores the boundary only to qualify the corrected
+  unreleased introduction tree, and no publishable release-bump tree retains it.
 
 `tools/dev/bun.sh tools/release/sync-release-pr.mjs` closes the complete generated
 release fixed point: dependent candidates, compatibility values, package pins,
@@ -721,6 +724,21 @@ bootstrap its reserved identity, publish its job-local outputs, or bypass the
 declared blocker to resume another product.
 
 History repair is allowed only before any affected product tag/package is public. Freeze main, archive and bundle the old tip, then qualify the replacement tree with an all-target manual CI run on a retained temporary branch. The one tree-identical introduction commit must contain exactly one `Oliphaunt-History-Repair-Candidate: <lowercase-full-sha>` trailer naming that qualified branch commit. Bind the one-shot repair predecessor to the exact old tip, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. Rewritten-main CI selects the exact run and immutable artifacts named by the trailer, verifies the retained remote branch tip and equal Git tree before planning, and then runs the complete non-cancelled graph. Temporary-branch `Qualified` evidence is deliberately ineligible for publication; the rewritten main needs its own `Qualified` record.
+
+If the superseded tip is the still-unpublished generated first-release commit,
+the retained qualification transport is a direct child of that exact tip even
+though its desired tree restores every product to the unreleased `0.0.0`
+state. This one regression is accepted only when the child restores the
+immutable `bootstrap-sha`, its parent manifest contains exactly the configured
+first versions (including Swift `0.6.0`), its candidate manifest has the same
+complete package paths at `0.0.0`, and every changed workspace package version
+also ends at `0.0.0`. Dispatch it only from the exact branch exported as
+`RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH` with `wasm_target`,
+`native_target`, and
+`mobile_target` all set to `all`. Push, pull-request, main, tag, another branch,
+an indirect descendant, or a partial rollback cannot use this transport
+exception. Its `Qualified` result proves only the replacement tree; it does
+not authorize the final non-fast-forward update.
 
 If that exact-main run exposes another defect, do not layer a fix commit onto the intended public history and do not prepare a release. Archive the superseded introduction separately, qualify a new replacement tree, and repeat the controlled rewrite. Rotate only `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` to the current main tip; the Release Please bootstrap boundary and displaced-main metadata baseline remain immutable, and every earlier repair predecessor must be rejected as a replay. The desired public bootstrap history remains one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
 

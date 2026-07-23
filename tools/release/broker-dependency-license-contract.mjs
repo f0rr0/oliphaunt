@@ -5,7 +5,6 @@ import {
   chmodSync,
   lstatSync,
   mkdtempSync,
-  mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -16,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from "./release-directory-safety.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { assertReleaseNoticesInEntries } from "./release-notices.mjs";
 
@@ -182,41 +182,19 @@ function requireRealDirectory(directory, label) {
 }
 
 function ensureSafeDirectoryChain(directory, label) {
-  const resolved = path.resolve(directory);
-  const filesystemRoot = path.parse(resolved).root;
-  let cursor = filesystemRoot;
-  requireRealDirectory(cursor, label);
-  const relative = path.relative(filesystemRoot, resolved);
-  for (const part of relative ? relative.split(path.sep) : []) {
-    cursor = path.join(cursor, part);
-    let stat;
-    try {
-      stat = lstatSync(cursor);
-    } catch (cause) {
-      if (cause?.code !== "ENOENT") {
-        fail(`${label} cannot be inspected: ${cursor}: ${cause.message}`);
-      }
-      mkdirSync(cursor, { mode: 0o755 });
-      stat = lstatSync(cursor);
-    }
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      fail(`${label} must not have a symlink or non-directory ancestor: ${cursor}`);
-    }
+  try {
+    return requireReleaseDirectoryChain(directory, { create: true, label });
+  } catch (cause) {
+    fail(cause.message);
   }
-  return resolved;
 }
 
 function requireSafeDirectoryChain(directory, label) {
-  const resolved = path.resolve(directory);
-  const filesystemRoot = path.parse(resolved).root;
-  let cursor = filesystemRoot;
-  requireRealDirectory(cursor, label);
-  const relative = path.relative(filesystemRoot, resolved);
-  for (const part of relative ? relative.split(path.sep) : []) {
-    cursor = path.join(cursor, part);
-    requireRealDirectory(cursor, label);
+  try {
+    return requireReleaseDirectoryChain(directory, { label });
+  } catch (cause) {
+    fail(cause.message);
   }
-  return resolved;
 }
 
 function safeMember(value, label) {

@@ -208,6 +208,23 @@ function assertAndroidE2eDiskSafety(workflow, jobId) {
   ]);
 }
 
+function assertMacosReleaseToolchainSetup(workflow, jobId, stepId, { android = false } = {}) {
+  const suffix = android ? " --android" : "";
+  const expected = `bash .github/scripts/configure-macos-release-toolchains.sh${suffix}`;
+  const setup = assertRunInvocation(
+    workflow,
+    jobId,
+    stepId,
+    commandPattern(`bash\\s+[.]github/scripts/configure-macos-release-toolchains[.]sh${android ? "\\s+--android" : ""}\\b`),
+    "the canonical macOS release toolchain configuration",
+  );
+  invariant(
+    normalized(setup.step.run) === expected,
+    `${jobId}.${stepId} must invoke only ${expected}`,
+  );
+  return setup;
+}
+
 function assertReleaseCheckToolchains(workflow) {
   const releaseCheckCallers = [];
   const metadataCheckCallers = [];
@@ -1056,7 +1073,13 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   assertExactNeeds(workflow, "affected", ["release-intent"]);
   assertExactNeeds(workflow, "required", ["affected", "release-intent", "checks", "tests", "builds", "e2e"]);
   assertExactNeeds(workflow, "qualified", ["affected", "required"]);
-  assertExactNeeds(workflow, "checks", ["affected", "check-targets", "policy-targets"]);
+  assertExactNeeds(workflow, "release-metadata-portability", ["affected"]);
+  assertExactNeeds(workflow, "checks", [
+    "affected",
+    "check-targets",
+    "policy-targets",
+    "release-metadata-portability",
+  ]);
   assertExactNeeds(workflow, "tests", ["affected", "test-targets"]);
   assertExactNeeds(workflow, "e2e", [
     "affected",
@@ -1090,6 +1113,70 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     "selected_checks_gate",
     "selected",
     "${{ needs.affected.outputs.check_jobs }}",
+  );
+  const releaseMetadataPortability = workflow.jobs["release-metadata-portability"];
+  invariant(
+    releaseMetadataPortability?.["runs-on"] === "macos-26"
+      && releaseMetadataPortability?.["timeout-minutes"] === 30,
+    "publication-host release metadata validation must run on macos-26 within 30 minutes",
+  );
+  const releaseMetadataNode = assertActionStep(
+    workflow,
+    "release-metadata-portability",
+    "setup_release_metadata_node",
+    "./.github/actions/setup-node-runtime",
+  );
+  invariant(
+    releaseMetadataNode.step.with?.["node-version"] === "${{ env.NODE_VERSION }}",
+    "publication-host release metadata validation must use the pinned CI Node version",
+  );
+  const releaseMetadataMoon = assertActionStep(
+    workflow,
+    "release-metadata-portability",
+    "setup_release_metadata_moon",
+    "./.github/actions/setup-moon",
+  );
+  invariant(
+    releaseMetadataMoon.step.with?.["install-workspace"] === "true",
+    "publication-host release metadata validation must install the frozen workspace",
+  );
+  assertActionStep(
+    workflow,
+    "release-metadata-portability",
+    "setup_release_metadata_rust",
+    "./.github/actions/setup-rust",
+  );
+  assertMacosReleaseToolchainSetup(
+    workflow,
+    "release-metadata-portability",
+    "configure_release_metadata_toolchains",
+    { android: true },
+  );
+  const releaseMetadataValidation = assertRunInvocation(
+    workflow,
+    "release-metadata-portability",
+    "release_metadata_portability",
+    commandPattern("tools/dev/bun[.]sh\\s+tools/release/release-check[.]mjs\\b"),
+    "the full publication-host release metadata validation",
+  );
+  invariant(
+    normalized(releaseMetadataValidation.step.run)
+      === "tools/dev/bun.sh tools/release/release-check.mjs",
+    "publication-host release metadata validation must invoke only the canonical full release check",
+  );
+  assertStepOrder(workflow, "release-metadata-portability", [
+    "setup_release_metadata_node",
+    "setup_release_metadata_moon",
+    "setup_release_metadata_rust",
+    "configure_release_metadata_toolchains",
+    "release_metadata_portability",
+  ]);
+  assertGate(
+    workflow,
+    "checks",
+    "release_metadata_portability_gate",
+    "required",
+    '["release-metadata-portability"]',
   );
   assertGate(
     workflow,
@@ -1136,8 +1223,11 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   );
   invariant(
     releaseIntent.step.env?.CI_EVENT_NAME === "${{ github.event_name }}"
-      && releaseIntent.step.env?.CI_FULL_REF === "${{ github.ref }}",
-    "release intent must receive immutable event and full-ref context",
+      && releaseIntent.step.env?.CI_FULL_REF === "${{ github.ref }}"
+      && releaseIntent.step.env?.CI_WASM_TARGET === "${{ inputs.wasm_target }}"
+      && releaseIntent.step.env?.CI_NATIVE_TARGET === "${{ inputs.native_target }}"
+      && releaseIntent.step.env?.CI_MOBILE_TARGET === "${{ inputs.mobile_target }}",
+    "release intent must receive immutable event, full-ref, and all qualification-target context",
   );
   const historyRepairNode = assertActionStep(
     workflow,
@@ -3560,6 +3650,24 @@ export function assertReleaseOperationWorkflow(workflow) {
   );
   assertSingleCheckout(workflow, "publish-bootstrap", undefined);
   assertReleaseCheckToolchains(workflow);
+  for (const jobId of ["publish-dry-run", "publish"]) {
+    assertMacosReleaseToolchainSetup(
+      workflow,
+      jobId,
+      "configure_release_candidate_toolchains",
+      { android: true },
+    );
+  }
+  assertMacosReleaseToolchainSetup(
+    workflow,
+    "publish-registry",
+    "configure_registry_toolchains",
+  );
+  assertMacosReleaseToolchainSetup(
+    workflow,
+    "publish-finalize",
+    "configure_finalize_toolchains",
+  );
 
   assertStepOrder(workflow, "prepare-release-pr", ["require_current_main", "release_please", "sync_release_pr"]);
   assertRunInvocation(

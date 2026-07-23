@@ -4,14 +4,18 @@ import assert from 'node:assert/strict';
 import {spawnSync} from '../test/fd-backed-spawn-sync.mjs';
 import {createHash} from 'node:crypto';
 import {
+  accessSync,
   appendFileSync,
   chmodSync,
+  constants,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -37,6 +41,25 @@ function sha256(file) {
 function executable(file, contents) {
   writeFileSync(file, contents, 'utf8');
   chmodSync(file, 0o755);
+}
+
+function pathExecutable(commandName) {
+  const extensions = process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';')]
+    : [''];
+  for (const directory of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const extension of extensions) {
+      const candidate = path.join(directory, `${commandName}${extension}`);
+      try {
+        accessSync(candidate, constants.X_OK);
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // Keep searching the ambient PATH captured before the fixture prepends
+        // its fault-injection shims.
+      }
+    }
+  }
+  assert.fail(`test host PATH has no executable ${commandName}`);
 }
 
 function command(commandName, args, options = {}) {
@@ -93,6 +116,7 @@ function makeFixture() {
     cargoLog: path.join(root, 'cargo.log'),
     goLog: path.join(root, 'go.log'),
     mvFailureMarker: path.join(root, 'mv-failed-once'),
+    realMv: pathExecutable('mv'),
   };
   mkdirSync(fixture.bin);
   mkdirSync(fixture.fakeBin);
@@ -150,12 +174,15 @@ function makeFixture() {
 
   const linkCargoSource = path.join(root, 'link-cargo-source');
   mkdirSync(linkCargoSource);
-  symlinkSync('/tmp/oliphaunt-must-not-be-read', path.join(linkCargoSource, 'cargo-binstall'));
+  symlinkSync(
+    path.join(root, 'oliphaunt-must-not-be-read'),
+    path.join(linkCargoSource, 'cargo-binstall'),
+  );
   fixture.linkCargoArchive = path.join(fixture.archives, 'link-cargo.tgz');
   createTar(fixture.linkCargoArchive, linkCargoSource, ['cargo-binstall']);
 
   const badActionSource = path.join(root, 'bad-action-source');
-  command('cp', ['-R', `${actionSource}/.`, badActionSource]);
+  cpSync(actionSource, badActionSource, {recursive: true});
   writeFileSync(path.join(badActionSource, 'unexpected'), 'not allowed\n');
   fixture.badActionArchive = path.join(fixture.archives, 'bad-actionlint.tar.gz');
   createTar(fixture.badActionArchive, badActionSource, [...actionMembers, 'unexpected']);
@@ -178,7 +205,7 @@ function makeFixture() {
   );
   executable(
     path.join(fixture.fakeBin, 'mv'),
-    `#!/usr/bin/env bash\nset -eu\nlast=\nfor argument in "$@"; do last="$argument"; done\nif [ -n "\${FAKE_MV_FAIL_TARGET:-}" ] && [ "$last" = "$FAKE_MV_FAIL_TARGET" ] && [ ! -e "$FAKE_MV_FAILURE_MARKER" ]; then\n  : >"$FAKE_MV_FAILURE_MARKER"\n  exit 91\nfi\nexec /usr/bin/mv "$@"\n`,
+    `#!/usr/bin/env bash\nset -eu\nlast=\nfor argument in "$@"; do last="$argument"; done\nif [ -n "\${FAKE_MV_FAIL_TARGET:-}" ] && [ "$last" = "$FAKE_MV_FAIL_TARGET" ] && [ ! -e "$FAKE_MV_FAILURE_MARKER" ]; then\n  : >"$FAKE_MV_FAILURE_MARKER"\n  exit 91\nfi\nexec "$FAKE_REAL_MV" "$@"\n`,
   );
 
   writeManifest(fixture);
@@ -199,6 +226,7 @@ function environment(fixture, extra = {}) {
     FAKE_CARGO_LOG: fixture.cargoLog,
     FAKE_GO_LOG: fixture.goLog,
     FAKE_MV_FAILURE_MARKER: fixture.mvFailureMarker,
+    FAKE_REAL_MV: fixture.realMv,
     ...extra,
   };
 }

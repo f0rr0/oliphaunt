@@ -38,6 +38,7 @@ fi
 run actionlint -ignore 'unexpected key "queue" for "concurrency" section'
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
 run node --test \
+  .github/scripts/configure-macos-release-toolchains.test.mjs \
   .github/scripts/moon-task-capabilities.test.mjs \
   .github/scripts/setup-apple.test.mjs \
   .github/scripts/setup-msvc.test.mjs \

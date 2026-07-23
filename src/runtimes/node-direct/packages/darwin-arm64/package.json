@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/node-direct-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "macOS arm64 prebuilt Node-API native direct adapter for Oliphaunt.",
   "license": "MIT",
   "type": "module",

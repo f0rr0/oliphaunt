@@ -89,6 +89,59 @@ test("the canonical direct release workflow satisfies the split publication cont
   assert.doesNotThrow(() => assertReleaseWorkflow(candidate()));
 });
 
+test("CI revalidates the full release gate on the publication host before Checks passes", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const nonApple = ciCandidate();
+  nonApple.jobs["release-metadata-portability"]["runs-on"] = "ubuntu-24.04";
+  assert.throws(
+    () => assertCiWorkflow(nonApple, { builderJobs: BUILDER_JOBS }),
+    /must run on macos-26 within 30 minutes/u,
+  );
+
+  const bypassed = ciCandidate();
+  step(bypassed, "release-metadata-portability", "release_metadata_portability").run =
+    "echo assumed-valid";
+  assert.throws(
+    () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+    /full publication-host release metadata validation/u,
+  );
+
+  const unconfigured = ciCandidate();
+  step(
+    unconfigured,
+    "release-metadata-portability",
+    "configure_release_metadata_toolchains",
+  ).run = "true";
+  assert.throws(
+    () => assertCiWorkflow(unconfigured, { builderJobs: BUILDER_JOBS }),
+    /canonical macOS release toolchain configuration/u,
+  );
+
+  const unhydrated = ciCandidate();
+  step(unhydrated, "release-metadata-portability", "setup_release_metadata_moon")
+    .with["install-workspace"] = "false";
+  assert.throws(
+    () => assertCiWorkflow(unhydrated, { builderJobs: BUILDER_JOBS }),
+    /must install the frozen workspace/u,
+  );
+
+  const detached = ciCandidate();
+  detached.jobs.checks.needs = detached.jobs.checks.needs
+    .filter((job) => job !== "release-metadata-portability");
+  assert.throws(
+    () => assertCiWorkflow(detached, { builderJobs: BUILDER_JOBS }),
+    /checks[.]needs/u,
+  );
+
+  const ungated = ciCandidate();
+  step(ungated, "checks", "release_metadata_portability_gate").env.REQUIRED_JOBS_JSON = "[]";
+  assert.throws(
+    () => assertCiWorkflow(ungated, { builderJobs: BUILDER_JOBS }),
+    /gate must bind \["release-metadata-portability"\]/u,
+  );
+});
+
 test("release input validation binds every caller-controlled input before operation jobs", () => {
   const noCheckout = candidate();
   noCheckout.jobs["validate-inputs"].steps = noCheckout.jobs["validate-inputs"].steps
@@ -200,6 +253,19 @@ test("every release metadata gate sets up pinned Moon and Rust unconditionally f
     () => assertReleaseOperationWorkflow(missingRust),
     /must set up the pinned Rust toolchain exactly once and unconditionally/u,
   );
+
+  for (const [jobId, stepId] of [
+    ["publish-dry-run", "configure_release_candidate_toolchains"],
+    ["publish-registry", "configure_registry_toolchains"],
+    ["publish-finalize", "configure_finalize_toolchains"],
+  ]) {
+    const bypassedToolchain = candidate();
+    step(bypassedToolchain, jobId, stepId).run = "true";
+    assert.throws(
+      () => assertReleaseOperationWorkflow(bypassedToolchain),
+      /canonical macOS release toolchain configuration/u,
+    );
+  }
 
   const lateRust = candidate();
   const lateRustSteps = lateRust.jobs["prepare-release-pr"].steps;
@@ -1056,6 +1122,16 @@ test("generated release readiness blocks CI fanout until normalization", () => {
 
 test("history repair is bound to one exact qualified transport tree before CI fanout", () => {
   assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  for (const key of ["CI_WASM_TARGET", "CI_NATIVE_TARGET", "CI_MOBILE_TARGET"]) {
+    const unboundTarget = ciCandidate();
+    step(unboundTarget, "release-intent", "release_intent").env[key] = "all";
+    assert.throws(
+      () => assertCiWorkflow(unboundTarget, { builderJobs: BUILDER_JOBS }),
+      /all qualification-target context/u,
+      key,
+    );
+  }
 
   const missingGate = ciCandidate();
   missingGate.jobs["release-intent"].steps = missingGate.jobs["release-intent"].steps

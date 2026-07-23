@@ -138,7 +138,7 @@ test("rejects a symlinked package directory before rewriting its manifest", {
 
     assert.throws(
       () => prepareSourceOnlyNpmPackage(alias, SOURCE_ONLY_NPM_PROFILES.js),
-      /real non-symlink directory chain/u,
+      /symlink or non-directory ancestor/u,
     );
     assert.deepEqual(readFileSync(manifestFile), before);
     assert.equal(existsSync(path.join(packageDir, "LICENSE")), false);

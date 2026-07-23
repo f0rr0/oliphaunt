@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
-import { RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA } from "../../tools/release/release-please-bootstrap.mjs";
+import {
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
+} from "../../tools/release/release-please-bootstrap.mjs";
 import { verifyHistoryRepairCandidateBinding } from "./history-repair-candidate-lib.mjs";
 
 function fail(message) {
@@ -41,10 +44,13 @@ const expectedCandidateSha = requiredEnv("HISTORY_REPAIR_CANDIDATE_SHA").toLower
 const expectedIntroductionSha = requiredEnv("HISTORY_REPAIR_HEAD_SHA").toLowerCase();
 const expectedIntroductionTree = git(["rev-parse", `${expectedIntroductionSha}^{tree}`]).stdout;
 const candidateCommitTree = git(["rev-parse", `${expectedCandidateSha}^{tree}`]).stdout;
-if (typeof candidate.ref !== "string" || !candidate.ref.startsWith("refs/heads/")) {
-  fail(`history-repair candidate ref is not a branch: ${candidate.ref}`);
+const expectedCandidateRef = `refs/heads/${RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH}`;
+if (candidate.ref !== expectedCandidateRef) {
+  fail(
+    `history-repair candidate ref must be ${expectedCandidateRef}, got ${candidate.ref}`,
+  );
 }
-const branch = candidate.ref.slice("refs/heads/".length);
+const branch = RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH;
 if (git(["check-ref-format", "--branch", branch], {
   acceptStatusOne: true,
 }).status !== 0) {

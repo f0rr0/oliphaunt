@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { archiveTreeDigest } from "../policy/source-fetch-core.mjs";
+import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from "./release-directory-safety.mjs";
 import {
   extensionQualificationCandidates,
   qualificationCandidateTargets,
@@ -527,16 +528,11 @@ function requireRealDirectory(directory, label, { create = false } = {}) {
 }
 
 function requireSafeDirectoryChain(directory, { create = true, label = "license staging" } = {}) {
-  const resolved = path.resolve(directory);
-  const filesystemRoot = path.parse(resolved).root;
-  let cursor = filesystemRoot;
-  requireRealDirectory(cursor, `${label} ancestor`);
-  const relative = path.relative(filesystemRoot, resolved);
-  for (const part of relative ? relative.split(path.sep) : []) {
-    cursor = path.join(cursor, part);
-    requireRealDirectory(cursor, `${label} directory`, { create });
+  try {
+    return requireReleaseDirectoryChain(directory, { create, label });
+  } catch (cause) {
+    fail(cause.message);
   }
-  return resolved;
 }
 
 function safeDestination(root, relative) {

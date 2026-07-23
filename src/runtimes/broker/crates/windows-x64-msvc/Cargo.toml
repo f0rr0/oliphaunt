@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-broker-windows-x64-msvc"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Cargo artifact crate for the windows-x64-msvc oliphaunt-broker helper binary."

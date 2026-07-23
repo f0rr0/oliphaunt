@@ -452,7 +452,7 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   const missingAssertionRoot = path.join(root, "missing-parent", "missing-stage");
   assert.throws(
     () => assertExtensionUpstreamLicensesInDirectory(["pg_hashids"], missingAssertionRoot),
-    /assertion directory cannot be inspected/u,
+    /upstream license assertion cannot be inspected/u,
   );
   assert.equal(existsSync(path.join(root, "missing-parent")), false);
 
@@ -473,7 +473,7 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   symlinkSync(realAncestor, linkedAncestor);
   assert.throws(
     () => stageExtensionUpstreamLicenses("pg_hashids", path.join(linkedAncestor, "existing-stage")),
-    /staging directory must be a real directory/u,
+    /symlink or non-directory ancestor/u,
   );
 });
 

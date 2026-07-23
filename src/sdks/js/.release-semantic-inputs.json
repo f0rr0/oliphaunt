@@ -18,7 +18,7 @@
         },
         {
           "path": "pnpm-lock.yaml",
-          "sha256": "89f357c22586ae5264dc8bc1bb6cad7f51e0ad02a4706098b352ab85b9655661"
+          "sha256": "3cb642ed2627a7c9c96e1be76c9e0b4b8143efbb30e952d189df53f64bee4b41"
         },
         {
           "path": "pnpm-workspace.yaml",
@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+          "sha256": "c2bf0c5d1a1a8ba29ca68f12aac804cd468783f6026dbfec9451b6a9acf11306"
         }
       ]
     },
@@ -68,7 +68,7 @@
       "inputs": [
         {
           "path": "tools/release/source-only-sdk-package.mjs",
-          "sha256": "29e24783df82e000dd30c12522d37932941722340cc43ca442cffb4877e81436"
+          "sha256": "bfc73812ca80fc07e2a1250adb4d2eac4ac2184e128b51c060ed56d3bade8f90"
         }
       ]
     },
@@ -121,5 +121,5 @@
       ]
     }
   ],
-  "sha256": "9e2ef2bfb038c95affce6fc7bf4d875b6f7adda1ff7ee62dd49ad13197dba269"
+  "sha256": "d02fb2febb1897127862854fe69adf5c1da33f254f30083a034a80894da66c86"
 }
