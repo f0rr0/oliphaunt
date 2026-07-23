@@ -1,4 +1,3 @@
-import { gzipSync } from "node:zlib";
 import {
   chmodSync,
   copyFileSync,
@@ -13,7 +12,10 @@ import {
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+} from "./portable-archive.mjs";
 
 export const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 
@@ -439,7 +441,7 @@ export function manualCargoPackageSource(
 
   mkdirSync(outputDir, { recursive: true });
   rmSync(cratePath, { force: true });
-  writeFileSync(cratePath, gzipSync(createDeterministicTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
+  writeFileSync(cratePath, canonicalGzipSync(createDeterministicTar(stageDir, packageRoot, { fail })));
   requireExactCrateMembers(cratePath, packageRoot, expectedMembers, { fail, rel });
   const size = statSync(cratePath).size;
   if (size > packageSizeLimitBytes) {

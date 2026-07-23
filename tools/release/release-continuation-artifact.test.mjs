@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { createDeterministicZip } from "./archive_dir.mjs";
 import {
   openContinuationEnvelope,
   openContinuationAuthorization,
@@ -106,38 +106,52 @@ function run(id, workflow = 7, extra = {}) {
   };
 }
 
-function command(name, args, options = {}) {
-  const result = spawnSync(name, args, {
-    cwd: options.cwd,
-    encoding: "utf8",
-    input: options.input,
-    stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return result.stdout;
+function renameZipMember(bytes, from, to) {
+  const source = Buffer.from(from);
+  const destination = Buffer.from(to);
+  assert.equal(
+    source.length,
+    destination.length,
+    "ZIP fixture member renames must preserve local and central record extents",
+  );
+  const renamed = Buffer.from(bytes);
+  let cursor = 0;
+  let replacements = 0;
+  while (cursor < renamed.length) {
+    const offset = renamed.indexOf(source, cursor);
+    if (offset === -1) break;
+    destination.copy(renamed, offset);
+    replacements += 1;
+    cursor = offset + destination.length;
+  }
+  assert.equal(
+    replacements,
+    2,
+    "deterministic ZIP fixture must contain one local and one central member name",
+  );
+  return renamed;
 }
 
-function authorizationZip(receiptBytes, { duplicate = false, extra = false } = {}) {
+async function authorizationZip(receiptBytes, { duplicate = false, extra = false } = {}) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-authorization-test-"));
   try {
-    const archive = path.join(directory, "authorization.zip");
-    writeFileSync(path.join(directory, "release-continuation-authorization.json"), receiptBytes);
-    const members = ["release-continuation-authorization.json"];
-    if (extra || duplicate) {
-      writeFileSync(path.join(directory, "unexpected.json"), "{}\n");
-      members.push("unexpected.json");
-    }
-    command("zip", ["-q", archive, ...members], { cwd: directory });
+    const authorizationName = "release-continuation-authorization.json";
+    writeFileSync(path.join(directory, authorizationName), receiptBytes);
+    let duplicateSourceName;
     if (duplicate) {
-      const notes = command("zipnote", [archive], { cwd: directory });
-      const renamed = notes.replace(
-        "@ unexpected.json\n",
-        "@ unexpected.json\n@=release-continuation-authorization.json\n",
-      );
-      assert.notEqual(renamed, notes, "duplicate ZIP fixture rename");
-      command("zipnote", ["-w", archive], { cwd: directory, input: renamed });
+      duplicateSourceName = "another-continuation-authorization.json";
+      writeFileSync(path.join(directory, duplicateSourceName), "{}\n");
+    } else if (extra) {
+      writeFileSync(path.join(directory, "unexpected.json"), "{}\n");
     }
-    return readFileSync(archive);
+    const archive = await createDeterministicZip(directory);
+    return duplicateSourceName === undefined
+      ? archive
+      : renameZipMember(
+        archive,
+        duplicateSourceName,
+        authorizationName,
+      );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -152,7 +166,7 @@ function authorizationArtifact(bytes) {
   };
 }
 
-function normalContinuationZip(extraMembers = [], { tamperJournal = false, tamperPacer = false } = {}) {
+async function normalContinuationZip(extraMembers = [], { tamperJournal = false, tamperPacer = false } = {}) {
   const checkpointBytes = Buffer.from("exact checkpoint bytes\n");
   const executionResult = {
     admittedIds: ["carrier:npm:a"],
@@ -249,7 +263,6 @@ function normalContinuationZip(extraMembers = [], { tamperJournal = false, tampe
   });
   const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-normal-continuation-test-"));
   try {
-    const archive = path.join(directory, "continuation.zip");
     writeFileSync(path.join(directory, "normal-publication-checkpoint.json"), checkpointBytes);
     writeFileSync(path.join(directory, "normal-publication-execution-result.json"), executionResultBytes);
     const pacerMember = tamperPacer
@@ -265,17 +278,7 @@ function normalContinuationZip(extraMembers = [], { tamperJournal = false, tampe
       `${JSON.stringify(contract, null, 2)}\n`,
     );
     for (const member of extraMembers) writeFileSync(path.join(directory, member), "{}\n");
-    command("zip", [
-      "-q",
-      archive,
-      "normal-publication-checkpoint.json",
-      "normal-publication-execution-result.json",
-      "oliphaunt-github-content-write-pacer.json",
-      "oliphaunt-github-core-request-journal.json",
-      "release-continuation-contract.json",
-      ...extraMembers,
-    ], { cwd: directory });
-    const bytes = readFileSync(archive);
+    const bytes = await createDeterministicZip(directory);
     const pointer = createReleaseContinuationPointer({
       contract,
       artifact: {
@@ -377,14 +380,14 @@ test("parent completion and authorization visibility fail closed while remaining
   }, value).id, 55);
 });
 
-test("authorization ZIP joins immutable transport, canonical receipt, pointer, and child identity", () => {
+test("authorization ZIP joins immutable transport, canonical receipt, pointer, and child identity", async () => {
   const value = pointer();
   const receipt = createReleaseContinuationAuthorization({
     childRunId: 101,
     pointer: value,
     repo: "f0rr0/oliphaunt",
   });
-  const canonical = authorizationZip(serializeReleaseContinuationAuthorization(receipt));
+  const canonical = await authorizationZip(serializeReleaseContinuationAuthorization(receipt));
   assert.deepEqual(
     openContinuationAuthorization(canonical, authorizationArtifact(canonical), value, {
       currentRunId: 101,
@@ -401,7 +404,10 @@ test("authorization ZIP joins immutable transport, canonical receipt, pointer, a
     /does not authorize this exact dispatched child run/u,
   );
   for (const options of [{ extra: true }, { duplicate: true }]) {
-    const archive = authorizationZip(serializeReleaseContinuationAuthorization(receipt), options);
+    const archive = await authorizationZip(
+      serializeReleaseContinuationAuthorization(receipt),
+      options,
+    );
     assert.throws(
       () => openContinuationAuthorization(archive, authorizationArtifact(archive), value, {
         currentRunId: 101,
@@ -411,7 +417,7 @@ test("authorization ZIP joins immutable transport, canonical receipt, pointer, a
     );
   }
 
-  const noncanonical = authorizationZip(`${JSON.stringify(receipt, null, 2)}\n`);
+  const noncanonical = await authorizationZip(`${JSON.stringify(receipt, null, 2)}\n`);
   assert.throws(
     () => openContinuationAuthorization(noncanonical, authorizationArtifact(noncanonical), value, {
       currentRunId: 101,
@@ -435,8 +441,8 @@ test("authorization ZIP joins immutable transport, canonical receipt, pointer, a
   );
 });
 
-test("normal continuation envelope is exactly checkpoint, typed result, contract, and GitHub state", () => {
-  const exact = normalContinuationZip();
+test("normal continuation envelope is exactly checkpoint, typed result, contract, and GitHub state", async () => {
+  const exact = await normalContinuationZip();
   const envelope = openContinuationEnvelope(exact.bytes, exact.pointer);
   assert.equal(envelope.executionResult.deferralMode, "progress");
   assert.equal(envelope.stateBytes.toString("utf8"), "exact checkpoint bytes\n");
@@ -447,14 +453,14 @@ test("normal continuation envelope is exactly checkpoint, typed result, contract
     "normal-publication-plan.json",
     "registry-integrity-receipts.json",
   ]) {
-    const substituted = normalContinuationZip([member]);
+    const substituted = await normalContinuationZip([member]);
     assert.throws(
       () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
       new RegExp(`unexpected member .*${member.replaceAll(".", "[.]")}`, "u"),
     );
   }
   for (const options of [{ tamperJournal: true }, { tamperPacer: true }]) {
-    const substituted = normalContinuationZip([], options);
+    const substituted = await normalContinuationZip([], options);
     assert.throws(
       () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
       /pacer\/journal bytes do not match the contract/u,

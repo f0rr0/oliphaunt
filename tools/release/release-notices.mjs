@@ -15,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from "./release-directory-safety.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PREFIX = "release-notices.mjs";
@@ -267,28 +268,7 @@ function checkedPrefix(value = "") {
 }
 
 function requireSafeDirectoryChain(directory, label) {
-  const resolved = path.resolve(directory);
-  const filesystemRoot = path.parse(resolved).root;
-  let cursor = filesystemRoot;
-  requireRealDirectory(cursor, label);
-  const relative = path.relative(filesystemRoot, resolved);
-  for (const part of relative ? relative.split(path.sep) : []) {
-    cursor = path.join(cursor, part);
-    let stat;
-    try {
-      stat = lstatSync(cursor);
-    } catch (cause) {
-      if (cause?.code !== "ENOENT") {
-        throw new Error(`${label} cannot be inspected: ${cursor}: ${cause.message}`);
-      }
-      mkdirSync(cursor, { mode: 0o755 });
-      stat = lstatSync(cursor);
-    }
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`${label} must not have a symlink or non-directory ancestor: ${cursor}`);
-    }
-  }
-  return resolved;
+  return requireReleaseDirectoryChain(directory, { create: true, label });
 }
 
 function requireSafeParent(root, destination, { create = false } = {}) {

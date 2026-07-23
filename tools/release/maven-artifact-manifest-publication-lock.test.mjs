@@ -2,11 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 
 import { execFileSync, spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageExtensionUpstreamLicenses } from "./extension-upstream-licenses.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import { discoverPublicationArtifacts } from "./publication-lock.mjs";
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { ROOT } from "./release-graph.mjs";
@@ -48,12 +48,12 @@ function contribAndroidBundle(root, target, { archiveRoot } = {}) {
   mkdirSync(path.dirname(output), { recursive: true });
   stageReleaseNotices(stage, { profile: "contrib-native-openssl" });
   writeFileSync(path.join(stage, "bundle-manifest.json"), "{}\n");
-  writeFileSync(output, gzipSync(createDeterministicTar(stage, archiveRoot ?? canonicalRoot, {
+  writeFileSync(output, canonicalGzipSync(createDeterministicTar(stage, archiveRoot ?? canonicalRoot, {
     fail(message) {
       throw new Error(message);
     },
     fixedFileMode: 0o644,
-  }), { mtime: 0 }));
+  })));
   return output;
 }
 

@@ -13,7 +13,6 @@ import {
   chmodSync,
 } from "node:fs";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 
 import {
   assertReleaseNoticesInArchive,
@@ -27,6 +26,7 @@ import {
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import {
   ROOT,
   compareText,
@@ -636,12 +636,12 @@ function bundleCarrierAssets(product, version, productRoot, members, compatibili
     chmodSync(bundleManifest, 0o644);
     stageReleaseNotices(stageDir, { profile: legal.profile });
     const output = path.join(assetDir, `${archiveRoot}.tar.gz`);
-    writeFileSync(output, gzipSync(createDeterministicTar(stageDir, archiveRoot, {
+    writeFileSync(output, canonicalGzipSync(createDeterministicTar(stageDir, archiveRoot, {
       fail,
       // Every bundle member is data. Windows filesystem modes are synthetic,
       // so encode the portable carrier contract instead of copying stat bits.
       fixedFileMode: 0o644,
-    }), { mtime: 0 }));
+    })));
     assertReleaseNoticesInArchive(output, {
       prefix: archiveRoot,
       profile: legal.profile,

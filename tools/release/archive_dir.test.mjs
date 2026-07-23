@@ -123,6 +123,11 @@ test("writes deterministic canonical ustar directory markers", () => {
     run(process.execPath, [ARCHIVER, source, second]);
 
     assert.equal(digest(first), digest(second), "archive output must be byte-for-byte deterministic");
+    assert.equal(
+      readFileSync(first).subarray(0, 10).toString("hex"),
+      "1f8b0800000000000003",
+      "tar.gz output must use the canonical cross-platform gzip header",
+    );
     assert.deepEqual(entries(first), [
       { headerName: ".", name: ".", prefix: "", type: "5" },
       { headerName: "nested/", name: "nested/", prefix: "", type: "5" },

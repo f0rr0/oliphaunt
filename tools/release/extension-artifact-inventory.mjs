@@ -408,7 +408,7 @@ export function readCanonicalExtensionArtifactArchive(file, label = file) {
       || gzipHeader[8] !== 0
       || gzipHeader[9] !== 0x03
     ) {
-      throw inventoryError(label, "must use the canonical Bun gzip header");
+      throw inventoryError(label, "must use the canonical cross-platform gzip header");
     }
     if (statSync(compressedSnapshot).size !== compressedBytes) {
       throw inventoryError(label, "private carrier snapshot has the wrong byte count");

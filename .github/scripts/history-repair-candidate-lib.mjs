@@ -3,8 +3,13 @@ import {
   assertBindingMatches,
   assertCandidateBindingShape,
 } from "./release-candidate-lib.mjs";
+import {
+  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
+} from "../../tools/release/release-please-bootstrap.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
+const EXPECTED_CANDIDATE_REF =
+  `refs/heads/${RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH}`;
 const CANDIDATE_KEYS = [
   "affectedPlan",
   "eventName",
@@ -59,12 +64,7 @@ export function verifyHistoryRepairCandidateBinding({
   same(candidateCommitTree, expectedIntroductionTree, "history-repair candidate commit tree");
   same(candidateRemoteSha, expectedCandidateSha, "history-repair candidate remote branch tip");
   assert(Number.isSafeInteger(candidate.runAttempt) && candidate.runAttempt > 0, "history-repair candidate runAttempt is invalid");
-  assert(
-    typeof candidate.ref === "string"
-      && candidate.ref.startsWith("refs/heads/")
-      && candidate.ref !== "refs/heads/main",
-    `history-repair candidate ref must be a non-main branch, got ${candidate.ref}`,
-  );
+  same(candidate.ref, EXPECTED_CANDIDATE_REF, "history-repair candidate ref");
   same(
     candidate.workflowRef,
     `${expectedRepository}/.github/workflows/ci.yml@${candidate.ref}`,
@@ -77,7 +77,7 @@ export function verifyHistoryRepairCandidateBinding({
   );
   assertBindingMatches(candidate.affectedPlan, expectedPlan, "history-repair candidate affected plan");
   return Object.freeze({
-    branch: candidate.ref.slice("refs/heads/".length),
+    branch: RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
     sha: candidate.sha,
     tree: candidate.tree,
   });

@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -58,7 +59,7 @@ function npmTreeIdentity(files, executablePaths) {
 }
 
 function verifiedNpmFixture() {
-  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-verified-npm-"));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "oliphaunt-verified-npm-")));
   const toolchains = path.join(root, "src/sources/toolchains");
   const nodeExecutable = path.join(root, "runtime/node");
   const npmRoot = path.join(root, "publisher/verified/npm");

@@ -20,6 +20,7 @@ import {
   configureExampleCargoRegistry,
   verifyCandidateRegistryPackage,
 } from "./example-cargo-registry.mjs";
+import { canonicalSystemDirectoryPath } from "./release-directory-safety.mjs";
 
 const TOOL = "exact-cargo-candidate-consumer.mjs";
 
@@ -38,6 +39,23 @@ function sha256File(file) {
 function pathInside(parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child));
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+/**
+ * Compare a dereferenced Cargo manifest with its clean Cargo home while
+ * accepting only Darwin's identity-proven root directory aliases. The
+ * manifest path must already be the result of realpath so caller-created
+ * aliases inside or beside the Cargo home cannot hide an escape.
+ */
+export function isExactCargoManifestInsideHome(
+  cargoHome,
+  manifestRealPath,
+  directoryIdentityOptions = {},
+) {
+  return pathInside(
+    canonicalSystemDirectoryPath(cargoHome, directoryIdentityOptions),
+    manifestRealPath,
+  );
 }
 
 function normalizedDependencies(dependencies) {
@@ -179,7 +197,7 @@ export function validateExactCargoMetadata({ metadata, candidates, cargoHome }) 
       || typeof manifestPath !== "string"
       || !existsSync(manifestPath)
       || !statSync(manifestPath).isFile()
-      || !pathInside(cargoHome, realpathSync(manifestPath))
+      || !isExactCargoManifestInsideHome(cargoHome, realpathSync(manifestPath))
     ) {
       failures.push(`${candidate.name}@${candidate.vers} was not extracted from the isolated candidate registry into the clean Cargo home`);
       continue;

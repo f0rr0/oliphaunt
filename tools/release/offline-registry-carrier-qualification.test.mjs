@@ -12,7 +12,6 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 
 import {
   inventoryOutputRoot,
@@ -29,6 +28,7 @@ import {
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import { renderMavenArtifactPom } from "./maven-artifact-staging.mjs";
 import { runBunProductDryRun } from "./release-product-dry-run.mjs";
 import { WASIX_CARGO_ARTIFACT_SCHEMA } from "./wasix-cargo-artifact-contract.mjs";
@@ -58,12 +58,12 @@ function archiveFixture(sourceRoot, output, archiveRoot, members) {
     mkdirSync(path.dirname(output), { recursive: true });
     writeFileSync(
       output,
-      gzipSync(createDeterministicTar(stage, archiveRoot, {
+      canonicalGzipSync(createDeterministicTar(stage, archiveRoot, {
         fail(message) {
           throw new Error(message);
         },
         fixedFileMode: 0o644,
-      }), { mtime: 0 }),
+      })),
     );
   } finally {
     rmSync(stage, { recursive: true, force: true });

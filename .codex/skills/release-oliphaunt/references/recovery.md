@@ -14,7 +14,21 @@
 This path is forbidden after any affected product tag/package is public.
 
 1. Freeze main and verify the exact old tip. Create a uniquely named archive ref and an independently verified offline bundle for that tip.
-2. Build the desired tree on a temporary branch based on the current main tip and run an all-target `workflow_dispatch` CI qualification before touching main. Record the exact candidate SHA and run id, and keep that remote branch intact through rewritten-main qualification.
+2. Build the desired tree on a temporary branch based on the current main tip
+   and run an all-target `workflow_dispatch` CI qualification before touching
+   main. When the current tip is the still-unpublished generated first-release
+   commit, the qualification transport must be its direct child on the exact
+   branch exported as
+   `RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH`. Its tree must restore the immutable
+   `bootstrap-sha`, retain the complete configured package path set, restore
+   every manifest and changed workspace package version to `0.0.0`, and prove
+   that the parent manifest contained exactly each configured first version
+   (including Swift `0.6.0`). Dispatch that exact ref with `wasm_target=all`,
+   `native_target=all`, and `mobile_target=all`; a PR, push, main or tag ref,
+   another branch, an indirect descendant, a partial reset, or a narrower
+   target selection is not a qualification transport. Record the exact
+   candidate SHA and run id, and keep that remote branch intact through
+   rewritten-main qualification.
 3. Create one tree-identical introduction commit on the intended stable parent. Its full message must contain exactly one `Oliphaunt-History-Repair-Candidate: <lowercase-full-candidate-sha>` trailer. Do not add the trailer to the tree or add a second commit. A reproducible signed construction is:
 
 ```sh

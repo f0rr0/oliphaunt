@@ -12,6 +12,7 @@ import {
 import {
   RELEASE_PLEASE_BOOTSTRAP_SHA,
   RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
 } from "./release-please-bootstrap.mjs";
 
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";
@@ -91,6 +92,36 @@ function qualificationTransportState() {
   };
 }
 
+function firstReleaseRollbackState() {
+  const currentPaths = [...UNAFFECTED_PATHS, CANONICAL_CONTRIB_PATH];
+  const packages = Object.fromEntries(
+    currentPaths.map((packagePath, index) => [
+      packagePath,
+      {
+        component: `product-${index}`,
+        ...(packagePath === "src/sdks/swift" ? { "initial-version": "0.6.0" } : {}),
+      },
+    ]),
+  );
+  return {
+    config: {
+      "bootstrap-sha": RELEASE_PLEASE_BOOTSTRAP_SHA,
+      "initial-version": "0.1.0",
+      packages,
+    },
+    before: Object.fromEntries(
+      currentPaths.map((packagePath) => [
+        packagePath,
+        packagePath === "src/sdks/swift" ? "0.6.0" : "0.1.0",
+      ]),
+    ),
+    after: Object.fromEntries(
+      currentPaths.map((packagePath) => [packagePath, "0.0.0"]),
+    ),
+    parents: [RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA],
+  };
+}
+
 function coverageBaseline(state) {
   return releasePleaseCoverageBootstrapBaseline(
     state.config,
@@ -129,6 +160,49 @@ test("coverage recognizes the exact production-shaped 49-to-18 qualification tra
   assert.equal(baseline?.parentSha, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
   assert.deepEqual(baseline?.normalizedBeforeManifest, state.after);
 });
+
+test("coverage recognizes only the exact unpublished first-release rollback baseline", () => {
+  const state = firstReleaseRollbackState();
+  const baseline = coverageBaseline(state);
+  assert.equal(Object.keys(state.before).length, 18);
+  assert.equal(Object.keys(state.after).length, 18);
+  assert.equal(baseline?.kind, "unpublished-first-release-rollback-transport");
+  assert.equal(baseline?.parentSha, RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA);
+  assert.deepEqual(baseline?.normalizedBeforeManifest, state.after);
+
+  const wrongParent = firstReleaseRollbackState();
+  wrongParent.parents = ["1111111111111111111111111111111111111111"];
+  assert.equal(coverageBaseline(wrongParent), null);
+});
+
+for (const [name, mutate, pattern] of [
+  [
+    "a partial first-release rollback",
+    (state) => { state.after[UNAFFECTED_PATHS[0]] = "0.1.0"; },
+    /restore every package to unreleased 0[.]0[.]0/u,
+  ],
+  [
+    "a wrong first release",
+    (state) => { state.before[UNAFFECTED_PATHS[0]] = "0.2.0"; },
+    /parent version 0[.]1[.]0, got 0[.]2[.]0/u,
+  ],
+  [
+    "a missing rollback bootstrap boundary",
+    (state) => { delete state.config["bootstrap-sha"]; },
+    /requires bootstrap-sha/u,
+  ],
+  [
+    "rollback package path drift",
+    (state) => { delete state.after[UNAFFECTED_PATHS[0]]; },
+    /manifests must exactly match the configured package paths/u,
+  ],
+]) {
+  test(`coverage refuses to skip ${name}`, () => {
+    const state = firstReleaseRollbackState();
+    mutate(state);
+    assert.throws(() => coverageBaseline(state), pattern);
+  });
+}
 
 for (const [name, mutate, pattern] of [
   [

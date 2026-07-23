@@ -16,6 +16,7 @@ import {
   releasePackageLicense,
   stageReleaseNotices,
 } from "./release-notices.mjs";
+import { requireSafeDirectoryChain } from "./release-directory-safety.mjs";
 
 const TOOL = "source-only-sdk-package.mjs";
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
@@ -46,30 +47,6 @@ function requireRegularFile(file, label) {
     throw new Error(`${label} must be a regular non-symlink file: ${file}`);
   }
   return stat;
-}
-
-function requireRealDirectoryChain(directory, label) {
-  const resolved = path.resolve(directory);
-  const { root } = path.parse(resolved);
-  let cursor = root;
-  const rootStat = lstatSync(cursor);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new Error(`${label} must start at a real filesystem root: ${cursor}`);
-  }
-  const parts = path.relative(root, resolved).split(path.sep).filter(Boolean);
-  for (const part of parts) {
-    cursor = path.join(cursor, part);
-    let stat;
-    try {
-      stat = lstatSync(cursor);
-    } catch (cause) {
-      throw new Error(`${label} cannot be inspected: ${cause.message}`);
-    }
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`${label} must have a real non-symlink directory chain: ${cursor}`);
-    }
-  }
-  return resolved;
 }
 
 function readJson(file, label) {
@@ -144,7 +121,9 @@ function writeManifest(file, manifest) {
 export function prepareSourceOnlyNpmPackage(packageDir, contract) {
   // Validate the complete lexical path before reading or rewriting package.json.
   // Notice staging enforces the same boundary, but it runs after sanitation.
-  const directory = requireRealDirectoryChain(packageDir, "source-only npm package directory");
+  const directory = requireSafeDirectoryChain(packageDir, {
+    label: "source-only npm package directory",
+  });
   const packageJsonFile = path.join(directory, "package.json");
   const manifest = readJson(packageJsonFile, "source-only npm package manifest");
   const expectedScripts = checkedScripts(contract.scripts, contract.name);

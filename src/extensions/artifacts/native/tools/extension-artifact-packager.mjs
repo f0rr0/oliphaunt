@@ -21,6 +21,7 @@ import {
 } from '../../../../../tools/release/release-notices.mjs';
 import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
 import { qualificationCandidateSqlNamesForTarget } from '../../../../../tools/release/extension-qualification-candidates.mjs';
+import { canonicalGzipSync } from '../../../../../tools/release/portable-archive.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -1264,18 +1265,7 @@ async function createTar(base) {
 }
 
 function canonicalGzip(bytes) {
-  const compressed = Buffer.from(Bun.gzipSync(bytes));
-  if (
-    compressed.length < 18
-    || compressed[0] !== 0x1f
-    || compressed[1] !== 0x8b
-    || compressed[2] !== 8
-    || compressed[3] !== 0
-  ) {
-    fail('Bun.gzipSync did not produce the expected flag-free gzip stream');
-  }
-  compressed.fill(0, 4, 9);
-  compressed[9] = 0x03;
+  const compressed = canonicalGzipSync(bytes);
   validateExtensionArtifactCompressedBytes(compressed.length, 'prebuilt extension artifact');
   return compressed;
 }

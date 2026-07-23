@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   exactReleasePleaseQualificationTransportBaseline,
+  exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
   isExactReleasePleaseIntroductionCommit,
 } from './release-please-bootstrap.mjs';
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
@@ -138,6 +139,14 @@ export function releasePleaseCoverageBootstrapBaseline(
   if (isExactReleasePleaseIntroductionCommit(releasePleaseConfig, afterManifest, parentShas)) {
     return { kind: 'introduction' };
   }
+  const rollback = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
+    releasePleaseConfig,
+    beforeManifest,
+    afterManifest,
+    parentShas,
+    { prefix },
+  );
+  if (rollback !== null) return rollback;
   return exactReleasePleaseQualificationTransportBaseline(
     releasePleaseConfig,
     beforeManifest,
@@ -159,11 +168,17 @@ function main() {
     parentShas,
   );
   if (bootstrapBaseline !== null) {
-    console.log(
-      bootstrapBaseline.kind === 'introduction'
-        ? 'release PR coverage check skipped for the exact unreleased introduction commit'
-        : 'release PR coverage check skipped for the exact unreleased qualification transport baseline',
-    );
+    const message = {
+      introduction: 'release PR coverage check skipped for the exact unreleased introduction commit',
+      'qualification-transport':
+        'release PR coverage check skipped for the exact unreleased qualification transport baseline',
+      'unpublished-first-release-rollback-transport':
+        'release PR coverage check skipped for the exact unpublished first-release rollback transport',
+    }[bootstrapBaseline.kind];
+    if (message === undefined) {
+      fail(`unknown release-please coverage bootstrap baseline ${bootstrapBaseline.kind}`);
+    }
+    console.log(message);
     return;
   }
 

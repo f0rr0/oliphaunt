@@ -68,6 +68,11 @@ test("uses Cargo's file selection, preserves modes, and emits deterministic exac
   const first = packageSource(root, source, path.join(root, "first"));
   const second = packageSource(root, source, path.join(root, "second"));
   assert.deepEqual(readFileSync(first), readFileSync(second));
+  assert.equal(
+    readFileSync(first).subarray(0, 10).toString("hex"),
+    "1f8b0800000000000003",
+    "Cargo source packages must use the canonical cross-platform gzip header",
+  );
 
   const entries = readPortableArchiveEntries(first);
   assert.deepEqual([...entries.keys()], [

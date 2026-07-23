@@ -7,8 +7,10 @@ import test from "node:test";
 import { deflateRawSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
 
 import {
+  canonicalGzipSync,
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   decompressSingleZstdFrame,
+  normalizeCanonicalGzipHeader,
   portableMemberName,
   readAndroidApkEntries,
   readCanonicalTarGzipEntries,
@@ -171,7 +173,7 @@ function tarArchive(rows) {
     Buffer.from(`${checksum.toString(8).padStart(6, "0")}\0 `, "ascii").copy(header, 148);
     records.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
-  return gzipSync(Buffer.concat([...records, Buffer.alloc(1024)]), { mtime: 0 });
+  return canonicalGzipSync(Buffer.concat([...records, Buffer.alloc(1024)]));
 }
 
 function refreshFirstTarChecksum(tar) {
@@ -195,6 +197,26 @@ test("uses a runner-safe default archive memory envelope", () => {
     maxEntryBytes: 512 * 1024 * 1024,
     maxExpandedBytes: 1024 * 1024 * 1024,
   });
+});
+
+test("canonicalizes host-derived gzip metadata without changing payload or caller bytes", () => {
+  const payload = Buffer.from("portable gzip payload\n");
+  const hostArchive = Buffer.from(gzipSync(payload, { mtime: 0 }));
+  hostArchive.fill(0x7f, 4, 9);
+  hostArchive[9] = 0x07;
+  const original = Buffer.from(hostArchive);
+
+  const canonical = normalizeCanonicalGzipHeader(hostArchive);
+  assert.deepEqual(
+    canonical.subarray(0, 10),
+    Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]),
+  );
+  assert.deepEqual(gunzipSync(canonical), payload);
+  assert.deepEqual(hostArchive, original);
+  assert.throws(
+    () => normalizeCanonicalGzipHeader(Buffer.from("not gzip")),
+    /flag-free gzip stream/u,
+  );
 });
 
 test("reads a strict ZIP and validates payload bytes", (t) => {
@@ -627,7 +649,7 @@ test("binds the exact deterministic tar-gzip encoding used by release consumers"
   const ownerTar = gunzipForTest(validBytes);
   Buffer.from("builder\0", "ascii").copy(ownerTar, 265);
   refreshFirstTarChecksum(ownerTar);
-  const owner = fixtureFile(t, "owner.tar.gz", gzipSync(ownerTar, { mtime: 0 })).file;
+  const owner = fixtureFile(t, "owner.tar.gz", canonicalGzipSync(ownerTar)).file;
   assert.doesNotThrow(() => readPortableArchiveEntries(owner));
   assert.throws(
     () => readCanonicalTarGzipEntries(owner),

@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
-import { deflateRawSync, gzipSync } from 'node:zlib';
+import { deflateRawSync } from 'node:zlib';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
+import { canonicalGzipSync } from './portable-archive.mjs';
 
 function fail(message) {
   throw new Error(`archive_dir.mjs: ${message}`);
@@ -314,7 +316,7 @@ async function main(argv) {
   }
   await fs.mkdir(path.dirname(output), { recursive: true });
   if (output.endsWith('.tar.gz')) {
-    await fs.writeFile(output, gzipSync(await createTar(source, { keepParent }), { mtime: 0 }));
+    await fs.writeFile(output, canonicalGzipSync(await createTar(source, { keepParent })));
   } else if (path.extname(output) === '.zip') {
     await fs.writeFile(output, await createDeterministicZip(source, { keepParent }));
   } else {

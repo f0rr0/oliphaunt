@@ -17,12 +17,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gunzipSync } from "node:zlib";
 
 import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "../../../../tools/release/extension-upstream-licenses.mjs";
+import { canonicalGzipSync } from "../../../../tools/release/portable-archive.mjs";
 import { stageReleaseNotices } from "../../../../tools/release/release-notices.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./mobile-extension-artifact-paths.mjs", import.meta.url));
@@ -164,7 +165,7 @@ function writeCanonicalTarGzip(output, stage, archiveNames) {
     }
   }
   chunks.push(Buffer.alloc(1024));
-  writeFileSync(output, gzipSync(Buffer.concat(chunks), { mtime: 0 }));
+  writeFileSync(output, canonicalGzipSync(Buffer.concat(chunks)));
 }
 
 function rewriteFirstTarMode(output, mode) {
@@ -174,7 +175,7 @@ function rewriteFirstTarMode(output, mode) {
   const checksum = [...tar.subarray(0, 512)].reduce((total, byte) => total + byte, 0).toString(8);
   assert(checksum.length <= 6);
   writeTarString(tar, 148, 8, `${checksum.padStart(6, "0")}\0 `);
-  writeFileSync(output, gzipSync(tar, { mtime: 0 }));
+  writeFileSync(output, canonicalGzipSync(tar));
 }
 
 function extensionMember(sqlName, stagesIos = true) {

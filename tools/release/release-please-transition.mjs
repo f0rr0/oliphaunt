@@ -5,6 +5,8 @@ import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { compareText, runtimeTiedContribProducts } from "./release-graph.mjs";
 import {
   exactReleasePleaseQualificationTransportBaseline,
+  exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
+  isUnreleasedReleasePleaseManifest,
 } from "./release-please-bootstrap.mjs";
 
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
@@ -104,6 +106,21 @@ export function releasePleaseManifestTransitions(
       prefix,
       `release-please manifest paths must exactly match configured packages; missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`,
     );
+  }
+
+  if (
+    before !== null &&
+    isUnreleasedReleasePleaseManifest(after) &&
+    !isUnreleasedReleasePleaseManifest(before)
+  ) {
+    const rollback = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
+      config,
+      before,
+      after,
+      parentSha === undefined ? [] : [parentSha],
+      { prefix },
+    );
+    if (rollback !== null) before = rollback.normalizedBeforeManifest;
   }
 
   if (before !== null) {

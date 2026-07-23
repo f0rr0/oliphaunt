@@ -143,6 +143,7 @@ describe("Moon command resolution", () => {
     expect(config.implicitInputs).toContain("/tools/dev/bun.sh");
     expect(config.implicitInputs).toContain("/tools/dev/capture-command-output.mjs");
     expect(config.implicitInputs).toContain("/tools/dev/moon-command.mjs");
+    expect(config.implicitInputs).toContain("/tools/release/release-directory-safety.mjs");
     expect(config.implicitInputs).toContain("/tools/test/fd-backed-spawn-sync.mjs");
   });
 });

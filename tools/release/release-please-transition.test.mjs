@@ -14,6 +14,7 @@ import {
 import {
   RELEASE_PLEASE_BOOTSTRAP_SHA,
   RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
 } from "./release-please-bootstrap.mjs";
 
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";
@@ -148,6 +149,35 @@ function historyRepairTransitions(state, parentSha = RELEASE_PLEASE_DISPLACED_MA
   });
 }
 
+function firstReleaseRollbackState() {
+  return {
+    config: {
+      "bootstrap-sha": RELEASE_PLEASE_BOOTSTRAP_SHA,
+      "initial-version": "0.1.0",
+      packages: Object.fromEntries(
+        Object.entries(PRODUCT_PATHS).map(([product, packagePath]) => [
+          packagePath,
+          { component: product },
+        ]),
+      ),
+    },
+    before: manifest(Object.fromEntries(
+      Object.keys(PRODUCT_PATHS).map((product) => [product, "0.1.0"]),
+    )),
+    after: manifest(ZERO),
+  };
+}
+
+function firstReleaseRollbackTransitions(
+  state,
+  parentSha = RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+) {
+  return releasePleaseManifestTransitions(state.config, state.before, state.after, {
+    parentSha,
+    prefix: "transition-test",
+  });
+}
+
 test("the unreleased introduction may have no parent release manifest", (t) => {
   const root = fixture(t);
   for (const directory of Object.values(PRODUCT_PATHS)) mkdirSync(path.join(root, directory), { recursive: true });
@@ -171,6 +201,66 @@ test("a missing parent manifest cannot conceal already-released versions", (t) =
 
 test("the exact displaced-main contrib consolidation is an unchanged bootstrap baseline", () => {
   assert.deepEqual(historyRepairTransitions(historyRepairContribState()), []);
+});
+
+test("the exact unpublished first-release parent normalizes the rollback to seed state", () => {
+  assert.deepEqual(firstReleaseRollbackTransitions(firstReleaseRollbackState()), []);
+});
+
+test("first-release rollback normalization rejects a wrong or missing parent", () => {
+  for (const parentSha of [
+    undefined,
+    RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+    RELEASE_PLEASE_BOOTSTRAP_SHA,
+  ]) {
+    const state = firstReleaseRollbackState();
+    assert.throws(
+      () => parentSha === undefined
+        ? releasePleaseManifestTransitions(
+          state.config,
+          state.before,
+          state.after,
+          { prefix: "transition-test" },
+        )
+        : firstReleaseRollbackTransitions(state, parentSha),
+      /manifest version regressed from 0[.]1[.]0 to 0[.]0[.]0/u,
+    );
+  }
+});
+
+test("the exact rollback parent rejects partial or malformed seed restoration", () => {
+  const cases = [
+    {
+      name: "missing bootstrap",
+      mutate(state) {
+        delete state.config["bootstrap-sha"];
+      },
+      pattern: /requires bootstrap-sha/u,
+    },
+    {
+      name: "wrong first-release version",
+      mutate(state) {
+        state.before[PRODUCT_PATHS["oliphaunt-extension-vector"]] = "0.2.0";
+      },
+      pattern: /parent version 0[.]1[.]0, got 0[.]2[.]0/u,
+    },
+    {
+      name: "partial rollback",
+      mutate(state) {
+        state.after[PRODUCT_PATHS["oliphaunt-extension-vector"]] = "0.1.0";
+      },
+      pattern: /manifest version regressed from 0[.]1[.]0 to 0[.]0[.]0/u,
+    },
+  ];
+  for (const { name, mutate, pattern } of cases) {
+    const state = firstReleaseRollbackState();
+    mutate(state);
+    assert.throws(
+      () => firstReleaseRollbackTransitions(state),
+      pattern,
+      name,
+    );
+  }
 });
 
 for (const [name, mutate] of Object.entries({
