@@ -65,6 +65,7 @@ struct OliphauntHandle {
     bool sync_initialized;
     bool closing;
     bool logical_active;
+    uint64_t logical_generation;
     bool external_root_lock;
 
     unsigned char *input;
@@ -106,7 +107,6 @@ struct OliphauntHandle {
     bool trace_protocol;
 
     OliphauntEmbeddedIO io;
-    bool owns_global_guard;
     int stable_root_lock_fd;
     int root_marker_lock_fd;
     char *stable_root_lock_path;
@@ -141,11 +141,31 @@ int oliphaunt_build_backend_argv(OliphauntHandle *handle, OliphauntBackendArgv *
 void oliphaunt_free_backend_argv(OliphauntBackendArgv *argv);
 size_t oliphaunt_backend_stack_size_bytes(void);
 
+/*
+ * Returns 1 with existing->mutex held when a resident instance exists, 0 after
+ * reserving the process-wide instance slot for initial startup, or -1 on
+ * failure. A caller receiving 1 must unlock existing->mutex on every path.
+ */
 int oliphaunt_acquire_global_instance(OliphauntHandle **existing);
 int oliphaunt_ensure_extension_symbol_scope(char *error, size_t error_capacity);
 void oliphaunt_publish_global_instance(OliphauntHandle *handle);
 void oliphaunt_release_global_instance(bool spent);
-void oliphaunt_clear_global_instance(OliphauntHandle *handle, bool spent);
+/*
+ * Atomically claims a published resident instance for terminal close.
+ *
+ * When require_generation is true, handle is ignored and the current
+ * registry-owned instance is selected by generation alone. Returns 0 and sets
+ * claimed when the caller owns terminal close, 1 for a stale/non-owner handle
+ * or generation, 2 when terminal close already completed, and -1 on internal
+ * synchronization failure.
+ */
+int oliphaunt_claim_global_instance_for_close(
+    OliphauntHandle *handle,
+    uint64_t generation,
+    bool require_generation,
+    OliphauntHandle **claimed);
+int oliphaunt_claim_current_global_instance_for_close(OliphauntHandle **claimed);
+int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle);
 void oliphaunt_register_process_exit_shutdown(void);
 
 bool oliphaunt_trace_enabled(void);

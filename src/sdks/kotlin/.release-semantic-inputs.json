@@ -85,7 +85,19 @@
           "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
         }
       ]
+    },
+    {
+      "id": "canonical-native-c-abi-header",
+      "paths": [
+        "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
+          "sha256": "a8aeb5ba34baf76b49964bd8dbd8358bbccdb4ab37f213cc2313de20d5c94c91"
+        }
+      ]
     }
   ],
-  "sha256": "350478ba55a76f6d5bb16f1ceee5e5a784727d0e80a480ca3fffabba0cf61c11"
+  "sha256": "a5fb0d66b3f0950c46b887651c9b6a14b196359b7332f5c9451fa545313fbf61"
 }

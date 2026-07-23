@@ -76,6 +76,9 @@ int main(void) {
     int32_t (*restore_fn)(const OliphauntRestoreOptions *) = oliphaunt_restore;
     int32_t (*cancel_fn)(OliphauntHandle *) = oliphaunt_cancel;
     int32_t (*detach_fn)(OliphauntHandle *) = oliphaunt_detach;
+    uint64_t (*logical_generation_fn)(OliphauntHandle *) = oliphaunt_logical_generation;
+    int32_t (*close_if_generation_fn)(uint64_t) =
+        oliphaunt_close_if_generation;
     int32_t (*close_fn)(OliphauntHandle *) = oliphaunt_close;
     int32_t (*register_static_extensions_fn)(const OliphauntStaticExtension *, size_t) =
         oliphaunt_register_static_extensions;
@@ -95,6 +98,8 @@ int main(void) {
     CHECK(restore_fn != NULL, "oliphaunt_restore must link");
     CHECK(cancel_fn != NULL, "oliphaunt_cancel must link");
     CHECK(detach_fn != NULL, "oliphaunt_detach must link");
+    CHECK(logical_generation_fn != NULL, "oliphaunt_logical_generation must link");
+    CHECK(close_if_generation_fn != NULL, "oliphaunt_close_if_generation must link");
     CHECK(close_fn != NULL, "oliphaunt_close must link");
     CHECK(register_static_extensions_fn != NULL, "oliphaunt_register_static_extensions must link");
     CHECK(last_error_fn != NULL, "oliphaunt_last_error must link");
@@ -191,6 +196,9 @@ int main(void) {
 
     CHECK(close_fn(NULL) == 0, "oliphaunt_close(NULL) must be a no-op");
     CHECK(detach_fn(NULL) == 0, "oliphaunt_detach(NULL) must be a no-op");
+    CHECK(logical_generation_fn(NULL) == 0, "oliphaunt_logical_generation(NULL) must return zero");
+    CHECK(close_if_generation_fn(0) == -1,
+          "oliphaunt_close_if_generation(0) must reject generation zero");
     CHECK(cancel_fn(NULL) != 0, "oliphaunt_cancel(NULL) must fail");
     const char *error = last_error_fn(NULL);
     CHECK(error != NULL && strstr(error, "invalid oliphaunt_cancel arguments") != NULL,

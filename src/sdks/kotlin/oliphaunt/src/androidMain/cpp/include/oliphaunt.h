@@ -87,6 +87,12 @@ typedef struct OliphauntStaticExtension {
  * oliphaunt_close is terminal for the process lifetime and restores the caller's
  * previous PGDATA value, or unsets it if it was unset.
  *
+ * Every successful oliphaunt_init or oliphaunt_init_ex establishes a current
+ * logical lease generation. Hosts with independent cleanup owners must capture
+ * its non-zero value immediately with oliphaunt_logical_generation and use
+ * oliphaunt_close_if_generation: a stale owner then cannot terminate a newer
+ * logical lease on the same resident handle.
+ *
  * Callers that require process environment isolation should use broker/server
  * mode through the Rust SDK instead of keeping multiple direct-mode backends in
  * one process.
@@ -178,6 +184,25 @@ OLIPHAUNT_API int32_t oliphaunt_backup_ex(
 OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *options);
 OLIPHAUNT_API int32_t oliphaunt_cancel(OliphauntHandle *handle);
 OLIPHAUNT_API int32_t oliphaunt_detach(OliphauntHandle *handle);
+/*
+ * Returns the non-zero generation of the currently published logical lease.
+ * Returns zero for NULL, stale, terminally closed, or otherwise non-current
+ * handles. The registry is validated before the opaque handle is dereferenced.
+ */
+OLIPHAUNT_API uint64_t oliphaunt_logical_generation(OliphauntHandle *handle);
+/*
+ * Terminally closes the process-wide resident handle only when generation
+ * still owns its current logical lease. Returns 0 when terminal close completes
+ * or had already completed, 1 for an active stale/non-owner generation no-op,
+ * and -1 for generation zero or an internal failure.
+ */
+OLIPHAUNT_API int32_t oliphaunt_close_if_generation(
+    uint64_t generation);
+/*
+ * Unconditionally performs process-terminal close for the current published
+ * resident handle. Hosts with multiple cleanup owners should use
+ * oliphaunt_close_if_generation and retain only its generation token.
+ */
 OLIPHAUNT_API int32_t oliphaunt_close(OliphauntHandle *handle);
 OLIPHAUNT_API int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count);
 OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *handle);

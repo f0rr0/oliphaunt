@@ -60,6 +60,19 @@ to_shell_path() {
   fi
 }
 
+resolve_output_path() {
+  raw="$1"
+  case "$raw" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*|\\\\*) ;;
+    *) raw="$root/$raw" ;;
+  esac
+  if [ "$platform" = "windows" ] && command -v cygpath >/dev/null 2>&1; then
+    cygpath -am "$raw"
+  else
+    printf '%s\n' "$raw"
+  fi
+}
+
 tar_list_gzip() {
   if [ "$platform" = "windows" ]; then
     tar --force-local -tzf "$1"
@@ -113,10 +126,10 @@ if [ ! -f "$node_include/node_api.h" ]; then
   exit 2
 fi
 
-out_dir="${OLIPHAUNT_NODE_ADDON_OUT_DIR:-$root/target/oliphaunt-artifacts/node-direct/$target}"
-asset_dir="${OLIPHAUNT_NODE_ADDON_ASSET_OUT_DIR:-$root/target/oliphaunt-node-direct/release-assets}"
-npm_package_dir="${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_OUT_DIR:-$root/target/oliphaunt-node-direct/npm-packages}"
-npm_package_work_root="${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_WORK_DIR:-$root/target/oliphaunt-node-direct/npm-package-work/$target}"
+out_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_OUT_DIR:-$root/target/oliphaunt-artifacts/node-direct/$target}")"
+asset_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_ASSET_OUT_DIR:-$root/target/oliphaunt-node-direct/release-assets}")"
+npm_package_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_OUT_DIR:-$root/target/oliphaunt-node-direct/npm-packages}")"
+npm_package_work_root="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_WORK_DIR:-$root/target/oliphaunt-node-direct/npm-package-work/$target}")"
 src="src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc"
 addon="$out_dir/oliphaunt_node.node"
 addon_file="$addon"
@@ -125,16 +138,18 @@ mkdir -p "$out_dir" "$asset_dir" "$npm_package_dir"
 
 cxx="${CXX:-c++}"
 oliphaunt_include="$root/src/runtimes/liboliphaunt/native/include"
-common_flags="-std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node -I$node_include -I$oliphaunt_include"
 
 case "$platform" in
   macos)
-    # shellcheck disable=SC2086 # common_flags is an intentional POSIX argument list.
-    "$cxx" $common_flags -fPIC "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup "$src" -o "$addon"
+    "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+      "-I$node_include" "-I$oliphaunt_include" -fPIC \
+      "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup \
+      "$src" -o "$addon"
     ;;
   linux)
-    # shellcheck disable=SC2086 # common_flags is an intentional POSIX argument list.
-    "$cxx" $common_flags -fPIC -shared "$src" -ldl -o "$addon"
+    "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+      "-I$node_include" "-I$oliphaunt_include" -fPIC -shared \
+      "$src" -ldl -o "$addon"
     ;;
   windows)
     node_lib="${NODE_LIB:-}"
@@ -165,14 +180,21 @@ case "$platform" in
       exit 2
     fi
     cxx="${CXX:-cl}"
+    windows_build_dir="$root/target/oliphaunt-node-direct/native-build/$target"
+    rm -rf "$windows_build_dir"
+    mkdir -p "$windows_build_dir"
+    addon_object="$windows_build_dir/oliphaunt_node.obj"
+    addon_import_library="$windows_build_dir/oliphaunt_node.lib"
     if command -v cygpath >/dev/null 2>&1; then
       node_include="$(cygpath -w "$node_include")"
       oliphaunt_include="$(cygpath -w "$oliphaunt_include")"
       node_lib="$(cygpath -w "$node_lib")"
       src="$(cygpath -w "$src")"
       addon="$(cygpath -w "$addon")"
+      addon_object="$(cygpath -w "$addon_object")"
+      addon_import_library="$(cygpath -w "$addon_import_library")"
     fi
-    "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 //DNODE_GYP_MODULE_NAME=oliphaunt_node "-I$node_include" "-I$oliphaunt_include" "$src" //link "$node_lib" //OUT:"$addon"
+    "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 //DNODE_GYP_MODULE_NAME=oliphaunt_node "-I$node_include" "-I$oliphaunt_include" "$src" //Fo:"$addon_object" //link "$node_lib" //OUT:"$addon" //IMPLIB:"$addon_import_library"
     ;;
 esac
 
@@ -200,6 +222,8 @@ for (const name of expected) {
 }
 JS
 
+bash src/runtimes/node-direct/tools/test-node-addon-cleanup-lifecycle.sh "$addon_file"
+
 if [ "$platform" = "windows" ]; then
   asset="oliphaunt-node-direct-$version-$target.zip"
 else
@@ -219,10 +243,16 @@ tools/release/archive_dir.mjs "$asset_stage" "$asset_dir/$asset"
 input_dirs="${OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then
   old_ifs="$IFS"
-  IFS=':'
+  if [ "$platform" = "windows" ]; then
+    input_delimiter=';'
+  else
+    input_delimiter=':'
+  fi
+  IFS="$input_delimiter"
   for input_dir in $input_dirs; do
     IFS="$old_ifs"
     [ -n "$input_dir" ] || continue
+    input_dir="$(to_shell_path "$input_dir")"
     [ -d "$input_dir" ] || {
       echo "release asset input directory does not exist: $input_dir" >&2
       exit 1
@@ -233,7 +263,7 @@ if [ -n "$input_dirs" ]; then
         [ -n "$input_asset" ] || continue
         cp -p "$input_asset" "$asset_dir/"
       done
-    IFS=':'
+    IFS="$input_delimiter"
   done
   IFS="$old_ifs"
 fi

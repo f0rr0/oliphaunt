@@ -79,27 +79,27 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
-          "sha256": "2f4dd3f15ffc9b188b4e215812294063f1157aab6be0c49111d51ddb38ca6876"
+          "sha256": "b772a154f5961626b98b26f4f318b59e9e345edde15a0e58420bd0b448fe74ba"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
-          "sha256": "a7c00ead28ab97eb09bd61d44ce9a75c06d788c594491e4278734ea3783130b3"
+          "sha256": "1fa85b23f5c2fbcbd515ff6a8f8d55160e212b8b2bc09446f92610184fd593bb"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
-          "sha256": "14baf57ae2d1413c3e8f287d465fc6a55db1c0d4d09a306967b98322989fc083"
+          "sha256": "cb5f273ddade32cca058457c6737c9251fc566b086a481fa876b666af929be4a"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
-          "sha256": "50ce9237d8452abdff025b6ab39a6806fd9e8271471933e347cdc7041bf2abd2"
+          "sha256": "6b431153dd62d87b94293e8d9125647d79bd0433fda36920f68b05a8c6f39237"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-          "sha256": "d3de524e5d6cec2e3829c1af46ce2b364f8bd8658ec1696acf841b4c423e8913"
+          "sha256": "e60a34da21b426a5d11f26dd75c6a2563834347f78c3732c27a5bcea129f81a2"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "11a1014c30c7a1d0b7708c310ac401ed691d9310a56a2fa005be0f3516368340"
+          "sha256": "fa4a87dfac5a508b7001303f379a33b5afc682059ed29027299f50deabb4543f"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
@@ -378,5 +378,5 @@
       ]
     }
   ],
-  "sha256": "f2cd5b0411cc10f33922ce39684f94a6fa5f6f5129993eb824f9e5dda7939b1e"
+  "sha256": "4660006dc6d35b360b7b17965d57439586f71a50e125937385cdf6bd635118e8"
 }

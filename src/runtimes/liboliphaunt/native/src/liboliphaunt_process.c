@@ -103,17 +103,10 @@ int oliphaunt_ensure_extension_symbol_scope(char *error, size_t error_capacity) 
 }
 
 static void oliphaunt_shutdown_global_instance_at_exit(void) {
-    OliphauntHandle *handle = NULL;
-    pthread_mutex_lock(&global_instance_mutex);
-    if (global_instance_state == OLIPHAUNT_GLOBAL_ACTIVE && global_instance != NULL) {
-        handle = global_instance;
-        global_instance = NULL;
-        global_instance_state = OLIPHAUNT_GLOBAL_SPENT;
-    }
-    pthread_mutex_unlock(&global_instance_mutex);
-
-    if (handle != NULL) {
-        (void)oliphaunt_close(handle);
+    OliphauntHandle *claimed = NULL;
+    int claim_rc = oliphaunt_claim_current_global_instance_for_close(&claimed);
+    if (claim_rc == 0 && claimed != NULL) {
+        (void)oliphaunt_close_claimed_global_instance(claimed);
     }
 }
 
@@ -134,7 +127,14 @@ int oliphaunt_acquire_global_instance(OliphauntHandle **existing) {
     pthread_mutex_lock(&global_instance_mutex);
     if (global_instance_state == OLIPHAUNT_GLOBAL_ACTIVE) {
         if (existing != NULL && global_instance != NULL) {
-            *existing = global_instance;
+            OliphauntHandle *handle = global_instance;
+            int lock_rc = pthread_mutex_lock(&handle->mutex);
+            if (lock_rc != 0) {
+                pthread_mutex_unlock(&global_instance_mutex);
+                set_error(NULL, "cannot lock the resident native liboliphaunt instance");
+                return -1;
+            }
+            *existing = handle;
             pthread_mutex_unlock(&global_instance_mutex);
             return 1;
         }
@@ -167,11 +167,72 @@ void oliphaunt_release_global_instance(bool spent) {
     pthread_mutex_unlock(&global_instance_mutex);
 }
 
-void oliphaunt_clear_global_instance(OliphauntHandle *handle, bool spent) {
+uint64_t oliphaunt_logical_generation(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        return 0;
+    }
+
+    uint64_t generation = 0;
     pthread_mutex_lock(&global_instance_mutex);
-    if (global_instance == handle || global_instance == NULL) {
-        global_instance = NULL;
-        global_instance_state = spent ? OLIPHAUNT_GLOBAL_SPENT : OLIPHAUNT_GLOBAL_UNUSED;
+    if (global_instance_state == OLIPHAUNT_GLOBAL_ACTIVE && global_instance == handle) {
+        int lock_rc = pthread_mutex_lock(&handle->mutex);
+        if (lock_rc == 0) {
+            generation = handle->logical_generation;
+            pthread_mutex_unlock(&handle->mutex);
+        }
     }
     pthread_mutex_unlock(&global_instance_mutex);
+    return generation;
+}
+
+int oliphaunt_claim_global_instance_for_close(
+    OliphauntHandle *handle,
+    uint64_t generation,
+    bool require_generation,
+    OliphauntHandle **claimed) {
+    if (claimed == NULL) {
+        return -1;
+    }
+    *claimed = NULL;
+
+    pthread_mutex_lock(&global_instance_mutex);
+    if (global_instance_state == OLIPHAUNT_GLOBAL_SPENT) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        return 2;
+    }
+    if (global_instance_state != OLIPHAUNT_GLOBAL_ACTIVE || global_instance == NULL) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        return 1;
+    }
+
+    OliphauntHandle *current = global_instance;
+    int lock_rc = pthread_mutex_lock(&current->mutex);
+    if (lock_rc != 0) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        set_error(NULL, "cannot lock the resident native liboliphaunt instance for terminal close");
+        return -1;
+    }
+    bool owns_close = require_generation
+        ? generation == current->logical_generation
+        : handle == NULL || handle == current;
+    if (!owns_close) {
+        pthread_mutex_unlock(&current->mutex);
+        pthread_mutex_unlock(&global_instance_mutex);
+        return 1;
+    }
+
+    global_instance = NULL;
+    global_instance_state = OLIPHAUNT_GLOBAL_SPENT;
+    *claimed = current;
+    pthread_mutex_unlock(&current->mutex);
+    pthread_mutex_unlock(&global_instance_mutex);
+    return 0;
+}
+
+int oliphaunt_claim_current_global_instance_for_close(OliphauntHandle **claimed) {
+    return oliphaunt_claim_global_instance_for_close(
+        NULL,
+        0,
+        false,
+        claimed);
 }

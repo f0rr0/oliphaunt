@@ -19,7 +19,7 @@ task.
 | Response ownership | `OliphauntResponse`, `oliphaunt_free_response` | Free ABI-owned buffers exactly once |
 | Errors | `oliphaunt_last_error`, structured error fields where available | Read the last SDK or PostgreSQL error for a handle |
 | Data movement | backup and restore entry points where exposed | Move PostgreSQL roots through validated archives |
-| Lifecycle | `oliphaunt_checkpoint`, `oliphaunt_close` | Flush, detach, and release the resident backend handle |
+| Lifecycle | `oliphaunt_detach`, `oliphaunt_logical_generation`, `oliphaunt_close_if_generation`, `oliphaunt_close` | Detach a logical lease, guard host cleanup against stale leases, or terminate the resident backend |
 
 Most app developers use a language SDK instead of calling the C ABI directly.
 The C ABI is primarily for binding authors and applications that need the native
@@ -33,3 +33,14 @@ accepts a separately versioned `OliphauntInitOptions`. A non-empty
 process environment and release-layout discovery. A non-null options record
 requires ABI version 1, an existing non-empty `module_dir`, and zero reserved
 flags. Pass `NULL` options to preserve the legacy resolution contract.
+
+Direct-mode `oliphaunt_detach` leaves the same-root backend resident so a later
+init can acquire a new logical lease. Binding authors capture the nonzero
+`oliphaunt_logical_generation` immediately after every successful init and use
+`oliphaunt_close_if_generation` during host-environment teardown. It
+closes only the matching current lease; while a newer lease is active, a stale
+generation returns a positive no-op result and must not terminate that owner.
+Once terminal close has completed, cleanup returns zero because the terminal
+condition is already satisfied. Invalid arguments or lifecycle-state errors
+return a negative result. `oliphaunt_close` is the unconditional terminal
+operation for hosts that serialize the entire process lifetime themselves.

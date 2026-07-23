@@ -47,6 +47,7 @@ tasks:
       - "third-party-native:check"
       - "extension-runtime-contract:check"
       - "liboliphaunt-native:external-source-fetch-test"
+      - "liboliphaunt-native:generation-lifecycle-test"
       - "liboliphaunt-native:ios-extension-packager-test"
       - "liboliphaunt-native:module-dir-resolver-test"
       - "liboliphaunt-native:postgis-reproducible-time-test"
@@ -72,6 +73,19 @@ tasks:
     inputs:
       - "/src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh"
       - "/src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.test.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  generation-lifecycle-test:
+    tags: ["quality", "unit"]
+    command: "bash src/runtimes/liboliphaunt/native/tools/test-generation-lifecycle.sh"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_internal.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_platform.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
+      - "/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_generation_lifecycle.c"
+      - "/src/runtimes/liboliphaunt/native/tools/test-generation-lifecycle.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true

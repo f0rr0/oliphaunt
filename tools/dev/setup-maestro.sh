@@ -44,7 +44,8 @@ if [ -z "$version" ] || [ -z "$maestro_url" ] || [ -z "$maestro_sha256" ]; then
 fi
 
 normalized_version="${version#cli-}"
-if ! [[ "$normalized_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]] || {
+stable_maestro_version_re='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$'
+if ! [[ "$normalized_version" =~ $stable_maestro_version_re ]] || {
   [ "$version" != "$normalized_version" ] && [ "$version" != "cli-$normalized_version" ];
 }; then
   echo "$maestro_manifest contains an invalid Maestro version: $version" >&2

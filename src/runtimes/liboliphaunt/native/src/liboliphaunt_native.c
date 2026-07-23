@@ -35,6 +35,8 @@ extern void SetLatch(Latch *latch);
 
 static char global_last_error[1024];
 
+static int32_t close_unpublished_handle(OliphauntHandle *handle);
+
 void oliphaunt_set_error(OliphauntHandle *handle, const char *message) {
     char *target = handle ? handle->last_error : global_last_error;
     snprintf(target, 1024, "%s", message ? message : "unknown native liboliphaunt error");
@@ -81,7 +83,21 @@ static bool config_matches_resident_runtime(
            startup_args_match(handle, config);
 }
 
-static int reopen_resident_runtime(
+static int advance_logical_generation_locked(OliphauntHandle *handle) {
+    if (handle->logical_generation == UINT64_MAX) {
+        return -1;
+    }
+    handle->logical_generation++;
+    return 0;
+}
+
+/*
+ * oliphaunt_acquire_global_instance returns an existing resident handle with
+ * its mutex held. Keeping that lock across validation and lease activation
+ * prevents terminal close from claiming and freeing the resident allocation
+ * between lookup and reopen.
+ */
+static int reopen_resident_runtime_locked(
     OliphauntHandle *handle,
     const OliphauntConfig *config,
     const OliphauntInitOptions *options,
@@ -90,7 +106,6 @@ static int reopen_resident_runtime(
         set_error(NULL, "native liboliphaunt process-wide runtime is unavailable");
         return -1;
     }
-    pthread_mutex_lock(&handle->mutex);
     if (handle->logical_active) {
         pthread_mutex_unlock(&handle->mutex);
         set_error(NULL, "native liboliphaunt already has an active logical direct handle");
@@ -104,6 +119,11 @@ static int reopen_resident_runtime(
     if (!config_matches_resident_runtime(handle, config, options)) {
         pthread_mutex_unlock(&handle->mutex);
         set_error(NULL, "native liboliphaunt resident runtime is bound to a different root, identity, runtime, or extension startup configuration");
+        return -1;
+    }
+    if (advance_logical_generation_locked(handle) != 0) {
+        pthread_mutex_unlock(&handle->mutex);
+        set_error(NULL, "native liboliphaunt logical generation space is exhausted");
         return -1;
     }
     handle->logical_active = true;
@@ -433,7 +453,7 @@ int32_t oliphaunt_init_ex(
         return -1;
     }
     if (acquire_rc > 0) {
-        return reopen_resident_runtime(existing, config, options, out);
+        return reopen_resident_runtime_locked(existing, config, options, out);
     }
 
     OliphauntHandle *handle = (OliphauntHandle *)calloc(1, sizeof(OliphauntHandle));
@@ -442,7 +462,6 @@ int32_t oliphaunt_init_ex(
         set_error(NULL, "out of memory allocating OliphauntHandle");
         return -1;
     }
-    handle->owns_global_guard = true;
     handle->stable_root_lock_fd = -1;
     handle->root_marker_lock_fd = -1;
     handle->trace_protocol = oliphaunt_trace_enabled();
@@ -456,14 +475,14 @@ int32_t oliphaunt_init_ex(
     handle->database = oliphaunt_dup_config_string(config->database, "postgres");
     if (handle->pgdata == NULL || handle->runtime_dir == NULL || handle->module_dir == NULL ||
         handle->username == NULL || handle->database == NULL) {
-        oliphaunt_close(handle);
+        close_unpublished_handle(handle);
         set_error(NULL, "out of memory copying oliphaunt config");
         return -1;
     }
     if (oliphaunt_dup_startup_args(handle, config) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "%s", handle->last_error);
-        oliphaunt_close(handle);
+        close_unpublished_handle(handle);
         set_error(NULL, message);
         return -1;
     }
@@ -471,15 +490,26 @@ int32_t oliphaunt_init_ex(
         oliphaunt_acquire_root_marker_lock(handle, handle->pgdata) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "%s", handle->last_error);
-        oliphaunt_close(handle);
+        close_unpublished_handle(handle);
         set_error(NULL, message);
         return -1;
     }
 
-    if (pthread_mutex_init(&handle->mutex, NULL) != 0 ||
-        pthread_cond_init(&handle->input_cond, NULL) != 0 ||
-        pthread_cond_init(&handle->output_cond, NULL) != 0) {
-        oliphaunt_close(handle);
+    if (pthread_mutex_init(&handle->mutex, NULL) != 0) {
+        close_unpublished_handle(handle);
+        set_error(NULL, "failed to initialize native liboliphaunt synchronization");
+        return -1;
+    }
+    if (pthread_cond_init(&handle->input_cond, NULL) != 0) {
+        pthread_mutex_destroy(&handle->mutex);
+        close_unpublished_handle(handle);
+        set_error(NULL, "failed to initialize native liboliphaunt synchronization");
+        return -1;
+    }
+    if (pthread_cond_init(&handle->output_cond, NULL) != 0) {
+        pthread_cond_destroy(&handle->input_cond);
+        pthread_mutex_destroy(&handle->mutex);
+        close_unpublished_handle(handle);
         set_error(NULL, "failed to initialize native liboliphaunt synchronization");
         return -1;
     }
@@ -488,12 +518,20 @@ int32_t oliphaunt_init_ex(
     if (start_backend(handle) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "%s", handle->last_error);
-        oliphaunt_close(handle);
+        close_unpublished_handle(handle);
         set_error(NULL, message);
         return -1;
     }
 
+    pthread_mutex_lock(&handle->mutex);
+    if (advance_logical_generation_locked(handle) != 0) {
+        pthread_mutex_unlock(&handle->mutex);
+        close_unpublished_handle(handle);
+        set_error(NULL, "native liboliphaunt logical generation space is exhausted");
+        return -1;
+    }
     handle->logical_active = true;
+    pthread_mutex_unlock(&handle->mutex);
     oliphaunt_register_process_exit_shutdown();
     oliphaunt_publish_global_instance(handle);
     *out = handle;
@@ -543,7 +581,7 @@ int32_t oliphaunt_detach(OliphauntHandle *handle) {
     return 0;
 }
 
-int32_t oliphaunt_close(OliphauntHandle *handle) {
+int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
     if (handle == NULL) {
         return 0;
     }
@@ -594,11 +632,62 @@ int32_t oliphaunt_close(OliphauntHandle *handle) {
     free(handle->input);
     free(handle->output);
     oliphaunt_clear_stream_chunks_locked(handle);
-    if (handle->owns_global_guard) {
-        oliphaunt_clear_global_instance(handle, handle->thread_started);
-    }
     free(handle);
     return 0;
+}
+
+static int32_t close_unpublished_handle(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        return 0;
+    }
+    bool spent = handle->thread_started;
+    int32_t rc = oliphaunt_close_claimed_global_instance(handle);
+    oliphaunt_release_global_instance(spent);
+    return rc;
+}
+
+int32_t oliphaunt_close_if_generation(uint64_t generation) {
+    if (generation == 0) {
+        set_error(NULL, "invalid oliphaunt_close_if_generation generation");
+        return -1;
+    }
+
+    OliphauntHandle *claimed = NULL;
+    int claim_rc = oliphaunt_claim_global_instance_for_close(
+        NULL,
+        generation,
+        true,
+        &claimed);
+    if (claim_rc == 1) {
+        return 1;
+    }
+    if (claim_rc == 2) {
+        return 0;
+    }
+    if (claim_rc != 0 || claimed == NULL) {
+        return -1;
+    }
+    return oliphaunt_close_claimed_global_instance(claimed);
+}
+
+int32_t oliphaunt_close(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        return 0;
+    }
+
+    OliphauntHandle *claimed = NULL;
+    int claim_rc = oliphaunt_claim_global_instance_for_close(
+        handle,
+        0,
+        false,
+        &claimed);
+    if (claim_rc == 1 || claim_rc == 2) {
+        return 0;
+    }
+    if (claim_rc != 0 || claimed == NULL) {
+        return -1;
+    }
+    return oliphaunt_close_claimed_global_instance(claimed);
 }
 
 int32_t oliphaunt_cancel(OliphauntHandle *handle) {

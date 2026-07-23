@@ -1568,6 +1568,8 @@ artifact_ready() {
     oliphaunt_restore \
     oliphaunt_cancel \
     oliphaunt_detach \
+    oliphaunt_logical_generation \
+    oliphaunt_close_if_generation \
     oliphaunt_close \
     oliphaunt_register_static_extensions \
     oliphaunt_last_error \

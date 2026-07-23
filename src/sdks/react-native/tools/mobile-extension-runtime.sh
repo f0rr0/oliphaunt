@@ -266,10 +266,11 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
 
   [ -n "$selected_extensions" ] || return 1
 
-  local prebuilt_runtime_artifacts native_runtime_version
+  local prebuilt_runtime_artifacts native_runtime_version stable_semver_re
   need_cmd cargo
   native_runtime_version="$(tr -d '\r\n' <"$root/src/runtimes/liboliphaunt/native/VERSION")"
-  [[ "$native_runtime_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+  stable_semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  [[ "$native_runtime_version" =~ $stable_semver_re ]] ||
     fail "liboliphaunt native VERSION must be stable SemVer"
   local extension_target
   case "$platform" in

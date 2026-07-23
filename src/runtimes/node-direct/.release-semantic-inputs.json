@@ -70,7 +70,7 @@
       "inputs": [
         {
           "path": "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
-          "sha256": "291543f2b06d58c3a7ada6f259163ec66bac174d4c8e52755bf6fd95398170f3"
+          "sha256": "a8aeb5ba34baf76b49964bd8dbd8358bbccdb4ab37f213cc2313de20d5c94c91"
         }
       ]
     },
@@ -99,5 +99,5 @@
       ]
     }
   ],
-  "sha256": "4b70eeeaf04c1aec33108fb2f43db5e653e65cf8731bc4436652c5361f3578b1"
+  "sha256": "95584d3fa65c9e0a1dee6eaae9c6cd292e921265f4e6b1a6621c202e66b824cb"
 }

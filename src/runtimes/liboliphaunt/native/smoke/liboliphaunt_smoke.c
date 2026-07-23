@@ -1719,6 +1719,19 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         fprintf(stderr, "oliphaunt_init failed: %s\n", oliphaunt_last_error(db));
         return 1;
     }
+    uint64_t first_generation = oliphaunt_logical_generation(db);
+    if (first_generation == 0) {
+        fprintf(stderr, "oliphaunt_init did not publish a non-zero logical generation\n");
+        oliphaunt_close(db);
+        return 1;
+    }
+    uint64_t non_owner_generation =
+        first_generation == UINT64_MAX ? 1 : first_generation + 1;
+    if (oliphaunt_close_if_generation(non_owner_generation) != 1) {
+        fprintf(stderr, "oliphaunt_close_if_generation did not reject a non-owner generation\n");
+        oliphaunt_close(db);
+        return 1;
+    }
     if (expect_pgdata_env("oliphaunt_init active backend", pgdata) != 0) {
         oliphaunt_close(db);
         return 1;
@@ -1869,15 +1882,34 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         oliphaunt_close(db);
         return 1;
     }
-    if (exec_query_expect_tags(reopened, "SELECT 42 AS reopened", select_tags, sizeof(select_tags)) != 0) {
+    uint64_t reopened_generation = oliphaunt_logical_generation(reopened);
+    if (reopened_generation == 0 || reopened_generation == first_generation) {
+        fprintf(stderr, "same-process logical reopen did not advance its generation\n");
+        oliphaunt_close(reopened);
+        return 1;
+    }
+    if (oliphaunt_close_if_generation(first_generation) != 1) {
+        fprintf(stderr, "stale logical generation unexpectedly claimed the reopened runtime\n");
+        oliphaunt_close(reopened);
+        return 1;
+    }
+    if (exec_query_expect_tags(reopened, "SELECT 42 AS reopened_after_stale_close", select_tags, sizeof(select_tags)) != 0) {
         oliphaunt_close(reopened);
         return 1;
     }
 
     fprintf(stderr, "terminal shutdown of resident database runtime\n");
-    rc = oliphaunt_close(reopened);
+    rc = oliphaunt_close_if_generation(reopened_generation);
     if (rc != 0) {
-        fprintf(stderr, "oliphaunt_close failed\n");
+        fprintf(stderr, "generation-guarded oliphaunt close failed\n");
+        return 1;
+    }
+    if (oliphaunt_close_if_generation(reopened_generation) != 0) {
+        fprintf(stderr, "repeated close of the same logical generation was not idempotent\n");
+        return 1;
+    }
+    if (oliphaunt_close_if_generation(first_generation) != 0) {
+        fprintf(stderr, "terminally closed runtime did not treat stale cleanup as satisfied\n");
         return 1;
     }
     return 0;

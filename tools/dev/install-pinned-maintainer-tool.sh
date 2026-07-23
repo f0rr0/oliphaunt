@@ -47,7 +47,8 @@ manifest_value() {
 }
 
 version="$(manifest_value "$tool" version || true)"
-if [ -z "$version" ] || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+stable_tool_version_re='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$'
+if [ -z "$version" ] || [[ ! "$version" =~ $stable_tool_version_re ]]; then
   echo "$manifest must contain one valid quoted $tool.version" >&2
   exit 1
 fi

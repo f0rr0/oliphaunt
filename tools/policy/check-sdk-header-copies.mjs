@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const canonicalPath = 'src/runtimes/liboliphaunt/native/include/oliphaunt.h';
 const copies = [
+  'src/sdks/kotlin/oliphaunt/src/androidMain/cpp/include/oliphaunt.h',
   'src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h',
   'src/sdks/react-native/android/src/main/cpp/include/oliphaunt.h',
 ];

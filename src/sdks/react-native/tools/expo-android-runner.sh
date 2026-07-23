@@ -176,6 +176,8 @@ android_liboliphaunt_has_current_abi() {
     oliphaunt_restore \
     oliphaunt_cancel \
     oliphaunt_detach \
+    oliphaunt_logical_generation \
+    oliphaunt_close_if_generation \
     oliphaunt_close \
     oliphaunt_last_error \
     oliphaunt_version \

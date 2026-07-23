@@ -260,7 +260,14 @@ export function windowsImportLibraryFixture({
   importMachine = 0x8664,
   objectMachine = 0x8664,
   symbol,
-  importSymbols = symbol === undefined ? ['oliphaunt_init', 'oliphaunt_init_ex'] : [symbol],
+  importSymbols = symbol === undefined
+    ? [
+        'oliphaunt_close_if_generation',
+        'oliphaunt_init',
+        'oliphaunt_init_ex',
+        'oliphaunt_logical_generation',
+      ]
+    : [symbol],
 } = {}) {
   if (!Array.isArray(importSymbols) || importSymbols.length === 0) {
     throw new Error('Windows import-library fixture requires at least one import symbol');

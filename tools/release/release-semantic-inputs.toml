@@ -369,10 +369,10 @@ product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 
 [[rules]]
 id = "canonical-native-c-abi-header"
-# Node direct compiles this canonical runtime header into its addon. Native
-# owns the path directly; this edge adds the cross-product byte dependency.
+# Node direct and Kotlin compile or package this canonical runtime header.
+# Native owns the path directly; this edge adds the cross-product byte dependencies.
 paths = ["src/runtimes/liboliphaunt/native/include/oliphaunt.h"]
-products = ["oliphaunt-node-direct"]
+products = ["oliphaunt-kotlin", "oliphaunt-node-direct"]
 
 [[rules]]
 id = "native-runtime-release-asset-producers"

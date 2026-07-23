@@ -79,6 +79,9 @@ Bindings and direct C consumers own the app-facing contract above the ABI:
 - Select exact SQL extension names before opening the database.
 - Surface `capabilities()` and structured errors in ecosystem-native types.
 - Use ABI backup and restore calls instead of copying live PostgreSQL roots.
+- Capture the logical generation immediately after init when more than one host
+  environment or finalizer can own cleanup, and use generation-guarded terminal
+  close so stale teardown cannot close a newer lease.
 
 ## First Query
 

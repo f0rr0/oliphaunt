@@ -148,13 +148,15 @@ oliphaunt_icu_artifacts_ready() {
 
 oliphaunt_icu_linked_symbols_ready() {
   local symbols="${1-}"
+  local data_symbol_re
+  data_symbol_re='(^|[[:space:]])_?icudt[0-9]+[a-z]*_dat($|[[:space:]])'
   [ -n "$symbols" ] || return 1
   grep -Eq '(^|[[:space:]])_?ucol_open(_[0-9]+)?($|[[:space:]])' <<< "$symbols" || return 1
   ! grep -Eq '(^|[[:space:]])_?pg_register_static_icu_data($|[[:space:]])' <<< "$symbols" || return 1
 
   local line address size_or_type type_or_symbol symbol_name
   while IFS= read -r line; do
-    [[ "$line" =~ (^|[[:space:]])_?icudt[0-9]+[a-z]*_dat($|[[:space:]]) ]] || continue
+    [[ "$line" =~ $data_symbol_re ]] || continue
     read -r address size_or_type type_or_symbol symbol_name _ <<< "$line"
     if [[ "$size_or_type" =~ ^[[:xdigit:]]+$ ]] && [[ "$type_or_symbol" =~ ^[A-Za-z]$ ]]; then
       [ "$((16#$size_or_type))" -le 4096 ] || return 1

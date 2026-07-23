@@ -297,6 +297,8 @@ artifact_ready() {
     _oliphaunt_restore \
     _oliphaunt_cancel \
     _oliphaunt_detach \
+    _oliphaunt_logical_generation \
+    _oliphaunt_close_if_generation \
     _oliphaunt_close \
     _oliphaunt_register_static_extensions \
     _oliphaunt_last_error \

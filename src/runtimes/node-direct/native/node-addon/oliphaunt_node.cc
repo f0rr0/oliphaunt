@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -11,6 +12,9 @@
 #include <vector>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -29,6 +33,8 @@ using BackupFn = int32_t (*)(OliphauntHandle *, uint32_t, OliphauntResponse *);
 using RestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 using CancelFn = int32_t (*)(OliphauntHandle *);
 using DetachFn = int32_t (*)(OliphauntHandle *);
+using LogicalGenerationFn = uint64_t (*)(OliphauntHandle *);
+using CloseIfGenerationFn = int32_t (*)(uint64_t);
 using LastErrorFn = const char *(*)(OliphauntHandle *);
 using VersionFn = const char *(*)();
 using CapabilitiesFn = uint64_t (*)();
@@ -53,22 +59,64 @@ struct NativeLibrary {
   RestoreFn restore = nullptr;
   CancelFn cancel = nullptr;
   DetachFn detach = nullptr;
+  LogicalGenerationFn logical_generation = nullptr;
+  CloseIfGenerationFn close_if_generation = nullptr;
   LastErrorFn last_error = nullptr;
   VersionFn version = nullptr;
   CapabilitiesFn capabilities = nullptr;
   FreeResponseFn free_response = nullptr;
+  // JavaScript close is intentionally a logical detach so a direct backend can
+  // be reopened. Keep its process-resident handle until the owning Node
+  // environment performs the one terminal close.
+  std::mutex lifecycle_mutex;
+  OliphauntHandle *resident_handle = nullptr;
+  uint64_t resident_generation = 0;
+  napi_env owner_env = nullptr;
+  bool terminally_closed = false;
 };
 
 struct NativeHandleBox {
   std::shared_ptr<NativeLibrary> library;
   OliphauntHandle *handle = nullptr;
+  uint64_t generation = 0;
   bool detached = false;
 };
 
 std::mutex g_libraries_mutex;
 std::map<std::string, std::shared_ptr<NativeLibrary>> g_libraries;
 
+struct AddonEnvironment {
+  napi_env env = nullptr;
+};
+
 void Throw(napi_env env, const std::string &message) { napi_throw_error(env, nullptr, message.c_str()); }
+
+#if defined(_WIN32)
+bool Utf8ToWidePath(napi_env env, const std::string &path, std::wstring *wide_path) {
+  if (path.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    Throw(env, "liboliphaunt path is too long to load on Windows");
+    return false;
+  }
+
+  const int source_length = static_cast<int>(path.size());
+  const int required_length =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), source_length, nullptr, 0);
+  if (required_length <= 0) {
+    Throw(env, "liboliphaunt path is not valid UTF-8");
+    return false;
+  }
+
+  wide_path->resize(static_cast<size_t>(required_length));
+  const int converted_length = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), source_length, wide_path->data(), required_length);
+  if (converted_length != required_length) {
+    wide_path->clear();
+    Throw(env, "liboliphaunt path could not be converted for the Windows loader");
+    return false;
+  }
+  return true;
+}
+#endif
 
 bool Check(napi_env env, napi_status status, const char *message) {
   if (status == napi_ok) {
@@ -103,7 +151,31 @@ void *LoadSymbol(napi_env env, DynamicLibrary library, const char *name) {
   return symbol;
 }
 
+bool SameLoadedImage(DynamicLibrary left, DynamicLibrary right) {
+  return left.handle != nullptr && left.handle == right.handle;
+}
+
+void ReleaseDynamicLibraryReference(DynamicLibrary library) {
+  if (library.handle == nullptr) {
+    return;
+  }
+#if defined(_WIN32)
+  (void)FreeLibrary(library.handle);
+#else
+  (void)dlclose(library.handle);
+#endif
+}
+
 std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string &path) {
+  if (path.empty()) {
+    Throw(env, "liboliphaunt path must not be empty");
+    return nullptr;
+  }
+  if (path.find('\0') != std::string::npos) {
+    Throw(env, "liboliphaunt path must not contain a null byte");
+    return nullptr;
+  }
+
   std::lock_guard<std::mutex> guard(g_libraries_mutex);
   auto existing = g_libraries.find(path);
   if (existing != g_libraries.end()) {
@@ -112,7 +184,11 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
 
   DynamicLibrary dynamic;
 #if defined(_WIN32)
-  dynamic.handle = LoadLibraryA(path.c_str());
+  std::wstring wide_path;
+  if (!Utf8ToWidePath(env, path, &wide_path)) {
+    return nullptr;
+  }
+  dynamic.handle = LoadLibraryW(wide_path.c_str());
 #else
   // liboliphaunt embeds PostgreSQL. PostgreSQL loads extension DSOs after the
   // engine starts, and those DSOs resolve backend globals from liboliphaunt.
@@ -131,6 +207,17 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
     return nullptr;
   }
 
+  // Equivalent path aliases can return the same loader image. They must share
+  // one lifecycle record or environment cleanup could terminally close the
+  // same resident OliphauntHandle more than once.
+  for (const auto &entry : g_libraries) {
+    if (SameLoadedImage(entry.second->library, dynamic)) {
+      ReleaseDynamicLibraryReference(dynamic);
+      g_libraries[path] = entry.second;
+      return entry.second;
+    }
+  }
+
   auto library = std::make_shared<NativeLibrary>();
   library->library = dynamic;
   library->init = reinterpret_cast<InitFn>(LoadSymbol(env, dynamic, "oliphaunt_init"));
@@ -145,6 +232,13 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
   library->restore = reinterpret_cast<RestoreFn>(LoadSymbol(env, dynamic, "oliphaunt_restore"));
   library->cancel = reinterpret_cast<CancelFn>(LoadSymbol(env, dynamic, "oliphaunt_cancel"));
   library->detach = reinterpret_cast<DetachFn>(LoadSymbol(env, dynamic, "oliphaunt_detach"));
+  // Validate the mandatory terminal-close ABI even though Node cleanup uses
+  // only the generation-guarded entry point and never invokes this pointer API.
+  (void)LoadSymbol(env, dynamic, "oliphaunt_close");
+  library->logical_generation = reinterpret_cast<LogicalGenerationFn>(
+      LoadSymbol(env, dynamic, "oliphaunt_logical_generation"));
+  library->close_if_generation = reinterpret_cast<CloseIfGenerationFn>(
+      LoadSymbol(env, dynamic, "oliphaunt_close_if_generation"));
   library->last_error =
       reinterpret_cast<LastErrorFn>(LoadSymbol(env, dynamic, "oliphaunt_last_error"));
   library->version = reinterpret_cast<VersionFn>(LoadSymbol(env, dynamic, "oliphaunt_version"));
@@ -158,6 +252,52 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
   }
   g_libraries[path] = library;
   return library;
+}
+
+void CleanupEnvironment(void *data) {
+  std::unique_ptr<AddonEnvironment> environment(static_cast<AddonEnvironment *>(data));
+  if (environment == nullptr) {
+    return;
+  }
+
+  std::vector<std::shared_ptr<NativeLibrary>> libraries;
+  {
+    std::lock_guard<std::mutex> guard(g_libraries_mutex);
+    libraries.reserve(g_libraries.size());
+    for (const auto &entry : g_libraries) {
+      libraries.push_back(entry.second);
+    }
+  }
+
+  for (const auto &library : libraries) {
+    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
+    if (library->owner_env != environment->env || library->resident_handle == nullptr ||
+        library->terminally_closed) {
+      continue;
+    }
+
+    uint64_t generation = library->resident_generation;
+    // Node runs environment cleanup hooks before external finalizers. Publish
+    // the local terminal state first so a later NativeHandleBox finalizer
+    // cannot detach the generation being closed. A copied addon image has an
+    // independent lifecycle map, so liboliphaunt must decide atomically whether
+    // this image still owns the process-resident generation.
+    library->terminally_closed = true;
+    library->resident_handle = nullptr;
+    library->resident_generation = 0;
+    library->owner_env = nullptr;
+    int32_t close_result = -1;
+    if (library->close_if_generation != nullptr) {
+      close_result = library->close_if_generation(generation);
+    }
+    if (close_result > 0) {
+      // This cleanup record was stale. The current generation belongs to
+      // another addon image/environment, so this image may be reused later.
+      // Its old finalizers remain harmless because their generation no longer
+      // matches any resident lifecycle recorded here.
+      library->terminally_closed = false;
+    }
+  }
 }
 
 bool HasNamedProperty(napi_env env, napi_value object, const char *name) {
@@ -304,8 +444,14 @@ NativeHandleBox *GetHandleBox(napi_env env, napi_value value) {
 void FinalizeHandle(napi_env, void *data, void *) {
   auto *box = static_cast<NativeHandleBox *>(data);
   if (box != nullptr) {
-    if (!box->detached && box->handle != nullptr && box->library != nullptr && box->library->detach != nullptr) {
-      box->library->detach(box->handle);
+    if (box->library != nullptr) {
+      std::lock_guard<std::mutex> guard(box->library->lifecycle_mutex);
+      if (!box->library->terminally_closed && !box->detached && box->handle != nullptr &&
+          box->library->resident_handle == box->handle &&
+          box->library->resident_generation == box->generation &&
+          box->library->detach != nullptr) {
+        box->library->detach(box->handle);
+      }
     }
     delete box;
   }
@@ -380,29 +526,64 @@ napi_value Open(napi_env env, napi_callback_info info) {
   native_config.startup_arg_count = startup_ptrs.size();
 
   OliphauntHandle *handle = nullptr;
-  int32_t rc;
-  if (module_dir.empty()) {
-    rc = library->init(&native_config, &handle);
-  } else {
-    OliphauntInitOptions init_options = {};
-    init_options.abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION;
-    init_options.module_dir = module_dir.c_str();
-    init_options.reserved_flags = 0;
-    rc = library->init_ex(&native_config, &init_options, &handle);
-  }
-  if (rc != 0) {
-    Throw(env, "native liboliphaunt init failed: " + LastError(library.get(), nullptr));
-    return nullptr;
-  }
-  if (handle == nullptr) {
-    Throw(env, "native liboliphaunt init returned a null handle");
-    return nullptr;
+  uint64_t generation = 0;
+  {
+    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
+    if (library->terminally_closed) {
+      Throw(env, "native liboliphaunt environment has already shut down");
+      return nullptr;
+    }
+    int32_t rc;
+    if (module_dir.empty()) {
+      rc = library->init(&native_config, &handle);
+    } else {
+      OliphauntInitOptions init_options = {};
+      init_options.abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION;
+      init_options.module_dir = module_dir.c_str();
+      init_options.reserved_flags = 0;
+      rc = library->init_ex(&native_config, &init_options, &handle);
+    }
+    if (rc != 0) {
+      Throw(env, "native liboliphaunt init failed: " + LastError(library.get(), nullptr));
+      return nullptr;
+    }
+    if (handle == nullptr) {
+      Throw(env, "native liboliphaunt init returned a null handle");
+      return nullptr;
+    }
+    generation = library->logical_generation(handle);
+    if (generation == 0) {
+      // Another cleanup owner can terminally close and free the resident
+      // handle between init and generation acquisition. A zero generation
+      // therefore makes handle opaque and potentially stale: fail closed
+      // without passing it to detach, close, last_error, or any other ABI.
+      library->terminally_closed = true;
+      library->resident_handle = nullptr;
+      library->resident_generation = 0;
+      library->owner_env = nullptr;
+      Throw(env, "native liboliphaunt init returned an invalid logical generation");
+      return nullptr;
+    }
+    library->resident_handle = handle;
+    library->resident_generation = generation;
+    library->owner_env = env;
   }
   auto *box = new NativeHandleBox();
   box->library = library;
   box->handle = handle;
+  box->generation = generation;
   napi_value external = nullptr;
-  Check(env, napi_create_external(env, box, FinalizeHandle, nullptr, &external), "create native handle");
+  if (!Check(env, napi_create_external(env, box, FinalizeHandle, nullptr, &external),
+             "create native handle")) {
+    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
+    if (!library->terminally_closed && library->resident_handle == handle &&
+        library->resident_generation == generation &&
+        library->detach != nullptr) {
+      (void)library->detach(handle);
+    }
+    delete box;
+    return nullptr;
+  }
   return external;
 }
 
@@ -555,6 +736,14 @@ napi_value Detach(napi_env env, napi_callback_info info) {
   if (args.empty()) return nullptr;
   NativeHandleBox *box = GetHandleBox(env, args[0]);
   if (box == nullptr) return nullptr;
+  std::lock_guard<std::mutex> guard(box->library->lifecycle_mutex);
+  if (box->library->terminally_closed || box->library->resident_handle != box->handle ||
+      box->library->resident_generation != box->generation) {
+    box->detached = true;
+    box->handle = nullptr;
+    Throw(env, "native liboliphaunt environment has already shut down");
+    return nullptr;
+  }
   int32_t rc = box->library->detach(box->handle);
   if (rc != 0) {
     Throw(env, "native liboliphaunt detach failed: " + LastError(box->library.get(), box->handle));
@@ -568,6 +757,12 @@ napi_value Detach(napi_env env, napi_callback_info info) {
 }
 
 napi_value Init(napi_env env, napi_value exports) {
+  auto *environment = new AddonEnvironment{env};
+  if (!Check(env, napi_add_env_cleanup_hook(env, CleanupEnvironment, environment),
+             "register native environment cleanup")) {
+    delete environment;
+    return nullptr;
+  }
   const napi_property_descriptor descriptors[] = {
       {"version", nullptr, Version, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"capabilities", nullptr, Capabilities, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -262,7 +262,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ],
     [
       "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
-      ["oliphaunt-node-direct"],
+      ["oliphaunt-kotlin", "oliphaunt-node-direct"],
     ],
     ["tools/release/package-liboliphaunt-linux-assets.sh", ["liboliphaunt-native"]],
     ["tools/release/package-liboliphaunt-macos-assets.sh", ["liboliphaunt-native"]],

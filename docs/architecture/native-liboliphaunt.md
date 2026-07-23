@@ -131,7 +131,13 @@ The current ABI is intentionally small:
 - `oliphaunt_exec_protocol`
 - `oliphaunt_exec_simple_query`
 - `oliphaunt_exec_protocol_stream`
+- `oliphaunt_backup`
+- `oliphaunt_backup_ex`
+- `oliphaunt_restore`
 - `oliphaunt_cancel`
+- `oliphaunt_detach`
+- `oliphaunt_logical_generation`
+- `oliphaunt_close_if_generation`
 - `oliphaunt_close`
 - `oliphaunt_register_static_extensions`
 - `oliphaunt_last_error`
@@ -159,6 +165,18 @@ standard process state resolve files inside the selected root. `oliphaunt_close`
 restores the caller's previous value, or unsets `PGDATA` if it was unset before
 open. Broker and server modes provide stronger process isolation for apps that
 cannot tolerate a process-wide environment mutation.
+
+`oliphaunt_detach` ends one logical lease while keeping the same-root backend
+resident for a later `oliphaunt_init`/`oliphaunt_init_ex`. Every successful
+logical open establishes a nonzero token returned by
+`oliphaunt_logical_generation`. Binding cleanup code that can outlive a logical
+lease must use
+`oliphaunt_close_if_generation`: it atomically closes only when its token still
+owns the resident runtime. An active stale generation returns a non-error no-op,
+which prevents an old worker or duplicated native binding from closing a newer
+lease.
+`oliphaunt_close` remains the unconditional terminal operation for callers that
+already serialize the complete process lifetime.
 
 Desktop dynamic extension modules also require PostgreSQL backend symbols from
 the loaded `liboliphaunt` image. `oliphaunt_init_ex` therefore promotes that

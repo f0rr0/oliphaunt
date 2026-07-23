@@ -85,8 +85,15 @@ target runtime advertises those modes.
 ### Handle lifecycle
 
 Each binding runs calls through a single owner queue or equivalent serial
-executor. Close rejects queued work and waits for active work according to the
-SDK's platform contract.
+executor. A host with exactly one serialized lifetime owner can terminate the
+resident runtime with `oliphaunt_close`. A binding with independent environment,
+worker, or finalizer cleanup owners must instead capture
+`oliphaunt_logical_generation(db)` immediately after a successful init and pass
+only that token to `oliphaunt_close_if_generation` during teardown. A stale
+owner receives a positive non-error result while a newer logical lease remains
+active, instead of closing that lease. If terminal close already completed, the
+same cleanup is satisfied with zero. Close rejects queued work and waits for
+active work according to the SDK's platform contract.
 
 </Step>
 <Step>

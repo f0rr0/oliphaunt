@@ -43,12 +43,16 @@ reject_text() {
 check_static() {
   require_file "$package_dir/package.json"
   require_file "$package_dir/native/node-addon/oliphaunt_node.cc"
+  require_file "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   require_file "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
   require_file "$package_dir/tools/build-node-addon.sh"
   require_file "$package_dir/tools/check-package-metadata.mjs"
   require_file "$package_dir/tools/install-node-fallback.sh"
   require_file "$package_dir/tools/extract-node-headers.mjs"
+  require_file "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs"
+  require_file "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh"
   require_file "src/sources/toolchains/node.toml"
+  bash "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh" --test-path-classifier
   require_text "$package_dir/package.json" '"name": "@oliphaunt/node-direct"' \
     "Node direct runtime must have a product-local package identity"
   require_text "$package_dir/tools/build-node-addon.sh" "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc" \
@@ -59,6 +63,10 @@ check_static() {
     "Node direct build must create release assets with the shared deterministic archive helper"
   require_text "$package_dir/tools/build-node-addon.sh" "Node direct addon smoke passed" \
     "Node direct build must load-smoke the compiled addon before publishing an artifact"
+  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
+  require_text "$package_dir/tools/build-node-addon.sh" \
+    'test-node-addon-cleanup-lifecycle.sh "$addon_file"' \
+    "Node direct build must execute the compiled environment cleanup lifecycle proof"
   require_text "$package_dir/tools/build-node-addon.sh" 'require pnpm' \
     "Node direct packaging must require the pinned workspace package manager"
   # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
@@ -91,6 +99,24 @@ check_static() {
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     'LoadSymbol(env, dynamic, "oliphaunt_init_ex")' \
     "Node direct must resolve the versioned per-handle initialization ABI"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'LoadSymbol(env, dynamic, "oliphaunt_close")' \
+    "Node direct must reject native libraries missing the mandatory terminal-close ABI"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'LoadSymbol(env, dynamic, "oliphaunt_logical_generation")' \
+    "Node direct must resolve the resident logical generation"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'LoadSymbol(env, dynamic, "oliphaunt_close_if_generation")' \
+    "Node direct must resolve generation-guarded environment cleanup"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "napi_add_env_cleanup_hook" \
+    "Node direct must close its resident backend before Node finalizers and process teardown"
+  require_text "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc" \
+    "oliphaunt_close_if_generation" \
+    "Node direct cleanup proof must implement the generation-guarded fake ABI"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "generation-acquisition-race" \
+    "Node direct cleanup proof must reject stale handles between init and generation acquisition"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     'GetString(env, config, "moduleDirectory", false)' \
     "Node direct must carry the selected extension module directory through its native boundary"

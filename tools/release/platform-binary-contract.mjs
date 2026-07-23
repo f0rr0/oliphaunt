@@ -38,7 +38,12 @@ const MSVC_RUNTIME_IMPORT = /^(?:CONCRT|MSVCP|VCRUNTIME)[0-9A-Z_]*\.DLL$/iu;
 const WINDOWS_VC_RUNTIME_DLL_SET = new Set(WINDOWS_VC_RUNTIME_DLLS);
 const WINDOWS_RUNTIME_IMPORT_LIBRARY_PATH = "lib/oliphaunt.lib";
 const WINDOWS_RUNTIME_IMPORT_DLL = "oliphaunt.dll";
-const WINDOWS_RUNTIME_IMPORT_SYMBOLS = Object.freeze(["oliphaunt_init", "oliphaunt_init_ex"]);
+const WINDOWS_RUNTIME_IMPORT_SYMBOLS = Object.freeze([
+  "oliphaunt_init",
+  "oliphaunt_init_ex",
+  "oliphaunt_logical_generation",
+  "oliphaunt_close_if_generation",
+]);
 const COFF_ARCHIVE_HEADER_SIZE = 60;
 const COFF_OBJECT_HEADER_SIZE = 20;
 const COFF_SECTION_HEADER_SIZE = 40;

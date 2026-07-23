@@ -54,6 +54,7 @@ tasks:
     command: "bun tools/policy/check-sdk-header-copies.mjs"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/oliphaunt/src/androidMain/cpp/include/oliphaunt.h"
       - "/src/sdks/react-native/android/src/main/cpp/include/oliphaunt.h"
       - "/src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h"
       - "/tools/policy/check-sdk-header-copies.mjs"

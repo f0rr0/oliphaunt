@@ -24,7 +24,8 @@ if [[ ! "$LLVM_URL" =~ ^https://[^[:space:]]+$ ]]; then
   echo "Wasmer LLVM URL must be a single HTTPS URL" >&2
   exit 2
 fi
-if [[ ! "$LLVM_VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+llvm_version_re='^[0-9]+(\.[0-9]+)+$'
+if [[ ! "$LLVM_VERSION" =~ $llvm_version_re ]]; then
   echo "Wasmer LLVM version must contain only numeric components" >&2
   exit 2
 fi
