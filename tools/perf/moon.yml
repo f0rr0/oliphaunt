@@ -1,0 +1,66 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "perf-tools"
+language: "rust"
+layer: "tool"
+stack: "systems"
+tags: ["tools", "performance", "bench"]
+dependsOn:
+  - "benchmarks"
+
+project:
+  title: "Performance Tools"
+  description: "Native, WASM, mobile, and SQLite benchmark orchestration and reporting."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/perf"
+  paths:
+    "**/*": ["@oliphaunt/perf"]
+
+tasks:
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/perf/check-native-perf-harness.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/**/*"
+      - "/src/extensions/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/**/*"
+      - "/src/extensions/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false

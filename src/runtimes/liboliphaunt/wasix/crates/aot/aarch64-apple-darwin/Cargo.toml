@@ -1,0 +1,18 @@
+[package]
+name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Wasmer AOT runtime artifacts for oliphaunt-wasix on aarch64-apple-darwin"
+repository = "https://github.com/f0rr0/oliphaunt"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
+publish = false
+links = "oliphaunt_artifact_liboliphaunt_wasix_aot_macos_arm64"
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**", "LICENSE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.oliphaunt-wasix.md", "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT", "THIRD_PARTY_LICENSES/ICU-LICENSE"]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+serde_json = "1"
+sha2 = "0.10"

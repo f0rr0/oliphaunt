@@ -1,0 +1,113 @@
+name: Set up Apple
+description: Select and verify the supported Xcode toolchain for Apple SDK jobs.
+
+inputs:
+  xcode-minor:
+    description: Supported Xcode minor version installed on the pinned macOS runner image.
+    required: false
+    default: "26.5"
+
+runs:
+  using: composite
+  steps:
+    - name: Select and verify Apple toolchain
+      shell: bash
+      env:
+        REQUESTED_XCODE_MINOR: ${{ inputs.xcode-minor }}
+        SUPPORTED_XCODE_MINOR: "26.5"
+      run: | # zizmor: ignore[github-env] DEVELOPER_DIR is an exact, allowlisted runner-owned Xcode bundle path.
+        set -euo pipefail
+
+        if [[ "$REQUESTED_XCODE_MINOR" != "$SUPPORTED_XCODE_MINOR" ]]; then
+          echo "setup-apple: unsupported Xcode minor '$REQUESTED_XCODE_MINOR'; expected $SUPPORTED_XCODE_MINOR" >&2
+          exit 1
+        fi
+
+        developer_dir="/Applications/Xcode_26.5.app/Contents/Developer"
+        if [[ ! -d "$developer_dir" ]]; then
+          echo "setup-apple: required Xcode developer directory was not found at $developer_dir" >&2
+          exit 1
+        fi
+        if [[ -z "${GITHUB_ENV:-}" ]]; then
+          echo "setup-apple: GITHUB_ENV is not set" >&2
+          exit 1
+        fi
+
+        export DEVELOPER_DIR="$developer_dir"
+        xcode_version_output="$(xcodebuild -version)"
+        observed_xcode_version="$(printf '%s\n' "$xcode_version_output" | sed -n '1s/^Xcode //p')"
+        xcode_build="$(printf '%s\n' "$xcode_version_output" | sed -n 's/^Build version //p')"
+        if [[ "$observed_xcode_version" != "$SUPPORTED_XCODE_MINOR" ]]; then
+          echo "setup-apple: $developer_dir reported Xcode '$observed_xcode_version'; expected $SUPPORTED_XCODE_MINOR" >&2
+          exit 1
+        fi
+        if [[ -z "$xcode_build" ]]; then
+          echo "setup-apple: xcodebuild did not report an Xcode build version" >&2
+          exit 1
+        fi
+
+        macos_sdk="$(xcrun --sdk macosx --show-sdk-version)"
+        iphoneos_sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+        iphonesimulator_sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+        for sdk_record in \
+          "macOS SDK:$macos_sdk" \
+          "iPhoneOS SDK:$iphoneos_sdk" \
+          "iPhoneSimulator SDK:$iphonesimulator_sdk"; do
+          sdk_name="${sdk_record%%:*}"
+          sdk_version="${sdk_record#*:}"
+          if [[ ! "$sdk_version" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "setup-apple: $sdk_name reported invalid version '$sdk_version'" >&2
+            exit 1
+          fi
+        done
+        if [[ -z "${ImageOS:-}" || -z "${ImageVersion:-}" ]]; then
+          echo "setup-apple: hosted runner ImageOS and ImageVersion provenance must be available" >&2
+          exit 1
+        fi
+
+        printf 'DEVELOPER_DIR=%s\n' "$developer_dir" >> "$GITHUB_ENV"
+        printf 'Apple toolchain: Xcode=%s build=%s DEVELOPER_DIR=%s\n' \
+          "$observed_xcode_version" "$xcode_build" "$developer_dir"
+        printf 'Apple SDKs: macOS=%s iPhoneOS=%s iPhoneSimulator=%s\n' \
+          "$macos_sdk" "$iphoneos_sdk" "$iphonesimulator_sdk"
+        printf 'Apple runner image: ImageOS=%s ImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            printf '### Apple toolchain\n\n'
+            printf '| Property | Observed value |\n| --- | --- |\n'
+            printf '| ImageOS | `%s` |\n' "$ImageOS"
+            printf '| ImageVersion | `%s` |\n' "$ImageVersion"
+            printf '| Xcode | `%s` |\n' "$observed_xcode_version"
+            printf '| Xcode build | `%s` |\n' "$xcode_build"
+            printf '| macOS SDK | `%s` |\n' "$macos_sdk"
+            printf '| iPhoneOS SDK | `%s` |\n' "$iphoneos_sdk"
+            printf '| iPhoneSimulator SDK | `%s` |\n' "$iphonesimulator_sdk"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        ruby --version
+        gem --version
+
+    - name: Install Apple build dependencies
+      shell: bash
+      run: |
+        .github/scripts/prepare-macos-homebrew.sh
+        if ! brew list bison >/dev/null 2>&1; then
+          installed=0
+          for attempt in 1 2 3; do
+            if HOMEBREW_NO_AUTO_UPDATE=1 brew install bison; then
+              installed=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 15))
+            fi
+          done
+          if [ "$installed" != "1" ]; then
+            echo "setup-apple: Homebrew failed to install bison after 3 attempts" >&2
+            exit 1
+          fi
+        fi
+        bison_prefix="$(brew --prefix bison)"
+        "$bison_prefix/bin/bison" --version | head -n 1

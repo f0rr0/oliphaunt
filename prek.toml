@@ -1,11 +1,11 @@
-minimum_prek_version = "0.3.10"
-default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
+minimum_prek_version = "0.4.3"
+default_install_hook_types = ["pre-commit", "commit-msg"]
 fail_fast = true
 exclude = { glob = [
   "target/**",
-  "examples/tauri-sqlx-vanilla/node_modules/**",
-  "examples/tauri-sqlx-vanilla/dist/**",
-  "examples/tauri-sqlx-vanilla/src-tauri/target/**",
+  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/node_modules/**",
+  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/dist/**",
+  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/target/**",
 ] }
 
 [[repos]]
@@ -14,7 +14,7 @@ hooks = [
   { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], stages = ["pre-commit"], types = ["text"] },
   { id = "end-of-file-fixer", stages = ["pre-commit"], types = ["text"] },
   { id = "check-toml", stages = ["pre-commit"] },
-  { id = "check-yaml", stages = ["pre-commit"] },
+  { id = "check-yaml", args = ["--allow-multiple-documents"], stages = ["pre-commit"] },
   { id = "check-json", stages = ["pre-commit"], exclude = "(^|/)tsconfig\\.json$" },
   { id = "check-merge-conflict", stages = ["pre-commit"] },
   { id = "check-case-conflict", stages = ["pre-commit"] },
@@ -34,10 +34,5 @@ hooks = [
 repo = "local"
 hooks = [
   { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --check", pass_filenames = false, files = "\\.(rs|toml)$", stages = ["pre-commit"] },
-  { id = "tauri-cargo-fmt", name = "Tauri cargo fmt", language = "system", entry = "cargo fmt --manifest-path examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --check", pass_filenames = false, files = "^examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
-  { id = "git-diff-check", name = "git diff --check", language = "system", entry = "git diff --check", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "pre-push-fmt", name = "pre-push cargo fmt", language = "system", entry = "cargo fmt --all --check", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "asset-input-fingerprint", name = "asset input fingerprint", language = "system", entry = "scripts/check-asset-input-fingerprint.sh", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "example-lockfiles", name = "example lockfiles", language = "system", entry = "scripts/check-example-lockfiles.sh", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "pre-push-check", name = "pre-push cargo check", language = "system", entry = "cargo check --workspace --locked", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "tauri-rustfmt", name = "Tauri rustfmt", language = "system", entry = "tools/policy/check-tauri-example-rustfmt.sh", pass_filenames = false, files = "^src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
 ]

@@ -1,0 +1,29 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-amcheck"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "contrib", "postgres18"]
+dependsOn:
+  - id: "extension-runtime-contract"
+    scope: "production"
+  - id: "liboliphaunt-native"
+    scope: "production"
+  - id: "liboliphaunt-wasix"
+    scope: "production"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib/amcheck"
+    deps:
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/contrib/amcheck/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/tools/check-extension-tree.mjs"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

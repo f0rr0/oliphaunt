@@ -1,0 +1,35 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "native-dynamic"
+status = "supported"
+build_kind = "autotools"
+dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
+module_files = [
+  "lib/postgresql/postgis-3.so",
+  "lib/postgresql/liboliphaunt_postgis_deps.so",
+]
+data_files = [
+  "share/postgresql/contrib/postgis-3.6/legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+  "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+  "share/postgresql/proj/proj.db",
+]
+configure_flags = [
+  "--without-raster",
+  "--without-topology",
+  "--without-sfcgal",
+  "--without-address-standardizer",
+  "--without-protobuf",
+]
+excluded_sql_extensions = [
+  "postgis_raster",
+  "postgis_topology",
+  "postgis_sfcgal",
+  "postgis_tiger_geocoder",
+  "address_standardizer",
+  "address_standardizer_data_us",
+]

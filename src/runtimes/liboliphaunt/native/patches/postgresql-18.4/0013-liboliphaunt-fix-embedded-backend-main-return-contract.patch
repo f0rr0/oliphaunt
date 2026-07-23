@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sat, 23 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: fix embedded BackendMain return contract
+
+PostgresMain returns to its host in OLIPHAUNT_EMBEDDED builds, so BackendMain
+can return after it calls PostgresMain. Keep upstream pg_noreturn for normal
+server builds while removing the invalid attribute only from embedded builds.
+---
+ src/include/tcop/backend_startup.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/include/tcop/backend_startup.h b/src/include/tcop/backend_startup.h
+index e863968..c2247c3 100644
+--- a/src/include/tcop/backend_startup.h
++++ b/src/include/tcop/backend_startup.h
+@@ -117,6 +117,10 @@ typedef struct ConnectionTiming
+ 	TimestampTz auth_end;
+ } ConnectionTiming;
+
++#ifdef OLIPHAUNT_EMBEDDED
++extern void BackendMain(const void *startup_data, size_t startup_data_len);
++#else
+ pg_noreturn extern void BackendMain(const void *startup_data, size_t startup_data_len);
++#endif
+
+ #endif							/* BACKEND_STARTUP_H */

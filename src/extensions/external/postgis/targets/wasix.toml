@@ -1,0 +1,62 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "wasix-side-module"
+status = "supported"
+build_kind = "autotools"
+build_script = "src/extensions/external/postgis/tools/build_wasix.sh"
+dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
+module_files = [
+  "lib/postgresql/postgis-3.so",
+  "lib/postgresql/liboliphaunt_postgis_deps.so",
+]
+data_files = [
+  "share/postgresql/contrib/postgis-3.6/legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+  "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+  "share/postgresql/proj/proj.db",
+]
+configure_flags = [
+  "--without-raster",
+  "--without-topology",
+  "--without-sfcgal",
+  "--without-address-standardizer",
+  "--without-tiger",
+  "--without-protobuf",
+  "--disable-nls",
+]
+required_build_files = [
+  "postgis/postgis-3.so",
+  "postgis/liboliphaunt_postgis_deps.so",
+  "extensions/postgis/postgis.control",
+  "share/proj/proj.db",
+]
+required_build_globs = [
+  "extensions/postgis/sql/postgis--*.sql",
+]
+excluded_sql_extensions = [
+  "postgis_raster",
+  "postgis_topology",
+  "postgis_sfcgal",
+  "postgis_tiger_geocoder",
+  "address_standardizer",
+  "address_standardizer_data_us",
+]
+
+[[native_support_modules]]
+name = "postgis_deps"
+runtime_path = "lib/postgresql/liboliphaunt_postgis_deps.so"
+build_path = "postgis/postgis/liboliphaunt_postgis_deps.so"
+aot_file = "postgis_deps-llvm-opta.bin.zst"
+
+[staging]
+module_source_dir = "postgis/postgis"
+control_source = "postgis/extensions/postgis/postgis.control"
+sql_source_dir = "postgis/extensions/postgis/sql"
+
+[[staging.data_dirs]]
+source = "postgis/share/proj"
+destination = "share/proj"

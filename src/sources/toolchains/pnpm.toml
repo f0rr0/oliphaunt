@@ -1,0 +1,21 @@
+[toolchain]
+version = "11.5.0"
+
+[package]
+url = "https://registry.npmjs.org/pnpm/-/pnpm-11.5.0.tgz"
+sha256 = "a282871708f87a47b9cd72182dfdf9ee251c69100b8bac862a3d4f5e2145d8ff"
+sha512 = "dbfcc4f81cf48597afd4bc391ffdf12c11f1a9fb83a395bfa6b0a2d9cc2fd8ffebafdb1ccbd529632153f793904c2615b7f09fe1a345473fd1c35845172a8eb1"
+bytes = "4281185"
+expanded_bytes = "17589456"
+format = "tar.gz"
+prefix = "package"
+entry_count = "449"
+file_count = "449"
+tree_sha256 = "bc4c36f336fecec19bb14777cb4897bae42d7c9227ac8cc4737d03ec61c0d8c5"
+executable_paths = "bin/pnpm.mjs,bin/pnpx.mjs,dist/node-gyp-bin/node-gyp,dist/node-gyp-bin/node-gyp.cmd,dist/node_modules/node-gyp/bin/node-gyp.js"
+binary_path = "bin/pnpm.mjs"
+binary_sha256 = "ff3224d46b47fbb24a7e9fe15fededef7e00892d07d4e376b6762d4899906bfd"
+companion_path = "bin/pnpx.mjs"
+companion_sha256 = "7e2a61f1636e6d85fbd894b7062b1837e175c673c3dc9ba9bc7538fe1ce66502"
+payload_path = "dist/pnpm.mjs"
+payload_sha256 = "1d1078d8c01e422c1a334fe145ccb34f18035fc4d053f48e561aa5ab0e46b078"

@@ -1,0 +1,47 @@
+[toolchain]
+version = "22.22.3"
+
+[assets.aarch64-apple-darwin]
+url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-darwin-arm64.tar.gz"
+sha256 = "0da7ff74ef8611328c8212f17943368713a2ad953fb7d89a8c8a0eae87c23207"
+bytes = "50060289"
+format = "tar.gz"
+binary_path = "node-v22.22.3-darwin-arm64/bin/node"
+binary_sha256 = "5d9d3872911e2340a43b707962e68143de8a4e8d54628845c0c4f2de1fb7cd5c"
+binary_bytes = "112915776"
+
+[assets.x86_64-apple-darwin]
+url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-darwin-x64.tar.gz"
+sha256 = "45830ba752fa0d892c6dcd640946669801293cac820a33591ded40ac075198ec"
+bytes = "51241726"
+format = "tar.gz"
+binary_path = "node-v22.22.3-darwin-x64/bin/node"
+binary_sha256 = "edc0e47adde954e891939bb509a62accdad5f6b15f32ec56ed78f9d6b7dd7308"
+binary_bytes = "115442320"
+
+[assets.aarch64-unknown-linux-gnu]
+url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-linux-arm64.tar.xz"
+sha256 = "1c4a9933a5e45bc88f54f70b5f91232c127ec49f1a5989d23fb85824c7adf9b7"
+bytes = "30238428"
+format = "tar.xz"
+binary_path = "node-v22.22.3-linux-arm64/bin/node"
+binary_sha256 = "41c1ec75816937af3893453a82b1535c566c65b682c67fbc59a0546b27c027bd"
+binary_bytes = "122097112"
+
+[assets.x86_64-unknown-linux-gnu]
+url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-linux-x64.tar.xz"
+sha256 = "2e5d13569282d016861fae7c8f935e741693c269101a5bebcf761a5376d1f99f"
+bytes = "31059464"
+format = "tar.xz"
+binary_path = "node-v22.22.3-linux-x64/bin/node"
+binary_sha256 = "e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2"
+binary_bytes = "124819136"
+
+[assets.x86_64-pc-windows-msvc]
+url = "https://nodejs.org/download/release/v22.22.3/node-v22.22.3-win-x64.zip"
+sha256 = "6c8d54f635feff4df76c2ca80f45332eb2ff57d25226edce36592e51a177ee33"
+bytes = "35674109"
+format = "zip"
+binary_path = "node-v22.22.3-win-x64/node.exe"
+binary_sha256 = "780f44f2c53c108bae261ada21a525b4bfe733c020ac85e41bfe94479090ac9b"
+binary_bytes = "86969160"

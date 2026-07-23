@@ -1,0 +1,109 @@
+{
+  "name": "@oliphaunt/ts",
+  "version": "0.0.0",
+  "description": "TypeScript SDK for Oliphaunt on Node.js, Bun, and Deno.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/sdks/js"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "liboliphauntVersion": "0.0.0",
+    "icuPackage": "@oliphaunt/icu",
+    "icuVersion": "0.0.0",
+    "brokerVersion": "0.0.0",
+    "nodeDirectAddonVersion": "0.0.0",
+    "nodeDirectAddon": "oliphaunt-node-direct",
+    "brokerHelper": "oliphaunt-broker"
+  },
+  "optionalDependencies": {
+    "@oliphaunt/broker-darwin-arm64": "workspace:0.0.0",
+    "@oliphaunt/broker-linux-arm64-gnu": "workspace:0.0.0",
+    "@oliphaunt/broker-linux-x64-gnu": "workspace:0.0.0",
+    "@oliphaunt/broker-win32-x64-msvc": "workspace:0.0.0",
+    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:0.0.0",
+    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:0.0.0",
+    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:0.0.0",
+    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:0.0.0",
+    "@oliphaunt/node-direct-darwin-arm64": "workspace:0.0.0",
+    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:0.0.0",
+    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:0.0.0",
+    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:0.0.0",
+    "@oliphaunt/tools-darwin-arm64": "workspace:0.0.0",
+    "@oliphaunt/tools-linux-arm64-gnu": "workspace:0.0.0",
+    "@oliphaunt/tools-linux-x64-gnu": "workspace:0.0.0",
+    "@oliphaunt/tools-win32-x64-msvc": "workspace:0.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./node": {
+      "types": "./lib/native/node.d.ts",
+      "default": "./lib/native/node.js"
+    },
+    "./bun": {
+      "types": "./lib/native/bun.d.ts",
+      "default": "./lib/native/bun.js"
+    },
+    "./deno": {
+      "types": "./lib/native/deno.d.ts",
+      "default": "./lib/native/deno.js"
+    },
+    "./protocol": {
+      "types": "./lib/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/query.d.ts",
+      "default": "./lib/query.js"
+    },
+    "./package.json": {
+      "default": "./package.json"
+    }
+  },
+  "main": "lib/index.js",
+  "module": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src",
+    "jsr.json",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "docs:api": "typedoc --options typedoc.json",
+    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf lib"
+  },
+  "engines": {
+    "node": ">=22.13 <25"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@vitest/coverage-v8": "catalog:",
+    "jsr": "^0.14.3",
+    "tsx": "catalog:",
+    "typedoc": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

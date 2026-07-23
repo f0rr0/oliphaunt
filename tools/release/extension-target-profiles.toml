@@ -1,0 +1,50 @@
+schema = "oliphaunt-extension-artifact-target-profiles-v1"
+
+[[profiles]]
+id = "native-desktop-v1"
+
+[[profiles.targets]]
+target = "linux-arm64-gnu"
+family = "native"
+kind = "native-dynamic"
+
+[[profiles.targets]]
+target = "linux-x64-gnu"
+family = "native"
+kind = "native-dynamic"
+
+[[profiles.targets]]
+target = "macos-arm64"
+family = "native"
+kind = "native-dynamic"
+
+[[profiles.targets]]
+target = "windows-x64-msvc"
+family = "native"
+kind = "native-dynamic"
+
+[[profiles]]
+id = "native-mobile-v1"
+
+[[profiles.targets]]
+target = "ios-xcframework"
+family = "native"
+kind = "native-static-registry"
+
+[[profiles.targets]]
+target = "android-arm64-v8a"
+family = "native"
+kind = "native-static-registry"
+
+[[profiles.targets]]
+target = "android-x86_64"
+family = "native"
+kind = "native-static-registry"
+
+[[profiles]]
+id = "wasix-portable-v1"
+
+[[profiles.targets]]
+target = "wasix-portable"
+family = "wasix"
+kind = "wasix-runtime"

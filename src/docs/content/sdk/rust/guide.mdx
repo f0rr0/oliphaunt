@@ -1,0 +1,163 @@
+---
+title: Build With Rust
+description: Use the Rust SDK in Tauri or native Rust apps with direct, broker, server, app-owned roots, exact extensions, lifecycle, and backup APIs.
+---
+
+# Build With Rust
+
+Use the Rust SDK in Tauri backends and native Rust desktop apps. It owns the
+complete native mode model: direct for lowest latency, broker for helper-process
+isolation, and server when independent PostgreSQL clients are required.
+
+<Callout type="info" title="Rust owns the complete native mode surface">
+Use this guide when the app runtime is Rust. Tauri webviews and desktop
+JavaScript apps use their SDKs and call into Rust through app commands or helper
+processes.
+</Callout>
+
+<SdkGuideSummary id="rust" />
+
+<Steps>
+<Step>
+
+### Install
+
+Add the crate and let the SDK resolve released runtime assets and helpers
+through configuration:
+
+```toml
+[dependencies]
+oliphaunt = "0.1"
+```
+
+</Step>
+<Step>
+
+### Open and query
+
+Create a builder, choose storage, select exact extensions, open, query, and
+close.
+
+<!-- oliphaunt-snippet: oliphaunt-rust -->
+
+```rust
+use oliphaunt::{Extension, Oliphaunt};
+
+async fn open_database() -> oliphaunt::Result<()> {
+    let db = Oliphaunt::builder()
+        .path(".oliphaunt")
+        .native_direct()
+        .extension(Extension::Vector)
+        .open()
+        .await?;
+
+    let rows = db.query("SELECT 1::text AS value").await?;
+    assert_eq!(rows.get_text(0, "value")?, Some("1"));
+
+    db.close().await?;
+    Ok(())
+}
+```
+
+Keep the opened `Oliphaunt` handle in application state. Cloned handles point to
+the same executor. Use server mode when the app needs a connection pool or
+independent PostgreSQL client sessions.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use typed helpers for application queries and keep the database handle in Tauri
+state, an async service, or another app-owned dependency container:
+
+```rust
+db.execute(
+    r#"
+    CREATE TABLE IF NOT EXISTS notes (
+        id bigserial PRIMARY KEY,
+        title text NOT NULL,
+        body text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+    )
+    "#,
+)
+.await?;
+
+db.query_params(
+    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
+    ["First note", "Stored in an embedded PostgreSQL root"],
+)
+.await?;
+
+let notes = db
+    .query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
+    .await?;
+```
+
+Expose app-specific commands to a Tauri webview instead of exposing raw database
+handles directly to frontend code.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure engine mode, root, durability, startup identity, selected extensions,
+runtime assets, broker executable, and server executable through the builder.
+Use a persistent app-owned directory for user data. Temporary roots are useful
+for tests and short-lived tools.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+`NativeDirect` runs one serialized embedded session in the process. It gives the
+lowest round-trip latency and rejects pool sizes above one.
+
+`NativeBroker` talks to a local helper process. Use it for desktop apps that need
+process isolation, crash recovery, or several roots managed by one application.
+
+`NativeServer` starts a PostgreSQL-compatible server process. Use it when `psql`,
+`pg_dump`, ORMs, or true independent client sessions matter.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Direct-mode work queues fairly on one owner executor. Transactions pin the
+physical session until commit or rollback. `close()` rejects queued work, waits
+for active work, then closes or detaches from the selected runtime. Use explicit
+cancellation for long-running SQL.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names before open. There are no packs, aliases, or
+implicit selectors. If you select `vector`, the generated artifacts include
+`vector` and only its declared dependencies.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use SDK backup and restore APIs instead of copying PostgreSQL directories from
+application code. The SDK validates formats, target roots, locks, and restore
+options before materializing data.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="rust" />
+
+## Troubleshooting
+
+Check root locks, missing runtime assets, mode capability errors, extension
+selection errors, and SQLSTATE-bearing PostgreSQL errors. If concurrency looks
+surprising, confirm the selected mode first: direct mode serializes work by
+design, while independent sessions require server mode.

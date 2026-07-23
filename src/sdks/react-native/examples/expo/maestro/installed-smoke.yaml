@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: Oliphaunt installed app smoke
+tags:
+  - oliphaunt
+  - smoke
+  - installed-app
+---
+- extendedWaitUntil:
+    visible:
+      id: liboliphaunt-smoke-status-passed
+    timeout: ${SMOKE_TIMEOUT_MS}
+- assertVisible:
+    id: liboliphaunt-smoke-status-passed
+- assertVisible:
+    id: liboliphaunt-smoke-result
