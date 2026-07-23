@@ -1,0 +1,76 @@
+[package]
+name = "liboliphaunt-wasix-portable"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Portable WASIX runtime assets for oliphaunt-wasix"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/liboliphaunt-wasix-portable"
+license = "MIT AND PostgreSQL AND Unicode-3.0"
+publish = false
+links = "oliphaunt_artifact_liboliphaunt_wasix_runtime"
+include = [
+  "Cargo.toml",
+  "build.rs",
+  "README.md",
+  "src/**",
+  "payload/**",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
+  "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+  "THIRD_PARTY_LICENSES/ICU-LICENSE",
+]
+
+[features]
+extension-amcheck = []
+extension-auto-explain = []
+extension-bloom = []
+extension-btree-gin = []
+extension-btree-gist = []
+extension-citext = []
+extension-cube = []
+extension-dict-int = []
+extension-dict-xsyn = []
+extension-earthdistance = ["extension-cube"]
+extension-file-fdw = []
+extension-fuzzystrmatch = []
+extension-hstore = []
+extension-intarray = []
+extension-isn = []
+extension-lo = []
+extension-ltree = []
+extension-pageinspect = []
+extension-pg-buffercache = []
+extension-pg-freespacemap = []
+extension-pg-hashids = []
+extension-pg-ivm = []
+extension-pg-surgery = []
+extension-pg-textsearch = []
+extension-pg-trgm = []
+extension-pg-uuidv7 = []
+extension-pg-visibility = []
+extension-pg-walinspect = []
+extension-pgcrypto = []
+extension-pgtap = []
+extension-postgis = []
+extension-seg = []
+extension-tablefunc = []
+extension-tcn = []
+extension-tsm-system-rows = []
+extension-tsm-system-time = []
+extension-unaccent = []
+extension-uuid-ossp = []
+extension-vector = []
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+serde_json = "1"
+sha2 = "0.10"

@@ -1,0 +1,87 @@
+---
+title: Extensions
+description: Select exact PostgreSQL extension names and verify the artifacts that enter each app package.
+---
+
+# Extensions
+
+Oliphaunt uses exact, opt-in PostgreSQL extension selection. App developers
+choose the SQL extension names their app needs, and release artifacts contain
+only those selected extensions plus mandatory dependencies declared by the
+extension metadata.
+
+There are no extension packs, aliases, grouped selectors, or implicit expansion.
+Selecting `vector` means selecting the PostgreSQL extension named `vector`.
+
+<ExactExtensionRule />
+
+<ExtensionArtifactFlow />
+
+## How Selection Works
+
+Select extensions before opening the database:
+
+```rust
+use oliphaunt::{Extension, Oliphaunt};
+
+# async fn demo() -> oliphaunt::Result<()> {
+let db = Oliphaunt::builder()
+    .temporary()
+    .native_direct()
+    .extension(Extension::Vector)
+    .open()
+    .await?;
+
+db.execute("CREATE EXTENSION vector").await?;
+# Ok(())
+# }
+```
+
+`CREATE EXTENSION` succeeds when the selected runtime resources contain that
+extension for the target platform. The SDK loads only the selected extension
+artifacts and their declared dependencies.
+
+## Platform Behavior
+
+| Platform | Expected behavior |
+| --- | --- |
+| Rust/Tauri desktop | SDK resolves selected runtime extension artifacts for the target |
+| iOS/macOS Swift | App bundle includes selected extension artifacts and dependencies only |
+| Android Kotlin | Android package includes selected extension artifacts and dependencies only |
+| React Native | Config plugin delegates selection to Swift/Kotlin packaging |
+| TypeScript desktop | SDK resolves selected runtime artifacts or helper-process resources |
+| WASM | WASM assets include selected extension artifacts built for the WASIX runtime |
+
+## Dependencies
+
+Some PostgreSQL extensions depend on other extensions or runtime files. Those
+dependencies are explicit metadata. If `earthdistance` declares `cube` as a
+dependency, selecting `earthdistance` may include `cube`; selecting `vector`
+includes `vector` and its declared dependencies only.
+
+## External Extensions
+
+External extensions are distributed as exact extension artifacts or indexes.
+Consumer apps select them by SQL extension name. If a developer provides a
+verified custom artifact for `acme_ext`, the app selects `acme_ext`.
+
+Each promoted exact extension has its own product tag, changelog, and package
+version. PostgreSQL contrib extension packages are runtime-bound and move with
+the compatible Oliphaunt runtime group. External extension packages own
+independent packaging SemVer; their immutable upstream version/commit and
+compatible Oliphaunt runtime versions are separate metadata. Do not assume an
+external package version matches either its upstream project version or the
+runtime version.
+
+## Verifying App Artifacts
+
+Before release, app tooling reports:
+
+- selected SQL extension names;
+- included extension files;
+- mandatory dependencies;
+- package-size contribution per extension;
+- target platform and architecture.
+
+That report lets developers confirm that an app using only `vector` ships
+`vector` and its declared dependencies, without unrelated extension artifacts.

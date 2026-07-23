@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: restore host cwd after embedded shutdown
+
+PostgreSQL's standalone startup changes the process working directory to
+PGDATA.  Embedded liboliphaunt must not leave the host process in that directory
+after close, so preserve the caller cwd around the embedded backend lifetime
+and restore it after PostgreSQL's normal exit cleanup callbacks run.
+---
+ src/backend/tcop/postgres.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 31e14a1..56888c4 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4199,6 +4199,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	int			socket_pair[2] = {-1, -1};
+ 	ClientSocket client_sock;
+ 	struct sockaddr_in *addr;
++	char		original_cwd[MAXPGPATH];
++	bool		have_original_cwd;
+
+ 	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
+ 		username == NULL || io == NULL)
+@@ -4226,6 +4228,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	if (!SelectConfigFiles(userDoption, progname))
+ 		return -1;
+
++	have_original_cwd = (getcwd(original_cwd, sizeof(original_cwd)) != NULL);
++
+ 	checkDataDir();
+ 	ChangeToDataDir();
+ 	CreateDataDirLockFile(false);
+@@ -4275,5 +4279,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	PostgresMain(dbname, username);
+ 	oliphaunt_embedded_proc_exit(0);
+
++	if (have_original_cwd && chdir(original_cwd) != 0)
++		return -1;
++
+ 	if (socket_pair[1] >= 0)
+ 		close(socket_pair[1]);

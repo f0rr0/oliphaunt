@@ -1,0 +1,43 @@
+schema = "oliphaunt-extension-recipe-v1"
+sql_name = "pg_textsearch"
+display_name = "pg_textsearch"
+kind = "external-simple-pgxs"
+license = "PostgreSQL"
+source = "pg_textsearch"
+postgres_majors = [18]
+
+[lifecycle]
+creates_extension = true
+requires = []
+implicit_sql_dependencies = []
+load_sql = []
+post_create_sql = []
+shared_preload_libraries = []
+restart_required = false
+background_workers = false
+shared_memory = false
+session_load_required = false
+needs_superuser = false
+trusted = false
+
+[artifacts]
+control_files = ["share/postgresql/extension/pg_textsearch.control"]
+sql_globs = ["share/postgresql/extension/pg_textsearch--*.sql"]
+native_modules = []
+native_dependency_modules = []
+data_files = []
+headers = []
+licenses = ["share/licenses/pg_textsearch/LICENSE"]
+
+[support.native]
+direct = "supported"
+broker = "supported"
+server = "supported"
+
+[support.wasix]
+direct = "supported"
+server = "supported"
+
+[support.mobile]
+ios = "supported"
+android = "supported"

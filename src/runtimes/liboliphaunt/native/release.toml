@@ -1,0 +1,39 @@
+id = "liboliphaunt-native"
+owner = "@oliphaunt/core"
+kind = "native-core"
+publish_targets = ["github-release-assets", "npm", "maven-central", "crates-io"]
+registry_packages = [
+  "crates:liboliphaunt-native-linux-arm64-gnu",
+  "crates:liboliphaunt-native-linux-x64-gnu",
+  "crates:liboliphaunt-native-macos-arm64",
+  "crates:liboliphaunt-native-windows-x64-msvc",
+  "crates:oliphaunt-tools",
+  "crates:oliphaunt-tools-linux-arm64-gnu",
+  "crates:oliphaunt-tools-linux-x64-gnu",
+  "crates:oliphaunt-tools-macos-arm64",
+  "crates:oliphaunt-tools-windows-x64-msvc",
+  "npm:@oliphaunt/icu",
+  "npm:@oliphaunt/liboliphaunt-darwin-arm64",
+  "npm:@oliphaunt/liboliphaunt-linux-x64-gnu",
+  "npm:@oliphaunt/liboliphaunt-linux-arm64-gnu",
+  "npm:@oliphaunt/liboliphaunt-win32-x64-msvc",
+  "npm:@oliphaunt/tools-darwin-arm64",
+  "npm:@oliphaunt/tools-linux-x64-gnu",
+  "npm:@oliphaunt/tools-linux-arm64-gnu",
+  "npm:@oliphaunt/tools-win32-x64-msvc",
+  "maven:dev.oliphaunt.runtime:oliphaunt-icu",
+  "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
+  "maven:dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
+  "maven:dev.oliphaunt.runtime:liboliphaunt-android-x86_64",
+]
+release_artifacts = [
+  "c-headers",
+  "macos-dylib",
+  "linux-shared-library",
+  "windows-dll",
+  "ios-xcframework",
+  "android-shared-library",
+  "runtime-resources",
+  "icu-data",
+  "package-size-report",
+]

@@ -1,0 +1,58 @@
+---
+title: SDKs And Platforms
+description: Compare Oliphaunt SDK package names, target apps, runtime ownership, and platform responsibilities.
+---
+
+Oliphaunt ships as peer SDKs for the platforms where developers build apps.
+Each SDK uses the conventions of its ecosystem while keeping the same database
+concepts: open a root, run SQL, manage lifecycle, select exact extensions, and
+back up or restore data.
+
+Rust is the SDK for Tauri and Rust desktop apps.
+React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin SDKs.
+TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps currently keep
+Oliphaunt in Rust state behind narrow app-owned commands; a direct JavaScript adapter is planned.
+
+## Choose an SDK
+
+<SdkChooser />
+
+React Native delegates database execution to the platform SDKs: Apple calls flow
+through the Swift SDK, and Android calls flow through the Kotlin SDK. That keeps
+resource packaging, lifecycle, and native crash behavior predictable for mobile
+apps.
+
+TypeScript broker mode uses a published broker helper, so JavaScript desktop apps
+resolve the helper through package configuration. Native Node.js, Bun, and Deno
+installs use the npm package; the JSR distribution is deliberately limited to
+portable protocol/query helpers.
+
+## Shared Concepts
+
+The SDKs intentionally use matching names for the concepts developers need to
+move between platforms:
+
+- `nativeDirect` for the lowest-latency embedded session.
+- `nativeBroker` for helper-process isolation and multi-root desktop apps.
+- `nativeServer` when real PostgreSQL clients, pools, or tools need independent
+  sessions.
+- `capabilities()` to check what a selected runtime can do.
+- `backup` and `restore` for app-friendly data movement.
+- structured PostgreSQL errors with SQLSTATE and backend fields where available.
+
+SDK capability reports describe which modes are available on the selected
+platform. Mobile SDKs expose direct mode first; broker and server support appear
+when the platform SDK advertises those runtimes.
+
+<ModeMatrix />
+
+## Extensions
+
+<ExactExtensionRule />
+
+Extension selection is exact-name only: app configuration names PostgreSQL
+extensions such as `vector` directly.
+
+That model matters for mobile and desktop distribution: app developers decide
+which PostgreSQL extensions their app uses, and Oliphaunt packaging makes that
+choice auditable before release.

@@ -1,0 +1,16 @@
+[toolchain]
+version = "2.5.24"
+repository = "lexxmark/winflexbison"
+
+[assets.windows-x64]
+url = "https://github.com/lexxmark/winflexbison/releases/download/v2.5.24/win_flex_bison-2.5.24.zip"
+sha256 = "39c6086ce211d5415500acc5ed2d8939861ca1696aee48909c7f6daf5122b505"
+bytes = "1042625"
+entry_count = "63"
+file_count = "56"
+expanded_bytes = "2227860"
+tree_sha256 = "48758c8d315556e0664e570cda6d11b62014b88e8907dfe4197b0e7badf096ff"
+flex_path = "win_flex.exe"
+flex_sha256 = "d370f1880fd7606325aefdf1bc10a0023187d63eb70455630550b609ff06cc46"
+bison_path = "win_bison.exe"
+bison_sha256 = "3084acb68d67d301591f2f0f61fb50e4bcdcb865327286d0985db7ba02b06bcc"

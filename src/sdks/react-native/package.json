@@ -1,0 +1,106 @@
+{
+  "name": "@oliphaunt/react-native",
+  "version": "0.0.0",
+  "description": "React Native New Architecture SDK for Oliphaunt.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/sdks/react-native"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/index.d.ts",
+  "react-native": "lib/module/index.js",
+  "oliphaunt": {
+    "swiftSdkVersion": "0.0.0",
+    "kotlinSdkVersion": "0.0.0"
+  },
+  "files": [
+    "android",
+    "app.plugin.js",
+    "ios",
+    "lib",
+    "src",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "tools/codegen-check.cjs",
+    "tools/stage-ios-app.mjs",
+    "tools/verify-ios-package.mjs",
+    "OliphauntReactNative.podspec",
+    "react-native.config.js",
+    "!ios/extension-frameworks",
+    "!ios/extension-frameworks/**",
+    "!ios/frameworks",
+    "!ios/frameworks/**",
+    "!ios/generated",
+    "!ios/generated/**",
+    "!ios/resources",
+    "!ios/resources/**",
+    "!android/.gradle",
+    "!android/.cxx",
+    "!android/build",
+    "!android/src/main/assets",
+    "!android/src/main/assets/**",
+    "!android/src/main/jniLibs",
+    "!android/src/main/jniLibs/**",
+    "!android/src/test",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.types.json && tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json",
+    "codegen:check": "node ./tools/codegen-check.cjs /tmp/oliphaunt-react-native-schema.json src/specs/NativeOliphaunt.ts",
+    "docs:api": "typedoc --options typedoc.json",
+    "package:verify-ios": "node ./tools/verify-ios-package.mjs --package-dir .",
+    "prepack": "node ./tools/verify-ios-package.mjs --package-dir .",
+    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf lib"
+  },
+  "peerDependencies": {
+    "expo": ">=56.0.0",
+    "react": ">=19.0.0",
+    "react-native": ">=0.85.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@react-native/codegen": "^0.85.3",
+    "@react-native/typescript-config": "^0.85.0",
+    "@types/node": "^24.10.1",
+    "@vitest/coverage-v8": "catalog:",
+    "react": "^19.2.0",
+    "react-native": "^0.85.0",
+    "tsx": "catalog:",
+    "typedoc": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "codegenConfig": {
+    "name": "OliphauntReactNativeSpec",
+    "type": "modules",
+    "jsSrcsDir": "src/specs",
+    "android": {
+      "javaPackageName": "dev.oliphaunt.reactnative"
+    },
+    "ios": {
+      "modules": {
+        "Oliphaunt": {
+          "className": "Oliphaunt",
+          "unstableRequiresMainQueueSetup": false
+        }
+      }
+    }
+  }
+}
