@@ -18,11 +18,19 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 import org.gradle.api.GradleException;
 import org.gradle.testfixtures.ProjectBuilder;
 
 public final class OliphauntExtensionCatalogContractTest {
+  private static final String STABLE_RELEASE_VERSION_REGEX =
+      "(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)";
+  private static final Pattern RUNTIME_REPLAY_RESOURCES =
+      Pattern.compile(
+          "^liboliphaunt-(" + STABLE_RELEASE_VERSION_REGEX + ")-runtime-resources\\.tar\\.gz$");
+
   private OliphauntExtensionCatalogContractTest() {}
 
   public static void main(String[] args) throws Exception {
@@ -36,6 +44,7 @@ public final class OliphauntExtensionCatalogContractTest {
     rejectsCarrierWrapperSiblings();
     validatesExactExtensionArtifactInventory();
     validatesPgcryptoAndPostgisLegalArtifacts();
+    validatesExactReleaseReplayVersionParsing();
     replaysExactReleaseArtifactsWhenConfigured();
     validatesCarrierBoundAncillaryExtensionSqlInventory();
     resolvesCanonicalEmptyAndSqlOnlyRegistriesEndToEnd();
@@ -818,42 +827,75 @@ public final class OliphauntExtensionCatalogContractTest {
               + runtimeRoot);
     }
 
+    List<String> sqlNames = OliphauntExtensionCatalog.sqlNames();
+    equal(39, sqlNames.size(), "exact replay selected extension count");
+    TreeSet<String> releaseProducts = new TreeSet<>();
+    for (String sqlName : sqlNames) {
+      releaseProducts.add(OliphauntExtensionCatalog.require(sqlName).releaseProduct());
+    }
+    equal(8, releaseProducts.size(), "exact replay release owner count");
+
     List<Path> extensionArtifacts;
     try (var paths = Files.walk(extensionRoot)) {
       extensionArtifacts =
           paths
               .filter(Files::isRegularFile)
               .filter(path -> path.getParent().getFileName().toString().equals("release-assets"))
-              .filter(
-                  path ->
-                      path.getFileName()
-                          .toString()
-                          .matches(
-                              "oliphaunt-extension-.*-0\\.0\\.0-native-android-"
-                                  + "(arm64-v8a|x86_64)-(bundle|runtime)\\.tar\\.gz"))
+              .filter(path -> isExactAndroidExtensionReplayArtifact(path, releaseProducts))
               .sorted()
               .toList();
     }
     equal(16, extensionArtifacts.size(), "exact replay Android release carrier count");
 
+    LinkedHashMap<String, String> ownerVersions = new LinkedHashMap<>();
+    for (String releaseProduct : releaseProducts) {
+      TreeSet<String> versions = new TreeSet<>();
+      TreeSet<String> targets = new TreeSet<>();
+      int carrierCount = 0;
+      for (Path artifact : extensionArtifacts) {
+        Matcher matcher =
+            exactAndroidExtensionReplayPattern(releaseProduct)
+                .matcher(artifact.getFileName().toString());
+        if (!matcher.matches()) {
+          continue;
+        }
+        versions.add(matcher.group(1));
+        targets.add(matcher.group(2));
+        carrierCount += 1;
+      }
+      equal(2, carrierCount, "exact replay carrier count for " + releaseProduct);
+      equal(
+          List.of("arm64-v8a", "x86_64"),
+          new ArrayList<>(targets),
+          "exact replay Android targets for " + releaseProduct);
+      equal(1, versions.size(), "exact replay version count for " + releaseProduct);
+      ownerVersions.put(releaseProduct, versions.first());
+    }
+
+    TreeSet<String> runtimeVersions = new TreeSet<>();
+    try (var paths = Files.list(runtimeRoot)) {
+      paths
+          .filter(Files::isRegularFile)
+          .map(path -> RUNTIME_REPLAY_RESOURCES.matcher(path.getFileName().toString()))
+          .filter(Matcher::matches)
+          .forEach(matcher -> runtimeVersions.add(matcher.group(1)));
+    }
+    equal(1, runtimeVersions.size(), "exact replay runtime version count");
+    String runtimeVersion = runtimeVersions.first();
+
     List<Path> runtimeArtifacts =
         List.of(
-            runtimeRoot.resolve("liboliphaunt-0.0.0-runtime-resources.tar.gz"),
-            runtimeRoot.resolve("liboliphaunt-0.0.0-android-arm64-v8a.tar.gz"),
-            runtimeRoot.resolve("liboliphaunt-0.0.0-android-x86_64.tar.gz"));
+            runtimeRoot.resolve(
+                "liboliphaunt-" + runtimeVersion + "-runtime-resources.tar.gz"),
+            runtimeRoot.resolve(
+                "liboliphaunt-" + runtimeVersion + "-android-arm64-v8a.tar.gz"),
+            runtimeRoot.resolve(
+                "liboliphaunt-" + runtimeVersion + "-android-x86_64.tar.gz"));
     for (Path artifact : runtimeArtifacts) {
       if (!Files.isRegularFile(artifact)) {
         throw new AssertionError("exact replay is missing runtime carrier " + artifact);
       }
     }
-
-    List<String> sqlNames = OliphauntExtensionCatalog.sqlNames();
-    equal(39, sqlNames.size(), "exact replay selected extension count");
-    LinkedHashMap<String, String> ownerVersions = new LinkedHashMap<>();
-    for (String sqlName : sqlNames) {
-      ownerVersions.put(OliphauntExtensionCatalog.require(sqlName).releaseProduct(), "0.0.0");
-    }
-    equal(8, ownerVersions.size(), "exact replay release owner count");
 
     Path root = Files.createTempDirectory("oliphaunt-exact-android-release-replay-");
     try {
@@ -864,7 +906,7 @@ public final class OliphauntExtensionCatalogContractTest {
               .build()
               .getTasks()
               .create("exactReleaseReplay", ResolveOliphauntAndroidAssetsTask.class);
-      resolve.getVersion().set("0.0.0");
+      resolve.getVersion().set(runtimeVersion);
       resolve.getSelectedAbis().set(List.of("arm64-v8a", "x86_64"));
       resolve.getSelectedExtensions().set(sqlNames);
       resolve.getExtensionOwnerVersions().set(ownerVersions);
@@ -914,6 +956,48 @@ public final class OliphauntExtensionCatalogContractTest {
     } finally {
       deleteRecursively(root);
     }
+  }
+
+  private static void validatesExactReleaseReplayVersionParsing() {
+    Matcher extension =
+        exactAndroidExtensionReplayPattern("oliphaunt-extension-vector")
+            .matcher(
+                "oliphaunt-extension-vector-12.34.56-native-android-arm64-v8a-bundle.tar.gz");
+    equal(true, extension.matches(), "versioned exact extension replay name");
+    equal("12.34.56", extension.group(1), "versioned exact extension replay version");
+    equal("arm64-v8a", extension.group(2), "versioned exact extension replay target");
+    equal(
+        false,
+        exactAndroidExtensionReplayPattern("oliphaunt-extension-vector")
+            .matcher(
+                "oliphaunt-extension-vector-01.34.56-native-android-arm64-v8a-bundle.tar.gz")
+            .matches(),
+        "noncanonical exact extension replay version");
+
+    Matcher runtime =
+        RUNTIME_REPLAY_RESOURCES.matcher("liboliphaunt-12.34.56-runtime-resources.tar.gz");
+    equal(true, runtime.matches(), "versioned exact runtime replay name");
+    equal("12.34.56", runtime.group(1), "versioned exact runtime replay version");
+  }
+
+  private static Pattern exactAndroidExtensionReplayPattern(String releaseProduct) {
+    return Pattern.compile(
+        "^"
+            + Pattern.quote(releaseProduct)
+            + "-("
+            + STABLE_RELEASE_VERSION_REGEX
+            + ")-native-android-(arm64-v8a|x86_64)-(?:bundle|runtime)\\.tar\\.gz$");
+  }
+
+  private static boolean isExactAndroidExtensionReplayArtifact(
+      Path artifact, TreeSet<String> releaseProducts) {
+    String fileName = artifact.getFileName().toString();
+    for (String releaseProduct : releaseProducts) {
+      if (exactAndroidExtensionReplayPattern(releaseProduct).matcher(fileName).matches()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static void validatesCarrierBoundAncillaryExtensionSqlInventory()

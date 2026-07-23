@@ -35,6 +35,7 @@ import {
   normalizeBrokerDependencyLicenseModes,
   stageBrokerDependencyLicenses,
 } from "./broker-dependency-license-contract.mjs";
+import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { brokerNpmTarballs } from "./release-product-dry-run.mjs";
 import { brokerNpmTarballs as localRegistryBrokerNpmTarballs } from "./local-registry-publish.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
@@ -42,6 +43,10 @@ import { stageReleaseNotices } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const CONTRACT = path.join(ROOT, "src/runtimes/broker/dependency-licenses.json");
+const BROKER_VERSION = currentProductVersionSync(
+  "oliphaunt-broker",
+  "broker-dependency-license-contract.test.mjs",
+);
 const TARGETS = ["linux-x64-gnu", "linux-arm64-gnu", "macos-arm64", "windows-x64-msvc"];
 const TIMEOUT = 120_000;
 
@@ -300,7 +305,7 @@ test("real npm target tarballs reopen the exact target-specific dependency closu
       "--asset-dir",
       assetDir,
       "--version",
-      "0.0.0",
+      BROKER_VERSION,
     ],
     { cwd: ROOT, encoding: "utf8" },
   );
@@ -311,7 +316,7 @@ test("real npm target tarballs reopen the exact target-specific dependency closu
     ["@oliphaunt/broker-linux-x64-gnu", "linux-x64-gnu"],
     ["@oliphaunt/broker-win32-x64-msvc", "windows-x64-msvc"],
   ]);
-  const tarballs = brokerNpmTarballs("0.0.0", { assetDir });
+  const tarballs = brokerNpmTarballs(BROKER_VERSION, { assetDir });
   assert.equal(tarballs.length, packageTargets.size);
   for (const [packageName, tarball] of tarballs) {
     assertBrokerDependencyLicensesInArchive(tarball, {
@@ -321,7 +326,7 @@ test("real npm target tarballs reopen the exact target-specific dependency closu
   }
 
   const localTarballs = localRegistryBrokerNpmTarballs(
-    "0.0.0",
+    BROKER_VERSION,
     scratch(t, "local-registry-npm-stage"),
     scratch(t, "local-registry-npm-tarballs"),
     assetDir,
@@ -347,7 +352,7 @@ test("concurrent real Cargo payload packagers are isolated and reopen exact targ
       "--asset-dir",
       assetDir,
       "--version",
-      "0.0.0",
+      BROKER_VERSION,
     ],
     { cwd: ROOT, encoding: "utf8" },
   );
@@ -363,7 +368,7 @@ test("concurrent real Cargo payload packagers are isolated and reopen exact targ
       "--source-output-dir",
       sourceOutputDirs[index],
       "--version",
-      "0.0.0",
+      BROKER_VERSION,
     ],
     logRoots[index],
   )));
@@ -375,7 +380,7 @@ test("concurrent real Cargo payload packagers are isolated and reopen exact targ
     );
   }
   const targets = new Map(TARGETS.map((target) => [
-    `oliphaunt-broker-${target}-0.0.0.crate`,
+    `oliphaunt-broker-${target}-${BROKER_VERSION}.crate`,
     target,
   ]));
   for (const outputDir of outputDirs) {
