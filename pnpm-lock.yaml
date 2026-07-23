@@ -186,52 +186,52 @@ importers:
         version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
     optionalDependencies:
       '@oliphaunt/broker-darwin-arm64':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/broker/packages/darwin-arm64
       '@oliphaunt/broker-linux-arm64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/broker/packages/linux-arm64-gnu
       '@oliphaunt/broker-linux-x64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/broker/packages/linux-x64-gnu
       '@oliphaunt/broker-win32-x64-msvc':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/broker/packages/win32-x64-msvc
       '@oliphaunt/liboliphaunt-darwin-arm64':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/packages/darwin-arm64
       '@oliphaunt/liboliphaunt-linux-arm64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/packages/linux-arm64-gnu
       '@oliphaunt/liboliphaunt-linux-x64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/packages/linux-x64-gnu
       '@oliphaunt/liboliphaunt-win32-x64-msvc':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/packages/win32-x64-msvc
       '@oliphaunt/node-direct-darwin-arm64':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/darwin-arm64
       '@oliphaunt/node-direct-linux-arm64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/linux-arm64-gnu
       '@oliphaunt/node-direct-linux-x64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/linux-x64-gnu
       '@oliphaunt/node-direct-win32-x64-msvc':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/win32-x64-msvc
       '@oliphaunt/tools-darwin-arm64':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/tools-packages/darwin-arm64
       '@oliphaunt/tools-linux-arm64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu
       '@oliphaunt/tools-linux-x64-gnu':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu
       '@oliphaunt/tools-win32-x64-msvc':
-        specifier: workspace:0.0.0
+        specifier: workspace:0.1.0
         version: link:../../runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc
 
   src/sdks/react-native:
