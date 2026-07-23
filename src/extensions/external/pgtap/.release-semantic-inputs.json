@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "d31d982efd78ecfc90202b912f50e48cab7bbbf174b984de5b3eae9cfbe76471"
+          "sha256": "2542920dbb45420d4c016bb9633e9039dd6c6401deb09fc90667164b1cd1b787"
         },
         {
           "path": "Cargo.toml",
@@ -44,7 +44,7 @@
         },
         {
           "path": "tools/release/release-notices.mjs",
-          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+          "sha256": "c2bf0c5d1a1a8ba29ca68f12aac804cd468783f6026dbfec9451b6a9acf11306"
         }
       ]
     },
@@ -56,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/extension-upstream-licenses.mjs",
-          "sha256": "f10d4596f13b536f0c73669eb3785e43f649a912cc8509622274c12a0f1d299f"
+          "sha256": "202f34971290781d2c6f81cf566d61c62477d3eb36acca456fd130f8e63c6478"
         }
       ]
     },
@@ -96,7 +96,7 @@
       "inputs": [
         {
           "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
-          "sha256": "a06e9c4bdf0c9f4114463301d689298ce4a8fc16015e25e9f8636119b549e1bf"
+          "sha256": "14abaf5b3828900fdc3c561aa7298c3e026623f14f71292b708c3cf3edaca3ae"
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
@@ -132,7 +132,7 @@
         },
         {
           "path": "tools/release/build-extension-ci-artifacts.mjs",
-          "sha256": "0f1b2c3ac14014cc37beedd802418b57ec888a2c4e9553f87e0a72a1bb0ef255"
+          "sha256": "4aa4332d70814a0fdada16207df7ade2a18405da0bde92a364307dc76ab241e5"
         },
         {
           "path": "tools/release/extension-artifact-archive-policy.mjs",
@@ -140,7 +140,7 @@
         },
         {
           "path": "tools/release/extension-artifact-inventory.mjs",
-          "sha256": "de4cf08f4e84a7eb1f487e1aef3d1fbe647fbc46c87402fb1e19743c6ec1a938"
+          "sha256": "12324731d593cfa385d5bd4a5f169bcfd24dbcc22e4778af34c47770c44be39a"
         },
         {
           "path": "tools/release/extension-registry-carrier-materializer.mjs",
@@ -213,7 +213,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "13827441dc7f5894450220f90c04b493b22fd974a54ff43308a254db16ec247c"
+          "sha256": "4154f50916121441975b3ce9a37a8dddf1e619c487e75fb26199e4415572fc25"
         }
       ]
     },
@@ -237,7 +237,19 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "c4e8fd46cd3da2c9a3c70b83501257c6f590e5eb0f6fd9054767d97774cc7078"
+          "sha256": "c7a4d32249b399563afb33dc723c4e2ca8569b6697e83e51057d34236b21238a"
+        }
+      ]
+    },
+    {
+      "id": "canonical-cross-platform-gzip-producer",
+      "paths": [
+        "tools/release/portable-archive.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/portable-archive.mjs",
+          "sha256": "bd7492d3e95c04d60bf1d3fb0360eeb2b20111efc9bc6ada785a92b18b37ff4e"
         }
       ]
     },
@@ -273,7 +285,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "4b94ea1e5d53d3f68f8073d386084dba14011333bda8aa3e1fc752e2a2b320fb"
+          "sha256": "98893e6caf22c11144503c51a5739dec6c387601fea6ffda7f17290546164f02"
         }
       ]
     },
@@ -331,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "f765f08b3f2419e5a65414995a044a47d8983a2e7be459fab5701201274e13ee"
+  "sha256": "7309ae1822443897701a6efe159386ccd53db157572846077fb93459be4c67ab"
 }

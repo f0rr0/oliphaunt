@@ -7,12 +7,28 @@ import path from "node:path";
 
 import {
   consumeExactCargoCandidates,
+  isExactCargoManifestInsideHome,
   renderExactCargoConsumerManifest,
   validateExactCargoCandidateLock,
   validateExactCargoMetadata,
 } from "./exact-cargo-candidate-consumer.mjs";
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import { EXAMPLE_CARGO_REGISTRY_SOURCE } from "./example-cargo-registry.mjs";
+
+function directoryIdentity(device, inode) {
+  return {
+    dev: BigInt(device),
+    ino: BigInt(inode),
+    isDirectory: () => true,
+  };
+}
+
+function symbolicLinkMetadata() {
+  return {
+    isDirectory: () => false,
+    isSymbolicLink: () => true,
+  };
+}
 
 test("renders deterministic all-feature exact Cargo dependencies", () => {
   const rendered = renderExactCargoConsumerManifest({
@@ -32,6 +48,60 @@ test("renders deterministic all-feature exact Cargo dependencies", () => {
       { name: "dup", version: "1.0.0" },
     ],
   })).toThrow("duplicate package names");
+});
+
+test("accepts only identity-proven Darwin Cargo-home aliases and rejects escapes", () => {
+  const identity = directoryIdentity(1, 13);
+  const lstat = (file, options) => {
+    expect(file).toBe("/var");
+    expect(options).toEqual({ bigint: true });
+    return symbolicLinkMetadata();
+  };
+  const stat = (file, options) => {
+    expect(["/var", "/private/var"]).toContain(file);
+    expect(options).toEqual({ bigint: true });
+    return identity;
+  };
+  const options = { platform: "darwin", lstat, stat };
+  const cargoHome = "/var/folders/runner/cargo-home";
+  const canonicalHome = "/private/var/folders/runner/cargo-home";
+
+  expect(isExactCargoManifestInsideHome(
+    cargoHome,
+    path.join(canonicalHome, "registry/src/index/candidate-1.0.0/Cargo.toml"),
+    options,
+  )).toBe(true);
+  expect(isExactCargoManifestInsideHome(
+    cargoHome,
+    "/private/var/folders/runner/cargo-home-escape/Cargo.toml",
+    options,
+  )).toBe(false);
+  expect(isExactCargoManifestInsideHome(
+    cargoHome,
+    "/private/var/folders/runner/outside/Cargo.toml",
+    options,
+  )).toBe(false);
+
+  expect(isExactCargoManifestInsideHome(
+    cargoHome,
+    path.join(canonicalHome, "registry/src/index/candidate-1.0.0/Cargo.toml"),
+    {
+      platform: "darwin",
+      lstat,
+      stat: (file, statOptions) => file === "/var"
+        ? stat(file, statOptions)
+        : directoryIdentity(1, 99),
+    },
+  )).toBe(false);
+  expect(isExactCargoManifestInsideHome(
+    "/runner-created-alias/cargo-home",
+    path.join(canonicalHome, "registry/src/index/candidate-1.0.0/Cargo.toml"),
+    {
+      platform: "darwin",
+      lstat: () => { throw new Error("an arbitrary alias must not be inspected"); },
+      stat: () => { throw new Error("an arbitrary alias must not be inspected"); },
+    },
+  )).toBe(false);
 });
 
 test("requires every exact indexed package in the Cargo lock and clean extracted metadata", () => {
@@ -75,6 +145,8 @@ test("requires every exact indexed package in the Cargo lock and clean extracted
       cargoHome,
     })).toHaveLength(1);
 
+    const outside = path.join(root, "outside.toml");
+    writeFileSync(outside, "[package]\nname='candidate'\nversion='1.0.0'\n");
     writeFileSync(lock, "version = 4\npackage = []\n");
     expect(() => validateExactCargoCandidateLock({ lockFile: lock, indexDirectory: index })).toThrow(
       "resolved 0 lock rows",
@@ -84,7 +156,7 @@ test("requires every exact indexed package in the Cargo lock and clean extracted
         name: "candidate",
         version: "1.0.0",
         source: EXAMPLE_CARGO_REGISTRY_SOURCE,
-        manifest_path: path.join(root, "outside.toml"),
+        manifest_path: outside,
       }] },
       candidates: [{ name: "candidate", vers: "1.0.0", cksum: checksum }],
       cargoHome,

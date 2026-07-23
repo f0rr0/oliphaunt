@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
+import { constants as zlibConstants, zstdCompressSync } from "node:zlib";
 import {
   chmodSync,
   copyFileSync,
@@ -25,7 +25,12 @@ import {
 import { RUST_BUILD_SCRIPT_SHA256 } from "./rust-build-script-sha256.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { assertWasixAotArtifactPayloads } from "./check-liboliphaunt-wasix-release-assets.mjs";
-import { portableMemberName, readPortableArchiveEntries, readPortableTarZstdBufferEntries } from "./portable-archive.mjs";
+import {
+  canonicalGzipSync,
+  portableMemberName,
+  readPortableArchiveEntries,
+  readPortableTarZstdBufferEntries,
+} from "./portable-archive.mjs";
 import { compareText } from "./release-graph.mjs";
 import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
 import {
@@ -845,7 +850,7 @@ function cargoPackageWithoutDependencyResolution(crateDir, targetDir) {
   writeFileSync(stagedManifest, packagedManifestText(readFileSync(stagedManifest, "utf8")));
   cargoMetadataPackage(stagedManifest);
   rmSync(cratePath, { force: true });
-  writeFileSync(cratePath, gzipSync(createDeterministicTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
+  writeFileSync(cratePath, canonicalGzipSync(createDeterministicTar(stageDir, packageRoot, { fail })));
   if (!isFile(cratePath)) {
     fail(`manual package did not create ${rel(cratePath)}`);
   }

@@ -14,11 +14,13 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { gzipSync } from "node:zlib";
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  canonicalGzipSync,
+  readPortableArchiveEntries,
+} from "./portable-archive.mjs";
 import { hasCanonicalReleaseStagingMode } from "./release-notices.mjs";
 import {
   auditExtensionUpstreamLicenseSources,
@@ -152,8 +154,8 @@ test("committed legal bytes stage every active external release without source c
   const script = `
     import { mkdirSync, writeFileSync } from "node:fs";
     import path from "node:path";
-    import { gzipSync } from "node:zlib";
     import { createDeterministicTar } from ${JSON.stringify(path.join(ROOT, "tools/release/cargo-source-package.mjs"))};
+    import { canonicalGzipSync } from ${JSON.stringify(path.join(ROOT, "tools/release/portable-archive.mjs"))};
     import {
       assertExtensionUpstreamLicensesInArchive,
       assertExtensionUpstreamLicensesInDirectory,
@@ -168,9 +170,9 @@ test("committed legal bytes stage every active external release without source c
       const checked = assertExtensionUpstreamLicensesInDirectory([sqlName], stage);
       if (JSON.stringify(staged) !== JSON.stringify(checked)) throw new Error(sqlName + " staged legal bytes differ");
       const archive = path.join(root, sqlName + ".tar.gz");
-      writeFileSync(archive, gzipSync(createDeterministicTar(stage, sqlName, {
+      writeFileSync(archive, canonicalGzipSync(createDeterministicTar(stage, sqlName, {
         fail(message) { throw new Error(message); },
-      }), { mtime: 0 }));
+      })));
       const packed = assertExtensionUpstreamLicensesInArchive([sqlName], archive, { prefix: sqlName });
       if (JSON.stringify(packed) !== JSON.stringify(staged.map((member) => sqlName + "/" + member))) {
         throw new Error(sqlName + " archived legal bytes differ");
@@ -380,11 +382,11 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   assert.deepEqual(assertExtensionUpstreamLicensesInDirectory(["pg_hashids"], stage), staged);
 
   const archive = path.join(root, "pg-hashids.crate");
-  writeFileSync(archive, gzipSync(createDeterministicTar(stage, "pg-hashids-0.1.0", {
+  writeFileSync(archive, canonicalGzipSync(createDeterministicTar(stage, "pg-hashids-0.1.0", {
     fail(message) {
       throw new Error(message);
     },
-  }), { mtime: 0 }));
+  })));
   assert.deepEqual(
     assertExtensionUpstreamLicensesInArchive(["pg_hashids"], archive, { prefix: "pg-hashids-0.1.0" }),
     ["pg-hashids-0.1.0/share/licenses/pg_hashids/LICENSE"],
@@ -452,7 +454,7 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   const missingAssertionRoot = path.join(root, "missing-parent", "missing-stage");
   assert.throws(
     () => assertExtensionUpstreamLicensesInDirectory(["pg_hashids"], missingAssertionRoot),
-    /assertion directory cannot be inspected/u,
+    /upstream license assertion cannot be inspected/u,
   );
   assert.equal(existsSync(path.join(root, "missing-parent")), false);
 
@@ -473,7 +475,7 @@ test("staging verifies committed bytes, mode, and directory safety", (t) => {
   symlinkSync(realAncestor, linkedAncestor);
   assert.throws(
     () => stageExtensionUpstreamLicenses("pg_hashids", path.join(linkedAncestor, "existing-stage")),
-    /staging directory must be a real directory/u,
+    /symlink or non-directory ancestor/u,
   );
 });
 
@@ -490,11 +492,11 @@ test("the public PostGIS carrier's compiled-component legal atoms are pinned, st
   assert.deepEqual(assertExtensionUpstreamLicensesInDirectory(["postgis"], stage), expected);
 
   const archive = path.join(root, "postgis.tar.gz");
-  writeFileSync(archive, gzipSync(createDeterministicTar(stage, "postgis", {
+  writeFileSync(archive, canonicalGzipSync(createDeterministicTar(stage, "postgis", {
     fail(message) {
       throw new Error(message);
     },
-  }), { mtime: 0 }));
+  })));
   assert.deepEqual(
     assertExtensionUpstreamLicensesInArchive(["postgis"], archive, { prefix: "postgis" }),
     expected.map((member) => `postgis/${member}`),

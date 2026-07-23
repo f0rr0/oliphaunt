@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gunzipSync } from "node:zlib";
 
 import {
   buildPublicationCandidate,
@@ -40,6 +40,7 @@ import {
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 
 const temporaryDirectories = [];
 
@@ -357,7 +358,7 @@ function extensionGithubReleaseFixture(
         },
       };
       if (bundleFixedFileMode !== null) tarOptions.fixedFileMode = bundleFixedFileMode;
-      writeFileSync(output, gzipSync(createDeterministicTar(stage, archiveRoot, tarOptions), { mtime: 0 }));
+      writeFileSync(output, canonicalGzipSync(createDeterministicTar(stage, archiveRoot, tarOptions)));
       mutateBundleArchive?.({
         archiveRoot,
         family: group.family,
@@ -898,7 +899,7 @@ describe("publication artifact discovery and freezing", () => {
         const tar = gunzipSync(readFileSync(output));
         Buffer.from("builder\0", "ascii").copy(tar, 265);
         refreshTarHeaderChecksum(tar);
-        writeFileSync(output, gzipSync(tar, { mtime: 0 }));
+        writeFileSync(output, canonicalGzipSync(tar));
       },
     }, /exact deterministic POSIX ustar file encoding/u);
   });

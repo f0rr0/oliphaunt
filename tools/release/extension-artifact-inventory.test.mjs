@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGzip, gzipSync } from "node:zlib";
+import test from "node:test";
+import { createGzip } from "node:zlib";
 
 import {
   EXTENSION_ARTIFACT_PROPERTY_KEYS,
@@ -19,12 +20,14 @@ import {
   EXTENSION_ARTIFACT_ARCHIVE_POLICY,
   validateExtensionArtifactArchivePlan,
 } from "./extension-artifact-archive-policy.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
 } from "./extension-upstream-licenses.mjs";
 import { extensionProductForSqlName } from "./release-artifact-targets.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
+import { elfFixture } from "../test/release-fixture-utils.mjs";
 
 const REPOSITORY = path.resolve(import.meta.dirname, "../..");
 
@@ -97,10 +100,7 @@ function canonicalArchive(entries, { mutateHeader = undefined, trailingZeroBlock
     if (data.length % 512 !== 0) chunks.push(Buffer.alloc(512 - (data.length % 512)));
   }
   chunks.push(Buffer.alloc(512 * trailingZeroBlocks));
-  const compressed = Buffer.from(gzipSync(Buffer.concat(chunks), { mtime: 0 }));
-  compressed.fill(0, 4, 9);
-  compressed[9] = 0x03;
-  return compressed;
+  return canonicalGzipSync(Buffer.concat(chunks));
 }
 
 function legalContract(sqlName, target) {
@@ -790,12 +790,24 @@ async function main() {
       extensionSqlFileNames: [],
       extensionSqlFilePrefixes: [],
     };
+    const moduleFile = "auto_explain.so";
     const producerAutoRuntime = path.join(root, "producer-auto-runtime");
     const producerAutoEmbedded = path.join(root, "producer-auto-embedded");
+    const stripShim = path.join(root, "no-op-elf-strip");
     await fs.mkdir(path.join(producerAutoRuntime, "lib/postgresql"), { recursive: true });
     await fs.mkdir(producerAutoEmbedded, { recursive: true });
-    await fs.copyFile("/bin/true", path.join(producerAutoRuntime, "lib/postgresql/auto_explain.so"));
-    await fs.copyFile("/bin/false", path.join(producerAutoEmbedded, "auto_explain.so"));
+    await fs.writeFile(
+      path.join(producerAutoRuntime, "lib/postgresql", moduleFile),
+      elfFixture({ machine: 62 }),
+    );
+    await fs.writeFile(
+      path.join(producerAutoEmbedded, moduleFile),
+      elfFixture({ machine: 62, requiredVersions: ["GLIBC_2.17"] }),
+    );
+    await fs.chmod(path.join(producerAutoRuntime, "lib/postgresql", moduleFile), 0o755);
+    await fs.chmod(path.join(producerAutoEmbedded, moduleFile), 0o755);
+    await fs.writeFile(stripShim, "#!/usr/bin/env sh\nexit 0\n");
+    await fs.chmod(stripShim, 0o755);
     const producerAutoArchive = path.join(root, "producer-auto-explain.tar.gz");
     const producerAuto = spawnSync(
       path.join(REPOSITORY, "tools/dev/bun.sh"),
@@ -807,15 +819,20 @@ async function main() {
         "--sql-name", "auto_explain",
         "--creates-extension", "false",
         "--native-module-stem", "auto_explain",
-        "--native-module-file", "auto_explain.so",
+        "--native-module-file", moduleFile,
         "--native-target", "linux-x64-gnu",
         "--native-runtime-product", "liboliphaunt-native",
         "--native-runtime-version", "1.2.3",
+        "--stage-root", path.join(root, "producer-stage"),
         "--format", "tar-gz",
         "--output", producerAutoArchive,
         "--force",
       ],
-      { cwd: REPOSITORY, encoding: "utf8" },
+      {
+        cwd: REPOSITORY,
+        encoding: "utf8",
+        env: { ...process.env, OLIPHAUNT_ELF_STRIP: stripShim },
+      },
     );
     assert.equal(producerAuto.status, 0, producerAuto.stderr || producerAuto.stdout);
     const producerAutoValidated = validateExtensionArtifactArchive({
@@ -825,11 +842,13 @@ async function main() {
       nativeRuntimeVersion: "1.2.3",
       label: "dual-profile producer contract",
     });
-    assert.equal(producerAutoValidated.entries.has("files/lib/postgresql/auto_explain.so"), true);
-    assert.equal(producerAutoValidated.entries.has("files/lib/modules/auto_explain.so"), true);
+    const serverMember = `files/lib/postgresql/${moduleFile}`;
+    const embeddedMember = `files/lib/modules/${moduleFile}`;
+    assert.equal(producerAutoValidated.entries.has(serverMember), true);
+    assert.equal(producerAutoValidated.entries.has(embeddedMember), true);
     assert.notEqual(
-      producerAutoValidated.entries.get("files/lib/postgresql/auto_explain.so").sha256,
-      producerAutoValidated.entries.get("files/lib/modules/auto_explain.so").sha256,
+      producerAutoValidated.entries.get(serverMember).sha256,
+      producerAutoValidated.entries.get(embeddedMember).sha256,
       "normal and embedded module byte identities must remain independently frozen",
     );
 
@@ -842,7 +861,7 @@ async function main() {
         "--sql-name", "auto_explain",
         "--creates-extension", "false",
         "--native-module-stem", "auto_explain",
-        "--native-module-file", "auto_explain.so",
+        "--native-module-file", moduleFile,
         "--native-target", "linux-x64-gnu",
         "--native-runtime-product", "liboliphaunt-native",
         "--native-runtime-version", "1.2.3",
@@ -1060,7 +1079,7 @@ async function main() {
         nativeRuntimeVersion: "1.2.3",
         label: "invalid gzip header",
       }),
-      /canonical Bun gzip header/u,
+      /canonical cross-platform gzip header/u,
     );
 
     const invalidAlias = new Map(legitimate);
@@ -1169,7 +1188,4 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.stack ?? String(error));
-  process.exit(1);
-});
+test("extension artifact inventory enforces exact inventory and adversarial bounds", main);

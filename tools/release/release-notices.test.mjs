@@ -199,6 +199,27 @@ test("rejects unsafe prefixes and unsafe staging destinations", (t) => {
   );
 });
 
+test("rejects caller-created directory aliases and non-directory ancestors", (t) => {
+  const { root } = fixture(t);
+  const outside = path.join(root, "outside");
+  const stage = path.join(outside, "stage");
+  mkdirSync(stage, { recursive: true });
+
+  const callerAlias = path.join(root, "var");
+  symlinkSync(outside, callerAlias, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(
+    () => stageReleaseNotices(path.join(callerAlias, "stage")),
+    /symlink or non-directory ancestor/u,
+  );
+
+  const nonDirectory = path.join(root, "ordinary-file");
+  writeFileSync(nonDirectory, "not a directory\n");
+  assert.throws(
+    () => stageReleaseNotices(path.join(nonDirectory, "stage")),
+    /symlink or non-directory ancestor/u,
+  );
+});
+
 test("validates exact archive members and canonical bytes", (t) => {
   const { root, stage } = fixture(t);
   stageReleaseNotices(stage, { products: ["native"] });

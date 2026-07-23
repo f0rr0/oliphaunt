@@ -332,18 +332,8 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Configure macOS release toolchains
-        run: |
-          java_home_17="${JAVA_HOME_17_arm64:-${JAVA_HOME_17_X64:-}}"
-          if [[ -z "$java_home_17" || ! -x "$java_home_17/bin/java" ]]; then
-            echo 'macOS release runner does not expose a usable Java 17 toolchain' >&2
-            exit 1
-          fi
-          echo "JAVA_HOME=$java_home_17" >> "$GITHUB_ENV"
-          echo "$java_home_17/bin" >> "$GITHUB_PATH"
-          if [[ -z "${ANDROID_HOME:-}" && -d "$HOME/Library/Android/sdk" ]]; then
-            echo "ANDROID_HOME=$HOME/Library/Android/sdk" >> "$GITHUB_ENV"
-            echo "ANDROID_SDK_ROOT=$HOME/Library/Android/sdk" >> "$GITHUB_ENV"
-          fi
+        id: configure_release_candidate_toolchains
+        run: bash .github/scripts/configure-macos-release-toolchains.sh --android
 
       - name: Validate release metadata
         run: |
@@ -1651,15 +1641,9 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Configure macOS registry toolchains
+        id: configure_registry_toolchains
         timeout-minutes: 1
-        run: |
-          java_home_17="${JAVA_HOME_17_arm64:-${JAVA_HOME_17_X64:-}}"
-          if [[ -z "$java_home_17" || ! -x "$java_home_17/bin/java" ]]; then
-            echo 'macOS release runner does not expose a usable Java 17 toolchain' >&2
-            exit 1
-          fi
-          echo "JAVA_HOME=$java_home_17" >> "$GITHUB_ENV"
-          echo "$java_home_17/bin" >> "$GITHUB_PATH"
+        run: bash .github/scripts/configure-macos-release-toolchains.sh
 
       - name: Set up pinned Deno
         timeout-minutes: 3
@@ -2095,15 +2079,9 @@ jobs:
           deno-version: ${{ env.DENO_VERSION }}
 
       - name: Configure macOS finalization toolchains
+        id: configure_finalize_toolchains
         timeout-minutes: 1
-        run: |
-          java_home_17="${JAVA_HOME_17_arm64:-${JAVA_HOME_17_X64:-}}"
-          if [[ -z "$java_home_17" || ! -x "$java_home_17/bin/java" ]]; then
-            echo 'macOS release runner does not expose a usable Java 17 toolchain' >&2
-            exit 1
-          fi
-          echo "JAVA_HOME=$java_home_17" >> "$GITHUB_ENV"
-          echo "$java_home_17/bin" >> "$GITHUB_PATH"
+        run: bash .github/scripts/configure-macos-release-toolchains.sh
 
       - name: Verify final GitHub staging
         id: verify_final_github_staging

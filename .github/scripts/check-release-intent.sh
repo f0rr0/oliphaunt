@@ -18,6 +18,31 @@ if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! release_contract="$(
+  bun -e '
+import {
+  RELEASE_PLEASE_BOOTSTRAP_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
+  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
+} from "./tools/release/release-please-bootstrap.mjs";
+console.log([
+  RELEASE_PLEASE_BOOTSTRAP_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
+  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
+].join("\t"));
+'
+)"; then
+  echo "could not load the release-please history-repair contract" >&2
+  exit 1
+fi
+IFS=$'\t' read -r \
+  canonical_bootstrap_sha \
+  repair_before_sha \
+  repair_candidate_branch \
+  introduction_subject <<< "${release_contract}"
+
 # The current authorized protected-main rewrite reports the immediately
 # superseded introduction tip as `github.event.before`. This is intentionally
 # distinct from the immutable displaced-main release-metadata baseline. Its
@@ -28,25 +53,6 @@ fi
 # remains strict.
 if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
   ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
-  if ! repair_contract="$(
-    bun -e '
-import {
-  RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
-} from "./tools/release/release-please-bootstrap.mjs";
-console.log([
-  RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
-].join("\t"));
-'
-  )"; then
-    echo "could not load the protected-main history-repair contract" >&2
-    exit 1
-  fi
-  IFS=$'\t' read -r canonical_bootstrap_sha repair_before_sha introduction_subject <<< "${repair_contract}"
-
   rewrite_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
   read -r -a rewrite_commit_and_parents <<< "${rewrite_parents}"
   if [[ "${#rewrite_commit_and_parents[@]}" -ne 2 ]]; then
@@ -216,6 +222,53 @@ for (const [path, version] of Object.entries(data).sort(([left], [right]) =>
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
+is_first_release_rollback_transport=false
+if [[ "${event_name}" == "workflow_dispatch" ]] &&
+  [[ "${full_ref}" == "refs/heads/${repair_candidate_branch}" ]] &&
+  [[ "${head_branch}" == "${repair_candidate_branch}" ]] &&
+  [[ "${CI_WASM_TARGET:-}" == "all" ]] &&
+  [[ "${CI_NATIVE_TARGET:-}" == "all" ]] &&
+  [[ "${CI_MOBILE_TARGET:-}" == "all" ]]; then
+  resolved_base=""
+  if resolved_base="$(git rev-parse "${base_ref}^{commit}" 2>/dev/null)" &&
+    [[ "${resolved_base}" == "${repair_before_sha}" ]]; then
+    rollback_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
+    read -r -a rollback_commit_and_parents <<< "${rollback_parents}"
+    if [[ "${#rollback_commit_and_parents[@]}" -eq 2 ]] &&
+      [[ "${rollback_commit_and_parents[1]}" == "${repair_before_sha}" ]] &&
+      {
+        git show "${head_ref}:release-please-config.json"
+        printf '\0'
+        git show "${base_ref}:.release-please-manifest.json"
+        printf '\0'
+        git show "${head_ref}:.release-please-manifest.json"
+      } |
+        ROLLBACK_PARENT_SHA="${rollback_commit_and_parents[1]}" bun -e '
+import {
+  exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
+} from "./tools/release/release-please-bootstrap.mjs";
+try {
+  const fields = new TextDecoder().decode(await Bun.stdin.arrayBuffer()).split("\0");
+  if (fields.length !== 3) throw new Error("expected three rollback transport JSON inputs");
+  const [config, beforeManifest, afterManifest] = fields.map((field) => JSON.parse(field));
+  const transport = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
+    config,
+    beforeManifest,
+    afterManifest,
+    [process.env.ROLLBACK_PARENT_SHA],
+    { prefix: "check-release-intent" },
+  );
+  if (transport === null) process.exit(1);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+'; then
+      is_first_release_rollback_transport=true
+    fi
+  fi
+fi
+
 if [[ -z "${base_versions}" || -z "${head_versions}" || -z "${head_release_manifest_versions}" ]]; then
   echo "could not read package versions or release-please manifest versions" >&2
   exit 1
@@ -237,7 +290,27 @@ if [[ -n "${base_release_manifest_versions}" ]]; then
 else
   changed_existing_release_manifest_versions=""
 fi
-if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" && "${is_release_pr}" != true ]]; then
+
+rollback_version_changes_are_seed_state=false
+if [[ "${is_first_release_rollback_transport}" == true ]] &&
+  [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
+  printf '%s\n%s\n' \
+    "${changed_existing_versions}" \
+    "${changed_existing_release_manifest_versions}" |
+    awk '
+      NF {
+        count += 1
+        if ($0 !~ / -> 0[.]0[.]0$/) exit 1
+      }
+      END { if (count == 0) exit 1 }
+    '; then
+  rollback_version_changes_are_seed_state=true
+  echo "authorized exact unpublished first-release rollback qualification transport" >&2
+fi
+
+if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
+  [[ "${is_release_pr}" != true ]] &&
+  [[ "${rollback_version_changes_are_seed_state}" != true ]]; then
   cat >&2 <<EOF
 This PR changes one or more workspace package versions or release-please
 manifest versions.

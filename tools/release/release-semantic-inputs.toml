@@ -290,6 +290,23 @@ products = [
 product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 
 [[rules]]
+id = "canonical-cross-platform-gzip-producer"
+# This helper writes the canonical gzip envelope used by Cargo source
+# packages, runtime archives, and exact extension carriers. A helper-only
+# edit must therefore release every product whose published bytes it can
+# change, even when none of its direct importers changed in the same commit.
+paths = ["tools/release/portable-archive.mjs"]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-broker",
+  "oliphaunt-node-direct",
+  "oliphaunt-rust",
+  "oliphaunt-wasix-rust",
+]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
 id = "shared-sdk-artifact-producer"
 # Product staging modules import this byte-affecting filesystem/process helper.
 # The dispatcher and final staged-artifact check remain orchestration-only.

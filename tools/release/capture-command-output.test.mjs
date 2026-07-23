@@ -600,6 +600,7 @@ test("isolated React Native SDK worktrees materialize their external module clos
     "tools/release/extension-qualification-candidates.mjs",
     "tools/release/extension-upstream-licenses.mjs",
     "tools/release/portable-archive.mjs",
+    "tools/release/release-directory-safety.mjs",
     "tools/release/release-notices.mjs",
     "tools/test/fd-backed-spawn-sync.mjs",
   ]);
@@ -620,6 +621,7 @@ test("isolated React Native SDK worktrees materialize their external module clos
     '"$root/tools/release/extension-qualification-candidates.mjs"',
     '"$root/tools/release/extension-upstream-licenses.mjs"',
     '"$root/tools/release/portable-archive.mjs"',
+    '"$root/tools/release/release-directory-safety.mjs"',
     '"$root/tools/release/release-notices.mjs"',
     '"$scratch_root/tools/release/"',
     '"$root/tools/test/fd-backed-spawn-sync.mjs"',

@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 import {
   RELEASE_PLEASE_BOOTSTRAP_SHA,
   RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
   RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
   RELEASE_PLEASE_INTRODUCTION_SUBJECT,
 } from "../release/release-please-bootstrap.mjs";
@@ -92,6 +93,11 @@ function findIntroductionCommit(head = "HEAD", runGit = (args) => command("git",
 const HISTORY_HEAD = process.env.OLIPHAUNT_RELEASE_INTENT_TEST_HEAD || "HEAD";
 const INTRODUCTION_COMMIT = findIntroductionCommit(HISTORY_HEAD);
 const INTRODUCTION_TREE = command("git", ["rev-parse", `${INTRODUCTION_COMMIT}^{tree}`]);
+const HISTORY_REPAIR_BEFORE_TREE = command(
+  "git",
+  ["rev-parse", `${RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA}^{tree}`],
+);
+const ROLLBACK_SUBJECT = "fix: qualify unpublished first-release rollback";
 
 function commitTree(subject, timestamp, {
   parent = RELEASE_PLEASE_BOOTSTRAP_SHA,
@@ -115,11 +121,11 @@ function commitTree(subject, timestamp, {
   );
 }
 
-function treeWithJson(file, mutate) {
-  const value = JSON.parse(isolatedGit(["show", `${INTRODUCTION_COMMIT}:${file}`]));
-  mutate(value);
+function treeWithFile(file, mutate) {
+  const source = isolatedGit(["show", `${INTRODUCTION_COMMIT}:${file}`]);
+  const contents = mutate(source);
   const blob = isolatedGit(["hash-object", "-w", "--stdin"], {
-    input: `${JSON.stringify(value, null, 2)}\n`,
+    input: contents,
   });
   isolatedGit(["read-tree", INTRODUCTION_TREE], { env: isolatedIndexEnvironment });
   isolatedGit(["update-index", "--add", "--cacheinfo", `100644,${blob},${file}`], {
@@ -128,7 +134,23 @@ function treeWithJson(file, mutate) {
   return isolatedGit(["write-tree"], { env: isolatedIndexEnvironment });
 }
 
+function treeWithJson(file, mutate) {
+  return treeWithFile(file, (source) => {
+    const value = JSON.parse(source);
+    mutate(value);
+    return `${JSON.stringify(value, null, 2)}\n`;
+  });
+}
+
 const rewriteCandidate = commitTree(SUBJECT, "2026-01-01T00:00:01Z");
+const rollbackCandidate = commitTree(
+  ROLLBACK_SUBJECT,
+  "2026-01-01T00:00:02Z",
+  {
+    parent: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    trailers: [],
+  },
+);
 assert.notEqual(
   spawnSync("git", ["merge-base", "--is-ancestor", RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, rewriteCandidate], {
     cwd: ROOT,
@@ -144,7 +166,10 @@ function releaseIntent({
   eventName = "push",
   fullRef = "refs/heads/main",
   head = rewriteCandidate,
+  mobileTarget = "",
+  nativeTarget = "",
   subject = SUBJECT,
+  wasmTarget = "",
 } = {}) {
   const outputFile = path.join(isolatedObjects, `github-output-${releaseIntent.sequence += 1}`);
   writeFileSync(outputFile, "");
@@ -154,7 +179,13 @@ function releaseIntent({
     {
       cwd: ROOT,
       encoding: "utf8",
-      env: { ...gitEnvironment, GITHUB_OUTPUT: outputFile },
+      env: {
+        ...gitEnvironment,
+        CI_MOBILE_TARGET: mobileTarget,
+        CI_NATIVE_TARGET: nativeTarget,
+        CI_WASM_TARGET: wasmTarget,
+        GITHUB_OUTPUT: outputFile,
+      },
     },
   );
   return {
@@ -164,6 +195,138 @@ function releaseIntent({
   };
 }
 releaseIntent.sequence = 0;
+
+function rollbackIntent(overrides = {}) {
+  return releaseIntent({
+    base: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    branch: RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
+    eventName: "workflow_dispatch",
+    fullRef: `refs/heads/${RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH}`,
+    head: rollbackCandidate,
+    mobileTarget: "all",
+    nativeTarget: "all",
+    subject: ROLLBACK_SUBJECT,
+    wasmTarget: "all",
+    ...overrides,
+  });
+}
+
+test("accepts only the exact unpublished first-release rollback qualification transport", {
+  timeout: 20_000,
+}, () => {
+  const result = rollbackIntent();
+  assert.equal(result.status, 0, result.output);
+  assert.match(
+    result.output,
+    /authorized exact unpublished first-release rollback qualification transport/u,
+  );
+  assert.doesNotMatch(result.stepOutput, /^history_repair=true$/mu);
+});
+
+test("rollback version ownership bypass requires the exact dispatch branch and ref", () => {
+  for (const [name, overrides] of [
+    ["push event", { eventName: "push" }],
+    ["pull request event", { eventName: "pull_request", fullRef: "refs/pull/123/merge" }],
+    ["main ref", { fullRef: "refs/heads/main" }],
+    ["tag ref", { fullRef: "refs/tags/f0rr0/history-repair-candidate-5" }],
+    ["other head branch", { branch: "f0rr0/history-repair-candidate-4" }],
+  ]) {
+    const result = rollbackIntent(overrides);
+    assert.equal(result.status, 1, `${name}\n${result.output}`);
+    assert.match(result.output, /version bumps are release owned/u, name);
+    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
+  }
+});
+
+test("rollback version ownership bypass requires an all-target qualification dispatch", () => {
+  for (const [name, overrides] of [
+    ["focused WASM target", { wasmTarget: "linux-x64-gnu" }],
+    ["focused native target", { nativeTarget: "macos-arm64" }],
+    ["focused mobile target", { mobileTarget: "ios" }],
+    ["missing WASM target", { wasmTarget: "" }],
+    ["missing native target", { nativeTarget: "" }],
+    ["missing mobile target", { mobileTarget: "" }],
+  ]) {
+    const result = rollbackIntent(overrides);
+    assert.equal(result.status, 1, `${name}\n${result.output}`);
+    assert.match(result.output, /version bumps are release owned/u, name);
+    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
+  }
+});
+
+test("rollback version ownership bypass requires the exact resolved base and sole parent", () => {
+  const wrongResolvedBase = commitTree(
+    "chore: isolate a wrong released rollback base",
+    "2026-01-01T00:00:03Z",
+    {
+      tree: HISTORY_REPAIR_BEFORE_TREE,
+      trailers: [],
+    },
+  );
+  const wrongBase = rollbackIntent({ base: wrongResolvedBase });
+  assert.equal(wrongBase.status, 1, wrongBase.output);
+  assert.match(wrongBase.output, /exact current introduction repair/u);
+  assert.doesNotMatch(wrongBase.output, /authorized exact unpublished/u);
+
+  const intermediate = commitTree(
+    "chore: insert a forbidden rollback parent",
+    "2026-01-01T00:00:04Z",
+    {
+      parent: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+      tree: HISTORY_REPAIR_BEFORE_TREE,
+      trailers: [],
+    },
+  );
+  const wrongParent = commitTree(
+    ROLLBACK_SUBJECT,
+    "2026-01-01T00:00:05Z",
+    {
+      parent: intermediate,
+      trailers: [],
+    },
+  );
+  const wrongParentResult = rollbackIntent({ head: wrongParent });
+  assert.equal(wrongParentResult.status, 1, wrongParentResult.output);
+  assert.match(wrongParentResult.output, /version bumps are release owned/u);
+});
+
+test("rollback version ownership bypass requires exact unreleased bootstrap state", () => {
+  const partialManifestTree = treeWithJson(".release-please-manifest.json", (manifest) => {
+    const first = Object.keys(manifest).sort()[0];
+    assert.ok(first);
+    manifest[first] = "0.1.0";
+  });
+  const missingBootstrapTree = treeWithJson("release-please-config.json", (config) => {
+    delete config["bootstrap-sha"];
+  });
+  const nonseedPackageTree = treeWithFile("src/sdks/rust/Cargo.toml", (source) => {
+    const changed = source.replace(
+      'version = "0.0.0"',
+      'version = "9.9.9"',
+    );
+    assert.notEqual(changed, source);
+    return changed;
+  });
+  for (const [name, tree] of [
+    ["partially released manifest", partialManifestTree],
+    ["missing bootstrap boundary", missingBootstrapTree],
+    ["non-seed package version", nonseedPackageTree],
+  ]) {
+    const head = commitTree(
+      ROLLBACK_SUBJECT,
+      "2026-01-01T00:00:05Z",
+      {
+        parent: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+        tree,
+        trailers: [],
+      },
+    );
+    const result = rollbackIntent({ head });
+    assert.equal(result.status, 1, `${name}\n${result.output}`);
+    assert.match(result.output, /version bumps are release owned/u, name);
+    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
+  }
+});
 
 test("accepts only the exact current protected-main introduction repair", { timeout: 20_000 }, () => {
   const result = releaseIntent();

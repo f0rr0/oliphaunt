@@ -2,7 +2,13 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import {
+  createReadStream,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +27,20 @@ import {
 
 const CLI = path.join(import.meta.dirname, "ios-app-transport.mjs");
 const IS_MACOS = process.platform === "darwin";
+
+function temporaryVolumeSupportsCaseDistinctNames() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-ios-case-probe-"));
+  try {
+    writeFileSync(path.join(root, "Case.txt"), "upper\n");
+    writeFileSync(path.join(root, "case.txt"), "lower\n");
+    const names = new Set(readdirSync(root));
+    return names.has("Case.txt") && names.has("case.txt");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+}
+
+const CASE_DISTINCT_TEMP_VOLUME = IS_MACOS && temporaryVolumeSupportsCaseDistinctNames();
 
 function run(command, args, { cwd = undefined } = {}) {
   return spawnSync(command, args, {
@@ -541,7 +561,7 @@ test(
 
 test(
   "preserves case-distinct resources when the test volume supports them",
-  { skip: !IS_MACOS },
+  { skip: !IS_MACOS || !CASE_DISTINCT_TEMP_VOLUME },
   async (t) => {
     const root = await fixtureRoot(t, "case");
     const appDirectory = path.join(root, "app");
@@ -550,10 +570,7 @@ test(
     await fs.writeFile(path.join(fixture.resources, "Case.txt"), "upper\n");
     await fs.writeFile(path.join(fixture.resources, "case.txt"), "lower\n");
     const sourceNames = new Set(await fs.readdir(fixture.resources));
-    if (!sourceNames.has("Case.txt") || !sourceNames.has("case.txt")) {
-      t.skip("the macOS test volume is case-insensitive");
-      return;
-    }
+    assert(sourceNames.has("Case.txt") && sourceNames.has("case.txt"));
 
     const transport = path.join(root, "transport");
     const output = path.join(root, "output");

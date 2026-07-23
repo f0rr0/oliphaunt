@@ -192,6 +192,9 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_FULL_REF: ${{ github.ref }}
+          CI_WASM_TARGET: ${{ inputs.wasm_target }}
+          CI_NATIVE_TARGET: ${{ inputs.native_target }}
+          CI_MOBILE_TARGET: ${{ inputs.mobile_target }}
         run: |
           subject="${PR_TITLE:-}"
           if [ -z "$subject" ]; then
@@ -333,6 +336,44 @@ jobs:
           MOON_TARGET_MATRIX_JSON: ${{ needs.affected.outputs.policy_matrix }}
         run: bun .github/scripts/run-moon-target-matrix.mjs
 
+  release-metadata-portability:
+    name: Checks / release metadata (macOS)
+    needs:
+      - affected
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        id: setup_release_metadata_node
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Moon
+        id: setup_release_metadata_moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        id: setup_release_metadata_rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Configure macOS release toolchains
+        id: configure_release_metadata_toolchains
+        run: bash .github/scripts/configure-macos-release-toolchains.sh --android
+
+      - name: Validate release metadata on the publication host
+        id: release_metadata_portability
+        run: tools/dev/bun.sh tools/release/release-check.mjs
+
   checks:
     name: Checks
     if: ${{ always() }}
@@ -340,6 +381,7 @@ jobs:
       - affected
       - check-targets
       - policy-targets
+      - release-metadata-portability
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -362,6 +404,14 @@ jobs:
           SELECTED_JOBS_JSON: ${{ needs.affected.outputs.check_jobs }}
           GATE_LABEL: selected check and policy jobs
         run: bun .github/scripts/check-ci-gate.mjs selected
+
+      - name: Check publication-host release metadata
+        id: release_metadata_portability_gate
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["release-metadata-portability"]'
+          GATE_LABEL: publication-host release metadata
+        run: bun .github/scripts/check-ci-gate.mjs required
 
   test-targets:
     name: Tests / ${{ matrix.target }}

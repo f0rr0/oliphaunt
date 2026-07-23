@@ -17,7 +17,6 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 
 import * as extensionMaterializer from "./extension-registry-carrier-materializer.mjs";
 import {
@@ -31,6 +30,7 @@ import {
 import * as localRegistryCompatibility from "./local-registry-publish.mjs";
 import { publicExtensionReleaseAsset } from "./build-extension-ci-artifacts.mjs";
 import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 import {
   canonicalExtensionNpmTargets,
@@ -137,10 +137,7 @@ function canonicalExtensionArchive(entries) {
     if (data.length % 512 !== 0) chunks.push(Buffer.alloc(512 - (data.length % 512)));
   }
   chunks.push(Buffer.alloc(1024));
-  const compressed = Buffer.from(gzipSync(Buffer.concat(chunks), { mtime: 0 }));
-  compressed.fill(0, 4, 9);
-  compressed[9] = 0x03;
-  return compressed;
+  return canonicalGzipSync(Buffer.concat(chunks));
 }
 
 function writeExactExtensionArtifact(asset, {

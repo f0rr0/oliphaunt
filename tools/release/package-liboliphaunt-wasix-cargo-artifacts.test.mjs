@@ -28,6 +28,7 @@ import {
   wasixExtensionAotPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const directories = [];
@@ -46,6 +47,25 @@ function run(command, args, { cwd = ROOT, env = process.env } = {}) {
   });
   expect(result.status, `${command} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`).toBe(0);
   return result;
+}
+
+function supportedRustcHostTriple() {
+  const { stdout } = run("rustc", ["--print", "host-tuple"]);
+  const outputLines = stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (outputLines.length !== 1) {
+    throw new Error(`rustc --print host-tuple returned unexpected output:\n${stdout}`);
+  }
+  const [hostTriple] = outputLines;
+  const supportedTriples = [...new Set(Object.values(AOT_TARGET_TRIPLES))].sort();
+  if (!supportedTriples.includes(hostTriple)) {
+    throw new Error(
+      `rustc host triple ${JSON.stringify(hostTriple)} is not a supported WASIX AOT target; expected one of ${supportedTriples.join(", ")}`,
+    );
+  }
+  return hostTriple;
 }
 
 function sha256(file) {
@@ -124,12 +144,12 @@ function aggregateFixture(root) {
   }
   mkdirSync(releaseAssets, { recursive: true });
   const carrier = path.join(releaseAssets, carrierName);
-  writeFileSync(carrier, gzipSync(createDeterministicTar(stage, archiveRoot, {
+  writeFileSync(carrier, canonicalGzipSync(createDeterministicTar(stage, archiveRoot, {
     fail(message) {
       throw new Error(message);
     },
     fixedFileMode: 0o644,
-  }), { mtime: 0 }));
+  })));
   writeFileSync(path.join(productRoot, "extension-artifacts.json"), `${JSON.stringify({
     schema: "oliphaunt-extension-ci-artifacts-v2",
     product,
@@ -415,6 +435,7 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
       ...aotSources.map((source) => `dep:${source.spec.name}`).sort(),
     ]);
 
+    const hostTriple = supportedRustcHostTriple();
     const app = path.join(root, "app");
     mkdirSync(path.join(app, "src"), { recursive: true });
     writeFileSync(path.join(app, "Cargo.toml"), `[package]
@@ -438,9 +459,9 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(sources, runti
     assert!(liboliphaunt_wasix_portable::SELECTED_EXTENSION_AOT_SQL_NAMES.contains(&"earthdistance"));
     assert!(liboliphaunt_wasix_portable::SELECTED_EXTENSION_AOT_SQL_NAMES.contains(&"cube"));
     assert!(!liboliphaunt_wasix_portable::SELECTED_EXTENSION_AOT_SQL_NAMES.contains(&"hstore"));
-    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json("x86_64-unknown-linux-gnu", "earthdistance").is_some());
-    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json("x86_64-unknown-linux-gnu", "cube").is_some());
-    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json("x86_64-unknown-linux-gnu", "hstore").is_none());
+    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "earthdistance").is_some());
+    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "cube").is_some());
+    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "hstore").is_none());
 }
 `);
     run("cargo", ["run", "--offline", "--manifest-path", path.join(app, "Cargo.toml")], {

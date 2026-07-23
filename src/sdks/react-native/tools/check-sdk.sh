@@ -155,6 +155,7 @@ JSON
     "$root/tools/release/extension-qualification-candidates.mjs" \
     "$root/tools/release/extension-upstream-licenses.mjs" \
     "$root/tools/release/portable-archive.mjs" \
+    "$root/tools/release/release-directory-safety.mjs" \
     "$root/tools/release/release-notices.mjs" \
     "$scratch_root/tools/release/"
   cp \

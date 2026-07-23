@@ -12,7 +12,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
 
 import {
   ExactCandidateCommandTimeoutError,
@@ -63,6 +62,7 @@ import {
 } from "./artifact_target_matrix.mjs";
 import { ROOT } from "./release-artifact-targets.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { canonicalGzipSync } from "./portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 import { extensionCarrierLegalContract } from "./extension-upstream-licenses.mjs";
 import {
@@ -821,12 +821,12 @@ test("validates one staged contrib carrier with exact nested and legal bytes", (
   }, null, 2)}\n`);
   mkdirSync(outputRoot, { recursive: true });
   const carrierFile = path.join(outputRoot, `${carrierRoot}.tar.gz`);
-  writeFileSync(carrierFile, gzipSync(createDeterministicTar(stageRoot, carrierRoot, {
+  writeFileSync(carrierFile, canonicalGzipSync(createDeterministicTar(stageRoot, carrierRoot, {
     fail: (message) => {
       throw new Error(message);
     },
     fixedFileMode: 0o644,
-  }), { mtime: 0 }));
+  })));
   const carrier = {
     name: path.basename(carrierFile),
     path: path.relative(ROOT, carrierFile),

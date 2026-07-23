@@ -20,6 +20,10 @@ implicitInputs:
   # infrastructure so no consumer can silently reuse output captured by an
   # older transport contract.
   - "/tools/dev/capture-command-output.mjs"
+  # Root-to-leaf release staging safety is shared by every carrier family.
+  # Treat it as execution infrastructure so cached payloads cannot outlive
+  # the directory policy that admitted their staging roots.
+  - "/tools/release/release-directory-safety.mjs"
   # Bun-owned mutation tests share the fd-backed synchronous compatibility
   # facade. Its semantics therefore participate in every cached test result.
   - "/tools/test/fd-backed-spawn-sync.mjs"

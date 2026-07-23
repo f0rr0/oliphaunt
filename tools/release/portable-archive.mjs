@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { inflateRawSync, zstdDecompressSync } from "node:zlib";
+import { gzipSync, inflateRawSync, zstdDecompressSync } from "node:zlib";
 
 export const DEFAULT_PORTABLE_ARCHIVE_LIMITS = Object.freeze({
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -15,9 +15,41 @@ const ZIP_ALLOWED_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
 const ANDROID_ALIGNMENT_EXTRA_FIELD_ID = 0xd935;
 const APK_SIGNING_BLOCK_MAGIC = Buffer.from("APK Sig Block 42", "ascii");
 const APK_SIGNATURE_SCHEME_BLOCK_IDS = new Set([0x7109871a, 0xf05368c0, 0x1b93ad61]);
+const CANONICAL_GZIP_HEADER = Buffer.from([
+  0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+]);
 
 function archiveError(file, message) {
   return new Error(`portable-archive: ${path.basename(file)} ${message}`);
+}
+
+/**
+ * Normalize only the gzip metadata bytes that are outside the compressed
+ * payload and trailer. zlib derives the OS byte from its build host, so an
+ * otherwise identical archive is not byte-for-byte portable without this
+ * explicit producer boundary.
+ */
+export function normalizeCanonicalGzipHeader(compressed) {
+  if (!Buffer.isBuffer(compressed) && !(compressed instanceof Uint8Array)) {
+    throw new TypeError("portable-archive: canonical gzip input must be a Buffer or Uint8Array");
+  }
+  const normalized = Buffer.from(compressed);
+  if (
+    normalized.length < 18
+    || normalized[0] !== 0x1f
+    || normalized[1] !== 0x8b
+    || normalized[2] !== 0x08
+    || normalized[3] !== 0x00
+  ) {
+    throw new Error("portable-archive: canonical gzip input must be a flag-free gzip stream");
+  }
+  normalized.fill(0, 4, 9);
+  normalized[9] = 0x03;
+  return normalized;
+}
+
+export function canonicalGzipSync(input) {
+  return normalizeCanonicalGzipHeader(gzipSync(input, { mtime: 0 }));
 }
 
 function positiveLimit(value, fallback, label) {
@@ -1242,12 +1274,9 @@ export function readCanonicalTarGzipEntries(file, options = {}) {
     throw archiveError(file, "canonical tar.gz fileMode must be an integer between 0000 and 0777");
   }
   const compressed = readFileSync(file);
-  const canonicalGzipHeader = Buffer.from([
-    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-  ]);
   if (
     compressed.length < 18
-    || !compressed.subarray(0, canonicalGzipHeader.length).equals(canonicalGzipHeader)
+    || !compressed.subarray(0, CANONICAL_GZIP_HEADER.length).equals(CANONICAL_GZIP_HEADER)
   ) {
     throw archiveError(file, "must use the canonical gzip method, flags, mtime, XFL, and OS header");
   }

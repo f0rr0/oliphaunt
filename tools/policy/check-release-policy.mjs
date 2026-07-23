@@ -68,6 +68,7 @@ const STABLE_CI_JOBS = new Set([
   "affected",
   "check-targets",
   "policy-targets",
+  "release-metadata-portability",
   "release-intent",
   "checks",
   "test-targets",

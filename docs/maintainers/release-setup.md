@@ -1,6 +1,6 @@
 # Release setup
 
-Status: normative external-setup guide. Last verified: 2026-07-22. Owner: repository maintainers.
+Status: normative external-setup guide. Last verified: 2026-07-23. Owner: repository maintainers.
 
 This document covers state that cannot live in the repository. The executable
 contract is the direct least-privilege workflow in
@@ -411,6 +411,20 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
    current main tip; never move `bootstrap-sha` or the displaced-main metadata
    baseline. An earlier predecessor remains invalid, and the replacement must
    receive a fresh exact-main `Qualified` run before this sequence continues.
+   When the current tip is the still-unpublished generated first-release
+   commit, create the qualification transport as its direct child on the exact
+   branch exported by
+   `RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH`. Its desired tree must restore
+   `bootstrap-sha`, the complete Release Please manifest at `0.0.0`, and every
+   changed workspace package version to `0.0.0`; the parent manifest must
+   exactly equal the configured first versions, including Swift `0.6.0`.
+   Dispatch CI from that exact branch with `wasm_target=all`,
+   `native_target=all`, and `mobile_target=all`. The intent, transition,
+   coverage, and candidate-binding gates reject every other event, ref,
+   branch, base, parent, path set, partial reset, or target selection. This
+   temporary result remains transport evidence only: the later
+   non-fast-forward `main` introduction still requires the exact one-parent
+   bootstrap shape and one canonical qualified-candidate trailer.
 3. Run `prepare-release-pr` from current `main`; review the single generated release-bump commit.
    A large Release Please update may arrive internally as multiple transport
    chunks; the prepare job validates and collapses the exact canonical PR tree
@@ -428,8 +442,11 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
 The first generated release PR consumes the one-time `bootstrap-sha` boundary.
 `sync-release-pr.mjs` removes it on that PR once any manifest entry advances
 from `0.0.0`; the release-bump commit must contain that removal. Never delete
-the boundary on the unreleased introduction tree, and never restore it after
-the first release bump.
+the boundary on the unreleased introduction tree. Never restore it on a
+publishable release-bump tree. The only post-bump restoration permitted is the
+exact, still-unpublished first-release rollback qualification transport in
+step 2 above; it is a direct child of the displaced bump solely to prove the
+corrected unreleased introduction tree.
 
 `release_commit` is only an equality assertion for the workflow commit; it
 cannot select an older commit. On a root dispatch, the workflow ref must be
