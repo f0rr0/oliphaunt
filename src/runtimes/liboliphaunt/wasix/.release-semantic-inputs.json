@@ -1,0 +1,369 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "liboliphaunt-wasix",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "cargo-workspace-build-inputs",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "rust-toolchain.toml"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "2542920dbb45420d4c016bb9633e9039dd6c6401deb09fc90667164b1cd1b787"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+        }
+      ]
+    },
+    {
+      "id": "wasix-product-notice",
+      "paths": [
+        "src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"
+      ],
+      "inputs": [
+        {
+          "path": "src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md",
+          "sha256": "ad377797934d8579007c95f66f3b60cb26d992ec58a6b8c429778c453c9cc003"
+        }
+      ]
+    },
+    {
+      "id": "postgresql-release-license-snapshot",
+      "paths": [
+        "src/postgres/versions/18/source.toml",
+        "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      ],
+      "inputs": [
+        {
+          "path": "src/postgres/versions/18/source.toml",
+          "sha256": "b8ac2717620c295521243fe1f663562293335b8ff9a3a759b92a3e3fb95df1a2"
+        },
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT",
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+        }
+      ]
+    },
+    {
+      "id": "icu-release-license-snapshot",
+      "paths": [
+        "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+        "src/sources/third-party/shared/icu.toml"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+          "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+        },
+        {
+          "path": "src/sources/third-party/shared/icu.toml",
+          "sha256": "14b9c3dde24abaa3fb6338f27e44415eb18875b484d60bcfce12bb84629f6a8d"
+        }
+      ]
+    },
+    {
+      "id": "postgis-reproducible-time-contract",
+      "paths": [
+        "src/extensions/external/postgis/source.toml",
+        "src/extensions/external/postgis/tools/reproducible-bin/date",
+        "src/extensions/external/postgis/tools/reproducible-time.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/external/postgis/source.toml",
+          "sha256": "cd720f3bae015515639273795df9fb6be6ba2ad7c9d6714d1b1e330643c33040"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-bin/date",
+          "sha256": "a6b0c3237e02debf0117504a5c30cc8dd47183269396f26c9341e878d1b8cf16"
+        },
+        {
+          "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
+          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+        }
+      ]
+    },
+    {
+      "id": "wasix-postgis-runtime-producer",
+      "paths": [
+        "src/extensions/external/postgis/tools/build_wasix.sh"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/external/postgis/tools/build_wasix.sh",
+          "sha256": "d248aa8a29e89fd17a7a3e44b0bf92cc9084e15ea244ee9bb1e064965825fc66"
+        }
+      ]
+    },
+    {
+      "id": "wasix-release-asset-rust-producers",
+      "paths": [
+        "tools/xtask/Cargo.toml",
+        "tools/xtask/src/aot_serializer.rs",
+        "tools/xtask/src/asset_fingerprint.rs",
+        "tools/xtask/src/asset_manifest.rs",
+        "tools/xtask/src/asset_pipeline.rs",
+        "tools/xtask/src/extension_catalog.rs",
+        "tools/xtask/src/fs_utils.rs",
+        "tools/xtask/src/main.rs",
+        "tools/xtask/src/postgres_guard.rs",
+        "tools/xtask/src/release_workspace.rs",
+        "tools/xtask/src/template_runner.rs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/xtask/Cargo.toml",
+          "sha256": "9aa6267089defced298d1287e99a4fc3b3e96f0d71bed39875b61992a4a7511b"
+        },
+        {
+          "path": "tools/xtask/src/aot_serializer.rs",
+          "sha256": "d74b8c24bd978bc2d69ed2f43f78aca08682fe01a0b9a17145361cb5dde0f72e"
+        },
+        {
+          "path": "tools/xtask/src/asset_fingerprint.rs",
+          "sha256": "e7eb15342326c2480fdf991b2de271114ac2d336aff7ac81291c9fe4aa15dad6"
+        },
+        {
+          "path": "tools/xtask/src/asset_manifest.rs",
+          "sha256": "945c31587d2d54fa668093c44d7f5222d857955d9433eb8c365801df13325521"
+        },
+        {
+          "path": "tools/xtask/src/asset_pipeline.rs",
+          "sha256": "4bf91b0968a0de6ac2245f1fa3081ca36e44f5b20c532996ffea9a2393a8d396"
+        },
+        {
+          "path": "tools/xtask/src/extension_catalog.rs",
+          "sha256": "c7a999c87bcada023c7bb0e73d5ba6727d502afde911ab8e1657f89f70ebff26"
+        },
+        {
+          "path": "tools/xtask/src/fs_utils.rs",
+          "sha256": "d79e0cf095f3e0a6fd0b533afc17745c2929a21f58ed62f75fc99a1061db9e52"
+        },
+        {
+          "path": "tools/xtask/src/main.rs",
+          "sha256": "64524e528b897474bf33faebcecece397795621dcae2297a70e6f622064ecbf2"
+        },
+        {
+          "path": "tools/xtask/src/postgres_guard.rs",
+          "sha256": "5414e25bbcef932cc984a593a444e5314f2536785fc961dc6867ee327585d764"
+        },
+        {
+          "path": "tools/xtask/src/release_workspace.rs",
+          "sha256": "68597581267918307468712578d3732a818e3511d3d2f08a0006843b0543d0f8"
+        },
+        {
+          "path": "tools/xtask/src/template_runner.rs",
+          "sha256": "95e8318491202b116ff8ef178ed02ece0f910061e0bac39c2d4c22f9c4bcec4b"
+        }
+      ]
+    },
+    {
+      "id": "wasix-generated-extension-runtime-inputs",
+      "paths": [
+        "src/extensions/generated/contrib-build.tsv",
+        "src/extensions/generated/docs/**",
+        "src/extensions/generated/extensions.build-plan.json",
+        "src/extensions/generated/extensions.catalog.json",
+        "src/extensions/generated/mobile/static-extensions.tsv",
+        "src/extensions/generated/mobile/static-registry.json",
+        "src/extensions/generated/pgxs-build.tsv",
+        "src/extensions/generated/sdk/js.json",
+        "src/extensions/generated/sdk/react-native.json",
+        "src/extensions/generated/sdk/rust.json",
+        "src/extensions/generated/wasix/**"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/generated/contrib-build.tsv",
+          "sha256": "ffe0c051a5a9c88e6bc0bbf29bbc8186efc2fe2eba3af401545f74a9e21badd5"
+        },
+        {
+          "path": "src/extensions/generated/docs/extension-evidence.json",
+          "sha256": "2afd2098b13d0b77578dcf921ce29d822acd1eb9337a2c6629ff149e718f6e99"
+        },
+        {
+          "path": "src/extensions/generated/docs/extensions.json",
+          "sha256": "19e35779507fccfe56c9aec2e750d7a472f50f0e82a24ea983b78adcab0f93bd"
+        },
+        {
+          "path": "src/extensions/generated/extensions.build-plan.json",
+          "sha256": "6f5b3e306601d58a9f82ae185465064d7ac462df883cf16e72236ac03a85d43c"
+        },
+        {
+          "path": "src/extensions/generated/extensions.catalog.json",
+          "sha256": "f80b3ee2d7c5b9a030ecdc54c00f830e72701f765cffa04f4c5f9f6fe252e1a1"
+        },
+        {
+          "path": "src/extensions/generated/mobile/static-extensions.tsv",
+          "sha256": "0f059d4d5cc3b7abcf507473a61e8dda32901a413702e74a30488947654fd2fb"
+        },
+        {
+          "path": "src/extensions/generated/mobile/static-registry.json",
+          "sha256": "6a66c127b3a95ce7697e16e8e416caa64a0cec325f3f00c6ff27f439e7b5ad20"
+        },
+        {
+          "path": "src/extensions/generated/pgxs-build.tsv",
+          "sha256": "89e3dedea42a4921cea9a180138cc0092808718ed6cc55e66858b074e005c29b"
+        },
+        {
+          "path": "src/extensions/generated/sdk/js.json",
+          "sha256": "9989e346d7bbc8434d6b11c8d77948c3b1b76f41b471f46e8c5a6789abfc9cb7"
+        },
+        {
+          "path": "src/extensions/generated/sdk/react-native.json",
+          "sha256": "a87c048075c55abc75a4679c85eb83ea7f9d1a78a15c5138e2f2b8675507351d"
+        },
+        {
+          "path": "src/extensions/generated/sdk/rust.json",
+          "sha256": "1b23f33dec30cfa8105353be9cc910dbc0b3d78f87f2457c06f06dadde1a9138"
+        },
+        {
+          "path": "src/extensions/generated/wasix/extensions.json",
+          "sha256": "ea6cc4ea44cfc73628ebefffa09c113fd9e382b089bbbaac120b25ba15ac3c9f"
+        }
+      ]
+    },
+    {
+      "id": "extension-kotlin-runtime-catalog",
+      "paths": [
+        "src/extensions/generated/sdk/kotlin.json"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/generated/sdk/kotlin.json",
+          "sha256": "7cc0df19dab8949ebe7215d48a4053aac24c553c6545453d939b5d4831454187"
+        }
+      ]
+    },
+    {
+      "id": "swift-extension-owner-catalog",
+      "paths": [
+        "src/extensions/generated/sdk/swift.json"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/generated/sdk/swift.json",
+          "sha256": "ba8db32c5856e112c5933a5ad3ebf858515c745e017b6c5ea61ae2f5c0375001"
+        }
+      ]
+    },
+    {
+      "id": "wasix-runtime-extension-cargo-carrier-producer",
+      "paths": [
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+          "sha256": "13827441dc7f5894450220f90c04b493b22fd974a54ff43308a254db16ec247c"
+        }
+      ]
+    },
+    {
+      "id": "wasix-extension-cargo-build-script-hash-producer",
+      "paths": [
+        "tools/release/rust-build-script-sha256.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/rust-build-script-sha256.mjs",
+          "sha256": "0cdf9a4db3788e4987a466a01c2715957730431b63b5ea9e103ee20464d3dcf4"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "c4e8fd46cd3da2c9a3c70b83501257c6f590e5eb0f6fd9054767d97774cc7078"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "published-binary-compatibility-contract",
+      "paths": [
+        "tools/release/platform-compatibility-policy.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/platform-compatibility-policy.mjs",
+          "sha256": "2da411f95ccf11afa603605b5c15b3775073f9c1f157c70e5d0362902712564c"
+        }
+      ]
+    },
+    {
+      "id": "runtime-release-checksum-producer",
+      "paths": [
+        "tools/release/write_checksum_manifest.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/write_checksum_manifest.mjs",
+          "sha256": "acf259694c121cc475efae4a64418bda7817d5d9f32ead3bdeffd65f0b01b840"
+        }
+      ]
+    },
+    {
+      "id": "shared-release-archive-transport",
+      "paths": [
+        "tools/release/tar-command.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/tar-command.mjs",
+          "sha256": "fd4fbcb1827bd60e8d04994913b36ce5ad11eb2b81a7c7018afd4d1934d1d385"
+        }
+      ]
+    }
+  ],
+  "sha256": "9b9ad078927583cdba6194fb86a7b70c33382d2458de67957946cc468e67f6f3"
+}

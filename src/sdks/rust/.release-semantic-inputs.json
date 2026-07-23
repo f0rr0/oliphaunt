@@ -1,0 +1,113 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-rust",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "cargo-workspace-build-inputs",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "rust-toolchain.toml"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "2542920dbb45420d4c016bb9633e9039dd6c6401deb09fc90667164b1cd1b787"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "4f735930c5927489ce95eb37a542e25e8a925ac4844e6a275eefdf14e83849ff"
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "c4e8fd46cd3da2c9a3c70b83501257c6f590e5eb0f6fd9054767d97774cc7078"
+        }
+      ]
+    },
+    {
+      "id": "shared-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/shared.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "rust-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/rust.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/rust.mjs",
+          "sha256": "2f07b165d6b2ac2349a3bd3c3e34b18e55dfc0ae80066d1bb239f2cde9e91722"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "rust-sdk-source-producer",
+      "paths": [
+        "tools/release/prepare-rust-release-source.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/prepare-rust-release-source.mjs",
+          "sha256": "6dd54f1b70a4765be1b4fa4e54c955fc90c41f3c29ba860bfc5d5898455bca2e"
+        }
+      ]
+    }
+  ],
+  "sha256": "40bee26749d4a11e4a4a2b59fb9a04bbb3a23358431b8e03723e8c9a8e3522f4"
+}

@@ -1,0 +1,91 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-kotlin",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+        }
+      ]
+    },
+    {
+      "id": "extension-upstream-license-carrier-producer",
+      "paths": [
+        "tools/release/extension-upstream-licenses.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/extension-upstream-licenses.mjs",
+          "sha256": "f10d4596f13b536f0c73669eb3785e43f649a912cc8509622274c12a0f1d299f"
+        }
+      ]
+    },
+    {
+      "id": "android-extension-legal-catalog-producer",
+      "paths": [
+        "src/extensions/tools/android-extension-legal-catalog.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/tools/android-extension-legal-catalog.mjs",
+          "sha256": "8f42c3af6567c1bef8d795f6c861b19558b38eb1eeaaf78cfe6790c66782a69b"
+        }
+      ]
+    },
+    {
+      "id": "shared-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/shared.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "kotlin-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/kotlin.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/kotlin.mjs",
+          "sha256": "ca2977e2477732b755bf773fa6044a4d98e13c4e01de0e3008e6d17f43ad3e72"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    }
+  ],
+  "sha256": "350478ba55a76f6d5bb16f1ceee5e5a784727d0e80a480ca3fffabba0cf61c11"
+}

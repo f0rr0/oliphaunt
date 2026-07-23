@@ -1,0 +1,12 @@
+schema = "oliphaunt-extension-upstream-tests-v1"
+runner = "postgis-installcheck"
+status = "candidate"
+reason = "The reduced WASIX/mobile PostGIS surface is smoke-gated today. Upstream PostGIS installcheck is required before broadening the public evidence tier beyond transitional catalog smoke."
+included_suites = ["postgis"]
+excluded_suites = [
+  "raster",
+  "topology",
+  "sfcgal",
+  "tiger_geocoder",
+  "address_standardizer",
+]

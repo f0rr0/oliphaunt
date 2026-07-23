@@ -1,0 +1,14 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "exclude": ["src/__tests__/**"],
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "gitRevision": "main",
+  "json": "../../target/docs/generated/api/typescript/typedoc.json",
+  "name": "Oliphaunt TypeScript SDK",
+  "out": "../../target/docs/generated/api/typescript/html",
+  "plugin": [],
+  "readme": "README.md",
+  "tsconfig": "tsconfig.build.json"
+}

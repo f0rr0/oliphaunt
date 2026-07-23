@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/publication-catalog-v1.json",
+  "title": "Oliphaunt publication catalog",
+  "description": "Canonical Product and Carrier model. Product metadata remains colocated in each release.toml and is normalized exclusively by publication-catalog.mjs.",
+  "type": "object",
+  "required": ["schema", "products", "carriers"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "oliphaunt-publication-catalog-v1" },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "path", "version", "publishTargets", "dependencies"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].+)?$" },
+          "publishTargets": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "dependencies": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+        }
+      }
+    },
+    "carriers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "product", "version", "ecosystem", "name", "role", "target", "declared"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "product": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "ecosystem": { "enum": ["cargo", "npm", "maven", "jsr"] },
+          "name": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "minLength": 1 },
+          "target": { "type": ["string", "null"] },
+          "declared": { "const": true }
+        }
+      }
+    }
+  }
+}

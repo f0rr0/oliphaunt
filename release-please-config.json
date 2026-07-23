@@ -1,0 +1,374 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "07a9054faa03d5737dc0193f7a77ed4a71920c05",
+  "include-v-in-tag": true,
+  "separate-pull-requests": false,
+  "tag-separator": "-",
+  "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
+  "group-pull-request-title-pattern": "chore(release): prepare ${branch} releases",
+  "initial-version": "0.1.0",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features",
+      "hidden": false
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes",
+      "hidden": false
+    },
+    {
+      "type": "perf",
+      "section": "Performance Improvements",
+      "hidden": false
+    },
+    {
+      "type": "refactor",
+      "section": "Code Refactoring",
+      "hidden": false
+    },
+    {
+      "type": "revert",
+      "section": "Reverts",
+      "hidden": false
+    }
+  ],
+  "plugins": [
+    {
+      "type": "node-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "liboliphaunt-runtime",
+      "components": [
+        "liboliphaunt-native",
+        "liboliphaunt-wasix",
+        "oliphaunt-extension-contrib-pg18"
+      ]
+    }
+  ],
+  "packages": {
+    "src/runtimes/liboliphaunt/native": {
+      "release-type": "simple",
+      "component": "liboliphaunt-native",
+      "package-name": "liboliphaunt-native",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "json",
+          "path": "icu-npm/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "icu-npm/OliphauntICU.podspec"
+        },
+        {
+          "type": "generic",
+          "path": "src/liboliphaunt_native.c"
+        }
+      ]
+    },
+    "src/sdks/rust": {
+      "release-type": "rust",
+      "component": "oliphaunt-rust",
+      "package-name": "oliphaunt",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "crates/oliphaunt-build/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    },
+    "src/runtimes/broker": {
+      "release-type": "rust",
+      "component": "oliphaunt-broker",
+      "package-name": "oliphaunt-broker",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/linux-arm64-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/linux-x64-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/macos-arm64/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/windows-x64-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    },
+    "src/runtimes/node-direct": {
+      "release-type": "node",
+      "component": "oliphaunt-node-direct",
+      "package-name": "@oliphaunt/node-direct",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "src/sdks/swift": {
+      "release-type": "simple",
+      "component": "oliphaunt-swift",
+      "package-name": "oliphaunt-swift",
+      "initial-version": "0.6.0",
+      "bump-patch-for-minor-pre-major": false,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/sdks/kotlin": {
+      "release-type": "simple",
+      "component": "oliphaunt-kotlin",
+      "package-name": "dev.oliphaunt:oliphaunt-android",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "gradle.properties"
+        }
+      ]
+    },
+    "src/sdks/react-native": {
+      "release-type": "node",
+      "component": "oliphaunt-react-native",
+      "package-name": "@oliphaunt/react-native",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/sdks/js": {
+      "release-type": "node",
+      "component": "oliphaunt-js",
+      "package-name": "@oliphaunt/ts",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "jsr.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "src/extensions/contrib": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-contrib-pg18",
+      "package-name": "oliphaunt-extension-contrib-pg18",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_hashids": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-hashids",
+      "package-name": "oliphaunt-extension-pg-hashids",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_ivm": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-ivm",
+      "package-name": "oliphaunt-extension-pg-ivm",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_textsearch": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-textsearch",
+      "package-name": "oliphaunt-extension-pg-textsearch",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_uuidv7": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-uuidv7",
+      "package-name": "oliphaunt-extension-pg-uuidv7",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pgtap": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pgtap",
+      "package-name": "oliphaunt-extension-pgtap",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/postgis": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-postgis",
+      "package-name": "oliphaunt-extension-postgis",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/vector": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-vector",
+      "package-name": "oliphaunt-extension-vector",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/runtimes/liboliphaunt/wasix": {
+      "release-type": "simple",
+      "component": "liboliphaunt-wasix",
+      "package-name": "liboliphaunt-wasix",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "crates/assets/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/aarch64-apple-darwin/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/aarch64-apple-darwin/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/aarch64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/x86_64-pc-windows-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/x86_64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    },
+    "src/bindings/wasix-rust/crates/oliphaunt-wasix": {
+      "release-type": "rust",
+      "component": "oliphaunt-wasix-rust",
+      "package-name": "oliphaunt-wasix",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

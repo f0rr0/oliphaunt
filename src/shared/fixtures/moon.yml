@@ -1,0 +1,45 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "shared-fixtures"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["shared", "fixtures", "tests"]
+
+project:
+  title: "Shared Fixtures"
+  description: "Cross-product fixture corpora consumed by SDK and runtime tests."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+dependsOn:
+  - "shared-contracts"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun src/shared/contracts/tools/check-test-matrix.mjs --fixtures"
+    deps:
+      - "shared-contracts:check"
+    inputs:
+      - "/src/shared/contracts/**/*"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/rust/tests/**/*"
+      - "/src/sdks/swift/Tests/**/*"
+      - "/src/sdks/kotlin/oliphaunt/src/**/*"
+      - "/src/sdks/js/src/**/*"
+      - "/src/sdks/react-native/src/**/*"
+      - "/src/sdks/react-native/tools/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
+      - "/tools/release/**/*"
+      - "/tools/policy/**/*"
+    outputs:
+      - "/target/shared-fixtures/manifest.generated.json"
+      - "/target/shared-fixtures/consumption-report.json"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

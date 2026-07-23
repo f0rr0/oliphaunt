@@ -1,0 +1,25 @@
+{
+  "name": "@oliphaunt/ts",
+  "version": "0.0.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/jsr.ts",
+    "./protocol": "./src/protocol.ts",
+    "./query": "./src/query.ts"
+  },
+  "publish": {
+    "include": [
+      "ARCHITECTURE.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md",
+      "jsr.json",
+      "package.json",
+      "src/jsr.ts",
+      "src/protocol.ts",
+      "src/query.ts"
+    ],
+    "exclude": ["src/__tests__/**"]
+  }
+}

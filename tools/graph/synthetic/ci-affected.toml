@@ -1,0 +1,249 @@
+# Exact path-to-CI planning contracts. Ownership-only matches for historical or
+# generated evidence must stay policy-only, while real extension source and
+# recipe changes must retain the full publication and lifecycle proof closure.
+
+[cases.transitional_extension_evidence]
+path = "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json"
+forbid_builders = true
+forbidden_jobs = [
+    "native-extension-lifecycle",
+    "native-extension-lifecycle-aggregate",
+    "rust-sdk-exact-candidate-consumer",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.generated_extension_evidence]
+path = "src/extensions/generated/docs/extension-evidence.json"
+forbid_builders = true
+forbidden_jobs = [
+    "native-extension-lifecycle",
+    "native-extension-lifecycle-aggregate",
+    "rust-sdk-exact-candidate-consumer",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.external_extension_source]
+path = "src/extensions/external/vector/source.toml"
+required_jobs = [
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "native-extension-lifecycle",
+]
+
+[cases.external_extension_recipe]
+path = "src/extensions/external/postgis/targets/native.toml"
+required_jobs = [
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "native-extension-lifecycle",
+]
+
+[cases.wasix_rust_candidate]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/types.rs"
+required_jobs = [
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.wasix_rust_exact_candidate_consumer_tool]
+path = "tools/release/wasix-rust-exact-candidate-consumer.mjs"
+required_jobs = [
+    "extension-artifacts-wasix",
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.exact_cargo_candidate_consumer_tool]
+path = "tools/release/exact-cargo-candidate-consumer.mjs"
+required_jobs = [
+    "extension-artifacts-wasix",
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+# Simulated single-file mutations for every JavaScript exact-candidate trigger
+# input. Each case traverses Moon affectedness and the CI planner, so removing
+# either an input edge or the explicit planner trigger fails closed.
+[cases.js_exact_candidate_consumer_tool]
+path = "tools/release/js-exact-candidate-consumer.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_watchdog_tool]
+path = "tools/release/exact-candidate-command-watchdog.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_extension_discovery_proof]
+path = "tools/release/extension-manifest-discovery-proof.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_extension_materializer]
+path = "tools/release/extension-registry-carrier-materializer.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_extension_runtime_contract]
+path = "tools/release/extension-runtime-asset-contract.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_windows_launcher]
+path = "tools/release/run-windows-standard-user-exact-candidate.ps1"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_runtime_fixture]
+path = "tools/release/fixtures/js-exact-candidate-runtime.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_procsignal_fixture]
+path = "tools/release/fixtures/js-exact-candidate-procsignal.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_deno_preparation_fixture]
+path = "tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.js_exact_candidate_jsr_fixture]
+path = "tools/release/fixtures/js-exact-candidate-jsr.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
+[cases.wasix_runtime_candidate_dependency]
+path = "src/runtimes/liboliphaunt/wasix/crates/assets/build.rs"
+required_jobs = [
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+# The post-producer validator must rerun exactly the two jobs that create iOS
+# ZIP carriers. This validator-only change must not expand into Android,
+# desktop, WASIX, or package aggregation lanes.
+[cases.ios_carrier_validator]
+path = "tools/release/validate-ios-carrier-zips.mjs"
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-ios",
+]
+expected_native_targets = ["ios-xcframework"]
+forbidden_jobs = [
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-release-assets",
+]
+
+# The shared portable archive parser keeps all of its normal packaging
+# consumers while also rerunning both jobs whose iOS ZIPs the validator reads.
+[cases.ios_carrier_portable_archive]
+path = "tools/release/portable-archive.mjs"
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-ios",
+]
+
+# A validator change must not narrow a simultaneously affected full native
+# runtime build. The aggregate/full-runtime reason wins over focused iOS work.
+[cases.ios_carrier_validator_with_full_native_runtime]
+paths = [
+    "tools/release/validate-ios-carrier-zips.mjs",
+    "src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c",
+]
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "liboliphaunt-native-release-assets",
+]
+expect_all_native_targets = true

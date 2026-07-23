@@ -1,0 +1,242 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-kotlin"
+language: "kotlin"
+layer: "library"
+stack: "systems"
+tags: ["sdk", "kotlin", "android", "native", "release-product"]
+dependsOn:
+  - "liboliphaunt-native"
+  - id: "shared-fixtures"
+    scope: "build"
+
+project:
+  title: "Oliphaunt Kotlin SDK"
+  description: "Kotlin and Android SDK for native liboliphaunt."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-kotlin"
+    packagePath: "src/sdks/kotlin"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-android"
+  paths:
+    "**/*.kt": ["@oliphaunt/sdk-android"]
+    "**/*.kts": ["@oliphaunt/sdk-android"]
+
+tasks:
+  check:
+    tags: ["quality", "static", "ci-android-sdk"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh check-static"
+    deps:
+      - "liboliphaunt-native:check"
+      - "shared-contracts:check"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/policy/run-gradle-lint-checked.sh"
+      - "/tools/runtime/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit", "ci-android-sdk"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh test-unit"
+    deps:
+      - "liboliphaunt-native:check"
+      - "shared-fixtures:check"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/runtime/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh smoke-runtime"
+    deps:
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  package:
+    tags: ["package"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh package-shape"
+    deps:
+      - "oliphaunt-kotlin:check"
+      - "oliphaunt-kotlin:test"
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/shared/fixtures/**/*"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin"
+    deps:
+      - "oliphaunt-kotlin:package"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/shared/fixtures/**/*"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/sdk-artifacts/kotlin.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/ios-carrier-manifest.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/prepare-rust-release-source.mjs"
+      - "/tools/release/prepare-swift-release-consumer.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-cli-utils.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-semantic-inputs.mjs"
+      - "/tools/release/rust-native-targets.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
+      - "/tools/release/swift-source-carrier-contract.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/runtime/**/*"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  maven-staging:
+    tags: ["release", "artifact-package", "ci-kotlin-maven-staging"]
+    command: "tools/dev/bun.sh tools/release/kotlin-maven-staging.mjs"
+    deps:
+      - "oliphaunt-kotlin:package-artifacts"
+    inputs:
+      - "/src/sdks/kotlin/gradle.properties"
+      - "/tools/release/kotlin-maven-staging.mjs"
+      - "/tools/release/maven-central-contract.mjs"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+  release-check:
+    tags: ["release", "package"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh release-check"
+    deps:
+      - "liboliphaunt-native:check"
+      - "liboliphaunt-native:release-runtime"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/policy/run-gradle-lint-checked.sh"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --quick --platform android"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  regression:
+    tags: ["regression", "runtime"]
+    command: "bash src/sdks/kotlin/tools/check-sdk.sh regression"
+    deps:
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
+      - "/tools/policy/run-gradle-lint-checked.sh"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-kotlin"
+    inputs:
+      - "/coverage/baseline.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/coverage/**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-kotlin/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench-run:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --platform android"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
