@@ -602,6 +602,8 @@ build_apk() {
     fi
   fi
 
+  run "$root/src/sdks/react-native/tools/verify-android-apk.sh" "$apk"
+
   local apk_files="$scratch_root/apk-files.txt"
   zipinfo -1 "$apk" >"$apk_files"
   grep -Fxq "lib/$android_abi/liboliphaunt.so" "$apk_files" ||

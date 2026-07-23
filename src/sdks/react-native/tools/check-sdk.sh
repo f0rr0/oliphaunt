@@ -323,6 +323,7 @@ prepare_react_native_package_worktree
 if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/expo-android-gradle-limits.test.sh"
   run bash "$package_dir/tools/expo-runner-android-device.test.sh"
+  run bash "$package_dir/tools/verify-android-apk.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"

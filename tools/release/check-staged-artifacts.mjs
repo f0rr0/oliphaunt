@@ -41,6 +41,7 @@ import {
 } from "./ios-carrier-manifest.mjs";
 import {
   portableMemberName,
+  readAndroidApkEntries,
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
 } from "./portable-archive.mjs";
@@ -335,6 +336,36 @@ function strictArchiveEntries(file, format) {
   return entries;
 }
 
+function strictAndroidApkEntries(file) {
+  const fileStat = statSync(file, { bigint: true });
+  const cacheKey = [
+    "android-apk",
+    path.resolve(file),
+    fileStat.dev,
+    fileStat.ino,
+    fileStat.size,
+    fileStat.mtimeNs,
+    fileStat.ctimeNs,
+  ].join("\0");
+  const cached = ARCHIVE_ENTRY_CACHE.get(cacheKey);
+  if (cached !== undefined) {
+    ARCHIVE_ENTRY_CACHE.delete(cacheKey);
+    ARCHIVE_ENTRY_CACHE.set(cacheKey, cached);
+    return cached;
+  }
+  let entries;
+  try {
+    entries = readAndroidApkEntries(file);
+  } catch (error) {
+    fail(`${rel(file)} is not a strict Android APK archive: ${error.message}`);
+  }
+  ARCHIVE_ENTRY_CACHE.set(cacheKey, entries);
+  while (ARCHIVE_ENTRY_CACHE.size > ARCHIVE_ENTRY_CACHE_LIMIT) {
+    ARCHIVE_ENTRY_CACHE.delete(ARCHIVE_ENTRY_CACHE.keys().next().value);
+  }
+  return entries;
+}
+
 function archiveTarNames(file) {
   return [...strictArchiveEntries(file, "tar.gz")]
     .filter(([, entry]) => entry.isFile)
@@ -468,6 +499,25 @@ function archiveZipNames(file) {
 
 function zipReadText(file, name) {
   const entry = readZipEntries(file).get(name);
+  if (!entry || !entry.isFile) {
+    fail(`${rel(file)} is missing ${name}`);
+  }
+  try {
+    return Buffer.from(entry.data()).toString("utf8");
+  } catch (error) {
+    fail(`${rel(file)} member ${name} is not readable UTF-8: ${error.message}`);
+  }
+}
+
+function archiveAndroidApkNames(file) {
+  return [...strictAndroidApkEntries(file)]
+    .filter(([, entry]) => entry.isFile)
+    .map(([name]) => name)
+    .sort(compareText);
+}
+
+function androidApkReadText(file, name) {
+  const entry = strictAndroidApkEntries(file).get(name);
   if (!entry || !entry.isFile) {
     fail(`${rel(file)} is missing ${name}`);
   }
@@ -2123,7 +2173,12 @@ function discoverMobileArtifacts(platform) {
     return existsSync(root)
       ? readdirSync(root).filter((name) => name.endsWith(".apk")).map((name) => {
           const file = path.join(root, name);
-          return { platform: "android", path: file, names: archiveZipNames(file), readText: (member) => zipReadText(file, member) };
+          return {
+            platform: "android",
+            path: file,
+            names: archiveAndroidApkNames(file),
+            readText: (member) => androidApkReadText(file, member),
+          };
         }).sort((left, right) => compareText(left.path, right.path))
       : [];
   }

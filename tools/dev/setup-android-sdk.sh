@@ -366,7 +366,8 @@ build_tools_valid() {
   local directory="$sdk_root/build-tools/$pinned_build_tools"
   package_revision_valid "$directory" "$pinned_build_tools" &&
     usable_executable "$directory/aapt2" &&
-    usable_executable "$directory/zipalign"
+    usable_executable "$directory/zipalign" &&
+    usable_executable "$directory/apksigner"
 }
 
 cmake_valid() {

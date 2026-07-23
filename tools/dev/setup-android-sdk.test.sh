@@ -80,7 +80,11 @@ case "$operation" in
     printf 'Pkg.Revision=36.0.0\\n' > "$sdk_root/build-tools/36.0.0/source.properties"
     printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/aapt2"
     printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/zipalign"
-    chmod +x "$sdk_root/build-tools/36.0.0/aapt2" "$sdk_root/build-tools/36.0.0/zipalign"
+    printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/build-tools/36.0.0/apksigner"
+    chmod +x \
+      "$sdk_root/build-tools/36.0.0/aapt2" \
+      "$sdk_root/build-tools/36.0.0/zipalign" \
+      "$sdk_root/build-tools/36.0.0/apksigner"
     printf 'Pkg.Revision = 3.22.1\\n' > "$sdk_root/cmake/3.22.1/source.properties"
     printf '%s\\n' '#!/bin/sh' 'exit 0' > "$sdk_root/cmake/3.22.1/bin/cmake"
     chmod +x "$sdk_root/cmake/3.22.1/bin/cmake"
@@ -226,6 +230,8 @@ grep -qx 'Pkg.Revision = 3.22.1' "$tmp/sdk/cmake/3.22.1/source.properties"
 grep -qx 'Pkg.Revision=36.0.0' "$tmp/sdk/build-tools/36.0.0/source.properties"
 grep -qx 'AndroidVersion.ApiLevel=36' "$tmp/sdk/platforms/android-36/source.properties"
 [ -x "$tmp/sdk/platform-tools/adb" ]
+[ -x "$tmp/sdk/build-tools/36.0.0/zipalign" ]
+[ -x "$tmp/sdk/build-tools/36.0.0/apksigner" ]
 grep -qx 1 "$tmp/sdk/fake-install-count"
 
 # Fully valid local state performs no transport and no repository package install.
@@ -251,12 +257,20 @@ grep -qx 'Pkg.Revision=20.0' "$tmp/sdk/cmdline-tools/latest/source.properties"
 [ "$(wc -l < "$tmp/curl.log" | tr -d ' ')" = "2" ]
 
 # Corrupt package metadata is removed and reinstalled under the exact package path.
+rm "$tmp/sdk/build-tools/36.0.0/apksigner"
+: > "$tmp/curl.log"
+CURL_MODE=fail-all run_android > "$tmp/build-tools-repair.out"
+[ ! -s "$tmp/curl.log" ]
+[ -x "$tmp/sdk/build-tools/36.0.0/apksigner" ]
+grep -qx 2 "$tmp/sdk/fake-install-count"
+
+# Every other exact SDK package remains independently repairable.
 rm "$tmp/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
 : > "$tmp/curl.log"
 CURL_MODE=fail-all run_android > "$tmp/package-repair.out"
 [ ! -s "$tmp/curl.log" ]
 grep -qx 'Pkg.Revision = 27.0.12077973' "$tmp/sdk/ndk/27.0.12077973/source.properties"
-grep -qx 2 "$tmp/sdk/fake-install-count"
+grep -qx 3 "$tmp/sdk/fake-install-count"
 
 # Checksum, layout, and executable-version failures never promote command-line-tools.
 if ANDROID_MANIFEST="$tmp/config/android-bad-sha.toml" SDK_ROOT="$tmp/sdk-bad-sha" \

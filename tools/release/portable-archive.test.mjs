@@ -10,6 +10,7 @@ import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   decompressSingleZstdFrame,
   portableMemberName,
+  readAndroidApkEntries,
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
@@ -48,7 +49,7 @@ function crc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function zipArchive(rows) {
+function zipArchive(rows, { beforeCentral = Buffer.alloc(0) } = {}) {
   const locals = [];
   const centrals = [];
   let localOffset = 0;
@@ -58,7 +59,7 @@ function zipArchive(rows) {
     const data = Buffer.from(row.data ?? "payload");
     const method = row.method ?? 0;
     const compressed = method === 8 ? deflateRawSync(data) : data;
-    const flags = row.flags ?? 0;
+    const flags = (row.flags ?? 0) | (row.descriptor ? 0x0008 : 0);
     const actualCrc = crc32(data);
     const storedCrc = row.crc ?? actualCrc;
     const localExtra = row.localExtra ?? Buffer.alloc(0);
@@ -73,7 +74,26 @@ function zipArchive(rows) {
     local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(name.length, 26);
     local.writeUInt16LE(localExtra.length, 28);
-    const localRecord = Buffer.concat([local, name, localExtra, compressed]);
+    let descriptor = Buffer.alloc(0);
+    if (row.descriptor) {
+      descriptor = Buffer.alloc(row.descriptor === "signed" ? 16 : 12);
+      let descriptorOffset = 0;
+      if (row.descriptor === "signed") {
+        descriptor.writeUInt32LE(0x08074b50, 0);
+        descriptorOffset = 4;
+      }
+      descriptor.writeUInt32LE(row.descriptorCrc ?? storedCrc, descriptorOffset);
+      descriptor.writeUInt32LE(compressed.length, descriptorOffset + 4);
+      descriptor.writeUInt32LE(data.length, descriptorOffset + 8);
+    }
+    const localRecord = Buffer.concat([
+      local,
+      name,
+      localExtra,
+      compressed,
+      descriptor,
+      row.afterData ?? Buffer.alloc(0),
+    ]);
     locals.push(localRecord);
 
     const central = Buffer.alloc(46);
@@ -98,8 +118,34 @@ function zipArchive(rows) {
   eocd.writeUInt16LE(rows.length, 8);
   eocd.writeUInt16LE(rows.length, 10);
   eocd.writeUInt32LE(centralDirectory.length, 12);
-  eocd.writeUInt32LE(localOffset, 16);
-  return Buffer.concat([...locals, centralDirectory, eocd]);
+  eocd.writeUInt32LE(localOffset + beforeCentral.length, 16);
+  return Buffer.concat([...locals, beforeCentral, centralDirectory, eocd]);
+}
+
+function androidAlignmentExtra(alignment, paddingLength, paddingByte = 0) {
+  const extra = Buffer.alloc(6 + paddingLength, paddingByte);
+  extra.writeUInt16LE(0xd935, 0);
+  extra.writeUInt16LE(2 + paddingLength, 2);
+  extra.writeUInt16LE(alignment, 4);
+  return extra;
+}
+
+function apkSigningBlock(pairs = [{ id: 0x7109871a, data: "signature" }]) {
+  const pairBuffers = pairs.map(({ id, data }) => {
+    const value = Buffer.from(data);
+    const pair = Buffer.alloc(12 + value.length);
+    pair.writeBigUInt64LE(BigInt(4 + value.length), 0);
+    pair.writeUInt32LE(id, 8);
+    value.copy(pair, 12);
+    return pair;
+  });
+  const pairBytes = Buffer.concat(pairBuffers);
+  const size = 24 + pairBytes.length;
+  const header = Buffer.alloc(8);
+  const footer = Buffer.alloc(8);
+  header.writeBigUInt64LE(BigInt(size), 0);
+  footer.writeBigUInt64LE(BigInt(size), 0);
+  return Buffer.concat([header, pairBytes, footer, Buffer.from("APK Sig Block 42", "ascii")]);
 }
 
 function tarOctal(value, length) {
@@ -165,6 +211,251 @@ test("accepts an unambiguous FAT-origin ZIP member", (t) => {
     zipArchive([{ name: "file.txt", versionMadeBy: 0x0014, externalAttributes: 0 }]),
   );
   assert.equal(readPortableArchiveEntries(file).get("file.txt").isFile, true);
+});
+
+test("accepts Android legacy and 0xd935 alignment only in the APK profile", (t) => {
+  // This reproduces the exact two zero bytes on the AGP-produced
+  // assets/dexopt/baseline.prof that exposed the release failure. The leading
+  // record puts its data at a four-byte-aligned offset.
+  const legacy = fixtureFile(
+    t,
+    "legacy-aligned.apk",
+    zipArchive([
+      { name: "aaaa" },
+      { name: "assets/dexopt/baseline.prof", data: "profile", localExtra: Buffer.alloc(2) },
+    ]),
+  ).file;
+  assert.throws(() => readPortableArchiveEntries(legacy), /truncated ZIP local/u);
+  assert.equal(
+    readAndroidApkEntries(legacy).get("assets/dexopt/baseline.prof").data().toString(),
+    "profile",
+  );
+
+  // Official apksigner rewrites the same member to d935,size=3,alignment=4,
+  // one zero byte; with this path the payload begins at byte offset 64.
+  const structured = fixtureFile(
+    t,
+    "structured-aligned.apk",
+    zipArchive([{
+      name: "assets/dexopt/baseline.prof",
+      data: "profile",
+      localExtra: androidAlignmentExtra(4, 1),
+    }]),
+  ).file;
+  assert.throws(() => readPortableArchiveEntries(structured), /unsupported ZIP local/u);
+  assert.equal(
+    readAndroidApkEntries(structured).get("assets/dexopt/baseline.prof").data().toString(),
+    "profile",
+  );
+
+  const sharedLibraryName = "lib/arm64-v8a/liboliphaunt.so";
+  const unpaddedSharedLibraryOffset = 30 + Buffer.byteLength(sharedLibraryName) + 6;
+  const sharedLibraryPadding = (
+    16 * 1024 - (unpaddedSharedLibraryOffset % (16 * 1024))
+  ) % (16 * 1024);
+  const sharedLibrary = fixtureFile(
+    t,
+    "structured-shared-library.apk",
+    zipArchive([{
+      name: sharedLibraryName,
+      data: "ELF",
+      localExtra: androidAlignmentExtra(16 * 1024, sharedLibraryPadding),
+    }]),
+  ).file;
+  assert.equal(
+    readAndroidApkEntries(sharedLibrary).get(sharedLibraryName).data().toString(),
+    "ELF",
+  );
+});
+
+test("rejects malformed or misplaced Android alignment metadata", (t) => {
+  const cases = [
+    [
+      "legacy-unaligned.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: Buffer.alloc(2) },
+      /malformed legacy APK alignment/u,
+    ],
+    [
+      "legacy-nonzero.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: Buffer.from([0, 1]) },
+      /truncated ZIP local/u,
+    ],
+    [
+      "alignment-too-short.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: Buffer.from([0x35, 0xd9, 1, 0, 4]) },
+      /malformed APK alignment/u,
+    ],
+    [
+      "alignment-nonzero.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: androidAlignmentExtra(4, 1, 1) },
+      /malformed APK alignment/u,
+    ],
+    [
+      "alignment-unaligned.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: androidAlignmentExtra(4, 0) },
+      /malformed APK alignment/u,
+    ],
+    [
+      "alignment-wrong-multiple.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: androidAlignmentExtra(8, 5) },
+      /malformed APK alignment/u,
+    ],
+    [
+      "alignment-redundant.apk",
+      { name: "assets/dexopt/baseline.prof", localExtra: androidAlignmentExtra(4, 5) },
+      /malformed APK alignment/u,
+    ],
+    [
+      "alignment-compressed.apk",
+      {
+        name: "assets/dexopt/baseline.prof",
+        method: 8,
+        localExtra: androidAlignmentExtra(4, 1),
+      },
+      /alignment metadata on compressed/u,
+    ],
+    [
+      "alignment-central.apk",
+      { name: "assets/dexopt/baseline.prof", centralExtra: androidAlignmentExtra(4, 1) },
+      /unsupported ZIP central/u,
+    ],
+    [
+      "alignment-not-last.apk",
+      {
+        name: "assets/dexopt/baseline.prof",
+        localExtra: Buffer.concat([
+          androidAlignmentExtra(4, 1),
+          Buffer.from([0x55, 0x54, 5, 0, 1, 0, 0, 0, 0]),
+        ]),
+      },
+      /does not place APK alignment ZIP metadata last/u,
+    ],
+  ];
+  for (const [name, row, pattern] of cases) {
+    const file = fixtureFile(t, name, zipArchive([row])).file;
+    assert.throws(() => readAndroidApkEntries(file), pattern);
+  }
+});
+
+test("accepts a framed APK Signing Block and unknown extension pairs", (t) => {
+  const block = apkSigningBlock([
+    { id: 0x504b4453, data: "unknown-but-framed" },
+    { id: 0x7109871a, data: "v2-signature-container" },
+  ]);
+  for (const descriptor of [undefined, "unsigned", "signed"]) {
+    const file = fixtureFile(
+      t,
+      `signed-${descriptor ?? "none"}.apk`,
+      zipArchive(
+        [{ name: "AndroidManifest.xml", data: "manifest", descriptor }],
+        { beforeCentral: block },
+      ),
+    ).file;
+    assert.throws(() => readPortableArchiveEntries(file), /ambiguous .*gap/u);
+    assert.equal(
+      readAndroidApkEntries(file).get("AndroidManifest.xml").data().toString(),
+      "manifest",
+    );
+  }
+
+  const manifestRecordBytes = 30
+    + Buffer.byteLength("AndroidManifest.xml")
+    + Buffer.byteLength("manifest");
+  const canonicalPadding = 4096 - manifestRecordBytes;
+  const padded = fixtureFile(
+    t,
+    "signed-canonical-padding.apk",
+    zipArchive(
+      [{ name: "AndroidManifest.xml", data: "manifest" }],
+      { beforeCentral: Buffer.concat([Buffer.alloc(canonicalPadding), block]) },
+    ),
+  ).file;
+  assert.equal(
+    readAndroidApkEntries(padded).get("AndroidManifest.xml").data().toString(),
+    "manifest",
+  );
+});
+
+test("rejects malformed APK Signing Block gaps and descriptors", (t) => {
+  const valid = apkSigningBlock();
+  const badHeaderSize = Buffer.from(valid);
+  badHeaderSize.writeBigUInt64LE(badHeaderSize.readBigUInt64LE(0) + 1n, 0);
+  const badPairSize = Buffer.from(valid);
+  badPairSize.writeBigUInt64LE(3n, 8);
+  const unknownOnly = apkSigningBlock([{ id: 0x504b4453, data: "extension" }]);
+  const duplicatePair = apkSigningBlock([
+    { id: 0x7109871a, data: "first" },
+    { id: 0x7109871a, data: "second" },
+  ]);
+  const cases = [
+    ["opaque-gap.apk", Buffer.alloc(32, 1), /unrecognized gap/u],
+    ["nonzero-padding.apk", Buffer.concat([Buffer.from([1]), valid]), /non-zero padding/u],
+    [
+      "noncanonical-zero-padding.apk",
+      Buffer.concat([Buffer.alloc(17), valid]),
+      /non-canonical zero padding/u,
+    ],
+    ["size-mismatch.apk", badHeaderSize, /disagreeing APK Signing Block sizes/u],
+    ["bad-pair.apk", badPairSize, /invalid APK Signing Block pair size/u],
+    ["no-signature-scheme.apk", unknownOnly, /without a v2, v3, or v3[.]1/u],
+    ["duplicate-pair.apk", duplicatePair, /repeats APK Signing Block pair ID/u],
+  ];
+  for (const [name, beforeCentral, pattern] of cases) {
+    const file = fixtureFile(
+      t,
+      name,
+      zipArchive([{ name: "AndroidManifest.xml", data: "manifest" }], { beforeCentral }),
+    ).file;
+    assert.throws(() => readAndroidApkEntries(file), pattern);
+  }
+
+  const invalidDescriptor = fixtureFile(
+    t,
+    "invalid-descriptor.apk",
+    zipArchive(
+      [{ name: "AndroidManifest.xml", descriptor: "signed", descriptorCrc: 0x12345678 }],
+      { beforeCentral: valid },
+    ),
+  ).file;
+  assert.throws(
+    () => readAndroidApkEntries(invalidDescriptor),
+    /invalid or ambiguous ZIP descriptor/u,
+  );
+
+  const internalGap = fixtureFile(
+    t,
+    "internal-gap.apk",
+    zipArchive([
+      { name: "first", afterData: Buffer.alloc(4) },
+      { name: "second" },
+    ]),
+  ).file;
+  assert.throws(() => readAndroidApkEntries(internalGap), /ambiguous 4-byte gap/u);
+});
+
+test("retains entry safety and integrity checks in the Android APK profile", (t) => {
+  const cases = [
+    ["traversal.apk", [{ name: "../escape" }], /unsafe archive member/u],
+    ["duplicate.apk", [{ name: "same" }, { name: "same" }], /repeats archive member/u],
+    ["link.apk", [{ name: "link", externalAttributes: 0o120777 << 16 }], /link or special/u],
+    ["setid.apk", [{ name: "file", externalAttributes: 0o104644 << 16 }], /set-id or sticky/u],
+    ["crc.apk", [{ name: "file", crc: 0x12345678 }], /CRC-32 mismatch/u],
+  ];
+  for (const [name, rows, pattern] of cases) {
+    const file = fixtureFile(t, name, zipArchive(rows)).file;
+    assert.throws(() => readAndroidApkEntries(file), pattern);
+  }
+
+  const caseSensitive = fixtureFile(
+    t,
+    "aapt-case-sensitive.apk",
+    zipArchive([{ name: "res/2F.xml" }, { name: "res/2f.xml" }]),
+  ).file;
+  assert.deepEqual(
+    [...readAndroidApkEntries(caseSensitive).keys()],
+    ["res/2F.xml", "res/2f.xml"],
+  );
+  assert.throws(() => readPortableArchiveEntries(caseSensitive), /case\/NFC-colliding/u);
 });
 
 test("requires ZIP directory type flags and trailing path markers to agree", (t) => {

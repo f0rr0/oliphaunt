@@ -12,6 +12,9 @@ export const DEFAULT_PORTABLE_ARCHIVE_LIMITS = Object.freeze({
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const ZIP_ALLOWED_FLAGS = 0x080e;
 const ZIP_ALLOWED_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
+const ANDROID_ALIGNMENT_EXTRA_FIELD_ID = 0xd935;
+const APK_SIGNING_BLOCK_MAGIC = Buffer.from("APK Sig Block 42", "ascii");
+const APK_SIGNATURE_SCHEME_BLOCK_IDS = new Set([0x7109871a, 0xf05368c0, 0x1b93ad61]);
 
 function archiveError(file, message) {
   return new Error(`portable-archive: ${path.basename(file)} ${message}`);
@@ -140,7 +143,7 @@ export function portableMemberName(raw, type, file, { allowRoot = false } = {}) 
   return value;
 }
 
-function checkedEntries(entries, file, archiveLimits) {
+function checkedEntries(entries, file, archiveLimits, { caseSensitive = false } = {}) {
   if (entries.length === 0) throw archiveError(file, "contains no archive members");
   if (entries.length > archiveLimits.maxEntries) {
     throw archiveError(file, `exceeds the ${archiveLimits.maxEntries}-entry limit`);
@@ -170,7 +173,12 @@ function checkedEntries(entries, file, archiveLimits) {
       throw archiveError(file, `repeats archive member ${entry.name}`);
     }
     exact.add(entry.name);
-    const portableKey = entry.name.normalize("NFC").toLowerCase();
+    // Android resource names are case-sensitive and aapt2 legitimately emits
+    // distinct hashed paths such as res/2F.xml and res/2f.xml. Other carrier
+    // formats retain the cross-filesystem case-folding collision check.
+    const portableKey = caseSensitive
+      ? entry.name.normalize("NFC")
+      : entry.name.normalize("NFC").toLowerCase();
     const prior = portable.get(portableKey);
     if (prior !== undefined && prior !== entry.name) {
       throw archiveError(
@@ -212,9 +220,57 @@ function crc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function validateZipExtra(extra, file, label) {
+function androidApkEntryAlignment(name) {
+  return name.endsWith(".so") ? 16 * 1024 : 4;
+}
+
+function validateAndroidAlignmentExtra(value, file, label, { dataOffset, method, name }) {
+  if (method !== 0) {
+    throw archiveError(file, `uses APK alignment metadata on compressed ZIP member ${label}`);
+  }
+  if (value.length < 2) {
+    throw archiveError(file, `has malformed APK alignment ZIP metadata for ${label}`);
+  }
+  const alignment = value.readUInt16LE(0);
+  const padding = value.subarray(2);
+  const expectedAlignment = androidApkEntryAlignment(name);
+  const unpaddedDataOffset = dataOffset - padding.length;
+  const expectedPadding = (
+    expectedAlignment - (unpaddedDataOffset % expectedAlignment)
+  ) % expectedAlignment;
+  if (
+    alignment !== expectedAlignment
+    || (alignment & (alignment - 1)) !== 0
+    || padding.length !== expectedPadding
+    || padding.some((byte) => byte !== 0)
+    || dataOffset % alignment !== 0
+  ) {
+    throw archiveError(file, `has malformed APK alignment ZIP metadata for ${label}`);
+  }
+}
+
+function validateZipExtra(
+  extra,
+  file,
+  label,
+  { androidApkLocal = false, dataOffset = 0, method = -1, name = "" } = {},
+) {
   const seen = new Set();
   for (let offset = 0; offset < extra.length;) {
+    if (androidApkLocal && extra.subarray(offset).every((byte) => byte === 0)) {
+      const paddingLength = extra.length - offset;
+      const alignment = androidApkEntryAlignment(name);
+      const unpaddedDataOffset = dataOffset - paddingLength;
+      const expectedPadding = (alignment - (unpaddedDataOffset % alignment)) % alignment;
+      if (
+        method !== 0
+        || paddingLength !== expectedPadding
+        || dataOffset % alignment !== 0
+      ) {
+        throw archiveError(file, `has malformed legacy APK alignment padding for ${label}`);
+      }
+      return;
+    }
     if (extra.length - offset < 4) {
       throw archiveError(file, `has a truncated ZIP ${label} extra field`);
     }
@@ -231,14 +287,19 @@ function validateZipExtra(extra, file, label) {
       );
     }
     seen.add(id);
-    if (!ZIP_ALLOWED_EXTRA_FIELDS.has(id)) {
+    if (!ZIP_ALLOWED_EXTRA_FIELDS.has(id) && !(androidApkLocal && id === ANDROID_ALIGNMENT_EXTRA_FIELD_ID)) {
       throw archiveError(
         file,
         `uses unsupported ZIP ${label} extra field 0x${id.toString(16).padStart(4, "0")}`,
       );
     }
     const value = extra.subarray(offset, offset + size);
-    if (id === 0x5455) {
+    if (id === ANDROID_ALIGNMENT_EXTRA_FIELD_ID) {
+      if (offset + size !== extra.length) {
+        throw archiveError(file, `does not place APK alignment ZIP metadata last for ${label}`);
+      }
+      validateAndroidAlignmentExtra(value, file, label, { dataOffset, method, name });
+    } else if (id === 0x5455) {
       if (![5, 9, 13].includes(size) || (value[0] & ~0x07) !== 0 || (value[0] & 0x01) === 0) {
         throw archiveError(file, "has malformed extended-timestamp ZIP metadata");
       }
@@ -261,6 +322,111 @@ function validateZipExtra(extra, file, label) {
       }
     }
     offset += size;
+  }
+}
+
+function safeZipUInt64(buffer, offset, file, label) {
+  const bytes = boundedSlice(buffer, offset, 8, file, label);
+  const value = bytes.readBigUInt64LE(0);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw archiveError(file, `has an unsafe ${label}`);
+  }
+  return Number(value);
+}
+
+function zipDescriptorMatches(buffer, entry, offset, length) {
+  if (length === 16) {
+    return buffer.readUInt32LE(offset) === 0x08074b50
+      && buffer.readUInt32LE(offset + 4) === entry.crc32
+      && buffer.readUInt32LE(offset + 8) === entry.compressedSize
+      && buffer.readUInt32LE(offset + 12) === entry.size;
+  }
+  return buffer.readUInt32LE(offset) === entry.crc32
+    && buffer.readUInt32LE(offset + 4) === entry.compressedSize
+    && buffer.readUInt32LE(offset + 8) === entry.size;
+}
+
+function apkZipDescriptorLength(buffer, entry, available, file) {
+  const candidates = [];
+  for (const length of [12, 16]) {
+    if (available >= length && zipDescriptorMatches(buffer, entry, entry.dataEnd, length)) {
+      candidates.push(length);
+    }
+  }
+  if (candidates.length !== 1) {
+    throw archiveError(file, `has an invalid or ambiguous ZIP descriptor before APK metadata for ${entry.name}`);
+  }
+  return candidates[0];
+}
+
+function validateApkSigningBlock(buffer, recordsEnd, centralOffset, file) {
+  const gap = centralOffset - recordsEnd;
+  if (gap === 0) return;
+  if (gap < 32) {
+    throw archiveError(file, `has an unrecognized ${gap}-byte gap before its APK central directory`);
+  }
+  const footerOffset = centralOffset - 24;
+  const magic = boundedSlice(buffer, centralOffset - 16, 16, file, "APK Signing Block magic");
+  if (!magic.equals(APK_SIGNING_BLOCK_MAGIC)) {
+    throw archiveError(file, "has an unrecognized gap before its APK central directory");
+  }
+  const size = safeZipUInt64(buffer, footerOffset, file, "APK Signing Block footer size");
+  if (size < 24 || size > centralOffset - recordsEnd - 8) {
+    throw archiveError(file, "has an invalid APK Signing Block size");
+  }
+  const blockOffset = centralOffset - size - 8;
+  const firstSize = safeZipUInt64(buffer, blockOffset, file, "APK Signing Block header size");
+  if (firstSize !== size) {
+    throw archiveError(file, "has disagreeing APK Signing Block sizes");
+  }
+  if (buffer.subarray(recordsEnd, blockOffset).some((byte) => byte !== 0)) {
+    throw archiveError(file, "has non-zero padding before its APK Signing Block");
+  }
+  const signingPadding = blockOffset - recordsEnd;
+  if (
+    signingPadding !== 0
+    && (
+      signingPadding >= 4096
+      || blockOffset % 4096 !== 0
+      || signingPadding !== (4096 - (recordsEnd % 4096)) % 4096
+    )
+  ) {
+    throw archiveError(file, "has non-canonical zero padding before its APK Signing Block");
+  }
+  const pairsEnd = footerOffset;
+  let offset = blockOffset + 8;
+  let pairCount = 0;
+  let hasSignatureScheme = false;
+  const pairIds = new Set();
+  while (offset < pairsEnd) {
+    if (pairsEnd - offset < 12) {
+      throw archiveError(file, "has a truncated APK Signing Block pair");
+    }
+    const pairSize = safeZipUInt64(buffer, offset, file, "APK Signing Block pair size");
+    offset += 8;
+    if (pairSize < 4 || pairSize > pairsEnd - offset) {
+      throw archiveError(file, "has an invalid APK Signing Block pair size");
+    }
+    const pairId = buffer.readUInt32LE(offset);
+    if (pairIds.has(pairId)) {
+      throw archiveError(
+        file,
+        `repeats APK Signing Block pair ID 0x${pairId.toString(16).padStart(8, "0")}`,
+      );
+    }
+    pairIds.add(pairId);
+    if (APK_SIGNATURE_SCHEME_BLOCK_IDS.has(pairId)) hasSignatureScheme = true;
+    // Unknown IDs are intentionally accepted. Android makes the signing-block
+    // container extensible; exact framing plus at least one known whole-file
+    // signature scheme is the archive-safety boundary here.
+    offset += pairSize;
+    pairCount += 1;
+  }
+  if (offset !== pairsEnd || pairCount === 0) {
+    throw archiveError(file, "has an empty or truncated APK Signing Block pair sequence");
+  }
+  if (!hasSignatureScheme) {
+    throw archiveError(file, "has an APK Signing Block without a v2, v3, or v3.1 signature pair");
   }
 }
 
@@ -391,7 +557,7 @@ function inflateZipEntry(buffer, entry, file, maxEntryBytes) {
   return data;
 }
 
-function readZipEntries(file, archiveLimits) {
+function readZipEntries(file, archiveLimits, { androidApk = false } = {}) {
   const buffer = readFileSync(file);
   const eocdOffset = findZipEnd(buffer, file);
   const eocd = boundedSlice(buffer, eocdOffset, 22, file, "ZIP end record");
@@ -525,7 +691,13 @@ function readZipEntries(file, archiveLimits) {
     if (!localVariable.subarray(0, localNameLength).equals(rawNameBytes)) {
       throw archiveError(file, `has a local/central ZIP name disagreement for ${name}`);
     }
-    validateZipExtra(localVariable.subarray(localNameLength), file, `local ${JSON.stringify(rawName)}`);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    validateZipExtra(
+      localVariable.subarray(localNameLength),
+      file,
+      `local ${JSON.stringify(rawName)}`,
+      { androidApkLocal: androidApk, dataOffset, method, name },
+    );
     const descriptor = (flags & 0x0008) !== 0;
     const localCrc = local.readUInt32LE(14);
     const localCompressedSize = local.readUInt32LE(18);
@@ -545,7 +717,6 @@ function readZipEntries(file, archiveLimits) {
     ) {
       throw archiveError(file, `has local/central ZIP CRC or size disagreement for ${name}`);
     }
-    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
     if (dataOffset > centralOffset || compressedSize > centralOffset - dataOffset) {
       throw archiveError(file, `has ZIP payload outside local-record bounds for ${name}`);
     }
@@ -581,8 +752,15 @@ function readZipEntries(file, archiveLimits) {
     const nextOffset = extents[index + 1]?.localOffset ?? centralOffset;
     if (entry.dataEnd > nextOffset) throw archiveError(file, "has overlapping ZIP local records");
     const gap = nextOffset - entry.dataEnd;
-    if (entry.descriptor) validateZipDescriptor(buffer, entry, entry.dataEnd, gap, file);
-    else if (gap !== 0) {
+    const finalEntry = index === extents.length - 1;
+    if (entry.descriptor && androidApk && finalEntry) {
+      const descriptorLength = apkZipDescriptorLength(buffer, entry, gap, file);
+      validateApkSigningBlock(buffer, entry.dataEnd + descriptorLength, centralOffset, file);
+    } else if (entry.descriptor) {
+      validateZipDescriptor(buffer, entry, entry.dataEnd, gap, file);
+    } else if (androidApk && finalEntry) {
+      validateApkSigningBlock(buffer, entry.dataEnd, centralOffset, file);
+    } else if (gap !== 0) {
       throw archiveError(file, `has an ambiguous ${gap}-byte gap after ZIP member ${entry.name}`);
     }
   }
@@ -606,7 +784,7 @@ function readZipEntries(file, archiveLimits) {
     delete entry.localOffset;
     delete entry.method;
   }
-  return checkedEntries(entries, file, archiveLimits);
+  return checkedEntries(entries, file, archiveLimits, { caseSensitive: androidApk });
 }
 
 function tarString(header, offset, length, file, label, { allowEmpty = false } = {}) {
@@ -1037,6 +1215,18 @@ export function readPortableArchiveEntries(file, options = {}) {
   if (format === "tar.gz") return readTarEntries(file, archiveLimits);
   if (format === "tar.zst") return readTarEntries(file, archiveLimits, "zstd");
   throw archiveError(file, `has an unsupported archive format ${JSON.stringify(format)}`);
+}
+
+/**
+ * Read an Android application package while retaining the portable ZIP safety
+ * contract. APKs additionally permit Android's local-header alignment padding
+ * and a structurally framed APK Signing Block immediately before the central
+ * directory; ordinary ZIP/JAR/AAR readers deliberately do not accept either.
+ */
+export function readAndroidApkEntries(file, options = {}) {
+  const archiveLimits = limits(options);
+  requireRegularArchive(file, archiveLimits.maxArchiveBytes);
+  return readZipEntries(file, archiveLimits, { androidApk: true });
 }
 
 /**
