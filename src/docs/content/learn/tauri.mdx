@@ -1,0 +1,111 @@
+---
+title: Tauri Usage
+description: Use the Rust SDK from Tauri state and expose app-specific database commands to the webview.
+---
+
+# Tauri Usage
+
+Use the Rust SDK from Tauri state. `oliphaunt` is the native SDK for Tauri and
+Rust desktop apps; it owns direct embedded mode, broker mode, and server mode
+over native PostgreSQL.
+
+WASM is a separate runtime family. Native Tauri apps start with the Rust SDK.
+
+<TauriAppPattern />
+
+## App Shape
+
+Keep the database handle in Rust state and expose narrow Tauri commands to the
+webview. The webview calls app-specific commands such as `add_item` or
+`search_items`; Rust owns the root directory, lock, runtime handle, lifecycle,
+and backup APIs.
+
+| Need | Recommended mode |
+| --- | --- |
+| One embedded app database with lowest overhead | `NativeDirect` |
+| Multiple roots or helper-process ownership | `NativeBroker` |
+| SQLx pools, ORMs, `psql`, or `pg_dump` | `NativeServer` |
+
+## Direct Rust State
+
+Use `Oliphaunt` with `NativeDirect` when your Tauri commands own the database
+calls and you want the lowest-latency embedded path:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+use tauri::State;
+
+struct Db(Oliphaunt);
+
+#[tauri::command]
+async fn add_item(db: State<'_, Db>, value: String) -> Result<(), String> {
+    db.0
+        .query_params("INSERT INTO items(value) VALUES ($1)", [value])
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+```
+
+Open the database under your app data directory during setup:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+
+async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<Oliphaunt> {
+    Oliphaunt::builder()
+        .path(app_data_dir.join("postgres"))
+        .native_direct()
+        .open()
+        .await
+}
+```
+
+Store the resulting `Oliphaunt` handle with `tauri::State`. Cloned SDK handles
+share the same executor and session semantics; server mode is the path for
+independent PostgreSQL client sessions.
+
+## Existing Postgres Clients
+
+Use `NativeServer` when another Rust library expects a PostgreSQL URL, real
+independent sessions, SQLx pools, `psql`, or `pg_dump`:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+
+async fn open_server_mode() -> oliphaunt::Result<String> {
+    let db = Oliphaunt::builder()
+        .path("./.liboliphaunt")
+        .native_server()
+        .max_client_sessions(8)
+        .open()
+        .await?;
+
+    Ok(db.connection_string().expect("server mode has a URL").to_owned())
+}
+```
+
+Use `NativeBroker` for desktop apps that want helper-process ownership or
+multiple database roots managed by the Rust SDK.
+
+## Extensions And Assets
+
+Select exact SQL extension names in Rust configuration before opening the root.
+Package only the extension artifacts your Tauri app uses, then verify the app
+artifact before release. An app that selects `vector` ships `vector` and its
+declared dependencies.
+
+## Backup And Restore
+
+Use the Rust SDK backup and restore APIs for app export/import flows. Keep live
+PostgreSQL roots behind the Rust SDK. The SDK validates archive format, selected
+extensions, locks, and restore targets before moving data.
+
+## Operational Guidance
+
+- Use `NativeDirect` for one embedded PostgreSQL session with minimal overhead.
+- Use `NativeBroker` when helper-process ownership matters more than direct
+  call overhead.
+- Use `NativeServer` for real concurrent PostgreSQL client sessions and pools.
+- React Native apps use the React Native SDK, which delegates to Swift on
+  iOS/macOS and Kotlin on Android.

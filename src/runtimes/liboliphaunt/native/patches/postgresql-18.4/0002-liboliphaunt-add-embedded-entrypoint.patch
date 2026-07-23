@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: add embedded backend entrypoint
+
+Add a dedicated embedded entrypoint for liboliphaunt.  The entrypoint performs
+standalone backend initialization directly, installs a host-backed Port, emits
+the normal AuthenticationOk message, and then lets PostgreSQL's ordinary
+PostgresMain loop own protocol execution on the backend thread.
+
+This deliberately avoids driving the backend through main("--single", ...).
+The standalone initialization path is reused, but the protocol lifecycle is a
+real FE/BE remote connection backed by host I/O callbacks.
+---
+ src/backend/tcop/postgres.c | 108 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 108 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 115a634..708fd8a 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -25,6 +25,9 @@
+ #include <unistd.h>
+ #include <sys/resource.h>
+ #include <sys/socket.h>
++#ifdef OLIPHAUNT_EMBEDDED
++#include <netinet/in.h>
++#endif
+ #include <sys/time.h>
+
+ #ifdef USE_VALGRIND
+@@ -43,6 +46,10 @@
+ #include "libpq/libpq.h"
+ #include "libpq/pqformat.h"
+ #include "libpq/pqsignal.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "libpq/libpq-be.h"
++#include "libpq/protocol.h"
++#endif
+ #include "mb/pg_wchar.h"
+ #include "mb/stringinfo_mb.h"
+ #include "miscadmin.h"
+@@ -4172,6 +4179,107 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	PostgresMain(dbname, username);
+ }
+
++#ifdef OLIPHAUNT_EMBEDDED
++/*
++ * oliphaunt_embedded_main
++ *
++ * Dedicated liboliphaunt backend entrypoint.  This mirrors the standalone
++ * bootstrap used by PostgresSingleUserMain(), but installs a normal remote
++ * FE/BE Port backed by host I/O callbacks before entering PostgresMain().
++ *
++ * The caller owns the thread.  This function returns when the frontend sends
++ * Terminate.
++ */
++int
++oliphaunt_embedded_main(int argc, char *argv[],
++					 const char *dbname, const char *username,
++					 OliphauntEmbeddedIO *io)
++{
++	const char *switch_dbname = NULL;
++	int			socket_pair[2] = {-1, -1};
++	ClientSocket client_sock;
++	struct sockaddr_in *addr;
++
++	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
++		username == NULL || io == NULL)
++		return -1;
++
++	Assert(!IsUnderPostmaster);
++
++	if (progname == NULL)
++		progname = get_progname(argv[0]);
++	MyProcPid = getpid();
++	if (TopMemoryContext == NULL)
++		MemoryContextInit();
++	(void) set_stack_base();
++	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
++
++	InitStandaloneProcess(argv[0]);
++	InitializeGUCOptions();
++	process_postgres_switches(argc, argv, PGC_POSTMASTER, &switch_dbname);
++
++	if (switch_dbname != NULL && strcmp(switch_dbname, dbname) != 0)
++		ereport(FATAL,
++				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
++				 errmsg("embedded liboliphaunt database name was provided twice")));
++
++	if (!SelectConfigFiles(userDoption, progname))
++		return -1;
++
++	checkDataDir();
++	ChangeToDataDir();
++	CreateDataDirLockFile(false);
++	LocalProcessControlFile(false);
++	process_shared_preload_libraries();
++	InitializeMaxBackends();
++	InitPostmasterChildSlots();
++	InitializeFastPathLocks();
++	process_shmem_requests();
++	InitializeShmemGUCs();
++	InitializeWalConsistencyChecking();
++	CreateSharedMemoryAndSemaphores();
++	set_max_safe_fds();
++	PgStartTime = GetCurrentTimestamp();
++	InitProcess();
++
++	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_pair) != 0)
++		ereport(FATAL,
++				(errmsg("could not create embedded liboliphaunt socketpair: %m")));
++
++	memset(&client_sock, 0, sizeof(client_sock));
++	client_sock.sock = socket_pair[0];
++	addr = (struct sockaddr_in *) &client_sock.raddr.addr;
++	addr->sin_family = AF_INET;
++	addr->sin_port = htons(5432);
++	addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++	client_sock.raddr.salen = sizeof(struct sockaddr_in);
++
++	whereToSendOutput = DestRemote;
++	MyBackendType = B_BACKEND;
++	MyProcPort = pq_init(&client_sock);
++	MyProcPort->oliphaunt_io = io;
++
++	/*
++	 * Authentication is host-owned for embedded mode.  Emit the standard
++	 * AuthenticationOk message before PostgresMain reports ParameterStatus,
++	 * BackendKeyData, and ReadyForQuery.
++	 */
++	{
++		StringInfoData buf;
++
++		pq_beginmessage(&buf, PqMsg_AuthenticationRequest);
++		pq_sendint32(&buf, (int32) AUTH_REQ_OK);
++		pq_endmessage(&buf);
++	}
++
++	PostgresMain(dbname, username);
++
++	if (socket_pair[1] >= 0)
++		close(socket_pair[1]);
++
++	return 0;
++}
++#endif
+
+ /* ----------------------------------------------------------------
+  * PostgresMain

@@ -1,0 +1,125 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-js",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "javascript-workspace-build-inputs",
+      "paths": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml"
+      ],
+      "inputs": [
+        {
+          "path": "package.json",
+          "sha256": "612dd3b56208b67841480254fb801b5e92628b6d7e0cbd0bb9719163bdcab552"
+        },
+        {
+          "path": "pnpm-lock.yaml",
+          "sha256": "3cb642ed2627a7c9c96e1be76c9e0b4b8143efbb30e952d189df53f64bee4b41"
+        },
+        {
+          "path": "pnpm-workspace.yaml",
+          "sha256": "1802cd201f7828983c51574c165eb1bf68b8dd667e54b0e7f58eb245739f6ec1"
+        }
+      ]
+    },
+    {
+      "id": "canonical-release-notice-carrier-producer",
+      "paths": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/release/release-notices.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+        },
+        {
+          "path": "tools/release/release-notices.mjs",
+          "sha256": "7ca648a710f7f8880b18c481e9c30dcdbf84723254689d489e367055d6f45a64"
+        }
+      ]
+    },
+    {
+      "id": "npm-extension-contract",
+      "paths": [
+        "src/sdks/js/src/native/extension-contract.ts"
+      ],
+      "inputs": [
+        {
+          "path": "src/sdks/js/src/native/extension-contract.ts",
+          "sha256": "a010de71754e015f302898180cf75819085475187a9237d42ad76c7ef6c97555"
+        }
+      ]
+    },
+    {
+      "id": "source-only-sdk-package-producer",
+      "paths": [
+        "tools/release/source-only-sdk-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/source-only-sdk-package.mjs",
+          "sha256": "29e24783df82e000dd30c12522d37932941722340cc43ca442cffb4877e81436"
+        }
+      ]
+    },
+    {
+      "id": "shared-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/shared.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/shared.mjs",
+          "sha256": "4ab4c4f723ec26dfeb4ab6c0c20c43dad7698098bd88cbc593d9748897c0c8a7"
+        }
+      ]
+    },
+    {
+      "id": "shared-npm-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/npm.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/npm.mjs",
+          "sha256": "582d747d420ae8740bb88ea2a4a1a8b206b249521a6184e2c14354de9e02b26b"
+        }
+      ]
+    },
+    {
+      "id": "js-sdk-artifact-producer",
+      "paths": [
+        "tools/release/sdk-artifacts/js.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/sdk-artifacts/js.mjs",
+          "sha256": "76065be2fc6584ee835e9f2634b7f5622208b9d0d30b38707345cf89b7f80085"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    }
+  ],
+  "sha256": "2b285b73c6a46fd7e7b2d4f5ec86612ac94e4ec30f717f6d5aab567681a3c6dc"
+}

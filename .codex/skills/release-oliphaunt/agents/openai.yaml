@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Oliphaunt"
+  short_description: "Prepare, qualify, publish, and recover releases"
+  default_prompt: "Use $release-oliphaunt to prepare and qualify an Oliphaunt release."

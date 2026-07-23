@@ -1,0 +1,4 @@
+name = "geos"
+url = "https://github.com/libgeos/geos.git"
+branch = "3.14.1"
+commit = "c389f532d25fe6228861d9b19339f9cb57ca4bdb"

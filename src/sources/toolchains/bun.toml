@@ -1,0 +1,37 @@
+[toolchain]
+version = "1.3.14"
+
+[assets.darwin-aarch64]
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip"
+sha256 = "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+binary_path = "bun-darwin-aarch64/bun"
+binary_sha256 = "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+entry_count = "2"
+
+[assets.darwin-x64]
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-x64.zip"
+sha256 = "4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633"
+binary_path = "bun-darwin-x64/bun"
+binary_sha256 = "ea2f223e94bb2f4bf3050895113c3cf346438f6fa0501c8532284e063f72f7a0"
+entry_count = "2"
+
+[assets.linux-aarch64]
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip"
+sha256 = "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b"
+binary_path = "bun-linux-aarch64/bun"
+binary_sha256 = "37141662ebed915a2ab89313156e455e2a1374395f5f6760d06407f49406f086"
+entry_count = "2"
+
+[assets.linux-x64]
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip"
+sha256 = "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f"
+binary_path = "bun-linux-x64/bun"
+binary_sha256 = "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74"
+entry_count = "2"
+
+[assets.windows-x64]
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-windows-x64.zip"
+sha256 = "0a0620930b6675d7ba440e81f4e0e00d3cfbe096c4b140d3fff02205e9e18922"
+binary_path = "bun-windows-x64/bun.exe"
+binary_sha256 = "0187f68d843f825a72ada4a7eca60db896ed753759a7f8252edcd31ac1bf1b9c"
+entry_count = "2"

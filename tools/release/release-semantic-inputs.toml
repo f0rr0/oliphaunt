@@ -1,0 +1,479 @@
+schema = "oliphaunt-release-semantic-inputs-v1"
+
+# Rules in this file own shared inputs that can change published bytes or a
+# public target/support contract. Validators, tests, workflows, and registry
+# transport orchestration deliberately do not belong here.
+
+[[rules]]
+id = "cargo-workspace-build-inputs"
+paths = ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml"]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-broker",
+  "oliphaunt-rust",
+  "oliphaunt-wasix-rust",
+]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "javascript-workspace-build-inputs"
+paths = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
+products = ["oliphaunt-js", "oliphaunt-react-native"]
+
+[[rules]]
+id = "canonical-release-notice-carrier-producer"
+# These inputs are copied into every public carrier. The helper also defines
+# the exact profile-specific notice namespace and therefore changes bytes for
+# every release-product kind when it changes.
+paths = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "tools/release/release-notices.mjs",
+]
+product_kinds = [
+  "native-core",
+  "wasm-runtime",
+  "runtime",
+  "sdk",
+  "exact-extension-artifact",
+  "exact-extension-bundle",
+]
+
+[[rules]]
+id = "native-product-notice"
+paths = ["src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md"]
+products = ["liboliphaunt-native"]
+
+[[rules]]
+id = "wasix-product-notice"
+paths = ["src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"]
+products = ["liboliphaunt-wasix"]
+
+[[rules]]
+id = "postgresql-release-license-snapshot"
+paths = [
+  "src/postgres/versions/18/source.toml",
+  "src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT",
+]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-extension-contrib-pg18",
+]
+
+[[rules]]
+id = "icu-release-license-snapshot"
+paths = [
+  "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
+  "src/sources/third-party/shared/icu.toml",
+]
+products = ["liboliphaunt-native", "liboliphaunt-wasix"]
+
+[[rules]]
+id = "openssl-release-license-snapshot"
+paths = [
+  "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt",
+  "src/sources/third-party/shared/openssl.toml",
+]
+products = ["oliphaunt-extension-contrib-pg18"]
+
+[[rules]]
+id = "extension-upstream-license-carrier-producer"
+paths = ["tools/release/extension-upstream-licenses.mjs"]
+products = [
+  "oliphaunt-kotlin",
+  "oliphaunt-extension-contrib-pg18",
+  "oliphaunt-extension-pg-hashids",
+  "oliphaunt-extension-pg-ivm",
+  "oliphaunt-extension-pg-textsearch",
+  "oliphaunt-extension-pg-uuidv7",
+  "oliphaunt-extension-pgtap",
+  "oliphaunt-extension-postgis",
+  "oliphaunt-extension-vector",
+]
+
+[[rules]]
+id = "android-extension-legal-catalog-producer"
+paths = ["src/extensions/tools/android-extension-legal-catalog.mjs"]
+products = ["oliphaunt-kotlin"]
+
+[[rules]]
+id = "postgis-reproducible-time-contract"
+paths = [
+  "src/extensions/external/postgis/source.toml",
+  "src/extensions/external/postgis/tools/reproducible-bin/date",
+  "src/extensions/external/postgis/tools/reproducible-time.sh",
+]
+products = ["liboliphaunt-native", "liboliphaunt-wasix"]
+
+[[rules]]
+id = "native-postgis-carrier-producers"
+paths = [
+  "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
+  "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
+]
+products = ["oliphaunt-extension-postgis"]
+
+[[rules]]
+id = "wasix-postgis-runtime-producer"
+paths = ["src/extensions/external/postgis/tools/build_wasix.sh"]
+products = ["liboliphaunt-wasix"]
+
+[[rules]]
+id = "npm-extension-contract"
+# This schema/parser is compiled into @oliphaunt/ts and is imported directly
+# by the npm extension carrier materializer, so one edit changes both sides of
+# the independently versioned package contract.
+paths = ["src/sdks/js/src/native/extension-contract.ts"]
+products = ["oliphaunt-js"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "source-only-sdk-package-producer"
+paths = ["tools/release/source-only-sdk-package.mjs"]
+products = ["oliphaunt-js", "oliphaunt-react-native"]
+
+[[rules]]
+id = "extension-artifact-carrier-producers"
+# Frozen npm/Cargo carrier bytes live in the focused materializer. The
+# local-registry publisher remains transport-only and deliberately has no
+# release-semantic owner.
+paths = [
+  "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
+  "src/extensions/artifacts/native/tools/package-release-assets.sh",
+  "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
+  "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh",
+  "src/extensions/artifacts/packages/tools/package-release-assets.sh",
+  "src/extensions/artifacts/wasix/tools/package-release-assets.mjs",
+  "src/extensions/artifacts/wasix/tools/package-release-assets.sh",
+  "src/sdks/rust/extension-artifact-archive-policy.properties",
+  "tools/release/bounded-gunzip-to-file.mjs",
+  "tools/release/build-extension-ci-artifacts.mjs",
+  "tools/release/extension-artifact-archive-policy.mjs",
+  "tools/release/extension-artifact-inventory.mjs",
+  "tools/release/extension-registry-carrier-materializer.mjs",
+  "tools/release/extension-registry-packages.mjs",
+  "tools/release/extension-runtime-asset-contract.mjs",
+  "tools/release/npm-trusted-publishing.mjs",
+  "tools/release/package-extension-cargo-facades.mjs",
+]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "apple-carrier-manifest-producer"
+# This renderer creates both independent extension carrier assets and the
+# selection-neutral carrier embedded in the Swift source tree and React Native
+# npm package.
+paths = ["tools/release/ios-carrier-manifest.mjs"]
+products = ["oliphaunt-swift", "oliphaunt-react-native"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "wasix-release-asset-rust-producers"
+# The xtask release command stages, rewrites, and deterministically archives
+# the public WASIX runtime carriers under target/oliphaunt-wasix/release-assets.
+paths = [
+  "tools/xtask/Cargo.toml",
+  "tools/xtask/src/aot_serializer.rs",
+  "tools/xtask/src/asset_fingerprint.rs",
+  "tools/xtask/src/asset_manifest.rs",
+  "tools/xtask/src/asset_pipeline.rs",
+  "tools/xtask/src/extension_catalog.rs",
+  "tools/xtask/src/fs_utils.rs",
+  "tools/xtask/src/main.rs",
+  "tools/xtask/src/postgres_guard.rs",
+  "tools/xtask/src/release_workspace.rs",
+  "tools/xtask/src/template_runner.rs",
+]
+products = ["liboliphaunt-wasix"]
+
+[[rules]]
+id = "wasix-generated-extension-runtime-inputs"
+# The WASIX portable runtime carrier copies the public projection of
+# src/extensions/generated. Qualification-only metadata is removed explicitly.
+# Keep the SDK catalogs that have additional byte owners in separate exact
+# rules below so ownership patterns remain non-overlapping.
+paths = [
+  "src/extensions/generated/contrib-build.tsv",
+  "src/extensions/generated/docs/**",
+  "src/extensions/generated/extensions.build-plan.json",
+  "src/extensions/generated/extensions.catalog.json",
+  "src/extensions/generated/mobile/static-extensions.tsv",
+  "src/extensions/generated/mobile/static-registry.json",
+  "src/extensions/generated/pgxs-build.tsv",
+  "src/extensions/generated/sdk/js.json",
+  "src/extensions/generated/sdk/react-native.json",
+  "src/extensions/generated/sdk/rust.json",
+  "src/extensions/generated/wasix/**",
+]
+products = ["liboliphaunt-wasix"]
+
+[[rules]]
+id = "extension-kotlin-runtime-catalog"
+paths = ["src/extensions/generated/sdk/kotlin.json"]
+products = ["liboliphaunt-wasix"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "swift-extension-owner-catalog"
+paths = ["src/extensions/generated/sdk/swift.json"]
+products = ["liboliphaunt-wasix", "oliphaunt-swift"]
+
+[[rules]]
+id = "native-npm-carrier-producer"
+# This mixed helper directly assembles and packs the frozen native-runtime and
+# broker npm tarballs. Its other branches only validate staged bytes or invoke
+# focused byte producers that have their own semantic ownership rules.
+paths = ["tools/release/release-product-dry-run.mjs"]
+products = [
+  "liboliphaunt-native",
+  "oliphaunt-broker",
+]
+
+[[rules]]
+id = "maven-runtime-extension-carrier-producer"
+paths = [
+  "tools/release/build_maven_artifact_manifest.mjs",
+  "tools/release/maven-artifact-staging.mjs",
+]
+products = ["liboliphaunt-native"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "native-cargo-carrier-producer"
+paths = ["tools/release/package-liboliphaunt-cargo-artifacts.mjs"]
+products = ["liboliphaunt-native"]
+
+[[rules]]
+id = "broker-cargo-carrier-producer"
+paths = ["tools/release/package_broker_cargo_artifacts.mjs"]
+products = ["oliphaunt-broker"]
+
+[[rules]]
+id = "broker-compiled-dependency-license-carrier-producer"
+paths = [
+  "src/runtimes/broker/dependency-license-blobs/**",
+  "src/runtimes/broker/dependency-licenses.json",
+  "tools/release/broker-dependency-license-contract.mjs",
+]
+products = ["oliphaunt-broker"]
+
+[[rules]]
+id = "wasix-runtime-extension-cargo-carrier-producer"
+paths = ["tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"]
+products = ["liboliphaunt-wasix"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "wasix-extension-cargo-build-script-hash-producer"
+paths = ["tools/release/rust-build-script-sha256.mjs"]
+products = ["liboliphaunt-wasix"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "shared-cargo-source-archive-producer"
+paths = ["tools/release/cargo-source-package.mjs"]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-broker",
+  "oliphaunt-rust",
+  "oliphaunt-wasix-rust",
+]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "shared-sdk-artifact-producer"
+# Product staging modules import this byte-affecting filesystem/process helper.
+# The dispatcher and final staged-artifact check remain orchestration-only.
+paths = ["tools/release/sdk-artifacts/shared.mjs"]
+products = [
+  "oliphaunt-js",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-wasix-rust",
+]
+
+[[rules]]
+id = "shared-npm-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/npm.mjs"]
+products = ["oliphaunt-js", "oliphaunt-react-native"]
+
+[[rules]]
+id = "rust-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/rust.mjs"]
+products = ["oliphaunt-rust"]
+
+[[rules]]
+id = "swift-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/swift.mjs"]
+products = ["oliphaunt-swift"]
+
+[[rules]]
+id = "kotlin-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/kotlin.mjs"]
+products = ["oliphaunt-kotlin"]
+
+[[rules]]
+id = "js-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/js.mjs"]
+products = ["oliphaunt-js"]
+
+[[rules]]
+id = "react-native-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/react-native.mjs"]
+products = ["oliphaunt-react-native"]
+
+[[rules]]
+id = "wasix-rust-sdk-artifact-producer"
+paths = ["tools/release/sdk-artifacts/wasix-rust.mjs"]
+products = ["oliphaunt-wasix-rust"]
+
+[[rules]]
+id = "canonical-public-product-target-contract"
+paths = ["tools/release/release-artifact-targets.mjs"]
+product_kinds = [
+  "native-core",
+  "wasm-runtime",
+  "runtime",
+  "sdk",
+  "exact-extension-artifact",
+  "exact-extension-bundle",
+]
+
+[[rules]]
+id = "published-binary-compatibility-contract"
+paths = ["tools/release/platform-compatibility-policy.mjs"]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-broker",
+  "oliphaunt-node-direct",
+]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "shared-native-archive-encoder"
+paths = ["tools/release/archive_dir.mjs"]
+products = ["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "canonical-native-c-abi-header"
+# Node direct and Kotlin compile or package this canonical runtime header.
+# Native owns the path directly; this edge adds the cross-product byte dependencies.
+paths = ["src/runtimes/liboliphaunt/native/include/oliphaunt.h"]
+products = ["oliphaunt-kotlin", "oliphaunt-node-direct"]
+
+[[rules]]
+id = "native-runtime-release-asset-producers"
+paths = [
+  "tools/release/package-liboliphaunt-aggregate-assets.sh",
+  "tools/release/package-liboliphaunt-icu-data.sh",
+  "tools/release/package-liboliphaunt-linux-assets.sh",
+  "tools/release/package-liboliphaunt-macos-assets.sh",
+  "tools/release/package-liboliphaunt-mobile-assets.sh",
+  "tools/release/package-liboliphaunt-windows-assets.ps1",
+  "tools/release/optimize_native_runtime_payload.mjs",
+]
+products = ["liboliphaunt-native"]
+
+[[rules]]
+id = "native-runtime-resource-rust-producers"
+# The selection-neutral runtime-resources carrier is emitted by the Rust SDK's
+# oliphaunt-resources binary during native iOS asset packaging. Own only the
+# CLI, renderer, native runtime/template materialization, and prebuilt-extension
+# artifact loader closure that can alter those bytes. Index/download/signing
+# helpers and unrelated SDK runtime behavior remain Rust-SDK-only inputs.
+paths = [
+  "src/sdks/rust/src/bin/package_resources.rs",
+  "src/sdks/rust/src/build_resources.rs",
+  "src/sdks/rust/src/config.rs",
+  "src/sdks/rust/src/extension.rs",
+  "src/sdks/rust/src/generated/extensions.rs",
+  "src/sdks/rust/src/lib.rs",
+  "src/sdks/rust/src/liboliphaunt/ffi.rs",
+  "src/sdks/rust/src/liboliphaunt/mod.rs",
+  "src/sdks/rust/src/liboliphaunt/root.rs",
+  "src/sdks/rust/src/liboliphaunt/root/extensions.rs",
+  "src/sdks/rust/src/liboliphaunt/root/files.rs",
+  "src/sdks/rust/src/liboliphaunt/root/fingerprint.rs",
+  "src/sdks/rust/src/liboliphaunt/root/runtime.rs",
+  "src/sdks/rust/src/liboliphaunt/root/runtime/**",
+  "src/sdks/rust/src/liboliphaunt/root/template.rs",
+  "src/sdks/rust/src/runtime_resources.rs",
+  "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
+  "src/sdks/rust/src/runtime_resources/manifest.rs",
+  "src/sdks/rust/src/runtime_resources/package.rs",
+  "src/sdks/rust/src/runtime_resources/static_registry.rs",
+]
+products = ["liboliphaunt-native"]
+
+[[rules]]
+id = "broker-release-asset-producers"
+paths = [
+  "tools/release/build-linux-broker-baseline.sh",
+  "tools/release/package-broker-assets.sh",
+]
+products = ["oliphaunt-broker"]
+
+[[rules]]
+id = "native-release-binary-byte-postprocessing"
+paths = ["tools/release/strip_native_release_binaries.mjs"]
+products = ["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "native-release-symlink-materialization"
+paths = ["tools/release/materialize-release-symlinks.mjs"]
+products = ["liboliphaunt-native"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "windows-release-runtime-closure"
+paths = [
+  "tools/release/native-runtime-payload-policy.json",
+  "tools/release/windows-vc-runtime-closure.mjs",
+]
+products = ["liboliphaunt-native", "oliphaunt-broker"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "runtime-release-checksum-producer"
+paths = ["tools/release/write_checksum_manifest.mjs"]
+products = [
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "oliphaunt-broker",
+  "oliphaunt-node-direct",
+]
+
+[[rules]]
+id = "swiftpm-release-source-renderer"
+paths = ["tools/release/render_swiftpm_release_package.mjs"]
+products = ["oliphaunt-swift"]
+
+[[rules]]
+id = "rust-sdk-source-producer"
+paths = ["tools/release/prepare-rust-release-source.mjs"]
+products = ["oliphaunt-rust"]
+
+[[rules]]
+id = "wasix-rust-sdk-source-producer"
+paths = ["tools/release/package_oliphaunt_wasix_sdk_crate.mjs"]
+products = ["oliphaunt-wasix-rust"]
+
+[[rules]]
+id = "shared-release-archive-transport"
+paths = ["tools/release/tar-command.mjs"]
+products = ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-broker"]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]

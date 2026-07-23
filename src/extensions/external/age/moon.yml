@@ -1,0 +1,23 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-age"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "external"]
+dependsOn:
+  - "extension-runtime-contract"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/age"
+    deps:
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/external/age/**/*"
+      - "/src/extensions/tools/check-extension-tree.mjs"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -1,0 +1,91 @@
+---
+title: C ABI
+description: Native runtime boundary for language bindings and direct C consumers.
+---
+
+<SdkLanding id="c-abi" />
+
+`liboliphaunt` is the native runtime boundary for SDKs and direct C consumers.
+Most app developers use a platform SDK, but binding authors use the C ABI as the
+stable layer under Swift, Kotlin, React Native, TypeScript native adapters, and
+other language bindings.
+
+Use this surface when you are writing a new SDK, integrating from a C or C++
+application, or validating the native runtime independently from a language
+wrapper.
+
+## Install
+
+Consume the released headers, libraries, and runtime assets for the target you
+are binding. Language SDKs package those artifacts through their own ecosystems,
+so app developers usually install the Rust, Swift, Kotlin, React Native,
+TypeScript, or WASM SDK.
+
+The public boundary is intentionally small:
+
+- initialize a native direct database session;
+- execute raw PostgreSQL protocol bytes or simple SQL;
+- stream large protocol responses;
+- back up or restore supported archive formats;
+- read capabilities and structured errors;
+- close or detach according to the process lifecycle.
+
+The ABI owns handles and response buffers. Language bindings own serialization,
+typed query helpers, task scheduling, and platform packaging.
+
+## Open And Query
+
+The C ABI uses opaque handles and explicit response ownership:
+
+```c
+#include <oliphaunt.h>
+#include <string.h>
+
+OliphauntHandle *handle = NULL;
+OliphauntConfig config = {
+    .abi_version = OLIPHAUNT_ABI_VERSION,
+    .pgdata = "./app-data/main.oliphaunt/pgdata",
+    .username = "app",
+    .database = "app",
+};
+
+int32_t status = oliphaunt_init(&config, &handle);
+if (status == 0) {
+    OliphauntResponse response = {0};
+    const char *sql = "SELECT 1::text AS value";
+    status = oliphaunt_exec_simple_query(handle, sql, strlen(sql), &response);
+    oliphaunt_free_response(&response);
+}
+oliphaunt_close(handle);
+```
+
+## Runtime Shape
+
+The C ABI is the native direct runtime boundary. It exposes capabilities for the
+target artifact so bindings can report which runtime modes, backup formats,
+streaming behavior, and extensions are available.
+
+Direct mode owns one serialized embedded PostgreSQL session. Broker and server
+support appear through higher-level SDKs or helper processes only when the
+target runtime advertises those capabilities.
+
+## App Responsibilities
+
+Bindings and direct C consumers own the app-facing contract above the ABI:
+
+- Keep all cross-language query transport on raw PostgreSQL protocol bytes or
+  simple SQL helpers provided by the ABI.
+- Serialize work according to the selected runtime mode.
+- Select exact SQL extension names before opening the database.
+- Surface `capabilities()` and structured errors in ecosystem-native types.
+- Use ABI backup and restore calls instead of copying live PostgreSQL roots.
+- Capture the logical generation immediately after init when more than one host
+  environment or finalizer can own cleanup, and use generation-guarded terminal
+  close so stale teardown cannot close a newer lease.
+
+## First Query
+
+Use [Build a Binding](/docs/sdk/c-abi/guide) for open, query, close,
+lifecycle, extension, and backup behavior. Use the
+[API reference](/docs/sdk/c-abi/api-reference) for the public handle and
+function map.

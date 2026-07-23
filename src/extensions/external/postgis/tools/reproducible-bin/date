@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+epoch="${SOURCE_DATE_EPOCH:-}"
+format='+%Y-%m-%d %H:%M:%S'
+if [ "$#" = 4 ] && {
+  { [ "$1" = -d ] && [ "$2" = "@$epoch" ] && [ "$3" = -u ] && [ "$4" = "$format" ]; } ||
+  { [ "$1" = -u ] && [ "$2" = -d ] && [ "$3" = "@$epoch" ] && [ "$4" = "$format" ]; }
+}; then
+  [[ "$epoch" =~ ^[1-9][0-9]{0,11}$ ]] && [ "$epoch" -le 253402300799 ] || {
+    echo "PostGIS reproducible date shim requires a canonical SOURCE_DATE_EPOCH" >&2
+    exit 2
+  }
+  exec perl -MPOSIX=strftime -e \
+    'print strftime("%Y-%m-%d %H:%M:%S", gmtime($ARGV[0])), "\n"' "$epoch"
+fi
+
+real_date="${OLIPHAUNT_POSTGIS_REAL_DATE:-}"
+[ -n "$real_date" ] && [ -x "$real_date" ] && [ "$real_date" != "$0" ] || {
+  echo "PostGIS reproducible date shim cannot delegate without OLIPHAUNT_POSTGIS_REAL_DATE" >&2
+  exit 2
+}
+exec "$real_date" "$@"

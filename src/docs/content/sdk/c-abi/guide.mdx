@@ -1,0 +1,123 @@
+---
+title: Build A Binding
+description: Build a language binding over opaque C handles, raw protocol bytes, explicit response ownership, lifecycle, extensions, and backup APIs.
+---
+
+# Build A Binding
+
+Use the C ABI when building language bindings or platform SDKs. App developers
+usually choose Rust, Swift, Kotlin, React Native, TypeScript, or WASM instead.
+
+<Callout type="info" title="The C ABI is a binding boundary">
+Use this surface when you need opaque handles, explicit response ownership, and
+the native runtime boundary. App-facing SDKs own typed queries and platform
+lifecycle integration.
+</Callout>
+
+<SdkGuideSummary id="c-abi" />
+
+<Steps>
+<Step>
+
+### Install
+
+Consume the released headers, libraries, and runtime assets for your target.
+Language bindings package those artifacts through the target ecosystem so app
+developers install one SDK surface.
+
+</Step>
+<Step>
+
+### Open and query
+
+Open a root, send raw protocol bytes, read backend messages, and close the
+handle.
+
+<!-- oliphaunt-snippet: liboliphaunt-native -->
+
+```c
+#include <oliphaunt.h>
+#include <string.h>
+
+OliphauntConfig config = {
+    .abi_version = OLIPHAUNT_ABI_VERSION,
+    .pgdata = "/app/data/main.oliphaunt/pgdata",
+    .username = "app",
+    .database = "app",
+};
+
+OliphauntHandle *db = NULL;
+int rc = oliphaunt_init(&config, &db);
+if (rc != 0) {
+    return rc;
+}
+
+OliphauntResponse response = {0};
+const char *sql = "SELECT 1::text AS value";
+rc = oliphaunt_exec_simple_query(db, sql, strlen(sql), &response);
+oliphaunt_free_response(&response);
+oliphaunt_close(db);
+```
+
+Higher-level SDKs own SQL builders, typed parsing, async scheduling, resource
+selection, and lifecycle integration.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure root, mode, selected extensions, runtime resource paths, startup
+identity, durability, and owner identity through the ABI config surface.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+The ABI exposes capabilities for the selected target. Direct mode owns one
+serialized embedded session. Broker and server support appear only when the
+target runtime advertises those modes.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Each binding runs calls through a single owner queue or equivalent serial
+executor. A host with exactly one serialized lifetime owner can terminate the
+resident runtime with `oliphaunt_close`. A binding with independent environment,
+worker, or finalizer cleanup owners must instead capture
+`oliphaunt_logical_generation(db)` immediately after a successful init and pass
+only that token to `oliphaunt_close_if_generation` during teardown. A stale
+owner receives a positive non-error result while a newer logical lease remains
+active, instead of closing that lease. If terminal close already completed, the
+same cleanup is satisfied with zero. Close rejects queued work and waits for
+active work according to the SDK's platform contract.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Pass exact SQL extension names and resource paths. The ABI loads selected
+extension artifacts and their declared dependencies.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use ABI backup and restore calls for supported physical archive formats.
+Bindings validate user input before crossing the ABI boundary.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="c-abi" />
+
+## Troubleshooting
+
+Inspect ABI error codes, `oliphaunt_last_error`/Oliphaunt error fields, missing
+runtime resources, root locks, mode capability errors, and PostgreSQL SQLSTATE
+data.

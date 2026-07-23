@@ -1,0 +1,144 @@
+---
+title: Build With TypeScript
+description: Use the desktop JavaScript SDK in Node.js, Bun, or Deno with helper-backed runtimes and selected extensions.
+---
+
+# Build With TypeScript
+
+Use the TypeScript SDK in Node.js, Bun, and Deno. It
+provides a JavaScript API over Oliphaunt runtime assets and broker/server
+helpers where supported.
+
+<Callout type="info" title="Desktop JavaScript uses native helpers">
+Use this package for Node.js, Bun, and Deno. Tauri apps currently keep the
+database in Rust state behind narrow app-owned commands; direct webview
+integration is planned. React Native apps use the React Native SDK because
+mobile runtime work flows through Swift and Kotlin.
+</Callout>
+
+<SdkGuideSummary id="typescript" />
+
+<Steps>
+<Step>
+
+### Install
+
+Install the npm package. Runtime assets and helper executables resolve through
+package configuration.
+
+```sh
+npm install @oliphaunt/ts
+```
+
+</Step>
+<Step>
+
+### Open and query
+
+Create a client, open a root, run SQL, and close the handle.
+
+<!-- oliphaunt-snippet: oliphaunt-js -->
+
+```ts
+import { Oliphaunt } from '@oliphaunt/ts';
+
+const db = await Oliphaunt.open({
+  engine: 'nativeBroker',
+  root: './app-data/main.oliphaunt',
+  extensions: ['vector'],
+});
+
+const rows = await db.query('SELECT 1::text AS value');
+const value = rows.getText(0, 'value');
+
+await db.close();
+```
+
+Keep one client per app database root unless you intentionally use a mode that
+supports independent sessions.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use the TypeScript query helpers for app code and keep the client in a service
+or framework-owned dependency container:
+
+```ts
+await db.execute(`
+  CREATE TABLE IF NOT EXISTS notes (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )
+`);
+
+await db.query(
+  'INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id',
+  ['First note', 'Stored in an embedded PostgreSQL root'],
+);
+
+const notes = await db.query(
+  'SELECT id, title FROM notes ORDER BY id DESC LIMIT 20',
+);
+const firstTitle = notes.getText(0, 'title');
+```
+
+Tauri apps keep the database in Rust state and expose narrow app-owned commands
+to the webview. A direct TypeScript/webview adapter is planned, not supported in
+the first release.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure mode, root, selected exact extensions, runtime asset locations,
+durability, startup identity, broker helper path, and server helper path through
+the JS configuration object.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+Direct mode is lowest-latency where a native binding is available. Broker mode
+uses a helper process and is the preferred robust desktop JavaScript path.
+Server mode is for PostgreSQL-compatible tools and independent clients.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+The client queues work through the selected runtime boundary. Close rejects
+queued work and waits for active work. Use explicit cancellation for long SQL.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names before open. Generated resources include only
+selected extensions and mandatory dependencies.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use SDK backup and restore helpers for physical archives and supported server
+flows. Keep live PostgreSQL directories behind the SDK data-movement APIs.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="typescript" />
+
+## Troubleshooting
+
+Check runtime asset resolution, helper executable availability, root locks,
+mode capability errors, extension selection, and SQLSTATE-bearing PostgreSQL
+errors.

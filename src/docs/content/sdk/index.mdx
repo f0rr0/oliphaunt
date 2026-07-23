@@ -1,0 +1,82 @@
+---
+title: SDKs
+description: Choose the Oliphaunt SDK for Rust, Apple, Android, React Native, TypeScript, WASM, or C ABI binding.
+---
+
+# SDKs
+
+Choose the SDK by the app target and delivery path. Oliphaunt is a family of
+peer SDKs over the same embedded PostgreSQL runtime model: open an app-owned
+root, select the runtime mode, choose exact SQL extensions, run SQL, read
+capabilities, and use the SDK's lifecycle and backup APIs.
+
+Each SDK page starts with the package to install, the platform build step that
+matters, a first query, and the runtime behavior that affects real apps. Use
+the reference pages when you need exact capability or extension tables.
+
+<SdkChooser />
+
+## How To Choose
+
+Use the SDK that owns the app binary or helper process that carries the
+database runtime:
+
+- choose Swift for iOS and macOS apps;
+- choose Kotlin for Android apps;
+- choose React Native when JavaScript owns the app surface and Swift/Kotlin
+  carry the native runtime underneath;
+- choose Rust for Tauri and native Rust desktop apps, and TypeScript for
+  Node.js, Bun, Deno, and local JavaScript helper processes;
+- choose WASM when the runtime host is WASIX;
+- choose C ABI only when building another language binding or integrating the
+  native runtime directly.
+
+React Native crosses two native platforms. Its public API is TypeScript, while
+packaging, lifecycle, and binary transport are handled through Swift on Apple
+platforms and Kotlin on Android.
+
+## Shared Contract
+
+All SDKs expose the same durable concepts where the platform supports them:
+
+- explicit runtime mode selection;
+- app-owned persistent or temporary roots;
+- exact SQL extension selection;
+- `capabilities()` before relying on advanced features;
+- SQL helpers plus raw protocol access for adapters;
+- lifecycle, backup, restore, and structured PostgreSQL errors.
+
+Each SDK reports platform-specific mode support through capabilities. Mobile
+SDKs expose direct mode first; broker and server support appear when a platform
+SDK advertises those runtimes. Direct mode uses one physical session with
+serialized work.
+
+<ModeMatrix />
+
+## What Each SDK Page Answers
+
+Use the landing page for the package you are adding to an app. It answers the
+questions that block the first useful integration:
+
+| Question | Why it matters |
+| --- | --- |
+| Which package do I install? | App users install your app; the SDK carries released runtime artifacts. |
+| What build step changes my app binary? | Native runtime assets and selected extensions are packaged at build time. |
+| Which runtime mode can I use? | Direct, broker, server, and WASM have different concurrency and process boundaries. |
+| How do I ship only selected extensions? | App artifacts include exact SQL extension names and declared dependencies only. |
+| What happens on close, backgrounding, relaunch, and backup? | Embedded database behavior has to match platform lifecycle expectations. |
+
+React Native covers the JavaScript boundary, config plugin, TurboModule, JSI
+transport, and installed-app wiring. Swift and Kotlin cover platform lifecycle
+and runtime resources. Rust and TypeScript cover their own desktop runtime
+ownership. WASM remains a separate runtime family.
+
+## Where To Go Next
+
+- Use [Start](/docs/start) for the shortest first-query path.
+- Use [Capability Matrix](/docs/reference/capabilities) before relying on a
+  mode or feature in a packaged app.
+- Use [Extensions](/docs/reference/extensions) to understand exact extension
+  selection and app artifact behavior.
+- Use [Native Runtime](/docs/learn/native-runtime) for direct, broker, and
+  server semantics.

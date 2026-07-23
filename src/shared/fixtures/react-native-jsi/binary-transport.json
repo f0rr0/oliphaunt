@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "kind": "oliphaunt-react-native-jsi-binary-transport",
+  "cases": [
+    {
+      "name": "array-buffer-request",
+      "requestKind": "ArrayBuffer",
+      "valid": true
+    },
+    {
+      "name": "uint8array-offset",
+      "requestKind": "Uint8Array",
+      "byteOffset": 1,
+      "byteLength": 3,
+      "valid": true
+    },
+    {
+      "name": "stream-chunks",
+      "chunks": ["aa", "bb"],
+      "requiresNativeChunkCallback": true
+    },
+    {
+      "name": "base64-rejected",
+      "requestKind": "base64",
+      "valid": false
+    },
+    {
+      "name": "unsafe-handle-rejected",
+      "handle": 9007199254740992,
+      "valid": false
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "schema": "oliphaunt-extension-upstream-license-data-v1",
+  "sources": [
+    {
+      "id": "pg_textsearch",
+      "manifest": "src/extensions/external/pg_textsearch/source.toml",
+      "kind": "git",
+      "url": "https://github.com/timescale/pg_textsearch.git",
+      "branch": "pinned",
+      "commit": "5c5147bf2610d786f1bd139951b9fb7fe4ac68fb"
+    }
+  ],
+  "extension": {
+    "sql_name": "pg_textsearch",
+    "files": [
+      {
+        "source": "pg_textsearch",
+        "path": "LICENSE",
+        "destination": "share/licenses/pg_textsearch/LICENSE",
+        "role": "license",
+        "spdx": "PostgreSQL",
+        "license_url": "https://github.com/timescale/pg_textsearch/blob/5c5147bf2610d786f1bd139951b9fb7fe4ac68fb/LICENSE",
+        "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5"
+      },
+      {
+        "source": "pg_textsearch",
+        "path": "NOTICE",
+        "destination": "share/licenses/pg_textsearch/NOTICE",
+        "role": "notice",
+        "spdx": "PostgreSQL",
+        "license_url": "https://github.com/timescale/pg_textsearch/blob/5c5147bf2610d786f1bd139951b9fb7fe4ac68fb/NOTICE",
+        "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d"
+      }
+    ]
+  },
+  "blobs": {
+    "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5": "VGhlIFBvc3RncmVTUUwgTGljZW5zZQoKUGVybWlzc2lvbiB0byB1c2UsIGNvcHksIG1vZGlmeSwgYW5kIGRpc3RyaWJ1dGUgdGhpcyBzb2Z0d2FyZSBhbmQgaXRzCmRvY3VtZW50YXRpb24gZm9yIGFueSBwdXJwb3NlLCB3aXRob3V0IGZlZSwgYW5kIHdpdGhvdXQgYSB3cml0dGVuIGFncmVlbWVudAppcyBoZXJlYnkgZ3JhbnRlZCwgcHJvdmlkZWQgdGhhdCB0aGUgYWJvdmUgY29weXJpZ2h0IG5vdGljZSBhbmQgdGhpcyBwYXJhZ3JhcGgKYW5kIHRoZSBmb2xsb3dpbmcgdHdvIHBhcmFncmFwaHMgYXBwZWFyIGluIGFsbCBjb3BpZXMuCgpJTiBOTyBFVkVOVCBTSEFMTCBUSUdFUiBEQVRBIEJFIExJQUJMRSBUTyBBTlkgUEFSVFkgRk9SIERJUkVDVCwgSU5ESVJFQ1QsClNQRUNJQUwsIElOQ0lERU5UQUwsIE9SIENPTlNFUVVFTlRJQUwgREFNQUdFUywgSU5DTFVESU5HIExPU1QgUFJPRklUUywgQVJJU0lORwpPVVQgT0YgVEhFIFVTRSBPRiBUSElTIFNPRlRXQVJFIEFORCBJVFMgRE9DVU1FTlRBVElPTiwgRVZFTiBJRiBUSUdFUiBEQVRBIEhBUwpCRUVOIEFEVklTRUQgT0YgVEhFIFBPU1NJQklMSVRZIE9GIFNVQ0ggREFNQUdFLgoKVElHRVIgREFUQSBTUEVDSUZJQ0FMTFkgRElTQ0xBSU1TIEFOWSBXQVJSQU5USUVTLCBJTkNMVURJTkcsIEJVVCBOT1QgTElNSVRFRCBUTywKVEhFIElNUExJRUQgV0FSUkFOVElFUyBPRiBNRVJDSEFOVEFCSUxJVFkgQU5EIEZJVE5FU1MgRk9SIEEgUEFSVElDVUxBUiBQVVJQT1NFLgpUSEUgU09GVFdBUkUgUFJPVklERUQgSEVSRVVOREVSIElTIE9OIEFOICJBUyBJUyIgQkFTSVMsIEFORCBUSUdFUiBEQVRBIEhBUyBOTwpPQkxJR0FUSU9OUyBUTyBQUk9WSURFIE1BSU5URU5BTkNFLCBTVVBQT1JULCBVUERBVEVTLCBFTkhBTkNFTUVOVFMsIE9SCk1PRElGSUNBVElPTlMuCg==",
+    "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d": "cGdfdGV4dHNlYXJjaCBieSBUaWdlciBEYXRhIChUTSkKCkNvcHlyaWdodCAoYykgMjAyNS0yMDI2IFRpbWVzY2FsZSwgSW5jLiBkL2IvYSBUaWdlciBEYXRhLiBBbGwgUmlnaHRzIFJlc2VydmVkLgoKTGljZW5zZWQgdW5kZXIgdGhlIFBvc3RncmVTUUwgTGljZW5zZSAodGhlICJMaWNlbnNlIik7CnlvdSBtYXkgbm90IHVzZSB0aGlzIGZpbGUgZXhjZXB0IGluIGNvbXBsaWFuY2Ugd2l0aCB0aGUgTGljZW5zZS4KWW91IG1heSBvYnRhaW4gYSBjb3B5IG9mIHRoZSBMaWNlbnNlIGF0CgogICBodHRwczovL2dpdGh1Yi5jb20vdGltZXNjYWxlL3BnX3RleHRzZWFyY2gvYmxvYi9tYWluL0xJQ0VOU0UKClVubGVzcyByZXF1aXJlZCBieSBhcHBsaWNhYmxlIGxhdyBvciBhZ3JlZWQgdG8gaW4gd3JpdGluZywgc29mdHdhcmUKZGlzdHJpYnV0ZWQgdW5kZXIgdGhlIExpY2Vuc2UgaXMgZGlzdHJpYnV0ZWQgb24gYW4gIkFTIElTIiBCQVNJUywKV0lUSE9VVCBXQVJSQU5USUVTIE9SIENPTkRJVElPTlMgT0YgQU5ZIEtJTkQsIGVpdGhlciBleHByZXNzIG9yIGltcGxpZWQuClNlZSB0aGUgTGljZW5zZSBmb3IgdGhlIHNwZWNpZmljIGxhbmd1YWdlIGdvdmVybmluZyBwZXJtaXNzaW9ucyBhbmQKbGltaXRhdGlvbnMgdW5kZXIgdGhlIExpY2Vuc2UuCg=="
+  }
+}
