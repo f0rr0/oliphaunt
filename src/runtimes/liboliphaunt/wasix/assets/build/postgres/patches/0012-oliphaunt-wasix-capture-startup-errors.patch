@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: capture startup errors
+
+PostgreSQL can emit protocol ErrorResponse bytes from InitPostgres() before
+the exported main-loop recovery buffer is installed.  In the embedded WASIX
+runtime that path still needs to be PostgreSQL-owned: database, role, and
+startup-option failures should reach the host as PostgreSQL ErrorResponse
+frames instead of collapsing into a generic process exit.
+
+Attach the host-backed protocol Port before InitPostgres() only while startup
+error capture is active, route startup errors to DestRemote, and ask the bridge
+to trap nonzero proc_exit() so the host can flush the captured protocol bytes.
+Normal successful startup restores the previous output destination and leaves
+the later oliphaunt_wasix_start()/oliphaunt_wasix_send_conn_data() lifecycle unchanged.
+---
+ src/backend/tcop/postgres.c | 35 +++++++++++++++++++++++++++++++++++
+ src/include/port/wasix-dl.h |  1 +
+ 2 files changed, 36 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index b2e2753f7c..a835d2c6dd 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -281,3 +281,23 @@ oliphaunt_wasix_send_conn_data(void)
+ 	ReadyForQuery(DestRemote);
+ }
++static CommandDest oliphaunt_wasix_startup_error_saved_dest = DestDebug;
++
++static void
++oliphaunt_wasix_begin_startup_error_capture(void)
++{
++	if (MyProcPort == NULL)
++		oliphaunt_wasix_init_protocol_port();
++	oliphaunt_wasix_startup_error_saved_dest = whereToSendOutput;
++	oliphaunt_wasix_startup_error_capture_active = 1;
++	whereToSendOutput = DestRemote;
++}
++
++static void
++oliphaunt_wasix_end_startup_error_capture(void)
++{
++	oliphaunt_wasix_startup_error_capture_active = 0;
++	if (whereToSendOutput == DestRemote)
++		whereToSendOutput = oliphaunt_wasix_startup_error_saved_dest;
++}
++
+ #else
+@@ -5051,10 +5071,22 @@ PostgresMain(const char *dbname, const char *username)
+ 	 *
+ 	 * Honor session_preload_libraries if not dealing with a WAL sender.
+ 	 */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/*
++	 * If InitPostgres() fails before the exported top-level recovery buffer is
++	 * active, keep the failure on PostgreSQL's wire-protocol path.  The bridge
++	 * traps nonzero proc_exit() while this flag is set so the host can collect
++	 * the ErrorResponse bytes already written to the host-backed Port.
++	 */
++	oliphaunt_wasix_begin_startup_error_capture();
++#endif
+ 	InitPostgres(dbname, InvalidOid,	/* database to connect to */
+ 				 username, InvalidOid,	/* role to connect as */
+ 				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
+ 				 NULL);			/* no out_dbname */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_end_startup_error_capture();
++#endif
+
+ 	/*
+ 	 * If the PostmasterContext is still around, recycle the space; we don't
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index e0e6dbab31..3b934a7d0f 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -23,6 +23,7 @@ extern sigjmp_buf postgresmain_sigjmp_buf;
+ extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
+ extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern void oliphaunt_wasix_process_startup_options(struct Port *port);
++extern volatile int oliphaunt_wasix_startup_error_capture_active;
+ extern uid_t oliphaunt_wasix_geteuid(void);
+ extern uid_t oliphaunt_wasix_getuid(void);
+ extern gid_t oliphaunt_wasix_getegid(void);
+--
+2.49.0

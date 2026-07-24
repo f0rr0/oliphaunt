@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sat, 18 Jul 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: enforce embedded signal boundary
+
+An embedded backend shares process-wide signal state with its host and with
+dynamically loaded extensions.  Protect the host's SIGUSR1 ownership at the
+portable signal API boundary, rather than relying on every backend and
+extension call site to remember the embedding contract.
+
+For embedded backend code, make pqsignal(SIGUSR1, ...) a no-op and reject raw
+kill(..., SIGUSR1) and raise(SIGUSR1) requests before they reach the host.
+Delegate every other signal to the platform implementation.  Frontend tools
+and normal PostgreSQL builds retain the upstream behavior.
+---
+ src/include/port.h  | 26 ++++++++++++++++++++++++++
+ src/port/pqsignal.c | 39 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 65 insertions(+)
+
+diff --git a/src/include/port.h b/src/include/port.h
+index b35b8cc..347803d 100644
+--- a/src/include/port.h
++++ b/src/include/port.h
+@@ -13,7 +13,14 @@
+ #ifndef PG_PORT_H
+ #define PG_PORT_H
+
+ #include <ctype.h>
++
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++#include <signal.h>
++#ifndef WIN32
++#include <unistd.h>
++#endif
++#endif
+
+ /*
+  * Windows has enough specialized port stuff that we push most of it off
+@@ -531,7 +538,26 @@ extern void pqsignal(int signo, pqsigfunc func);
+ #endif
+ typedef void (*pqsigfunc) (SIGNAL_ARGS);
+ extern void pqsignal(int signo, pqsigfunc func);
+
++/*
++ * An embedded backend must not replace or emit the host-owned SIGUSR1.
++ * Route all backend and extension callers through the provider boundary.
++ */
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++extern PGDLLIMPORT int oliphaunt_embedded_kill(pid_t pid, int signo);
++extern PGDLLIMPORT int oliphaunt_embedded_raise(int signo);
++
++#ifdef kill
++#undef kill
++#endif
++#define kill(pid, signo) oliphaunt_embedded_kill((pid), (signo))
++
++#ifdef raise
++#undef raise
++#endif
++#define raise(signo) oliphaunt_embedded_raise((signo))
++#endif
++
+ /* port/quotes.c */
+ extern char *escape_single_quotes_ascii(const char *src);
+
+diff --git a/src/port/pqsignal.c b/src/port/pqsignal.c
+index 1e46997..082fed5 100644
+--- a/src/port/pqsignal.c
++++ b/src/port/pqsignal.c
+@@ -69,7 +69,41 @@ StaticAssertDecl(SIGTERM < PG_NSIG, "SIGTERM >= PG_NSIG");
+ StaticAssertDecl(SIGALRM < PG_NSIG, "SIGALRM >= PG_NSIG");
+
+ static volatile pqsigfunc pqsignal_handlers[PG_NSIG];
+
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++/*
++ * Embedded backends may use the ordinary signal APIs for non-host signals.
++ * Reject SIGUSR1, and bypass the port.h macros when delegating everything else.
++ */
++int
++oliphaunt_embedded_kill(pid_t pid, int signo)
++{
++	if (signo == SIGUSR1)
++	{
++		errno = EPERM;
++		return -1;
++	}
++
++#ifdef WIN32
++	return pgkill(pid, signo);
++#else
++	return (kill)(pid, signo);
++#endif
++}
++
++int
++oliphaunt_embedded_raise(int signo)
++{
++	if (signo == SIGUSR1)
++	{
++		errno = EPERM;
++		return -1;
++	}
++
++	return (raise)(signo);
++}
++#endif
++
+ /*
+  * Except when called with SIG_IGN or SIG_DFL, pqsignal() sets up this function
+  * as the handler for all signals.  This wrapper handler function checks that
+@@ -127,7 +161,12 @@ pqsignal(int signo, pqsigfunc func)
+
+ 	Assert(signo > 0);
+ 	Assert(signo < PG_NSIG);
+
++#if defined(OLIPHAUNT_EMBEDDED) && !defined(FRONTEND)
++	if (signo == SIGUSR1)
++		return;
++#endif
++
+ 	if (func != SIG_IGN && func != SIG_DFL)
+ 	{
+ 		pqsignal_handlers[signo] = func;	/* assumed atomic */

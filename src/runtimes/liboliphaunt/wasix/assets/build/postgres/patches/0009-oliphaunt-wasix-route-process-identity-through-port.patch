@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: route process identity through port
+
+The embedded WASIX runtime has one synthetic PostgreSQL process identity.
+Make that port behavior explicit in `wasix-dl.h` instead of relying on
+configure-script-wide `-Dgeteuid=...` flags.
+
+The remap includes `getpwuid_r` because PostgreSQL frontend support code and
+libpq use it for home-directory lookup.  Keeping these mappings in the port
+header makes the runtime identity contract visible in the PostgreSQL patch
+stack while still preserving normal PostgreSQL call sites.
+---
+ src/include/port/wasix-dl.h | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index 6252eecbfd..6c1c7b895f 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -8,6 +8,7 @@
+
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
+ #include <setjmp.h>
++#include <pwd.h>
+ #include <sys/types.h>
+
+ struct Port;
+@@ -21,7 +22,21 @@ extern sigjmp_buf postgresmain_sigjmp_buf;
+ extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
+ extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern void oliphaunt_wasix_process_startup_options(struct Port *port);
++extern uid_t oliphaunt_wasix_geteuid(void);
++extern uid_t oliphaunt_wasix_getuid(void);
++extern gid_t oliphaunt_wasix_getegid(void);
++extern gid_t oliphaunt_wasix_getgid(void);
++extern struct passwd *oliphaunt_wasix_getpwuid(uid_t uid);
++extern int oliphaunt_wasix_getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
++						  struct passwd **result);
+ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
++
++#define geteuid oliphaunt_wasix_geteuid
++#define getuid oliphaunt_wasix_getuid
++#define getegid oliphaunt_wasix_getegid
++#define getgid oliphaunt_wasix_getgid
++#define getpwuid oliphaunt_wasix_getpwuid
++#define getpwuid_r oliphaunt_wasix_getpwuid_r
+ #endif
+
+ #endif
+--
+2.49.0

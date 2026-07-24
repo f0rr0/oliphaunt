@@ -1,0 +1,74 @@
+---
+title: Capability Matrix
+description: Compare SDK mode support, runtime boundaries, protocol features, extensions, backup, restore, and client compatibility.
+---
+
+# Capability Matrix
+
+Use this page to choose the right SDK and runtime mode. Oliphaunt SDKs are
+peers: Rust is for Tauri and native Rust apps, Swift is for iOS and macOS,
+Kotlin is for Android, React Native uses the Swift and Kotlin SDKs underneath,
+TypeScript is for desktop JavaScript runtimes, and WASM is the WebAssembly
+runtime family.
+
+Capability checks return explicit errors when a feature is absent. Use them to
+show only the modes, controls, and workflows the installed SDK advertises for
+the target.
+
+<CapabilitySnapshot />
+
+## SDKs
+
+| SDK | Primary use | Runtime owner | Notes |
+| --- | --- | --- | --- |
+| C ABI | Binding authors | `liboliphaunt` | Low-level raw protocol and lifecycle boundary |
+| Rust | Tauri and native Rust apps | Rust SDK | Full direct, broker, and server model where supported |
+| Swift | iOS and macOS apps | Swift SDK | Async Apple API over the native runtime |
+| Kotlin | Android apps | Kotlin SDK | Coroutine Android API over the native runtime |
+| React Native | Expo and New Architecture apps | Swift/Kotlin | TypeScript API, config plugin, TurboModule/JSI transport |
+| TypeScript | Node.js, Bun, Deno | TypeScript SDK | Desktop JavaScript API over native helpers; direct Tauri JavaScript integration is planned |
+| WASM | WebAssembly/WASIX apps | WASM SDK | Separate runtime family with WASM-owned assets |
+
+## Runtime Modes
+
+| Mode | Best for | Session model | SDK availability |
+| --- | --- | --- | --- |
+| Native direct | Lowest-latency embedded database | One serialized physical session | Rust, Swift, Kotlin, React Native through Swift/Kotlin, C ABI |
+| Native broker | Desktop apps that need process isolation or multiple roots | Helper process owns roots and sessions | Rust first; TypeScript via helper integration where supported |
+| Native server | `psql`, `pg_dump`, ORMs, pools, independent clients | PostgreSQL-compatible server process | Rust first; other SDKs only when they advertise support |
+| WASM | WebAssembly/WASIX deployments | WASM runtime session model | WASM SDK |
+
+Mobile direct mode has one resident backend per app process and one physical
+session. It is same-root logically reopenable inside that process. Use server
+mode only where the SDK reports true server support. Mobile direct mode is not
+a broker/server alias; it is not a crash-isolated server and does not provide
+independent concurrent PostgreSQL client sessions.
+
+## Feature Support
+
+| Feature | Rust | Swift | Kotlin | React Native | TypeScript | WASM |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open persistent root | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
+| Temporary root | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
+| Simple SQL helpers | Yes | Yes | Yes | Yes | Yes | Yes |
+| Raw protocol bytes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Chunked protocol streaming | Yes | Yes where reported | Yes where reported | JSI ArrayBuffer stream where reported | Yes where reported | Yes where reported |
+| Transactions | Yes | Yes | Yes | Yes | Yes | Yes |
+| Exact extension selection | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
+| Physical backup/restore | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
+| PostgreSQL-compatible server | Yes | Where advertised | Where advertised | Where advertised through Swift/Kotlin | Via supported helper path | WASM-specific |
+| Independent concurrent clients | Server mode only | Server mode only where available | Server mode only where available | Server mode only where available | Server mode only where available | Runtime-specific |
+
+## Choosing A Mode
+
+Choose native direct when app code owns one embedded database and latency is the
+priority.
+
+Choose native broker when a desktop app needs stronger isolation, multiple
+database roots, crash recovery, or a long-lived helper process.
+
+Choose native server when compatibility with existing PostgreSQL clients matters
+more than embedding latency.
+
+Choose WASM when the deployment target is WASIX/WebAssembly. Choose a
+native SDK when the app ships a `liboliphaunt` runtime.

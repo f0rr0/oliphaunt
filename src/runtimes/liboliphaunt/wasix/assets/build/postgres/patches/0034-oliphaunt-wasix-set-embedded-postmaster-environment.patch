@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000034 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: set embedded postmaster environment
+
+The long-lived embedded backend should run through PostgreSQL's normal backend
+conditionals where possible. Mark the WASIX backend as a postmaster environment
+after startup while keeping checkpoint requests local under
+OLIPHAUNT_WASM_SINGLE_USER.
+
+This is paired with the prior checkpoint patch: that patch keeps single-user
+checkpoint behavior explicit, while this one restores the embedded backend's
+postmaster-style runtime identity for the rest of PostgreSQL.
+---
+ src/backend/tcop/postgres.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -232,6 +232,8 @@ oliphaunt_wasix_start(void)
+ 	whereToSendOutput = DestRemote;
+ 	ExitOnAnyError = false;
+ 	MyBackendType = B_BACKEND;
++	IsPostmasterEnvironment = true;
++	IsUnderPostmaster = true;
+ }
+
+ OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_pq_flush") void
+--
+2.39.5

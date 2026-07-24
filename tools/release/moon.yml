@@ -1,0 +1,205 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "release-tools"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "release"]
+dependsOn:
+  - id: "postgres18"
+    scope: "build"
+  - id: "source-toolchains"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-native"
+    scope: "build"
+  - id: "third-party-wasix"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "oliphaunt-rust"
+    scope: "build"
+  - id: "oliphaunt-broker"
+    scope: "build"
+  - id: "oliphaunt-node-direct"
+    scope: "build"
+  - id: "oliphaunt-swift"
+    scope: "build"
+  - id: "oliphaunt-kotlin"
+    scope: "build"
+  - id: "oliphaunt-react-native"
+    scope: "build"
+  - id: "oliphaunt-js"
+    scope: "build"
+  - id: "oliphaunt-wasix-rust"
+    scope: "build"
+
+project:
+  title: "Release Tools"
+  description: "Release-please identity, product-local metadata, packaging gates, and release workflow helpers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  # Planner-only exact-file invalidation edge. These files define the hosted
+  # JavaScript candidate supervisor, Windows privilege boundary, and runtime
+  # fixtures; changing any one must rerun every same-run desktop proof lane.
+  js-exact-candidate-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/js-exact-candidate-consumer.mjs"
+      - "/tools/release/exact-candidate-command-watchdog.mjs"
+      - "/tools/release/extension-manifest-discovery-proof.mjs"
+      - "/tools/release/extension-registry-carrier-materializer.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/src/sdks/js/src/native/extension-contract.ts"
+      - "/tools/release/run-windows-standard-user-exact-candidate.ps1"
+      - "/tools/release/fixtures/js-exact-candidate-runtime.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-procsignal.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-jsr.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  # Planner-only exact-file invalidation edge. The hosted E2E job owns the
+  # executable frozen-candidate proof; this task prevents unrelated release
+  # tooling edits from selecting its expensive WASIX producer closure.
+  wasix-rust-exact-candidate-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/exact-cargo-candidate-consumer.mjs"
+      - "/tools/release/wasix-rust-exact-candidate-consumer.mjs"
+      - "/tools/release/rust-build-script-sha256.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  # Planner-only source edge for the fail-closed validation that runs after
+  # both iOS carrier producers and before either artifact upload.
+  ios-carrier-validation-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/validate-ios-carrier-zips.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
+    inputs:
+      # The canonical release gate invokes graph.mjs directly. These inputs
+      # ensure graph-policy-only changes select its single hosted owner.
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.github/**/*"
+      - "/benchmarks/moon.yml"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/coverage/baseline.toml"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/README.md"
+      - "/docs/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      - "/tools/policy/**/*"
+      - "/tools/release/**/*"
+      - "/tools/test/create-broker-release-fixture.mjs"
+      - "/tools/test/create-liboliphaunt-release-fixture.mjs"
+      - "/tools/test/release-fixture-utils.mjs"
+    options:
+      # This task owns live repository-graph validation in hosted CI. Its graph
+      # read set includes dynamically declared paths and nested Moon queries.
+      cache: false
+      runFromWorkspaceRoot: true
+  broker-dependency-license-audit:
+    tags: ["policy", "assertion", "quality", "static", "ci-rust"]
+    command: "tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs audit-contract"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/benchmarks/**/Cargo.toml"
+      - "/examples/**/Cargo.toml"
+      - "/src/**/Cargo.toml"
+      - "/tools/**/Cargo.toml"
+      - "/src/runtimes/broker/dependency-licenses.json"
+      - "/src/runtimes/broker/dependency-license-blobs/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "release-tools:check"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  consumer-shape:
+    tags: ["release", "package"]
+    command: "tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format markdown"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/Package.swift"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/runtimes/node-direct/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/sdks/swift/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "/src/sdks/js/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

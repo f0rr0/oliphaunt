@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000003 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: export startup packet parser
+
+Allow the embedded WASIX host to feed PostgreSQL's normal startup packet
+parser directly.
+
+The released lane already relies on this shape: the Rust host writes the
+client startup packet into the guest protocol buffer, then calls
+ProcessStartupPacket() before asking the backend to send AuthenticationOk,
+ParameterStatus, BackendKeyData, and ReadyForQuery.
+
+Keep PostgreSQL's normal symbol scope unchanged.  Only
+OLIPHAUNT_WASM_SINGLE_USER builds make the parser externally visible and export
+it with the ABI name expected by the current host.
+---
+ src/backend/tcop/backend_startup.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/src/backend/tcop/backend_startup.c b/src/backend/tcop/backend_startup.c
+index dd3307cb76..f7b053e3b8 100644
+--- a/src/backend/tcop/backend_startup.c
++++ b/src/backend/tcop/backend_startup.c
+@@ -44,9 +44,19 @@ char	   *log_connections_string = NULL;
+  */
+ ConnectionTiming conn_timing = {.ready_for_use = TIMESTAMP_MINUS_INFINITY};
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
++#else
++#define OLIPHAUNT_WASM_HOST_EXPORT(name)
++#endif
++
+ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac);
+ static int	ProcessSSLStartup(Port *port);
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++int	ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
++#else
+ static int	ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
++#endif
+ static void ProcessCancelRequestPacket(Port *port, void *pkt, int pktlen);
+ static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options);
+ static void process_startup_packet_die(SIGNAL_ARGS);
+@@ -489,7 +499,11 @@ reject:
+  * should make no assumption here about the order in which the client may make
+  * requests.
+  */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++OLIPHAUNT_WASM_HOST_EXPORT("ProcessStartupPacket") int
++#else
+ static int
++#endif
+ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
+ {
+ 	int32		len;
+--
+2.49.0

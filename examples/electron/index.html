@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Oliphaunt Electron Todo</title>
+    <script type="module" src="/src/renderer.ts" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Electron / TypeScript SDK / native broker</p>
+          <h1>Oliphaunt Todo</h1>
+        </div>
+        <output id="status">Ready</output>
+      </header>
+
+      <form id="todo-form" class="composer">
+        <label>
+          <span>Title</span>
+          <input id="title" name="title" maxlength="120" required />
+        </label>
+        <label>
+          <span>Notes</span>
+          <textarea id="notes" name="notes" rows="3"></textarea>
+        </label>
+        <div class="form-grid">
+          <label>
+            <span>Area</span>
+            <input id="area" name="area" placeholder="product" />
+          </label>
+          <label>
+            <span>Context</span>
+            <input id="context" name="context" placeholder="desktop" />
+          </label>
+          <label>
+            <span>Priority</span>
+            <select id="priority" name="priority">
+              <option value="1">High</option>
+              <option value="2" selected>Normal</option>
+              <option value="3">Low</option>
+            </select>
+          </label>
+          <button type="submit">Add todo</button>
+        </div>
+      </form>
+
+      <section class="filters">
+        <input id="search" type="search" placeholder="Search todos" />
+        <div class="segments" role="group" aria-label="Status">
+          <button type="button" data-status="open" class="active">Open</button>
+          <button type="button" data-status="all">All</button>
+          <button type="button" data-status="done">Done</button>
+        </div>
+      </section>
+
+      <section class="summary" aria-label="Todo summary">
+        <output id="open-count">0 open</output>
+        <output id="done-count">0 done</output>
+        <output id="high-count">0 high priority</output>
+      </section>
+
+      <section id="todo-list" class="todo-list" aria-label="Todos"></section>
+    </main>
+  </body>
+</html>

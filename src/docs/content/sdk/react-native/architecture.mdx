@@ -1,0 +1,138 @@
+---
+title: Architecture
+description: Understand how the React Native SDK delegates runtime behavior to Swift and Kotlin while owning TypeScript, config plugin, TurboModule, and JSI transport.
+---
+
+# Architecture
+
+`@oliphaunt/react-native` is the React Native New Architecture SDK for
+Oliphaunt. It gives JavaScript and TypeScript apps a native embedded PostgreSQL
+database through the Swift and Kotlin SDKs.
+
+The package has three jobs:
+
+- provide the TypeScript API developers call from React Native;
+- configure app builds so the selected native runtime and exact extensions are
+  packaged;
+- move protocol bytes between JavaScript and the platform SDK.
+
+<ReactNativeBoundaryMap />
+
+## Runtime Ownership
+
+Database runtime behavior belongs to the platform SDKs. Apple apps use the
+Swift SDK. Android apps use the Kotlin SDK.
+
+| Platform | Runtime owner | React Native role |
+| --- | --- | --- |
+| iOS | Swift SDK | TypeScript API, config plugin, TurboModule, JSI byte transport |
+| macOS (planned) | Swift SDK | No first-release React Native adapter; a future target must reuse the Swift boundary |
+| Android | Kotlin SDK | TypeScript API, config plugin, TurboModule, JSI byte transport |
+
+That keeps platform behavior consistent. Root validation, extension selection,
+backup and restore, lifecycle, cancellation, and capability reporting live in
+the same SDKs used by native Swift and Kotlin app developers.
+
+Android calls go through the Android `dev.oliphaunt.OliphauntAndroid` facade,
+returning the Kotlin SDK `OliphauntDatabase` handle behind the React Native
+handle.
+
+## JavaScript Shape
+
+The JavaScript API is handle-oriented:
+
+```ts
+import { Oliphaunt } from '@oliphaunt/react-native';
+
+const db = await Oliphaunt.open({
+  engine: 'nativeDirect',
+  temporary: true,
+  runtimeFootprint: 'balancedMobile',
+});
+
+const result = await db.query('SELECT 1::text AS value');
+const value = result.getText(0, 'value');
+
+await db.close();
+```
+
+The query helpers are layered over PostgreSQL protocol bytes. Use
+`query(sql, params)` for normal app work. Use raw protocol APIs when you need
+custom frontend protocol behavior, COPY, or multi-result-set handling.
+
+## Binary Transport
+
+Oliphaunt uses React Native's New Architecture for module lifecycle and typed
+native bindings. Bulk protocol bytes use the binary JSI path.
+
+The fast path is a versioned JSI ArrayBuffer transport:
+
+- JS accepts `Uint8Array`, `ArrayBuffer`, and typed-array views;
+- native code returns binary responses as owned buffers;
+- streaming APIs deliver chunks for large responses when the platform reports
+  `protocolStream=true`;
+- the SDK verifies the JSI installer before opening a native database session.
+
+This is the performance boundary for large result sets, protocol round trips,
+backup and restore bytes, and mobile latency.
+
+## Config Plugin And Packaging
+
+The React Native package makes native packaging predictable:
+
+- select exact SQL extension names;
+- include only selected extension artifacts and declared dependencies;
+- include the native library and runtime resources for the app target;
+- expose package-size reporting so developers can verify what ships.
+
+An app that selects only `vector` ships `vector` and its declared dependencies.
+
+## Lifecycle
+
+Mobile direct mode uses one resident backend per app process and one physical
+session. It is same-root logically reopenable inside that process. Broker and
+server entries can appear in `supportedModes()` on targets that advertise those
+capabilities, but `OpenConfig.engine` currently accepts `nativeDirect` only.
+
+Use the React Native lifecycle helpers around background and foreground
+transitions. They delegate to Swift or Kotlin so platform storage and lifecycle
+rules stay native.
+
+## Capabilities
+
+Read capabilities from the opened database or SDK support API. Capabilities are
+the contract; platform names only identify the target.
+
+`supportedModes()` is delegated too: iOS reports Swift support, and Android
+reports Kotlin support through the Android facade.
+
+Capabilities report:
+
+- raw protocol support;
+- streaming support;
+- backup and restore formats;
+- selected extension support;
+- process and root behavior;
+- whether broker or server mode is available.
+
+Mode requests outside the React Native bridge's open surface fail with clear
+errors. Direct mode remains one physical session; use a server-capable platform
+runtime when an app needs independent PostgreSQL client sessions.
+
+`Oliphaunt.restore({ libraryPath, ... })` forwards the same native library
+override that the platform SDKs use, so restore follows the selected native
+runtime.
+
+## What The React Native SDK Owns
+
+React Native owns the React Native boundary:
+
+- TypeScript API and types;
+- TurboModule schema;
+- JSI ArrayBuffer transport;
+- config plugin resource selection;
+- installed iOS and Android app wiring for open, query, stream, backup, restore,
+  and close operations.
+
+Database runtime semantics follow the Swift and Kotlin SDKs. React Native docs
+focus on packaging, transport, delegation, and installed-app behavior.

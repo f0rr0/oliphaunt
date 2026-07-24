@@ -1,0 +1,120 @@
+# Oliphaunt Examples
+
+These examples keep the same todo schema across desktop shells:
+
+- `tauri`: Tauri v2 with the native Rust SDK.
+- `tauri-wasix`: Tauri v2 with `oliphaunt-wasix` and SQLx.
+- `electron`: Electron with the TypeScript SDK and native server mode.
+- `electron-wasix`: Electron with a Rust WASIX sidecar exposing a PostgreSQL URL.
+
+Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
+tags plus trigram/accent-insensitive search for the todo list. Native examples
+load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`, while
+`pg_dump` and `psql` come through the `oliphaunt-tools` facade selecting
+`oliphaunt-tools-*` payload crates. WASIX examples load `postgres` and `initdb`
+from the runtime crates. WASIX examples enable the `oliphaunt-wasix` `tools`
+feature, which resolves `pg_dump`/`psql` from `oliphaunt-wasix-tools`; WASIX
+intentionally has no `pg_ctl`.
+
+Local registry artifacts for Linux x64 from a successful exact-commit CI run
+can be staged transactionally. Set `QUALIFIED_SHA` to the commit that passed
+the required CI qualification; the helper selects a matching successful run
+or verifies an explicitly supplied `--run-id`:
+
+```sh
+tools/dev/bun.sh tools/release/local-registry-publish.mjs download --sha "$QUALIFIED_SHA" --preset local-publish
+tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
+  --asset-dir target/local-registry-artifacts/liboliphaunt-native-release-assets-linux-x64-gnu \
+  --output-dir target/local-registry-generated/liboliphaunt-native-cargo \
+  --target linux-x64-gnu
+tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
+  --asset-dir target/local-registry-artifacts/oliphaunt-broker-release-assets-linux-x64-gnu \
+  --output-dir target/local-registry-generated/broker-cargo \
+  --target linux-x64-gnu
+tools/dev/bun.sh tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs \
+  --asset-dir target/local-registry-artifacts/liboliphaunt-wasix-release-assets \
+  --output-dir target/local-registry-generated/wasix-cargo \
+  --extension-artifact-root target/local-registry-artifacts/oliphaunt-extension-package-artifacts
+tools/dev/bun.sh tools/release/local-registry-publish.mjs publish \
+  --surface cargo \
+  --artifact-root target/local-registry-generated/liboliphaunt-native-cargo \
+  --artifact-root target/local-registry-generated/broker-cargo \
+  --artifact-root target/local-registry-generated/wasix-cargo \
+  --artifact-root target/local-registry-artifacts/oliphaunt-extension-package-artifacts
+```
+
+The native packaging step emits `liboliphaunt-native-linux-x64-gnu`, the
+`oliphaunt-tools` facade crate, and `oliphaunt-tools-linux-x64-gnu`. The WASIX
+packaging step emits
+`liboliphaunt-wasix-portable`, `oliphaunt-wasix-tools`,
+`liboliphaunt-wasix-aot-*`, and `oliphaunt-wasix-tools-aot-*`.
+
+Run npm examples through the local registry helper so pnpm reads the staged
+Verdaccio registry:
+
+```sh
+examples/tools/with-local-registries.sh pnpm --dir examples/electron install
+examples/tools/with-local-registries.sh pnpm --dir examples/electron start
+```
+
+The committed Cargo example manifests use ordinary crates.io dependencies with
+exact Oliphaunt product versions. They do not name the private
+`oliphaunt-local` registry, commit `[patch.crates-io]`, or track a nested
+`Cargo.lock`.
+
+`examples/tools/with-local-registries.sh` generates the candidate patch table
+inside its isolated Cargo home. This keeps the commands in each example README
+usable against staged packages without changing an example manifest or lock.
+
+Candidate validation happens only after exact-SHA CI has produced every
+selected `.crate`. The release dry-run copies each example into scratch space,
+adds exact `[patch.crates-io]` entries for packages in the candidate registry,
+generates a fresh lock, and validates every candidate source, version, index
+checksum, and archive SHA-256 before running `cargo fetch --locked`. Public
+dependencies—and unchanged Oliphaunt packages in a later partial
+release—continue to resolve from crates.io. Both the scratch manifests and
+locks live under `target/`; they never change the qualified commit.
+
+Run the static source policy with:
+
+```sh
+tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
+```
+
+Given an assembled candidate registry, run the exact-byte consumer proof with:
+
+```sh
+tools/dev/bun.sh tools/release/validate-example-cargo-candidates.mjs \
+  --index target/release-work/candidate-registries/cargo/index
+```
+
+The native examples run a SQL backup smoke through `pg_dump` during startup.
+The WASIX examples run `dump_sql("--schema-only")` and a non-interactive `psql`
+`SELECT 1` smoke during startup.
+
+Run Tauri GUI smoke tests through WebDriver on Linux:
+
+```sh
+examples/tools/run-tauri-webdriver-smoke.sh examples/tauri
+examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix
+```
+
+The WebDriver smoke builds the selected Tauri app in debug mode, launches it
+through `tauri-driver`, creates a todo through the real UI, toggles it done, and
+asserts the done filter. It expects `WebKitWebDriver`; on Debian/Ubuntu install
+`webkit2gtk-driver`. In headless environments it uses `xvfb-run` when present.
+
+Run Electron GUI smoke tests through the IPC test driver on Linux:
+
+```sh
+examples/tools/run-electron-driver-smoke.sh examples/electron
+examples/tools/run-electron-driver-smoke.sh examples/electron-wasix
+```
+
+The Electron smoke builds the selected app, launches the packaged Electron
+binary with a test-driver IPC channel, creates a todo through the real renderer,
+toggles it done, and asserts the done filter. In headless environments it uses
+`xvfb-run` when present.
+
+On Linux, SwiftPM artifacts are staged for inspection and skipped for registry
+publish when `swift` is not installed.

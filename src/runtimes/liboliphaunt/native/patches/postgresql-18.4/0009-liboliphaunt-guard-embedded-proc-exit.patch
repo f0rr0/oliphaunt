@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: guard embedded proc_exit failures
+
+PostgreSQL startup failures normally reach proc_exit(), which terminates the
+process. That is correct for backend processes, but embedded liboliphaunt runs a
+backend thread inside a host app. A FATAL during embedded startup must unwind
+to the liboliphaunt owner so the host can surface an error instead of exiting.
+
+Install a thread-local embedded proc_exit handler around oliphaunt_embedded_main().
+The normal proc_exit_prepare() callback chain still runs, then control jumps
+back to the embedded entrypoint with the PostgreSQL exit code.
+---
+ src/backend/storage/ipc/ipc.c | 27 +++++++++++++++++++++++++
+ src/backend/tcop/postgres.c   | 38 +++++++++++++++++++++++++++++++++--
+ src/include/storage/ipc.h     |  3 +++
+ 3 files changed, 66 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
+index a2d0f8a..b0630ec 100644
+--- a/src/backend/storage/ipc/ipc.c
++++ b/src/backend/storage/ipc/ipc.c
+@@ -85,6 +85,17 @@ static int	on_proc_exit_index,
+ 			on_shmem_exit_index,
+ 			before_shmem_exit_index;
+
++#ifdef OLIPHAUNT_EMBEDDED
++#ifdef _MSC_VER
++#define OLIPHAUNT_THREAD_LOCAL __declspec(thread)
++#else
++#define OLIPHAUNT_THREAD_LOCAL __thread
++#endif
++
++static OLIPHAUNT_THREAD_LOCAL oliphaunt_embedded_proc_exit_handler oliphaunt_proc_exit_handler = NULL;
++static OLIPHAUNT_THREAD_LOCAL void *oliphaunt_proc_exit_context = NULL;
++#endif
++
+
+ /* ----------------------------------------------------------------
+  *		proc_exit
+@@ -111,6 +122,14 @@ proc_exit(int code)
+ 	/* Clean up everything that must be cleaned up */
+ 	proc_exit_prepare(code);
+
++#ifdef OLIPHAUNT_EMBEDDED
++	if (oliphaunt_proc_exit_handler != NULL)
++	{
++		oliphaunt_proc_exit_handler(code, oliphaunt_proc_exit_context);
++		abort();
++	}
++#endif
++
+ #ifdef PROFILE_PID_DIR
+ 	{
+ 		/*
+@@ -218,6 +237,14 @@ proc_exit_prepare(int code)
+ }
+
+ #ifdef OLIPHAUNT_EMBEDDED
++void
++oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++									  void *context)
++{
++	oliphaunt_proc_exit_handler = handler;
++	oliphaunt_proc_exit_context = context;
++}
++
+ /*
+  * Run PostgreSQL's normal backend exit callbacks without terminating the host
+  * process.  This is only valid for the embedded thread owner that already
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 56888c4..c96011f 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -27,6 +27,7 @@
+ #include <sys/socket.h>
+ #ifdef OLIPHAUNT_EMBEDDED
+ #include <netinet/in.h>
++#include <setjmp.h>
+ #endif
+ #include <sys/time.h>
+
+@@ -4180,6 +4181,20 @@ PostgresSingleUserMain(int argc, char *argv[],
+ }
+
+ #ifdef OLIPHAUNT_EMBEDDED
++typedef struct OliphauntEmbeddedProcExitGuard
++{
++	sigjmp_buf env;
++	int			code;
++} OliphauntEmbeddedProcExitGuard;
++
++static void
++oliphaunt_embedded_throw_proc_exit(int code, void *context)
++{
++	OliphauntEmbeddedProcExitGuard *guard = (OliphauntEmbeddedProcExitGuard *) context;
++	guard->code = code;
++	siglongjmp(guard->env, 1);
++}
++
+ /*
+  * oliphaunt_embedded_main
+  *
+@@ -4199,6 +4214,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	int			socket_pair[2] = {-1, -1};
+ 	ClientSocket client_sock;
+ 	struct sockaddr_in *addr;
++	OliphauntEmbeddedProcExitGuard exit_guard;
++	int			rc = 0;
+ 	char		original_cwd[MAXPGPATH];
+ 	bool		have_original_cwd;
+
+@@ -4208,6 +4225,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
+
+ 	Assert(!IsUnderPostmaster);
+
++	memset(&exit_guard, 0, sizeof(exit_guard));
++	oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_throw_proc_exit,
++									  &exit_guard);
++	if (sigsetjmp(exit_guard.env, 1) != 0)
++	{
++		rc = exit_guard.code;
++		goto embedded_cleanup;
++	}
++
+ 	if (progname == NULL)
+ 		progname = get_progname(argv[0]);
+ 	MyProcPid = getpid();
+@@ -4278,14 +4304,22 @@ oliphaunt_embedded_main(int argc, char *argv[],
+
+ 	PostgresMain(dbname, username);
+ 	oliphaunt_embedded_proc_exit(0);
++	rc = 0;
+
++embedded_cleanup:
++	oliphaunt_embedded_set_proc_exit_handler(NULL, NULL);
+ 	if (have_original_cwd && chdir(original_cwd) != 0)
+-		return -1;
++		rc = rc == 0 ? -1 : rc;
+
+ 	if (socket_pair[1] >= 0)
+ 		close(socket_pair[1]);
++	if (socket_pair[0] >= 0 && MyProcPort == NULL)
++		close(socket_pair[0]);
+
+-	return 0;
++	if (rc == 0 && exit_guard.code != 0)
++		rc = exit_guard.code;
++
++	return rc;
+ }
+ #endif
+
+diff --git a/src/include/storage/ipc.h b/src/include/storage/ipc.h
+index 8bfa63a..69d2d80 100644
+--- a/src/include/storage/ipc.h
++++ b/src/include/storage/ipc.h
+@@ -68,7 +68,10 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
+ pg_noreturn extern void proc_exit(int code);
+ extern void shmem_exit(int code);
+ #ifdef OLIPHAUNT_EMBEDDED
++typedef void (*oliphaunt_embedded_proc_exit_handler) (int code, void *context);
+ extern void oliphaunt_embedded_proc_exit(int code);
++extern void oliphaunt_embedded_set_proc_exit_handler(oliphaunt_embedded_proc_exit_handler handler,
++												  void *context);
+ #endif
+ extern void on_proc_exit(pg_on_exit_callback function, Datum arg);
+ extern void on_shmem_exit(pg_on_exit_callback function, Datum arg);

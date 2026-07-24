@@ -1,0 +1,1 @@
+CREATE FUNCTION pass(text) RETURNS boolean LANGUAGE SQL AS 'SELECT true';

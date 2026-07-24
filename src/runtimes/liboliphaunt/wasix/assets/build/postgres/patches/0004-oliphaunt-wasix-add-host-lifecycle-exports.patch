@@ -1,0 +1,226 @@
+From 0000000000000000000000000000000000000004 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add host lifecycle exports
+
+Expose the minimal compatibility ABI that the current Oliphaunt WASIX host
+needs after `_start` has initialized the standalone backend.
+
+The important invariant is that PostgreSQL still performs normal standalone
+backend initialization through `PostgresSingleUserMain()` and `PostgresMain()`.
+The host ABI added here only attaches a direct FE/BE Port after that backend
+state exists, then sends the normal AuthenticationOk, ParameterStatus,
+BackendKeyData, and ReadyForQuery messages through libpq.
+
+The exported names intentionally keep the current `oliphaunt_wasix_*` spelling so the Rust
+release lane can be brought up before a host-side ABI rename.  The code path is
+guarded by `OLIPHAUNT_WASM_SINGLE_USER`.
+---
+ src/backend/tcop/postgres.c       | 120 ++++++++++++++++++++++++++++++++++++++
+ src/backend/utils/init/postinit.c |   9 +++
+ src/include/port/wasix-dl.h       |  10 ++++
+ 3 files changed, 139 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 39e4e3216d..674dd23641 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -24,6 +24,9 @@
+ #include <unistd.h>
+ #include <sys/resource.h>
+ #include <sys/socket.h>
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include <netinet/in.h>
++#endif
+ #include <sys/time.h>
+
+ #ifdef USE_VALGRIND
+@@ -40,13 +43,20 @@
+ #include "common/pg_prng.h"
+ #include "jit/jit.h"
+ #include "libpq/libpq.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "libpq/libpq-be.h"
++#include "libpq/protocol.h"
++#endif
+ #include "libpq/pqformat.h"
+ #include "libpq/pqsignal.h"
+ #include "mb/pg_wchar.h"
+ #include "mb/stringinfo_mb.h"
+ #include "miscadmin.h"
+ #include "nodes/print.h"
+ #include "optimizer/optimizer.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "port/wasix-dl.h"
++#endif
+ #include "parser/analyze.h"
+ #include "parser/parser.h"
+ #include "pg_getopt.h"
+@@ -158,6 +168,111 @@ static volatile sig_atomic_t RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
+ static MemoryContext row_description_context = NULL;
+ static StringInfoData row_description_buf;
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#define OLIPHAUNT_WASM_EXIT_ALIVE 99
++#define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
++
++extern volatile int is_oliphaunt_active;
++
++static OliphauntWasmHostIO oliphaunt_wasix_protocol_io =
++{
++	NULL,
++	oliphaunt_wasix_host_read,
++	oliphaunt_wasix_host_write
++};
++
++static void
++oliphaunt_wasix_init_protocol_port(void)
++{
++	ClientSocket client_sock;
++	struct sockaddr_in *addr;
++	MemoryContext oldcontext;
++
++	if (MyProcPort != NULL)
++	{
++		MyProcPort->oliphaunt_wasix_io = &oliphaunt_wasix_protocol_io;
++		return;
++	}
++
++	memset(&client_sock, 0, sizeof(client_sock));
++	client_sock.sock = 1;
++	addr = (struct sockaddr_in *) &client_sock.raddr.addr;
++	addr->sin_family = AF_INET;
++	addr->sin_port = htons(5432);
++	addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++	client_sock.raddr.salen = sizeof(struct sockaddr_in);
++
++	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
++	MyProcPort = pq_init(&client_sock);
++	MyProcPort->oliphaunt_wasix_io = &oliphaunt_wasix_protocol_io;
++	MyProcPort->remote_host = MemoryContextStrdup(TopMemoryContext, "127.0.0.1");
++	MyProcPort->remote_port = MemoryContextStrdup(TopMemoryContext, "5432");
++	MemoryContextSwitchTo(oldcontext);
++}
++
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_start") void
++oliphaunt_wasix_start(void)
++{
++	oliphaunt_wasix_init_protocol_port();
++	whereToSendOutput = DestRemote;
++	ExitOnAnyError = false;
++	MyBackendType = B_BACKEND;
++}
++
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_pq_flush") void
++oliphaunt_wasix_pq_flush(void)
++{
++	pq_flush();
++}
++
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_get_proc_port") struct Port *
++oliphaunt_wasix_get_proc_port(void)
++{
++	return MyProcPort;
++}
++
++OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_send_conn_data") void
++oliphaunt_wasix_send_conn_data(void)
++{
++	StringInfoData buf;
++
++	if (MyProcPort == NULL)
++		oliphaunt_wasix_init_protocol_port();
++
++	oliphaunt_wasix_process_startup_options(MyProcPort);
++	ClientAuthInProgress = false;
++	whereToSendOutput = DestRemote;
++
++	if (MyCancelKeyLength == 0)
++	{
++		int			len;
++
++		len = (MyProcPort == NULL || MyProcPort->proto >= PG_PROTOCOL(3, 2))
++			? MAX_CANCEL_KEY_LENGTH : 4;
++		if (!pg_strong_random(&MyCancelKey, len))
++			ereport(ERROR,
++					(errcode(ERRCODE_INTERNAL_ERROR),
++					 errmsg("could not generate random cancel key")));
++		MyCancelKeyLength = len;
++	}
++
++	pq_beginmessage(&buf, PqMsg_AuthenticationRequest);
++	pq_sendint32(&buf, (int32) AUTH_REQ_OK);
++	pq_endmessage(&buf);
++
++	BeginReportingGUCOptions();
++
++	pq_beginmessage(&buf, PqMsg_BackendKeyData);
++	pq_sendint32(&buf, (int32) MyProcPid);
++	pq_sendbytes(&buf, MyCancelKey, MyCancelKeyLength);
++	pq_endmessage(&buf);
++
++	ReadyForQuery(DestRemote);
++}
++#else
++#define OLIPHAUNT_WASM_HOST_EXPORT(name)
++#endif
++
+ /* ----------------------------------------------------------------
+  *		decls for routines only used in this file
+  * ----------------------------------------------------------------
+@@ -5109,6 +5220,11 @@ PostgresMain(const char *dbname, const char *username)
+ 				 * it will fail to be called during other backend-shutdown
+ 				 * scenarios.
+ 				 */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++				if (is_oliphaunt_active != 0)
++					exit(OLIPHAUNT_WASM_EXIT_ALIVE);
++#endif
++
+ 				proc_exit(0);
+
+ 			case PqMsg_CopyData:
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index 47925d6848..bcce4363fe 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -1290,6 +1290,15 @@ process_startup_options(Port *port, bool am_superuser)
+ 	}
+ }
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++void
++oliphaunt_wasix_process_startup_options(Port *port)
++{
++	if (port != NULL)
++		process_startup_options(port, true);
++}
++#endif
++
+ /*
+  * Load GUC settings from pg_db_role_setting.
+  *
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index 630687ec15..dfae28b4cc 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -3,6 +3,17 @@
+  *	  Port-specific declarations for the Oliphaunt WASIX side-module build.
+  *-------------------------------------------------------------------------
+  */
+ #ifndef PG_PORT_WASIX_DL_H
+ #define PG_PORT_WASIX_DL_H
++
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include <sys/types.h>
++
++struct Port;
++
++extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
++extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
++extern void oliphaunt_wasix_process_startup_options(struct Port *port);
++#endif
++
+ #endif
+--
+2.49.0
