@@ -228,7 +228,7 @@ test("rollback version ownership bypass requires the exact dispatch branch and r
     ["push event", { eventName: "push" }],
     ["pull request event", { eventName: "pull_request", fullRef: "refs/pull/123/merge" }],
     ["main ref", { fullRef: "refs/heads/main" }],
-    ["tag ref", { fullRef: "refs/tags/f0rr0/history-repair-candidate-5" }],
+    ["tag ref", { fullRef: `refs/tags/${RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH}` }],
     ["other head branch", { branch: "f0rr0/history-repair-candidate-4" }],
   ]) {
     const result = rollbackIntent(overrides);

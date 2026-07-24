@@ -44,6 +44,11 @@ import {
   publicCargoPackageNames as wasixPublicCargoPackageNames,
 } from "./wasix-cargo-artifact-contract.mjs";
 import {
+  expectedWasixExtensionPackageInventory,
+  isExpectedWasixExtensionPackage,
+  validateWasixExtensionArtifactInventory,
+} from "./wasix-extension-cargo-artifact-inventory.mjs";
+import {
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
   requiredToolsPackageTools,
@@ -1332,17 +1337,7 @@ async function runLiboliphauntNativeDryRun() {
   );
 }
 
-function isExpectedWasixExtensionPackage(name, kind) {
-  if (kind === "wasix-extension") {
-    return exactExtensionProducts(TOOL).some((product) => name === `${product}-wasix`);
-  }
-  if (kind === "wasix-extension-aot") {
-    return exactExtensionProducts(TOOL).some((product) => name.startsWith(`${product}-wasix-aot-`));
-  }
-  return false;
-}
-
-function validateWasixCargoArtifacts(outputDir) {
+export function validateWasixCargoArtifacts(outputDir) {
   const manifestPath = path.join(outputDir, "packages.json");
   if (!isFile(manifestPath)) {
     fail(`missing generated ${WASIX_PRODUCT} Cargo artifact manifest: ${rel(manifestPath)}`);
@@ -1369,6 +1364,15 @@ function validateWasixCargoArtifacts(outputDir) {
   );
   const generatedCrates = new Set();
   const expectedCratePaths = new Set();
+  const expectedExtensionInventory = expectedWasixExtensionPackageInventory(TOOL);
+  try {
+    validateWasixExtensionArtifactInventory(
+      data.packages,
+      expectedExtensionInventory,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const packages = [];
   const allowedKinds = new Set([
     "wasix-runtime",
@@ -1393,7 +1397,10 @@ function validateWasixCargoArtifacts(outputDir) {
     if (!allowedKinds.has(kind)) {
       fail(`${rel(manifestPath)} has unsupported WASIX Cargo artifact kind ${JSON.stringify(kind)}`);
     }
-    if (!expectedBaseCrates.has(name) && !isExpectedWasixExtensionPackage(name, kind)) {
+    if (
+      !expectedBaseCrates.has(name)
+      && !isExpectedWasixExtensionPackage(name, kind, expectedExtensionInventory)
+    ) {
       fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate ${name}`);
     }
     const sourceManifest = path.join(ROOT, rawManifest);
@@ -1588,6 +1595,15 @@ function runExtensionWasixCargoArtifactDryRun(product) {
   if (manifest?.schema !== WASIX_CARGO_ARTIFACT_SCHEMA || !Array.isArray(manifest.packages)) {
     fail(`${product} WASIX Cargo dry-run generated an invalid package manifest`);
   }
+  const expectedExtensionInventory = expectedWasixExtensionPackageInventory(TOOL, [product]);
+  try {
+    validateWasixExtensionArtifactInventory(
+      manifest.packages,
+      expectedExtensionInventory,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const packages = manifest.packages.map((pkg) => {
     if (
       pkg === null
@@ -1601,27 +1617,6 @@ function runExtensionWasixCargoArtifactDryRun(product) {
     }
     return pkg.name;
   });
-  if (new Set(packages).size !== packages.length) {
-    fail(`${product} WASIX Cargo dry-run generated duplicate package identities`);
-  }
-  const expectedBases = registryPackageRows({ product, packageKind: "crates" }, TOOL)
-    .map(({ packageName }) => packageName)
-    .filter((name) => name === `${product}-wasix` || name.startsWith(`${product}-aot-`));
-  const expectedBaseSet = new Set(expectedBases);
-  const actualBases = packages.filter((name) => !/-part-[0-9]{3}$/u.test(name));
-  assertSameStringSet(`${product} WASIX Cargo base packages`, actualBases, expectedBases);
-  const invalidParts = packages.filter((name) => {
-    const match = name.match(/^(.*)-part-([0-9]{3})$/u);
-    return match !== null && (!expectedBaseSet.has(match[1]) || Number.parseInt(match[2], 10) < 1);
-  });
-  if (invalidParts.length > 0) {
-    fail(`${product} WASIX Cargo dry-run generated invalid payload part packages: ${invalidParts.sort(compareText).join(", ")}`);
-  }
-  const undeclared = packages.filter((name) =>
-    !expectedBaseSet.has(name) && !/-part-[0-9]{3}$/u.test(name));
-  if (undeclared.length > 0) {
-    fail(`${product} WASIX Cargo dry-run generated undeclared base packages: ${undeclared.sort(compareText).join(", ")}`);
-  }
   packages.sort(compareText);
   console.log(`${product} WASIX Cargo dry-run packages: ${packages.join(", ")}`);
 }

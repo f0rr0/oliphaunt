@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/tools-win32-x64-msvc",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Windows x64 MSVC PostgreSQL client tools for Oliphaunt.",
   "license": "MIT AND PostgreSQL",
   "type": "module",
