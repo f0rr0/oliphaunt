@@ -1,0 +1,19 @@
+[packages]
+command_line_tools_build = "14742923"
+command_line_tools_revision = "20.0"
+ndk = "27.0.12077973"
+cmake = "3.22.1"
+compile_sdk = "36"
+build_tools = "36.0.0"
+
+[command_line_tools.linux]
+url = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
+mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip"
+sha256 = "04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7"
+entry_count = "135"
+
+[command_line_tools.mac]
+url = "https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip"
+mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip"
+sha256 = "ed304c5ede3718541e4f978e4ae870a4d853db74af6c16d920588d48523b9dee"
+entry_count = "324"

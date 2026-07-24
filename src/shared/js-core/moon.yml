@@ -1,0 +1,32 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "shared-js-core"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["shared", "typescript", "sdk"]
+
+project:
+  title: "Shared JavaScript Core"
+  description: "Canonical TypeScript helpers mirrored into the JavaScript and React Native SDK packages."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+  paths:
+    "**/*.ts": ["@oliphaunt/sdk-js", "@oliphaunt/sdk-react-native"]
+    "tools/**": ["@oliphaunt/sdk-js", "@oliphaunt/sdk-react-native"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node src/shared/js-core/tools/check-js-core.mjs"
+    inputs:
+      - "/src/shared/js-core/**/*"
+      - "/src/sdks/js/src/protocol.ts"
+      - "/src/sdks/js/src/query.ts"
+      - "/src/sdks/react-native/src/protocol.ts"
+      - "/src/sdks/react-native/src/query.ts"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

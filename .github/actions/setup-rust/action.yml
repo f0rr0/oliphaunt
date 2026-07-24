@@ -1,0 +1,31 @@
+name: Set up Rust
+description: Install the pinned Rust toolchain and optional Rust tools.
+
+inputs:
+  components:
+    description: Comma-separated Rust components.
+    required: false
+    default: ""
+  tools:
+    description: Comma-separated Rust tools.
+    required: false
+    default: ""
+  cache-save-if:
+    description: Expression string passed to Swatinem/rust-cache save-if.
+    required: false
+    default: "false"
+  cache:
+    description: Whether to enable the Cargo cache.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Rust tooling
+      uses: ./.github/actions/setup-rust-tools
+      with:
+        components: ${{ inputs.components }}
+        cache: ${{ inputs.cache }}
+        cache-save-if: ${{ inputs.cache-save-if }}
+        tools: ${{ inputs.tools }}

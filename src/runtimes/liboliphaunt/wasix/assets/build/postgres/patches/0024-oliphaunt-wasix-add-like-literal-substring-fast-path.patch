@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add like literal substring fast path
+
+The benchmark suite has simple `%literal%` LIKE predicates where the pattern
+contains no wildcard other than the leading and trailing `%`.  PostgreSQL's
+generic LIKE matcher still enters the recursive wildcard engine for those
+cases.  Add a narrow single-byte fast path for deterministic locales that
+reduces the check to `memchr` plus `memcmp`, while preserving upstream behavior
+for lower-case/case-insensitive match variants, non-deterministic collations,
+escapes, `_`, inner `%`, and every other pattern shape.
+---
+ src/backend/utils/adt/like.c       | 45 ++++++++++++++++++++++++++++++++++++++
+ src/backend/utils/adt/like_match.c | 10 +++++++++
+ 2 files changed, 55 insertions(+)
+
+diff --git a/src/backend/utils/adt/like.c b/src/backend/utils/adt/like.c
+index 36d2797000..84be33c000 100644
+--- a/src/backend/utils/adt/like.c
++++ b/src/backend/utils/adt/like.c
+@@ -101,6 +101,51 @@ SB_lower_char(unsigned char c, pg_locale_t locale)
+ 		return tolower_l(c, locale->info.lt);
+ }
+
++static inline int
++MatchTextLiteralSubstring(const char *t, int tlen, const char *p, int plen,
++						  pg_locale_t locale)
++{
++	const char *needle;
++	int			needle_len;
++	const char *pos;
++	const char *end;
++	unsigned char first;
++
++	if (locale && !locale->deterministic)
++		return LIKE_ABORT;
++	if (plen < 2 || p[0] != '%' || p[plen - 1] != '%')
++		return LIKE_ABORT;
++
++	needle = p + 1;
++	needle_len = plen - 2;
++	for (int i = 0; i < needle_len; i++)
++	{
++		if (needle[i] == '%' || needle[i] == '_' || needle[i] == '\\')
++			return LIKE_ABORT;
++	}
++
++	if (needle_len == 0)
++		return LIKE_TRUE;
++	if (tlen < needle_len)
++		return LIKE_FALSE;
++
++	first = (unsigned char) needle[0];
++	pos = t;
++	end = t + tlen - needle_len + 1;
++	while (pos < end)
++	{
++		const char *hit = memchr(pos, first, end - pos);
++
++		if (hit == NULL)
++			return LIKE_FALSE;
++		if (memcmp(hit, needle, needle_len) == 0)
++			return LIKE_TRUE;
++		pos = hit + 1;
++	}
++
++	return LIKE_FALSE;
++}
++
+
+ #define NextByte(p, plen)	((p)++, (plen)--)
+
+diff --git a/src/backend/utils/adt/like_match.c b/src/backend/utils/adt/like_match.c
+index 0e3b2bc000..7b93dd4000 100644
+--- a/src/backend/utils/adt/like_match.c
++++ b/src/backend/utils/adt/like_match.c
+@@ -86,6 +86,16 @@ MatchText(const char *t, int tlen, const char *p, int plen, pg_locale_t locale)
+ 	/* Since this function recurses, it could be driven to stack overflow */
+ 	check_stack_depth();
+
++#ifndef MATCH_LOWER
++	{
++		int			fast_match;
++
++		fast_match = MatchTextLiteralSubstring(t, tlen, p, plen, locale);
++		if (fast_match != LIKE_ABORT)
++			return fast_match;
++	}
++#endif
++
+ 	/*
+ 	 * In this loop, we advance by char when matching wildcards (and thus on
+ 	 * recursive entry to this function we are properly char-synced). On other
+--
+2.50.0

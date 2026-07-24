@@ -1,0 +1,76 @@
+---
+title: Swift SDK
+description: Apple SDK for iOS and macOS apps using Swift concurrency.
+---
+
+<SdkLanding id="swift" />
+
+The Swift SDK is the Apple SDK for iOS and macOS apps. It wraps the native
+runtime with Swift concurrency, app-container storage defaults, resource bundle
+handling, and platform lifecycle APIs.
+
+Use this SDK directly in SwiftUI, UIKit, AppKit, and app extension-safe code
+where supported. React Native on Apple platforms delegates runtime work through
+this SDK, so the Swift lifecycle model is the Apple behavior source.
+
+## Install
+
+Add the Swift package from Xcode or `Package.swift`:
+
+```swift
+.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.6.0")
+```
+
+The package carries the Swift API and the native runtime artifacts for supported
+Apple targets.
+
+## Open And Query
+
+Open a database from an async context:
+
+```swift
+import Oliphaunt
+
+let appSupport = FileManager.default.urls(
+    for: .applicationSupportDirectory,
+    in: .userDomainMask
+)[0]
+
+let database = try await OliphauntDatabase.open(
+    configuration: OliphauntConfiguration(
+        root: appSupport.appending(path: "main.oliphaunt"),
+        mode: .nativeDirect,
+        extensions: ["vector"]
+    )
+)
+
+let rows = try await database.query("SELECT 1::text AS value")
+try await database.close()
+```
+
+## Runtime Shape
+
+Swift is async-first and actor-owned. Direct mode owns one resident backend per
+app process and one serialized physical session. The SDK reports capabilities
+for any additional modes available on the selected Apple target.
+
+The actor boundary keeps database calls off the main actor. App code can issue
+concurrent Swift tasks against the same database handle; direct mode queues them
+against the resident backend and preserves transaction ordering.
+
+## App Responsibilities
+
+- Keep user data in an app-owned persistent directory.
+- Call lifecycle hooks around background and foreground transitions.
+- Select exact SQL extension names so the app bundle contains only selected
+  extension artifacts and declared dependencies.
+- Use backup and restore APIs for export, import, and user-visible data
+  movement.
+- Check `capabilities()` before enabling optional UI for streaming, backup
+  formats, or additional runtime modes.
+
+## First Query
+
+Use [Build With Swift](/docs/sdk/swift/guide) for open/query, app lifecycle,
+extension selection, and backup/restore. Use the
+[API reference](/docs/sdk/swift/api-reference) for the public API map.

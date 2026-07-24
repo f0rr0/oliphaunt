@@ -1,0 +1,103 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "source-inputs"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["sources"]
+
+project:
+  title: "Source Inputs"
+  description: "Neutral source checkout materialization for PostgreSQL, runtime dependencies, toolchains, and extension-owned sources."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  source-fetch:
+    tags: ["source", "fetch"]
+    command: "bun tools/policy/fetch-sources.mjs all"
+    inputs:
+      - "/src/sources/**/*"
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  source-fetch-native-runtime:
+    tags: ["source", "fetch"]
+    command: "bun tools/policy/fetch-sources.mjs native-runtime"
+    inputs:
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  source-fetch-wasix-runtime:
+    tags: ["source", "fetch"]
+    command: "bun tools/policy/fetch-sources.mjs wasix-runtime"
+    inputs:
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  source-fetch-extensions:
+    tags: ["source", "fetch"]
+    command: "bun tools/policy/fetch-sources.mjs extensions"
+    inputs:
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
