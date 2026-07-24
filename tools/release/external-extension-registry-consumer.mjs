@@ -19,6 +19,7 @@ import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
+  DESKTOP_TARGETS,
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
@@ -702,44 +703,210 @@ function stopVerdaccio(registryRoot) {
   rmSync(pidFile, { force: true });
 }
 
-const NPM_TARGET_CONFIG = Object.freeze({
-  "linux-arm64-gnu": Object.freeze({ os: "linux", cpu: "arm64", libc: "glibc" }),
-  "linux-x64-gnu": Object.freeze({ os: "linux", cpu: "x64", libc: "glibc" }),
-  "macos-arm64": Object.freeze({ os: "darwin", cpu: "arm64" }),
-  "windows-x64-msvc": Object.freeze({ os: "win32", cpu: "x64" }),
-});
+export function externalExtensionNpmConsumerSpec(plan, target) {
+  const targetContract = DESKTOP_TARGETS[target];
+  if (
+    !Object.hasOwn(DESKTOP_TARGETS, target)
+    || targetContract === undefined
+    || !Object.hasOwn(targetContract, "npmOs")
+    || !Object.hasOwn(targetContract, "npmCpu")
+    || typeof targetContract.npmOs !== "string"
+    || targetContract.npmOs.length === 0
+    || typeof targetContract.npmCpu !== "string"
+    || targetContract.npmCpu.length === 0
+    || (targetContract.npmLibc !== undefined
+      && (typeof targetContract.npmLibc !== "string" || targetContract.npmLibc.length === 0))
+  ) {
+    throw error(`no npm consumer configuration for ${target}`);
+  }
+  const platform = {
+    os: targetContract.npmOs,
+    cpu: targetContract.npmCpu,
+    ...(targetContract.npmLibc === undefined ? {} : { libc: targetContract.npmLibc }),
+  };
+  if (
+    !Array.isArray(plan?.npm?.targets)
+    || !plan.npm.targets.includes(target)
+    || new Set(plan.npm.targets).size !== plan.npm.targets.length
+  ) {
+    throw error(`npm consumer target ${target} must appear exactly once in the plan`);
+  }
+  const productsByTarget = plan.npm.productsByTarget;
+  if (
+    productsByTarget === null
+    || typeof productsByTarget !== "object"
+    || Array.isArray(productsByTarget)
+    || !Object.hasOwn(productsByTarget, target)
+  ) {
+    throw error(`npm consumer plan has no product selection for ${target}`);
+  }
+  const products = productsByTarget[target];
+  if (
+    !Array.isArray(products)
+    || products.length === 0
+    || products.some((product) => typeof product !== "string" || product.length === 0)
+    || new Set(products).size !== products.length
+  ) {
+    throw error(`npm consumer products for ${target} must be a non-empty unique string list`);
+  }
+  const entries = products.map((product) => {
+    const version = currentProductVersionSync(product, TOOL);
+    const targetPackages = Object.fromEntries(
+      extensionRegistryPackageTargetSets(product, TOOL).npmTargets
+        .map((item) => [item, extensionNpmTargetPackageForProduct(product, item)])
+        .sort(([left], [right]) => compareText(left, right)),
+    );
+    const targetPackage = targetPackages[target];
+    if (targetPackage === undefined) {
+      throw error(`${product} has no npm target package for selected target ${target}`);
+    }
+    return {
+      product,
+      version,
+      facade: extensionNpmPackageForProduct(product),
+      targetPackage,
+      targetPackages,
+    };
+  }).sort((left, right) => compareText(left.product, right.product));
+  const dependencies = Object.fromEntries(
+    entries.map(({ facade, version }) => [facade, version])
+      .sort(([left], [right]) => compareText(left, right)),
+  );
+  const expectedPackages = Object.fromEntries(
+    entries.flatMap(({ facade, targetPackage, version }) => [
+      [facade, version],
+      [targetPackage, version],
+    ]).sort(([left], [right]) => compareText(left, right)),
+  );
+  if (
+    Object.keys(dependencies).length !== entries.length
+    || Object.keys(expectedPackages).length !== entries.length * 2
+    || new Set(entries.flatMap(({ facade, targetPackages }) => [
+      facade,
+      ...Object.values(targetPackages),
+    ])).size !== entries.reduce(
+      (count, { targetPackages }) => count + 1 + Object.keys(targetPackages).length,
+      0,
+    )
+  ) {
+    throw error(`npm consumer package identities collide for ${target}`);
+  }
+  return {
+    target,
+    platform,
+    products: entries.map(({ product }) => product),
+    dependencies,
+    expectedPackages,
+    entries,
+  };
+}
 
 function installedOliphauntPackages(consumerRoot) {
   const scope = path.join(consumerRoot, "node_modules/@oliphaunt");
   if (!existsSync(scope)) return [];
-  return readdirSync(scope, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => `@oliphaunt/${entry.name}`)
-    .sort(compareText);
+  const entries = readdirSync(scope, { withFileTypes: true });
+  const invalid = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name).sort(compareText);
+  if (invalid.length > 0) {
+    throw error(`installed npm @oliphaunt scope contains non-directory entries: ${invalid.join(", ")}`);
+  }
+  const packages = entries.map((entry) => `@oliphaunt/${entry.name}`).sort(compareText);
+  for (const name of packages) {
+    const nestedScope = path.join(consumerRoot, "node_modules", ...name.split("/"), "node_modules/@oliphaunt");
+    if (existsSync(nestedScope)) {
+      throw error(`installed npm carrier ${name} contains an unexpected nested @oliphaunt scope`);
+    }
+  }
+  return packages;
 }
 
-export function validateExactNpmConsumer({ consumerRoot, registryUrl, expectedPackages }) {
+function exactStringMap(value, label) {
+  const entries = Object.entries(object(value, label));
+  if (entries.some(([key, item]) =>
+    key.length === 0 || typeof item !== "string" || item.length === 0)) {
+    throw error(`${label} must map non-empty strings to non-empty strings`);
+  }
+  return Object.fromEntries(entries.sort(([left], [right]) => compareText(left, right)));
+}
+
+function assertExactStringMap(value, expected, label) {
+  const actual = exactStringMap(value, label);
+  const canonicalExpected = exactStringMap(expected, `${label} expected value`);
+  if (JSON.stringify(actual) !== JSON.stringify(canonicalExpected)) {
+    throw error(`${label} differs: expected=${JSON.stringify(canonicalExpected)}, actual=${JSON.stringify(actual)}`);
+  }
+  return actual;
+}
+
+function assertExactStringList(value, expected, label) {
+  const actual = value === undefined ? [] : value;
+  if (
+    !Array.isArray(actual)
+    || actual.some((item) => typeof item !== "string" || item.length === 0)
+    || new Set(actual).size !== actual.length
+    || JSON.stringify(actual) !== JSON.stringify(expected)
+  ) {
+    throw error(`${label} differs: expected=${JSON.stringify(expected)}, actual=${JSON.stringify(actual)}`);
+  }
+}
+
+function exactNpmLockEntry(lock, name, version, registryUrl, { optional }) {
+  const entry = lock.packages[`node_modules/${name}`];
+  if (
+    entry?.version !== version
+    || typeof entry.resolved !== "string"
+    || !entry.resolved.startsWith(`${registryUrl}/`)
+    || typeof entry.integrity !== "string"
+    || !entry.integrity.startsWith("sha512-")
+    || (optional ? entry.optional !== true : entry.optional === true)
+  ) {
+    throw error(`${name}@${version} does not have an exact isolated-registry lock entry`);
+  }
+  return entry;
+}
+
+export function validateExactNpmConsumer({ consumerRoot, registryUrl, consumer }) {
+  const spec = object(consumer, "npm consumer specification");
+  const dependencies = exactStringMap(spec.dependencies, "npm consumer dependencies");
+  const expectedPackages = exactStringMap(spec.expectedPackages, "npm consumer expected packages");
+  const platform = object(spec.platform, "npm consumer platform");
+  if (
+    typeof spec.target !== "string"
+    || spec.target.length === 0
+    || typeof platform.os !== "string"
+    || platform.os.length === 0
+    || typeof platform.cpu !== "string"
+    || platform.cpu.length === 0
+    || (platform.libc !== undefined && (typeof platform.libc !== "string" || platform.libc.length === 0))
+  ) {
+    throw error("npm consumer platform must declare exact os/cpu and optional libc strings");
+  }
+  if (!Array.isArray(spec.entries) || spec.entries.length === 0) {
+    throw error("npm consumer specification must contain package entries");
+  }
   const lockFile = path.join(consumerRoot, "package-lock.json");
   const lock = JSON.parse(readFileSync(lockFile, "utf8"));
   if (lock.lockfileVersion !== 3 || lock.packages === null || typeof lock.packages !== "object") {
     throw error(`${lockFile} must be an npm lockfile v3`);
   }
+  const rootManifest = JSON.parse(readFileSync(path.join(consumerRoot, "package.json"), "utf8"));
+  assertExactStringMap(rootManifest.dependencies, dependencies, "npm consumer root dependencies");
+  assertExactStringMap(rootManifest.optionalDependencies ?? {}, {}, "npm consumer root optional dependencies");
+  assertExactStringMap(lock.packages[""]?.dependencies, dependencies, "npm consumer lock root dependencies");
+  assertExactStringMap(lock.packages[""]?.optionalDependencies ?? {}, {}, "npm consumer lock root optional dependencies");
   const actual = installedOliphauntPackages(consumerRoot);
   const expectedNames = Object.keys(expectedPackages).sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expectedNames)) {
     throw error(`installed npm carrier set differs: expected=${JSON.stringify(expectedNames)}, actual=${JSON.stringify(actual)}`);
   }
-  return expectedNames.map((name) => {
-    const entry = lock.packages[`node_modules/${name}`];
+  const installed = expectedNames.map((name) => {
+    const facade = dependencies[name] !== undefined;
+    const entry = exactNpmLockEntry(lock, name, expectedPackages[name], registryUrl, {
+      optional: !facade,
+    });
     const manifestFile = path.join(consumerRoot, "node_modules", ...name.split("/"), "package.json");
     const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
     if (
-      entry?.version !== expectedPackages[name]
-      || typeof entry.resolved !== "string"
-      || !entry.resolved.startsWith(`${registryUrl}/`)
-      || typeof entry.integrity !== "string"
-      || !entry.integrity.startsWith("sha512-")
-      || manifest.name !== name
+      manifest.name !== name
       || manifest.version !== expectedPackages[name]
     ) {
       throw error(`${name}@${expectedPackages[name]} was not installed exactly from the isolated npm registry`);
@@ -752,6 +919,76 @@ export function validateExactNpmConsumer({ consumerRoot, registryUrl, expectedPa
       manifestSha256: sha256File(manifestFile),
     };
   });
+  for (const [index, rawEntry] of spec.entries.entries()) {
+    const packageSpec = object(rawEntry, `npm consumer entries[${index}]`);
+    const {
+      product,
+      version,
+      facade,
+      targetPackage,
+    } = packageSpec;
+    if (
+      typeof product !== "string"
+      || product.length === 0
+      || typeof version !== "string"
+      || expectedPackages[facade] !== version
+      || dependencies[facade] !== version
+      || expectedPackages[targetPackage] !== version
+      || dependencies[targetPackage] !== undefined
+    ) {
+      throw error(`npm consumer entries[${index}] does not match the exact facade/leaf dependency topology`);
+    }
+    const targetPackages = exactStringMap(
+      packageSpec.targetPackages,
+      `npm consumer entries[${index}].targetPackages`,
+    );
+    if (targetPackages[spec.target] !== targetPackage) {
+      throw error(`npm consumer entries[${index}] selected target package differs for ${spec.target}`);
+    }
+    const optionalDependencies = Object.fromEntries(
+      Object.values(targetPackages).map((name) => [name, version])
+        .sort(([left], [right]) => compareText(left, right)),
+    );
+    for (const name of Object.keys(optionalDependencies)) {
+      exactNpmLockEntry(lock, name, version, registryUrl, { optional: true });
+    }
+    const facadeManifest = JSON.parse(readFileSync(
+      path.join(consumerRoot, "node_modules", ...facade.split("/"), "package.json"),
+      "utf8",
+    ));
+    assertExactStringMap(
+      facadeManifest.optionalDependencies,
+      optionalDependencies,
+      `${facade} optionalDependencies`,
+    );
+    if (facadeManifest.oliphaunt?.product !== product) {
+      throw error(`${facade} does not identify Oliphaunt product ${product}`);
+    }
+    assertExactStringMap(
+      facadeManifest.oliphaunt?.targetPackageNames,
+      targetPackages,
+      `${facade} Oliphaunt target package map`,
+    );
+    const targetManifest = JSON.parse(readFileSync(
+      path.join(consumerRoot, "node_modules", ...targetPackage.split("/"), "package.json"),
+      "utf8",
+    ));
+    assertExactStringList(targetManifest.os, [platform.os], `${targetPackage} os selector`);
+    assertExactStringList(targetManifest.cpu, [platform.cpu], `${targetPackage} cpu selector`);
+    assertExactStringList(
+      targetManifest.libc,
+      platform.libc === undefined ? [] : [platform.libc],
+      `${targetPackage} libc selector`,
+    );
+    if (
+      targetManifest.optional !== true
+      || targetManifest.oliphaunt?.product !== product
+      || targetManifest.oliphaunt?.target !== spec.target
+    ) {
+      throw error(`${targetPackage} does not identify the exact optional Oliphaunt target ${product}/${spec.target}`);
+    }
+  }
+  return installed;
 }
 
 function publishAndConsumeNpm(plan, outputRoot, port, npmRuntime) {
@@ -777,24 +1014,19 @@ function publishAndConsumeNpm(plan, outputRoot, port, npmRuntime) {
     const targetEvidence = [];
     const installedUnion = new Set();
     for (const target of plan.npm.targets) {
-      const config = NPM_TARGET_CONFIG[target];
-      if (config === undefined) throw error(`no npm consumer configuration for ${target}`);
       const consumerRoot = path.join(outputRoot, "npm-consumers", target);
       rmSync(consumerRoot, { recursive: true, force: true });
       mkdirSync(consumerRoot, { recursive: true });
-      const products = plan.npm.productsByTarget[target];
-      const dependencies = Object.fromEntries(products.flatMap((product) => {
-        const version = currentProductVersionSync(product, TOOL);
-        return [
-          [extensionNpmPackageForProduct(product), version],
-          [extensionNpmTargetPackageForProduct(product, target), version],
-        ];
-      }).sort(([left], [right]) => compareText(left, right)));
+      const consumer = externalExtensionNpmConsumerSpec(plan, target);
       writeFileSync(path.join(consumerRoot, "package.json"), `${JSON.stringify({
         name: `oliphaunt-external-extension-consumer-${target}`,
         version: "0.0.0",
         private: true,
-        dependencies,
+        // npm applies --os/--cpu/--libc when selecting optional native
+        // dependencies, but checks non-optional packages against the actual
+        // host. Depending only on the neutral facades exercises the public
+        // install path and lets their exact optional maps select one leaf.
+        dependencies: consumer.dependencies,
       }, null, 2)}\n`);
       const checkedRuntime = assertVerifiedNpmPublisherRuntime(npmRuntime);
       run(checkedRuntime.nodeExecutable, [
@@ -806,16 +1038,20 @@ function publishAndConsumeNpm(plan, outputRoot, port, npmRuntime) {
         "--fetch-retries=0",
         `--registry=${registryUrl}`,
         `--userconfig=${npmrc}`,
-        `--os=${config.os}`,
-        `--cpu=${config.cpu}`,
-        ...(config.libc === undefined ? [] : [`--libc=${config.libc}`]),
+        `--os=${consumer.platform.os}`,
+        `--cpu=${consumer.platform.cpu}`,
+        ...(consumer.platform.libc === undefined ? [] : [`--libc=${consumer.platform.libc}`]),
       ], { cwd: consumerRoot, timeout: 15 * 60_000 });
-      const installed = validateExactNpmConsumer({ consumerRoot, registryUrl, expectedPackages: dependencies });
+      const installed = validateExactNpmConsumer({
+        consumerRoot,
+        registryUrl,
+        consumer,
+      });
       for (const entry of installed) installedUnion.add(entry.name);
       targetEvidence.push({
         target,
-        platform: config,
-        products,
+        platform: consumer.platform,
+        products: consumer.products,
         packageLockSha256: sha256File(path.join(consumerRoot, "package-lock.json")),
         installed,
       });

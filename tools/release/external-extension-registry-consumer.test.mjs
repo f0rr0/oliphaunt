@@ -18,17 +18,29 @@ import {
   assertVerifiedNpmPublisherRuntime,
   assertVerifiedNpmPublisherTree,
   externalExtensionConsumerPlan,
+  externalExtensionNpmConsumerSpec,
   renderExactMavenConsumer,
   resolveVerifiedNpmPublisherRuntime,
+  validateExactNpmConsumer,
 } from "./external-extension-registry-consumer.mjs";
 import {
+  DESKTOP_TARGETS,
   exactExtensionProducts,
   extensionMetadata,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
+import {
+  extensionNpmPackageForProduct,
+  extensionNpmTargetPackageForProduct,
+} from "./extension-registry-packages.mjs";
 
 const EXTERNALS = exactExtensionProducts("external-extension-registry-consumer.test")
   .filter((product) => extensionMetadata(product, "external-extension-registry-consumer.test").class === "external");
+
+function writeJson(file, value) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
@@ -129,6 +141,95 @@ function verifiedNpmFixture() {
   };
 }
 
+function npmConsumerInstallFixture(consumer) {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "oliphaunt-external-npm-consumer-")));
+  const registryUrl = "http://127.0.0.1:4873";
+  const rootManifest = {
+    name: `oliphaunt-external-extension-consumer-${consumer.target}`,
+    version: "0.0.0",
+    private: true,
+    dependencies: { ...consumer.dependencies },
+  };
+  const lock = {
+    name: rootManifest.name,
+    version: rootManifest.version,
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": {
+        name: rootManifest.name,
+        version: rootManifest.version,
+        dependencies: { ...consumer.dependencies },
+      },
+    },
+  };
+  const manifests = new Map();
+  for (const entry of consumer.entries) {
+    const optionalDependencies = Object.fromEntries(
+      Object.values(entry.targetPackages).map((name) => [name, entry.version]).sort(),
+    );
+    lock.packages[`node_modules/${entry.facade}`] = {
+      version: entry.version,
+      resolved: `${registryUrl}/${entry.facade}/-/${entry.facade.split("/").at(-1)}-${entry.version}.tgz`,
+      integrity: "sha512-facade-fixture",
+    };
+    for (const name of Object.values(entry.targetPackages)) {
+      lock.packages[`node_modules/${name}`] = {
+        version: entry.version,
+        resolved: `${registryUrl}/${name}/-/${name.split("/").at(-1)}-${entry.version}.tgz`,
+        integrity: "sha512-target-fixture",
+        optional: true,
+      };
+    }
+    const facadeManifest = {
+      name: entry.facade,
+      version: entry.version,
+      optionalDependencies,
+      oliphaunt: {
+        product: entry.product,
+        targetPackageNames: entry.targetPackages,
+      },
+    };
+    const targetManifest = {
+      name: entry.targetPackage,
+      version: entry.version,
+      os: [consumer.platform.os],
+      cpu: [consumer.platform.cpu],
+      ...(consumer.platform.libc === undefined ? {} : { libc: [consumer.platform.libc] }),
+      optional: true,
+      oliphaunt: {
+        product: entry.product,
+        target: consumer.target,
+      },
+    };
+    const facadeFile = path.join(root, "node_modules", ...entry.facade.split("/"), "package.json");
+    const targetFile = path.join(root, "node_modules", ...entry.targetPackage.split("/"), "package.json");
+    writeJson(facadeFile, facadeManifest);
+    writeJson(targetFile, targetManifest);
+    manifests.set(entry.facade, { file: facadeFile, value: facadeManifest });
+    manifests.set(entry.targetPackage, { file: targetFile, value: targetManifest });
+  }
+  writeJson(path.join(root, "package.json"), rootManifest);
+  writeJson(path.join(root, "package-lock.json"), lock);
+  return {
+    root,
+    registryUrl,
+    rootManifest,
+    lock,
+    manifests,
+    rewriteRootManifest() {
+      writeJson(path.join(root, "package.json"), rootManifest);
+    },
+    rewriteLock() {
+      writeJson(path.join(root, "package-lock.json"), lock);
+    },
+    rewriteManifest(name) {
+      const manifest = manifests.get(name);
+      writeJson(manifest.file, manifest.value);
+    },
+  };
+}
+
 test("aggregates every selected external facade and leaf without selecting contrib", () => {
   const plan = externalExtensionConsumerPlan([
     "oliphaunt-extension-contrib-pg18",
@@ -152,6 +253,173 @@ test("aggregates every selected external facade and leaf without selecting contr
     JSON.stringify(products) === JSON.stringify([...EXTERNALS].sort()))).toBe(true);
   expect(plan.npm.expectedPackages.length).toBe(EXTERNALS.length * 5);
   expect(plan.maven.expectedCoordinates.length).toBe(EXTERNALS.length * 2);
+});
+
+test("cross-platform npm consumers install facades and require the selected optional carrier", () => {
+  const plan = externalExtensionConsumerPlan(EXTERNALS);
+  const expectedPlatforms = {
+    "linux-arm64-gnu": { os: "linux", cpu: "arm64", libc: "glibc" },
+    "linux-x64-gnu": { os: "linux", cpu: "x64", libc: "glibc" },
+    "macos-arm64": { os: "darwin", cpu: "arm64" },
+    "windows-x64-msvc": { os: "win32", cpu: "x64" },
+  };
+  expect(Object.fromEntries(plan.npm.targets.map((target) => {
+    const contract = DESKTOP_TARGETS[target];
+    return [target, {
+      os: contract.npmOs,
+      cpu: contract.npmCpu,
+      ...(contract.npmLibc === undefined ? {} : { libc: contract.npmLibc }),
+    }];
+  }))).toEqual(expectedPlatforms);
+  for (const target of plan.npm.targets) {
+    const consumer = externalExtensionNpmConsumerSpec(plan, target);
+    expect(consumer.platform).toEqual(expectedPlatforms[target]);
+    expect(consumer.products).toEqual([...EXTERNALS].sort());
+    expect(Object.keys(consumer.dependencies)).toEqual(
+      EXTERNALS.map((product) => extensionNpmPackageForProduct(product)).sort(),
+    );
+    expect(Object.keys(consumer.expectedPackages)).toEqual(EXTERNALS.flatMap((product) => {
+      return [
+        extensionNpmPackageForProduct(product),
+        extensionNpmTargetPackageForProduct(product, target),
+      ];
+    }).sort());
+    expect(consumer.entries.every(({ facade, targetPackage }) =>
+      consumer.dependencies[facade] !== undefined
+      && consumer.dependencies[targetPackage] === undefined
+      && consumer.expectedPackages[facade] === consumer.expectedPackages[targetPackage])).toBe(true);
+  }
+});
+
+test("rejects malformed cross-platform npm consumer product selections", () => {
+  const plan = externalExtensionConsumerPlan(EXTERNALS);
+  expect(() => externalExtensionNpmConsumerSpec(plan, "unknown-target"))
+    .toThrow("no npm consumer configuration for unknown-target");
+  expect(() => externalExtensionNpmConsumerSpec(plan, "macos-x64"))
+    .toThrow("no npm consumer configuration for macos-x64");
+  expect(() => externalExtensionNpmConsumerSpec({
+    npm: { targets: [], productsByTarget: { "linux-arm64-gnu": [EXTERNALS[0]] } },
+  }, "linux-arm64-gnu")).toThrow("must appear exactly once in the plan");
+  expect(() => externalExtensionNpmConsumerSpec({
+    npm: { targets: ["linux-arm64-gnu"], productsByTarget: {} },
+  }, "linux-arm64-gnu")).toThrow("has no product selection");
+  expect(() => externalExtensionNpmConsumerSpec({
+    npm: {
+      targets: ["linux-arm64-gnu"],
+      productsByTarget: { "linux-arm64-gnu": [EXTERNALS[0], EXTERNALS[0]] },
+    },
+  }, "linux-arm64-gnu")).toThrow("must be a non-empty unique string list");
+});
+
+test("validates exact facade-only npm resolution across all four target selections", () => {
+  const plan = externalExtensionConsumerPlan(EXTERNALS);
+  const union = new Set();
+  for (const target of plan.npm.targets) {
+    const consumer = externalExtensionNpmConsumerSpec(plan, target);
+    const fixture = npmConsumerInstallFixture(consumer);
+    try {
+      const installed = validateExactNpmConsumer({
+        consumerRoot: fixture.root,
+        registryUrl: fixture.registryUrl,
+        consumer,
+      });
+      expect(installed.map(({ name }) => name)).toEqual(Object.keys(consumer.expectedPackages).sort());
+      expect(Object.keys(fixture.lock.packages)).toHaveLength(1 + EXTERNALS.length * 5);
+      for (const { name } of installed) union.add(name);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+  expect([...union].sort()).toEqual(plan.npm.expectedPackages);
+});
+
+test("rejects direct leaves and facade, lock, platform, or installed-set drift", () => {
+  const plan = externalExtensionConsumerPlan(EXTERNALS);
+  const consumer = externalExtensionNpmConsumerSpec(plan, "linux-arm64-gnu");
+  const first = consumer.entries[0];
+  const cases = [
+    {
+      message: "root dependencies differs",
+      mutate(fixture) {
+        fixture.rootManifest.dependencies[first.targetPackage] = first.version;
+        fixture.rewriteRootManifest();
+      },
+    },
+    {
+      message: "lock root dependencies differs",
+      mutate(fixture) {
+        fixture.lock.packages[""].dependencies[first.targetPackage] = first.version;
+        fixture.rewriteLock();
+      },
+    },
+    {
+      message: `${first.facade} optionalDependencies differs`,
+      mutate(fixture) {
+        delete fixture.manifests.get(first.facade).value.optionalDependencies[first.targetPackage];
+        fixture.rewriteManifest(first.facade);
+      },
+    },
+    {
+      message: `${first.targetPackage} os selector differs`,
+      mutate(fixture) {
+        fixture.manifests.get(first.targetPackage).value.os = ["darwin"];
+        fixture.rewriteManifest(first.targetPackage);
+      },
+    },
+    {
+      message: `${first.targetPackage}@${first.version} does not have an exact isolated-registry lock entry`,
+      mutate(fixture) {
+        fixture.lock.packages[`node_modules/${first.targetPackage}`].optional = false;
+        fixture.rewriteLock();
+      },
+    },
+    {
+      message: `does not identify the exact optional Oliphaunt target ${first.product}/linux-arm64-gnu`,
+      mutate(fixture) {
+        fixture.manifests.get(first.targetPackage).value.oliphaunt.target = "linux-x64-gnu";
+        fixture.rewriteManifest(first.targetPackage);
+      },
+    },
+    {
+      message: "installed npm carrier set differs",
+      mutate(fixture) {
+        writeJson(path.join(fixture.root, "node_modules/@oliphaunt/unexpected/package.json"), {
+          name: "@oliphaunt/unexpected",
+          version: "0.1.0",
+        });
+      },
+    },
+    {
+      message: `installed npm carrier ${first.facade} contains an unexpected nested @oliphaunt scope`,
+      mutate(fixture) {
+        writeJson(
+          path.join(
+            fixture.root,
+            "node_modules",
+            ...first.facade.split("/"),
+            "node_modules/@oliphaunt/unexpected/package.json",
+          ),
+          {
+            name: "@oliphaunt/unexpected",
+            version: "0.1.0",
+          },
+        );
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    const fixture = npmConsumerInstallFixture(consumer);
+    try {
+      testCase.mutate(fixture);
+      expect(() => validateExactNpmConsumer({
+        consumerRoot: fixture.root,
+        registryUrl: fixture.registryUrl,
+        consumer,
+      })).toThrow(testCase.message);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
 });
 
 test("renders one exact Maven dependency consumer over every local repository", () => {
@@ -194,6 +462,9 @@ test("revalidates the complete npm tree immediately before every exact npm consu
     "const checkedRuntime = assertVerifiedNpmPublisherRuntime(npmRuntime);\n"
       + "      run(checkedRuntime.nodeExecutable",
   );
+  expect(body).toContain("dependencies: consumer.dependencies");
+  expect(body).toContain("consumer,");
+  expect(body).not.toContain('"--force"');
 });
 
 test("resolves only setup-exported Node and npm files after manifest identity checks", () => {
