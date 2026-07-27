@@ -1,0 +1,23 @@
+[toolchain]
+version = "11.18.0"
+
+[package]
+url = "https://registry.npmjs.org/npm/-/npm-11.18.0.tgz"
+sha256 = "73f6155215ebabf4ed96dca1f567c2372cc713c33af2e5b9b62fde4e92373e2e"
+sha512 = "4faecce0be70366d1c67b1012c4adc1246354a6cc45bf589f92003073b05518d547403df1475c542d67a4845e22b4fafcd7cac0af02c7a96cc6814f09eb003fb"
+bytes = "2997746"
+expanded_bytes = "12199255"
+format = "tar.gz"
+prefix = "package"
+entry_count = "1943"
+file_count = "1943"
+tree_sha256 = "4b5452be2ef2b0e30c3841967a0edee5ff37ec0011b61e1ca91df1177d8cac82"
+executable_paths = "bin/node-gyp-bin/node-gyp,bin/node-gyp-bin/node-gyp.cmd,bin/npm,bin/npm-cli.js,bin/npm-prefix.js,bin/npm.cmd,bin/npx,bin/npx-cli.js,bin/npx.cmd,lib/utils/completion.sh,node_modules/@npmcli/arborist/bin/index.js,node_modules/@npmcli/installed-package-contents/bin/index.js,node_modules/@npmcli/run-script/lib/node-gyp-bin/node-gyp,node_modules/@npmcli/run-script/lib/node-gyp-bin/node-gyp.cmd,node_modules/cssesc/bin/cssesc,node_modules/node-gyp/bin/node-gyp.js,node_modules/node-gyp/gyp/gyp,node_modules/node-gyp/gyp/gyp.bat,node_modules/node-gyp/gyp/gyp_main.py,node_modules/node-gyp/gyp/pylib/gyp/MSVSSettings_test.py,node_modules/node-gyp/gyp/pylib/gyp/__init__.py,node_modules/node-gyp/gyp/pylib/gyp/common_test.py,node_modules/node-gyp/gyp/pylib/gyp/easy_xml_test.py,node_modules/node-gyp/gyp/pylib/gyp/flock_tool.py,node_modules/node-gyp/gyp/pylib/gyp/generator/msvs_test.py,node_modules/node-gyp/gyp/pylib/gyp/input_test.py,node_modules/node-gyp/gyp/pylib/gyp/mac_tool.py,node_modules/node-gyp/gyp/pylib/gyp/win_tool.py,node_modules/node-gyp/gyp/test_gyp.py,node_modules/nopt/bin/nopt.js,node_modules/pacote/bin/index.js,node_modules/qrcode-terminal/bin/qrcode-terminal.js,node_modules/semver/bin/semver.js,node_modules/which/bin/which.js"
+binary_path = "bin/npm-cli.js"
+binary_sha256 = "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+binary_bytes = "54"
+companion_path = "bin/npx-cli.js"
+companion_sha256 = "237adf8f3747cad8b9b62fcfd0d9c8d509a64e550337707f55100afcb79e8900"
+companion_bytes = "2921"
+package_json_sha256 = "8d658bbfdb83b154e8d0389770f34ef50e34847b51b504fe55d91d283ce0ba32"
+package_json_bytes = "6597"

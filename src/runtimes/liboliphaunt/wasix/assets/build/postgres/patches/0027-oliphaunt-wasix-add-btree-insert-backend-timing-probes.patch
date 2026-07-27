@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000027 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add btree insert backend timing probes
+
+The coarse storage diagnostic shows `_bt_doinsert` as the largest named
+execution component for indexed updates, but that single timer does not say
+whether the time is in scan-key construction, tree search, uniqueness checks,
+insert-location selection, page mutation, or page splits.  Add a second layer
+of diagnostic-only btree timers so follow-up work can target the right part of
+the btree path before adding another speculative shortcut.
+
+These probes are compiled out of normal release artifacts because
+`OLIPHAUNT_WASIX_BACKEND_TIMING` is off by default.
+---
+ src/backend/access/nbtree/nbtinsert.c | 16 ++++++++++++++++
+ src/include/port/wasix-dl.h           |  6 ++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/src/backend/access/nbtree/nbtinsert.c b/src/backend/access/nbtree/nbtinsert.c
+--- a/src/backend/access/nbtree/nbtinsert.c
++++ b/src/backend/access/nbtree/nbtinsert.c
+@@ -112,7 +112,9 @@ _bt_doinsert(Relation rel, IndexTuple itup,
+ 	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_DOINSERT);
+
+ 	/* we need an insertion scan key to do our search, so build one */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_MKSCANKEY);
+ 	itup_key = _bt_mkscankey(rel, itup);
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_MKSCANKEY);
+
+ 	if (checkingunique)
+ 	{
+@@ -166,7 +168,9 @@ search:
+ 	 * searching from the root page.  insertstate.buf will hold a buffer that
+ 	 * is locked in exclusive mode afterwards.
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_SEARCH_INSERT);
+ 	stack = _bt_search_insert(rel, heapRel, &insertstate);
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_SEARCH_INSERT);
+
+ 	/*
+ 	 * checkingunique inserts are not allowed to go ahead when two tuples with
+@@ -209,8 +213,10 @@ search:
+ 		TransactionId xwait;
+ 		uint32		speculativeToken;
+
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_CHECK_UNIQUE);
+ 		xwait = _bt_check_unique(rel, &insertstate, heapRel, checkUnique,
+ 								 &is_unique, &speculativeToken);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_CHECK_UNIQUE);
+
+ 		if (unlikely(TransactionIdIsValid(xwait)))
+ 		{
+@@ -257,11 +263,15 @@ search:
+ 		 * search bounds established within _bt_check_unique when insertion is
+ 		 * checkingunique.
+ 		 */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_FIND_INSERTLOC);
+ 		newitemoff = _bt_findinsertloc(rel, &insertstate, checkingunique,
+ 									   indexUnchanged, stack, heapRel);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_FIND_INSERTLOC);
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_INSERTONPG);
+ 		_bt_insertonpg(rel, heapRel, itup_key, insertstate.buf, InvalidBuffer,
+ 					   stack, itup, insertstate.itemsz, newitemoff,
+ 					   insertstate.postingoff, false);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_INSERTONPG);
+ 	}
+ 	else
+ 	{
+@@ -1218,8 +1228,10 @@ _bt_insertonpg(Relation rel,
+ 		Assert(!split_only_page);
+
+ 		/* split the buffer into left and right halves */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_SPLIT);
+ 		rbuf = _bt_split(rel, heaprel, itup_key, buf, cbuf, newitemoff, itemsz,
+ 						 itup, origitup, nposting, postingoff);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_SPLIT);
+ 		PredicateLockPageSplit(rel,
+ 							   BufferGetBlockNumber(buf),
+ 							   BufferGetBlockNumber(rbuf));
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -56,6 +56,12 @@ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #define OLIPHAUNT_BACKEND_TIMING_HEAPAM_TUPLE_UPDATE 49
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_DOINSERT 50
+ #define OLIPHAUNT_BACKEND_TIMING_XLOG_INSERT_RECORD 51
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_MKSCANKEY 52
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_SEARCH_INSERT 53
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_CHECK_UNIQUE 54
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_FIND_INSERTLOC 55
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_INSERTONPG 56
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_SPLIT 57
+ extern void oliphaunt_wasix_backend_timing_start(int id);
+ extern void oliphaunt_wasix_backend_timing_end(int id);
+ #define OLIPHAUNT_BACKEND_TIMING_START(id) oliphaunt_wasix_backend_timing_start(id)
+--
+2.39.5

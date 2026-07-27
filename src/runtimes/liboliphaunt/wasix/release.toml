@@ -1,0 +1,26 @@
+id = "liboliphaunt-wasix"
+owner = "@oliphaunt/wasm"
+kind = "wasm-runtime"
+publish_targets = ["github-release-assets", "crates-io"]
+registry_packages = [
+  "crates:oliphaunt-icu",
+  "crates:liboliphaunt-wasix-portable",
+  "crates:oliphaunt-wasix-tools",
+  "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
+  "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+]
+release_artifacts = [
+  "release-assets",
+]
+derived_version_files = ["src/runtimes/liboliphaunt/icu/Cargo.toml"]
+
+[compatibility_versions.liboliphaunt-wasix-icu]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/liboliphaunt/icu/Cargo.toml"
+parser = "toml:package.version"

@@ -1,0 +1,41 @@
+{
+  "name": "@oliphaunt/broker-darwin-arm64",
+  "version": "0.0.0",
+  "description": "macOS arm64 oliphaunt-broker helper binary.",
+  "license": "MIT AND Apache-2.0 AND BSD-3-Clause AND CC-BY-3.0 AND ISC AND Unicode-3.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/broker/packages/darwin-arm64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "brokerHelper": "oliphaunt-broker",
+    "target": "macos-arm64",
+    "executableRelativePath": "bin/oliphaunt-broker"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./bin/oliphaunt-broker"
+    ]
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_LICENSES"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

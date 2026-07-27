@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000036 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: skip activity id reporting
+
+PostgreSQL 18 reports plan IDs to activity statistics from the simple-query,
+extended-query, and planner paths.  The embedded embedded WASIX runtime does
+not expose query or plan IDs as an observability surface, and the activity
+tracking GUC is disabled for this lane.
+
+Guard query-id and plan-id activity reporting behind the existing single-user
+build define.  This keeps SQL behavior unchanged while avoiding extra reporting
+calls and portal/query statement scans on the hot embedded path.
+---
+ src/backend/optimizer/plan/planner.c |  2 ++
+ src/backend/tcop/postgres.c          | 20 ++++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/src/backend/optimizer/plan/planner.c b/src/backend/optimizer/plan/planner.c
+--- a/src/backend/optimizer/plan/planner.c
++++ b/src/backend/optimizer/plan/planner.c
+@@ -309,7 +309,9 @@ planner(Query *parse, const char *query_string, int cursorOptions,
+ 	else
+ 		result = standard_planner(parse, query_string, cursorOptions, boundParams);
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	pgstat_report_plan_id(result->planId, false);
++#endif
+
+ 	return result;
+ }
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -1259,8 +1259,10 @@ exec_simple_query(const char *query_string)
+ 		const char *cmdtagname;
+ 		size_t		cmdtaglen;
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 		pgstat_report_query_id(0, true);
+ 		pgstat_report_plan_id(0, true);
++#endif
+
+ 		/*
+ 		 * Get the command name for use in status display (it also becomes the
+@@ -1822,7 +1824,9 @@ exec_bind_message(StringInfo input_message)
+ 	char		msec_str[32];
+ 	ParamsErrorCbData params_data;
+ 	ErrorContextCallback params_errcxt;
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	ListCell   *lc;
++#endif
+
+ 	/* Get the fixed part of the message */
+ 	portal_name = pq_getmsgstring(input_message);
+@@ -1858,6 +1860,7 @@ exec_bind_message(StringInfo input_message)
+
+ 	pgstat_report_activity(STATE_RUNNING, psrc->query_string);
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	foreach(lc, psrc->query_list)
+ 	{
+ 		Query	   *query = lfirst_node(Query, lc);
+@@ -1870,6 +1873,7 @@ exec_bind_message(StringInfo input_message)
+ 			break;
+ 		}
+ 	}
++#endif
+
+ 	set_ps_display("BIND");
+
+@@ -2211,6 +2215,7 @@ exec_bind_message(StringInfo input_message)
+ 					  cplan->stmt_list,
+ 					  cplan);
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	/* Portal is defined, set the plan ID based on its contents. */
+ 	foreach(lc, portal->stmts)
+ 	{
+@@ -2223,6 +2228,7 @@ exec_bind_message(StringInfo input_message)
+ 			break;
+ 		}
+ 	}
++#endif
+
+ 	/* Done with the snapshot used for parameter I/O and parsing/planning */
+ 	if (snapshot_set)
+@@ -2307,7 +2316,9 @@ exec_execute_message(const char *portal_name, long max_rows)
+ 	ErrorContextCallback params_errcxt;
+ 	const char *cmdtagname;
+ 	size_t		cmdtaglen;
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	ListCell   *lc;
++#endif
+
+ 	/* Adjust destination to tell printtup.c what to do */
+ 	dest = whereToSendOutput;
+@@ -2347,6 +2353,7 @@ PortalRun(QueryCompletion *qc, DestReceiver *dest)
+
+ 	pgstat_report_activity(STATE_RUNNING, sourceText);
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	foreach(lc, portal->stmts)
+ 	{
+ 		PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
+@@ -2359,7 +2366,9 @@ PortalRun(QueryCompletion *qc, DestReceiver *dest)
+ 			break;
+ 		}
+ 	}
++#endif
+
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	foreach(lc, portal->stmts)
+ 	{
+ 		PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
+@@ -2372,6 +2381,7 @@ PortalRun(QueryCompletion *qc, DestReceiver *dest)
+ 			break;
+ 		}
+ 	}
++#endif
+
+ 	cmdtagname = GetCommandTagNameAndLen(portal->commandTag, &cmdtaglen);
+
+--
+2.39.5

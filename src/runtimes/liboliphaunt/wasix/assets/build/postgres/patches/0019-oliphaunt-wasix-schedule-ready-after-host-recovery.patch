@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000019 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: schedule ready after host recovery
+
+PostgreSQL's normal top-level ERROR recovery returns through the
+PostgresMain() sigsetjmp site.  After PostgresMainLongJmp() performs cleanup,
+PostgresMain() re-arms the exception stack and sets send_ready_for_query when
+the backend is not in extended-protocol skip-till-Sync mode.
+
+The embedded WASIX host can instead force ERROR recovery across the process
+exit boundary and then invoke PostgresMainLongJmp() directly.  Preserve the
+same ReadyForQuery scheduling in that host-callable path, while still
+withholding ReadyForQuery when extended-query recovery has set ignore_till_sync.
+---
+ src/backend/tcop/postgres.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 0dc4c9d1b3..b33221f794 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4585,6 +4585,17 @@ PostgresMainLongJmp(void)
+
+ 	/* Now we can allow interrupts again */
+ 	RESUME_INTERRUPTS();
++
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/*
++	 * Host-forced ERROR recovery calls this export directly instead of
++	 * returning through PostgresMain()'s sigsetjmp site.  Preserve upstream's
++	 * post-recovery ReadyForQuery scheduling for simple-query errors without
++	 * breaking extended-protocol skip-till-Sync behavior.
++	 */
++	if (!ignore_till_sync)
++		send_ready_for_query = true;
++#endif
+ }
+
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
+--
+2.49.0

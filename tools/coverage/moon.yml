@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "coverage-tools"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "coverage", "repo-hygiene"]
+
+project:
+  title: "Coverage Tools"
+  description: "Measured polyglot coverage runners, parsers, thresholds, and aggregate summaries."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh tools/coverage/coverage.mjs check-tools"
+    inputs:
+      - "/tools/coverage/**/*"
+      - "/coverage/baseline.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

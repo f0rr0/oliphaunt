@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: keep btree delete scratch on stack
+
+PostgreSQL btree simple deletion and bottom-up deletion use two page-local
+scratch arrays sized by MaxTIDsPerBTreePage.  The arrays are bounded by BLCKSZ
+and only live for a single deletion pass, but upstream allocates and frees both
+arrays for each pass.
+
+Keep upstream allocation behavior everywhere except the embedded WASIX
+embedded WASIX runtime.  In that lane, place the scratch arrays on the C stack to
+avoid allocator traffic during indexed-update churn.  This does not change
+which tuples are considered, which tableam callback runs, or when physical
+deletion is attempted.
+---
+ src/backend/access/nbtree/nbtdedup.c | 20 ++++++++++++++++++++
+ src/backend/access/nbtree/nbtinsert.c | 19 +++++++++++++++++++
+ 2 files changed, 39 insertions(+)
+
+diff --git a/src/backend/access/nbtree/nbtdedup.c b/src/backend/access/nbtree/nbtdedup.c
+index 53907b54a6..7b016cdb6e 100644
+--- a/src/backend/access/nbtree/nbtdedup.c
++++ b/src/backend/access/nbtree/nbtdedup.c
+@@ -314,6 +314,10 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	BTPageOpaque opaque = BTPageGetOpaque(page);
+ 	BTDedupState state;
+ 	TM_IndexDeleteOp delstate;
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++	TM_IndexDelete deltids[MaxTIDsPerBTreePage];
++	TM_IndexStatus status[MaxTIDsPerBTreePage];
++#endif
+ 	bool		neverdedup;
+ 	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+
+@@ -355,8 +359,18 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	delstate.bottomup = true;
+ 	delstate.bottomupfreespace = Max(BLCKSZ / 16, newitemsz);
+ 	delstate.ndeltids = 0;
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++	/*
++	 * The delete state is page-local and bounded by BLCKSZ.  Keep it off the
++	 * allocator in the embedded WASIX backend, where these palloc/pfree pairs
++	 * are visible during indexed-update churn.
++	 */
++	delstate.deltids = deltids;
++	delstate.status = status;
++#else
+ 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
+ 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
++#endif
+
+ 	minoff = P_FIRSTDATAKEY(opaque);
+ 	maxoff = PageGetMaxOffsetNumber(page);
+@@ -409,8 +423,10 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	/* Ask tableam which TIDs are deletable, then physically delete them */
+ 	_bt_delitems_delete_check(rel, buf, heapRel, &delstate);
+
++#if !defined(__wasi__) || !defined(OLIPHAUNT_WASM_SINGLE_USER)
+ 	pfree(delstate.deltids);
+ 	pfree(delstate.status);
++#endif
+
+ 	/* Report "success" to caller unconditionally to avoid deduplication */
+ 	if (neverdedup)
+diff --git a/src/backend/access/nbtree/nbtinsert.c b/src/backend/access/nbtree/nbtinsert.c
+index 0da44e1779..c006987ca9 100644
+--- a/src/backend/access/nbtree/nbtinsert.c
++++ b/src/backend/access/nbtree/nbtinsert.c
+@@ -2817,6 +2817,10 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+ 	BlockNumber *deadblocks;
+ 	int			ndeadblocks;
+ 	TM_IndexDeleteOp delstate;
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++	TM_IndexDelete deltids[MaxTIDsPerBTreePage];
++	TM_IndexStatus status[MaxTIDsPerBTreePage];
++#endif
+ 	OffsetNumber offnum;
+
+ 	/* Get array of table blocks pointed to by LP_DEAD-set tuples */
+@@ -2829,8 +2833,17 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+ 	delstate.bottomup = false;
+ 	delstate.bottomupfreespace = 0;
+ 	delstate.ndeltids = 0;
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++	/*
++	 * The scratch arrays are page-size bounded and used for this deletion
++	 * pass only.  Avoid allocator traffic in the embedded WASIX backend.
++	 */
++	delstate.deltids = deltids;
++	delstate.status = status;
++#else
+ 	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
+ 	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
++#endif
+
+ 	for (offnum = minoff;
+ 		 offnum <= maxoff;
+@@ -2911,8 +2924,10 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+ 	/* Physically delete LP_DEAD tuples (plus any delete-safe extra TIDs) */
+ 	_bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
+
++#if !defined(__wasi__) || !defined(OLIPHAUNT_WASM_SINGLE_USER)
+ 	pfree(delstate.deltids);
+ 	pfree(delstate.status);
++#endif
+ }
+
+ /*
+--
+2.49.0

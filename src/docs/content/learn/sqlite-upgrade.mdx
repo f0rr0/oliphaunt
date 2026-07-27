@@ -1,0 +1,69 @@
+---
+sidebar_position: 1
+title: Moving From SQLite
+description: Map SQLite storage, SQL, backup, and extension assumptions to embedded PostgreSQL.
+---
+
+# Moving From SQLite
+
+Oliphaunt is embedded PostgreSQL, so migration from SQLite starts by mapping a
+single-file database model to PostgreSQL roots, WAL, extensions, and PostgreSQL
+SQL semantics.
+
+Use this guide when an app already uses SQLite and you are evaluating whether a
+PostgreSQL-compatible embedded runtime is worth the extra footprint.
+
+<SqliteMigrationMap />
+
+## Concept Map
+
+| SQLite concept | Oliphaunt concept |
+| --- | --- |
+| One database file | One PostgreSQL root directory |
+| Pragmas | PostgreSQL settings and SDK durability profiles |
+| SQLite transaction | PostgreSQL transaction |
+| SQLite extension loading | Exact PostgreSQL extension selection before open |
+| File copy backup | SDK backup/export API |
+| Multiple library handles | Mode-specific Oliphaunt handles and session semantics |
+
+## Schema And SQL Differences
+
+PostgreSQL is stricter and richer than SQLite:
+
+- column types and casts matter more;
+- `SERIAL`, `IDENTITY`, sequences, arrays, JSONB, and enums replace many
+  SQLite-specific conventions;
+- PostgreSQL query parameters are `$1`, `$2`, and so on;
+- constraints, indexes, and generated columns follow PostgreSQL syntax;
+- extension-backed types and operators require exact extension selection.
+
+Start with a small schema slice. Port table definitions, then migrate one query
+path at a time so type and constraint differences are visible early.
+
+## Storage And Backup
+
+SQLite apps often back up by copying one file. Oliphaunt live storage is a
+PostgreSQL root directory, so data movement goes through SDK backup and restore
+APIs. That keeps locks, WAL, selected extensions, archive format, and restore
+target checks together.
+
+For mobile apps, keep the root in app-private storage and use the platform's
+normal user-data protection choices. For desktop apps, choose direct, broker, or
+server mode based on the concurrency and process-isolation model your app needs.
+
+## Migration Path
+
+1. Choose the SDK for the app target.
+2. Open a temporary Oliphaunt root and port the schema.
+3. Port read paths before write-heavy sync/import paths.
+4. Add selected extensions explicitly.
+5. Add backup/restore and package-size checks before shipping.
+6. Compare app-start, first-query, memory, and package-size numbers against the
+   SQLite baseline.
+
+## When SQLite Is Still The Better Fit
+
+Use Oliphaunt when PostgreSQL compatibility, richer SQL, extensions, and
+server-compatible workflows are worth the larger runtime and directory storage
+model. Use SQLite when a tiny single-file dependency and SQLite-specific
+semantics are the better fit.

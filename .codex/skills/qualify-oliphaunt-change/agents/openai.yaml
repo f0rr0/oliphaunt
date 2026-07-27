@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qualify Oliphaunt Change"
+  short_description: "Run and diagnose the appropriate CI qualification"
+  default_prompt: "Use $qualify-oliphaunt-change to qualify this Oliphaunt change before merge or release."

@@ -1,0 +1,86 @@
+name: Set up npm publisher
+description: Install and verify the exact npm CLI used for trusted publication.
+
+inputs:
+  npm-version:
+    description: Exact stable npm version.
+    required: true
+
+outputs:
+  node-executable:
+    description: Absolute verified Node.js executable used to launch npm.
+    value: ${{ steps.install.outputs.node-executable }}
+  npm-cli:
+    description: Absolute digest-verified npm CLI entrypoint.
+    value: ${{ steps.install.outputs.npm-cli }}
+  execution-envelope:
+    description: Absolute digest-verified npm execution envelope.
+    value: ${{ steps.install.outputs.execution-envelope }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore verified npm publisher archive
+      id: restore_verified_npm_publisher
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/oliphaunt-npm-publisher
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}
+
+    - name: Install exact npm publisher
+      id: install
+      shell: bash
+      env:
+        NPM_PUBLISHER_VERSION: ${{ inputs.npm-version }}
+        OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-npm-publisher
+      run: | # zizmor: ignore[github-env] only a full-tree digest-verified runner-temp path is exported.
+        set -euo pipefail
+        publisher_bin="$(bash .github/actions/setup-npm-publisher/install.sh)"
+        node_executable="$(command -v node)"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          command -v cygpath >/dev/null 2>&1
+          node_executable="$(cygpath -u "$node_executable")"
+        fi
+        npm_cli="$(cd "$publisher_bin/../npm/bin" && pwd -P)/npm-cli.js"
+        execution_envelope="$(cd "$publisher_bin/.." && pwd -P)"
+        if [[ "$node_executable" != /* || ! -f "$node_executable" || -L "$node_executable" ]]; then
+          echo "The verified Node.js executable is not a regular absolute path: ${node_executable}" >&2
+          exit 1
+        fi
+        if [[ ! -f "$npm_cli" || -L "$npm_cli" ]]; then
+          echo "The verified npm CLI is not a regular file: ${npm_cli}" >&2
+          exit 1
+        fi
+        node_version="$("$node_executable" --version)"
+        npm_version="$("$node_executable" "$npm_cli" --version)"
+        if [[ "$npm_version" != "$NPM_PUBLISHER_VERSION" ]]; then
+          echo "Expected npm ${NPM_PUBLISHER_VERSION}; observed ${npm_version}" >&2
+          exit 1
+        fi
+        "$node_executable" tools/release/npm-trusted-publishing.mjs check-runtime \
+          --node "$node_version" \
+          --npm "$npm_version"
+        export_dir="$publisher_bin"
+        output_node="$node_executable"
+        output_npm_cli="$npm_cli"
+        output_envelope="$execution_envelope"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          export_dir="$(cygpath -w "$export_dir")"
+          output_node="$(cygpath -w "$output_node")"
+          output_npm_cli="$(cygpath -w "$output_npm_cli")"
+          output_envelope="$(cygpath -w "$execution_envelope")"
+        fi
+        echo "$export_dir" >> "$GITHUB_PATH"
+        {
+          echo "node-executable=$output_node"
+          echo "npm-cli=$output_npm_cli"
+          echo "execution-envelope=$output_envelope"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Save verified npm publisher archive
+      if: ${{ env.HEAVY_CACHE_SAVE_IF == 'true' && steps.restore_verified_npm_publisher.outputs.cache-hit != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/oliphaunt-npm-publisher
+        key: verified-npm-publisher-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-npm-publisher/action.yml', '.github/actions/setup-npm-publisher/install.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/npm-publisher.toml', 'tools/dev/curl-platform-flags.sh') }}

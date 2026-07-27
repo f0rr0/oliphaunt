@@ -1,0 +1,37 @@
+name: Set up Deno
+description: Install the pinned Deno toolchain for TypeScript/JSR release checks.
+
+inputs:
+  deno-version:
+    description: Deno version.
+    required: false
+    default: "v2.8.1"
+
+outputs:
+  execution-envelope:
+    description: Absolute digest-verified Deno execution envelope.
+    value: ${{ steps.install.outputs.execution-envelope }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install verified Deno
+      id: install
+      shell: bash
+      env:
+        DENO_VERSION_INPUT: ${{ inputs.deno-version }}
+        OLIPHAUNT_PINNED_TOOL_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-pinned-tools
+      run: | # zizmor: ignore[github-env] the installer returns a digest- and version-verified runner-temp path.
+        set -euo pipefail
+        binary="$(tools/dev/install-pinned-js-runtime.sh deno --expected-version "$DENO_VERSION_INPUT")"
+        binary_dir="$(dirname "$binary")"
+        execution_envelope="$(cd "$binary_dir/.." && pwd -P)"
+        output_envelope="$execution_envelope"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          command -v cygpath >/dev/null 2>&1
+          binary_dir="$(cygpath -w "$binary_dir")"
+          output_envelope="$(cygpath -w "$execution_envelope")"
+        fi
+        echo "$binary_dir" >> "$GITHUB_PATH"
+        echo "execution-envelope=$output_envelope" >> "$GITHUB_OUTPUT"
+        "$binary" --version

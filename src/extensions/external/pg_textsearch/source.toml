@@ -1,0 +1,9 @@
+name = "pg_textsearch"
+url = "https://github.com/timescale/pg_textsearch.git"
+branch = "pinned"
+commit = "5c5147bf2610d786f1bd139951b9fb7fe4ac68fb"
+
+[extension-control]
+sql-name = "pg_textsearch"
+source-path = "pg_textsearch.control"
+default-version = "0.5.1"

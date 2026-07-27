@@ -1,0 +1,4 @@
+name = "icu"
+url = "https://github.com/unicode-org/icu.git"
+branch = "release-76-1"
+commit = "8eca245c7484ac6cc179e3e5f7c1ea7680810f39"
