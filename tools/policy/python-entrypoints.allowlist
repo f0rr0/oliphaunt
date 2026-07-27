@@ -1,0 +1,8 @@
+# Intentional Python tooling inventory.
+# Format: path<TAB>domain<TAB>migration-decision<TAB>rationale
+# New Python files should be ported to Bun or deliberately added here with a specific migration decision.
+.github/actions/setup-moon/toolchain-archive.py	moon-toolchain	retain-archive-validation	uses standard-library ZIP and tar readers for bounded cross-platform bootstrap extraction and portable tree fingerprints
+.github/actions/setup-wasmer-llvm/validate-archive.py	wasix-toolchain	retain-archive-validation	uses the standard-library tar parser for bounded member and link validation before cross-platform extraction
+src/extensions/tools/check-extension-model.py	extensions	defer-extension-model-port	generates and validates multi-language extension catalog, SDK metadata, docs, and evidence from one model
+tools/policy/source-archive.py	source-spine	retain-archive-validation	uses the standard-library tar parser for bounded source archive validation and safe extraction
+tools/policy/verify-source-tree.py	source-spine	retain-archive-validation	provides a dependency-free offline integrity verifier inside isolated native and WASIX builders

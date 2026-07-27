@@ -1,0 +1,38 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+# Installed dependency trees are derived state. Task invalidation comes from
+# tracked package manifests, workspace configuration, and lockfiles instead of
+# pnpm's directory symlinks, which Moon cannot hash as files.
+implicitInputs:
+  - "/.moon/tasks/**/*"
+  # Moon resolves tool versions from this file before it evaluates tasks.
+  - "/.prototools"
+  # Git and Moon use ignore policy while constructing repository and affected
+  # inventories, so it is part of every task's interpreted input universe.
+  - "/.gitignore"
+  # Checkout normalization affects every source byte seen by every task.
+  - "/.gitattributes"
+  # Command discovery participates in Moon graph, affected-plan, policy, and
+  # release computation, so changing it must invalidate every consumer.
+  - "/tools/dev/bun.sh"
+  # File-backed synchronous command transport is shared by release, policy,
+  # graph, CI, SDK, and developer tooling. Treat it as execution
+  # infrastructure so no consumer can silently reuse output captured by an
+  # older transport contract.
+  - "/tools/dev/capture-command-output.mjs"
+  # Root-to-leaf release staging safety is shared by every carrier family.
+  # Treat it as execution infrastructure so cached payloads cannot outlive
+  # the directory policy that admitted their staging roots.
+  - "/tools/release/release-directory-safety.mjs"
+  # Bun-owned mutation tests share the fd-backed synchronous compatibility
+  # facade. Its semantics therefore participate in every cached test result.
+  - "/tools/test/fd-backed-spawn-sync.mjs"
+  - "/tools/dev/moon-command.mjs"
+  - "!/node_modules"
+  - "!/node_modules/**"
+  - "!/examples/**/node_modules"
+  - "!/examples/**/node_modules/**"
+  - "!/src/**/node_modules"
+  - "!/src/**/node_modules/**"
+  - "!/tools/**/node_modules"
+  - "!/tools/**/node_modules/**"

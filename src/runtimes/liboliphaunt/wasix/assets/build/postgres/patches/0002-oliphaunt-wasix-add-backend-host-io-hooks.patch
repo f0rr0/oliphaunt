@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000002 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add backend host I/O hooks
+
+Add an explicit backend libpq I/O hook for the embedded WASIX host.
+
+The released PG17.5 lane routes protocol bytes through broad recv()/send()
+remapping in the WASIX shim.  For the PG18 lane, keep the normal socket path
+unchanged and add a Port-owned callback table that can be installed by the
+single-user startup patch later in the series.
+
+This patch only provides the hook surface.  It does not choose startup
+lifecycle, authentication, or protocol-pump behavior.
+---
+ src/backend/libpq/be-secure.c | 10 ++++++++++
+ src/backend/libpq/pqcomm.c    |  8 ++++++++
+ src/include/libpq/libpq-be.h  | 11 +++++++++++
+ 3 files changed, 29 insertions(+)
+
+diff --git a/src/backend/libpq/be-secure.c b/src/backend/libpq/be-secure.c
+index 2c9dfc28f0..d069849c9d 100644
+--- a/src/backend/libpq/be-secure.c
++++ b/src/backend/libpq/be-secure.c
+@@ -288,6 +288,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
+ 		return len;
+ 	}
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (port->oliphaunt_wasix_io != NULL && port->oliphaunt_wasix_io->read != NULL)
++		return port->oliphaunt_wasix_io->read(port->oliphaunt_wasix_io->context, ptr, len);
++#endif
++
+ 	/*
+ 	 * Try to read from the socket without blocking. If it succeeds we're
+ 	 * done, otherwise we'll wait for the socket using the latch mechanism.
+@@ -381,6 +386,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
+ {
+ 	ssize_t		n;
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (port->oliphaunt_wasix_io != NULL && port->oliphaunt_wasix_io->write != NULL)
++		return port->oliphaunt_wasix_io->write(port->oliphaunt_wasix_io->context, ptr, len);
++#endif
++
+ #ifdef WIN32
+ 	pgwin32_noblock = true;
+ #endif
+diff --git a/src/backend/libpq/pqcomm.c b/src/backend/libpq/pqcomm.c
+index 6f7b4f62b6..742d1856e5 100644
+--- a/src/backend/libpq/pqcomm.c
++++ b/src/backend/libpq/pqcomm.c
+@@ -309,6 +309,14 @@ pq_init(ClientSocket *client_sock)
+ 								   port->sock, NULL, NULL);
+ 	latch_pos = AddWaitEventToSet(FeBeWaitSet, WL_LATCH_SET, PGINVALID_SOCKET,
+ 								  MyLatch, NULL);
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/*
++	 * The embedded WASIX backend is not a postmaster child, so there is no
++	 * postmaster-death event to watch. Normal postmaster children keep the
++	 * upstream wait event unchanged.
++	 */
++	if (IsUnderPostmaster)
++#endif
+ 	AddWaitEventToSet(FeBeWaitSet, WL_POSTMASTER_DEATH, PGINVALID_SOCKET,
+ 					  NULL, NULL);
+
+diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
+index 6aa52a64ff..6068a0cb8f 100644
+--- a/src/include/libpq/libpq-be.h
++++ b/src/include/libpq/libpq-be.h
+@@ -99,6 +99,15 @@ typedef struct ClientConnectionInfo
+ 	UserAuth	auth_method;
+ } ClientConnectionInfo;
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++typedef struct OliphauntWasmHostIO
++{
++	void	   *context;
++	ssize_t		(*read) (void *context, void *ptr, size_t len);
++	ssize_t		(*write) (void *context, const void *ptr, size_t len);
++} OliphauntWasmHostIO;
++#endif
++
+ /*
+  * The Port structure holds state information about a client connection in a
+  * backend process.  It is available in the global variable MyProcPort.  The
+@@ -244,6 +253,9 @@ typedef struct Port
+ 	char	   *raw_buf;
+ 	ssize_t		raw_buf_consumed,
+ 				raw_buf_remaining;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	OliphauntWasmHostIO *oliphaunt_wasix_io;
++#endif
+ } Port;
+
+ /*
+--
+2.49.0

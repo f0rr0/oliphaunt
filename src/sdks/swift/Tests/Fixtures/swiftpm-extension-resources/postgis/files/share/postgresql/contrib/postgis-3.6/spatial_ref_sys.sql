@@ -1,0 +1,1 @@
+fixture declared postgis data

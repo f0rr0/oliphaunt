@@ -1,0 +1,93 @@
+---
+title: Performance
+description: Understand the latency, throughput, memory, package-size, and SQLite comparison measurements Oliphaunt publishes.
+---
+
+# Performance
+
+Oliphaunt is designed for app-embedded PostgreSQL. Performance work focuses on
+the operations developers feel in production apps: open time, simple-query
+latency, transaction throughput, bulk load speed, large result streaming,
+backup/restore time, memory footprint, and packaged app size.
+
+<PerformanceResultsGrid />
+
+## What to measure
+
+Use performance numbers in context:
+
+| Area | Why it matters |
+| --- | --- |
+| Cold open | App startup and first database access |
+| Warm open | Reopening a database during normal app use |
+| Query latency | UI responsiveness for small reads and writes |
+| Transaction throughput | Sync, import, and local-first write workloads |
+| Bulk load | Initial dataset import and cache hydration |
+| Large result streaming | Reports, sync scans, and export flows |
+| Backup and restore | User data migration and support workflows |
+| RSS and package size | Mobile distribution and desktop app footprint |
+
+Native direct mode is the lowest-latency embedded path. Broker mode adds
+an IPC boundary in exchange for process isolation and multi-root management.
+Server mode is the right choice when an app needs real PostgreSQL client
+connections, tools, pools, or ORMs.
+
+## Compare modes honestly
+
+Compare each mode against the problem it solves:
+
+- Use direct mode when one embedded database session is enough and latency is
+  the primary concern.
+- Use broker mode when crash isolation, recovery, upgrades, or multiple roots
+  are more important than the last microseconds of latency.
+- Use server mode when independent PostgreSQL clients are part of the product.
+
+For mobile apps, include startup time, memory footprint, selected extensions,
+and app artifact size in the same report. The useful result is the one that
+keeps latency, throughput, memory, and selected-extension packaging visible
+together.
+
+## SQLite comparison
+
+SQLite is the baseline developers already trust for embedded storage. Oliphaunt
+is measured against SQLite for:
+
+- first query after app launch;
+- single-row lookup;
+- batched insert/update;
+- aggregate queries over realistic local datasets;
+- transaction cost;
+- package size and memory footprint.
+
+The comparison explains the workload and schema. PostgreSQL features such
+as extensions, SQL compatibility, data types, and server-mode interoperability
+are part of the value proposition alongside low latency, high throughput, and a
+bounded footprint in common app workloads.
+
+## Release Measurements
+
+Published performance results include:
+
+- hardware and operating system;
+- SDK and runtime mode;
+- PostgreSQL and Oliphaunt versions;
+- selected extensions;
+- repeat count and percentile method;
+- memory/RSS collection method;
+- package-size method;
+- links to reproducible benchmark workloads.
+
+Reports must show p50/p90/p95/p99 latency, suite totals, throughput, RSS,
+CPU time, package size, and benchmark provenance.
+
+Native Direct Regression Diagnostics are included when direct mode misses a
+gate, so the report links the failing suite back to repeatable diagnostic
+commands rather than only showing a red/green result.
+
+PostgreSQL configuration sweeps must stay inside valid server settings. For
+example, `min_wal_size=8MB` is the practical lower bound because values below a
+WAL segment are invalid PostgreSQL experiments, not useful mobile footprint
+tuning data.
+
+Public docs present stable methodology and release results. Raw run logs and
+benchmark debugging notes stay out of app-developer setup guides.

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: use wasm-ld for backend core
+
+Use the same relocatable wasm linker shape as the released WASIX lane when
+assembling the backend core archive.  The default LD can resolve to the host
+linker in the cross build and cannot read wasm/LTO backend objects.
+---
+ src/backend/Makefile | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/backend/Makefile b/src/backend/Makefile
+index 9292f77031..89c356d090 100644
+--- a/src/backend/Makefile
++++ b/src/backend/Makefile
+@@ -83,12 +83,19 @@ libpostgres.a: postgres
+ endif # win32
+
+ ifeq ($(PORTNAME), wasix-dl)
++WASM_LD ?= $(shell $(CC) -print-prog-name=wasm-ld)
++LIBPGCORE ?= $(top_builddir)/libpgcore.a
++LIBPG = $(top_builddir)/libpostgres.a
++PGCORE = $(top_builddir)/src/common/libpgcommon_srv.a $(top_builddir)/src/port/libpgport_srv.a $(LIBPG)
++PGMAIN = main/main.o
++PGBACKEND = $(filter-out $(PGMAIN) $(top_builddir)/src/common/libpgcommon_srv.a $(top_builddir)/src/port/libpgport_srv.a,$(call expand_subsys,$(OBJS)))
++
+ oliphaunt: $(OBJS)
+-	$(AR) rcs libpgmain.a main/main.o
+-	$(AR) rcs libpostgres.a $(filter-out main/main.o,$(call expand_subsys,$^))
+-	$(LD) -r -o libpgcore.o $(filter-out main/main.o,$(call expand_subsys,$^))
+-	$(AR) rcs libpgcore.a libpgcore.o
+-	$(CC) $(CFLAGS) main/main.o libpgcore.a $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
++	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
++	$(AR) rcs $(LIBPG) $(PGBACKEND)
++	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
++	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
++	$(CC) $(CFLAGS) $(top_builddir)/libpgcore.a $(PGMAIN) $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
+
+ postgres: oliphaunt
+
+--
+2.49.0

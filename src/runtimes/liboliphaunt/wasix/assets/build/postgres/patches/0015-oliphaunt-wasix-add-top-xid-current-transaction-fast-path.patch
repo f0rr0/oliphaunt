@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add top xid current transaction fast path
+
+TransactionIdIsCurrentTransactionId() is a hot visibility helper.  In the
+common single-backend top-level transaction case, once the top XID comparison
+has failed there are no other current XIDs to discover unless parallel-worker
+state, a parent subtransaction stack, or subcommitted child XIDs exist.
+
+Short-circuit that ordinary case before entering the generic stack walk.  The
+existing parallel and subtransaction paths are preserved for every case that
+can still have another current XID.
+---
+ src/backend/access/transam/xact.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
+index b885513e3e..7026efae20 100644
+--- a/src/backend/access/transam/xact.c
++++ b/src/backend/access/transam/xact.c
+@@ -961,6 +961,19 @@ TransactionIdIsCurrentTransactionId(TransactionId xid)
+ 	if (TransactionIdEquals(xid, GetTopTransactionIdIfAny()))
+ 		return true;
+
++	/*
++	 * Fast path for the common top-level transaction case. Once the top XID
++	 * comparison failed, there are no other current XIDs to find unless we are
++	 * in a parallel worker, a subtransaction stack, or have subcommitted
++	 * children.
++	 */
++	s = CurrentTransactionState;
++	if (nParallelCurrentXids == 0 &&
++		s->parent == NULL &&
++		s->state != TRANS_ABORT &&
++		s->nChildXids == 0)
++		return false;
++
+ 	/*
+ 	 * In parallel workers, the XIDs we must consider as current are stored in
+ 	 * ParallelCurrentXids rather than the transaction-state stack.  Note that
+--
+2.49.0

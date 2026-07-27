@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/swiftpm-extension-input-v1.json",
+  "title": "Oliphaunt selected SwiftPM extension input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "basePackage", "nativeRuntime", "extensions"],
+  "properties": {
+    "schema": {
+      "const": "oliphaunt-swiftpm-extension-input-v1"
+    },
+    "basePackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url", "version"],
+      "properties": {
+        "name": {
+          "const": "Oliphaunt"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://.*\\.git$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+        }
+      }
+    },
+    "nativeRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "version"],
+      "properties": {
+        "product": {
+          "const": "liboliphaunt-native"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        }
+      }
+    },
+    "extensions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "product",
+          "version",
+          "sqlName",
+          "createsExtension",
+          "dataFiles",
+          "dependencies",
+          "extensionSqlFileNames",
+          "extensionSqlFilePrefixes",
+          "nativeModuleStem",
+          "nativeDependencies",
+          "resourceRoot",
+          "sharedPreloadLibraries",
+          "asset",
+          "registration"
+        ],
+        "properties": {
+          "product": {
+            "type": "string",
+            "pattern": "^oliphaunt-extension-[A-Za-z0-9.-]+$"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "sqlName": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "createsExtension": {
+            "type": "boolean"
+          },
+          "dataFiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f\\u007f]+$"
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+$"
+            }
+          },
+          "extensionSqlFileNames": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^(?=.{1,128}$)[A-Za-z0-9._-]+\\.sql$"
+            }
+          },
+          "extensionSqlFilePrefixes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          },
+          "nativeModuleStem": {
+            "type": ["string", "null"],
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "resourceRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sharedPreloadLibraries": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+$"
+            }
+          },
+          "nativeDependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "asset"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._-]+$"
+                },
+                "asset": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "url", "checksum"],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri",
+                      "pattern": "^https://"
+                    },
+                    "checksum": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "asset": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["name", "url", "checksum"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              },
+              "checksum": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          },
+          "registration": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["hasInit", "symbols"],
+            "properties": {
+              "hasInit": {
+                "type": "boolean"
+              },
+              "symbols": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "address"],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "address": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "nativeModuleStem": { "const": null } },
+              "required": ["nativeModuleStem"]
+            },
+            "then": {
+              "properties": {
+                "asset": { "const": null },
+                "registration": { "const": null },
+                "nativeDependencies": { "maxItems": 0 }
+              }
+            },
+            "else": {
+              "properties": {
+                "asset": { "type": "object" },
+                "registration": { "type": "object" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

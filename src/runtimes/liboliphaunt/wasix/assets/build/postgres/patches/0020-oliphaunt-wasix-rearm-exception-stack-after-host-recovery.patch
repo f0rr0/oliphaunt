@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000020 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: rearm exception stack after host recovery
+
+PostgresMain() normally reassigns PG_exception_stack after top-level ERROR
+cleanup returns through the sigsetjmp site.  The WASIX host-forced recovery
+path invokes PostgresMainLongJmp() directly, so it must restore the same
+top-level exception boundary before the host pumps another frontend message.
+
+Keep this paired with the direct-call ReadyForQuery scheduling and only under
+OLIPHAUNT_WASM_SINGLE_USER.  Non-WASIX builds and the normal sigsetjmp return
+path keep PostgreSQL's upstream assignment.
+---
+ src/backend/tcop/postgres.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index b33221f794..d87ef8ba37 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4588,11 +4588,19 @@ PostgresMainLongJmp(void)
+
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
+ 	/*
++	 * The normal path re-arms the top-level exception stack immediately after
++	 * returning through PostgresMain()'s sigsetjmp site.  Host-forced recovery
++	 * calls this function directly, so it has to restore the same boundary
++	 * before the next frontend message can report another ERROR.
++	 */
++	PG_exception_stack = &postgresmain_sigjmp_buf;
++
++	/*
+ 	 * Host-forced ERROR recovery calls this export directly instead of
+ 	 * returning through PostgresMain()'s sigsetjmp site.  Preserve upstream's
+ 	 * post-recovery ReadyForQuery scheduling for simple-query errors without
+ 	 * breaking extended-protocol skip-till-Sync behavior.
+ 	 */
+ 	if (!ignore_till_sync)
+ 		send_ready_for_query = true;
+ #endif
+--
+2.49.0

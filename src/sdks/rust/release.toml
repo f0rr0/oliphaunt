@@ -1,0 +1,16 @@
+id = "oliphaunt-rust"
+owner = "@oliphaunt/sdk-rust"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt", "crates:oliphaunt-build"]
+release_artifacts = ["cargo-crate", "runtime-resource-cli"]
+
+[compatibility_versions.broker_runtime]
+source_product = "oliphaunt-broker"
+path = "src/sdks/rust/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.broker-version"
+
+[compatibility_versions.broker_runtime_constant]
+source_product = "oliphaunt-broker"
+path = "src/sdks/rust/src/broker.rs"
+parser = "rust-const:BROKER_RELEASE_VERSION"

@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000026 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add executor storage backend timing probes
+
+The PG18 WASIX indexed-update diagnostics show that simple-query planning is a
+large cost, but not enough to explain the remaining gap versus the released
+PG17.5 lane.  Add diagnostic-only timing probes around coarse executor/storage
+hot paths so the next run can separate heap update, btree insert, and WAL
+record insertion time from the rest of executor work.
+
+These probes are compiled out of normal release artifacts because
+`OLIPHAUNT_WASIX_BACKEND_TIMING` is off by default.
+---
+ src/backend/access/heap/heapam_handler.c | 2 ++
+ src/backend/access/nbtree/nbtinsert.c    | 4 ++++
+ src/backend/access/transam/xlog.c        | 5 +++++
+ src/include/port/wasix-dl.h              | 3 +++
+ 4 files changed, 14 insertions(+)
+
+diff --git a/src/backend/access/heap/heapam_handler.c b/src/backend/access/heap/heapam_handler.c
+--- a/src/backend/access/heap/heapam_handler.c
++++ b/src/backend/access/heap/heapam_handler.c
+@@ -327,8 +327,10 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
+ 	slot->tts_tableOid = RelationGetRelid(relation);
+ 	tuple->t_tableOid = slot->tts_tableOid;
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAPAM_TUPLE_UPDATE);
+ 	result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
+ 						 tmfd, lockmode, update_indexes);
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAPAM_TUPLE_UPDATE);
+ 	ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
+
+ 	/*
+diff --git a/src/backend/access/nbtree/nbtinsert.c b/src/backend/access/nbtree/nbtinsert.c
+--- a/src/backend/access/nbtree/nbtinsert.c
++++ b/src/backend/access/nbtree/nbtinsert.c
+@@ -109,6 +109,8 @@ _bt_doinsert(Relation rel, IndexTuple itup,
+ 	BTStack		stack;
+ 	bool		checkingunique = (checkUnique != UNIQUE_CHECK_NO);
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_DOINSERT);
++
+ 	/* we need an insertion scan key to do our search, so build one */
+ 	itup_key = _bt_mkscankey(rel, itup);
+
+@@ -271,6 +273,8 @@ _bt_doinsert(Relation rel, IndexTuple itup,
+ 	if (stack)
+ 		_bt_freestack(stack);
+ 	pfree(itup_key);
++
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_DOINSERT);
+
+ 	return is_unique;
+ }
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -762,6 +762,8 @@ XLogInsertRecord(XLogRecData *rdata,
+ 	bool		prevDoPageWrites = doPageWrites;
+ 	TimeLineID	insertTLI;
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_XLOG_INSERT_RECORD);
++
+ 	/* Does this record type require special handling? */
+ 	if (unlikely(rechdr->xl_rmid == RM_XLOG_ID))
+ 	{
+@@ -855,6 +857,7 @@ XLogInsertRecord(XLogRecData *rdata,
+ 			 */
+ 			WALInsertLockRelease();
+ 			END_CRIT_SECTION();
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_XLOG_INSERT_RECORD);
+ 			return InvalidXLogRecPtr;
+ 		}
+
+@@ -1085,6 +1088,8 @@ XLogInsertRecord(XLogRecData *rdata,
+ 		/* Required for the flush of pending stats WAL data */
+ 		pgstat_report_fixed = true;
+ 	}
++
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_XLOG_INSERT_RECORD);
+
+ 	return EndPos;
+ }
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -53,6 +53,9 @@ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #define OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT 46
+ #define OLIPHAUNT_BACKEND_TIMING_EXEC_COMMAND_COUNTER 47
+ #define OLIPHAUNT_BACKEND_TIMING_EXEC_END_COMMAND 48
++#define OLIPHAUNT_BACKEND_TIMING_HEAPAM_TUPLE_UPDATE 49
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_DOINSERT 50
++#define OLIPHAUNT_BACKEND_TIMING_XLOG_INSERT_RECORD 51
+ extern void oliphaunt_wasix_backend_timing_start(int id);
+ extern void oliphaunt_wasix_backend_timing_end(int id);
+ #define OLIPHAUNT_BACKEND_TIMING_START(id) oliphaunt_wasix_backend_timing_start(id)
+--
+2.39.5

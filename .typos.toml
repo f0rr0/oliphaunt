@@ -1,0 +1,19 @@
+[files]
+extend-exclude = [
+  "target/**",
+  "**/node_modules/**",
+  "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**",
+  "src/runtimes/liboliphaunt/native/patches/**",
+  "src/runtimes/liboliphaunt/native/postgres18/**",
+]
+
+[default]
+extend-ignore-re = [
+  "PNPM",
+  "WASIX",
+]
+
+[default.extend-words]
+oliphaunt = "oliphaunt"
+wasix = "wasix"
+ser = "ser"

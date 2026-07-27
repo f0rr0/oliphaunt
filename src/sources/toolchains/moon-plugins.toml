@@ -1,0 +1,35 @@
+[plugins.javascript]
+locator = "registry://ghcr.io/moonrepo/javascript_toolchain@sha256:cc86bce23fb5d02228da3dd29396da21ff5e63ef97b74e6d7b4e2db78c69c762"
+repository = "moonrepo/javascript_toolchain"
+manifest_sha256 = "cc86bce23fb5d02228da3dd29396da21ff5e63ef97b74e6d7b4e2db78c69c762"
+manifest_bytes = "1538"
+blob_sha256 = "f745122f061b085dd6cbfe57b4fa4b8e25da13be44f21c0016dc587c399834f8"
+bytes = "2585502"
+cache_file = "javascript-bf39d4d62281be86ca6f9ab46922c59a6dcb6651c98c156b227fbd905b18636e.wasm"
+
+[plugins.node]
+locator = "registry://ghcr.io/moonrepo/node_toolchain@sha256:f3d7fb17637b543ea4916caeedbfde6827b94b4b70ab1c30651846d96c8583b1"
+repository = "moonrepo/node_toolchain"
+manifest_sha256 = "f3d7fb17637b543ea4916caeedbfde6827b94b4b70ab1c30651846d96c8583b1"
+manifest_bytes = "1271"
+blob_sha256 = "b3a82eec97d36310f2c5a54e634fae3c7bd9e6e07afc5b3d73e0305b9185df22"
+bytes = "2308838"
+cache_file = "node-097a07f5f499f30e67259e5d9721d44ddad499c09f362d6442200285b0d38bfd.wasm"
+
+[plugins.pnpm]
+locator = "registry://ghcr.io/moonrepo/node_depman_toolchain@sha256:c56f6dd596fbbf9bc628b9fcf145fd6cd5c5d842d5a65537571e775f328ddce6"
+repository = "moonrepo/node_depman_toolchain"
+manifest_sha256 = "c56f6dd596fbbf9bc628b9fcf145fd6cd5c5d842d5a65537571e775f328ddce6"
+manifest_bytes = "1327"
+blob_sha256 = "c225a7fb2d75e431c20e2dea1450e5814a840f6bd5defe2370d3efe2e900934c"
+bytes = "2970621"
+cache_file = "pnpm-3aaa5cfa117877683a09c3774b174c38e48846476575d6b0bac988ad8e71035b.wasm"
+
+[plugins.rust]
+locator = "registry://ghcr.io/moonrepo/rust_toolchain@sha256:46387ad173cc254f83b4bd392618c8fa530bca667bdafe4c63c5114c4a59f4a5"
+repository = "moonrepo/rust_toolchain"
+manifest_sha256 = "46387ad173cc254f83b4bd392618c8fa530bca667bdafe4c63c5114c4a59f4a5"
+manifest_bytes = "1268"
+blob_sha256 = "d9d11526d8ffef6a024b53755c1b773e2f29c6ad5947c2eaa482fbabeeb0b2f5"
+bytes = "3723576"
+cache_file = "rust-cc1944b38f994734ab9e11e63b547019aaa58a9fb6ead30705d3f6e6b09f8382.wasm"

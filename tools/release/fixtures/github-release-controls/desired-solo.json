@@ -1,0 +1,113 @@
+{
+  "repository": {
+    "id": 1001,
+    "full_name": "f0rr0/oliphaunt",
+    "default_branch": "main",
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true
+  },
+  "branchProtection": {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": ["Required"],
+      "checks": [{ "context": "Required", "app_id": 15368 }]
+    },
+    "required_pull_request_reviews": {
+      "dismiss_stale_reviews": true,
+      "required_approving_review_count": 0,
+      "require_last_push_approval": false,
+      "bypass_pull_request_allowances": {
+        "apps": [],
+        "teams": [],
+        "users": []
+      }
+    },
+    "enforce_admins": { "enabled": true },
+    "required_linear_history": { "enabled": true },
+    "allow_force_pushes": { "enabled": false },
+    "allow_deletions": { "enabled": false },
+    "required_conversation_resolution": { "enabled": true }
+  },
+  "branchProtectionGraphql": {
+    "nameWithOwner": "f0rr0/oliphaunt",
+    "refName": "main",
+    "rule": {
+      "id": "BPR_desired_solo",
+      "pattern": "main",
+      "allowsForcePushes": false,
+      "bypassForcePushAllowances": {
+        "totalCount": 0,
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": []
+      }
+    }
+  },
+  "actionsWorkflowPermissions": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false
+  },
+  "environments": {
+    "release-pr": {
+      "environment": {
+        "name": "release-pr",
+        "protection_rules": [],
+        "deployment_branch_policy": {
+          "protected_branches": false,
+          "custom_branch_policies": true
+        }
+      },
+      "branchPolicies": [{ "name": "main", "type": "branch" }],
+      "secretNames": ["RELEASE_PR_TOKEN"]
+    },
+    "release-dry-run": {
+      "environment": {
+        "name": "release-dry-run",
+        "protection_rules": [],
+        "deployment_branch_policy": {
+          "protected_branches": false,
+          "custom_branch_policies": true
+        }
+      },
+      "branchPolicies": [{ "name": "main", "type": "branch" }],
+      "secretNames": []
+    },
+    "release-bootstrap": {
+      "environment": {
+        "name": "release-bootstrap",
+        "protection_rules": [],
+        "deployment_branch_policy": {
+          "protected_branches": false,
+          "custom_branch_policies": true
+        }
+      },
+      "branchPolicies": [
+        { "name": "main", "type": "branch" },
+        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+      ],
+      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
+    },
+    "release-publish": {
+      "environment": {
+        "name": "release-publish",
+        "protection_rules": [],
+        "deployment_branch_policy": {
+          "protected_branches": false,
+          "custom_branch_policies": true
+        }
+      },
+      "branchPolicies": [
+        { "name": "main", "type": "branch" },
+        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+      ],
+      "secretNames": [
+        "MAVEN_CENTRAL_PASSWORD",
+        "MAVEN_CENTRAL_USERNAME",
+        "MAVEN_GPG_KEY_ID",
+        "MAVEN_GPG_PASSPHRASE",
+        "MAVEN_GPG_PRIVATE_KEY"
+      ]
+    }
+  }
+}

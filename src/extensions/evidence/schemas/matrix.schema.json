@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/extensions/evidence-matrix.schema.json",
+  "title": "Oliphaunt Extension Evidence Matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format-version", "source-digest-inputs", "claims"],
+  "properties": {
+    "format-version": { "const": 1 },
+    "source-digest-inputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "extension",
+          "postgres-major",
+          "artifact-family",
+          "platform-targets",
+          "runtime-modes",
+          "evidence-required",
+          "public"
+        ],
+        "properties": {
+          "extension": { "type": "string" },
+          "postgres-major": { "type": "integer" },
+          "artifact-family": { "type": "string" },
+          "platform-targets": { "type": "array", "items": { "type": "string" } },
+          "runtime-modes": { "type": "array", "items": { "type": "string" } },
+          "evidence-required": { "type": "array", "items": { "type": "string" } },
+          "public": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

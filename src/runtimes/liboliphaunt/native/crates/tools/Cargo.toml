@@ -1,0 +1,23 @@
+[package]
+name = "oliphaunt-tools"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Target-selecting Cargo facade for Oliphaunt native pg_dump and psql artifacts."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT"
+links = "oliphaunt_artifact_oliphaunt_tools_relay"
+build = "build.rs"
+include = [
+  "Cargo.toml",
+  "README.md",
+  "build.rs",
+  "src/**",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
+
+[lib]
+path = "src/lib.rs"
