@@ -17,7 +17,7 @@
 #include <unistd.h>
 #endif
 
-#define OLIPHAUNT_PRODUCT_VERSION "0.0.0" /* x-release-please-version */
+#define OLIPHAUNT_PRODUCT_VERSION "0.1.0" /* x-release-please-version */
 
 extern int oliphaunt_embedded_main(
     int argc,
