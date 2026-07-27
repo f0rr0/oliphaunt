@@ -89,6 +89,17 @@ test("the canonical direct release workflow satisfies the split publication cont
   assert.doesNotThrow(() => assertReleaseWorkflow(candidate()));
 });
 
+test("both live GitHub request-budget admissions bind an explicit workflow token", () => {
+  for (const stepId of ["github_request_budget", "final_github_request_budget"]) {
+    const uncredentialed = candidate();
+    delete step(uncredentialed, "publish", stepId).env.GH_TOKEN;
+    assert.throws(
+      () => assertReleaseOperationWorkflow(uncredentialed),
+      new RegExp(`publish[.]${stepId} must bind the workflow token`, "u"),
+    );
+  }
+});
+
 test("CI revalidates the full release gate on the publication host before Checks passes", () => {
   assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
 

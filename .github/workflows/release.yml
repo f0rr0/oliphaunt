@@ -957,6 +957,7 @@ jobs:
         id: github_request_budget
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
           tools/dev/bun.sh tools/release/github-release-request-budget.mjs \
@@ -1086,8 +1087,10 @@ jobs:
           retention-days: 90
 
       - name: Re-admit the live GitHub request envelope immediately before mutation
+        id: final_github_request_budget
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
           tools/dev/bun.sh tools/release/github-release-request-budget.mjs \

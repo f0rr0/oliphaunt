@@ -18,6 +18,10 @@ import {
   assertReleaseNoticesInDirectory,
 } from "./release-notices.mjs";
 import { normalPublicationPlan } from "./normal-publication-plan.mjs";
+import {
+  discoverPublicationArtifacts,
+  projectInternalDependencyIds,
+} from "./publication-lock.mjs";
 import { rustNativeTargetCfg } from "./rust-native-targets.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -87,6 +91,18 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     assert.equal(packedSource, source);
     assert.doesNotMatch(packedManifest, /=\s*\{[^}\n]*\bpath\s*=/u);
     assert.doesNotMatch(packedNames, /crates\/oliphaunt-build/u);
+    const [packagedCarrier] = discoverPublicationArtifacts([cratePath]);
+    const repeatedToolsRows = packagedCarrier.dependencies.filter(
+      ({ ecosystem, name }) => ecosystem === "cargo" && name === "oliphaunt-tools",
+    );
+    assert.equal(repeatedToolsRows.length, targets.length);
+    assert.deepEqual(
+      projectInternalDependencyIds(
+        [{ id: "cargo:oliphaunt" }, { id: "cargo:oliphaunt-tools" }],
+        packagedCarrier.dependencies,
+      ),
+      ["cargo:oliphaunt-tools"],
+    );
 
     // The product metadata intentionally points the Rust SDK at the broker
     // version while the broker executable is built from the SDK source. That

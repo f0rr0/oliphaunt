@@ -843,6 +843,20 @@ function canonicalExtensionBundleAssetName(product, { family, target }) {
   return `${product.id}-${product.version}-${family}-${target}-bundle.tar.gz`;
 }
 
+function expectedExtensionGithubReleaseAssetRows(product) {
+  if (extensionSqlNames(product.id, "publication-lock").length > 1) {
+    return extensionBundleCarrierRows(product.id).map((row) => ({
+      ...row,
+      identity: row.family,
+      name: canonicalExtensionBundleAssetName(product, row),
+    }));
+  }
+  return extensionRequiredArtifactRows(product.id).map((row) => ({
+    ...row,
+    name: canonicalExtensionAssetName(product, row),
+  }));
+}
+
 function exactExtensionManifestRows(product, manifest, manifestPath) {
   const expectedSqlNames = extensionSqlNames(product.id, "publication-lock");
   const metadata = extensionMetadata(product.id, "publication-lock");
@@ -1581,12 +1595,13 @@ function sourceIdentity(headRef) {
   return { commit, tree };
 }
 
-function internalDependencyIds(carriers, dependencies) {
+export function projectInternalDependencyIds(carriers, dependencies) {
   const ids = new Set(carriers.map((carrier) => carrier.id));
-  return dependencies
-    .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
-    .filter((id) => ids.has(id))
-    .sort(compareText);
+  return [...new Set(
+    dependencies
+      .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
+      .filter((id) => ids.has(id)),
+  )].sort(compareText);
 }
 
 export function validateCargoPayloadPartSets(carriers) {
@@ -1762,7 +1777,7 @@ export function buildPublicationCandidate({
     throw error(`artifact set is missing ${missing.length} declared carrier(s): ${missing.join(", ")}`);
   }
   for (const carrier of carriers) {
-    carrier.dependencies = internalDependencyIds(carriers, carrier.packageDependencies);
+    carrier.dependencies = projectInternalDependencyIds(carriers, carrier.packageDependencies);
   }
   validateCargoPayloadPartSets(carriers);
   assignPublishOrder(carriers, catalog.products);
@@ -1898,8 +1913,8 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
       throw error(`${product.id} frozen release metadata set is incomplete or contains extras`);
     }
     const publicAssets = artifacts.filter((artifact) => artifact.role === "github-release-asset");
-    const expectedAssets = new Map(extensionRequiredArtifactRows(product.id).map((row) => [
-      canonicalExtensionAssetName(product, row),
+    const expectedAssets = new Map(expectedExtensionGithubReleaseAssetRows(product).map((row) => [
+      row.name,
       row,
     ]));
     const actualNames = publicAssets.map(({ name }) => name).sort(compareText);
@@ -2059,7 +2074,7 @@ export function validatePublicationCandidate(candidate) {
   }
   const carrierPosition = new Map(candidate.carriers.map((carrier, index) => [carrier.id, index]));
   for (const [index, carrier] of candidate.carriers.entries()) {
-    const expectedDependencies = internalDependencyIds(candidate.carriers, carrier.packageDependencies);
+    const expectedDependencies = projectInternalDependencyIds(candidate.carriers, carrier.packageDependencies);
     if (stableJson(carrier.dependencies) !== stableJson(expectedDependencies)) {
       throw error(`${carrier.id}.dependencies do not match its internal package dependency identities`);
     }

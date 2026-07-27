@@ -12,6 +12,7 @@ import {
   discoverProductArtifacts,
   freezePublicationCandidate,
   lockedCarrierFile,
+  projectInternalDependencyIds,
   validateCargoPayloadPartSets,
   validatePublicationCandidate,
   validatePublicationLock,
@@ -126,11 +127,14 @@ function npmFixture(root, name, version, overrides = {}) {
   return output;
 }
 
-function cargoFixture(root, name, version) {
+function cargoFixture(root, name, version, { manifestSuffix = "" } = {}) {
   const directoryName = `${name}-${version}`;
   const stage = path.join(root, "cargo-stage", directoryName);
   mkdirSync(path.join(stage, "src"), { recursive: true });
-  writeFileSync(path.join(stage, "Cargo.toml"), `[package]\nname = ${JSON.stringify(name)}\nversion = ${JSON.stringify(version)}\nedition = "2024"\n\n[dependencies]\nserde = "1"\n`);
+  writeFileSync(
+    path.join(stage, "Cargo.toml"),
+    `[package]\nname = ${JSON.stringify(name)}\nversion = ${JSON.stringify(version)}\nedition = "2024"\n\n[dependencies]\nserde = "1"\n${manifestSuffix}`,
+  );
   writeFileSync(path.join(stage, "src/lib.rs"), "pub const FIXTURE: bool = true;\n");
   const output = path.join(root, `${directoryName}.crate`);
   tarGzip(output, path.dirname(stage), directoryName);
@@ -494,6 +498,25 @@ afterEach(() => {
 });
 
 describe("canonical publication catalog", () => {
+  test("projects repeated package dependencies to one sorted internal carrier edge", () => {
+    const carriers = [
+      { id: "npm:@oliphaunt/zeta" },
+      { id: "cargo:oliphaunt-tools" },
+      { id: "cargo:oliphaunt" },
+    ];
+    const packageDependencies = [
+      { ecosystem: "cargo", name: "oliphaunt-tools", requirement: "=0.1.0", scope: "runtime" },
+      { ecosystem: "npm", name: "@oliphaunt/zeta", requirement: "0.1.0", scope: "optional" },
+      { ecosystem: "cargo", name: "serde", requirement: "1", scope: "runtime" },
+      { ecosystem: "cargo", name: "oliphaunt-tools", requirement: "=0.1.0", scope: "build" },
+      { ecosystem: "cargo", name: "oliphaunt-tools", requirement: "=0.1.0", scope: "runtime" },
+    ];
+    expect(projectInternalDependencyIds(carriers, packageDependencies)).toEqual([
+      "cargo:oliphaunt-tools",
+      "npm:@oliphaunt/zeta",
+    ]);
+  });
+
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
     expect(catalog.products).toHaveLength(18);
@@ -608,6 +631,42 @@ describe("publication artifact discovery and freezing", () => {
     ]);
     expect(records.every((record) => record.artifacts.every((artifact) => artifact.size > 0 && artifact.sha256.length === 64))).toBe(true);
     expect(records.find((record) => record.ecosystem === "cargo").dependencies[0].name).toBe("serde");
+  });
+
+  test("freezes repeated target-specific Cargo package rows as one internal carrier edge", () => {
+    const root = temporaryDirectory();
+    const catalog = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-rust"] });
+    const version = catalog.products[0].version;
+    cargoFixture(root, "oliphaunt-build", version);
+    cargoFixture(root, "oliphaunt", version, {
+      manifestSuffix: [
+        "",
+        "[target.'cfg(target_os = \"linux\")'.dependencies]",
+        `oliphaunt-build = \"=${version}\"`,
+        "",
+        "[target.'cfg(target_os = \"macos\")'.dependencies]",
+        `oliphaunt-build = \"=${version}\"`,
+        "",
+        "[target.'cfg(target_os = \"windows\")'.dependencies]",
+        `oliphaunt-build = \"=${version}\"`,
+        "",
+      ].join("\n"),
+    });
+
+    const candidate = buildPublicationCandidate({
+      products: ["oliphaunt-rust"],
+      artifactRoots: [root],
+    });
+    const facade = candidate.carriers.find(({ id }) => id === "cargo:oliphaunt");
+    expect(facade.packageDependencies.filter(({ name }) => name === "oliphaunt-build")).toHaveLength(3);
+    expect(facade.dependencies).toEqual(["cargo:oliphaunt-build"]);
+    expect(() => freezePublicationCandidate(candidate)).not.toThrow();
+
+    const duplicatedEdge = structuredClone(candidate);
+    duplicatedEdge.carriers.find(({ id }) => id === "cargo:oliphaunt").dependencies.push("cargo:oliphaunt-build");
+    expect(() => validatePublicationCandidate(duplicatedEdge)).toThrow(
+      "cargo:oliphaunt.dependencies must be sorted and contain no duplicates",
+    );
   });
 
   test("rejects frozen npm tarballs that cannot use trusted publishing", () => {
@@ -802,6 +861,20 @@ describe("publication artifact discovery and freezing", () => {
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(assets.length + 4);
     expect(assets.every(({ name }) => /^oliphaunt-extension-contrib-pg18-[^-]+/u.test(name))).toBe(true);
+    const candidate = buildPublicationCandidate({
+      products: [product.id],
+      artifactRoots: [root],
+      allowMissing: true,
+    });
+    expect(candidate.missing.length).toBeGreaterThan(0);
+    expect(() => validatePublicationCandidate(candidate)).not.toThrow();
+
+    const wrongCarrierIdentity = structuredClone(candidate);
+    wrongCarrierIdentity.productArtifacts.find(({ role }) => role === "github-release-asset").identity =
+      "wrong-family";
+    expect(() => validatePublicationCandidate(wrongCarrierIdentity)).toThrow(
+      /incorrect target, kind, or identity metadata/u,
+    );
 
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     manifest.extensions.pop();

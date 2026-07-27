@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/ts",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "license": "MIT",
   "exports": {
     ".": "./src/jsr.ts",
@@ -20,8 +20,6 @@
       "src/protocol.ts",
       "src/query.ts"
     ],
-    "exclude": [
-      "src/__tests__/**"
-    ]
+    "exclude": ["src/__tests__/**"]
   }
 }

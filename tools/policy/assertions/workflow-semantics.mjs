@@ -1955,6 +1955,7 @@ const GITHUB_STAGE_PHASES = [
   "freeze_bootstrap_capsule",
   "preserve_publication_lock",
   "preserve_bootstrap_capsule",
+  "final_github_request_budget",
   "ensure_release_transport_ref",
   "stage_github_releases",
   "verify_product_tags",
@@ -2054,6 +2055,7 @@ function assertNormalStageConditions(workflow) {
       "preflight_maven_bundle",
       "preflight_swift_source_tag",
       "github_request_budget",
+      "final_github_request_budget",
       "ensure_release_transport_ref",
       "stage_github_releases",
       "verify_product_tags",
@@ -2096,6 +2098,7 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish", "preflight_swift_source_tag", "tools/dev/bun[.]sh\\s+tools/release/preflight-swiftpm-source-tag[.]mjs\\b", "the exact pre-mutation SwiftPM source-tag preflight"],
     ["publish-dry-run", "freeze_bootstrap_capsule", "tools/dev/bun[.]sh\\s+tools/release/bootstrap-publication-capsule[.]mjs\\s+pack\\b", "the dry-run bootstrap capsule freezer"],
     ["publish", "github_request_budget", "tools/dev/bun[.]sh\\s+tools/release/github-release-request-budget[.]mjs\\b", "the request-budget admission"],
+    ["publish", "final_github_request_budget", "tools/dev/bun[.]sh\\s+tools/release/github-release-request-budget[.]mjs\\b", "the final request-budget re-admission"],
     ["publish", "github_stage_phase_budget", "tools/dev/bun[.]sh\\s+tools/release/release-phase-budget[.]mjs\\b", "the staging phase budget proof"],
     ["publish", "ensure_release_transport_ref", "node\\s+[.]github/scripts/release-transport-ref[.]mjs\\s+ensure\\b", "the immutable exact-SHA continuation transport"],
     ["publish", "stage_github_releases", "bun\\s+[.]github/scripts/manage-release-drafts[.]mjs\\s+stage\\b", "draft staging"],
@@ -2208,6 +2211,13 @@ function assertCriticalReleaseCommands(workflow) {
     '"$PUBLICATION_LOCK_PATH"',
     '"$RELEASE_HEAD_SHA"',
   ], "pre-mutation SwiftPM source-tag preflight");
+  for (const stepId of ["github_request_budget", "final_github_request_budget"]) {
+    const admission = stepById(workflow, "publish", stepId).step;
+    invariant(
+      admission.env?.GH_TOKEN === "${{ github.token }}",
+      `publish.${stepId} must bind the workflow token for live GitHub release admission`,
+    );
+  }
   const jsrTooling = stepById(workflow, "publish-registry", "install_registry_jsr_tooling");
   invariant(
     normalized(jsrTooling.step.if)
