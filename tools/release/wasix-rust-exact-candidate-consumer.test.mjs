@@ -5,6 +5,7 @@ import path from "node:path";
 
 import {
   requireExactWasixSdkCrate,
+  validateWasixRustToolchainClosure,
   wasixRustCandidateContract,
 } from "./wasix-rust-exact-candidate-consumer.mjs";
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
@@ -14,6 +15,23 @@ const SDK_VERSION = currentProductVersionSync(
   "oliphaunt-wasix-rust",
   "wasix-rust-exact-candidate-consumer.test",
 );
+const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
+const WASIX_TOOLCHAIN_PACKAGES = [
+  ["wasmer", "7.2.0"],
+  ["wasmer-compiler", "7.2.0"],
+  ["wasmer-derive", "7.2.0"],
+  ["wasmer-types", "7.2.0"],
+  ["wasmer-vm", "7.2.0"],
+  ["wasmer-config", "0.702.0"],
+  ["wasmer-journal", "0.702.0"],
+  ["wasmer-package", "0.702.0"],
+  ["wasmer-wasix", "0.702.0"],
+  ["wasmer-wasix-types", "0.702.0"],
+  ["virtual-fs", "0.702.0"],
+  ["virtual-mio", "0.702.0"],
+  ["virtual-net", "0.702.0"],
+  ["webc", "12.0.0"],
+].map(([name, version]) => ({ name, version, source: CRATES_IO_SOURCE }));
 
 test("binds the WASIX Rust candidate to the complete liboliphaunt WASIX Cargo carrier set", () => {
   const contract = wasixRustCandidateContract();
@@ -32,6 +50,40 @@ test("binds the WASIX Rust candidate to the complete liboliphaunt WASIX Cargo ca
     "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
     "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
   ]);
+});
+
+test("rejects compatible upstream patch drift in the clean WASIX consumer closure", () => {
+  const closure = validateWasixRustToolchainClosure(WASIX_TOOLCHAIN_PACKAGES, {
+    lockfile: "fixture.lock",
+    canonical: { wasmer: "7.2.0", wasmerWasix: "0.702.0", webc: "12.0.0" },
+  });
+  expect(closure).toMatchObject({
+    wasmerVersion: "7.2.0",
+    wasmerWasixVersion: "0.702.0",
+    webcVersion: "12.0.0",
+  });
+  expect(closure.packages).toEqual(
+    [...WASIX_TOOLCHAIN_PACKAGES].sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    ),
+  );
+  expect(closure.sha256).toMatch(/^[0-9a-f]{64}$/u);
+
+  const drifted = WASIX_TOOLCHAIN_PACKAGES.map((pkg) =>
+    pkg.name === "virtual-mio" ? { ...pkg, version: "0.702.1" } : pkg
+  );
+  expect(() => validateWasixRustToolchainClosure(drifted, {
+    lockfile: "fixture.lock",
+    canonical: { wasmer: "7.2.0", wasmerWasix: "0.702.0", webc: "12.0.0" },
+  })).toThrow("fixture.lock: virtual-mio resolved 0.702.1; expected 0.702.0");
+
+  expect(() => validateWasixRustToolchainClosure([
+    ...WASIX_TOOLCHAIN_PACKAGES,
+    { name: "webc", version: "11.0.0", source: CRATES_IO_SOURCE },
+  ], {
+    lockfile: "fixture.lock",
+    canonical: { wasmer: "7.2.0", wasmerWasix: "0.702.0", webc: "12.0.0" },
+  })).toThrow("fixture.lock: expected exactly one resolved webc package, found 2");
 });
 
 test("accepts exactly one frozen oliphaunt-wasix crate and rejects substitutions", () => {

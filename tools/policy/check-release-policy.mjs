@@ -495,10 +495,17 @@ function checkCiWorkflowPolicy() {
   const wasixExactCandidateTrigger = readYaml("tools/release/moon.yml")
     .tasks?.["wasix-rust-exact-candidate-trigger"];
   invariant(object(wasixExactCandidateTrigger), "release-tools must define wasix-rust-exact-candidate-trigger");
-  invariant(
-    Array.isArray(wasixExactCandidateTrigger.inputs)
-      && wasixExactCandidateTrigger.inputs.includes("/tools/release/rust-build-script-sha256.mjs"),
-    "WASIX Rust exact-candidate trigger must track its generated Rust SHA-256 import closure",
+  assertSet(
+    wasixExactCandidateTrigger.inputs ?? [],
+    new Set([
+      "/src/sources/toolchains/wasix.toml",
+      "/tools/release/exact-cargo-candidate-consumer.mjs",
+      "/tools/release/rust-build-script-sha256.mjs",
+      "/tools/release/wasix-aot-manifest.mjs",
+      "/tools/release/wasix-cargo-toolchain-policy.mjs",
+      "/tools/release/wasix-rust-exact-candidate-consumer.mjs",
+    ]),
+    "WASIX Rust exact-candidate trigger inputs",
   );
   invariant(!BUILDER_JOBS.has("liboliphaunt-wasix-aot-targets"), "WASIX AOT target planning must not be a builder job");
 

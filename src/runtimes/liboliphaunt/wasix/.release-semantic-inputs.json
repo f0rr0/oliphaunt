@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "d31d982efd78ecfc90202b912f50e48cab7bbbf174b984de5b3eae9cfbe76471"
+          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
         },
         {
           "path": "Cargo.toml",
@@ -158,7 +158,7 @@
         },
         {
           "path": "tools/xtask/src/asset_manifest.rs",
-          "sha256": "945c31587d2d54fa668093c44d7f5222d857955d9433eb8c365801df13325521"
+          "sha256": "ee621caf693a6da94c53d9fc27bf65e54f4a3cd8db7aa890eeade8213ac5a272"
         },
         {
           "path": "tools/xtask/src/asset_pipeline.rs",
@@ -212,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "35343c90483a2035ba90a99079de6789d8e973c8e94f798c6bb272de8d5b0507"
+          "sha256": "423683b9fd36424fd207df04406d0b2ae829bdec73df7adcfba6753339cb284a"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "a9e22e5606b5ab9a9c4407131c2482aab1a54ec90324381c616d96e585e1d5d3"
+  "sha256": "dc7940a7bb18de8c85cae4f40547aea8adb88fea336ca0240cc5cfbeda4ecfb1"
 }

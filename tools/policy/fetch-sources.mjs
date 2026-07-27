@@ -216,6 +216,7 @@ function validateSourcesManifest(manifest, selectedScope) {
 function validateWasixToolchain(manifest) {
   assertEquals(manifest.toolchain?.wasmer, '7.2.0', 'toolchain.wasmer');
   assertEquals(manifest.toolchain?.['wasmer-wasix'], '0.702.0', 'toolchain.wasmer-wasix');
+  assertEquals(manifest.toolchain?.webc, '12.0.0', 'toolchain.webc');
   assertEquals(manifest.toolchain?.wasmer_llvm, '22.1', 'toolchain.wasmer_llvm');
   assertEquals(manifest.toolchain?.wasixcc?.version, '0.4.3', 'toolchain.wasixcc.version');
   assertEquals(

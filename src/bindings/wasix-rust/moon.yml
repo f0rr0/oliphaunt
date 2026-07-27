@@ -103,6 +103,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/icu/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
@@ -130,6 +131,7 @@ tasks:
       - "/tools/release/rust-native-targets.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/swift-source-carrier-contract.mjs"
+      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
       - "/tools/policy/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"

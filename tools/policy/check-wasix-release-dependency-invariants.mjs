@@ -2,10 +2,14 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  canonicalWasixCargoToolchainVersions,
+  validateWasixConsumerDependencyPins,
+} from '../release/wasix-cargo-toolchain-policy.mjs';
+
 const PRODUCT_MANIFEST_PATH =
   'src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml';
 const XTASK_MANIFEST_PATH = 'tools/xtask/Cargo.toml';
-const WASIX_TOOLCHAIN_PATH = 'src/sources/toolchains/wasix.toml';
 const RUNTIME_VERSION_PATH = 'src/runtimes/liboliphaunt/wasix/VERSION';
 const SOURCE_TEMPLATE_ASSETS_MANIFEST =
   'src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml';
@@ -94,22 +98,20 @@ function validateExactDependency(manifest, manifestPath, name, expectedVersion, 
 
 const productManifest = await readToml(PRODUCT_MANIFEST_PATH);
 const xtaskManifest = await readToml(XTASK_MANIFEST_PATH);
-const wasixToolchain = await readToml(WASIX_TOOLCHAIN_PATH);
 const runtimeVersion = (await Bun.file(RUNTIME_VERSION_PATH).text()).trim();
 const errors = [];
 const productDeps = new Map();
 
-const wasmerVersion = wasixToolchain.toolchain?.wasmer;
-const wasmerWasixVersion = wasixToolchain.toolchain?.['wasmer-wasix'];
-if (typeof wasmerVersion !== 'string' || wasmerVersion === '') {
-  errors.push(`${WASIX_TOOLCHAIN_PATH} must declare a non-empty toolchain.wasmer version`);
+let toolchainVersions;
+try {
+  toolchainVersions = canonicalWasixCargoToolchainVersions();
+} catch (cause) {
+  errors.push(cause.message);
 }
-if (typeof wasmerWasixVersion !== 'string' || wasmerWasixVersion === '') {
-  errors.push(
-    `${WASIX_TOOLCHAIN_PATH} must declare a non-empty toolchain.wasmer-wasix version`,
-  );
-}
-if (typeof wasmerVersion === 'string' && wasmerVersion !== '') {
+const wasmerVersion = toolchainVersions?.wasmer;
+const wasmerWasixVersion = toolchainVersions?.wasmerWasix;
+const webcVersion = toolchainVersions?.webc;
+if (wasmerVersion !== undefined) {
   for (const [manifestPath, manifest] of [
     [PRODUCT_MANIFEST_PATH, productManifest],
     [XTASK_MANIFEST_PATH, xtaskManifest],
@@ -118,24 +120,25 @@ if (typeof wasmerVersion === 'string' && wasmerVersion !== '') {
     validateExactDependency(manifest, manifestPath, 'wasmer-types', wasmerVersion, errors);
   }
 }
-if (typeof wasmerWasixVersion === 'string' && wasmerWasixVersion !== '') {
-  for (const [manifestPath, manifest] of [
-    [PRODUCT_MANIFEST_PATH, productManifest],
-    [XTASK_MANIFEST_PATH, xtaskManifest],
-  ]) {
-    validateExactDependency(
-      manifest,
-      manifestPath,
-      'wasmer-wasix',
-      wasmerWasixVersion,
-      errors,
-    );
-  }
+if (wasmerWasixVersion !== undefined) {
   validateExactDependency(
-    productManifest,
-    PRODUCT_MANIFEST_PATH,
-    'wasmer-config',
+    xtaskManifest,
+    XTASK_MANIFEST_PATH,
+    'wasmer-wasix',
     wasmerWasixVersion,
+    errors,
+  );
+  errors.push(...validateWasixConsumerDependencyPins(productManifest, {
+    manifestPath: PRODUCT_MANIFEST_PATH,
+    toolchainVersions,
+  }));
+}
+if (webcVersion !== undefined) {
+  validateExactDependency(
+    xtaskManifest,
+    XTASK_MANIFEST_PATH,
+    'webc',
+    webcVersion,
     errors,
   );
 }

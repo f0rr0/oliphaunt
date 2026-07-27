@@ -30,6 +30,7 @@ import {
   assertBrokerDependencyLicensesInEntries,
   brokerDependencyLicenseMembers,
   hasCanonicalBrokerFilesystemMode,
+  hasSafeBrokerSourceFilesystemMode,
   isAllowedBrokerPathPackageMetadataRow,
   loadBrokerDependencyLicenseContract,
   normalizeBrokerDependencyLicenseModes,
@@ -196,6 +197,13 @@ test("treats direct filesystem modes as POSIX-only metadata", () => {
   assert.equal(hasCanonicalBrokerFilesystemMode(0o755, 0o755, "darwin"), true);
   assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o644, "linux"), false);
   assert.equal(hasCanonicalBrokerFilesystemMode(0o666, 0o755, "darwin"), false);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o600, "linux"), true);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o640, "darwin"), true);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o644, "linux"), true);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o666, "linux"), false);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o755, "darwin"), false);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o000, "linux"), false);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o666, "win32"), true);
 });
 
 test("selected-target carrier staging is self-contained without Cargo or registry sources", (t) => {

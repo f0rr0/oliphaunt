@@ -72,6 +72,39 @@ required_jobs = [
     "wasix-rust-exact-candidate-consumer",
 ]
 
+[cases.wasix_cargo_toolchain_policy]
+path = "tools/release/wasix-cargo-toolchain-policy.mjs"
+required_jobs = [
+    "extension-artifacts-wasix",
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.wasix_aot_manifest_policy]
+path = "tools/release/wasix-aot-manifest.mjs"
+required_jobs = [
+    "extension-artifacts-wasix",
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
+[cases.wasix_exact_candidate_toolchain]
+path = "src/sources/toolchains/wasix.toml"
+required_jobs = [
+    "extension-artifacts-wasix",
+    "wasix-rust-package",
+    "liboliphaunt-wasix-runtime",
+    "liboliphaunt-wasix-aot",
+    "liboliphaunt-wasix-release-assets",
+    "wasix-rust-exact-candidate-consumer",
+]
+
 # Simulated single-file mutations for every JavaScript exact-candidate trigger
 # input. Each case traverses Moon affectedness and the CI planner, so removing
 # either an input edge or the explicit planner trigger fails closed.

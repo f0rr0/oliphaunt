@@ -16,6 +16,11 @@ import path from "node:path";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { cargoPackageIdentityFromCrate } from "./local-registry-publish.mjs";
 import {
+  canonicalWasixCargoToolchainVersions,
+  isWasixToolchainPackageName,
+  validateResolvedWasixToolchainPolicy,
+} from "./wasix-cargo-toolchain-policy.mjs";
+import {
   compareText,
   currentProductVersionSync,
   registryPackageRows,
@@ -169,6 +174,46 @@ function assembleRegistry(sdkRoot, runtimeCandidates, outputRoot, contract) {
   return registryRoot;
 }
 
+export function validateWasixRustToolchainClosure(
+  packages,
+  {
+    lockfile = "Cargo.lock",
+    canonical = canonicalWasixCargoToolchainVersions(),
+  } = {},
+) {
+  const failures = validateResolvedWasixToolchainPolicy(lockfile, packages, {
+    toolchainVersions: canonical,
+  });
+  if (failures.length > 0) throw error(failures.join("\n"));
+  const resolved = packages
+    .filter(({ name }) => isWasixToolchainPackageName(name))
+    .map(({ name, version, source }) => ({ name, version, source }))
+    .sort((left, right) => compareText(left.name, right.name));
+  const canonicalRows = resolved
+    .map(({ name, version, source }) => `${name}\0${version}\0${source ?? ""}\n`)
+    .join("");
+  return {
+    wasmerVersion: canonical.wasmer,
+    wasmerWasixVersion: canonical.wasmerWasix,
+    webcVersion: canonical.webc,
+    packages: resolved,
+    sha256: createHash("sha256").update(canonicalRows).digest("hex"),
+  };
+}
+
+function validateWasixRustToolchainLock(lockfile) {
+  let data;
+  try {
+    data = Bun.TOML.parse(readFileSync(lockfile, "utf8"));
+  } catch (cause) {
+    throw error(`${lockfile} is not a valid Cargo lockfile: ${cause.message}`);
+  }
+  if (data.version !== 4 || !Array.isArray(data.package)) {
+    throw error(`${lockfile} must be a Cargo lockfile v4 with package rows`);
+  }
+  return validateWasixRustToolchainClosure(data.package, { lockfile });
+}
+
 export function runWasixRustExactCandidateConsumer({
   candidateSha,
   sdkRoot,
@@ -209,6 +254,11 @@ export function runWasixRustExactCandidateConsumer({
   if (missing.length > 0) throw error(`clean WASIX Rust consumer omitted required local registry packages: ${missing.join(", ")}`);
   console.log("OLIPHAUNT_WASIX_RUST_EXACT_CANDIDATE_STAGE_PASS stage=clean-fetch");
 
+  const toolchainClosure = validateWasixRustToolchainLock(
+    path.join(output, "cargo-consumer/evidence/Cargo.lock"),
+  );
+  console.log("OLIPHAUNT_WASIX_RUST_EXACT_CANDIDATE_STAGE_PASS stage=toolchain-closure");
+
   const evidence = {
     schema: "oliphaunt-wasix-rust-exact-candidate-consumer-v1",
     candidate: {
@@ -219,6 +269,7 @@ export function runWasixRustExactCandidateConsumer({
     sdkCandidate: { ...sdkCandidate, path: relative(sdkCandidate.path) },
     runtimeCandidates: runtimeCandidates.manifest,
     cargo,
+    toolchainClosure,
   };
   writeFileSync(path.join(output, "evidence/exact-candidate.json"), `${JSON.stringify(evidence, null, 2)}\n`);
   writeFileSync(

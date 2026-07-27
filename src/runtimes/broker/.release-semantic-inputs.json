@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "d31d982efd78ecfc90202b912f50e48cab7bbbf174b984de5b3eae9cfbe76471"
+          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
         },
         {
           "path": "Cargo.toml",
@@ -322,7 +322,7 @@
         },
         {
           "path": "tools/release/broker-dependency-license-contract.mjs",
-          "sha256": "b9e6c1e3e32e75929f666e6258eb4a8d915ce7f25509c2359b01aadcf2795f96"
+          "sha256": "8291fa58378c9e93bb5fbf719007191ecc2bc17eae0c9000651f40cf29aab9a1"
         }
       ]
     },
@@ -457,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "aa48bffdbc15184ed11b4ff14efc05b8fdcf1fcf2e7877d533e0d4d326e595ea"
+  "sha256": "e24af5f0187036cbcb7459fae54d948be1b71e383a19e2ef7c8ab93f78b4daea"
 }

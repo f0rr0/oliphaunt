@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "d31d982efd78ecfc90202b912f50e48cab7bbbf174b984de5b3eae9cfbe76471"
+          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
         },
         {
           "path": "Cargo.toml",
@@ -116,10 +116,10 @@
       "inputs": [
         {
           "path": "tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
-          "sha256": "13f026579cce6c762ff8d56a42b6fbd5d439c67171b287b6ba9dfae6d160827b"
+          "sha256": "4cd818f1f389b457f00cb90a6e771e68a346f879c4150de7e351a8b4aae2319f"
         }
       ]
     }
   ],
-  "sha256": "4cfb271769a76819b72c10d2cb57d1a54cd8a822de5de1cc0548a56159743bd2"
+  "sha256": "88eb0628125887d6008b1794fa32c814749e8478387cae6b1a02816ce2b6ab35"
 }

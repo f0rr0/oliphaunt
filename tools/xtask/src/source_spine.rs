@@ -344,6 +344,7 @@ pub(super) fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()
         "0.702.0",
         "toolchain.wasmer-wasix",
     )?;
+    ensure_eq(&manifest.toolchain.webc, "12.0.0", "toolchain.webc")?;
     ensure_eq(
         &manifest.toolchain.wasmer_llvm,
         "22.1",

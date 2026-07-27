@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Native-first Rust SDK surface for embedded PostgreSQL through liboliphaunt."
@@ -30,7 +30,7 @@ extension-signing = ["dep:ed25519-dalek"]
 
 [package.metadata.oliphaunt]
 broker-helper = "oliphaunt-broker"
-broker-version = "0.1.0"
+broker-version = "0.0.0"
 
 [[bin]]
 name = "oliphaunt-resources"

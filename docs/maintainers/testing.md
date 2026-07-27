@@ -1,6 +1,6 @@
 # Testing Policy
 
-Status: normative testing policy. Last verified: 2026-07-15. Owner: repository maintainers.
+Status: normative testing policy. Last verified: 2026-07-27. Owner: repository maintainers.
 
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:
@@ -73,18 +73,30 @@ committed nested locks, and missing ignore rules:
 tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
 
-Release qualification first assembles an exact local registry from the
-qualified artifacts. It then copies each example to `target/`, injects exact
+The same-run WASIX Rust exact-candidate consumer assembles an exact local
+registry from candidate artifacts, generates a clean consumer lock, and
+enforces the canonical stable Wasmer/WASIX/WebC set before `Qualified` can pass.
+The release dry-run independently repeats that policy across the Cargo
+examples: it copies each example to `target/`, injects exact
 `[patch.crates-io]` entries for candidate packages, generates a lock, validates
 candidate versions and checksums against both the registry index and `.crate`
-bytes, enforces the canonical stable Wasmer/WASIX set and advisory floors, and
-runs a full `cargo fetch --locked`. The generated evidence records each lock
-digest. Run the same proof locally with:
+bytes, enforces the canonical toolchain set and advisory floors, and runs a
+full `cargo fetch --locked`. Both proofs record the generated lock digest. Run
+the example proof locally with:
 
 ```sh
 tools/dev/bun.sh tools/release/validate-example-cargo-candidates.mjs \
   --index target/release-work/candidate-registries/cargo/index
 ```
+
+This closure is deliberately broader than the direct runtime crates. Fresh
+consumer resolution previously broke twice after upstream publication:
+[issue #37](https://github.com/f0rr0/oliphaunt/issues/37) admitted two
+incompatible WebC identities, and
+[issue #72](https://github.com/f0rr0/oliphaunt/issues/72) mixed
+`wasmer-wasix` with a different `virtual-net` prerelease. Update the canonical
+Wasmer, WASIX-family, and WebC pins as one reviewed toolchain change; never
+repair only the leaf named by the latest compiler error.
 
 For a later partial release, only packages present in that candidate registry
 are patched; unchanged published packages and all third-party dependencies

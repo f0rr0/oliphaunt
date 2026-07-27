@@ -9,6 +9,10 @@ import {
   packagedCargoManifestText,
 } from './cargo-source-package.mjs';
 import {
+  canonicalWasixCargoToolchainVersions,
+  validateWasixConsumerDependencyPins,
+} from './wasix-cargo-toolchain-policy.mjs';
+import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
@@ -121,6 +125,17 @@ function validateGeneratedOliphauntWasixReleaseArtifactCoverage(
     fail(
       `generated oliphaunt-wasix release source is missing WASIX artifact dependency pins: ${missing.join(', ')}`,
     );
+  }
+  const toolchainVersions = canonicalWasixCargoToolchainVersions(root);
+  const toolchainFailures = validateWasixConsumerDependencyPins(
+    Bun.TOML.parse(manifestText),
+    {
+      manifestPath: 'generated oliphaunt-wasix release source',
+      toolchainVersions,
+    },
+  );
+  if (toolchainFailures.length > 0) {
+    fail(toolchainFailures.join('\n'));
   }
 }
 

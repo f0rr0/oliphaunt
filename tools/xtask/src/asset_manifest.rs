@@ -62,6 +62,7 @@ pub(super) struct Toolchain {
     pub(super) wasmer: String,
     #[serde(rename = "wasmer-wasix")]
     pub(super) wasmer_wasix: String,
+    pub(super) webc: String,
     pub(super) wasmer_llvm: String,
     pub(super) assets_manifest: String,
     pub(super) assets_manifest_sha256: String,

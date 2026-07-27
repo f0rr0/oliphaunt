@@ -152,7 +152,17 @@ export function hasCanonicalBrokerFilesystemMode(mode, expectedMode, platform = 
   return platform === "win32" || (mode & 0o777) === expectedMode;
 }
 
-function requireRealFile(file, label, expectedMode = 0o644) {
+export function hasSafeBrokerSourceFilesystemMode(mode, platform = process.platform) {
+  if (platform === "win32") return true;
+  const permissions = mode & 0o777;
+  // Git records only the executable bit for regular files. A restrictive
+  // checkout umask may therefore narrow 0644 to 0640 or 0600 without changing
+  // the repository identity. Accept only such safe subsets here; staged and
+  // archived carrier members remain normalized and verified as exact 0644.
+  return (permissions & 0o400) !== 0 && (permissions & ~0o644) === 0;
+}
+
+function requireRealFile(file, label) {
   let stat;
   try {
     stat = lstatSync(file);
@@ -162,8 +172,8 @@ function requireRealFile(file, label, expectedMode = 0o644) {
   if (!stat.isFile() || stat.isSymbolicLink()) {
     fail(`${label} must be a regular non-symlink file: ${file}`);
   }
-  if (!hasCanonicalBrokerFilesystemMode(stat.mode, expectedMode)) {
-    fail(`${label} must have mode 0${expectedMode.toString(8)}: ${file}`);
+  if (!hasSafeBrokerSourceFilesystemMode(stat.mode)) {
+    fail(`${label} must have a safe non-executable mode derived from 0644: ${file}`);
   }
   return stat;
 }

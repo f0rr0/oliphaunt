@@ -134,10 +134,12 @@ test("source-only SDK package tasks hash their canonical notices and staging con
     project("src/bindings/wasix-rust/moon.yml").tasks["package-artifacts"],
     [
       ...NOTICE_INPUTS,
+      "/src/sources/toolchains/wasix.toml",
       "/tools/release/cargo-source-package.mjs",
       "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
       "/tools/release/portable-archive.mjs",
       "/tools/release/release-notices.mjs",
+      "/tools/release/wasix-cargo-toolchain-policy.mjs",
     ],
     "oliphaunt-wasix-rust:package-artifacts",
   );

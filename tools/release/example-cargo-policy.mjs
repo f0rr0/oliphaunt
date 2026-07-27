@@ -15,11 +15,18 @@ import {
   loadPublicationCatalog,
   resolveActualCarrier,
 } from "./publication-catalog.mjs";
+import {
+  REQUIRED_WASIX_CONSUMER_PINS,
+  canonicalWasixCargoToolchainVersions,
+  validateResolvedWasixToolchainPolicy,
+  validateWasixConsumerDependencyPins,
+} from "./wasix-cargo-toolchain-policy.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TOOL = "example-cargo-policy.mjs";
 const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
-const WASIX_TOOLCHAIN_PATH = "src/sources/toolchains/wasix.toml";
+const WASIX_PRODUCT_MANIFEST_PATH =
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml";
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 
 const ADVISORY_VERSION_FLOORS = new Map([
@@ -27,21 +34,10 @@ const ADVISORY_VERSION_FLOORS = new Map([
   ["postgres-protocol", "0.6.12"],
 ]);
 
-const REQUIRED_WASMER_PACKAGES = new Map([
-  ["wasmer", "wasmer"],
-  ["wasmer-compiler", "wasmer"],
-  ["wasmer-derive", "wasmer"],
-  ["wasmer-types", "wasmer"],
-  ["wasmer-vm", "wasmer"],
-  ["wasmer-config", "wasmerWasix"],
-  ["wasmer-journal", "wasmerWasix"],
-  ["wasmer-package", "wasmerWasix"],
-  ["wasmer-wasix", "wasmerWasix"],
-  ["wasmer-wasix-types", "wasmerWasix"],
-  ["virtual-fs", "wasmerWasix"],
-  ["virtual-mio", "wasmerWasix"],
-  ["virtual-net", "wasmerWasix"],
-]);
+export {
+  REQUIRED_WASIX_CONSUMER_PINS,
+  validateWasixConsumerDependencyPins,
+};
 
 export const EXAMPLE_CARGO_POLICIES = Object.freeze([
   Object.freeze({
@@ -155,17 +151,6 @@ function initialReleaseVersion() {
   return version;
 }
 
-function wasixToolchainVersions() {
-  const manifest = readToml(path.join(ROOT, WASIX_TOOLCHAIN_PATH));
-  const toolchain = objectTable(manifest.toolchain);
-  const wasmer = toolchain.wasmer;
-  const wasmerWasix = toolchain["wasmer-wasix"];
-  if (typeof wasmer !== "string" || typeof wasmerWasix !== "string") {
-    fail(`${WASIX_TOOLCHAIN_PATH} must declare Wasmer and Wasmer-WASIX versions`);
-  }
-  return { wasmer, wasmerWasix };
-}
-
 export function exampleCargoPolicyById(id) {
   const policy = EXAMPLE_CARGO_POLICIES.find((candidate) => candidate.id === id);
   if (policy === undefined) {
@@ -214,6 +199,11 @@ function dependencyVersion(spec) {
 export function validateExampleManifests() {
   const context = catalogContext();
   const failures = [];
+  const toolchainVersions = canonicalWasixCargoToolchainVersions(ROOT);
+  failures.push(...validateWasixConsumerDependencyPins(
+    readToml(path.join(ROOT, WASIX_PRODUCT_MANIFEST_PATH)),
+    { toolchainVersions },
+  ));
   for (const policy of EXAMPLE_CARGO_POLICIES) {
     const manifestPath = path.join(ROOT, policy.crateDir, "Cargo.toml");
     const manifest = readToml(manifestPath);
@@ -300,12 +290,6 @@ function compareSemver(left, right) {
       : 0;
 }
 
-function optionalWasmerVersionKey(name) {
-  if (name.startsWith("wasmer-compiler-")) return "wasmer";
-  if (name.startsWith("wasmer-wasix-")) return "wasmerWasix";
-  return null;
-}
-
 export function validateResolvedPackagePolicy(
   lockfile,
   packages,
@@ -324,38 +308,11 @@ export function validateResolvedPackagePolicy(
     }
   }
   if (!wasixToolchain) return failures;
-  for (const [name, versionKey] of REQUIRED_WASMER_PACKAGES) {
-    const entries = byName.get(name) ?? [];
-    const expected = toolchainVersions?.[versionKey];
-    if (entries.length !== 1) {
-      failures.push(`${lockfile}: expected exactly one resolved ${name} package, found ${entries.length}`);
-      continue;
-    }
-    if (entries[0].source !== CRATES_IO_SOURCE) {
-      failures.push(`${lockfile}: ${name} must resolve from crates.io, got ${entries[0].source ?? "path"}`);
-    }
-    if (entries[0].version !== expected) {
-      failures.push(`${lockfile}: ${name} resolved ${entries[0].version}; expected ${expected}`);
-    }
-  }
-  for (const pkg of packages) {
-    if (REQUIRED_WASMER_PACKAGES.has(pkg.name)) continue;
-    const versionKey = optionalWasmerVersionKey(pkg.name);
-    const isWasmerPackage = pkg.name === "wasmer" || pkg.name.startsWith("wasmer-");
-    if (isWasmerPackage && pkg.source !== CRATES_IO_SOURCE) {
-      failures.push(`${lockfile}: ${pkg.name} must resolve from crates.io, got ${pkg.source ?? "path"}`);
-    }
-    if (versionKey !== null && pkg.version !== toolchainVersions?.[versionKey]) {
-      failures.push(`${lockfile}: ${pkg.name} resolved ${pkg.version}; expected ${toolchainVersions?.[versionKey]}`);
-    } else if (versionKey === null && isWasmerPackage) {
-      const parsed = semverParts(pkg.version);
-      if (parsed === null) {
-        failures.push(`${lockfile}: ${pkg.name} has invalid semantic version ${pkg.version}`);
-      } else if (parsed.prerelease !== null) {
-        failures.push(`${lockfile}: ${pkg.name} must not resolve prerelease ${pkg.version}`);
-      }
-    }
-  }
+  failures.push(...validateResolvedWasixToolchainPolicy(
+    lockfile,
+    packages,
+    { toolchainVersions },
+  ));
   return failures;
 }
 
@@ -429,7 +386,7 @@ export function validateCandidateLock(policyId, lockfile, indexDir, { registryVe
   const packages = Array.isArray(data.package) ? data.package : [];
   const failures = validateResolvedPackagePolicy(lockfile, packages, {
     wasixToolchain: policy.wasixToolchain,
-    toolchainVersions: wasixToolchainVersions(),
+    toolchainVersions: canonicalWasixCargoToolchainVersions(ROOT),
   });
   const context = catalogContext();
   const byName = packageByName(packages);

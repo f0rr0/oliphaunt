@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
 import { ROOT } from "./release-artifact-targets.mjs";
+import {
+  WASIX_TOOLCHAIN_PATH,
+  canonicalWasixCargoToolchainVersions,
+} from "./wasix-cargo-toolchain-policy.mjs";
 
-export const WASIX_TOOLCHAIN_PATH = "src/sources/toolchains/wasix.toml";
+export { WASIX_TOOLCHAIN_PATH };
 export const STABLE_WASIX_SOURCE_LANE = "stable";
 export const WASIX_AOT_ENGINE = "llvm-opta";
 
@@ -15,34 +16,12 @@ function requiredString(value, context) {
 }
 
 export function canonicalWasixAotMetadata(root = ROOT) {
-  const file = path.join(root, WASIX_TOOLCHAIN_PATH);
-  let text;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch (error) {
-    throw new Error(`cannot read ${WASIX_TOOLCHAIN_PATH}: ${error.message}`);
-  }
-  let data;
-  try {
-    data = Bun.TOML.parse(text);
-  } catch (error) {
-    throw new Error(`${WASIX_TOOLCHAIN_PATH} is not valid TOML: ${error.message}`);
-  }
-  const toolchain = data?.toolchain;
-  if (toolchain === null || typeof toolchain !== "object" || Array.isArray(toolchain)) {
-    throw new Error(`${WASIX_TOOLCHAIN_PATH} is missing [toolchain]`);
-  }
+  const toolchain = canonicalWasixCargoToolchainVersions(root);
   return {
     sourceLane: STABLE_WASIX_SOURCE_LANE,
     engine: WASIX_AOT_ENGINE,
-    wasmerVersion: requiredString(
-      toolchain.wasmer,
-      `${WASIX_TOOLCHAIN_PATH} toolchain.wasmer`,
-    ),
-    wasmerWasixVersion: requiredString(
-      toolchain["wasmer-wasix"],
-      `${WASIX_TOOLCHAIN_PATH} toolchain.wasmer-wasix`,
-    ),
+    wasmerVersion: toolchain.wasmer,
+    wasmerWasixVersion: toolchain.wasmerWasix,
   };
 }
 

@@ -34,11 +34,11 @@ test("keeps release-metadata and current history-repair boundaries distinct", ()
   assert.match(RELEASE_PLEASE_DISPLACED_MAIN_SHA, /^[0-9a-f]{40}$/u);
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-    "958db698320abb9a736f3e770d3a5537ca1afaae",
+    "36f00b793d0625d9fccf92c5ed87f5175bc15a17",
   );
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
-    "f0rr0/history-repair-candidate-7",
+    "f0rr0/history-repair-candidate-8",
   );
   assert.notEqual(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
   assert.notEqual(
