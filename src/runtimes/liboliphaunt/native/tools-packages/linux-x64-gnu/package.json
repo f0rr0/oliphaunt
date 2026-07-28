@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/tools-linux-x64-gnu",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Linux x64 glibc PostgreSQL client tools for Oliphaunt.",
   "license": "MIT AND PostgreSQL",
   "type": "module",
