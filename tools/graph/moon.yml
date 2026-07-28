@@ -1,0 +1,106 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "graph-tools"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "graph", "repo-hygiene"]
+
+project:
+  title: "Graph Tools"
+  description: "Generated Moon, release, coverage, CI, and explain graph data."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs check"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.github/moon.yml"
+      - "/benchmarks/moon.yml"
+      - "/coverage/baseline.toml"
+      - "/.release-please-manifest.json"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/**/moon.yml"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      # graph.mjs executes release_graph_query.mjs. Its transitive release-tool
+      # imports and semantic-ownership manifest all affect the graph result.
+      - "/tools/release/**/*"
+    options:
+      # This task recursively asks Moon for the resolved repository graph and
+      # probes declarative paths. Do not let an evolving dynamic read set turn
+      # a warm local cache into a false qualification result.
+      cache: false
+      runFromWorkspaceRoot: true
+      # release-tools:check invokes this validation as the single hosted owner.
+      # Keep the standalone target available for focused local qualification
+      # without running it concurrently against the same repository graph.
+      runInCI: false
+  generate:
+    tags: ["generated", "graph"]
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs generate"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.github/moon.yml"
+      - "/benchmarks/moon.yml"
+      - "/coverage/baseline.toml"
+      - "/.release-please-manifest.json"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/**/moon.yml"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      # Keep generation cache-equivalent to check so a newly imported release
+      # module cannot leave either task with a stale graph.
+      - "/tools/release/**/*"
+    outputs:
+      - "/target/graph/**/*"
+    options:
+      # Generation must observe the same live graph as the uncached checker.
+      cache: false
+      runFromWorkspaceRoot: true
+  cache-witness:
+    tags: ["cache", "witness"]
+    command: "bun tools/graph/cache-witness.mjs assert"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/tools/graph/cache-witness.mjs"
+      - "/tools/graph/moon.yml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  cache-witness-fixture:
+    tags: ["cache", "witness", "generated"]
+    command: "bun tools/graph/cache-witness.mjs fixture"
+    inputs:
+      - "/target/graph/cache-witness/input.txt"
+      - "/tools/graph/cache-witness.mjs"
+      - "/tools/graph/moon.yml"
+    outputs:
+      - "/target/graph/cache-witness/output.txt"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false

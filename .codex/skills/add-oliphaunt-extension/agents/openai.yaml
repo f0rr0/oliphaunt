@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Oliphaunt Extension"
+  short_description: "Add or update a supported PostgreSQL extension"
+  default_prompt: "Use $add-oliphaunt-extension to add or update an Oliphaunt PostgreSQL extension."

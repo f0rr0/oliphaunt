@@ -1,0 +1,89 @@
+id = "oliphaunt-extension-contrib-pg18"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-bundle"
+publish_targets = [
+  "github-release-assets",
+  "npm",
+  "maven-central",
+  "crates-io",
+]
+registry_packages = [
+  "crates:oliphaunt-extension-contrib-pg18",
+  "crates:oliphaunt-extension-contrib-pg18-aot-linux-arm64",
+  "crates:oliphaunt-extension-contrib-pg18-aot-linux-x64",
+  "crates:oliphaunt-extension-contrib-pg18-aot-macos-arm64",
+  "crates:oliphaunt-extension-contrib-pg18-aot-windows-x64",
+  "crates:oliphaunt-extension-contrib-pg18-linux-arm64-gnu",
+  "crates:oliphaunt-extension-contrib-pg18-linux-x64-gnu",
+  "crates:oliphaunt-extension-contrib-pg18-macos-arm64",
+  "crates:oliphaunt-extension-contrib-pg18-wasix",
+  "crates:oliphaunt-extension-contrib-pg18-windows-x64-msvc",
+  "npm:@oliphaunt/extension-contrib-pg18",
+  "npm:@oliphaunt/extension-contrib-pg18-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-contrib-pg18-linux-x64-gnu",
+  "npm:@oliphaunt/extension-contrib-pg18-macos-arm64",
+  "npm:@oliphaunt/extension-contrib-pg18-windows-x64-msvc",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-contrib-pg18-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-contrib-pg18-android-x86_64",
+]
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_names = [
+  "amcheck",
+  "auto_explain",
+  "bloom",
+  "btree_gin",
+  "btree_gist",
+  "citext",
+  "cube",
+  "dict_int",
+  "dict_xsyn",
+  "earthdistance",
+  "file_fdw",
+  "fuzzystrmatch",
+  "hstore",
+  "intarray",
+  "isn",
+  "lo",
+  "ltree",
+  "pageinspect",
+  "pg_buffercache",
+  "pg_freespacemap",
+  "pg_surgery",
+  "pg_trgm",
+  "pg_visibility",
+  "pg_walinspect",
+  "pgcrypto",
+  "seg",
+  "tablefunc",
+  "tcn",
+  "tsm_system_rows",
+  "tsm_system_time",
+  "unaccent",
+  "uuid-ossp",
+]
+
+[extension]
+class = "contrib"
+versioning = "runtime-bound"
+member_manifest = "src/extensions/contrib/postgres18.toml"
+
+[extension.source]
+path = "src/postgres/versions/18/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+
+[compatibility_versions.oliphaunt-extension-contrib-pg18-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/contrib/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-contrib-pg18-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/contrib/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

@@ -1,0 +1,1 @@
+SELECT * FROM bench_fixture WHERE id BETWEEN 250 AND 260 ORDER BY id;

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000029 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: stub pg_dump parallel fork
+
+The packaged standalone WASIX `pg_dump` is a single-process tool.  PostgreSQL's
+parallel dump support still references `fork()` on non-Windows builds, while
+the embedded WASIX sysroot used here does not declare or provide that symbol.
+Provide a local `ENOSYS` stub for this lane so `pg_dump` links without a fork
+runtime import and any attempted parallel worker creation fails through the
+existing pg_dump error path.
+---
+ src/bin/pg_dump/parallel.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/bin/pg_dump/parallel.c b/src/bin/pg_dump/parallel.c
+--- a/src/bin/pg_dump/parallel.c
++++ b/src/bin/pg_dump/parallel.c
+@@ -61,6 +61,16 @@
+ #include <fcntl.h>
+ #endif
+
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && !defined(WIN32)
++static pid_t
++oliphaunt_wasix_pgdump_fork(void)
++{
++	errno = ENOSYS;
++	return -1;
++}
++#define fork oliphaunt_wasix_pgdump_fork
++#endif
++
+ #include "fe_utils/string_utils.h"
+ #include "parallel.h"
+ #include "pg_backup_utils.h"
+--
+2.39.5

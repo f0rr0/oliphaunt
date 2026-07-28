@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: report COPY protocol state
+
+Report PostgreSQL COPY response transitions to the Oliphaunt WASIX host.
+
+The Rust proxy can batch ordinary FE/BE protocol messages through the buffered
+single-user pump, but COPY is a subprotocol whose next bytes are owned by
+PostgreSQL.  The host therefore needs to know exactly when PostgreSQL has
+emitted CopyInResponse, CopyOutResponse, or CopyBothResponse so it can switch
+the direct transport to streaming without guessing from frontend SQL text.
+
+This patch does not change COPY execution.  It adds guarded notifications next
+to the existing protocol response messages and keeps the ABI declaration in the
+wasix-dl port header.
+---
+ src/backend/commands/copyfromparse.c |  6 ++++++
+ src/backend/commands/copyto.c        |  6 ++++++
+ src/backend/replication/walsender.c  | 12 ++++++++++++
+ src/include/port/wasix-dl.h          |  6 ++++++
+ 4 files changed, 30 insertions(+)
+
+diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
+index 97a4c387a3..0f0eb63c8c 100644
+--- a/src/backend/commands/copyfromparse.c
++++ b/src/backend/commands/copyfromparse.c
+@@ -66,6 +66,9 @@
+ #include "libpq/libpq.h"
+ #include "libpq/pqformat.h"
+ #include "mb/pg_wchar.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "port/wasix-dl.h"
++#endif
+ #include "miscadmin.h"
+ #include "pgstat.h"
+ #include "port/pg_bswap.h"
+@@ -174,6 +177,9 @@ ReceiveCopyBegin(CopyFromState cstate)
+ 	int16		format = (cstate->opts.binary ? 1 : 0);
+ 	int			i;
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyInResponse);
+ 	pq_sendbyte(&buf, format);	/* overall format */
+ 	pq_sendint16(&buf, natts);
+diff --git a/src/backend/commands/copyto.c b/src/backend/commands/copyto.c
+index 84dc465cba..705f42916f 100644
+--- a/src/backend/commands/copyto.c
++++ b/src/backend/commands/copyto.c
+@@ -24,6 +24,9 @@
+ #include "libpq/libpq.h"
+ #include "libpq/pqformat.h"
+ #include "mb/pg_wchar.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "port/wasix-dl.h"
++#endif
+ #include "miscadmin.h"
+ #include "pgstat.h"
+ #include "storage/fd.h"
+@@ -394,6 +397,9 @@ SendCopyBegin(CopyToState cstate)
+ 	int16		format = (cstate->opts.binary ? 1 : 0);
+ 	int			i;
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyOutResponse);
+ 	pq_sendbyte(&buf, format);	/* overall format */
+ 	pq_sendint16(&buf, natts);
+diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
+index ff1c357870..a4608ae247 100644
+--- a/src/backend/replication/walsender.c
++++ b/src/backend/replication/walsender.c
+@@ -61,6 +61,9 @@
+ #include "libpq/pqformat.h"
+ #include "miscadmin.h"
+ #include "nodes/replnodes.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "port/wasix-dl.h"
++#endif
+ #include "pgstat.h"
+ #include "postmaster/interrupt.h"
+ #include "replication/decode.h"
+@@ -686,6 +689,9 @@ UploadManifest(void)
+ 	ib = CreateIncrementalBackupInfo(mcxt);
+
+ 	/* Send a CopyInResponse message */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_IN);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyInResponse);
+ 	pq_sendbyte(&buf, 0);
+ 	pq_sendint16(&buf, 0);
+@@ -940,6 +946,9 @@ StartReplication(StartReplicationCmd *cmd)
+ 		WalSndSetState(WALSNDSTATE_CATCHUP);
+
+ 		/* Send a CopyBothResponse message, and start streaming */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH);
++#endif
+ 		pq_beginmessage(&buf, PqMsg_CopyBothResponse);
+ 		pq_sendbyte(&buf, 0);
+ 		pq_sendint16(&buf, 0);
+@@ -1487,6 +1496,9 @@ StartLogicalReplication(StartReplicationCmd *cmd)
+ 	WalSndSetState(WALSNDSTATE_CATCHUP);
+
+ 	/* Send a CopyBothResponse message, and start streaming */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyBothResponse);
+ 	pq_sendbyte(&buf, 0);
+ 	pq_sendint16(&buf, 0);
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index 70e2debc5c..7754c1eef9 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -10,10 +10,16 @@
+
+ struct Port;
+
++#define OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE 0
++#define OLIPHAUNT_WASIX_PROTOCOL_COPY_IN 1
++#define OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT 2
++#define OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH 3
++
+ extern sigjmp_buf postgresmain_sigjmp_buf;
+ extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
+ extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern void oliphaunt_wasix_process_startup_options(struct Port *port);
++extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #endif
+
+ #endif
+--
+2.49.0

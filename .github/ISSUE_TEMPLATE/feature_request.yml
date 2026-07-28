@@ -3,6 +3,23 @@ description: Suggest a focused API, runtime, or packaging improvement.
 title: "feat: "
 labels: ["enhancement"]
 body:
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product area
+      description: Which product or surface would this improve?
+      options:
+        - liboliphaunt
+        - Rust SDK
+        - Swift SDK
+        - Kotlin SDK
+        - React Native SDK
+        - TypeScript SDK
+        - WASM/WASIX runtime
+        - Repo tooling / CI / release
+        - Documentation
+    validations:
+      required: true
   - type: textarea
     id: use_case
     attributes:

@@ -1,0 +1,22 @@
+[profile.default]
+retries = 0
+fail-fast = false
+
+[profile.ci]
+retries = 0
+fail-fast = false
+status-level = "fail"
+final-status-level = "slow"
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.slow]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+[profile.release]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "300s", terminate-after = 2 }

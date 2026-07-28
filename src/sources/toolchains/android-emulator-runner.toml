@@ -1,0 +1,12 @@
+[toolchain]
+name = "ReactiveCircus Android Emulator Runner"
+kind = "github-action"
+repository = "ReactiveCircus/android-emulator-runner"
+ref = "v2"
+sha = "70f4dee990796918b78d040e3278474bdbd348a7"
+license = "Apache-2.0"
+cloud_required = false
+
+[usage]
+scope = "React Native Android installed-app E2E on GitHub-hosted Ubuntu runners"
+reason = "Creates, boots, waits for, and tears down the Android emulator around the product-owned Maestro flow."

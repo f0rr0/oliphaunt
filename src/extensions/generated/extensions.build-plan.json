@@ -1,0 +1,1429 @@
+{
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "promotion-config",
+      "path": "src/extensions/catalog/extensions.promoted.toml"
+    },
+    {
+      "name": "asset-manifest-evidence",
+      "path": "target/oliphaunt-wasix/assets/manifest.json"
+    }
+  ],
+  "extensions": [
+    {
+      "id": "amcheck",
+      "sql-name": "amcheck",
+      "display-name": "amcheck",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/amcheck",
+      "contrib-dir": "amcheck",
+      "module-file": "amcheck.so",
+      "archive": "extensions/amcheck.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/amcheck/amcheck.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/amcheck.test.js"
+      ]
+    },
+    {
+      "id": "auto_explain",
+      "sql-name": "auto_explain",
+      "display-name": "auto_explain",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/auto_explain",
+      "contrib-dir": "auto_explain",
+      "module-file": "auto_explain.so",
+      "archive": "extensions/auto_explain.tar.zst",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'auto_explain';",
+          "SET auto_explain.log_min_duration = '0';",
+          "SET auto_explain.log_analyze = 'true';",
+          "SET auto_explain.log_level = 'NOTICE';"
+        ],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/auto_explain.test.js"
+      ]
+    },
+    {
+      "id": "bloom",
+      "sql-name": "bloom",
+      "display-name": "bloom",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/bloom",
+      "contrib-dir": "bloom",
+      "module-file": "bloom.so",
+      "archive": "extensions/bloom.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/bloom/bloom.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/bloom.test.js"
+      ]
+    },
+    {
+      "id": "btree_gin",
+      "sql-name": "btree_gin",
+      "display-name": "btree_gin",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/btree_gin",
+      "contrib-dir": "btree_gin",
+      "module-file": "btree_gin.so",
+      "archive": "extensions/btree_gin.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/btree_gin/btree_gin.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/btree_gin.test.js"
+      ]
+    },
+    {
+      "id": "btree_gist",
+      "sql-name": "btree_gist",
+      "display-name": "btree_gist",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/btree_gist",
+      "contrib-dir": "btree_gist",
+      "module-file": "btree_gist.so",
+      "archive": "extensions/btree_gist.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/btree_gist/btree_gist.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/btree_gist.test.js"
+      ]
+    },
+    {
+      "id": "citext",
+      "sql-name": "citext",
+      "display-name": "citext",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/citext",
+      "contrib-dir": "citext",
+      "module-file": "citext.so",
+      "archive": "extensions/citext.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/citext/citext.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/citext.test.js"
+      ]
+    },
+    {
+      "id": "cube",
+      "sql-name": "cube",
+      "display-name": "cube",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/cube",
+      "contrib-dir": "cube",
+      "module-file": "cube.so",
+      "archive": "extensions/cube.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/cube/cube.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/cube.test.js"
+      ]
+    },
+    {
+      "id": "dict_int",
+      "sql-name": "dict_int",
+      "display-name": "dict_int",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/dict_int",
+      "contrib-dir": "dict_int",
+      "module-file": "dict_int.so",
+      "archive": "extensions/dict_int.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/dict_int/dict_int.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_int.test.js"
+      ]
+    },
+    {
+      "id": "dict_xsyn",
+      "sql-name": "dict_xsyn",
+      "display-name": "dict_xsyn",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/dict_xsyn",
+      "contrib-dir": "dict_xsyn",
+      "module-file": "dict_xsyn.so",
+      "archive": "extensions/dict_xsyn.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/dict_xsyn/dict_xsyn.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_xsyn.test.ts"
+      ]
+    },
+    {
+      "id": "earthdistance",
+      "sql-name": "earthdistance",
+      "display-name": "earthdistance",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/earthdistance",
+      "contrib-dir": "earthdistance",
+      "module-file": "earthdistance.so",
+      "archive": "extensions/earthdistance.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/earthdistance/earthdistance.control",
+      "stable": true,
+      "dependencies": [
+        "cube"
+      ],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/earthdistance.test.js"
+      ]
+    },
+    {
+      "id": "file_fdw",
+      "sql-name": "file_fdw",
+      "display-name": "file_fdw",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/file_fdw",
+      "contrib-dir": "file_fdw",
+      "module-file": "file_fdw.so",
+      "archive": "extensions/file_fdw.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/file_fdw/file_fdw.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/file_fdw.test.js"
+      ]
+    },
+    {
+      "id": "fuzzystrmatch",
+      "sql-name": "fuzzystrmatch",
+      "display-name": "fuzzystrmatch",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/fuzzystrmatch",
+      "contrib-dir": "fuzzystrmatch",
+      "module-file": "fuzzystrmatch.so",
+      "archive": "extensions/fuzzystrmatch.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/fuzzystrmatch/fuzzystrmatch.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/fuzzystrmatch.test.js"
+      ]
+    },
+    {
+      "id": "hstore",
+      "sql-name": "hstore",
+      "display-name": "hstore",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/hstore",
+      "contrib-dir": "hstore",
+      "module-file": "hstore.so",
+      "archive": "extensions/hstore.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/hstore/hstore.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/hstore.test.js"
+      ]
+    },
+    {
+      "id": "intarray",
+      "sql-name": "intarray",
+      "display-name": "intarray",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/intarray",
+      "contrib-dir": "intarray",
+      "module-file": "_int.so",
+      "archive": "extensions/intarray.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/intarray/intarray.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/intarray.test.js"
+      ]
+    },
+    {
+      "id": "isn",
+      "sql-name": "isn",
+      "display-name": "isn",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/isn",
+      "contrib-dir": "isn",
+      "module-file": "isn.so",
+      "archive": "extensions/isn.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/isn/isn.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/isn.test.js"
+      ]
+    },
+    {
+      "id": "lo",
+      "sql-name": "lo",
+      "display-name": "lo",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/lo",
+      "contrib-dir": "lo",
+      "module-file": "lo.so",
+      "archive": "extensions/lo.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/lo/lo.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/lo.test.js"
+      ]
+    },
+    {
+      "id": "ltree",
+      "sql-name": "ltree",
+      "display-name": "ltree",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/ltree",
+      "contrib-dir": "ltree",
+      "module-file": "ltree.so",
+      "archive": "extensions/ltree.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/ltree/ltree.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/ltree.test.js"
+      ]
+    },
+    {
+      "id": "pageinspect",
+      "sql-name": "pageinspect",
+      "display-name": "pageinspect",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pageinspect",
+      "contrib-dir": "pageinspect",
+      "module-file": "pageinspect.so",
+      "archive": "extensions/pageinspect.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pageinspect/pageinspect.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pageinspect.test.js"
+      ]
+    },
+    {
+      "id": "pg_buffercache",
+      "sql-name": "pg_buffercache",
+      "display-name": "pg_buffercache",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_buffercache",
+      "contrib-dir": "pg_buffercache",
+      "module-file": "pg_buffercache.so",
+      "archive": "extensions/pg_buffercache.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_buffercache/pg_buffercache.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_buffercache.test.js"
+      ]
+    },
+    {
+      "id": "pg_freespacemap",
+      "sql-name": "pg_freespacemap",
+      "display-name": "pg_freespacemap",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_freespacemap",
+      "contrib-dir": "pg_freespacemap",
+      "module-file": "pg_freespacemap.so",
+      "archive": "extensions/pg_freespacemap.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_freespacemap/pg_freespacemap.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_freespacemap.test.ts"
+      ]
+    },
+    {
+      "id": "pg_hashids",
+      "sql-name": "pg_hashids",
+      "display-name": "pg_hashids",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-external",
+      "source-dir": "target/oliphaunt-sources/checkouts/pg_hashids",
+      "module-file": "pg_hashids.so",
+      "archive": "extensions/pg_hashids.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pg_hashids/pg_hashids.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_hashids.test.ts"
+      ]
+    },
+    {
+      "id": "pg_ivm",
+      "sql-name": "pg_ivm",
+      "display-name": "pg_ivm",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-external",
+      "source-dir": "target/oliphaunt-sources/checkouts/pg_ivm",
+      "module-file": "pg_ivm.so",
+      "archive": "extensions/pg_ivm.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pg_ivm/pg_ivm.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"
+      ]
+    },
+    {
+      "id": "pg_surgery",
+      "sql-name": "pg_surgery",
+      "display-name": "pg_surgery",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_surgery",
+      "contrib-dir": "pg_surgery",
+      "module-file": "pg_surgery.so",
+      "archive": "extensions/pg_surgery.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_surgery/pg_surgery.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_surgery.test.js"
+      ]
+    },
+    {
+      "id": "pg_textsearch",
+      "sql-name": "pg_textsearch",
+      "display-name": "pg_textsearch",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-external",
+      "source-dir": "target/oliphaunt-sources/checkouts/pg_textsearch",
+      "module-file": "pg_textsearch.so",
+      "archive": "extensions/pg_textsearch.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_textsearch.test.ts"
+      ]
+    },
+    {
+      "id": "pg_trgm",
+      "sql-name": "pg_trgm",
+      "display-name": "pg_trgm",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_trgm",
+      "contrib-dir": "pg_trgm",
+      "module-file": "pg_trgm.so",
+      "archive": "extensions/pg_trgm.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_trgm/pg_trgm.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_trgm.test.js"
+      ]
+    },
+    {
+      "id": "pg_uuidv7",
+      "sql-name": "pg_uuidv7",
+      "display-name": "pg_uuidv7",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-external",
+      "source-dir": "target/oliphaunt-sources/checkouts/pg_uuidv7",
+      "module-file": "pg_uuidv7.so",
+      "archive": "extensions/pg_uuidv7.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pg_uuidv7/pg_uuidv7.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_uuidv7.test.ts"
+      ]
+    },
+    {
+      "id": "pg_visibility",
+      "sql-name": "pg_visibility",
+      "display-name": "pg_visibility",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_visibility",
+      "contrib-dir": "pg_visibility",
+      "module-file": "pg_visibility.so",
+      "archive": "extensions/pg_visibility.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_visibility/pg_visibility.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_visibility.test.js"
+      ]
+    },
+    {
+      "id": "pg_walinspect",
+      "sql-name": "pg_walinspect",
+      "display-name": "pg_walinspect",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pg_walinspect",
+      "contrib-dir": "pg_walinspect",
+      "module-file": "pg_walinspect.so",
+      "archive": "extensions/pg_walinspect.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pg_walinspect/pg_walinspect.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_walinspect.test.js"
+      ]
+    },
+    {
+      "id": "pgcrypto",
+      "sql-name": "pgcrypto",
+      "display-name": "pgcrypto",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/pgcrypto",
+      "contrib-dir": "pgcrypto",
+      "module-file": "pgcrypto.so",
+      "archive": "extensions/pgcrypto.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/pgcrypto/pgcrypto.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [
+        "openssl:3.5.6-libcrypto-wasix-static"
+      ],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pgcrypto.test.js"
+      ]
+    },
+    {
+      "id": "pgtap",
+      "sql-name": "pgtap",
+      "display-name": "pgtap",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-sql-only",
+      "source-dir": "target/oliphaunt-sources/checkouts/pgtap",
+      "archive": "extensions/pgtap.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pgtap/pgtap.control",
+      "stable": true,
+      "dependencies": [
+        "plpgsql"
+      ],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pgtap.test.ts"
+      ]
+    },
+    {
+      "id": "postgis",
+      "sql-name": "postgis",
+      "display-name": "PostGIS",
+      "source-kind": "postgis",
+      "build-kind": "autotools",
+      "build-script": "src/extensions/external/postgis/tools/build_wasix.sh",
+      "required-build-files": [
+        "postgis/postgis-3.so",
+        "postgis/liboliphaunt_postgis_deps.so",
+        "extensions/postgis/postgis.control",
+        "share/proj/proj.db"
+      ],
+      "required-build-globs": [
+        "extensions/postgis/sql/postgis--*.sql"
+      ],
+      "source-dir": "target/oliphaunt-sources/checkouts/postgis",
+      "module-file": "postgis-3.so",
+      "archive": "extensions/postgis.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [
+        "geos:3.14.1-static",
+        "proj:9.8.1-static",
+        "sqlite:3.53.1-static",
+        "libxml2:2.14.6-static",
+        "json-c:0.18-static",
+        "libiconv:1.19-static"
+      ],
+      "native-support-modules": [
+        {
+          "name": "postgis_deps",
+          "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so",
+          "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
+          "aot-file": "postgis_deps-llvm-opta.bin.zst"
+        }
+      ],
+      "excluded-sql-extensions": [
+        "address_standardizer",
+        "address_standardizer_data_us",
+        "postgis_raster",
+        "postgis_sfcgal",
+        "postgis_tiger_geocoder",
+        "postgis_topology"
+      ],
+      "staging": {
+        "module-source-dir": "postgis/postgis",
+        "control-source": "postgis/extensions/postgis/postgis.control",
+        "sql-source-dir": "postgis/extensions/postgis/sql",
+        "data-dirs": [
+          {
+            "source": "postgis/share/proj",
+            "destination": "share/proj"
+          }
+        ]
+      },
+      "load-order": [
+        "lib/postgresql/postgis-3.so"
+      ],
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"
+      ]
+    },
+    {
+      "id": "seg",
+      "sql-name": "seg",
+      "display-name": "seg",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/seg",
+      "contrib-dir": "seg",
+      "module-file": "seg.so",
+      "archive": "extensions/seg.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/seg/seg.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/seg.test.js"
+      ]
+    },
+    {
+      "id": "tablefunc",
+      "sql-name": "tablefunc",
+      "display-name": "tablefunc",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/tablefunc",
+      "contrib-dir": "tablefunc",
+      "module-file": "tablefunc.so",
+      "archive": "extensions/tablefunc.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/tablefunc/tablefunc.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tablefunc.test.js"
+      ]
+    },
+    {
+      "id": "tcn",
+      "sql-name": "tcn",
+      "display-name": "tcn",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/tcn",
+      "contrib-dir": "tcn",
+      "module-file": "tcn.so",
+      "archive": "extensions/tcn.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/tcn/tcn.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tcn.test.js"
+      ]
+    },
+    {
+      "id": "tsm_system_rows",
+      "sql-name": "tsm_system_rows",
+      "display-name": "tsm_system_rows",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/tsm_system_rows",
+      "contrib-dir": "tsm_system_rows",
+      "module-file": "tsm_system_rows.so",
+      "archive": "extensions/tsm_system_rows.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/tsm_system_rows/tsm_system_rows.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tsm_system_rows.test.js"
+      ]
+    },
+    {
+      "id": "tsm_system_time",
+      "sql-name": "tsm_system_time",
+      "display-name": "tsm_system_time",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/tsm_system_time",
+      "contrib-dir": "tsm_system_time",
+      "module-file": "tsm_system_time.so",
+      "archive": "extensions/tsm_system_time.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/tsm_system_time/tsm_system_time.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tsm_system_time.test.js"
+      ]
+    },
+    {
+      "id": "unaccent",
+      "sql-name": "unaccent",
+      "display-name": "unaccent",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/unaccent",
+      "contrib-dir": "unaccent",
+      "module-file": "unaccent.so",
+      "archive": "extensions/unaccent.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/unaccent/unaccent.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/unaccent.test.js"
+      ]
+    },
+    {
+      "id": "uuid_ossp",
+      "sql-name": "uuid-ossp",
+      "display-name": "uuid-ossp",
+      "source-kind": "postgres-contrib",
+      "build-kind": "postgres-contrib",
+      "source-dir": "src/postgres/versions/18/contrib/uuid-ossp",
+      "contrib-dir": "uuid-ossp",
+      "module-file": "uuid-ossp.so",
+      "archive": "extensions/uuid-ossp.tar.zst",
+      "control-file": "src/postgres/versions/18/contrib/uuid-ossp/uuid-ossp.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/uuid_ossp.test.js"
+      ]
+    },
+    {
+      "id": "vector",
+      "sql-name": "vector",
+      "display-name": "pgvector",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-external",
+      "source-dir": "target/oliphaunt-sources/checkouts/pgvector",
+      "module-file": "vector.so",
+      "archive": "extensions/vector.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pgvector/vector.control",
+      "stable": true,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "target/oliphaunt-sources/checkouts/src/extensions/tests/pgvector.test.ts"
+      ]
+    }
+  ]
+}

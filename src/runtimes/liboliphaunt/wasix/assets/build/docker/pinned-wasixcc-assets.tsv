@@ -1,0 +1,10 @@
+# oliphaunt-wasixcc-toolchain-assets-v1
+# kind	asset	bytes	sha256	url
+driver	wasixcc-x86_64-unknown-linux-gnu.tar.gz	4167563	3c55abbe0490d0a4736dfe0caaf0763597ae3e50e587c447bf6397b841a0b096	https://github.com/wasix-org/wasixcc/releases/download/v0.4.3/wasixcc-x86_64-unknown-linux-gnu.tar.gz
+sysroot	sysroot.tar.gz	5935586	ec1c4286fae0c70d4ac4e71acfa2d28d439b1270fe65b4ee266df48dc10076a7	https://github.com/wasix-org/wasix-libc/releases/download/v2026-03-02.1/sysroot.tar.gz
+sysroot	sysroot-eh.tar.gz	6134525	0714ee07316d9a0bf9e1b1ec66acc15fee302b7bd23254680298554e75c2a74b	https://github.com/wasix-org/wasix-libc/releases/download/v2026-03-02.1/sysroot-eh.tar.gz
+sysroot	sysroot-ehpic.tar.gz	6163088	2ddbdc145ca8278c0599afdfe10218d1cf88571bf1a8d5dfe95e05becb6a0429	https://github.com/wasix-org/wasix-libc/releases/download/v2026-03-02.1/sysroot-ehpic.tar.gz
+sysroot	sysroot-exnref-eh.tar.gz	6161661	612f5c94c8d5972279b8f5728342f238b9da7a2ecc8ce5fb86090295f7a87026	https://github.com/wasix-org/wasix-libc/releases/download/v2026-03-02.1/sysroot-exnref-eh.tar.gz
+sysroot	sysroot-exnref-ehpic.tar.gz	6192126	bff94209738358f50f18c85b9446d84a65282690826ad88cc6b67d1795d9ce2f	https://github.com/wasix-org/wasix-libc/releases/download/v2026-03-02.1/sysroot-exnref-ehpic.tar.gz
+llvm	LLVM-Linux-x86_64.tar.gz	81194198	a94a2e550aea0081b31005e9fe18cacda4606c4cb98bc557b12f13cb0c06f6e2	https://github.com/wasix-org/llvm-project/releases/download/21.1.204/LLVM-Linux-x86_64.tar.gz
+binaryen	binaryen-version_130-x86_64-linux.tar.gz	107371282	0a18362361ad05465118cd8eeb72edaeec89de6894bc283576ef4e07aa3babcc	https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz

@@ -1,0 +1,47 @@
+{
+  "name": "@oliphaunt/liboliphaunt-win32-x64-msvc",
+  "version": "0.0.0",
+  "description": "Windows x64 MSVC liboliphaunt native library for Oliphaunt.",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/liboliphaunt/native/packages/win32-x64-msvc"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "target": "windows-x64-msvc",
+    "libraryRelativePath": "bin/oliphaunt.dll",
+    "runtimeRelativePath": "runtime"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./runtime/bin/initdb.exe",
+      "./runtime/bin/pg_ctl.exe",
+      "./runtime/bin/postgres.exe"
+    ]
+  },
+  "files": [
+    "bin",
+    "lib",
+    "runtime",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+    "THIRD_PARTY_LICENSES/ICU-LICENSE"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

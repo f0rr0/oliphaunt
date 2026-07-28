@@ -1,0 +1,118 @@
+# Product SDK taxonomy.
+#
+# This file is intentionally small and reviewed with SDK changes. It is the
+# repo-level registry for SDK ownership, target platforms, and delegation rules.
+# `sdk-contracts:check` parses this schema and cross-checks release identities;
+# product tasks own behavior and package proof.
+
+schema_version = 2
+
+[sdks.rust]
+classification = "sdk"
+package_identity = "cargo:oliphaunt"
+implementation_path = "src/sdks/rust"
+documentation_path = "src/docs/content/sdk/rust"
+supported_consumer_targets = ["tauri", "rust-desktop"]
+planned_consumer_targets = []
+runtime_owner = true
+runtime_boundary = "oliphaunt"
+parity_role = "canonical"
+available_modes = ["native-direct", "native-broker", "native-server"]
+unsupported_modes = []
+artifact_resolution = "cargo-artifact-crates"
+tool_resolution = "split-oliphaunt-tools-cargo-crates"
+extension_resolution = "exact-extension-cargo-crates"
+resource_override = "OLIPHAUNT_RESOURCES_DIR"
+
+[sdks.wasix-rust]
+classification = "sdk"
+package_identity = "cargo:oliphaunt-wasix"
+implementation_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix"
+documentation_path = "src/docs/content/sdk/wasm"
+supported_consumer_targets = ["wasix", "wasm"]
+planned_consumer_targets = []
+runtime_owner = true
+runtime_boundary = "oliphaunt-wasix"
+parity_role = "wasm-peer"
+available_modes = ["wasix-direct", "wasix-server"]
+unsupported_modes = ["native-direct", "native-broker", "native-server"]
+unsupported_mode_reason = "WASIX embeds PostgreSQL as WebAssembly modules; native liboliphaunt process modes do not apply"
+artifact_resolution = "liboliphaunt-wasix-cargo-artifact-crates"
+tool_resolution = "optional-oliphaunt-wasix-tools-cargo-crates"
+extension_resolution = "exact-extension-wasix-cargo-crates"
+resource_override = "OLIPHAUNT_WASM_GENERATED_ASSETS_DIR"
+
+[sdks.swift]
+classification = "sdk"
+package_identity = "swiftpm:Oliphaunt"
+implementation_path = "src/sdks/swift"
+documentation_path = "src/docs/content/sdk/swift"
+supported_consumer_targets = ["ios", "macos"]
+planned_consumer_targets = []
+runtime_owner = true
+runtime_boundary = "Oliphaunt"
+parity_role = "platform-peer"
+available_modes = ["native-direct"]
+unsupported_modes = ["native-broker", "native-server"]
+unsupported_mode_reason = "platform broker/server adapters are not implemented yet; direct mode remains a single-session runtime"
+artifact_resolution = "swiftpm-release-assets"
+tool_resolution = "not-applicable-mobile-native-direct"
+extension_resolution = "exact-extension-xcframework-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
+
+[sdks.kotlin]
+classification = "sdk"
+package_identity = "maven:dev.oliphaunt:oliphaunt-android"
+implementation_path = "src/sdks/kotlin"
+documentation_path = "src/docs/content/sdk/kotlin"
+supported_consumer_targets = ["android"]
+planned_consumer_targets = []
+runtime_owner = true
+runtime_boundary = "OliphauntAndroid"
+parity_role = "platform-peer"
+available_modes = ["native-direct"]
+unsupported_modes = ["native-broker", "native-server"]
+unsupported_mode_reason = "Android broker/server adapters are not implemented yet; direct mode remains a single-session runtime"
+artifact_resolution = "maven-runtime-artifacts"
+tool_resolution = "not-applicable-mobile-native-direct"
+extension_resolution = "exact-extension-maven-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
+
+[sdks.react-native]
+classification = "sdk"
+package_identity = "npm:@oliphaunt/react-native"
+implementation_path = "src/sdks/react-native"
+documentation_path = "src/docs/content/sdk/react-native"
+supported_consumer_targets = ["react-native-ios", "react-native-android"]
+planned_consumer_targets = ["react-native-macos"]
+runtime_owner = false
+runtime_boundary = "TurboModule adapter"
+delegates_apple_to = "swift"
+delegates_android_to = "kotlin"
+parity_role = "delegating-platform-peer"
+available_modes = ["native-direct"]
+unsupported_modes = ["native-broker", "native-server"]
+unsupported_mode_reason = "runtime availability is delegated to Swift and Kotlin supportedModes"
+artifact_resolution = "delegated-swiftpm-maven"
+tool_resolution = "delegated-platform-sdk"
+extension_resolution = "delegated-exact-extension-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
+
+[sdks.typescript]
+classification = "sdk"
+package_identity = "npm:@oliphaunt/ts"
+implementation_path = "src/sdks/js"
+documentation_path = "src/docs/content/sdk/typescript"
+supported_consumer_targets = ["node", "bun", "deno"]
+planned_consumer_targets = ["tauri-javascript"]
+runtime_owner = true
+runtime_boundary = "@oliphaunt/ts"
+parity_role = "desktop-javascript-peer"
+available_modes = ["native-direct", "native-broker", "native-server"]
+unsupported_modes = []
+depends_on_rust_broker_helper = true
+broker_helper_product = "oliphaunt-broker"
+artifact_resolution = "npm-optional-platform-packages"
+tool_resolution = "split-oliphaunt-tools-npm-packages"
+extension_resolution = "node-bun-exact-extension-npm-packages-prepared-runtimeDirectory-validation"
+resource_override = "libraryPath-runtimeDirectory"

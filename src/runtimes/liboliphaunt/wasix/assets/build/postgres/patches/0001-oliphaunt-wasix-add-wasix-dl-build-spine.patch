@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add wasix-dl build spine
+
+Add the minimum PostgreSQL-side build plumbing for the Oliphaunt WASIX
+embedded WASIX runtime.
+
+This patch intentionally does not add lifecycle, host I/O, identity,
+shared-memory, or error-recovery behavior.  It only teaches the upstream
+makefiles about the wasm side-module shape we need:
+
+* a `wasix-dl` template,
+* unversioned shared-library side modules,
+* GNU ld-style export lists for those side modules, and
+* a backend `oliphaunt` target that links a dynamic-main wasm artifact
+  from the normal backend object graph.
+
+The template intentionally does not disable spinlocks.  The released WASIX
+lane now relies on the toolchain atomics path, and this PG18 lane should keep
+that performance-critical invariant unless a later patch proves a narrower
+replacement.
+
+Keeping this as the first small patch makes later behavioral changes easy
+to review on their own merits.
+---
+ src/Makefile.shlib              |  9 +++++++++
+ src/backend/Makefile            | 22 +++++++++++++++++++---
+ src/include/port/wasix-dl.h     |  8 ++++++++
+ src/template/wasix-dl           | 14 ++++++++++++++
+ 4 files changed, 51 insertions(+), 3 deletions(-)
+ create mode 100644 src/include/port/wasix-dl.h
+ create mode 100644 src/template/wasix-dl
+
+diff --git a/src/Makefile.shlib b/src/Makefile.shlib
+index 1b5ddf2825..55129150fa 100644
+--- a/src/Makefile.shlib
++++ b/src/Makefile.shlib
+@@ -196,6 +196,16 @@ ifeq ($(PORTNAME), linux)
+   endif
+ endif
+
++ifeq ($(PORTNAME), wasix-dl)
++  LINK.shared		= $(COMPILER) -shared
++  ifdef SO_MAJOR_VERSION
++    shlib		= $(shlib_bare)
++    soname		= $(shlib_bare)
++  endif
++  BUILD.exports		= ( echo '{ global:'; $(AWK) '/^[^\#]/ {printf "%s;\n",$$1}' $<; echo ' local: *; };' ) >$@
++  exports_file		= $(SHLIB_EXPORTS:%.txt=%.list)
++endif
++
+ ifeq ($(PORTNAME), solaris)
+   LINK.shared		= $(COMPILER) -shared
+   ifdef soname
+diff --git a/src/backend/Makefile b/src/backend/Makefile
+index 4827ee361d..9292f77031 100644
+--- a/src/backend/Makefile
++++ b/src/backend/Makefile
+@@ -44,13 +44,13 @@ endif
+
+ all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
+
+-ifneq ($(PORTNAME), cygwin)
++ifeq (,$(filter cygwin wasix-dl,$(PORTNAME)))
+ ifneq ($(PORTNAME), win32)
+
+ postgres: $(OBJS)
+ 	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LIBS) -o $@
+
+-endif
++endif # win32
+ endif
+
+ ifeq ($(PORTNAME), cygwin)
+@@ -82,6 +82,22 @@ libpostgres.a: postgres
+
+ endif # win32
+
++ifeq ($(PORTNAME), wasix-dl)
++oliphaunt: $(OBJS)
++	$(AR) rcs libpgmain.a main/main.o
++	$(AR) rcs libpostgres.a $(filter-out main/main.o,$(call expand_subsys,$^))
++	$(LD) -r -o libpgcore.o $(filter-out main/main.o,$(call expand_subsys,$^))
++	$(AR) rcs libpgcore.a libpgcore.o
++	$(CC) $(CFLAGS) main/main.o libpgcore.a $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
++
++postgres: oliphaunt
++
++libpostgres.a: oliphaunt
++	touch $@
++
++.PHONY: oliphaunt
++endif # wasix-dl
++
+ $(top_builddir)/src/port/libpgport_srv.a: | submake-libpgport
+
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+new file mode 100644
+index 0000000000..630687ec15
+--- /dev/null
++++ b/src/include/port/wasix-dl.h
+@@ -0,0 +1,8 @@
++/*-------------------------------------------------------------------------
++ * src/include/port/wasix-dl.h
++ *	  Port-specific declarations for the Oliphaunt WASIX side-module build.
++ *-------------------------------------------------------------------------
++ */
++#ifndef PG_PORT_WASIX_DL_H
++#define PG_PORT_WASIX_DL_H
++#endif
+diff --git a/src/template/wasix-dl b/src/template/wasix-dl
+new file mode 100644
+index 0000000000..f3792d3e83
+--- /dev/null
++++ b/src/template/wasix-dl
+@@ -0,0 +1,14 @@
++#-------------------------------------------------------------------------
++#
++# src/template/wasix-dl
++#    Template for the Oliphaunt WASIX dynamic-main PostgreSQL build.
++#
++#-------------------------------------------------------------------------
++
++CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE -DOLIPHAUNT_WASM_SINGLE_USER"
++CFLAGS_SL="-fPIC"
++DLSUFFIX=".so"
++THREAD_CFLAGS="-pthread"
++THREAD_LIBS="-pthread"
++
++# The linked wasm artifact is a standalone side module loaded by the Rust host.
+--
+2.49.0
