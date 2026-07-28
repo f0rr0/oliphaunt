@@ -153,6 +153,107 @@ test("CI revalidates the full release gate on the publication host before Checks
   );
 });
 
+test("CI cancels merged-PR work without spending runner jobs and dispatches against the exact parent", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const missingTombstone = ciCandidate();
+  missingTombstone.on.pull_request.types =
+    missingTombstone.on.pull_request.types.filter((type) => type !== "closed");
+  assert.throws(
+    () => assertCiWorkflow(missingTombstone, { builderJobs: BUILDER_JOBS }),
+    /closed cancellation tombstone/u,
+  );
+
+  for (const jobId of ["affected", "release-intent"]) {
+    const allocating = ciCandidate();
+    delete allocating.jobs[jobId].if;
+    assert.throws(
+      () => assertCiWorkflow(allocating, { builderJobs: BUILDER_JOBS }),
+      new RegExp(`${jobId} must skip the closed pull-request cancellation tombstone`, "u"),
+      jobId,
+    );
+  }
+
+  for (const jobId of ["checks", "tests", "builds", "e2e", "required"]) {
+    const allocating = ciCandidate();
+    allocating.jobs[jobId].if = "${{ always() }}";
+    assert.throws(
+      () => assertCiWorkflow(allocating, { builderJobs: BUILDER_JOBS }),
+      new RegExp(`${jobId} aggregate must skip the closed pull-request cancellation tombstone`, "u"),
+      jobId,
+    );
+  }
+
+  const syntheticRoot = ciCandidate();
+  syntheticRoot.jobs.unmodeled = {
+    name: "Unmodeled root",
+    "runs-on": "ubuntu-24.04",
+    steps: [{ run: "true" }],
+  };
+  assert.throws(
+    () => assertCiWorkflow(syntheticRoot, { builderJobs: BUILDER_JOBS }),
+    /sole DAG root/u,
+  );
+
+  const unmodeledOverride = ciCandidate();
+  unmodeledOverride.jobs["check-targets"].if = "${{ always() }}";
+  assert.throws(
+    () => assertCiWorkflow(unmodeledOverride, { builderJobs: BUILDER_JOBS }),
+    /complete modeled runnerless-closed set/u,
+  );
+
+  const uppercaseOverride = ciCandidate();
+  uppercaseOverride.jobs["check-targets"].if = "${{ Always() }}";
+  assert.throws(
+    () => assertCiWorkflow(uppercaseOverride, { builderJobs: BUILDER_JOBS }),
+    /complete modeled runnerless-closed set/u,
+  );
+
+  const detachedOverride = ciCandidate();
+  detachedOverride.jobs["extension-packages"].if =
+    detachedOverride.jobs["extension-packages"].if
+      .replace("needs.affected.result == 'success' && ", "");
+  assert.throws(
+    () => assertCiWorkflow(detachedOverride, { builderJobs: BUILDER_JOBS }),
+    /condition does not guarantee/u,
+  );
+
+  for (const baseRef of [
+    "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || 'origin/main' }}",
+    "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.sha) || 'origin/main' }}",
+    "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || format('{0}^', github.sha) }}",
+    "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}",
+    "${{ github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}",
+    "${{ github.event.pull_request.base.sha || github.event.before || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}",
+    "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}",
+    "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && format('{0}^', github.sha)) || 'origin/main' }}",
+  ]) {
+    const invalidBase = ciCandidate();
+    step(invalidBase, "release-intent", "release_intent").env.BASE_REF = baseRef;
+    assert.throws(
+      () => assertCiWorkflow(invalidBase, { builderJobs: BUILDER_JOBS }),
+      /immutable PR title, base, head, branch/u,
+      baseRef,
+    );
+  }
+
+  const missingPrTitle = ciCandidate();
+  delete step(missingPrTitle, "release-intent", "release_intent").env.PR_TITLE;
+  assert.throws(
+    () => assertCiWorkflow(missingPrTitle, { builderJobs: BUILDER_JOBS }),
+    /immutable PR title, base, head, branch/u,
+  );
+
+  const missingArgument = ciCandidate();
+  step(missingArgument, "release-intent", "release_intent").run =
+    step(missingArgument, "release-intent", "release_intent").run
+      .replace(' "$CI_FULL_REF"', "");
+  assert.throws(
+    () => assertCiWorkflow(missingArgument, { builderJobs: BUILDER_JOBS }),
+    /exact immutable subject, base, head, branch, event, and full-ref arguments/u,
+  );
+});
+
 test("release input validation binds every caller-controlled input before operation jobs", () => {
   const noCheckout = candidate();
   noCheckout.jobs["validate-inputs"].steps = noCheckout.jobs["validate-inputs"].steps

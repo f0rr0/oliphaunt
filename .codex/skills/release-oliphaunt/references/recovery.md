@@ -50,4 +50,34 @@ Keep the immutable Release Please bootstrap and displaced-main metadata boundari
 8. Before preparing the replacement release PR, inspect any merged Release Please PR displaced by the rewrite. Prove its merge is unreachable from current `main` and every affected public tag/package is absent, then remove only its stale `autorelease: pending` label. Never add `autorelease: tagged` to a release that was not tagged.
 9. Only after the introduction passes exact-main qualification, prepare and review the generated release PR. The eventual desired public history is that single introduction commit followed by the single generated release-bump commit; qualify and publish only the exact release-bump SHA.
 
+### Explicit one-hosted-run variant
+
+Before any affected identity is public, a maintainer may explicitly choose to
+spend hosted matrix time only on the eventual release-bump commit. This is a
+governance exception to steps 2, 6, and 9 above; never describe the temporary
+candidate or rewritten introduction as hosted-qualified.
+
+1. Preserve every other safety boundary: exact public-absence inventory,
+   unique remote archive, independently verified complete bundle, direct-child
+   candidate, rotated one-shot predecessor/branch, complete `0.0.0` rollback,
+   signed commits, exact tree equality, force-with-lease, immediate protection
+   restoration, stale release-PR lifecycle cleanup, and a newly generated
+   single-commit release PR.
+2. Qualify the candidate locally with the all-target release-intent tuple, the
+   full `release-check`, workflow security/static checks, and the product
+   metadata/extension gates. Keep the candidate branch immutable for audit,
+   but do not dispatch it.
+3. Keep CI disabled through the protected-main rewrite, generated release-PR
+   update, and final squash merge. Before every remote mutation, recheck the
+   exact expected ref; after it, recheck commit/tree/signature, branch
+   protection, lifecycle state, and that no run was created.
+4. Enable CI only after the final release commit is already `main`. Confirm
+   there is no run for that SHA, then dispatch `CI` exactly once from `main`
+   with every target set to `all`. Do not also trigger or rerun a push build:
+   non-PR runs for the same SHA serialize and both consume the matrix.
+5. The exact final release commit must finish with a non-cancelled `Qualified`
+   record and all required artifacts before dry-run or publication. A failure
+   invalidates the two-commit attempt and requires another archived repair; it
+   does not authorize reusing earlier artifacts.
+
 Do not automate repository-setting changes or the force-push without explicit maintainer authorization at execution time.

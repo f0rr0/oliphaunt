@@ -125,6 +125,20 @@ removing it. Do not turn reference counts into a required CI gate.
 ## GitHub qualification
 
 - Identify runs by workflow plus exact `headSha`; never accept “latest successful on branch.”
+- A manual exact-main dispatch compares against `format('{0}^', github.sha)`,
+  the dispatched commit's immutable sole parent. Never fall back to
+  `origin/main` for a main dispatch: after a merge that moving ref is the
+  dispatched head itself and turns release-intent validation into an invalid
+  self-comparison. Non-main diagnostic and history-repair dispatches retain
+  their explicit comparison to current `origin/main`.
+- The `pull_request.closed` event is a runnerless cancellation tombstone. It
+  shares the PR concurrency group so merging cancels obsolete PR work, while
+  every root and `always()` aggregate job skips before runner allocation. It
+  cannot refund PR work that already completed. For an explicitly authorized
+  one-hosted-run recovery, keep CI disabled through every intermediate update
+  and the final merge, then enable it and manually dispatch exactly once from
+  the final `main` SHA. Do not also create a push run: non-PR runs for the same
+  SHA serialize rather than cancel one another.
 - The release prerequisite is the non-cancelled `Qualified` gate for that SHA, including required checks, builds, policy, tests, and selected E2E.
 - When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every promoted extension in direct, server, restart, materialization, and dump/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
 - Ensure artifact attestations and the publication lock reference the same SHA/tree.

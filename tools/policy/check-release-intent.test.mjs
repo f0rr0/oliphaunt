@@ -103,11 +103,17 @@ const COMPLETED_ROLLBACK_BRANCH = "f0rr0/history-repair-candidate-10";
 
 function commitTree(subject, timestamp, {
   parent = RELEASE_PLEASE_BOOTSTRAP_SHA,
+  parents,
   tree = INTRODUCTION_TREE,
   trailers = [`Oliphaunt-History-Repair-Candidate: ${QUALIFIED_CANDIDATE_SHA}`],
 } = {}) {
+  const commitParents = parents ?? [parent];
   return isolatedGit(
-    ["commit-tree", tree, "-p", parent],
+    [
+      "commit-tree",
+      tree,
+      ...commitParents.flatMap((commitParent) => ["-p", commitParent]),
+    ],
     {
       input: `${[subject, ...(trailers.length > 0 ? ["", ...trailers] : [])].join("\n")}\n`,
       env: {
@@ -213,13 +219,12 @@ function rollbackIntent(overrides = {}) {
   });
 }
 
-test("does not misclassify the current repeated introduction as a first-release rollback", {
+test("authorizes only the current exact unpublished first-release rollback transport", {
   timeout: 20_000,
 }, () => {
   const result = rollbackIntent();
   assert.equal(result.status, 0, result.output);
-  assert.doesNotMatch(result.output, /authorized exact unpublished first-release rollback/u);
-  assert.doesNotMatch(result.output, /first-release rollback transport requires/u);
+  assert.match(result.output, /authorized exact unpublished first-release rollback/u);
   assert.doesNotMatch(result.stepOutput, /^history_repair=true$/mu);
 });
 
@@ -306,11 +311,111 @@ test("rejects a fork PR whose head branch is named main", () => {
   assert.doesNotMatch(result.output, /authorized current main history repair/u);
 });
 
-test("rejects a manual sibling dispatch whose ref name is main", () => {
+test("rejects a manual main dispatch whose base is not its exact parent", () => {
   const result = releaseIntent({ eventName: "workflow_dispatch" });
   assert.equal(result.status, 1, result.output);
-  assert.match(result.output, /release-intent base .* is not an ancestor/u);
+  assert.match(result.output, /base must resolve to the exact commit parent/u);
   assert.doesNotMatch(result.output, /authorized current main history repair/u);
+});
+
+test("accepts the actual generated release commit with a literal immutable-parent expression", {
+  timeout: 20_000,
+}, () => {
+  const releasedSubject = command(
+    "git",
+    ["show", "-s", "--format=%s", RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA],
+  );
+  const result = releaseIntent({
+    base: `${RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA}^`,
+    branch: "main",
+    eventName: "workflow_dispatch",
+    fullRef: "refs/heads/main",
+    head: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    subject: releasedSubject,
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.doesNotMatch(result.stepOutput, /^history_repair=true$/mu);
+});
+
+test("manual main dispatch rejects self, non-parent, merge, orphan, and split branch identities", () => {
+  const cases = [
+    {
+      name: "self base",
+      overrides: {
+        base: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+        head: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+        subject: command(
+          "git",
+          ["show", "-s", "--format=%s", RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA],
+        ),
+      },
+      pattern: /base must resolve to the exact commit parent/u,
+    },
+    {
+      name: "non-parent base",
+      overrides: {
+        base: RELEASE_PLEASE_BOOTSTRAP_SHA,
+        head: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+        subject: command(
+          "git",
+          ["show", "-s", "--format=%s", RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA],
+        ),
+      },
+      pattern: /base must resolve to the exact commit parent/u,
+    },
+    {
+      name: "merge head",
+      overrides: {
+        base: INTRODUCTION_COMMIT,
+        head: commitTree("fix: merge-shaped dispatch", "2026-01-01T00:00:08Z", {
+          parents: [INTRODUCTION_COMMIT, RELEASE_PLEASE_BOOTSTRAP_SHA],
+          trailers: [],
+        }),
+        subject: "fix: merge-shaped dispatch",
+      },
+      pattern: /requires an exact one-parent commit/u,
+    },
+    {
+      name: "orphan head",
+      overrides: {
+        base: RELEASE_PLEASE_BOOTSTRAP_SHA,
+        head: commitTree("fix: orphan-shaped dispatch", "2026-01-01T00:00:09Z", {
+          parents: [],
+          trailers: [],
+        }),
+        subject: "fix: orphan-shaped dispatch",
+      },
+      pattern: /requires an exact one-parent commit/u,
+    },
+    {
+      name: "main branch with non-main full ref",
+      overrides: {
+        eventName: "workflow_dispatch",
+        fullRef: "refs/heads/diagnostic",
+      },
+      pattern: /requires matching main branch and full ref/u,
+    },
+    {
+      name: "main full ref with non-main branch",
+      overrides: {
+        branch: "diagnostic",
+        eventName: "workflow_dispatch",
+        fullRef: "refs/heads/main",
+      },
+      pattern: /requires matching main branch and full ref/u,
+    },
+  ];
+  for (const { name, overrides, pattern } of cases) {
+    const result = releaseIntent({
+      branch: "main",
+      eventName: "workflow_dispatch",
+      fullRef: "refs/heads/main",
+      ...overrides,
+    });
+    assert.equal(result.status, 1, `${name}\n${result.output}`);
+    assert.match(result.output, pattern, name);
+    assert.doesNotMatch(result.stepOutput, /^history_repair=true$/mu, name);
+  }
 });
 
 test("rejects the original displaced-main tip after the first repair completed", () => {

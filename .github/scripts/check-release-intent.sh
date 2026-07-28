@@ -43,8 +43,39 @@ IFS=$'\t' read -r \
   repair_candidate_branch \
   introduction_subject <<< "${release_contract}"
 
+# A manual dispatch on main has no immutable `before` event field. The
+# workflow supplies `${github.sha}^`; resolve and bind that value to the exact
+# sole parent before any version or ancestry decision. This rejects the old
+# moving `origin/main` self-comparison as well as a merge/orphan ambiguity.
+# Non-main diagnostic and history-repair dispatches retain their existing
+# comparison with current `origin/main`.
+if [[ "${event_name}" == "workflow_dispatch" ]] &&
+  {
+    [[ "${full_ref}" == "refs/heads/main" ]] ||
+      [[ "${head_branch}" == "main" ]]
+  }; then
+  if [[ "${full_ref}" != "refs/heads/main" ]] ||
+    [[ "${head_branch}" != "main" ]]; then
+    echo "manual main qualification requires matching main branch and full ref" >&2
+    exit 1
+  fi
+  dispatch_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
+  read -r -a dispatch_commit_and_parents <<< "${dispatch_parents}"
+  if [[ "${#dispatch_commit_and_parents[@]}" -ne 2 ]]; then
+    echo "manual main qualification requires an exact one-parent commit" >&2
+    exit 1
+  fi
+  dispatch_parent="${dispatch_commit_and_parents[1]}"
+  if ! resolved_dispatch_base="$(git rev-parse "${base_ref}^{commit}" 2>/dev/null)" ||
+    [[ "${resolved_dispatch_base}" != "${dispatch_parent}" ]]; then
+    echo "manual main qualification base must resolve to the exact commit parent" >&2
+    exit 1
+  fi
+  base_ref="${dispatch_parent}"
+fi
+
 # The current authorized protected-main rewrite reports the immediately
-# superseded introduction tip as `github.event.before`. This is intentionally
+# superseded protected-main tip as `github.event.before`. This is intentionally
 # distinct from the immutable displaced-main release-metadata baseline. Its
 # one-shot before/ref/event tuple and the exact unreleased introduction shape
 # make this exception non-replayable. A temporary-branch qualification proves

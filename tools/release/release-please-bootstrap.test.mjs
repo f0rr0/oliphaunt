@@ -34,11 +34,11 @@ test("keeps release-metadata and current history-repair boundaries distinct", ()
   assert.match(RELEASE_PLEASE_DISPLACED_MAIN_SHA, /^[0-9a-f]{40}$/u);
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-    "dfc4032aa0943915d68450a3a5b50b2182f22e85",
+    "1f61976e9b508b5786e683c6772a126c6435b66e",
   );
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
-    "f0rr0/history-repair-candidate-11",
+    "f0rr0/history-repair-candidate-12",
   );
   assert.notEqual(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
   assert.notEqual(
@@ -48,6 +48,10 @@ test("keeps release-metadata and current history-repair boundaries distinct", ()
   assert.notEqual(
     RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
     "29bac7ce0a726ae0ea2ef23c8751f874f738d439",
+  );
+  assert.notEqual(
+    RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
+    "dfc4032aa0943915d68450a3a5b50b2182f22e85",
   );
 });
 

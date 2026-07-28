@@ -1,6 +1,6 @@
 # Testing Policy
 
-Status: normative testing policy. Last verified: 2026-07-27. Owner: repository maintainers.
+Status: normative testing policy. Last verified: 2026-07-28. Owner: repository maintainers.
 
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:
@@ -30,6 +30,21 @@ validation.
 - Release: package-native dry-runs, artifact manifests, checksums,
   attestations, registry checks, exact-extension evidence, binary
   compatibility-floor inspection, and selected regression/performance gates.
+
+Merging a PR emits a `pull_request.closed` cancellation tombstone in the
+existing PR concurrency group. That event allocates no runners: the plan,
+release-intent, and every `always()` aggregate skip. Its only purpose is to
+cancel obsolete PR work before the `main` commit is qualified; work completed
+before cancellation has still consumed runner time. A cost-constrained
+pre-publication repair instead keeps CI disabled through all intermediate
+updates and the final merge, then enables CI and performs exactly one manual
+full dispatch on the final `main` SHA. Never pair that dispatch with an
+automatic push run: non-PR runs sharing the SHA group serialize rather than
+cancel each other.
+For a manual dispatch on `main`, release intent compares the dispatched SHA
+with its immutable sole parent; it never uses the moving `origin/main` ref,
+which already names the head after a merge. Non-main diagnostic and
+history-repair dispatches continue to compare with current `origin/main`.
 
 Target-scoped consumer diagnostics do not inherit an implicit success barrier
 from a multi-platform producer matrix. Mobile extension packaging and Android

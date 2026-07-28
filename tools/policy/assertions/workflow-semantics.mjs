@@ -94,6 +94,32 @@ export {
 };
 
 const CI_REF = "${{ github.event.pull_request.head.sha || github.sha }}";
+const CI_PR_TITLE = "${{ github.event.pull_request.title }}";
+const CI_BASE_REF =
+  "${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}";
+const CI_HEAD_REF =
+  "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}";
+const CI_HEAD_BRANCH = "${{ github.event.pull_request.head.ref || github.ref_name }}";
+const CI_CLOSED_TOMBSTONE_GUARD =
+  "${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}";
+const CI_CLOSED_TOMBSTONE_AGGREGATE_GUARD =
+  "${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}";
+const CI_CLOSED_TOMBSTONE_AGGREGATES = ["checks", "tests", "builds", "e2e", "required"];
+const CI_AFFECTED_SUCCESS_STATUS_OVERRIDES = [
+  "extension-packages",
+  "mobile-extension-packages",
+  "broker-release-assets",
+  "node-direct-release-assets",
+  "kotlin-maven-staging",
+  "js-sdk-exact-candidate-consumer",
+  "native-extension-lifecycle",
+  "native-extension-lifecycle-aggregate",
+  "rust-sdk-exact-candidate-consumer",
+  "wasix-rust-exact-candidate-consumer",
+  "wasix-release-regression",
+  "mobile-build-android",
+  "mobile-e2e-android",
+];
 const MOBILE_REF = "${{ needs.resolve.outputs.sha }}";
 const RELEASE_NPM_PUBLISHER_VERSION = "11.18.0";
 const RELEASE_NODE_RUNTIME_VERSION = "22.22.3";
@@ -1042,7 +1068,7 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   );
   invariant(
     sameSet(workflow.on.pull_request?.types ?? [], ["opened", "synchronize", "reopened", "closed"]),
-    "CI pull_request trigger must cover lifecycle cancellation events",
+    "CI pull_request trigger must retain the closed cancellation tombstone",
   );
   invariant(
     sameSet(workflow.on.push?.branches ?? [], ["main"]),
@@ -1070,7 +1096,27 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   assertAllCheckouts(workflow, CI_REF);
   assertAndroidE2eDiskSafety(workflow, "mobile-e2e-android");
 
+  for (const jobId of ["affected", "release-intent"]) {
+    invariant(
+      normalized(workflow.jobs[jobId]?.if) === normalized(CI_CLOSED_TOMBSTONE_GUARD),
+      `CI ${jobId} must skip the closed pull-request cancellation tombstone before runner allocation`,
+    );
+  }
+  for (const jobId of CI_CLOSED_TOMBSTONE_AGGREGATES) {
+    invariant(
+      normalized(workflow.jobs[jobId]?.if)
+        === normalized(CI_CLOSED_TOMBSTONE_AGGREGATE_GUARD),
+      `CI ${jobId} aggregate must skip the closed pull-request cancellation tombstone before runner allocation`,
+    );
+  }
   assertExactNeeds(workflow, "affected", ["release-intent"]);
+  const rootJobs = Object.entries(workflow.jobs)
+    .filter(([, job]) => strings(job.needs).length === 0)
+    .map(([jobId]) => jobId);
+  invariant(
+    sameSet(rootJobs, ["release-intent"]),
+    "CI release-intent must remain the sole DAG root so a closed PR skips every descendant",
+  );
   assertExactNeeds(workflow, "required", ["affected", "release-intent", "checks", "tests", "builds", "e2e"]);
   assertExactNeeds(workflow, "qualified", ["affected", "required"]);
   assertExactNeeds(workflow, "release-metadata-portability", ["affected"]);
@@ -1222,12 +1268,26 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     "the release-intent behavior contract",
   );
   invariant(
-    releaseIntent.step.env?.CI_EVENT_NAME === "${{ github.event_name }}"
+    releaseIntent.step.env?.PR_TITLE === CI_PR_TITLE
+      && releaseIntent.step.env?.BASE_REF === CI_BASE_REF
+      && releaseIntent.step.env?.HEAD_REF === CI_HEAD_REF
+      && releaseIntent.step.env?.HEAD_BRANCH === CI_HEAD_BRANCH
+      && releaseIntent.step.env?.CI_EVENT_NAME === "${{ github.event_name }}"
       && releaseIntent.step.env?.CI_FULL_REF === "${{ github.ref }}"
       && releaseIntent.step.env?.CI_WASM_TARGET === "${{ inputs.wasm_target }}"
       && releaseIntent.step.env?.CI_NATIVE_TARGET === "${{ inputs.native_target }}"
       && releaseIntent.step.env?.CI_MOBILE_TARGET === "${{ inputs.mobile_target }}",
-    "release intent must receive immutable event, full-ref, and all qualification-target context",
+    "release intent must receive immutable PR title, base, head, branch, event, full-ref, and all qualification-target context",
+  );
+  invariant(
+    normalized(releaseIntent.step.run) === normalized(`
+      subject="\${PR_TITLE:-}"
+      if [ -z "$subject" ]; then
+        subject="$(git log -1 --pretty=%s "$HEAD_REF")"
+      fi
+      .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF"
+    `),
+    "release intent must pass the exact immutable subject, base, head, branch, event, and full-ref arguments",
   );
   const historyRepairNode = assertActionStep(
     workflow,
@@ -1632,6 +1692,24 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
     ["always()", "github.event_name == 'push'", "github.ref == 'refs/heads/main'"],
     ["always()", "github.event_name == 'workflow_dispatch'"],
   ], "qualified");
+  const statusOverrideJobs = Object.entries(workflow.jobs)
+    .filter(([, job]) => /\b(?:always|cancelled|failure|success)\s*\(/iu.test(normalized(job.if)))
+    .map(([jobId]) => jobId);
+  invariant(
+    sameSet(statusOverrideJobs, [
+      ...CI_CLOSED_TOMBSTONE_AGGREGATES,
+      ...CI_AFFECTED_SUCCESS_STATUS_OVERRIDES,
+      "qualified",
+    ]),
+    "CI status-function override jobs must be the complete modeled runnerless-closed set",
+  );
+  for (const jobId of CI_AFFECTED_SUCCESS_STATUS_OVERRIDES) {
+    assertConditionRequires(
+      workflow.jobs[jobId]?.if,
+      ["always()", "needs.affected.result == 'success'"],
+      `CI ${jobId} closed pull-request guard`,
+    );
+  }
   const candidate = assertRunInvocation(
     workflow,
     "qualified",

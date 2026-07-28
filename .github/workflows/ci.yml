@@ -187,7 +187,7 @@ jobs:
         id: release_intent
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || 'origin/main' }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}^', github.sha)) || 'origin/main' }}
           HEAD_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
           CI_EVENT_NAME: ${{ github.event_name }}
@@ -376,7 +376,7 @@ jobs:
 
   checks:
     name: Checks
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - check-targets
@@ -458,7 +458,7 @@ jobs:
 
   tests:
     name: Tests
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - test-targets
@@ -2895,7 +2895,7 @@ jobs:
 
   builds:
     name: Builds
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - extension-artifacts-native
@@ -3096,7 +3096,7 @@ jobs:
 
   e2e:
     name: E2E
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - native-extension-lifecycle-aggregate
@@ -3129,7 +3129,7 @@ jobs:
 
   required:
     name: Required
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'closed') }}
     needs:
       - affected
       - release-intent

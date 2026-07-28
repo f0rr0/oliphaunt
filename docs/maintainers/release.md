@@ -748,6 +748,17 @@ declared blocker to resume another product.
 
 History repair is allowed only before any affected product tag/package is public. Freeze main, archive and bundle the old tip, then qualify the replacement tree with an all-target manual CI run on a retained temporary branch. The one tree-identical introduction commit must contain exactly one `Oliphaunt-History-Repair-Candidate: <lowercase-full-sha>` trailer naming that qualified branch commit. Bind the one-shot repair predecessor to the exact old tip, use an exact `--force-with-lease` only with explicit maintainer authorization, and immediately restore force-push protection. Rewritten-main CI selects the exact run and immutable artifacts named by the trailer, verifies the retained remote branch tip and equal Git tree before planning, and then runs the complete non-cancelled graph. Temporary-branch `Qualified` evidence is deliberately ineligible for publication; the rewritten main needs its own `Qualified` record.
 
+An explicitly authorized pre-publication cost-constrained repair may defer all
+hosted qualification to one manual all-target run on the final generated
+release-bump commit. CI stays disabled through the candidate, rewrite,
+release-PR update, and merge; exhaustive local gates and exact
+ref/tree/signature/protection proofs replace only the intermediate hosted
+evidence. The final `main` SHA must then receive exactly one non-cancelled
+`Qualified` run before dry-run or publish. Do not claim the candidate or
+introduction was hosted-qualified, and do not pair the final manual dispatch
+with a push run. The complete bounded procedure is in
+`.codex/skills/release-oliphaunt/references/recovery.md`.
+
 If the superseded tip is the still-unpublished generated first-release commit,
 the retained qualification transport is a direct child of that exact tip even
 though its desired tree restores every product to the unreleased `0.0.0`

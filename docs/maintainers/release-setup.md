@@ -434,6 +434,14 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
    candidate instead keeps the complete manifest unchanged at `0.0.0`; the
    coverage gate treats that as an ordinary unchanged release state, not as a
    second first-release rollback.
+   With explicit maintainer authorization before any identity is public, the
+   cost-constrained recovery variant may keep CI disabled through this repair
+   and the generated release merge, then run exactly one manual all-target CI
+   qualification on the final release-bump SHA. It must retain all archive,
+   bundle, absence, local-gate, direct-parent, tree, signature, lease,
+   protection, and lifecycle proofs; it must not claim either intermediate
+   commit was hosted-qualified. Follow the bounded exception in
+   `.codex/skills/release-oliphaunt/references/recovery.md`.
 3. Run `prepare-release-pr` from current `main`; review the single generated release-bump commit.
    After a pre-publication history rewrite, first inspect every displaced
    merged release PR. Only after proving its merge is unreachable from current
