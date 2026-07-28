@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
+          "sha256": "5610546e756a79eabf8dccd99cdb9654d417a6b57b414537cfa12716b2fecf24"
         },
         {
           "path": "Cargo.toml",
@@ -390,5 +390,5 @@
       ]
     }
   ],
-  "sha256": "19c980cb61cbb1ee3febe419e359c94f67338bfba562874fb565351fc483b394"
+  "sha256": "f2289b353301850099a167255e56ef7c5b967ca53250a07920fa6d210749dcc5"
 }
