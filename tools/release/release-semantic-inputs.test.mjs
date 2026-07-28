@@ -480,6 +480,7 @@ test("validators, workflow ceremony, and test fixtures remain non-release semant
     "tools/release/extension-manifest-discovery-proof.mjs",
     "tools/release/build-sdk-ci-artifacts.mjs",
     "tools/release/local-registry-publish.mjs",
+    "tools/release/npm-trusted-publishing-runtime.mjs",
     "tools/release/release-sdk-product-dry-run.mjs",
     "tools/policy/check-release-policy.mjs",
   ]) {

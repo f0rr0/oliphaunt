@@ -16,9 +16,12 @@ extractor="${OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR:-$root/.github/actions/se
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-npm-publisher}"
 
+windows_posix=0
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
-    command -v cygpath >/dev/null 2>&1 && cache_root="$(cygpath -u "$cache_root")"
+    command -v cygpath >/dev/null 2>&1 || fail "cygpath is required on Windows"
+    windows_posix=1
+    cache_root="$(cygpath -u "$cache_root")"
     ;;
 esac
 for path in "$manifest" "$extractor" "$curl_platform_flags"; do
@@ -133,12 +136,36 @@ final="$install_parent/verified"
 receipt_text="$(printf 'npm_version=%s\narchive_sha256=%s\ntree_sha256=%s' "$version" "$archive_sha256" "$tree_sha256")"
 npm_wrapper_text="$(printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../npm/bin/npm-cli.js" "$@"')"
+  'cli_path="$script_dir/../npm/bin/npm-cli.js"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "npm: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 npx_wrapper_text="$(printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../npm/bin/npx-cli.js" "$@"')"
+  'cli_path="$script_dir/../npm/bin/npx-cli.js"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "npx: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 npm_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\npm\bin\npm-cli.js" %*')"
 npx_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\npm\bin\npx-cli.js" %*')"
+
+node_script_version() {
+  local script="$1"
+  if [ "$windows_posix" = "1" ]; then
+    script="$(cygpath -aw "$script")" || return 1
+    MSYS2_ARG_CONV_EXCL='*' node "$script" --version
+  else
+    node "$script" --version
+  fi
+}
 
 cache_valid() {
   local candidate="$1"
@@ -169,7 +196,7 @@ cache_valid() {
   local args=(tree-digest --root "$candidate/npm") executable
   for executable in "${executables[@]}"; do args+=(--executable "$executable"); done
   [ "$("$python" "$extractor" "${args[@]}" 2>/dev/null)" = "$file_count $tree_sha256" ] || return 1
-  [ "$(node "$candidate/npm/$binary_path" --version 2>/dev/null)" = "$version" ] || return 1
+  [ "$(node_script_version "$candidate/npm/$binary_path" 2>/dev/null)" = "$version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
 }
 

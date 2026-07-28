@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "5610546e756a79eabf8dccd99cdb9654d417a6b57b414537cfa12716b2fecf24"
+          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
         },
         {
           "path": "Cargo.toml",
@@ -190,7 +190,7 @@
         },
         {
           "path": "tools/release/npm-trusted-publishing.mjs",
-          "sha256": "1ac48a13767ecd230386f553df2271a601952087cf826965733366a3f138445c"
+          "sha256": "f3b8374349c8931e5287558f37b94905f97780a03d7a37477871826c286b1a61"
         },
         {
           "path": "tools/release/package-extension-cargo-facades.mjs",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "0e98a34f4804818342d14f5a07c3e70f1933be481890a0299eb304960b73f099"
+  "sha256": "a273b7423055ccdb071d257834a34f47017aa05999c59dd27b2e2e5f550360c1"
 }

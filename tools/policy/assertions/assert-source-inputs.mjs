@@ -437,6 +437,7 @@ function checkToolchains() {
     'src/sources/toolchains/winflexbison.toml',
     'tools/dev/install-pinned-winflexbison.sh',
     'tools/dev/install-pinned-winflexbison.test.sh',
+    'tools/release/npm-trusted-publishing-runtime.mjs',
   ];
   for (const path of verifiedBootstrapInputs) requireFile(path);
   for (const action of [
@@ -457,15 +458,11 @@ function checkToolchains() {
   }
   requireText(
     '.github/actions/setup-npm-publisher/action.yml',
-    '"$node_executable" tools/release/npm-trusted-publishing.mjs check-runtime',
-  );
-  requireText(
-    '.github/actions/setup-npm-publisher/action.yml',
-    '"$node_executable" tools/release/npm-trusted-publishing.mjs check-trust-cli',
+    'tools/release/npm-trusted-publishing-runtime.mjs',
   );
   rejectText(
     '.github/actions/setup-npm-publisher/action.yml',
-    'tools/dev/bun.sh tools/release/npm-trusted-publishing.mjs',
+    'tools/dev/bun.sh tools/release/npm-trusted-publishing-runtime.mjs',
   );
   for (const action of [
     '.github/actions/setup-bun/action.yml',

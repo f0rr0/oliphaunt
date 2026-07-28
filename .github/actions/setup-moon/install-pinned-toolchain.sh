@@ -23,11 +23,12 @@ extractor="${OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR:-$action_dir/toolchain-archive.py}
 curl_platform_flags="$root/tools/dev/curl-platform-flags.sh"
 cache_root="${OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT:-${RUNNER_TEMP:-$root/target}/oliphaunt-moon-toolchain}"
 
+windows_posix=0
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
-    if command -v cygpath >/dev/null 2>&1; then
-      cache_root="$(cygpath -u "$cache_root")"
-    fi
+    command -v cygpath >/dev/null 2>&1 || fail "cygpath is required on Windows"
+    windows_posix=1
+    cache_root="$(cygpath -u "$cache_root")"
     ;;
 esac
 
@@ -545,12 +546,26 @@ pnpm_wrapper_text="$(printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../pnpm/bin/pnpm.mjs" "$@"')"
+  'cli_path="$script_dir/../pnpm/bin/pnpm.mjs"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpm: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 pnpx_wrapper_text="$(printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../pnpm/bin/pnpx.mjs" "$@"')"
+  'cli_path="$script_dir/../pnpm/bin/pnpx.mjs"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpx: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 pnpm_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpm.mjs" %*')"
 pnpx_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpx.mjs" %*')"
 
@@ -559,7 +574,14 @@ moon_binary_version() {
 }
 
 pnpm_binary_version() {
-  node "$1" --version 2>/dev/null | awk 'NF { print $1; exit }'
+  local script="$1"
+  if [ "$windows_posix" = "1" ]; then
+    script="$(cygpath -aw "$script")" || return 1
+    MSYS2_ARG_CONV_EXCL='*' node "$script" --version 2>/dev/null |
+      awk 'NF { print $1; exit }'
+  else
+    node "$script" --version 2>/dev/null | awk 'NF { print $1; exit }'
+  fi
 }
 
 cache_valid() {

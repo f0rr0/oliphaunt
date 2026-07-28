@@ -43,8 +43,16 @@ manifest = pathlib.Path(sys.argv[2])
 metadata = pathlib.Path(sys.argv[3])
 version = "11.5.0"
 files = {
-    "bin/pnpm.mjs": b"#!/usr/bin/env node\nprocess.stdout.write('11.5.0\\n');\n",
-    "bin/pnpx.mjs": b"#!/usr/bin/env node\nprocess.stdout.write('fixture-pnpx\\n');\n",
+    "bin/pnpm.mjs": (
+        b"#!/usr/bin/env node\n"
+        b"console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' "
+        b"? JSON.stringify(process.argv.slice(2)) : '11.5.0');\n"
+    ),
+    "bin/pnpx.mjs": (
+        b"#!/usr/bin/env node\n"
+        b"console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' "
+        b"? JSON.stringify(process.argv.slice(2)) : '11.5.0');\n"
+    ),
     "dist/node-gyp-bin/node-gyp": b"#!/usr/bin/env sh\nexit 0\n",
     "dist/node-gyp-bin/node-gyp.cmd": b"@ECHO OFF\r\nEXIT /B 0\r\n",
     "dist/node_modules/node-gyp/bin/node-gyp.js": b"#!/usr/bin/env node\nprocess.exit(0);\n",
@@ -164,7 +172,7 @@ printf '%s\n' \
   'esac' >"$fake_curl"
 chmod 0555 "$fake_curl"
 
-cache="$tmp/cache"
+cache="$tmp/cache with spaces"
 curl_log="$tmp/curl.log"
 run_install() {
   local selected_cache="$1"
@@ -188,6 +196,24 @@ run_install() {
 
 installation="$(run_install "$cache")"
 [ "$("$installation/bin/pnpm" --version)" = "11.5.0" ] || fail "fixture pnpm version mismatch"
+[ "$("$installation/bin/pnpx" --version)" = "11.5.0" ] || fail "fixture pnpx version mismatch"
+expected_argv='["--flag","value with spaces","/path-like/argument"]'
+for command_name in pnpm pnpx; do
+  observed_argv="$(
+    OLIPHAUNT_WRAPPER_ARGV_PROBE=1 \
+      "$installation/bin/$command_name" --flag "value with spaces" "/path-like/argument"
+  )"
+  [ "$observed_argv" = "$expected_argv" ] ||
+    fail "$command_name wrapper did not preserve structured caller arguments"
+done
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$installation/bin/pnpm" ||
+  fail "pnpm wrapper does not explicitly convert its internal Windows script path"
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$installation/bin/pnpx" ||
+  fail "pnpx wrapper does not explicitly convert its internal Windows script path"
+grep -Fq 'exec node "$cli_path" "$@"' "$installation/bin/pnpm" ||
+  fail "pnpm wrapper does not preserve structured caller arguments"
+grep -Fq 'exec node "$cli_path" "$@"' "$installation/bin/pnpx" ||
+  fail "pnpx wrapper does not preserve structured caller arguments"
 if [ -e "$installation/plugins" ] || [ -e "$installation/moon" ]; then
   fail "standalone installation unexpectedly contains Moon material"
 fi

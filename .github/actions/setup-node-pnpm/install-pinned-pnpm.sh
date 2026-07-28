@@ -27,11 +27,12 @@ for override in \
   fi
 done
 
+windows_posix=0
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
-    if command -v cygpath >/dev/null 2>&1; then
-      cache_root="$(cygpath -u "$cache_root")"
-    fi
+    command -v cygpath >/dev/null 2>&1 || fail "cygpath is required on Windows"
+    windows_posix=1
+    cache_root="$(cygpath -u "$cache_root")"
     ;;
 esac
 
@@ -293,16 +294,40 @@ pnpm_wrapper_text="$(printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../pnpm/bin/pnpm.mjs" "$@"')"
+  'cli_path="$script_dir/../pnpm/bin/pnpm.mjs"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpm: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 # These literal lines become the cached wrapper.
 # shellcheck disable=SC2016
 pnpx_wrapper_text="$(printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-  'exec node "$script_dir/../pnpm/bin/pnpx.mjs" "$@"')"
+  'cli_path="$script_dir/../pnpm/bin/pnpx.mjs"' \
+  'case "$(uname -s)" in' \
+  '  MINGW* | MSYS* | CYGWIN*)' \
+  '    command -v cygpath >/dev/null 2>&1 || { echo "pnpx: cygpath is required on Windows" >&2; exit 1; }' \
+  '    cli_path="$(cygpath -aw "$cli_path")"' \
+  '    ;;' \
+  'esac' \
+  'exec node "$cli_path" "$@"')"
 pnpm_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpm.mjs" %*')"
 pnpx_cmd_text="$(printf '%s\r\n' '@ECHO OFF' 'node "%~dp0..\pnpm\bin\pnpx.mjs" %*')"
+
+node_script_version() {
+  local script="$1"
+  if [ "$windows_posix" = "1" ]; then
+    script="$(cygpath -aw "$script")" || return 1
+    MSYS2_ARG_CONV_EXCL='*' node "$script" --version
+  else
+    node "$script" --version
+  fi
+}
 
 cache_valid() {
   local candidate="$1"
@@ -340,7 +365,7 @@ cache_valid() {
   done
   tree_result="$("$python" "$extractor" "${tree_args[@]}" 2>/dev/null)" || return 1
   [ "$tree_result" = "$file_count $tree_sha256" ] || return 1
-  [ "$(node "$candidate/pnpm/$binary_path" --version 2>/dev/null | awk 'NF { print $1; exit }')" = "$version" ] || return 1
+  [ "$(node_script_version "$candidate/pnpm/$binary_path" 2>/dev/null | awk 'NF { print $1; exit }')" = "$version" ] || return 1
   [ "$(cat "$candidate/receipt")" = "$receipt_text" ] || return 1
 }
 

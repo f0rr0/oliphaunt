@@ -1262,6 +1262,50 @@ jobs:
         with:
           deno-version: ${{ env.DENO_VERSION }}
 
+      - name: Verify Windows npm publisher native path outputs
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        env:
+          NPM_EXECUTION_ENVELOPE: ${{ steps.windows_exact_npm.outputs.execution-envelope }}
+          NPM_NODE_EXECUTABLE: ${{ steps.windows_exact_npm.outputs.node-executable }}
+          NPM_CLI_ENTRYPOINT: ${{ steps.windows_exact_npm.outputs.npm-cli }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($entry in @{
+            "execution envelope" = $env:NPM_EXECUTION_ENVELOPE
+            "Node.js executable" = $env:NPM_NODE_EXECUTABLE
+            "npm CLI entrypoint" = $env:NPM_CLI_ENTRYPOINT
+          }.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($entry.Value) -or
+                -not [IO.Path]::IsPathFullyQualified($entry.Value)) {
+              throw "$($entry.Key) is not a fully qualified native Windows path"
+            }
+          }
+          $envelope = Get-Item -LiteralPath $env:NPM_EXECUTION_ENVELOPE -Force
+          $node = Get-Item -LiteralPath $env:NPM_NODE_EXECUTABLE -Force
+          $npmCli = Get-Item -LiteralPath $env:NPM_CLI_ENTRYPOINT -Force
+          if (-not $envelope.PSIsContainer) {
+            throw "npm execution envelope is not a directory"
+          }
+          foreach ($file in @($node, $npmCli)) {
+            if ($file.PSIsContainer -or
+                (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+              throw "$($file.FullName) is not a regular non-reparse file"
+            }
+          }
+          $expectedNpmCli = [IO.Path]::GetFullPath(
+            (Join-Path $envelope.FullName "npm\bin\npm-cli.js")
+          )
+          $actualNpmCli = [IO.Path]::GetFullPath($npmCli.FullName)
+          if (-not [StringComparer]::OrdinalIgnoreCase.Equals($actualNpmCli, $expectedNpmCli)) {
+            throw "npm CLI entrypoint is outside the verified execution envelope"
+          }
+          $observedNpm = & $node.FullName $npmCli.FullName --version
+          if ($LASTEXITCODE -ne 0 -or $observedNpm.Trim() -ne $env:NPM_VERSION) {
+            throw "native npm output contract expected $env:NPM_VERSION; observed $observedNpm"
+          }
+          Write-Host "Windows npm publisher native path outputs passed"
+
       - name: Verify Windows package-manager shim argument transport
         if: ${{ runner.os == 'Windows' }}
         env:

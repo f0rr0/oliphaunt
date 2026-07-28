@@ -36,32 +36,48 @@ runs:
       run: | # zizmor: ignore[github-env] only a full-tree digest-verified runner-temp path is exported.
         set -euo pipefail
         publisher_bin="$(bash .github/actions/setup-npm-publisher/install.sh)"
-        node_executable="$(command -v node)"
+        node_launcher="$(command -v node)"
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
           command -v cygpath >/dev/null 2>&1
-          node_executable="$(cygpath -u "$node_executable")"
+          node_launcher="$(cygpath -u "$node_launcher")"
         fi
-        npm_cli="$(cd "$publisher_bin/../npm/bin" && pwd -P)/npm-cli.js"
+        npm_cli_fs="$(cd "$publisher_bin/../npm/bin" && pwd -P)/npm-cli.js"
+        verifier_fs="$(pwd -P)/tools/release/npm-trusted-publishing-runtime.mjs"
         execution_envelope="$(cd "$publisher_bin/.." && pwd -P)"
-        if [[ "$node_executable" != /* || ! -f "$node_executable" || -L "$node_executable" ]]; then
-          echo "The verified Node.js executable is not a regular absolute path: ${node_executable}" >&2
+        if [[ "$node_launcher" != /* || ! -f "$node_launcher" || -L "$node_launcher" ]]; then
+          echo "The verified Node.js launcher is not a regular absolute path: ${node_launcher}" >&2
           exit 1
         fi
-        if [[ ! -f "$npm_cli" || -L "$npm_cli" ]]; then
-          echo "The verified npm CLI is not a regular file: ${npm_cli}" >&2
+        if [[ ! -f "$npm_cli_fs" || -L "$npm_cli_fs" ]]; then
+          echo "The verified npm CLI is not a regular file: ${npm_cli_fs}" >&2
           exit 1
         fi
-        node_version="$("$node_executable" --version)"
-        npm_version="$("$node_executable" "$npm_cli" --version)"
+        if [[ ! -f "$verifier_fs" || -L "$verifier_fs" ]]; then
+          echo "The npm trusted-publishing verifier is not a regular file: ${verifier_fs}" >&2
+          exit 1
+        fi
+        run_native_node() {
+          MSYS2_ARG_CONV_EXCL='*' "$node_launcher" "$@"
+        }
+        node_executable="$(
+          run_native_node -e 'process.stdout.write(process.execPath)'
+        )"
+        npm_cli="$npm_cli_fs"
+        verifier="$verifier_fs"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          npm_cli="$(cygpath -aw "$npm_cli_fs")"
+          verifier="$(cygpath -aw "$verifier_fs")"
+        fi
+        node_version="$(run_native_node --version)"
+        npm_version="$(run_native_node "$npm_cli" --version)"
         if [[ "$npm_version" != "$NPM_PUBLISHER_VERSION" ]]; then
           echo "Expected npm ${NPM_PUBLISHER_VERSION}; observed ${npm_version}" >&2
           exit 1
         fi
-        "$node_executable" tools/release/npm-trusted-publishing.mjs check-runtime \
+        run_native_node "$verifier" check-runtime \
           --node "$node_version" \
           --npm "$npm_version"
-        "$node_executable" tools/release/npm-trusted-publishing.mjs check-trust-cli \
-          --node-executable "$node_executable" \
+        run_native_node "$verifier" check-trust-cli \
           --npm-cli "$npm_cli"
         export_dir="$publisher_bin"
         output_node="$node_executable"
@@ -69,15 +85,13 @@ runs:
         output_envelope="$execution_envelope"
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
           export_dir="$(cygpath -w "$export_dir")"
-          output_node="$(cygpath -w "$output_node")"
-          output_npm_cli="$(cygpath -w "$output_npm_cli")"
           output_envelope="$(cygpath -w "$execution_envelope")"
         fi
-        echo "$export_dir" >> "$GITHUB_PATH"
+        printf '%s\n' "$export_dir" >> "$GITHUB_PATH"
         {
-          echo "node-executable=$output_node"
-          echo "npm-cli=$output_npm_cli"
-          echo "execution-envelope=$output_envelope"
+          printf 'node-executable=%s\n' "$output_node"
+          printf 'npm-cli=%s\n' "$output_npm_cli"
+          printf 'execution-envelope=%s\n' "$output_envelope"
         } >> "$GITHUB_OUTPUT"
 
     - name: Save verified npm publisher archive

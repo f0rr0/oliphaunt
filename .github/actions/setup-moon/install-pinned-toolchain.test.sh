@@ -67,8 +67,14 @@ printf '%s\n' 'fixture readme' >"$fixture/content/README.md"
 printf '%s\n' 'fixture changelog' >"$fixture/content/CHANGELOG.md"
 printf '%s\n' 'fixture license' >"$fixture/content/LICENSE"
 
-printf '%s\n' '#!/usr/bin/env node' "console.log('$pnpm_version');" >"$fixture/content/pnpm/bin/pnpm.mjs"
-printf '%s\n' '#!/usr/bin/env node' "console.log('$pnpm_version');" >"$fixture/content/pnpm/bin/pnpx.mjs"
+printf '%s\n' \
+  '#!/usr/bin/env node' \
+  "console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' ? JSON.stringify(process.argv.slice(2)) : '$pnpm_version');" \
+  >"$fixture/content/pnpm/bin/pnpm.mjs"
+printf '%s\n' \
+  '#!/usr/bin/env node' \
+  "console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === '1' ? JSON.stringify(process.argv.slice(2)) : '$pnpm_version');" \
+  >"$fixture/content/pnpm/bin/pnpx.mjs"
 printf '%s\n' 'fixture pnpm payload' >"$fixture/content/pnpm/dist/pnpm.mjs"
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/content/pnpm/dist/node-gyp-bin/node-gyp"
 printf '%s\r\n' '@exit /b 0' >"$fixture/content/pnpm/dist/node-gyp-bin/node-gyp.cmd"
@@ -301,7 +307,7 @@ export OLIPHAUNT_MOON_PLUGIN_MANIFEST="$plugin_manifest"
 export OLIPHAUNT_MOON_PROTO_FILE="$fixture/.prototools"
 export OLIPHAUNT_MOON_TOOLCHAINS_CONFIG="$moon_config"
 export OLIPHAUNT_MOON_ARCHIVE_EXTRACTOR="$extractor"
-export OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT="$tmp/cache"
+export OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT="$tmp/cache with spaces"
 export OLIPHAUNT_MOON_TOOLCHAIN_TARGET="$moon_target"
 export OLIPHAUNT_MOON_TOOLCHAIN_TESTING=1
 export OLIPHAUNT_MOON_CURL="$fake_curl"
@@ -316,6 +322,20 @@ final="$(bash "$installer")"
 [ -d "$final" ] || fail "installer did not return an installation directory"
 [ "$("$final/bin/moon" --version)" = "moon $moon_version" ] || fail "wrong Moon version"
 [ "$("$final/bin/pnpm" --version)" = "$pnpm_version" ] || fail "wrong pnpm version"
+[ "$("$final/bin/pnpx" --version)" = "$pnpm_version" ] || fail "wrong pnpx version"
+expected_argv='["--flag","value with spaces","/path-like/argument"]'
+for command_name in pnpm pnpx; do
+  observed_argv="$(
+    OLIPHAUNT_WRAPPER_ARGV_PROBE=1 \
+      "$final/bin/$command_name" --flag "value with spaces" "/path-like/argument"
+  )"
+  [ "$observed_argv" = "$expected_argv" ] ||
+    fail "Moon $command_name wrapper did not preserve structured caller arguments"
+done
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$final/bin/pnpm" ||
+  fail "Moon pnpm wrapper does not explicitly convert its internal Windows script path"
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$final/bin/pnpx" ||
+  fail "Moon pnpx wrapper does not explicitly convert its internal Windows script path"
 [ "$(find "$final/plugins" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" = "4" ] || fail "wrong plugin count"
 [ "$(wc -l <"$FAKE_CURL_LOG" | tr -d '[:space:]')" = "14" ] || fail "unexpected first-install request count"
 while IFS= read -r call; do
@@ -339,7 +359,7 @@ OLIPHAUNT_MOON_CURL=false bash "$installer" >"$tmp/repaired"
 grep -Fq 'pnpm-fixture' "$final/pnpm/package.json" || fail "tree-digest repair did not restore package metadata"
 
 # A corrupt cached archive is re-downloaded before rebuilding an invalid installation.
-moon_cached="$tmp/cache/archives/$moon_archive_sha256.tar.xz"
+moon_cached="$OLIPHAUNT_MOON_TOOLCHAIN_CACHE_ROOT/archives/$moon_archive_sha256.tar.xz"
 chmod u+w "$moon_cached"
 printf '%s\n' corrupt >"$moon_cached"
 chmod u+w "$final/bin/moon"

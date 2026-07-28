@@ -15,7 +15,7 @@ import {
 import {
   validateNpmTrustCliHelp,
   validateNpmTrustCliRuntime,
-} from "./npm-trusted-publishing.mjs";
+} from "./npm-trusted-publishing-runtime.mjs";
 import { registryRetryDelaySeconds, registryStatusRetryable } from "./registry-http-retry.mjs";
 import { ROOT } from "./release-graph.mjs";
 

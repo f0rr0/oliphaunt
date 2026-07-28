@@ -12,16 +12,23 @@ mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
 # shellcheck disable=SC2016
 {
   grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action"
-  grep -Fq 'echo "$export_dir" >> "$GITHUB_PATH"' "$action"
+  grep -Fq "printf '%s\\n' \"\$export_dir\" >> \"\$GITHUB_PATH\"" "$action"
   grep -Fq 'value: ${{ steps.install.outputs.node-executable }}' "$action"
   grep -Fq 'value: ${{ steps.install.outputs.npm-cli }}' "$action"
-  grep -Fq 'npm_version="$("$node_executable" "$npm_cli" --version)"' "$action"
-  grep -Fq '"$node_executable" tools/release/npm-trusted-publishing.mjs check-trust-cli' "$action"
-  grep -Fq -- '--node-executable "$node_executable"' "$action"
+  grep -Fq 'node_launcher="$(command -v node)"' "$action"
+  grep -Fq 'node_launcher="$(cygpath -u "$node_launcher")"' "$action"
+  grep -Fq -- "-e 'process.stdout.write(process.execPath)'" "$action"
+  grep -Fq 'npm_cli="$(cygpath -aw "$npm_cli_fs")"' "$action"
+  grep -Fq 'verifier="$(cygpath -aw "$verifier_fs")"' "$action"
+  grep -Fq "MSYS2_ARG_CONV_EXCL='*' \"\$node_launcher\" \"\$@\"" "$action"
+  grep -Fq 'run_native_node "$verifier" check-trust-cli' "$action"
   grep -Fq -- '--npm-cli "$npm_cli"' "$action"
-  grep -Fq 'node_executable="$(cygpath -u "$node_executable")"' "$action"
-  grep -Fq 'output_node="$(cygpath -w "$output_node")"' "$action"
-  grep -Fq 'output_npm_cli="$(cygpath -w "$output_npm_cli")"' "$action"
+  grep -Fq 'output_node="$node_executable"' "$action"
+  grep -Fq 'output_npm_cli="$npm_cli"' "$action"
+  if grep -Fq -- '--node-executable' "$action"; then
+    echo "setup action reintroduced a redundant shell-to-Node executable path handoff" >&2
+    exit 1
+  fi
 }
 if grep -Eq '(^|[[:space:]])npm[[:space:]]+--version' "$action"; then
   echo "setup action reintroduced an ambient npm version probe" >&2
@@ -30,11 +37,15 @@ fi
 
 cat >"$work/payload/package/bin/npm-cli.js" <<'EOF'
 #!/usr/bin/env node
-console.log("11.18.0");
+console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
+  ? JSON.stringify(process.argv.slice(2))
+  : "11.18.0");
 EOF
 cat >"$work/payload/package/bin/npx-cli.js" <<'EOF'
 #!/usr/bin/env node
-console.log("11.18.0");
+console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
+  ? JSON.stringify(process.argv.slice(2))
+  : "11.18.0");
 EOF
 printf '{"name":"npm","version":"11.18.0"}\n' >"$work/payload/package/package.json"
 chmod 0755 "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
@@ -112,7 +123,7 @@ common=(
   OLIPHAUNT_NPM_PUBLISHER_ROOT="$root"
   OLIPHAUNT_NPM_PUBLISHER_MANIFEST="$work/npm.toml"
   OLIPHAUNT_NPM_PUBLISHER_ARCHIVE_EXTRACTOR="$extractor"
-  OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT="$work/cache"
+  OLIPHAUNT_NPM_PUBLISHER_CACHE_ROOT="$work/cache with spaces"
   OLIPHAUNT_NPM_PUBLISHER_CURL="$work/bin/curl"
   OLIPHAUNT_NPM_TEST_ARCHIVE="$work/npm.tgz"
   OLIPHAUNT_NPM_TEST_REQUEST_LOG="$work/requests.log"
@@ -122,12 +133,27 @@ common=(
 
 publisher_bin="$(env "${common[@]}" bash "$installer")"
 [ "$(PATH="$publisher_bin:$work/blockers:$PATH" npm --version)" = 11.18.0 ]
+[ "$(PATH="$publisher_bin:$work/blockers:$PATH" npx --version)" = 11.18.0 ]
+expected_argv='["--flag","value with spaces","/path-like/argument"]'
+for command_name in npm npx; do
+  observed_argv="$(
+    OLIPHAUNT_WRAPPER_ARGV_PROBE=1 \
+      PATH="$publisher_bin:$work/blockers:$PATH" \
+      "$command_name" --flag "value with spaces" "/path-like/argument"
+  )"
+  [ "$observed_argv" = "$expected_argv" ]
+done
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npm"
+grep -Fq 'cli_path="$(cygpath -aw "$cli_path")"' "$publisher_bin/npx"
+grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npm"
+grep -Fq 'exec node "$cli_path" "$@"' "$publisher_bin/npx"
 [ ! -e "$work/ambient.log" ]
 [ "$(wc -l <"$work/requests.log" | tr -d '[:space:]')" = 1 ]
 
 # Valid caches are fully offline and a modified CLI tree is repaired from the verified archive.
 [ "$(env "${common[@]}" OLIPHAUNT_NPM_PUBLISHER_CURL=false bash "$installer")" = "$publisher_bin" ]
-cli="$work/cache/installations/npm-11.18.0/verified/npm/bin/npm-cli.js"
+cache="$work/cache with spaces"
+cli="$cache/installations/npm-11.18.0/verified/npm/bin/npm-cli.js"
 chmod u+w "$cli"
 printf 'tampered\n' >"$cli"
 env "${common[@]}" OLIPHAUNT_NPM_PUBLISHER_CURL=false bash "$installer" >/dev/null
@@ -136,7 +162,7 @@ env "${common[@]}" OLIPHAUNT_NPM_PUBLISHER_CURL=false bash "$installer" >/dev/nu
 [ "$(wc -l <"$work/requests.log" | tr -d '[:space:]')" = 1 ]
 
 # A corrupt cached archive is redownloaded before a damaged installation is replaced.
-archive="$work/cache/archives/$archive_sha256.tgz"
+archive="$cache/archives/$archive_sha256.tgz"
 chmod u+w "$archive" "$cli"
 printf 'corrupt archive\n' >"$archive"
 printf 'corrupt cli\n' >"$cli"
@@ -168,7 +194,7 @@ interrupt_status=$?
 set -e
 [ "$interrupt_status" -eq 143 ]
 grep -Fxq 'interrupted prior cli' "$cli"
-[ -z "$(find "$work/cache/installations/npm-11.18.0" -maxdepth 1 -name '.*.stage.*' -print -quit)" ]
+[ -z "$(find "$cache/installations/npm-11.18.0" -maxdepth 1 -name '.*.stage.*' -print -quit)" ]
 env "${common[@]}" OLIPHAUNT_NPM_PUBLISHER_CURL=false bash "$installer" >/dev/null
 
 # A manifest/archive identity mismatch fails before promotion and preserves the valid runtime.

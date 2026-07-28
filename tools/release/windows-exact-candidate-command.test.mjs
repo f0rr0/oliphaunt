@@ -232,6 +232,10 @@ test("the required Windows node-direct producer runs the behavioral shim proof b
     setupMoon,
   );
   const proof = job.indexOf("      - name: Verify Windows package-manager shim argument transport\n");
+  const nativeNpmOutputs = job.indexOf(
+    "      - name: Verify Windows npm publisher native path outputs\n",
+    setupExactNpm,
+  );
   const condition = job.indexOf("        if: ${{ runner.os == 'Windows' }}\n", proof);
   const hostedProofFlag = job.indexOf(
     '          OLIPHAUNT_WINDOWS_STANDARD_USER_EXACT_NPM_PROOF: "1"\n',
@@ -244,6 +248,8 @@ test("the required Windows node-direct producer runs the behavioral shim proof b
   const setupRust = job.indexOf("      - name: Set up Rust\n");
   expect(setupMoon).toBeGreaterThan(-1);
   expect(setupExactNpm).toBeGreaterThan(setupMoon);
+  expect(nativeNpmOutputs).toBeGreaterThan(setupExactNpm);
+  expect(nativeNpmOutputs).toBeLessThan(proof);
   expect(proof).toBeGreaterThan(setupExactNpm);
   expect(condition).toBeGreaterThan(proof);
   expect(hostedProofFlag).toBeGreaterThan(condition);
@@ -253,6 +259,14 @@ test("the required Windows node-direct producer runs the behavioral shim proof b
   expect(npmSetup).toContain("        if: ${{ runner.os == 'Windows' }}\n");
   expect(npmSetup).toContain("        uses: ./.github/actions/setup-npm-publisher\n");
   expect(npmSetup).toContain("          npm-version: ${{ env.NPM_VERSION }}\n");
+  expect(npmSetup).toContain(
+    "          NPM_NODE_EXECUTABLE: ${{ steps.windows_exact_npm.outputs.node-executable }}\n",
+  );
+  expect(npmSetup).toContain(
+    "          NPM_CLI_ENTRYPOINT: ${{ steps.windows_exact_npm.outputs.npm-cli }}\n",
+  );
+  expect(npmSetup).toContain("[IO.Path]::IsPathFullyQualified");
+  expect(npmSetup).toContain("& $node.FullName $npmCli.FullName --version");
   expect(job.match(/\.\/\.github\/actions\/setup-npm-publisher/gu)).toHaveLength(1);
   expect(job.match(/OLIPHAUNT_WINDOWS_STANDARD_USER_EXACT_NPM_PROOF/gu)).toHaveLength(1);
   expect(workflow.match(
@@ -414,9 +428,12 @@ test("pinned setup actions expose their canonical verified execution envelopes",
   for (const source of [nodeRuntime, bun, deno, npm]) {
     expect(source).toContain("  execution-envelope:\n");
     expect(source).toContain("value: ${{ steps.install.outputs.execution-envelope }}");
-    expect(source).toContain('echo "execution-envelope=$output_envelope"');
     expect(source).toContain('output_envelope="$(cygpath -w "$execution_envelope")"');
   }
+  for (const source of [nodeRuntime, bun, deno]) {
+    expect(source).toContain('echo "execution-envelope=$output_envelope"');
+  }
+  expect(npm).toContain("printf 'execution-envelope=%s\\n' \"$output_envelope\"");
   expect(nodeRuntime).toContain(
     'execution_envelope="$(cd "$export_dir/.." && pwd -P)"',
   );
@@ -428,6 +445,24 @@ test("pinned setup actions expose their canonical verified execution envelopes",
   expect(npm).toContain(
     'execution_envelope="$(cd "$publisher_bin/.." && pwd -P)"',
   );
+  expect(npm).toContain('node_launcher="$(command -v node)"');
+  expect(npm).toContain(
+    'verifier_fs="$(pwd -P)/tools/release/npm-trusted-publishing-runtime.mjs"',
+  );
+  expect(npm).toContain(
+    "-e 'process.stdout.write(process.execPath)'",
+  );
+  expect(npm).toContain(
+    'npm_cli="$(cygpath -aw "$npm_cli_fs")"',
+  );
+  expect(npm).toContain(
+    "MSYS2_ARG_CONV_EXCL='*' \"$node_launcher\" \"$@\"",
+  );
+  expect(npm).toContain('verifier="$(cygpath -aw "$verifier_fs")"');
+  expect(npm).toContain('run_native_node "$verifier" check-trust-cli');
+  expect(npm).toContain('--npm-cli "$npm_cli"');
+  expect(npm).not.toContain("--node-executable");
+  expect(npm).not.toContain('output_npm_cli="$(cygpath -w "$output_npm_cli")"');
 
   expect(nodePnpm).toContain("  node-execution-envelope:\n");
   expect(nodePnpm).toContain(
