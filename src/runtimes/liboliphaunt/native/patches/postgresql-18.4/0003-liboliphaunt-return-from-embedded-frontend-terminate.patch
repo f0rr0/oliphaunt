@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: return from embedded frontend terminate
+
+Let embedded liboliphaunt backend threads return to their host owner when the
+frontend sends Terminate.  PostgreSQL's normal backend process path still uses
+proc_exit(0); only OLIPHAUNT_EMBEDDED changes PostgresMain into a returning
+function.
+---
+ src/backend/tcop/postgres.c | 8 +++++++-
+ src/include/tcop/tcopprot.h | 7 +++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 708fd8a..bfb9188 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -5109,9 +5109,15 @@ PostgresMain(const char *dbname, const char *username)
+ 				 * Whatever you had in mind to do should be set up as an
+ 				 * on_proc_exit or on_shmem_exit callback, instead. Otherwise
+ 				 * it will fail to be called during other backend-shutdown
+-				 * scenarios.
++				 * scenarios.  Embedded liboliphaunt owns the backend thread and
++				 * returns here so the host can join it without terminating the
++				 * process.
+ 				 */
++#ifdef OLIPHAUNT_EMBEDDED
++				return;
++#else
+ 				proc_exit(0);
++#endif
+
+ 			case PqMsg_CopyData:
+ 			case PqMsg_CopyDone:
+diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
+index a83cc4f..74ae54f 100644
+--- a/src/include/tcop/tcopprot.h
++++ b/src/include/tcop/tcopprot.h
+@@ -78,10 +78,17 @@ extern void ProcessClientWriteInterrupt(bool blocked);
+
+ extern void process_postgres_switches(int argc, char *argv[],
+ 									  GucContext ctx, const char **dbname);
++#ifdef OLIPHAUNT_EMBEDDED
++extern void PostgresSingleUserMain(int argc, char *argv[],
++								   const char *username);
++extern void PostgresMain(const char *dbname,
++						 const char *username);
++#else
+ pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
+ 											   const char *username);
+ pg_noreturn extern void PostgresMain(const char *dbname,
+ 									 const char *username);
++#endif
+ extern void ResetUsage(void);
+ extern void ShowUsage(const char *title);
+ extern int	check_log_duration(char *msec_str, bool was_logged);

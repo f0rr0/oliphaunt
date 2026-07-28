@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+root="$(git rev-parse --show-toplevel 2>/dev/null)"
+exec "$root/tools/dev/bun.sh" "$root/tools/coverage/coverage.mjs" run-product "$@"

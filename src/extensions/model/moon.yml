@@ -1,0 +1,48 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-model"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "model"]
+
+project:
+  title: "Extension Model"
+  description: "Exact SQL extension catalog, recipe, generated metadata, and policy checks."
+  owner: "oliphaunt"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/postgres/versions/18/source.toml"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
+      - "/src/sources/third-party/shared/openssl.toml"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

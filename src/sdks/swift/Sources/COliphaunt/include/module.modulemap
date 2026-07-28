@@ -1,0 +1,4 @@
+module COliphaunt {
+  umbrella header "COliphaunt.h"
+  export *
+}

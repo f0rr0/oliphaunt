@@ -1,0 +1,72 @@
+---
+title: Mobile Stability
+description: Understand mobile direct mode, app backgrounding, relaunch, and crash consistency on iOS, Android, and React Native.
+---
+
+# Mobile Stability
+
+Mobile apps use a different runtime model from desktop apps. On iOS and
+Android, Oliphaunt mobile SDKs start with native direct mode: one embedded
+PostgreSQL backend lives inside the app process, and SDK calls are serialized
+through the platform SDK.
+
+<MobileStabilityContract />
+
+## What developers can rely on
+
+Direct mode is built for crash consistency:
+
+- database changes go through PostgreSQL storage and WAL;
+- app relaunch reopens the same root and lets PostgreSQL recover;
+- SDK calls are serialized so concurrent app tasks share one physical database
+  session safely;
+- React Native delegates to Swift on Apple platforms and Kotlin on Android.
+
+Direct mode shares the app process. If the process exits, the next launch
+reopens the same root and PostgreSQL recovery brings storage back to a
+consistent state. Broker and server runtimes add a process boundary on targets
+that advertise those modes.
+
+The direct-mode contract is:
+
+- one resident backend per app process;
+- one physical session;
+- serialized requests;
+- same-root logical reopen only;
+- app-process ownership;
+- lifecycle hooks such as `prepareForBackground` and `resumeFromBackground` for
+  app foreground/background transitions.
+
+## Close and reopen
+
+On mobile direct mode, `close()` is a logical detach from the SDK handle. It
+cleans up session state and allows the same database root to be reopened in the
+same app process. A process owns one resident direct-mode root at a time.
+
+Use one app-owned persistent root for user data. Temporary roots are useful for
+tests and short-lived work. Production app data lives in an app-controlled
+directory with normal platform backup and data-protection choices.
+
+## Background and foreground
+
+Mobile operating systems can suspend apps while work is still queued. SDK
+lifecycle hooks let apps prepare for backgrounding, cancel or checkpoint bounded
+work, and resume cleanly when foregrounded.
+
+React Native apps get the same behavior through the platform SDKs. Bulk protocol
+bytes use the New Architecture JSI path; lifecycle and configuration stay on the
+typed native module surface.
+
+## Choosing the mode
+
+| Need | Mobile direct mode | Broker/server mode |
+| --- | --- | --- |
+| Lowest call latency | Best fit | Adds IPC or server overhead |
+| One app-owned database root | Best fit | Works where supported |
+| Independent PostgreSQL clients | Use server-capable runtime | Server mode |
+| App survives database-process crash | App-process ownership | Broker/server where supported |
+| React Native integration | Delegates to Swift/Kotlin | Delegates to platform support |
+
+Broker and server modes are platform-advertised capabilities. Android can use a
+separate service process when that runtime is available. Apple platforms expose
+only runtime modes that fit the app and extension model for that target.

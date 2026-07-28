@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "kind": "oliphaunt-sdk-capability-expectations",
+  "modes": [
+    {
+      "engine": "nativeDirect",
+      "availableByDefault": {
+        "rust": true,
+        "swift": true,
+        "kotlin": true,
+        "typescript": true,
+        "reactNative": true,
+        "wasm": false
+      },
+      "capabilities": {
+        "maxClientSessions": 1,
+        "independentSessions": false,
+        "processIsolated": false,
+        "backupFormats": ["physicalArchive"],
+        "restoreFormats": ["physicalArchive"]
+      }
+    },
+    {
+      "engine": "nativeBroker",
+      "availableByDefault": {
+        "rust": true,
+        "swift": false,
+        "kotlin": false,
+        "typescript": true,
+        "reactNative": false,
+        "wasm": false
+      },
+      "capabilities": {
+        "maxClientSessions": 1,
+        "independentSessions": false,
+        "processIsolated": true,
+        "backupFormats": ["physicalArchive"],
+        "restoreFormats": ["physicalArchive"]
+      }
+    },
+    {
+      "engine": "nativeServer",
+      "availableByDefault": {
+        "rust": true,
+        "swift": false,
+        "kotlin": false,
+        "typescript": true,
+        "reactNative": false,
+        "wasm": false
+      },
+      "capabilities": {
+        "maxClientSessions": null,
+        "independentSessions": true,
+        "processIsolated": true,
+        "backupFormats": ["sql", "physicalArchive"],
+        "restoreFormats": ["physicalArchive"]
+      }
+    }
+  ]
+}

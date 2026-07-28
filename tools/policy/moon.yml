@@ -1,0 +1,122 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "policy-tools"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "policy", "repo-hygiene"]
+
+project:
+  title: "Policy Checks"
+  description: "Cross-product repository policy, product graph, SDK parity, and package-boundary checks."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  fmt:
+    tags: ["format"]
+    command: "bash tools/policy/format.sh --write"
+    inputs:
+      - "/Cargo.toml"
+      - "/Cargo.lock"
+      - "/rust-toolchain.toml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/biome.json"
+      - "/renovate.json"
+      - "/.markdownlint-cli2.jsonc"
+      - "/src/docs/**/*"
+      - "!/src/docs/node_modules"
+      - "!/src/docs/node_modules/**"
+      - "!/src/docs/.next/**"
+      - "!/src/docs/.source/**"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/node_modules"
+      - "!/src/sdks/react-native/node_modules/**"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/lib/**"
+      - "/src/sdks/js/**/*"
+      - "!/src/sdks/js/node_modules"
+      - "!/src/sdks/js/node_modules/**"
+      - "!/src/sdks/js/lib/**"
+      - "/tools/policy/format.sh"
+      - "/tools/perf/matrix/**/*"
+      - "/tools/test/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  fmt-check:
+    tags: ["format", "quality", "static", "ci-rust"]
+    command: "bash tools/policy/format.sh --check"
+    inputs:
+      - "/Cargo.toml"
+      - "/Cargo.lock"
+      - "/rust-toolchain.toml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/biome.json"
+      - "/renovate.json"
+      - "/.markdownlint-cli2.jsonc"
+      - "/src/docs/**/*"
+      - "!/src/docs/node_modules"
+      - "!/src/docs/node_modules/**"
+      - "!/src/docs/.next/**"
+      - "!/src/docs/.source/**"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/node_modules"
+      - "!/src/sdks/react-native/node_modules/**"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/lib/**"
+      - "/src/sdks/js/**/*"
+      - "!/src/sdks/js/node_modules"
+      - "!/src/sdks/js/node_modules/**"
+      - "!/src/sdks/js/lib/**"
+      - "/tools/policy/format.sh"
+      - "/tools/perf/matrix/**/*"
+      - "/tools/test/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-policy-tools.sh"
+    inputs:
+      - "/.github/**/*"
+      - "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/README.md"
+      - "/coverage/**/*"
+      - "/docs/**/*"
+      - "/src/shared/fixtures/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/graph/**/*"
+      - "/tools/policy/**/*"
+      - "/tools/release/**/*"
+      - "/tools/perf/**/*"
+      - "/tools/test/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

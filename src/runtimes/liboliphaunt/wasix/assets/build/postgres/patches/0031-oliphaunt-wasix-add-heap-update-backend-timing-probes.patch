@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000031 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add heap update backend timing probes
+
+The btree compare diagnostics showed real index-search cost, but the benchmark
+text update case updates an unindexed text column while using the integer index
+only for lookup.  That makes heap update shape, page placement, toast, and heap
+WAL logging the next likely explanation for the remaining gap.
+
+Add finer diagnostic-only timers inside heap_update().  They split the coarse
+heapam_tuple_update timer into modified-column detection, toast update work,
+new-page buffer selection, heap tuple insertion, and heap update WAL logging.
+These probes are compiled out of normal release artifacts because
+OLIPHAUNT_WASIX_BACKEND_TIMING is off by default.
+---
+ src/backend/access/heap/heapam.c | 10 ++++++++++
+ src/include/port/wasix-dl.h      |  5 +++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/src/backend/access/heap/heapam.c b/src/backend/access/heap/heapam.c
+index 6203e3d..0b51048 100644
+--- a/src/backend/access/heap/heapam.c
++++ b/src/backend/access/heap/heapam.c
+@@ -3418,9 +3418,11 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
+ 	 * new tuple so we must include it as part of the old_key_tuple.  See
+ 	 * ExtractReplicaIdentity.
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAP_DETERMINE_COLUMNS);
+ 	modified_attrs = HeapDetermineColumnsInfo(relation, interesting_attrs,
+ 											  id_attrs, &oldtup,
+ 											  newtup, &id_has_external);
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAP_DETERMINE_COLUMNS);
+
+ 	/*
+ 	 * If we're not updating any "key" column, we can grab a weaker lock type.
+@@ -3910,7 +3912,9 @@ l2:
+ 		if (need_toast)
+ 		{
+ 			/* Note we always use WAL and FSM during updates */
++			OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAP_TOAST_UPDATE);
+ 			heaptup = heap_toast_insert_or_update(relation, newtup, &oldtup, 0);
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAP_TOAST_UPDATE);
+ 			newtupsize = MAXALIGN(heaptup->t_len);
+ 		}
+ 		else
+@@ -3944,10 +3948,12 @@ l2:
+ 			if (newtupsize > pagefree)
+ 			{
+ 				/* It doesn't fit, must use RelationGetBufferForTuple. */
++				OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAP_GET_BUFFER_FOR_TUPLE);
+ 				newbuf = RelationGetBufferForTuple(relation, heaptup->t_len,
+ 												   buffer, 0, NULL,
+ 												   &vmbuffer_new, &vmbuffer,
+ 												   0);
++				OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAP_GET_BUFFER_FOR_TUPLE);
+ 				/* We're all done. */
+ 				break;
+ 			}
+@@ -4080,7 +4086,9 @@ l2:
+ 		HeapTupleClearHeapOnly(newtup);
+ 	}
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAP_PUT_TUPLE);
+ 	RelationPutHeapTuple(relation, newbuf, heaptup, false); /* insert new tuple */
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAP_PUT_TUPLE);
+
+
+ 	/* Clear obsolete visibility flags, possibly set by ourselves above... */
+@@ -4131,11 +4139,13 @@ l2:
+ 			log_heap_new_cid(relation, heaptup);
+ 		}
+
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_HEAP_LOG_UPDATE);
+ 		recptr = log_heap_update(relation, buffer,
+ 								 newbuf, &oldtup, heaptup,
+ 								 old_key_tuple,
+ 								 all_visible_cleared,
+ 								 all_visible_cleared_new);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_HEAP_LOG_UPDATE);
+ 		if (newbuf != buffer)
+ 		{
+ 			PageSetLSN(BufferGetPage(newbuf), recptr);
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index 401decc..99ecf81 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -64,6 +64,11 @@ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_SPLIT 57
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_BINSRCH_INSERT 58
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE 59
++#define OLIPHAUNT_BACKEND_TIMING_HEAP_DETERMINE_COLUMNS 60
++#define OLIPHAUNT_BACKEND_TIMING_HEAP_TOAST_UPDATE 61
++#define OLIPHAUNT_BACKEND_TIMING_HEAP_GET_BUFFER_FOR_TUPLE 62
++#define OLIPHAUNT_BACKEND_TIMING_HEAP_PUT_TUPLE 63
++#define OLIPHAUNT_BACKEND_TIMING_HEAP_LOG_UPDATE 64
+ extern void oliphaunt_wasix_backend_timing_start(int id);
+ extern void oliphaunt_wasix_backend_timing_end(int id);
+ #define OLIPHAUNT_BACKEND_TIMING_START(id) oliphaunt_wasix_backend_timing_start(id)
+--
+2.39.5

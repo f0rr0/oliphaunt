@@ -1,0 +1,210 @@
+---
+title: Native Runtime
+description: Direct, broker, and server runtime behavior for native Oliphaunt SDKs.
+---
+
+# Native Runtime
+
+This guide describes the native runtime family used by `liboliphaunt` and the
+native SDKs. WASM runtime behavior is documented separately in
+[`WASM runtime`](/docs/sdk/wasm/runtime).
+
+## Choose a mode
+
+Use the mode names as product boundaries:
+
+- choose `NativeDirect` for the lowest-latency embedded call path when one
+  application-owned session is the right model;
+- choose `NativeBroker` when a desktop app wants the database runtime outside
+  the UI process or needs to manage several roots deliberately;
+- choose `NativeServer` when existing PostgreSQL clients need independent
+  sessions, connection strings, pools, `psql`, `pg_dump`, or ORM compatibility.
+
+These are different runtime contracts. Direct mode is the embedded session,
+broker mode adds a helper-process boundary, and server mode is the path for
+independent PostgreSQL client concurrency.
+
+<ModeMatrix />
+
+`NativeDirect` is the lowest-latency embedded mode. It loads `liboliphaunt` in
+the host process and owns one resident PostgreSQL backend for the process
+lifetime.
+
+Use it when the Rust SDK owns the database calls and the application wants one
+fast embedded PostgreSQL session:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+
+# async fn open_direct() -> oliphaunt::Result<()> {
+let db = Oliphaunt::builder()
+    .path(".oliphaunt")
+    .native_direct()
+    .open()
+    .await?;
+
+let rows = db.query("SELECT 1::text AS value").await?;
+assert_eq!(rows.get_text(0, "value")?, Some("1"));
+
+db.close().await?;
+# Ok(())
+# }
+```
+
+`NativeBroker` runs the same direct engine in a helper process. It is the robust
+desktop/app mode for process isolation and multiple roots managed by one Rust
+SDK runtime. Each broker-owned root still has one serialized physical
+PostgreSQL backend session.
+
+Use it when process isolation and multi-root ownership matter more than absolute
+minimum call overhead:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+
+# async fn open_broker() -> oliphaunt::Result<()> {
+let db = Oliphaunt::builder()
+    .path(".oliphaunt")
+    .native_broker()
+    .broker_max_roots(4)
+    .open()
+    .await?;
+
+db.execute("CREATE TABLE IF NOT EXISTS events(id bigint PRIMARY KEY)").await?;
+db.close().await?;
+# Ok(())
+# }
+```
+
+`NativeServer` starts a real local PostgreSQL-compatible server process. It is
+the only SDK mode for independent client sessions, connection pools, `psql`,
+`pg_dump`, ORMs, and libraries that expect a PostgreSQL connection string:
+
+```rust,no_run
+use oliphaunt::Oliphaunt;
+
+# async fn open_server() -> oliphaunt::Result<String> {
+let db = Oliphaunt::builder()
+    .path(".oliphaunt")
+    .native_server()
+    .max_client_sessions(8)
+    .open()
+    .await?;
+
+Ok(db.connection_string().expect("server mode exposes a URL").to_owned())
+# }
+```
+
+## Runtime Semantics
+
+The three modes are intentionally different. Direct and broker mode expose one
+serialized SDK-owned database session; server mode is the runtime for
+independent PostgreSQL clients.
+
+| Mode | Process model | Session model | Root model | Reopen/crash behavior |
+| --- | --- | --- | --- | --- |
+| `NativeDirect` | in-process | one serialized physical session | one resident root per process | same-root logical reopen; WAL recovery after process relaunch |
+| `NativeBroker` | helper process per active root | one serialized physical session per root | multiple roots bounded by `broker_max_roots` | helper crash can be restarted; app process remains alive |
+| `NativeServer` | PostgreSQL server process | independent PostgreSQL client sessions | one server root per opened handle | use normal server restart/recovery flows |
+
+`Oliphaunt` is cloneable as an SDK handle. Clones share the same owner executor,
+FIFO queue, session pin, cancellation handle, and close state. Use server mode
+when the application needs a connection pool or independent client sessions.
+Direct and broker mode reject `max_client_sessions` values other than `1`.
+
+Transactions and explicit session pins reserve the single SDK-owned physical
+session. While a pin is active, the owner executor keeps unrelated work outside
+that transaction-sensitive session and returns a session-busy error for calls
+that require a different database state.
+
+## Direct Lifecycle
+
+Direct mode is process-resident:
+
+- one resident backend per process;
+- one physical session;
+- serialized requests through the SDK owner executor;
+- one root per process after the resident backend exists;
+- `close()` detaches the SDK handle from the resident backend;
+- reopening is same-root only inside the same process;
+- native PostgreSQL crashes terminate the host process.
+
+Direct mode's reliability contract is crash-consistent storage. If the host
+process exits, the next launch reopens the same root and PostgreSQL performs WAL
+recovery. Applications that need the app process to survive database-process
+death use broker or server mode where the target platform supports them.
+
+## Storage
+
+Native live storage is a PostgreSQL root directory. A root contains PGDATA,
+Oliphaunt metadata, lock metadata, extension metadata, and recovery state.
+
+Persistent roots use exclusive locking in direct mode. Broker and server modes
+own their roots through the helper/server process. A second unsafe owner fails
+instead of sharing a data directory.
+
+Use SDK backup/restore APIs for ergonomic export/import:
+
+- direct and broker support same-version physical archives;
+- server supports same-version physical archives and SQL dumps through packaged
+  PostgreSQL tooling;
+- logical dumps are the portable cross-version upgrade format.
+
+## Startup Configuration
+
+`OliphauntBuilder::runtime_footprint(...)` selects the startup footprint before
+PostgreSQL starts:
+
+- `RuntimeFootprintProfile::Throughput`: throughput defaults;
+- `RuntimeFootprintProfile::BalancedMobile`: lower slot counts, smaller shared
+  buffers/WAL footprint, and PG18 sync I/O for resident mobile apps;
+- `RuntimeFootprintProfile::SmallMobile`: the smallest supported resident
+  profile for memory-pressure experiments.
+
+`OliphauntBuilder::startup_guc(name, value)` and `startup_gucs(...)` append
+validated PostgreSQL `-c name=value` overrides after durability and footprint
+profiles. Later overrides win, matching PostgreSQL startup behavior. Server mode
+then appends its configured `max_connections` from `max_client_sessions(...)`
+because independent session count is the server-mode contract.
+
+## Extensions
+
+Extensions are opt-in. Select exact PostgreSQL extension names before opening:
+
+```rust,no_run
+use oliphaunt::{Extension, Oliphaunt};
+
+# async fn open_with_vector() -> oliphaunt::Result<()> {
+let db = Oliphaunt::builder()
+    .path(".oliphaunt")
+    .native_direct()
+    .extension(Extension::Vector)
+    .open()
+    .await?;
+
+db.execute("CREATE EXTENSION IF NOT EXISTS vector").await?;
+db.close().await?;
+# Ok(())
+# }
+```
+
+`CREATE EXTENSION` succeeds only when the selected runtime resources contain the
+extension assets and, on mobile, when the required static registry entries are
+present. Desktop runtimes advertise dynamic loading separately through
+capabilities; the portable path is selected runtime resources first.
+
+## Capabilities
+
+Read capabilities before enabling mode-specific features:
+
+- `session_concurrency` distinguishes serialized SDK sessions from independent
+  server sessions;
+- `multi_root` is broker-only today;
+- `same_root_logical_reopen`, `root_switchable`, and `crash_restartable`
+  describe lifecycle semantics explicitly;
+- `backup_formats` and `restore_formats` gate backup/restore UI before work is
+  queued.
+
+Swift, Kotlin, and React Native expose the same product concepts with
+platform-native naming. Platform modes outside advertised capabilities return
+explicit errors so app code can choose another mode or hide the option in UI.

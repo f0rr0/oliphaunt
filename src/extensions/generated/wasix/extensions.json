@@ -1,0 +1,771 @@
+{
+  "extensions": [
+    {
+      "archive": "extensions/amcheck.tar.zst",
+      "dependencies": [],
+      "id": "amcheck",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "amcheck.so",
+      "native-support-modules": [],
+      "sql-name": "amcheck"
+    },
+    {
+      "archive": "extensions/auto_explain.tar.zst",
+      "dependencies": [],
+      "id": "auto_explain",
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'auto_explain';",
+          "SET auto_explain.log_min_duration = '0';",
+          "SET auto_explain.log_analyze = 'true';",
+          "SET auto_explain.log_level = 'NOTICE';"
+        ],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "auto_explain.so",
+      "native-support-modules": [],
+      "sql-name": "auto_explain"
+    },
+    {
+      "archive": "extensions/bloom.tar.zst",
+      "dependencies": [],
+      "id": "bloom",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "bloom.so",
+      "native-support-modules": [],
+      "sql-name": "bloom"
+    },
+    {
+      "archive": "extensions/btree_gin.tar.zst",
+      "dependencies": [],
+      "id": "btree_gin",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "btree_gin.so",
+      "native-support-modules": [],
+      "sql-name": "btree_gin"
+    },
+    {
+      "archive": "extensions/btree_gist.tar.zst",
+      "dependencies": [],
+      "id": "btree_gist",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "btree_gist.so",
+      "native-support-modules": [],
+      "sql-name": "btree_gist"
+    },
+    {
+      "archive": "extensions/citext.tar.zst",
+      "dependencies": [],
+      "id": "citext",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "citext.so",
+      "native-support-modules": [],
+      "sql-name": "citext"
+    },
+    {
+      "archive": "extensions/cube.tar.zst",
+      "dependencies": [],
+      "id": "cube",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "cube.so",
+      "native-support-modules": [],
+      "sql-name": "cube"
+    },
+    {
+      "archive": "extensions/dict_int.tar.zst",
+      "dependencies": [],
+      "id": "dict_int",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "dict_int.so",
+      "native-support-modules": [],
+      "sql-name": "dict_int"
+    },
+    {
+      "archive": "extensions/dict_xsyn.tar.zst",
+      "dependencies": [],
+      "id": "dict_xsyn",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "dict_xsyn.so",
+      "native-support-modules": [],
+      "sql-name": "dict_xsyn"
+    },
+    {
+      "archive": "extensions/earthdistance.tar.zst",
+      "dependencies": [
+        "cube"
+      ],
+      "id": "earthdistance",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "earthdistance.so",
+      "native-support-modules": [],
+      "sql-name": "earthdistance"
+    },
+    {
+      "archive": "extensions/file_fdw.tar.zst",
+      "dependencies": [],
+      "id": "file_fdw",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "file_fdw.so",
+      "native-support-modules": [],
+      "sql-name": "file_fdw"
+    },
+    {
+      "archive": "extensions/fuzzystrmatch.tar.zst",
+      "dependencies": [],
+      "id": "fuzzystrmatch",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "fuzzystrmatch.so",
+      "native-support-modules": [],
+      "sql-name": "fuzzystrmatch"
+    },
+    {
+      "archive": "extensions/hstore.tar.zst",
+      "dependencies": [],
+      "id": "hstore",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "hstore.so",
+      "native-support-modules": [],
+      "sql-name": "hstore"
+    },
+    {
+      "archive": "extensions/intarray.tar.zst",
+      "dependencies": [],
+      "id": "intarray",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "_int.so",
+      "native-support-modules": [],
+      "sql-name": "intarray"
+    },
+    {
+      "archive": "extensions/isn.tar.zst",
+      "dependencies": [],
+      "id": "isn",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "isn.so",
+      "native-support-modules": [],
+      "sql-name": "isn"
+    },
+    {
+      "archive": "extensions/lo.tar.zst",
+      "dependencies": [],
+      "id": "lo",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "lo.so",
+      "native-support-modules": [],
+      "sql-name": "lo"
+    },
+    {
+      "archive": "extensions/ltree.tar.zst",
+      "dependencies": [],
+      "id": "ltree",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "ltree.so",
+      "native-support-modules": [],
+      "sql-name": "ltree"
+    },
+    {
+      "archive": "extensions/pageinspect.tar.zst",
+      "dependencies": [],
+      "id": "pageinspect",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pageinspect.so",
+      "native-support-modules": [],
+      "sql-name": "pageinspect"
+    },
+    {
+      "archive": "extensions/pg_buffercache.tar.zst",
+      "dependencies": [],
+      "id": "pg_buffercache",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_buffercache.so",
+      "native-support-modules": [],
+      "sql-name": "pg_buffercache"
+    },
+    {
+      "archive": "extensions/pg_freespacemap.tar.zst",
+      "dependencies": [],
+      "id": "pg_freespacemap",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_freespacemap.so",
+      "native-support-modules": [],
+      "sql-name": "pg_freespacemap"
+    },
+    {
+      "archive": "extensions/pg_hashids.tar.zst",
+      "dependencies": [],
+      "id": "pg_hashids",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_hashids.so",
+      "native-support-modules": [],
+      "sql-name": "pg_hashids"
+    },
+    {
+      "archive": "extensions/pg_ivm.tar.zst",
+      "dependencies": [],
+      "id": "pg_ivm",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_ivm.so",
+      "native-support-modules": [],
+      "sql-name": "pg_ivm"
+    },
+    {
+      "archive": "extensions/pg_surgery.tar.zst",
+      "dependencies": [],
+      "id": "pg_surgery",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_surgery.so",
+      "native-support-modules": [],
+      "sql-name": "pg_surgery"
+    },
+    {
+      "archive": "extensions/pg_textsearch.tar.zst",
+      "dependencies": [],
+      "id": "pg_textsearch",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_textsearch.so",
+      "native-support-modules": [],
+      "sql-name": "pg_textsearch"
+    },
+    {
+      "archive": "extensions/pg_trgm.tar.zst",
+      "dependencies": [],
+      "id": "pg_trgm",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_trgm.so",
+      "native-support-modules": [],
+      "sql-name": "pg_trgm"
+    },
+    {
+      "archive": "extensions/pg_uuidv7.tar.zst",
+      "dependencies": [],
+      "id": "pg_uuidv7",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_uuidv7.so",
+      "native-support-modules": [],
+      "sql-name": "pg_uuidv7"
+    },
+    {
+      "archive": "extensions/pg_visibility.tar.zst",
+      "dependencies": [],
+      "id": "pg_visibility",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_visibility.so",
+      "native-support-modules": [],
+      "sql-name": "pg_visibility"
+    },
+    {
+      "archive": "extensions/pg_walinspect.tar.zst",
+      "dependencies": [],
+      "id": "pg_walinspect",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pg_walinspect.so",
+      "native-support-modules": [],
+      "sql-name": "pg_walinspect"
+    },
+    {
+      "archive": "extensions/pgcrypto.tar.zst",
+      "dependencies": [],
+      "id": "pgcrypto",
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "pgcrypto.so",
+      "native-support-modules": [],
+      "sql-name": "pgcrypto"
+    },
+    {
+      "archive": "extensions/pgtap.tar.zst",
+      "dependencies": [
+        "plpgsql"
+      ],
+      "id": "pgtap",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": null,
+      "native-support-modules": [],
+      "sql-name": "pgtap"
+    },
+    {
+      "archive": "extensions/postgis.tar.zst",
+      "dependencies": [],
+      "id": "postgis",
+      "lifecycle": {
+        "create-extension": true,
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [
+        "lib/postgresql/postgis-3.so"
+      ],
+      "native-module-file": "postgis-3.so",
+      "native-support-modules": [
+        {
+          "aot-file": "postgis_deps-llvm-opta.bin.zst",
+          "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
+          "name": "postgis_deps",
+          "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so"
+        }
+      ],
+      "sql-name": "postgis"
+    },
+    {
+      "archive": "extensions/seg.tar.zst",
+      "dependencies": [],
+      "id": "seg",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "seg.so",
+      "native-support-modules": [],
+      "sql-name": "seg"
+    },
+    {
+      "archive": "extensions/tablefunc.tar.zst",
+      "dependencies": [],
+      "id": "tablefunc",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "tablefunc.so",
+      "native-support-modules": [],
+      "sql-name": "tablefunc"
+    },
+    {
+      "archive": "extensions/tcn.tar.zst",
+      "dependencies": [],
+      "id": "tcn",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "tcn.so",
+      "native-support-modules": [],
+      "sql-name": "tcn"
+    },
+    {
+      "archive": "extensions/tsm_system_rows.tar.zst",
+      "dependencies": [],
+      "id": "tsm_system_rows",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "tsm_system_rows.so",
+      "native-support-modules": [],
+      "sql-name": "tsm_system_rows"
+    },
+    {
+      "archive": "extensions/tsm_system_time.tar.zst",
+      "dependencies": [],
+      "id": "tsm_system_time",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "tsm_system_time.so",
+      "native-support-modules": [],
+      "sql-name": "tsm_system_time"
+    },
+    {
+      "archive": "extensions/unaccent.tar.zst",
+      "dependencies": [],
+      "id": "unaccent",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "unaccent.so",
+      "native-support-modules": [],
+      "sql-name": "unaccent"
+    },
+    {
+      "archive": "extensions/uuid-ossp.tar.zst",
+      "dependencies": [],
+      "id": "uuid_ossp",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "uuid-ossp.so",
+      "native-support-modules": [],
+      "sql-name": "uuid-ossp"
+    },
+    {
+      "archive": "extensions/vector.tar.zst",
+      "dependencies": [],
+      "id": "vector",
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false,
+        "startup-config": []
+      },
+      "load-order": [],
+      "native-module-file": "vector.so",
+      "native-support-modules": [],
+      "sql-name": "vector"
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-definitions",
+      "path": "src/extensions/external"
+    }
+  ]
+}

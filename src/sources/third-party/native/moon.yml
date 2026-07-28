@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "third-party-native"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["third-party", "sources", "native"]
+
+project:
+  title: "Native Third-Party Sources"
+  description: "Pinned native-only third-party source metadata."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs third-party-native"
+    inputs:
+      - "/src/sources/third-party/native/**/*"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

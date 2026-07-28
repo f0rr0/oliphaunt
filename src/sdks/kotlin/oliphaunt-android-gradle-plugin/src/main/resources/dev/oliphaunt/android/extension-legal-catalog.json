@@ -1,0 +1,3166 @@
+{
+  "schema": "oliphaunt-android-extension-legal-catalog-v1",
+  "sourceCatalogSha256": "c73b96459c6d5b86d34ecd34e3af89d383320de8851f2988368552352bf349bc",
+  "contracts": [
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-contrib-pg18",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native-openssl",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
+          "bytes": 10175,
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-contrib-pg18",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native-openssl",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
+          "bytes": 10175,
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-hashids",
+      "product": "oliphaunt-extension-pg-hashids",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_hashids/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_hashids/LICENSE",
+          "bytes": 1081,
+          "sha256": "be1317083fe59a08568b79a5fcf765ac0627f3bd4cff6853bbc949edfd430938",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-hashids",
+      "product": "oliphaunt-extension-pg-hashids",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_hashids/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_hashids/LICENSE",
+          "bytes": 1081,
+          "sha256": "be1317083fe59a08568b79a5fcf765ac0627f3bd4cff6853bbc949edfd430938",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-ivm",
+      "product": "oliphaunt-extension-pg-ivm",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_ivm/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_ivm/LICENSE",
+          "bytes": 1015,
+          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-ivm",
+      "product": "oliphaunt-extension-pg-ivm",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_ivm/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_ivm/LICENSE",
+          "bytes": 1015,
+          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-textsearch",
+      "product": "oliphaunt-extension-pg-textsearch",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_textsearch/LICENSE",
+        "share/licenses/pg_textsearch/NOTICE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_textsearch/LICENSE",
+          "bytes": 910,
+          "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_textsearch/NOTICE",
+          "bytes": 646,
+          "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-textsearch",
+      "product": "oliphaunt-extension-pg-textsearch",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_textsearch/LICENSE",
+        "share/licenses/pg_textsearch/NOTICE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_textsearch/LICENSE",
+          "bytes": 910,
+          "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_textsearch/NOTICE",
+          "bytes": 646,
+          "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-uuidv7",
+      "product": "oliphaunt-extension-pg-uuidv7",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_uuidv7/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_uuidv7/LICENSE",
+          "bytes": 16725,
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pg-uuidv7",
+      "product": "oliphaunt-extension-pg-uuidv7",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_uuidv7/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pg_uuidv7/LICENSE",
+          "bytes": 16725,
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pgtap",
+      "product": "oliphaunt-extension-pgtap",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pgtap/README.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pgtap/README.md",
+          "bytes": 4499,
+          "sha256": "ffe79b36e67976724f6f5896c4f16d0ffe2f65382ec7987426735ffde9c5399c",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-pgtap",
+      "product": "oliphaunt-extension-pgtap",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pgtap/README.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/pgtap/README.md",
+          "bytes": 4499,
+          "sha256": "ffe79b36e67976724f6f5896c4f16d0ffe2f65382ec7987426735ffde9c5399c",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-postgis",
+      "product": "oliphaunt-extension-postgis",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/geos/COPYING",
+        "share/licenses/geos/src/deps/ryu/LICENSE",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+        "share/licenses/json-c/COPYING",
+        "share/licenses/libcharset/COPYING.LIB",
+        "share/licenses/libiconv/COPYING.LIB",
+        "share/licenses/libxml2/Copyright",
+        "share/licenses/postgis/COPYING",
+        "share/licenses/postgis/LICENSE.TXT",
+        "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+        "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+        "share/licenses/proj/COPYING",
+        "share/licenses/sqlite/LICENSE.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/COPYING",
+          "bytes": 26530,
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/json-c/COPYING",
+          "bytes": 2205,
+          "sha256": "74c1e6ca5eba76b54d0ad00d4815c8315c1b3bc45ff99de61d103dc92486284c",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libcharset/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libiconv/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libxml2/Copyright",
+          "bytes": 1314,
+          "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/COPYING",
+          "bytes": 18092,
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/LICENSE.TXT",
+          "bytes": 3002,
+          "sha256": "81749eea887e78402c9b85896cd629b155bc29256927f818f01001f038146391",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+          "bytes": 11343,
+          "sha256": "e55b7f3aaf3a9db897cc6a63fd6a79ae8fbbcaa32ffbe382ae77ce1f0db33f99",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/proj/COPYING",
+          "bytes": 1784,
+          "sha256": "6a8f30793e877d32e3f88b972f0970a051a3b5a26cd057d3993cb51e21c43319",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/sqlite/LICENSE.md",
+          "bytes": 3850,
+          "sha256": "ee6af51062b30d532991face5164136ae6f84e265ecf8abe89dc69dac45ca1e7",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-postgis",
+      "product": "oliphaunt-extension-postgis",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/geos/COPYING",
+        "share/licenses/geos/src/deps/ryu/LICENSE",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+        "share/licenses/json-c/COPYING",
+        "share/licenses/libcharset/COPYING.LIB",
+        "share/licenses/libiconv/COPYING.LIB",
+        "share/licenses/libxml2/Copyright",
+        "share/licenses/postgis/COPYING",
+        "share/licenses/postgis/LICENSE.TXT",
+        "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+        "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+        "share/licenses/proj/COPYING",
+        "share/licenses/sqlite/LICENSE.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/COPYING",
+          "bytes": 26530,
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/json-c/COPYING",
+          "bytes": 2205,
+          "sha256": "74c1e6ca5eba76b54d0ad00d4815c8315c1b3bc45ff99de61d103dc92486284c",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libcharset/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libiconv/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/libxml2/Copyright",
+          "bytes": 1314,
+          "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/COPYING",
+          "bytes": 18092,
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/LICENSE.TXT",
+          "bytes": 3002,
+          "sha256": "81749eea887e78402c9b85896cd629b155bc29256927f818f01001f038146391",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+          "bytes": 11343,
+          "sha256": "e55b7f3aaf3a9db897cc6a63fd6a79ae8fbbcaa32ffbe382ae77ce1f0db33f99",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/proj/COPYING",
+          "bytes": 1784,
+          "sha256": "6a8f30793e877d32e3f88b972f0970a051a3b5a26cd057d3993cb51e21c43319",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/sqlite/LICENSE.md",
+          "bytes": 3850,
+          "sha256": "ee6af51062b30d532991face5164136ae6f84e265ecf8abe89dc69dac45ca1e7",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-vector",
+      "product": "oliphaunt-extension-vector",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/vector/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/vector/LICENSE",
+          "bytes": 1104,
+          "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "aggregate",
+      "identity": "oliphaunt-extension-vector",
+      "product": "oliphaunt-extension-vector",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/vector/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/vector/LICENSE",
+          "bytes": 1104,
+          "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "amcheck",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "amcheck",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "auto_explain",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "auto_explain",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "bloom",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "bloom",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "btree_gin",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "btree_gin",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "btree_gist",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "btree_gist",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "citext",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "citext",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "cube",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "cube",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "dict_int",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "dict_int",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "dict_xsyn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "dict_xsyn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "earthdistance",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "earthdistance",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "file_fdw",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "file_fdw",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "fuzzystrmatch",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "fuzzystrmatch",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "hstore",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "hstore",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "intarray",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "intarray",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "isn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "isn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "lo",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "lo",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "ltree",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "ltree",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pageinspect",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pageinspect",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_buffercache",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_buffercache",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_freespacemap",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_freespacemap",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_hashids",
+      "product": "oliphaunt-extension-pg-hashids",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_hashids/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_hashids/LICENSE",
+          "bytes": 1081,
+          "sha256": "be1317083fe59a08568b79a5fcf765ac0627f3bd4cff6853bbc949edfd430938",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_hashids",
+      "product": "oliphaunt-extension-pg-hashids",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_hashids/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_hashids/LICENSE",
+          "bytes": 1081,
+          "sha256": "be1317083fe59a08568b79a5fcf765ac0627f3bd4cff6853bbc949edfd430938",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_ivm",
+      "product": "oliphaunt-extension-pg-ivm",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_ivm/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_ivm/LICENSE",
+          "bytes": 1015,
+          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_ivm",
+      "product": "oliphaunt-extension-pg-ivm",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_ivm/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_ivm/LICENSE",
+          "bytes": 1015,
+          "sha256": "22e995337ca75d05f5057e741e063acb802ff10cb8a13dc822bae749d9df59f4",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_surgery",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_surgery",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_textsearch",
+      "product": "oliphaunt-extension-pg-textsearch",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_textsearch/LICENSE",
+        "share/licenses/pg_textsearch/NOTICE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_textsearch/LICENSE",
+          "bytes": 910,
+          "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_textsearch/NOTICE",
+          "bytes": 646,
+          "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_textsearch",
+      "product": "oliphaunt-extension-pg-textsearch",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_textsearch/LICENSE",
+        "share/licenses/pg_textsearch/NOTICE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_textsearch/LICENSE",
+          "bytes": 910,
+          "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_textsearch/NOTICE",
+          "bytes": 646,
+          "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_trgm",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_trgm",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_uuidv7",
+      "product": "oliphaunt-extension-pg-uuidv7",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_uuidv7/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_uuidv7/LICENSE",
+          "bytes": 16725,
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_uuidv7",
+      "product": "oliphaunt-extension-pg-uuidv7",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pg_uuidv7/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pg_uuidv7/LICENSE",
+          "bytes": 16725,
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_visibility",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_visibility",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_walinspect",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pg_walinspect",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pgcrypto",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native-openssl",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
+          "bytes": 10175,
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pgcrypto",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native-openssl",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
+          "bytes": 10175,
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pgtap",
+      "product": "oliphaunt-extension-pgtap",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pgtap/README.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pgtap/README.md",
+          "bytes": 4499,
+          "sha256": "ffe79b36e67976724f6f5896c4f16d0ffe2f65382ec7987426735ffde9c5399c",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "pgtap",
+      "product": "oliphaunt-extension-pgtap",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/pgtap/README.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/pgtap/README.md",
+          "bytes": 4499,
+          "sha256": "ffe79b36e67976724f6f5896c4f16d0ffe2f65382ec7987426735ffde9c5399c",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "postgis",
+      "product": "oliphaunt-extension-postgis",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/geos/COPYING",
+        "share/licenses/geos/src/deps/ryu/LICENSE",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+        "share/licenses/json-c/COPYING",
+        "share/licenses/libcharset/COPYING.LIB",
+        "share/licenses/libiconv/COPYING.LIB",
+        "share/licenses/libxml2/Copyright",
+        "share/licenses/postgis/COPYING",
+        "share/licenses/postgis/LICENSE.TXT",
+        "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+        "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+        "share/licenses/proj/COPYING",
+        "share/licenses/sqlite/LICENSE.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/COPYING",
+          "bytes": 26530,
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/json-c/COPYING",
+          "bytes": 2205,
+          "sha256": "74c1e6ca5eba76b54d0ad00d4815c8315c1b3bc45ff99de61d103dc92486284c",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libcharset/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libiconv/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libxml2/Copyright",
+          "bytes": 1314,
+          "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/COPYING",
+          "bytes": 18092,
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/LICENSE.TXT",
+          "bytes": 3002,
+          "sha256": "81749eea887e78402c9b85896cd629b155bc29256927f818f01001f038146391",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+          "bytes": 11343,
+          "sha256": "e55b7f3aaf3a9db897cc6a63fd6a79ae8fbbcaa32ffbe382ae77ce1f0db33f99",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/proj/COPYING",
+          "bytes": 1784,
+          "sha256": "6a8f30793e877d32e3f88b972f0970a051a3b5a26cd057d3993cb51e21c43319",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/sqlite/LICENSE.md",
+          "bytes": 3850,
+          "sha256": "ee6af51062b30d532991face5164136ae6f84e265ecf8abe89dc69dac45ca1e7",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "postgis",
+      "product": "oliphaunt-extension-postgis",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/geos/COPYING",
+        "share/licenses/geos/src/deps/ryu/LICENSE",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+        "share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+        "share/licenses/json-c/COPYING",
+        "share/licenses/libcharset/COPYING.LIB",
+        "share/licenses/libiconv/COPYING.LIB",
+        "share/licenses/libxml2/Copyright",
+        "share/licenses/postgis/COPYING",
+        "share/licenses/postgis/LICENSE.TXT",
+        "share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE",
+        "share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+        "share/licenses/postgis/deps/ryu/LICENSE-Boost",
+        "share/licenses/proj/COPYING",
+        "share/licenses/sqlite/LICENSE.md"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/COPYING",
+          "bytes": 26530,
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/geos/src/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/json-c/COPYING",
+          "bytes": 2205,
+          "sha256": "74c1e6ca5eba76b54d0ad00d4815c8315c1b3bc45ff99de61d103dc92486284c",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libcharset/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libiconv/COPYING.LIB",
+          "bytes": 26419,
+          "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/libxml2/Copyright",
+          "bytes": 1314,
+          "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/COPYING",
+          "bytes": 18092,
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/LICENSE.TXT",
+          "bytes": 3002,
+          "sha256": "81749eea887e78402c9b85896cd629b155bc29256927f818f01001f038146391",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/flatgeobuf/flatbuffers/LICENSE",
+          "bytes": 11343,
+          "sha256": "e55b7f3aaf3a9db897cc6a63fd6a79ae8fbbcaa32ffbe382ae77ce1f0db33f99",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE",
+          "bytes": 205,
+          "sha256": "087edee322a9d2e527453ddc6731ccb4f015a36e55864b30715934f32a4879c1",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE-Apache2",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/postgis/deps/ryu/LICENSE-Boost",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/proj/COPYING",
+          "bytes": 1784,
+          "sha256": "6a8f30793e877d32e3f88b972f0970a051a3b5a26cd057d3993cb51e21c43319",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/sqlite/LICENSE.md",
+          "bytes": 3850,
+          "sha256": "ee6af51062b30d532991face5164136ae6f84e265ecf8abe89dc69dac45ca1e7",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "seg",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "seg",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tablefunc",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tablefunc",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tcn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tcn",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tsm_system_rows",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tsm_system_rows",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tsm_system_time",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "tsm_system_time",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "unaccent",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "unaccent",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "uuid-ossp",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-arm64-v8a",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "uuid-ossp",
+      "product": "oliphaunt-extension-contrib-pg18",
+      "target": "android-x86_64",
+      "profile": "contrib-native",
+      "licenseFiles": [],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+          "bytes": 1198,
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "vector",
+      "product": "oliphaunt-extension-vector",
+      "target": "android-arm64-v8a",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/vector/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/vector/LICENSE",
+          "bytes": 1104,
+          "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87",
+          "mode": "0644"
+        }
+      ]
+    },
+    {
+      "scope": "leaf",
+      "identity": "vector",
+      "product": "oliphaunt-extension-vector",
+      "target": "android-x86_64",
+      "profile": "external-native",
+      "licenseFiles": [
+        "share/licenses/vector/LICENSE"
+      ],
+      "members": [
+        {
+          "path": "LICENSE",
+          "bytes": 1085,
+          "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10",
+          "mode": "0644"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.md",
+          "bytes": 864,
+          "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/vector/LICENSE",
+          "bytes": 1104,
+          "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87",
+          "mode": "0644"
+        }
+      ]
+    }
+  ]
+}

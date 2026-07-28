@@ -1,0 +1,122 @@
+---
+title: WASIX Runtime Guide
+description: Understand WASM runtime modes, persistence choices, root locking, startup, supported targets, and server compatibility.
+---
+
+# WASIX Runtime Guide
+
+`oliphaunt-wasix` is the WASM/WASIX runtime family. It shares Oliphaunt's public
+concepts with native SDKs while using WASIX runtime assets, WASM host targets,
+and WebAssembly-specific persistence behavior.
+
+<WasmRuntimeMap />
+
+## Choose A Mode
+
+Use `Oliphaunt` when your Rust code owns the database calls:
+
+- direct function and method calls;
+- no socket listener;
+- best fit for tests, commands, jobs, and app-owned Rust state.
+
+Use `OliphauntServer` when a library expects a PostgreSQL URI:
+
+- SQLx, Diesel, SeaORM, `tokio-postgres`, or cross-language clients;
+- local TCP or Unix socket listener;
+- compatibility with existing Postgres clients inside the selected WASM host.
+
+Both modes share the same embedded backend for a root.
+
+## Persistence Modes
+
+Direct and server builders expose the same root choices:
+
+- `path(...)` for a persistent database under an explicit directory;
+- `app(...)` or `app_id(...)` for a persistent database under app data;
+- `temporary()` for a cached temporary database;
+- `fresh_temporary()` for a brand-new cluster path.
+
+Choose `temporary()` for most tests. Choose `fresh_temporary()` when the test
+needs a brand-new cluster and can pay the slower startup path.
+
+## Operational Limits
+
+The WASM runtime model owns one embedded backend per open root:
+
+- one `Oliphaunt` instance owns one embedded backend;
+- one `OliphauntServer` exposes one embedded backend;
+- downstream client pools use one connection;
+- server mode gives local PostgreSQL client compatibility inside the selected
+  WASM host.
+
+Generated server URLs include `sslmode=disable`. `CancelRequest` and normal
+startup packets are supported. The server-compatible API still runs against the
+embedded WASM backend for that root.
+
+## Root Locking And Lifecycle
+
+Persistent roots are locked while open. A second direct or server open against
+the same root returns a lock error so one runtime owns the directory at a time.
+
+Close database clients before calling `OliphauntServer::shutdown()`. The server
+thread waits for active client work to finish before exiting.
+
+Use `dump_data_dir()`, `load_data_dir_archive(...)`, or `try_clone()` for a
+same-version physical clone. Use logical dumps through `pg_dump` for portable
+exports and upgrades.
+
+## Startup And Preload
+
+The WASIX runtime opens only when the application package contains the matching
+portable runtime artifact and the target-specific AOT artifact. Public consumer
+builds receive those artifacts through package-manager dependencies, not through
+runtime downloads or app-owned archive environment variables.
+
+The crate exposes two preload hooks:
+
+```rust,no_run
+use oliphaunt_wasix::Oliphaunt;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Oliphaunt::preload()?;
+    Ok(())
+}
+```
+
+Call `preload` before a visible startup path when you want to warm the shipped
+runtime and target AOT artifact.
+
+Startup configuration belongs on the builders:
+
+- `postgres_config(...)` for PostgreSQL GUCs;
+- `username(...)` and `database(...)` for the session target;
+- `relaxed_durability(true)` for cacheable local workloads;
+- `startup_arg(...)` for advanced startup arguments.
+
+## Supported Targets
+
+Release assets are built for:
+
+- macOS arm64;
+- Linux x64;
+- Linux arm64;
+- Windows x64.
+
+Read capabilities and package reports before enabling target-specific UI. A host
+target needs matching shipped runtime assets for the WASM runtime to open.
+
+Browser, worker, and mobile app topics belong to their platform SDK pages.
+`oliphaunt-wasix` is the Rust package for local embedded and desktop/server WASM
+hosts.
+
+## Server-Compatible Access
+
+Reach for `OliphauntServer` when you need client-library compatibility:
+
+- SQLx migrations and query APIs;
+- ORMs that expect a PostgreSQL URI;
+- Python, Go, or Node clients in local app tests;
+- local tools that already speak the Postgres wire protocol.
+
+Reach for `Oliphaunt` when you control the Rust call site. It avoids the socket
+layer and keeps the API surface smaller.

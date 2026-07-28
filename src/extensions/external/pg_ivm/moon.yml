@@ -1,0 +1,54 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-pg-ivm"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "external", "release-product"]
+dependsOn:
+  - "extension-runtime-contract"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+
+project:
+  release:
+    component: "oliphaunt-extension-pg-ivm"
+    packagePath: "src/extensions/external/pg_ivm"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/pg_ivm"
+    deps:
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/external/pg_ivm/**/*"
+      - "/src/extensions/tools/check-extension-tree.mjs"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-pg-ivm --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-pg-ivm:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/external/pg_ivm/**/*"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-pg-ivm/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

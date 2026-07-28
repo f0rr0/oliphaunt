@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "kind": "postgres-backend-query-response",
+  "cases": [
+    {
+      "name": "select_value_and_null",
+      "description": "One simple-query result row with a text value and SQL NULL.",
+      "responseHex": "5400000036000276616c75650000000000000000000019ffffffffffff0000656d7074790000000000000000000019ffffffffffff0000440000000f00020000000131ffffffff430000000d53454c4543542031005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [
+            {
+              "name": "value",
+              "typeOid": 25,
+              "format": "text"
+            },
+            {
+              "name": "empty",
+              "typeOid": 25,
+              "format": "text"
+            }
+          ],
+          "rows": [
+            [
+              "1",
+              null
+            ]
+          ],
+          "commandTag": "SELECT 1",
+          "rowCount": 1
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "rowDescription",
+          "dataRow",
+          "commandComplete",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
+      "name": "extended_controls_insert",
+      "description": "Extended-query control frames without row data.",
+      "responseHex": "310000000432000000046e00000004430000000f494e5345525420302030005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [],
+          "rows": [],
+          "commandTag": "INSERT 0 0",
+          "rowCount": 0
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "parseComplete",
+          "bindComplete",
+          "noData",
+          "commandComplete",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
+      "name": "async_controls_before_command",
+      "description": "Async backend control messages before a command completion.",
+      "responseHex": "5300000019636c69656e745f656e636f64696e670055544638004e00000014534e4f54494345004d68656c6c6f000041000000180000007b6368616e6e656c007061796c6f616400430000000d53454c4543542030005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [],
+          "rows": [],
+          "commandTag": "SELECT 0",
+          "rowCount": 0
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "parameterStatus",
+          "notice",
+          "notification",
+          "commandComplete",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
+      "name": "postgres_error_relation_missing",
+      "description": "Structured PostgreSQL ErrorResponse with SQLSTATE and message fields.",
+      "responseHex": "450000002c534552524f5200433432503031004d72656c6174696f6e20646f6573206e6f7420657869737400005a0000000549",
+      "queryExpectation": {
+        "postgresError": {
+          "severity": "ERROR",
+          "sqlstate": "42P01",
+          "message": "relation does not exist"
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "error",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
+      "name": "bytes_after_ready_for_query",
+      "description": "Typed query parsers must reject trailing bytes after ReadyForQuery.",
+      "responseHex": "430000000d53454c4543542030005a000000054900",
+      "queryExpectation": {
+        "engineErrorContains": "backend returned bytes after ReadyForQuery"
+      }
+    },
+    {
+      "name": "copy_response_rejected",
+      "description": "Typed query helpers reject COPY traffic and leave it to raw protocol APIs.",
+      "responseHex": "4700000007000000",
+      "queryExpectation": {
+        "engineErrorContains": "does not support COPY protocol responses"
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "copyInResponse"
+        ]
+      }
+    },
+    {
+      "name": "unexpected_backend_tag",
+      "description": "Typed query parsers reject unknown backend tags.",
+      "responseHex": "5200000008000000005a0000000549",
+      "queryExpectation": {
+        "engineErrorContains": "unexpected backend message tag 0x52"
+      }
+    }
+  ]
+}

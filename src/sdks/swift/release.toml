@@ -1,0 +1,16 @@
+id = "oliphaunt-swift"
+owner = "@oliphaunt/sdk-swift"
+kind = "sdk"
+publish_targets = ["swift-package-source-tag", "github-release"]
+release_artifacts = [
+  "swiftpm-root-package",
+  "swift-source-package",
+  "apple-assets-via-liboliphaunt",
+  "exact-extension-xcframework-inputs",
+]
+derived_version_files = ["Package.swift"]
+
+[compatibility_versions.oliphaunt-swift-liboliphaunt]
+source_product = "liboliphaunt-native"
+path = "src/sdks/swift/LIBOLIPHAUNT_VERSION"
+parser = "raw"

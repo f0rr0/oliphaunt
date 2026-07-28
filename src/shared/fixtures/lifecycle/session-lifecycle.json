@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "oliphaunt-session-lifecycle-expectations",
+  "expectations": [
+    {
+      "name": "close-detaches-after-active-work",
+      "queuedWorkAfterClose": "databaseClosed",
+      "activeWork": "allowedToFinishUnlessCancelled"
+    },
+    {
+      "name": "background-idle",
+      "prepareForBackground": ["checkpoint"],
+      "resumeFromBackground": ["sessionProbe"]
+    },
+    {
+      "name": "background-active-work",
+      "prepareForBackground": ["cancel"],
+      "checkpoint": "skipped"
+    },
+    {
+      "name": "background-pinned-transaction",
+      "prepareForBackground": ["noCheckpoint"],
+      "reason": "transaction owns the single physical session"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+packages:
+  - "."
+
+minimumReleaseAge: 1440
+autoInstallPeers: false
+updateNotifier: false
+verifyDepsBeforeRun: false
+
+allowBuilds:
+  electron: true
+  esbuild: true

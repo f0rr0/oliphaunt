@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${OLIPHAUNT_WASMER_LLVM_TEST_ARCHIVE:?}"
+: "${OLIPHAUNT_WASMER_LLVM_TEST_LOG:?}"
+
+printf '%s\n' "$*" >> "$OLIPHAUNT_WASMER_LLVM_TEST_LOG"
+
+output=""
+url=""
+expect_output=0
+for argument in "$@"; do
+  if [ "$expect_output" = 1 ]; then
+    output="$argument"
+    expect_output=0
+    continue
+  fi
+  case "$argument" in
+    --output) expect_output=1 ;;
+    https://*) url="$argument" ;;
+  esac
+done
+
+if [ -z "$output" ] || [ -z "$url" ]; then
+  echo "fake curl requires an HTTPS URL and --output" >&2
+  exit 90
+fi
+if [ -n "${OLIPHAUNT_WASMER_LLVM_TEST_FINAL:-}" ] && [ -e "$OLIPHAUNT_WASMER_LLVM_TEST_FINAL" ]; then
+  echo "final install existed while the archive was downloading" >&2
+  exit 91
+fi
+if [ "${OLIPHAUNT_WASMER_LLVM_TEST_MODE:-copy}" = "transport-fail" ]; then
+  printf 'partial transport bytes\n' > "$output"
+  exit 56
+fi
+cp "$OLIPHAUNT_WASMER_LLVM_TEST_ARCHIVE" "$output"
