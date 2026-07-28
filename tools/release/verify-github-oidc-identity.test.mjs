@@ -105,17 +105,84 @@ test("requires the exact direct workflow, environment, SHA, and hosted runner cl
   }
 });
 
-test("rejects reusable-workflow-only claims", () => {
+test("accepts an exact optional current-job workflow ref with or without its SHA", () => {
   const expected = expectedOidcIdentity(environment());
-  for (const [claim, value] of [
-    ["job_workflow_ref", `f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main`],
-    ["job_workflow_sha", SHA],
+  for (const aliases of [
+    {},
+    { job_workflow_ref: expected.workflow_ref },
+    {
+      job_workflow_ref: expected.workflow_ref,
+      job_workflow_sha: expected.workflow_sha,
+    },
+  ]) {
+    assert.doesNotThrow(() => verifyOidcClaims({ ...expected, ...aliases }, expected));
+  }
+});
+
+test("rejects a current-job workflow SHA without the file-identifying ref", () => {
+  const expected = expectedOidcIdentity(environment());
+  assert.throws(
+    () => verifyOidcClaims({
+      ...expected,
+      job_workflow_sha: expected.workflow_sha,
+    }, expected),
+    /claim job_workflow_sha requires claim job_workflow_ref/u,
+  );
+});
+
+test("rejects substituted or malformed current-job workflow aliases", () => {
+  const expected = expectedOidcIdentity(environment());
+  for (const [claim, aliases] of [
+    ["job_workflow_ref", {
+      job_workflow_ref: `f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main`,
+    }],
+    ["job_workflow_ref", { job_workflow_ref: null }],
+    ["job_workflow_ref", { job_workflow_ref: "" }],
+    ["job_workflow_sha", {
+      job_workflow_ref: expected.workflow_ref,
+      job_workflow_sha: "f".repeat(40),
+    }],
+    ["job_workflow_sha", {
+      job_workflow_ref: expected.workflow_ref,
+      job_workflow_sha: null,
+    }],
+    ["job_workflow_sha", {
+      job_workflow_ref: expected.workflow_ref,
+      job_workflow_sha: "",
+    }],
+    ["job_workflow_ref", {
+      job_workflow_ref: `f0rr0/oliphaunt/.github/workflows/ci.yml@refs/heads/main`,
+      job_workflow_sha: expected.workflow_sha,
+    }],
   ]) {
     assert.throws(
-      () => verifyOidcClaims({ ...expected, [claim]: value }, expected),
-      new RegExp(`claim ${claim} is forbidden for a direct release workflow`, "u"),
+      () => verifyOidcClaims({ ...expected, ...aliases }, expected),
+      new RegExp(`claim ${claim} mismatch`, "u"),
     );
   }
+});
+
+test("rejects a root-branch current-job alias on an exact transport continuation", () => {
+  const env = {
+    ...environment(),
+    GITHUB_REF: releaseTransportFullRef(SHA),
+    RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+  };
+  const expected = expectedOidcIdentity(env);
+  assert.throws(
+    () => verifyOidcClaims({
+      ...expected,
+      job_workflow_ref: `f0rr0/oliphaunt/.github/workflows/release.yml@refs/heads/main`,
+    }, expected),
+    /claim job_workflow_ref mismatch/u,
+  );
+  assert.doesNotThrow(
+    () => verifyOidcClaims({
+      ...expected,
+      job_workflow_ref: expected.workflow_ref,
+      job_workflow_sha: expected.workflow_sha,
+    }, expected),
+  );
 });
 
 test("rejects unsupported events, refs, operations, and malformed SHAs", () => {
@@ -158,7 +225,12 @@ test("requests and validates the live-token response without exposing it", async
   let request;
   const fetchImpl = async (url, options) => {
     request = { url, options };
-    return new Response(JSON.stringify({ value: jwt(expected) }), {
+    return new Response(JSON.stringify({
+      value: jwt({
+        ...expected,
+        job_workflow_ref: expected.workflow_ref,
+      }),
+    }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });

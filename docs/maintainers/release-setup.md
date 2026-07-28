@@ -1,6 +1,6 @@
 # Release setup
 
-Status: normative external-setup guide. Last verified: 2026-07-23. Owner: repository maintainers.
+Status: normative external-setup guide. Last verified: 2026-07-28. Owner: repository maintainers.
 
 This document covers state that cannot live in the repository. The executable
 contract is the direct least-privilege workflow in
@@ -72,10 +72,15 @@ short-lived OIDC credentials without bootstrap tokens.
 Cargo and npm publication jobs run directly in `.github/workflows/release.yml`.
 Their GitHub OIDC identity therefore contains that exact file in
 `workflow_ref`, its exact commit in `workflow_sha`, and the protected
-`release-publish` environment claim. There is no called reusable-workflow
-identity in this topology. The workflow performs a read-only live-token check
-of the repository, workflow, ref, SHA, hosted runner, event, and environment
-claims before either mutating operation.
+`release-publish` environment claim. GitHub may also emit `job_workflow_ref`
+as an optional current-job alias, with or without `job_workflow_sha`. The ref
+must exactly equal the canonical `workflow_ref`; a present SHA alias is
+accepted only alongside that exact ref and must equal `workflow_sha`. This
+rejects a distinct called reusable-workflow identity without requiring the SHA
+alias to accompany every ref alias. Repository policy also forbids delegated
+operation jobs and `workflow_call`. The workflow performs a read-only
+live-token check of the repository, workflow, ref, SHA, hosted runner, event,
+and environment claims before either mutating operation.
 
 | Registry | Exact external configuration | Ref binding |
 | --- | --- | --- |

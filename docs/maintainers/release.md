@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-23. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-28. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -259,14 +259,20 @@ Trusted publishers match `release.yml`: direct publication exposes that file
 through `workflow_ref`, together with the exact `workflow_sha` and the
 `release-publish` environment claim. A root run has the `main` branch ref; an
 automatic continuation has only the deterministic
-`oliphaunt-release-transport/<full-sha>` tag ref and a `tag` ref type.
-There is no called-workflow
-`job_workflow_ref` in this topology. An unconditional, bounded,
+`oliphaunt-release-transport/<full-sha>` tag ref and a `tag` ref type. GitHub
+may also emit `job_workflow_ref` as an optional current-job alias for a
+directly defined job, with or without `job_workflow_sha`. The ref must exactly
+equal the already-required canonical `workflow_ref`. A present SHA alias is
+accepted only alongside that exact ref and must equal the canonical
+`workflow_sha`; a SHA alone cannot identify a workflow file. This rejects a
+distinct called-workflow identity without assuming that GitHub always emits
+the SHA alias. Repository policy separately forbids delegated operation jobs
+and `workflow_call`. An unconditional, bounded,
 repository-read-only validation job checks the canonical repository, exact
 workflow commit, operation, optional exact commit, continuation pointer, and
-the corresponding root-main or exact-transport ref
-before any operation job. Malformed or contradictory manual inputs therefore
-fail before release work begins.
+the corresponding root-main or exact-transport ref before any operation job.
+Malformed or contradictory manual inputs therefore fail before release work
+begins.
 After bootstrap, derive the complete configuration inventory from the exact
 publication lock with `tools/release/trusted-publisher-config.mjs`. Its default
 plan is offline/read-only; authenticated inspection requires `--audit`, and

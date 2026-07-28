@@ -9,10 +9,10 @@ const OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const OIDC_AUDIENCE = "oliphaunt-release-identity-preflight";
 const MAX_OIDC_RESPONSE_BYTES = 128 * 1024;
 const CALLER_WORKFLOW = "release.yml";
-const REUSABLE_WORKFLOW_ONLY_CLAIMS = Object.freeze([
-  "job_workflow_ref",
-  "job_workflow_sha",
-]);
+const CURRENT_JOB_WORKFLOW_ALIAS_CLAIMS = Object.freeze({
+  job_workflow_ref: "workflow_ref",
+  job_workflow_sha: "workflow_sha",
+});
 const ENVIRONMENT_BY_OPERATION = Object.freeze({
   "publish-bootstrap": "release-bootstrap",
   publish: "release-publish",
@@ -84,10 +84,23 @@ export function verifyOidcClaims(claims, expected) {
   if (claims === null || typeof claims !== "object" || Array.isArray(claims)) {
     throw new Error("GitHub OIDC token payload must be an object");
   }
-  for (const claim of REUSABLE_WORKFLOW_ONLY_CLAIMS) {
-    if (Object.hasOwn(claims, claim)) {
+  // GitHub may expose the current-job workflow ref without its SHA. A directly
+  // defined job aliases the canonical workflow identity; a called workflow
+  // does not. The SHA alone does not identify a workflow file, so accept it
+  // only when the exact ref alias is also present. Do not require the reverse
+  // undocumented co-presence relationship.
+  if (
+    Object.hasOwn(claims, "job_workflow_sha") &&
+    !Object.hasOwn(claims, "job_workflow_ref")
+  ) {
+    throw new Error(
+      "GitHub OIDC claim job_workflow_sha requires claim job_workflow_ref",
+    );
+  }
+  for (const [claim, canonicalClaim] of Object.entries(CURRENT_JOB_WORKFLOW_ALIAS_CLAIMS)) {
+    if (Object.hasOwn(claims, claim) && claims[claim] !== expected[canonicalClaim]) {
       throw new Error(
-        `GitHub OIDC claim ${claim} is forbidden for a direct release workflow; got ${printable(claims[claim])}`,
+        `GitHub OIDC claim ${claim} mismatch: expected ${printable(expected[canonicalClaim])}, got ${printable(claims[claim])}`,
       );
     }
   }
