@@ -1,0 +1,4 @@
+name = "openssl"
+url = "https://github.com/openssl/openssl.git"
+branch = "openssl-3.5.6"
+commit = "286ddeaac037533bbdce65b3c689e3f7ffebf0f6"

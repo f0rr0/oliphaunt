@@ -1,0 +1,15 @@
+schema = "oliphaunt-extension-runtime-contract-v1"
+
+[runtime]
+resource_layout = "share/postgresql/extension"
+dynamic_loader = "postgres-compatible"
+static_registry_abi = 1
+
+[selection]
+unit = "sql-extension-name"
+implicit_extensions = false
+implicit_extension_groups = false
+
+[artifacts]
+base_runtime_contains_optional_extensions = false
+extension_artifacts_are_exact = true

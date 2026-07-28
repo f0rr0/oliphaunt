@@ -1,0 +1,82 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-artifacts-wasix"
+language: "unknown"
+layer: "tool"
+stack: "systems"
+tags: ["extensions", "artifacts", "wasix"]
+dependsOn:
+  - id: "extension-model"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "source-inputs"
+    scope: "build"
+
+project:
+  title: "WASIX Extension Artifacts"
+  description: "Publishable exact-extension artifact checks for the WASIX runtime."
+  owner: "oliphaunt"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    deps:
+      - "extension-model:check"
+    inputs:
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-target:
+    tags: ["release", "artifact-builder", "ci-extension-artifacts-wasix"]
+    command: "bash src/extensions/artifacts/wasix/tools/package-release-assets.sh"
+    deps:
+      - "extension-artifacts-wasix:check"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/tools/policy/source-fetch-core.mjs"
+      # These tools execute in the same hosted qualification job before this
+      # public-only packager. Keep their affected edge here without making
+      # either tool part of a release product's semantic identity.
+      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-target-profiles.toml"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/verify-extension-qualification-build.mjs"
+      - "/tools/xtask/**/*"
+    outputs:
+      - "/target/extensions/wasix/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

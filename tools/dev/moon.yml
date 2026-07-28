@@ -1,0 +1,64 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "dev-tools"
+language: "bash"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "developer-experience"]
+
+project:
+  title: "Developer Tools"
+  description: "Local bootstrap, doctor, hook installation, and smoke helpers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  doctor:
+    tags: ["diagnostics", "developer-experience"]
+    command: "bash tools/dev/doctor.sh"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.prototools"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/tools/dev/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-tooling-stack.sh"
+    inputs:
+      - "/.github/actions/**/*"
+      - "/.github/workflows/**/*"
+      - "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}"
+      - "/docs/maintainers/tooling.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/tools/dev/**/*"
+      - "/tools/policy/assertions/repository-semantics.mjs"
+      - "/tools/policy/check-tooling-stack.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      # repo:tooling owns this exact command in hosted CI.
+      runInCI: skip
+  helper-reference-audit:
+    tags: ["diagnostics", "advisory", "cleanup"]
+    command: "bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  source-reference-audit:
+    tags: ["diagnostics", "advisory", "cleanup"]
+    command: "bun tools/policy/list-source-reference-candidates.mjs --max-refs 0"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

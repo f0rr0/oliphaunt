@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: prefer POSIX semaphores
+
+The WASIX runtime should not accidentally select PostgreSQL's SysV
+semaphore implementation while shared memory is being emulated in-process.
+Prefer unnamed POSIX semaphores the same way PostgreSQL's Linux, FreeBSD, and
+Cygwin templates do.
+---
+ src/template/wasix-dl | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/template/wasix-dl b/src/template/wasix-dl
+index f3792d3e83..10477bdb8a 100644
+--- a/src/template/wasix-dl
++++ b/src/template/wasix-dl
+@@ -11,4 +11,9 @@ DLSUFFIX=".so"
+ THREAD_CFLAGS="-pthread"
+ THREAD_LIBS="-pthread"
+
++# Prefer the semaphore path already used by PostgreSQL's POSIX templates.
++if test x"$PREFERRED_SEMAPHORES" = x"" ; then
++  PREFERRED_SEMAPHORES=UNNAMED_POSIX
++fi
++
+ # The linked wasm artifact is a standalone side module loaded by the Rust host.
+--
+2.49.0

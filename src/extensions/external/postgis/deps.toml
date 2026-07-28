@@ -1,0 +1,49 @@
+schema = "oliphaunt-extension-deps-v1"
+
+[[dependencies]]
+name = "geos"
+source = "geos"
+version = "3.14.1"
+linkage = "static"
+license = "LGPL-2.1-or-later"
+mobile-static-dependencies = ["geos-c", "geos"]
+
+[[dependencies]]
+name = "proj"
+source = "proj"
+version = "9.8.1"
+linkage = "static"
+license = "MIT"
+mobile-static-dependencies = ["proj"]
+
+[[dependencies]]
+name = "sqlite"
+source = "sqlite"
+version = "3.53.1"
+linkage = "static"
+license = "blessing"
+mobile-static-dependencies = ["sqlite"]
+
+[[dependencies]]
+name = "libxml2"
+source = "libxml2"
+version = "2.14.6"
+linkage = "static"
+license = "MIT"
+mobile-static-dependencies = ["libxml2"]
+
+[[dependencies]]
+name = "json-c"
+source = "json-c"
+version = "0.18"
+linkage = "static"
+license = "MIT"
+mobile-static-dependencies = ["json-c"]
+
+[[dependencies]]
+name = "libiconv"
+source = "libiconv"
+version = "1.19"
+linkage = "static"
+license = "LGPL-2.1-or-later"
+mobile-static-dependencies = ["libiconv", "libcharset"]

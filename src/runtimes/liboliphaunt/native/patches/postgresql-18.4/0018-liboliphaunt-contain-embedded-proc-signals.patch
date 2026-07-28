@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sat, 18 Jul 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: contain embedded process signals
+
+An embedded backend shares its process with the host runtime.  Process-wide
+SIGUSR1 ownership and process-directed ProcSignal delivery can therefore
+overwrite a host handler or terminate a host whose signal disposition changes
+after PostgreSQL starts.
+
+Keep normal PostgreSQL server behavior unchanged.  In OLIPHAUNT_EMBEDDED
+builds, leave the host's SIGUSR1 disposition untouched and synchronously
+dispatch the one supported backend's ProcSignal flags.  Reject attempts to
+signal any other PID so stale embedded shared-memory state cannot target an
+unrelated host process.
+---
+ src/backend/storage/ipc/procsignal.c | 32 ++++++++++++++++++++++++++++----
+ src/backend/tcop/postgres.c          |  5 +++++
+ 2 files changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
+index 4f9dcf1..b68d502 100644
+--- a/src/backend/storage/ipc/procsignal.c
++++ b/src/backend/storage/ipc/procsignal.c
+@@ -268,6 +268,31 @@ ProcSignalClearSlot(ProcNumber procNumber)
+
+ 	ConditionVariableBroadcast(&slot->pss_barrierCV);
+ }
++
++/*
++ * Embedded mode owns one backend inside a host process.  Dispatch its
++ * ProcSignal flags directly so PostgreSQL never sends the host SIGUSR1.
++ */
++static int
++oliphaunt_send_proc_signal(pid_t pid)
++{
++#ifdef OLIPHAUNT_EMBEDDED
++	int			save_errno;
++
++	if (pid != MyProcPid)
++	{
++		errno = ESRCH;
++		return -1;
++	}
++
++	save_errno = errno;
++	procsignal_sigusr1_handler(SIGUSR1);
++	errno = save_errno;
++	return 0;
++#else
++	return kill(pid, SIGUSR1);
++#endif
++}
+
+ /*
+  * SendProcSignal
+@@ -298,7 +324,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
+ 			slot->pss_signalFlags[reason] = true;
+ 			SpinLockRelease(&slot->pss_mutex);
+ 			/* Send signal */
+-			return kill(pid, SIGUSR1);
++			return oliphaunt_send_proc_signal(pid);
+ 		}
+ 		SpinLockRelease(&slot->pss_mutex);
+ 	}
+@@ -326,7 +352,7 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
+ 					slot->pss_signalFlags[reason] = true;
+ 					SpinLockRelease(&slot->pss_mutex);
+ 					/* Send signal */
+-					return kill(pid, SIGUSR1);
++					return oliphaunt_send_proc_signal(pid);
+ 				}
+ 				SpinLockRelease(&slot->pss_mutex);
+ 			}
+@@ -407,7 +433,8 @@ EmitProcSignalBarrier(ProcSignalBarrierType type)
+ 				/* see SendProcSignal for details */
+ 				slot->pss_signalFlags[PROCSIG_BARRIER] = true;
+ 				SpinLockRelease(&slot->pss_mutex);
+-				kill(pid, SIGUSR1);
++				/* Failure is handled by the barrier participant checks below. */
++				(void) oliphaunt_send_proc_signal(pid);
+ 			}
+ 			else
+ 				SpinLockRelease(&slot->pss_mutex);
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index d4cdf45..79222a9 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4511,6 +4511,11 @@ PostgresMain(const char *dbname, const char *username)
+ 		 * midst of output during who-knows-what operation...
+ 		 */
+ 		pqsignal(SIGPIPE, SIG_IGN);
++#ifndef OLIPHAUNT_EMBEDDED
+ 		pqsignal(SIGUSR1, procsignal_sigusr1_handler);
++#else
++		/* ProcSignal delivery is synchronous and the host owns SIGUSR1. */
++		Assert(!IsUnderPostmaster);
++#endif
+ 		pqsignal(SIGUSR2, SIG_IGN);
+ 		pqsignal(SIGFPE, FloatExceptionHandler);

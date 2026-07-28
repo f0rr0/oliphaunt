@@ -1,0 +1,66 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "files": {
+    "includes": [
+      "package.json",
+      "biome.json",
+      "renovate.json",
+      ".markdownlint-cli2.jsonc",
+      "src/docs/package.json",
+      "src/docs/tsconfig.json",
+      "src/docs/app/**/*.ts",
+      "src/docs/app/**/*.tsx",
+      "src/docs/app/**/*.css",
+      "src/docs/lib/**/*.ts",
+      "src/docs/mdx-components.tsx",
+      "src/docs/next.config.mjs",
+      "src/docs/source.config.ts",
+      "src/docs/tools/**/*.mjs",
+      "src/sdks/react-native/package.json",
+      "src/sdks/react-native/typedoc.json",
+      "src/sdks/react-native/react-native.config.js",
+      "src/sdks/react-native/src/**/*.ts",
+      "src/sdks/react-native/src/**/*.tsx",
+      "src/sdks/js/package.json",
+      "src/sdks/js/typedoc.json",
+      "src/sdks/js/jsr.json",
+      "src/sdks/js/src/**/*.ts",
+      "tools/perf/matrix/**/*.json",
+      "tools/perf/matrix/**/*.ts",
+      "tools/test/**/*.mjs",
+      "!**/node_modules",
+      "!**/lib",
+      "!**/dist",
+      "!**/.expo",
+      "!**/ios",
+      "!**/android"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noExplicitAny": "off"
+      }
+    }
+  }
+}

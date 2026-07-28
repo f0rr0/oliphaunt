@@ -1,2 +1,2 @@
-# Shared by `scripts/validate.sh workflows` and the workflow-lint CI job.
+# Shared by `moon run ci-workflows:check` and the workflow-lint CI job.
 rules: {}

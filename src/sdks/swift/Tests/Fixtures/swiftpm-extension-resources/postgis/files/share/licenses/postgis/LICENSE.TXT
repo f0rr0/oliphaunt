@@ -1,0 +1,1 @@
+PostGIS license test fixture.

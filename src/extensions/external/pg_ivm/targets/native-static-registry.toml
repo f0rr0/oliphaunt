@@ -1,0 +1,11 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "native-static-registry"
+status = "supported"
+build_kind = "pgxs-static-registry"
+source_files = [
+  "createas.c",
+  "matview.c",
+  "pg_ivm.c",
+  "ruleutils.c",
+  "subselect.c",
+]

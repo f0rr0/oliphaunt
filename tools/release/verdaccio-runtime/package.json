@@ -1,0 +1,13 @@
+{
+  "name": "@oliphaunt/verdaccio-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22.13 <25",
+    "pnpm": "11.5.0"
+  },
+  "dependencies": {
+    "verdaccio": "6.8.0"
+  }
+}

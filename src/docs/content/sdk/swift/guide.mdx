@@ -1,0 +1,157 @@
+---
+title: Build With Swift
+description: Add Oliphaunt to iOS or macOS with Swift concurrency, app-container storage, lifecycle hooks, exact extensions, and backup APIs.
+---
+
+# Build With Swift
+
+Use the Swift SDK in iOS and macOS apps. It wraps the native runtime behind
+Swift async APIs and keeps database work off the main actor.
+
+<Callout type="info" title="Apple apps start with Swift APIs">
+React Native on Apple platforms delegates runtime behavior through this SDK, but
+Swift and SwiftUI apps use `OliphauntDatabase` directly.
+</Callout>
+
+<SdkGuideSummary id="swift" />
+
+<Steps>
+<Step>
+
+### Install
+
+Add the Swift package in Xcode or `Package.swift`. The package includes the
+Swift API plus the platform runtime artifacts required for the selected target.
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.6.0")
+]
+```
+
+Persistent roots live under your app container. App users install your app; the
+SDK package carries the runtime files it needs.
+
+</Step>
+<Step>
+
+### Open and query
+
+Open an `OliphauntDatabase` with a file URL root, run SQL with async calls, and
+close when the app no longer needs the handle.
+
+<!-- oliphaunt-snippet: oliphaunt-swift -->
+
+```swift
+let appSupport = FileManager.default.urls(
+    for: .applicationSupportDirectory,
+    in: .userDomainMask
+)[0]
+
+let database = try await OliphauntDatabase.open(
+    configuration: OliphauntConfiguration(
+        root: appSupport.appending(path: "main.oliphaunt"),
+        mode: .nativeDirect,
+        extensions: ["vector"]
+    )
+)
+
+let rows = try await database.query("SELECT 1::text AS value")
+let value = try rows.getText(row: 0, column: "value")
+
+try await database.close()
+```
+
+Keep one database handle in app state and share it through your app's dependency
+model. The handle owns a serialized session boundary.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use async SQL helpers for application data. A SwiftUI model or app service can
+own the database handle and expose app-specific methods:
+
+```swift
+try await database.execute("""
+CREATE TABLE IF NOT EXISTS notes (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+)
+""")
+
+try await database.query(
+    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
+    parameters: [
+        .text("First note"),
+        .text("Stored in an embedded PostgreSQL root")
+    ]
+)
+
+let notes = try await database.query(
+    "SELECT id, title FROM notes ORDER BY id DESC LIMIT 20"
+)
+```
+
+Keep UI updates on the main actor, but keep database work behind the SDK's async
+database actor.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure root URL, runtime mode, selected exact extensions, resource bundle,
+startup identity, and durability through the Swift configuration API. Resource
+locations are explicit for tests and advanced app layouts; normal apps use the
+packaged defaults.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+Mobile direct mode is the primary Apple runtime. It uses one resident backend per
+app process and one physical session. Desktop/server boundaries are available on
+Apple targets only when `capabilities()` advertises them.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Swift exposes lifecycle as async API over a serial execution model. Use the
+provided background/foreground hooks around app lifecycle transitions so the SDK
+can checkpoint, close transient work, and resume cleanly where supported.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names in app configuration. The app bundle contains
+selected extension artifacts plus required dependencies. `CREATE EXTENSION`
+succeeds when the selected runtime resources contain that extension for the
+Apple target.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use SDK backup and restore APIs with app-owned file URLs. The SDK validates
+formats and target roots before calling into the native runtime.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="swift" />
+
+## Troubleshooting
+
+Most Apple failures come from invalid file URLs, missing runtime resources, root
+locks, mode capability errors, or extension selection mismatches. PostgreSQL
+errors preserve SQLSTATE where the backend returns it.

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Oliphaunt Tauri Todo",
+  "version": "0.1.0",
+  "identifier": "dev.oliphaunt.examples.tauri.todo",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "devUrl": "http://localhost:1421",
+    "beforeBuildCommand": "pnpm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Oliphaunt Tauri Todo",
+        "width": 1100,
+        "height": 760
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../../src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/icons/icon.png"
+    ]
+  }
+}

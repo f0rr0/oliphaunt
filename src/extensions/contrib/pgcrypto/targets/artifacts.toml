@@ -1,0 +1,14 @@
+schema = "oliphaunt-extension-artifact-targets-v1"
+profiles = ["native-desktop-v1", "native-mobile-v1", "wasix-portable-v1"]
+
+[evidence.native-desktop-v1]
+kind = "build-package-and-install"
+reference = "src/extensions/artifacts/native/tools/package-release-assets.sh + tools/release/check-staged-artifacts.mjs"
+
+[evidence.native-mobile-v1]
+kind = "build-package-and-install"
+reference = "src/extensions/artifacts/native/tools/package-release-assets.sh + src/sdks/react-native/tools/mobile-e2e.sh"
+
+[evidence.wasix-portable-v1]
+kind = "build-and-lifecycle-smoke"
+reference = "src/extensions/evidence/matrix.toml + src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh"
