@@ -44,6 +44,9 @@ import {
   RELEASE_TRANSPORT_REF_MAX_CORE_REQUESTS,
   RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES,
 } from "./release-continuation-read-budget.mjs";
+import {
+  RELEASE_PLEASE_MARK_TAGGED_MAX_MUTATION_ATTEMPTS,
+} from "./release-please-pr-lifecycle.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const GITHUB_ASSET_ROLES = new Set(["github-release-asset", "github-release-metadata"]);
@@ -75,11 +78,24 @@ export const FIRST_RELEASE_TRANSFER_REQUEST_TOTAL = Object.values(
 export const FIRST_RELEASE_RELEASE_API_REQUESTS = 299;
 export const FIRST_RELEASE_ATTESTATION_API_REQUESTS = 6;
 export const FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS = 1;
+export const RELEASE_PLEASE_ASSERT_MARKABLE_API_REQUESTS = 3;
+// Exact PR resolution costs three reads. Each of the two idempotent label
+// transitions may consume its bounded maximum of pre-read, write, and
+// post-read attempts before converging.
+export const RELEASE_PLEASE_MARK_TAGGED_API_REQUESTS =
+  RELEASE_PLEASE_ASSERT_MARKABLE_API_REQUESTS
+  + (2 * 3 * RELEASE_PLEASE_MARK_TAGGED_MAX_MUTATION_ATTEMPTS);
+export const RELEASE_PLEASE_LIFECYCLE_API_REQUESTS =
+  (2 * RELEASE_PLEASE_ASSERT_MARKABLE_API_REQUESTS)
+  + RELEASE_PLEASE_MARK_TAGGED_API_REQUESTS;
+export const RELEASE_PLEASE_LIFECYCLE_CONTENT_WRITES =
+  2 * RELEASE_PLEASE_MARK_TAGGED_MAX_MUTATION_ATTEMPTS;
 export const FIRST_RELEASE_NOMINAL_CORE_REQUESTS =
   FIRST_RELEASE_TRANSFER_REQUEST_TOTAL
   + FIRST_RELEASE_RELEASE_API_REQUESTS
   + FIRST_RELEASE_ATTESTATION_API_REQUESTS
-  + FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS;
+  + FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS
+  + RELEASE_PLEASE_LIFECYCLE_API_REQUESTS;
 
 export function pagesForRows(count) {
   if (!Number.isSafeInteger(count) || count < 0) fail("page row count must be a non-negative safe integer");
@@ -144,7 +160,13 @@ export function conservativeCoreRequestCount({
     + releaseAssetRequests
     + receiptRequests
     + attestationWrites
-    + transportTagWrites;
+    + transportTagWrites
+    // Root and immediate pre-promotion assertions each read the associated PR,
+    // its exact current state, and the tagged-label definition. Final closure
+    // repeats those reads, then independently reconciles an additive tagged
+    // label and a pending-label removal with pre/post reads around every
+    // bounded idempotent attempt.
+    + RELEASE_PLEASE_LIFECYCLE_API_REQUESTS;
 }
 
 function fail(message) {
@@ -244,7 +266,13 @@ export function contentWriteBudgetFromCounts({
     + assetCount
     + attestationWrites
     + sourceTagWrites;
-  const totalContentWrites = preRegistryContentWrites + productCount;
+  // Finalization promotes one draft per product, then closes the exact merged
+  // Release Please PR through two bounded idempotent additive/removal
+  // mutations, conservatively reserving every permitted retry.
+  const totalContentWrites =
+    preRegistryContentWrites
+    + productCount
+    + RELEASE_PLEASE_LIFECYCLE_CONTENT_WRITES;
   const effectiveAssetCounts = assetCounts ?? new Map(Array.from(
     { length: productCount },
     (_, index) => [

@@ -175,6 +175,50 @@ test("coverage recognizes only the exact unpublished first-release rollback base
   assert.equal(coverageBaseline(wrongParent), null);
 });
 
+test("a repeated introduction repair with an unchanged unreleased manifest is not misclassified as a rollback", () => {
+  const state = firstReleaseRollbackState();
+  state.before = { ...state.after };
+  assert.equal(coverageBaseline(state)?.kind, "repeated-introduction");
+});
+
+for (const [name, mutate] of [
+  [
+    "a removed manifest path",
+    (state) => { delete state.after[UNAFFECTED_PATHS[0]]; },
+  ],
+  [
+    "an added manifest path",
+    (state) => { state.after["src/extra"] = "0.0.0"; },
+  ],
+  [
+    "a removed configured path",
+    (state) => {
+      delete state.config.packages[UNAFFECTED_PATHS[0]];
+      delete state.after[UNAFFECTED_PATHS[0]];
+    },
+  ],
+  [
+    "a renamed configured path",
+    (state) => {
+      const packageConfig = state.config.packages[UNAFFECTED_PATHS[0]];
+      delete state.config.packages[UNAFFECTED_PATHS[0]];
+      state.config.packages["src/renamed"] = packageConfig;
+      delete state.after[UNAFFECTED_PATHS[0]];
+      state.after["src/renamed"] = "0.0.0";
+    },
+  ],
+]) {
+  test(`a repeated introduction repair rejects ${name}`, () => {
+    const state = firstReleaseRollbackState();
+    state.before = { ...state.after };
+    mutate(state);
+    assert.throws(
+      () => coverageBaseline(state),
+      /must preserve the complete configured manifest path set/u,
+    );
+  });
+}
+
 for (const [name, mutate, pattern] of [
   [
     "a partial first-release rollback",

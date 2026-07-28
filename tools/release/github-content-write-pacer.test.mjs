@@ -42,10 +42,15 @@ import {
 import {
   RELEASE_FINALIZATION_CLEANUP_MARGIN_SECONDS,
   RELEASE_FINALIZATION_RESERVE_SECONDS,
+  RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES,
   RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS,
   RELEASE_JOB_HARD_WINDOW_SECONDS,
   RELEASE_MINIMUM_FINALIZATION_SECONDS,
 } from "./release-finalization-budget.mjs";
+import {
+  RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS,
+  RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS,
+} from "./release-please-pr-lifecycle.mjs";
 
 const SHA = "a".repeat(40);
 
@@ -325,16 +330,16 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   assert.equal(sourceTagWriteCount(graph, ["oliphaunt-swift"]), 1);
   assert.equal(sourceTagWriteCount(graph, ["oliphaunt-rust"]), 0);
   assert.equal(budget.preRegistryContentWrites, 185);
-  assert.equal(budget.totalContentWrites, 203);
+  assert.equal(budget.totalContentWrites, 209);
   assert.equal(FIRST_RELEASE_TRANSFER_REQUEST_TOTAL, 88);
-  assert.equal(FIRST_RELEASE_NOMINAL_CORE_REQUESTS, 394);
-  assert.equal(budget.conservativeCoreRequests, 394);
+  assert.equal(FIRST_RELEASE_NOMINAL_CORE_REQUESTS, 421);
+  assert.equal(budget.conservativeCoreRequests, 421);
   assert.equal(conservativeCoreRequestCount({
     assetCount: 141,
     assetCounts,
     attestationWrites: 6,
     productCount,
-  }), 394);
+  }), 421);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR, 361);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE, 7);
 
@@ -343,14 +348,21 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   // well inside the 1,000-request primary limit.
   // The SwiftPM git push is a paced content write but not a REST request, so
   // subtract only REST-backed writes from the nominal core request count.
-  assert.equal(budget.futureNonContentRequests, 132);
-  assert.equal(budget.projectedRollingCoreRequests, 653);
+  assert.equal(budget.futureNonContentRequests, 153);
+  assert.equal(budget.projectedRollingCoreRequests, 674);
   assert.ok(budget.projectedRollingCoreRequests < 900);
   assert.ok(500 - GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR >= 130);
-  assert.equal(budget.totalPacingMs, GITHUB_CONTENT_WRITE_COLD_START_MS + (203 * 10_000));
+  assert.equal(budget.totalPacingMs, GITHUB_CONTENT_WRITE_COLD_START_MS + (209 * 10_000));
   assert.ok((2 * productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (30 * 60_000), "draft staging fits its operation budget");
   assert.ok((Math.max(...assetCounts.values()) * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (20 * 60_000), "largest product pacing fits its count-derived upload budget");
   assert.ok((productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (12 * 60_000), "draft promotion fits finalization timeout");
+  assert.ok(
+    RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS
+      + (productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS)
+      + RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS
+      < RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES.promoteDrafts * 60_000,
+    "pre-promotion assertion, draft pacing, and lifecycle reconciliation fit the final step",
+  );
   assert.ok(
     budget.assetUploadPlan.productCount === 12
       && budget.assetUploadPlan.waves.length === 3

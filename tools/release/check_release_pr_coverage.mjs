@@ -7,6 +7,8 @@ import {
   exactReleasePleaseQualificationTransportBaseline,
   exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
   isExactReleasePleaseIntroductionCommit,
+  isUnreleasedReleasePleaseManifest,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
 } from './release-please-bootstrap.mjs';
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { loadGraph } from './release-graph.mjs';
@@ -129,6 +131,13 @@ function releasePleaseProductPaths(config) {
   return productPaths;
 }
 
+function sameStringKeys(left, right) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
 export function releasePleaseCoverageBootstrapBaseline(
   releasePleaseConfig,
   beforeManifest,
@@ -139,14 +148,46 @@ export function releasePleaseCoverageBootstrapBaseline(
   if (isExactReleasePleaseIntroductionCommit(releasePleaseConfig, afterManifest, parentShas)) {
     return { kind: 'introduction' };
   }
-  const rollback = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
-    releasePleaseConfig,
-    beforeManifest,
-    afterManifest,
-    parentShas,
-    { prefix },
-  );
-  if (rollback !== null) return rollback;
+  const isCurrentRepairParent = Array.isArray(parentShas)
+    && parentShas.length === 1
+    && parentShas[0] === RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA;
+  if (
+    isCurrentRepairParent
+    && beforeManifest !== null
+    && isUnreleasedReleasePleaseManifest(beforeManifest)
+    && isUnreleasedReleasePleaseManifest(afterManifest)
+  ) {
+    const packages = releasePleaseConfig?.packages;
+    if (
+      packages === null
+      || Array.isArray(packages)
+      || typeof packages !== 'object'
+      || Object.keys(packages).length === 0
+      || !sameStringKeys(beforeManifest, afterManifest)
+      || !sameStringKeys(afterManifest, packages)
+    ) {
+      throw new Error(
+        `${prefix}: a repeated unreleased introduction repair must preserve the complete configured manifest path set`,
+      );
+    }
+    return { kind: 'repeated-introduction' };
+  }
+  if (
+    beforeManifest !== null
+    && (
+      !isUnreleasedReleasePleaseManifest(beforeManifest)
+      || !isUnreleasedReleasePleaseManifest(afterManifest)
+    )
+  ) {
+    const rollback = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
+      releasePleaseConfig,
+      beforeManifest,
+      afterManifest,
+      parentShas,
+      { prefix },
+    );
+    if (rollback !== null) return rollback;
+  }
   return exactReleasePleaseQualificationTransportBaseline(
     releasePleaseConfig,
     beforeManifest,
@@ -170,6 +211,8 @@ function main() {
   if (bootstrapBaseline !== null) {
     const message = {
       introduction: 'release PR coverage check skipped for the exact unreleased introduction commit',
+      'repeated-introduction':
+        'release PR coverage check skipped for the exact repeated unreleased introduction repair',
       'qualification-transport':
         'release PR coverage check skipped for the exact unreleased qualification transport baseline',
       'unpublished-first-release-rollback-transport':

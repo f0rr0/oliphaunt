@@ -2032,3 +2032,106 @@ test("direct registry mutation and post-promotion mutation bypasses are rejected
     /preserve_pre_promotion_evidence must precede promote_github_releases/u,
   );
 });
+
+test("Release Please lifecycle checks are bounded, exact-SHA-bound, and non-bypassable", () => {
+  const widenedPreflight = candidate();
+  step(
+    widenedPreflight,
+    "validate-inputs",
+    "require_release_please_lifecycle",
+  ).if = "${{ inputs.operation == 'prepare-release-pr' || inputs.operation == 'publish' }}";
+  assert.throws(
+    () => assertReleaseWorkflow(widenedPreflight),
+    /lifecycle preflight must run after input validation, only for prepare/u,
+  );
+
+  const bypassedPreflight = candidate();
+  step(
+    bypassedPreflight,
+    "validate-inputs",
+    "require_release_please_lifecycle",
+  ).run = "echo assumed-clean";
+  assert.throws(
+    () => assertReleaseWorkflow(bypassedPreflight),
+    /merged Release Please lifecycle preflight/u,
+  );
+
+  const missingClosure = candidate();
+  step(missingClosure, "publish-finalize", "promote_github_releases").run =
+    "bun .github/scripts/manage-release-drafts.mjs promote --products-json \"$PRODUCTS_JSON\" --head-ref \"$RELEASE_HEAD_SHA\"";
+  assert.throws(
+    () => assertReleaseWorkflow(missingClosure),
+    /pre-promotion Release Please lifecycle assertion|literal final step/u,
+  );
+
+  const earlyClosure = candidate();
+  step(earlyClosure, "publish-finalize", "promote_github_releases").run = [
+    "tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs mark-tagged --release-sha \"$RELEASE_HEAD_SHA\" --base main",
+    "bun .github/scripts/manage-release-drafts.mjs promote --products-json \"$PRODUCTS_JSON\" --head-ref \"$RELEASE_HEAD_SHA\"",
+  ].join("\n");
+  assert.throws(
+    () => assertReleaseWorkflow(earlyClosure),
+    /pre-promotion Release Please lifecycle assertion|literal final step/u,
+  );
+
+  for (const [name, mutate] of [
+    [
+      "ignored failure",
+      (workflow) => {
+        step(workflow, "publish-finalize", "promote_github_releases").run += " || true";
+      },
+    ],
+    [
+      "continue-on-error",
+      (workflow) => {
+        step(workflow, "publish-finalize", "promote_github_releases")["continue-on-error"] = true;
+      },
+    ],
+    [
+      "missing base",
+      (workflow) => {
+        step(workflow, "publish", "assert_release_please_markable").run =
+          step(workflow, "publish", "assert_release_please_markable").run
+            .replace(/\s+--base main/u, "");
+      },
+    ],
+    [
+      "unreachable invocation",
+      (workflow) => {
+        const lifecycle = step(workflow, "publish", "assert_release_please_markable");
+        lifecycle.run = `if false; then\n${lifecycle.run}\nfi`;
+      },
+    ],
+    [
+      "detached SHA argument",
+      (workflow) => {
+        step(workflow, "publish", "assert_release_please_markable").run = [
+          "echo --release-sha \"$RELEASE_HEAD_SHA\"",
+          "tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs assert-markable --base main",
+        ].join("\n");
+      },
+    ],
+  ]) {
+    const bypass = candidate();
+    mutate(bypass);
+    assert.throws(
+      () => assertReleaseWorkflow(bypass),
+      /markability assertion|literal final step|actively invoke/u,
+      name,
+    );
+  }
+
+  const extraEarlyMutation = candidate();
+  const publishSteps = extraEarlyMutation.jobs.publish.steps;
+  const assertionIndex = publishSteps.findIndex(
+    (entry) => entry.id === "assert_release_please_markable",
+  );
+  publishSteps.splice(assertionIndex, 0, {
+    id: "early_lifecycle_close",
+    run: "tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs mark-tagged --release-sha \"$RELEASE_HEAD_SHA\" --base main",
+  });
+  assert.throws(
+    () => assertReleaseWorkflow(extraEarlyMutation),
+    /performs unapproved release_please_lifecycle mutation/u,
+  );
+});

@@ -167,6 +167,14 @@ the configured release title on every chunk, collapses their tree to one commit,
 reapplies derived release synchronization, runs the structured verifier, and
 pushes with a lease against the inspected PR head. The normalized tree must be
 byte-identical before derived synchronization; a moved PR head is never replaced.
+Before the prepare job spends time on toolchains or release metadata, the
+read-only validation job directly inventories the exact
+`release-please--branches--main` head against `main` through the Pulls REST API
+and rejects any merged result that still carries `autorelease: pending`. It
+does not use GitHub Search or the Issues API's eventually consistent label
+index. A pending merged PR
+means either publication is unfinished or a pre-publication history rewrite
+was not closed; it is never reported as “no releasable changes.”
 
 ## Qualification contract
 
@@ -602,11 +610,20 @@ manifest commit without creating a local tag and accepts only an absent remote
 semantic tag or one already pointing at that exact commit; a conflicting or
 ambiguous tag blocks the release before GitHub drafts are staged. Both
 durable journals and the complete asset-wave report cross the validated
-receipt handoff before public promotion. Promotion is the literal final step
-of `publish-finalize` and the only remaining public
-mutation; an interrupted partial promotion is resumable because the next run
-accepts only exact already-public releases, promotes the remaining exact draft
-IDs, and finishes with one exact tag/release snapshot.
+receipt handoff before public promotion. Before bootstrap or normal publish can
+cross its first irreversible boundary, a read-only exact-SHA assertion resolves
+the unique merged Release Please PR, verifies its current lifecycle state, and
+proves the repository still defines `autorelease: tagged`. The same assertion
+runs again immediately before promotion. Promotion remains the literal final
+step of `publish-finalize`: it asserts markability, promotes every exact draft,
+then adds `autorelease: tagged` and removes `autorelease: pending` through two
+separately paced, journaled, request-budgeted, reconciled mutations. Add/remove
+operations do not replace the PR's label set, so unrelated labels—including
+ones added concurrently—are preserved. An interrupted partial promotion or
+lifecycle close is resumable because the next run accepts only exact
+already-public releases, promotes the remaining exact draft IDs, and
+idempotently converges both-label or pending-only state to
+tagged-without-pending.
 
 The normal lane has one all-registry pre-mutation admission contract. It
 inventories every selected frozen Cargo and npm `name@version`, routes absent
@@ -746,7 +763,7 @@ an indirect descendant, or a partial rollback cannot use this transport
 exception. Its `Qualified` result proves only the replacement tree; it does
 not authorize the final non-fast-forward update.
 
-If that exact-main run exposes another defect, do not layer a fix commit onto the intended public history and do not prepare a release. Archive the superseded introduction separately, qualify a new replacement tree, and repeat the controlled rewrite. Rotate only `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` to the current main tip; the Release Please bootstrap boundary and displaced-main metadata baseline remain immutable, and every earlier repair predecessor must be rejected as a replay. The desired public bootstrap history remains one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
+If that exact-main run exposes another defect, do not layer a fix commit onto the intended public history and do not prepare a release. Archive the superseded introduction separately, qualify a new replacement tree, and repeat the controlled rewrite. Rotate only `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` to the current main tip; the Release Please bootstrap boundary and displaced-main metadata baseline remain immutable, and every earlier repair predecessor must be rejected as a replay. A replacement candidate based on an already-unreleased introduction keeps the manifest unchanged at `0.0.0`; it must not be misclassified as the earlier release-bump rollback transport. Before preparing the replacement release PR, prove that any merged release PR displaced by the rewrite is unreachable from current `main`, has no public tags/packages, and then remove only its stale `autorelease: pending` label—never falsely add `autorelease: tagged`. The desired public bootstrap history remains one tree-identical introduction commit followed by one generated release-bump commit. See `.codex/skills/release-oliphaunt/references/recovery.md`.
 
 ## Handoff evidence
 

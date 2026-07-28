@@ -1809,9 +1809,26 @@ export function assertReleaseEntryWorkflow(workflow) {
       && normalized(inputValidation.step.if) === "",
     "the release workflow must validate every caller-controlled input unconditionally and inside a bounded read-only job",
   );
+  const releasePleaseLifecycle = assertRunInvocation(
+    workflow,
+    "validate-inputs",
+    "require_release_please_lifecycle",
+    commandPattern(
+      "node\\s+tools/release/release-please-pr-lifecycle[.]mjs\\s+assert-clean\\s+--base\\s+main\\b",
+    ),
+    "the merged Release Please lifecycle preflight",
+  );
+  invariant(
+    releasePleaseLifecycle.index > inputValidation.index
+      && releasePleaseLifecycle.step["timeout-minutes"] === 1
+      && normalized(releasePleaseLifecycle.step.if)
+        === "${{ inputs.operation == 'prepare-release-pr' }}"
+      && releasePleaseLifecycle.step.env?.GH_TOKEN === "${{ github.token }}",
+    "Release Please lifecycle preflight must run after input validation, only for prepare, with bounded read-only pull-request access",
+  );
   assertPermissions(
     workflow.jobs["validate-inputs"].permissions,
-    { contents: "read" },
+    { contents: "read", "pull-requests": "read" },
     "Release input validation",
   );
   assertSingleCheckout(workflow, "validate-inputs", "${{ github.sha }}");
@@ -1940,6 +1957,7 @@ const GITHUB_STAGE_PHASES = [
   "release_plan",
   "registry_needs",
   "verify_oidc_identity",
+  "assert_release_please_markable",
   "verify_maven_signing",
   "ci_qualification",
   "verify_qualification",
@@ -2028,6 +2046,7 @@ const BOOTSTRAP_PHASES = [
   "registry_needs",
   "bootstrap_scope",
   "verify_bootstrap_oidc_identity",
+  "assert_bootstrap_release_please_markable",
   "ci_qualification",
   "verify_bootstrap_qualification",
   "inspect_bootstrap_continuation",
@@ -2050,6 +2069,7 @@ function assertNormalStageConditions(workflow) {
     assertStepCondition(workflow, jobId, "github_stage_job_deadline", [PUBLISH_OPERATION]);
     for (const id of [
       "verify_oidc_identity",
+      "assert_release_please_markable",
       "verify_maven_signing",
       "approved_publication_lock",
       "preflight_maven_bundle",
@@ -2086,10 +2106,18 @@ function assertNormalStageConditions(workflow) {
   }
 }
 
+function canonicalShellLines(source) {
+  return executableShell(source)
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/gu, " "))
+    .filter((line) => line.length > 0);
+}
+
 function assertCriticalReleaseCommands(workflow) {
   const commands = [
     ["publish", "release_head", "[.]github/scripts/resolve-release-head[.]sh\\b", "the exact release-head resolver"],
     ["publish", "verify_oidc_identity", "bun\\s+[.]github/scripts/verify-github-oidc-identity[.]mjs\\b", "the direct-workflow OIDC verifier"],
+    ["publish", "assert_release_please_markable", "tools/dev/bun[.]sh\\s+tools/release/release-please-pr-lifecycle[.]mjs\\s+assert-markable\\b", "the pre-publication Release Please lifecycle assertion"],
     ["publish", "verify_maven_signing", "tools/dev/bun[.]sh\\s+tools/release/verify-maven-signing-readiness[.]mjs\\b", "the pre-mutation Maven signing verifier"],
     ["publish", "ci_qualification", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the exact-SHA CI selector"],
     ["publish", "verify_qualification", "node\\s+[.]github/scripts/verify-release-candidate[.]mjs\\b", "the candidate verifier"],
@@ -2129,11 +2157,61 @@ function assertCriticalReleaseCommands(workflow) {
     ["publish-finalize", "verify_published_release", "tools/dev/bun[.]sh\\s+tools/release/release-verify[.]mjs\\b", "published release verification"],
     ["publish-finalize", "public_consumer_smoke", "tools/dev/bun[.]sh\\s+tools/release/public-consumer-smoke[.]mjs\\b", "anonymous public consumers"],
     ["publish-finalize", "reverify_publication_lock", "tools/dev/bun[.]sh\\s+tools/release/publication-lock[.]mjs\\s+verify\\b", "final lock verification"],
+    ["publish-finalize", "promote_github_releases", "tools/dev/bun[.]sh\\s+tools/release/release-please-pr-lifecycle[.]mjs\\s+assert-markable\\b", "the immediate pre-promotion Release Please lifecycle assertion"],
     ["publish-finalize", "promote_github_releases", "bun\\s+[.]github/scripts/manage-release-drafts[.]mjs\\s+promote\\b", "draft promotion"],
+    ["publish-finalize", "promote_github_releases", "tools/dev/bun[.]sh\\s+tools/release/release-please-pr-lifecycle[.]mjs\\s+mark-tagged\\b", "Release Please lifecycle closure"],
+    ["publish-bootstrap", "assert_bootstrap_release_please_markable", "tools/dev/bun[.]sh\\s+tools/release/release-please-pr-lifecycle[.]mjs\\s+assert-markable\\b", "the pre-bootstrap Release Please lifecycle assertion"],
   ];
   for (const [jobId, id, command, description] of commands) {
     assertRunInvocation(workflow, jobId, id, commandPattern(command), description);
   }
+  const exactMarkableCommand =
+    'tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs assert-markable --release-sha "$RELEASE_HEAD_SHA" --base main';
+  const exactMarkTaggedCommand =
+    'tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs mark-tagged --release-sha "$RELEASE_HEAD_SHA" --base main';
+  for (const [jobId, stepId, condition] of [
+    [
+      "publish",
+      "assert_release_please_markable",
+      "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}",
+    ],
+    [
+      "publish-bootstrap",
+      "assert_bootstrap_release_please_markable",
+      "${{ steps.bootstrap_scope.outputs.required == 'true' }}",
+    ],
+  ]) {
+    const lifecycle = stepById(workflow, jobId, stepId).step;
+    invariant(
+      JSON.stringify(canonicalShellLines(lifecycle.run)) === JSON.stringify([exactMarkableCommand])
+        && normalized(lifecycle.if) === condition
+        && lifecycle["continue-on-error"] === undefined
+        && lifecycle["timeout-minutes"] === 1
+        && lifecycle.env?.GH_TOKEN === "${{ secrets.GITHUB_TOKEN }}",
+      `${jobId}.${stepId} must be one exact, bounded, non-optional Release Please markability assertion`,
+    );
+  }
+  const finalLifecycle = stepById(
+    workflow,
+    "publish-finalize",
+    "promote_github_releases",
+  ).step;
+  invariant(
+    JSON.stringify(canonicalShellLines(finalLifecycle.run)) === JSON.stringify([
+      exactMarkableCommand,
+      'bun .github/scripts/manage-release-drafts.mjs promote --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA"',
+      exactMarkTaggedCommand,
+    ])
+      && finalLifecycle.if === undefined
+      && finalLifecycle["continue-on-error"] === undefined
+      && finalLifecycle["timeout-minutes"]
+        === RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES.promoteDrafts
+      && sameSet(Object.keys(finalLifecycle.env ?? {}), ["GH_TOKEN", "PRODUCTS_JSON"])
+      && finalLifecycle.env?.GH_TOKEN === "${{ secrets.GITHUB_TOKEN }}"
+      && finalLifecycle.env?.PRODUCTS_JSON
+        === "${{ needs.publish-registry.outputs.products_json }}",
+    "the literal final step must assert markability, promote exact-SHA drafts, and close the Release Please lifecycle without bypasses",
+  );
   const releaseTransport = stepById(workflow, "publish", "ensure_release_transport_ref");
   const releaseReservation = workflowSteps(workflow, "publish")[releaseTransport.index - 1];
   invariant(
@@ -2360,20 +2438,29 @@ function assertPinnedNodeCommandRuntimes(workflow, context) {
       `${context} ${jobId} must have exactly one digest-verified pinned Node setup before executable node commands`,
     );
     const [setup] = setups;
+    const expectedSetupCondition = jobId === "validate-inputs"
+      ? "${{ inputs.operation == 'prepare-release-pr' }}"
+      : "";
     invariant(
       setup.step.with?.["node-version"] === "${{ env.NODE_VERSION }}"
         && (setup.step.uses !== "./.github/actions/setup-node-pnpm"
           || setup.step.with?.["pnpm-version"] === "${{ env.PNPM_VERSION }}")
-        && normalized(setup.step.if) === ""
+        && normalized(setup.step.if) === expectedSetupCondition
         && Number.isSafeInteger(setup.step["timeout-minutes"])
         && setup.step["timeout-minutes"] > 0,
-      `${context} ${jobId} pinned Node setup must be unconditional, version-bound, and bounded`,
+      `${context} ${jobId} pinned Node setup must be condition-matched, version-bound, and bounded`,
     );
     for (const command of commands) {
       invariant(
         command.index > setup.index,
         `${context} ${jobId} must install its digest-verified pinned Node runtime before every executable node command`,
       );
+      if (expectedSetupCondition !== "") {
+        invariant(
+          normalized(command.step.if) === expectedSetupCondition,
+          `${context} ${jobId} executable node commands must share the pinned setup condition`,
+        );
+      }
     }
   }
 }
@@ -3537,6 +3624,7 @@ export function assertReleaseOperationWorkflow(workflow) {
     attestations: "write",
     contents: "write",
     "id-token": "write",
+    "pull-requests": "read",
   }, "publish");
   invariant(
     workflow.jobs["publish-dry-run"].outputs === undefined
@@ -3556,11 +3644,13 @@ export function assertReleaseOperationWorkflow(workflow) {
   assertPermissions(workflow.jobs["publish-finalize"].permissions, {
     actions: "read",
     contents: "write",
+    "pull-requests": "write",
   }, "publish finalize");
   assertPermissions(workflow.jobs["publish-bootstrap"].permissions, {
     actions: "read",
     contents: "write",
     "id-token": "write",
+    "pull-requests": "read",
   }, "publish bootstrap");
   invariant(
     workflow.jobs["prepare-release-pr"].environment === "release-pr"
@@ -3761,6 +3851,7 @@ export function assertReleaseOperationWorkflow(workflow) {
     ],
     registry_bootstrap: ["publish-bootstrap.bootstrap_registry_identities"],
     github_promote: ["publish-finalize.promote_github_releases"],
+    release_please_lifecycle: ["publish-finalize.promote_github_releases"],
   });
 }
 

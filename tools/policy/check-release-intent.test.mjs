@@ -98,6 +98,8 @@ const HISTORY_REPAIR_BEFORE_TREE = command(
   ["rev-parse", `${RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA}^{tree}`],
 );
 const ROLLBACK_SUBJECT = "fix: qualify unpublished first-release rollback";
+const COMPLETED_ROLLBACK_BEFORE_SHA = "29bac7ce0a726ae0ea2ef23c8751f874f738d439";
+const COMPLETED_ROLLBACK_BRANCH = "f0rr0/history-repair-candidate-10";
 
 function commitTree(subject, timestamp, {
   parent = RELEASE_PLEASE_BOOTSTRAP_SHA,
@@ -211,121 +213,41 @@ function rollbackIntent(overrides = {}) {
   });
 }
 
-test("accepts only the exact unpublished first-release rollback qualification transport", {
+test("does not misclassify the current repeated introduction as a first-release rollback", {
   timeout: 20_000,
 }, () => {
   const result = rollbackIntent();
   assert.equal(result.status, 0, result.output);
-  assert.match(
-    result.output,
-    /authorized exact unpublished first-release rollback qualification transport/u,
-  );
+  assert.doesNotMatch(result.output, /authorized exact unpublished first-release rollback/u);
+  assert.doesNotMatch(result.output, /first-release rollback transport requires/u);
   assert.doesNotMatch(result.stepOutput, /^history_repair=true$/mu);
 });
 
-test("rollback version ownership bypass requires the exact dispatch branch and ref", () => {
-  for (const [name, overrides] of [
-    ["push event", { eventName: "push" }],
-    ["pull request event", { eventName: "pull_request", fullRef: "refs/pull/123/merge" }],
-    ["main ref", { fullRef: "refs/heads/main" }],
-    ["tag ref", { fullRef: `refs/tags/${RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH}` }],
-    ["other head branch", { branch: "f0rr0/history-repair-candidate-4" }],
-  ]) {
-    const result = rollbackIntent(overrides);
-    assert.equal(result.status, 1, `${name}\n${result.output}`);
-    assert.match(result.output, /version bumps are release owned/u, name);
-    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
-  }
-});
-
-test("rollback version ownership bypass requires an all-target qualification dispatch", () => {
-  for (const [name, overrides] of [
-    ["focused WASM target", { wasmTarget: "linux-x64-gnu" }],
-    ["focused native target", { nativeTarget: "macos-arm64" }],
-    ["focused mobile target", { mobileTarget: "ios" }],
-    ["missing WASM target", { wasmTarget: "" }],
-    ["missing native target", { nativeTarget: "" }],
-    ["missing mobile target", { mobileTarget: "" }],
-  ]) {
-    const result = rollbackIntent(overrides);
-    assert.equal(result.status, 1, `${name}\n${result.output}`);
-    assert.match(result.output, /version bumps are release owned/u, name);
-    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
-  }
-});
-
-test("rollback version ownership bypass requires the exact resolved base and sole parent", () => {
-  const wrongResolvedBase = commitTree(
-    "chore: isolate a wrong released rollback base",
+test("does not replay the completed candidate-10 rollback authorization", {
+  timeout: 20_000,
+}, () => {
+  const completedRollbackCandidate = commitTree(
+    ROLLBACK_SUBJECT,
     "2026-01-01T00:00:03Z",
     {
-      tree: HISTORY_REPAIR_BEFORE_TREE,
+      parent: COMPLETED_ROLLBACK_BEFORE_SHA,
       trailers: [],
     },
   );
-  const wrongBase = rollbackIntent({ base: wrongResolvedBase });
-  assert.equal(wrongBase.status, 1, wrongBase.output);
-  assert.match(wrongBase.output, /exact current introduction repair/u);
-  assert.doesNotMatch(wrongBase.output, /authorized exact unpublished/u);
-
-  const intermediate = commitTree(
-    "chore: insert a forbidden rollback parent",
-    "2026-01-01T00:00:04Z",
-    {
-      parent: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-      tree: HISTORY_REPAIR_BEFORE_TREE,
-      trailers: [],
-    },
-  );
-  const wrongParent = commitTree(
-    ROLLBACK_SUBJECT,
-    "2026-01-01T00:00:05Z",
-    {
-      parent: intermediate,
-      trailers: [],
-    },
-  );
-  const wrongParentResult = rollbackIntent({ head: wrongParent });
-  assert.equal(wrongParentResult.status, 1, wrongParentResult.output);
-  assert.match(wrongParentResult.output, /version bumps are release owned/u);
-});
-
-test("rollback version ownership bypass requires exact unreleased bootstrap state", () => {
-  const partialManifestTree = treeWithJson(".release-please-manifest.json", (manifest) => {
-    const first = Object.keys(manifest).sort()[0];
-    assert.ok(first);
-    manifest[first] = "0.1.0";
+  const result = releaseIntent({
+    base: COMPLETED_ROLLBACK_BEFORE_SHA,
+    branch: COMPLETED_ROLLBACK_BRANCH,
+    eventName: "workflow_dispatch",
+    fullRef: `refs/heads/${COMPLETED_ROLLBACK_BRANCH}`,
+    head: completedRollbackCandidate,
+    mobileTarget: "all",
+    nativeTarget: "all",
+    subject: ROLLBACK_SUBJECT,
+    wasmTarget: "all",
   });
-  const missingBootstrapTree = treeWithJson("release-please-config.json", (config) => {
-    delete config["bootstrap-sha"];
-  });
-  const nonseedPackageTree = treeWithFile("src/sdks/rust/Cargo.toml", (source) => {
-    const changed = source.replace(
-      'version = "0.0.0"',
-      'version = "9.9.9"',
-    );
-    assert.notEqual(changed, source);
-    return changed;
-  });
-  for (const [name, tree] of [
-    ["partially released manifest", partialManifestTree],
-    ["missing bootstrap boundary", missingBootstrapTree],
-    ["non-seed package version", nonseedPackageTree],
-  ]) {
-    const head = commitTree(
-      ROLLBACK_SUBJECT,
-      "2026-01-01T00:00:05Z",
-      {
-        parent: RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-        tree,
-        trailers: [],
-      },
-    );
-    const result = rollbackIntent({ head });
-    assert.equal(result.status, 1, `${name}\n${result.output}`);
-    assert.match(result.output, /version bumps are release owned/u, name);
-    assert.doesNotMatch(result.output, /authorized exact unpublished/u, name);
-  }
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /version bumps are release owned/u);
+  assert.doesNotMatch(result.output, /authorized exact unpublished/u);
 });
 
 test("accepts only the exact current protected-main introduction repair", { timeout: 20_000 }, () => {

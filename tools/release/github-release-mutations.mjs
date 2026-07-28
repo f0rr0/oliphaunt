@@ -562,6 +562,19 @@ function assertJsonMutation(endpoint, method, args, input) {
     }
     return;
   }
+  if (/\/issues\/[1-9][0-9]*\/labels$/u.test(endpoint)) {
+    assertExactKeys(payload, ["labels"], "Release Please lifecycle label addition");
+    if (
+      !Array.isArray(payload.labels)
+      || payload.labels.length !== 1
+      || payload.labels[0] !== "autorelease: tagged"
+    ) {
+      throw mutationError(
+        "Release Please lifecycle label addition may add only autorelease: tagged",
+      );
+    }
+    return;
+  }
   assertExactKeys(payload, ["draft"], "GitHub release promotion");
   if (payload.draft !== false) {
     throw mutationError("GitHub release promotion may only clear the draft flag");
@@ -634,10 +647,34 @@ function assertMutationArgs(args, input) {
   const tagCreate = /^repos\/[^/\s]+\/[^/\s]+\/git\/refs$/u.test(endpoint);
   const releaseCreate = /^repos\/[^/\s]+\/[^/\s]+\/releases$/u.test(endpoint);
   const releasePromote = /^repos\/[^/\s]+\/[^/\s]+\/releases\/[1-9][0-9]*$/u.test(endpoint);
-  if (!tagCreate && !releaseCreate && !releasePromote) {
+  const releasePleaseLabelAdd =
+    /^repos\/[^/\s]+\/[^/\s]+\/issues\/[1-9][0-9]*\/labels$/u.test(endpoint);
+  const releasePleasePendingLabelDelete =
+    /^repos\/[^/\s]+\/[^/\s]+\/issues\/[1-9][0-9]*\/labels\/autorelease%3A%20pending$/u.test(
+      endpoint,
+    );
+  if (releasePleasePendingLabelDelete) {
+    if (
+      args.length !== 4
+      || args[2] !== "-X"
+      || args[3] !== "DELETE"
+      || input !== undefined
+    ) {
+      throw mutationError(
+        "Release Please lifecycle pending-label removal must use one exact DELETE without a payload",
+      );
+    }
+    return;
+  }
+  if (!tagCreate && !releaseCreate && !releasePromote && !releasePleaseLabelAdd) {
     throw mutationError("GitHub API mutation endpoint is outside the frozen release allowlist");
   }
-  assertJsonMutation(endpoint, releasePromote ? "PATCH" : "POST", args, input);
+  assertJsonMutation(
+    endpoint,
+    releasePromote ? "PATCH" : "POST",
+    args,
+    input,
+  );
 }
 
 export function runGitHubMutationSync(args, options = {}) {

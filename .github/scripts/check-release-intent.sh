@@ -223,7 +223,26 @@ base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
 is_first_release_rollback_transport=false
-if [[ "${event_name}" == "workflow_dispatch" ]] &&
+is_released_to_seed_manifest_transition=false
+if [[ -n "${base_release_manifest_versions}" ]] &&
+  [[ -n "${head_release_manifest_versions}" ]] &&
+  printf '%s\n' "${head_release_manifest_versions}" |
+    awk '
+      NF {
+        count += 1
+        if ($0 !~ /=0[.]0[.]0$/) exit 1
+      }
+      END { if (count == 0) exit 1 }
+    ' &&
+  printf '%s\n' "${base_release_manifest_versions}" |
+    awk '
+      NF && $0 !~ /=0[.]0[.]0$/ { released += 1 }
+      END { if (released == 0) exit 1 }
+    '; then
+  is_released_to_seed_manifest_transition=true
+fi
+if [[ "${is_released_to_seed_manifest_transition}" == true ]] &&
+  [[ "${event_name}" == "workflow_dispatch" ]] &&
   [[ "${full_ref}" == "refs/heads/${repair_candidate_branch}" ]] &&
   [[ "${head_branch}" == "${repair_candidate_branch}" ]] &&
   [[ "${CI_WASM_TARGET:-}" == "all" ]] &&

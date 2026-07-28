@@ -442,6 +442,7 @@ const MUTATION_PATTERNS = new Map([
   ["release_transport", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*release-transport-ref[.]mjs\\s+ensure\\b`, "mu")],
   ["github_stage", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*manage-release-drafts[.]mjs\\s+stage\\b`, "mu")],
   ["github_promote", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*manage-release-drafts[.]mjs\\s+promote\\b`, "mu")],
+  ["release_please_lifecycle", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*release-please-pr-lifecycle[.]mjs\\s+mark-tagged\\b`, "mu")],
   ["release_publish", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*release-publish[.]mjs\\s+publish(?:\\s|\\\\$)`, "mu")],
   ["registry_bootstrap", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}(?:tools/dev/bun[.]sh|bun|node)\\s+[^\\n]*bootstrap-registry-identities[.]mjs\\b`, "mu")],
   ["unmediated_package_publish", new RegExp(`${ACTIVE_COMMAND_BOUNDARY}${OPTIONAL_COMMAND_PREFIX}(?:(?:npm|cargo)\\s+[^\\n;&|]*\\bpublish\\b|(?:mvn|gradle|[.]\\/gradlew)\\s+[^\\n;&|]*(?:deploy|publish)\\b|(?:npx\\s+)?jsr\\s+[^\\n;&|]*\\bpublish\\b)`, "mu")],

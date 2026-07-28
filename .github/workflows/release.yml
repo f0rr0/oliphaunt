@@ -81,6 +81,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Require canonical release repository
         run: |
@@ -103,6 +104,22 @@ jobs:
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bash .github/scripts/validate-release-workflow-inputs.sh
+
+      - name: Set up pinned Node.js
+        id: setup_release_validation_node
+        if: ${{ inputs.operation == 'prepare-release-pr' }}
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Require clear Release Please lifecycle
+        id: require_release_please_lifecycle
+        if: ${{ inputs.operation == 'prepare-release-pr' }}
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/release/release-please-pr-lifecycle.mjs assert-clean --base main
 
   prepare-release-pr:
     name: Prepare release PR
@@ -134,6 +151,16 @@ jobs:
         timeout-minutes: 1
         run: bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
 
+      - name: Require release PR token
+        env:
+          RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+        run: |
+          if [[ -z "${RELEASE_PR_TOKEN}" ]]; then
+            echo "RELEASE_PR_TOKEN is required so generated release PRs trigger normal PR CI." >&2
+            echo "Configure a GitHub App or maintainer bot token in the release-pr environment." >&2
+            exit 1
+          fi
+
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
@@ -145,16 +172,6 @@ jobs:
       - name: Validate release metadata
         run: |
           tools/dev/bun.sh tools/release/release-check.mjs
-
-      - name: Require release PR token
-        env:
-          RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
-        run: |
-          if [[ -z "${RELEASE_PR_TOKEN}" ]]; then
-            echo "RELEASE_PR_TOKEN is required so generated release PRs trigger normal PR CI." >&2
-            echo "Configure a GitHub App or maintainer bot token in the release-pr environment." >&2
-            exit 1
-          fi
 
       - name: Create or update release-please PR
         id: release_please
@@ -377,6 +394,18 @@ jobs:
           tools/dev/bun.sh tools/release/verify-release-commit.mjs \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
+
+      - name: Prove Release Please PR can complete after publication
+        id: assert_release_please_markable
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+            assert-markable \
+            --release-sha "$RELEASE_HEAD_SHA" \
+            --base main
 
       - name: Preflight selected product tag and release collisions
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -1374,6 +1403,7 @@ jobs:
       attestations: write
       contents: write
       id-token: write
+      pull-requests: read
     outputs:
       has_release_changes: ${{ steps.release_plan.outputs.has_release_changes }}
       products_json: ${{ steps.release_plan.outputs.products_json }}
@@ -1984,6 +2014,7 @@ jobs:
     permissions:
       actions: read
       contents: write
+      pull-requests: write
     steps:
       - name: Record bounded finalization job deadline
         id: finalize_job_deadline
@@ -2193,7 +2224,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ needs.publish-registry.outputs.products_json }}
-        run: bun .github/scripts/manage-release-drafts.mjs promote --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA"
+        run: |
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+            assert-markable \
+            --release-sha "$RELEASE_HEAD_SHA" \
+            --base main
+          bun .github/scripts/manage-release-drafts.mjs promote \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA"
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+            mark-tagged \
+            --release-sha "$RELEASE_HEAD_SHA" \
+            --base main
 
   publish-bootstrap:
     name: Bootstrap registry identities
@@ -2207,6 +2249,7 @@ jobs:
       actions: read
       contents: write
       id-token: write
+      pull-requests: read
     outputs:
       continuation_required: ${{ steps.require_bootstrap_execution_decision.outputs.deferred }}
       continuation_artifact_id: ${{ steps.preserve_deferred_bootstrap_ledger.outputs.artifact-id }}
@@ -2314,6 +2357,18 @@ jobs:
           tools/dev/bun.sh tools/release/verify-release-commit.mjs \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
+
+      - name: Prove Release Please PR can complete after bootstrap publication
+        id: assert_bootstrap_release_please_markable
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+            assert-markable \
+            --release-sha "$RELEASE_HEAD_SHA" \
+            --base main
 
       - name: Preflight selected product tag and release collisions
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}

@@ -494,6 +494,66 @@ test("mutation command helper rejects moving-tag uploads and accepts only an exa
   );
 });
 
+test("mutation command helper admits only exact additive Release Please lifecycle transitions", () => {
+  const addArgs = [
+    "api",
+    "repos/o/r/issues/99/labels",
+    "-X",
+    "POST",
+    "--input",
+    "-",
+  ];
+  let observed;
+  runGitHubMutationSync(addArgs, {
+    environment: {},
+    input: JSON.stringify({ labels: ["autorelease: tagged"] }),
+    spawn: (_command, actual) => {
+      observed = actual;
+      return { status: 0, stderr: "", stdout: "[]" };
+    },
+    timeoutMs: 123,
+  });
+  assert.deepEqual(observed, addArgs);
+
+  const deleteArgs = [
+    "api",
+    "repos/o/r/issues/99/labels/autorelease%3A%20pending",
+    "-X",
+    "DELETE",
+  ];
+  runGitHubMutationSync(deleteArgs, {
+    environment: {},
+    spawn: (_command, actual) => {
+      observed = actual;
+      return { status: 0, stderr: "", stdout: "[]" };
+    },
+    timeoutMs: 123,
+  });
+  assert.deepEqual(observed, deleteArgs);
+
+  for (const [changedArgs, input] of [
+    [[...addArgs.slice(0, 3), "PUT", ...addArgs.slice(4)], JSON.stringify({ labels: ["autorelease: tagged"] })],
+    [[...addArgs.slice(0, 1), "repos/o/r/issues/0/labels", ...addArgs.slice(2)], JSON.stringify({ labels: ["autorelease: tagged"] })],
+    [addArgs, JSON.stringify({ labels: ["autorelease: pending", "autorelease: tagged"] })],
+    [addArgs, JSON.stringify({ labels: ["reviewed"] })],
+    [addArgs, JSON.stringify({ labels: ["autorelease: tagged", "autorelease: tagged"] })],
+    [addArgs, JSON.stringify({ labels: ["autorelease: tagged"], extra: true })],
+    [[...deleteArgs, "--input", "-"], "{}"],
+    [[...deleteArgs.slice(0, 3), "POST"], undefined],
+    [[...deleteArgs.slice(0, 1), "repos/o/r/issues/99/labels/reviewed", ...deleteArgs.slice(2)], undefined],
+  ]) {
+    assert.throws(
+      () => runGitHubMutationSync(changedArgs, {
+        environment: {},
+        input,
+        spawn: () => ({ status: 0, stderr: "", stdout: "[]" }),
+        timeoutMs: 123,
+      }),
+      /mutation|lifecycle|payload|allowlist/u,
+    );
+  }
+});
+
 test("a shared abort guard is rechecked after pacing and journal admission before transport", () => {
   let guardCalls = 0;
   let spawned = false;
