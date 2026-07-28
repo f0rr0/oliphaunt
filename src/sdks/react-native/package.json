@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/react-native",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React Native New Architecture SDK for Oliphaunt.",
   "license": "MIT",
   "repository": {
@@ -21,8 +21,8 @@
   "types": "lib/typescript/index.d.ts",
   "react-native": "lib/module/index.js",
   "oliphaunt": {
-    "swiftSdkVersion": "0.0.0",
-    "kotlinSdkVersion": "0.0.0"
+    "swiftSdkVersion": "0.6.0",
+    "kotlinSdkVersion": "0.1.0"
   },
   "files": [
     "android",
