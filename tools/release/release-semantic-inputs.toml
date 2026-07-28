@@ -394,6 +394,7 @@ products = ["oliphaunt-kotlin", "oliphaunt-node-direct"]
 [[rules]]
 id = "native-runtime-release-asset-producers"
 paths = [
+  "src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh",
   "tools/release/package-liboliphaunt-aggregate-assets.sh",
   "tools/release/package-liboliphaunt-icu-data.sh",
   "tools/release/package-liboliphaunt-linux-assets.sh",

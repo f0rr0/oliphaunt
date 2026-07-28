@@ -13,18 +13,29 @@ xcframework_out="$out_dir/liboliphaunt.xcframework"
 stamp="$work_root/.liboliphaunt-ios-xcframework.sha256"
 script_mode="${1:-build}"
 runtime_resources_root="${OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT:-}"
+runtime_version_file="$repo_root/src/runtimes/liboliphaunt/native/VERSION"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "liboliphaunt iOS XCFramework build requires Darwin" >&2
   exit 2
 fi
 
-for cmd in install_name_tool nm plutil rg shasum xcodebuild xcrun; do
+for cmd in install_name_tool nm plutil rg shasum tr xcodebuild xcrun; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "missing required command: $cmd" >&2
     exit 1
   fi
 done
+
+[ -f "$runtime_version_file" ] || {
+  echo "missing liboliphaunt version file: $runtime_version_file" >&2
+  exit 1
+}
+runtime_version="$(tr -d '\r\n' <"$runtime_version_file")"
+if ! printf '%s\n' "$runtime_version" | rg -q '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$'; then
+  echo "liboliphaunt VERSION must be stable x.y.z, got: $runtime_version" >&2
+  exit 1
+fi
 
 simulator_script="$repo_root/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh"
 device_script="$repo_root/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh"
@@ -52,7 +63,12 @@ desired_hash() {
     printf 'mobile_static_extensions=%s\n' "${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}"
     printf 'runtime_resources_root=%s\n' "$runtime_resources_root"
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
-    shasum -a 256 "$macos_script" "$simulator_script" "$device_script" "$public_header"
+    shasum -a 256 \
+      "$macos_script" \
+      "$simulator_script" \
+      "$device_script" \
+      "$public_header" \
+      "$runtime_version_file"
   if [ -d "$runtime_resources_root" ]; then
     find "$runtime_resources_root" -type f -print0 | sort -z | xargs -0 shasum -a 256
   fi
@@ -152,6 +168,16 @@ xcframework_ready() {
   assert_library_slice "$simulator_library" IOSSIMULATOR || return 1
 }
 
+assert_framework_info_version() {
+  local plist="$1"
+  local observed
+  observed="$(plutil -extract CFBundleShortVersionString raw "$plist")"
+  [ "$observed" = "$runtime_version" ] || {
+    echo "framework version $observed does not match liboliphaunt $runtime_version: $plist" >&2
+    return 1
+  }
+}
+
 write_framework_info_plist() {
   local plist="$1"
   local platform="$2"
@@ -175,7 +201,7 @@ write_framework_info_plist() {
   <key>CFBundlePackageType</key>
   <string>FMWK</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${runtime_version}</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>MacOSX</string>
@@ -187,6 +213,7 @@ write_framework_info_plist() {
 </dict>
 </plist>
 PLIST
+    assert_framework_info_version "$plist"
     return
   fi
   cat >"$plist" <<PLIST
@@ -207,7 +234,7 @@ PLIST
   <key>CFBundlePackageType</key>
   <string>FMWK</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${runtime_version}</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>${platform}</string>
@@ -223,6 +250,7 @@ PLIST
 </dict>
 </plist>
 PLIST
+  assert_framework_info_version "$plist"
 }
 
 expected_library_platform_for_framework_platform() {

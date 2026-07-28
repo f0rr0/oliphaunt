@@ -296,8 +296,10 @@ carrier set includes npm, both normal and bootstrap jobs use
 verifies the canonical URL, compressed digests and byte count, safe archive
 shape, executable modes, and complete extracted-tree digest before exporting
 the CLI. It then compares the observed npm version exactly and validates the
-observed Node/npm trusted-publishing runtime. This local tool setup neither
-requests an OIDC token nor changes the frozen registry mutation logic.
+observed Node/npm trusted-publishing runtime plus the command-specific
+`npm trust list` and `npm trust github` help contract used by maintainer
+configuration. This local tool setup neither requests an OIDC token nor changes
+the frozen registry mutation logic.
 
 Installer fault-injection suites are owned by the exact-SHA
 `ci-workflows:check` gate. Publication does not execute those download, cache,

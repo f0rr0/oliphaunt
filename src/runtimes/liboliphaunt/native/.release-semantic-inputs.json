@@ -14,7 +14,7 @@
       "inputs": [
         {
           "path": "Cargo.lock",
-          "sha256": "5610546e756a79eabf8dccd99cdb9654d417a6b57b414537cfa12716b2fecf24"
+          "sha256": "b17f59b77b848af3cac6fa2225f7432ea7df8b6c6f558dcc3a875b102654e056"
         },
         {
           "path": "Cargo.toml",
@@ -220,6 +220,7 @@
     {
       "id": "native-runtime-release-asset-producers",
       "paths": [
+        "src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh",
         "tools/release/package-liboliphaunt-aggregate-assets.sh",
         "tools/release/package-liboliphaunt-icu-data.sh",
         "tools/release/package-liboliphaunt-linux-assets.sh",
@@ -229,6 +230,10 @@
         "tools/release/optimize_native_runtime_payload.mjs"
       ],
       "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh",
+          "sha256": "387ca9f406c7df03cdaf3a0ea5cf6993a5430be5f38e2472b5030601b73063fc"
+        },
         {
           "path": "tools/release/optimize_native_runtime_payload.mjs",
           "sha256": "89d6bd4a7908909643ab425b17578e6a8df59bc73aecc645dc0912eb4fd32b72"
@@ -440,5 +445,5 @@
       ]
     }
   ],
-  "sha256": "2e20833021a2f3bb13ed5d0072c15cf6d1cf449d7a12808c7d12187500ce424d"
+  "sha256": "8a4a2b02de06811fff200496827fd8e1531fbac327175a7e4fb59aa60e8eb55f"
 }

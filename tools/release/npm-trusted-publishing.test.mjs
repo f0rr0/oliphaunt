@@ -7,6 +7,8 @@ import test from "node:test";
 
 import {
   NPM_TRUSTED_PUBLISHING_REPOSITORY,
+  checkNpmTrustCliContract,
+  validateNpmTrustCliHelp,
   validateNpmTrustCliRuntime,
   validateNpmTrustedPublishingManifest,
   validateNpmTrustedPublishingRuntime,
@@ -80,6 +82,78 @@ test("requires npm 11.15 only for trust-configuration management", () => {
   assert.throws(() => validateNpmTrustCliRuntime("11.14.9"), /npm trust CLI 11\.14\.9 is too old/u);
   assert.doesNotThrow(() =>
     validateNpmTrustedPublishingRuntime({ nodeVersion: "22.14.0", npmVersion: "11.5.1" })
+  );
+});
+
+test("checks the pinned npm trust command-specific help contract without network access", () => {
+  const calls = [];
+  const captureImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    let stdout;
+    if (args.at(-1) === "--version") stdout = "11.18.0\n";
+    else if (args.includes("list")) stdout = "Options: --json --registry\n";
+    else if (args.includes("--dry-run")) {
+      stdout = JSON.stringify({
+        package: "@oliphaunt/oliphaunt-cli-contract-probe",
+        file: "release.yml",
+        repository: "f0rr0/oliphaunt",
+        environment: "release-publish",
+        permissions: ["createPackage"],
+      });
+    }
+    else {
+      stdout =
+        "Options: --file --repository --environment --allow-publish --json --registry --yes\n";
+    }
+    return { status: 0, stdout, stderr: "" };
+  };
+  const result = checkNpmTrustCliContract({
+    nodeExecutable: "/verified/node",
+    npmCli: "/verified/npm-cli.js",
+    captureImpl,
+  });
+  assert.equal(result.npmVersion, "11.18.0");
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ["/verified/npm-cli.js", "--version"],
+    ["/verified/npm-cli.js", "trust", "list", "--help"],
+    ["/verified/npm-cli.js", "trust", "github", "--help"],
+    [
+      "/verified/npm-cli.js",
+      "trust", "github", "@oliphaunt/oliphaunt-cli-contract-probe",
+      "--file", "release.yml",
+      "--repo", "f0rr0/oliphaunt",
+      "--env", "release-publish",
+      "--allow-publish",
+      "--yes",
+      "--json",
+      "--registry", "http://127.0.0.1:9/",
+      "--dry-run",
+    ],
+  ]);
+  assert.ok(calls.every(({ options }) => options.timeout === 30_000));
+  assert.ok(calls.every(({ options }) => options.maxOutputBytes === 256 * 1024));
+  assert.ok(calls.every(({ options }) => typeof options.label === "string"));
+  assert.equal(calls[3].options.env.NPM_CONFIG_FETCH_RETRIES, "0");
+
+  assert.throws(
+    () => validateNpmTrustCliHelp({
+      listHelp: "Options: --json",
+      githubHelp:
+        "Options: --file --repository --environment --allow-publish --json --registry --yes",
+    }),
+    /npm trust list does not advertise required option --registry/u,
+  );
+  assert.throws(
+    () => checkNpmTrustCliContract({
+      nodeExecutable: "/verified/node",
+      npmCli: "/verified/npm-cli.js",
+      captureImpl: (_command, args) => ({
+        status: args.at(-1) === "--version" ? 0 : 1,
+        stdout: args.at(-1) === "--version" ? "11.18.0\n" : "",
+        stderr: args.at(-1) === "--version" ? "" : "unsupported command",
+      }),
+    }),
+    /npm trust list --help failed with exit 1/u,
   );
 });
 

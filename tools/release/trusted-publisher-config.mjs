@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { link, lstat, open, unlink } from "node:fs/promises";
 import process from "node:process";
 import path from "node:path";
 
@@ -10,7 +12,10 @@ import {
   loadPublicationLock,
   lockedCarriers,
 } from "./publication-lock.mjs";
-import { validateNpmTrustCliRuntime } from "./npm-trusted-publishing.mjs";
+import {
+  validateNpmTrustCliHelp,
+  validateNpmTrustCliRuntime,
+} from "./npm-trusted-publishing.mjs";
 import { registryRetryDelaySeconds, registryStatusRetryable } from "./registry-http-retry.mjs";
 import { ROOT } from "./release-graph.mjs";
 
@@ -34,6 +39,19 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const NPM_TRUST_MUTATION_TIMEOUT_MS = 5 * 60_000;
 const MAX_READ_ATTEMPTS = 3;
+const NPM_REGISTRY = "https://registry.npmjs.org/";
+const NPM_READ_NETWORK_ENV = Object.freeze({
+  NPM_CONFIG_FETCH_RETRIES: "3",
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "1000",
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "5000",
+  NPM_CONFIG_FETCH_TIMEOUT: "20000",
+});
+const NPM_NO_REPLAY_NETWORK_ENV = Object.freeze({
+  NPM_CONFIG_FETCH_RETRIES: "0",
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "1000",
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "5000",
+  NPM_CONFIG_FETCH_TIMEOUT: "20000",
+});
 
 function error(message) {
   return new Error(`trusted-publisher-config: ${message}`);
@@ -204,35 +222,116 @@ function parseNpmJson(text, context) {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-function npmCommandPolicy(args) {
+function npmPackageName(name) {
+  if (
+    typeof name !== "string"
+    || name.length === 0
+    || name.length > 214
+    || /[\u0000-\u0020\u007f]/u.test(name)
+    || !/^@oliphaunt\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u.test(name)
+  ) {
+    throw error("npm package name must be a canonical bounded @oliphaunt identity");
+  }
+  return name;
+}
+
+export function npmTrustListArgs(name) {
+  return [
+    "trust", "list", npmPackageName(name),
+    "--json",
+    "--registry", NPM_REGISTRY,
+  ];
+}
+
+export function npmTrustGithubArgs(name) {
+  return [
+    "trust", "github", npmPackageName(name),
+    "--file", EXPECTED_TRUSTED_PUBLISHER.workflowFilename,
+    "--repo", EXPECTED_TRUSTED_PUBLISHER.repository,
+    "--env", EXPECTED_TRUSTED_PUBLISHER.environment,
+    "--allow-publish",
+    "--yes",
+    "--json",
+    "--registry", NPM_REGISTRY,
+  ];
+}
+
+function sameArguments(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function npmCommandPolicy(args, { interactiveAudit = false } = {}) {
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
     throw error("npm command arguments must be a string list");
   }
   if (args.length === 1 && args[0] === "--version") {
-    return { interactive: false, timeout: REQUEST_TIMEOUT_MS };
+    if (interactiveAudit) throw error("interactive audit mode is valid only for npm trust list");
+    return {
+      interactive: false,
+      networkEnv: NPM_NO_REPLAY_NETWORK_ENV,
+      timeout: REQUEST_TIMEOUT_MS,
+    };
+  }
+  if (
+    sameArguments(args, ["trust", "list", "--help"])
+    || sameArguments(args, ["trust", "github", "--help"])
+  ) {
+    if (interactiveAudit) throw error("interactive audit mode is valid only for npm trust list");
+    return {
+      interactive: false,
+      networkEnv: NPM_NO_REPLAY_NETWORK_ENV,
+      timeout: REQUEST_TIMEOUT_MS,
+    };
   }
   if (args[0] === "trust" && args[1] === "list") {
-    return { interactive: false, timeout: REQUEST_TIMEOUT_MS };
+    const expected = npmTrustListArgs(args[2]);
+    if (!sameArguments(args, expected)) {
+      throw error(`refusing unsupported npm trust list arguments ${JSON.stringify(args.slice(3))}`);
+    }
+    return {
+      interactive: interactiveAudit,
+      networkEnv: NPM_READ_NETWORK_ENV,
+      timeout: interactiveAudit ? NPM_TRUST_MUTATION_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+    };
   }
   if (args[0] === "trust" && args[1] === "github") {
-    return { interactive: true, timeout: NPM_TRUST_MUTATION_TIMEOUT_MS };
+    if (interactiveAudit) throw error("interactive audit mode is valid only for npm trust list");
+    const expected = npmTrustGithubArgs(args[2]);
+    if (!sameArguments(args, expected)) {
+      throw error(`refusing unsupported npm trust github arguments ${JSON.stringify(args.slice(3))}`);
+    }
+    return {
+      interactive: true,
+      networkEnv: NPM_NO_REPLAY_NETWORK_ENV,
+      timeout: NPM_TRUST_MUTATION_TIMEOUT_MS,
+    };
   }
   throw error(`refusing unsupported npm management command ${JSON.stringify(args.slice(0, 2))}`);
 }
 
-export function runNpmTrustCommand(args, context, { spawnImpl = undefined } = {}) {
-  const policy = npmCommandPolicy(args);
+export function runNpmTrustCommand(args, context, {
+  spawnImpl = undefined,
+  interactiveAudit = false,
+  stdinIsTTY = process.stdin.isTTY === true,
+  stdoutIsTTY = process.stdout.isTTY === true,
+} = {}) {
+  const policy = npmCommandPolicy(args, { interactiveAudit });
+  if (policy.interactive && (!stdinIsTTY || !stdoutIsTTY)) {
+    throw error(
+      `${context} requires an interactive terminal because npm may require web or classic OTP authentication`,
+    );
+  }
   const spawnOptions = {
     cwd: ROOT,
     ...(policy.interactive ? {} : { encoding: "utf8", maxBuffer: MAX_RESPONSE_BYTES }),
     env: {
       ...process.env,
-      NPM_CONFIG_FETCH_RETRIES: "0",
-      NPM_CONFIG_FETCH_TIMEOUT: String(REQUEST_TIMEOUT_MS - 5_000),
+      ...policy.networkEnv,
     },
     // npm's OTP handler deliberately refuses to prompt unless both stdin and
-    // stdout are TTYs. Only the one mutation command inherits the operator's
-    // terminal; version and audit reads stay non-interactive and captured.
+    // stdout are TTYs. A single read-only list warm-up and each mutation own
+    // the terminal; every list used as classification evidence is separately
+    // captured and bounded.
     stdio: policy.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
     timeout: policy.timeout,
     windowsHide: true,
@@ -260,46 +359,77 @@ export function runNpmTrustCommand(args, context, { spawnImpl = undefined } = {}
       .replace(/[\r\n\t]+/gu, " ")
       .trim()
       .slice(0, 300);
-    throw error(
+    const failure = error(
       `${context} failed${Number.isInteger(result.status) ? ` with exit ${result.status}` : ""}`
         + `${detail ? `: ${detail}` : ""}; no mutation is retried automatically`,
     );
+    if (
+      args[0] === "trust"
+      && args[1] === "list"
+      && (/\bEOTP\b/u.test(detail) || /one-time pass(?:word)?/iu.test(detail))
+    ) {
+      failure.npmAuthenticationRequired = true;
+    }
+    throw failure;
   }
   return result.stdout ?? "";
 }
 
-export function createNpmTrustClient({ runImpl = runNpmTrustCommand } = {}) {
+export function createNpmTrustClient({
+  runImpl = runNpmTrustCommand,
+  sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
   return {
     checkRuntime() {
       const version = runImpl(["--version"], "npm --version").trim();
       validateNpmTrustCliRuntime(version);
+      validateNpmTrustCliHelp({
+        listHelp: runImpl(
+          ["trust", "list", "--help"],
+          "npm trust list --help",
+        ),
+        githubHelp: runImpl(
+          ["trust", "github", "--help"],
+          "npm trust github --help",
+        ),
+      });
       return version;
     },
-    list(name) {
-      const output = runImpl([
-        "trust", "list", name,
-        "--json",
-        "--registry", "https://registry.npmjs.org/",
-        "--fetch-retries", "3",
-        "--fetch-retry-mintimeout", "1000",
-        "--fetch-retry-maxtimeout", "5000",
-        "--fetch-timeout", "20000",
-      ], `npm trust list ${name}`);
+    authorizeAudit(name) {
+      runImpl(
+        npmTrustListArgs(name),
+        `npm trust list authentication warm-up for ${name}`,
+        { interactiveAudit: true },
+      );
+      // This read-only ceremony's inherited display is deliberately discarded.
+      // Only a separate captured list can become classification evidence.
+    },
+    async list(name) {
+      const args = npmTrustListArgs(name);
+      let output;
+      try {
+        output = runImpl(args, `npm trust list ${name}`);
+      } catch (cause) {
+        if (cause?.npmAuthenticationRequired !== true) throw cause;
+        await sleepImpl(NPM_TRUST_REQUEST_SPACING_MS);
+        this.authorizeAudit(name);
+        await sleepImpl(NPM_TRUST_REQUEST_SPACING_MS);
+        try {
+          output = runImpl(args, `npm trust list ${name} after authentication warm-up`);
+        } catch (retryCause) {
+          if (retryCause?.npmAuthenticationRequired === true) {
+            throw error(
+              `npm trust list ${name} still requires OTP after the bounded read-only warm-up; `
+                + "select npm's five-minute authentication window and retry the command",
+            );
+          }
+          throw retryCause;
+        }
+      }
       return parseNpmJson(output, `npm trust list ${name}`);
     },
     create(name) {
-      runImpl([
-        "trust", "github", name,
-        "--file", EXPECTED_TRUSTED_PUBLISHER.workflowFilename,
-        "--repo", EXPECTED_TRUSTED_PUBLISHER.repository,
-        "--env", EXPECTED_TRUSTED_PUBLISHER.environment,
-        "--allow-publish",
-        "--yes",
-        "--json",
-        "--registry", "https://registry.npmjs.org/",
-        "--fetch-retries", "0",
-        "--fetch-timeout", "20000",
-      ], `npm trust github ${name}`);
+      runImpl(npmTrustGithubArgs(name), `npm trust github ${name}`);
       // The interactive command must own stdout so npm can expose its web/OTP
       // dialogue. The caller immediately performs an authenticated list and
       // accepts only the exact immutable configuration, so command output is
@@ -428,6 +558,13 @@ export function createCratesIoTrustClient({
 
 async function auditIdentities({ identities, ecosystem, client, spacingMs, sleepImpl, progress }) {
   const results = [];
+  if (ecosystem === "npm") {
+    if (typeof client.authorizeAudit !== "function") {
+      throw error("npm client must implement the read-only interactive audit authentication warm-up");
+    }
+    await client.authorizeAudit(identities[0].name);
+    await sleepImpl(spacingMs);
+  }
   for (const [index, identity] of identities.entries()) {
     const configs = await client.list(identity.name);
     const classified = ecosystem === "npm"
@@ -516,7 +653,14 @@ export async function reconcileTrustedPublishers({
 }
 
 function parseArgs(argv) {
-  const allowedValues = new Set(["lock", "products-json", "ecosystem", "batch", "confirm-lock-digest"]);
+  const allowedValues = new Set([
+    "lock",
+    "products-json",
+    "ecosystem",
+    "batch",
+    "confirm-lock-digest",
+    "output",
+  ]);
   const values = new Map();
   const booleans = new Set();
   for (let index = 0; index < argv.length; index += 1) {
@@ -549,14 +693,161 @@ function productsValue(raw) {
 function usage() {
   return [
     "usage:",
-    "  trusted-publisher-config.mjs [--lock FILE] [--products-json JSON]",
-    "  trusted-publisher-config.mjs --audit --ecosystem cargo|npm [--batch N] [--lock FILE] [--products-json JSON]",
-    "  trusted-publisher-config.mjs --apply --confirm-lock-digest SHA256 --ecosystem cargo|npm [--batch N] [--lock FILE] [--products-json JSON]",
+    "  trusted-publisher-config.mjs [--lock FILE] [--products-json JSON] [--output FILE]",
+    "  trusted-publisher-config.mjs --audit --ecosystem cargo|npm [--batch N] [--lock FILE] [--products-json JSON] [--output FILE]",
+    "  trusted-publisher-config.mjs --apply --confirm-lock-digest SHA256 --ecosystem cargo|npm [--batch N] [--lock FILE] [--products-json JSON] [--output FILE]",
     "",
     "No --audit/--apply: print an exact-lock plan without registry authentication or network access.",
     "--audit: authenticated read-only comparison. --apply: create only missing exact configs, then re-audit.",
     "npm requires deterministic batches sized for its documented five-minute 2FA window.",
+    "Run npm audit/apply directly in an interactive terminal; a read-only warm-up authenticates each audit pass.",
+    "npm audit/apply requires --output FILE; the report is atomically created with mode 0600 and never overwritten.",
   ].join("\n");
+}
+
+function prettyJson(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+export async function writeJson(value, stream = process.stdout) {
+  const output = prettyJson(value);
+  await new Promise((resolve, reject) => {
+    const onError = (cause) => {
+      stream.off?.("error", onError);
+      reject(cause);
+    };
+    stream.once?.("error", onError);
+    stream.write(output, (cause) => {
+      stream.off?.("error", onError);
+      if (cause !== undefined && cause !== null) reject(cause);
+      else resolve();
+    });
+  });
+}
+
+export async function reserveJsonFile(outputFile) {
+  if (typeof outputFile !== "string" || outputFile.length === 0) {
+    throw error("--output must be a non-empty file path");
+  }
+  const destination = path.resolve(ROOT, outputFile);
+  const reservation = `${destination}.oliphaunt-reservation`;
+  const temporary = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.tmp-${process.pid}-${randomUUID()}`,
+  );
+  const probe = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.probe-${process.pid}-${randomUUID()}`,
+  );
+  let outputHandle;
+  let reservationHandle;
+  let reservationCreated = false;
+  let probeLinked = false;
+  try {
+    reservationHandle = await open(reservation, "wx", 0o600);
+    reservationCreated = true;
+    await reservationHandle.writeFile(
+      `Oliphaunt trusted-publisher report reservation for ${destination}\n`,
+      "utf8",
+    );
+    await reservationHandle.sync();
+    await reservationHandle.close();
+    reservationHandle = undefined;
+    outputHandle = await open(temporary, "wx", 0o600);
+    try {
+      await lstat(destination);
+      const exists = new Error("destination exists");
+      exists.code = "EEXIST";
+      throw exists;
+    } catch (cause) {
+      if (cause?.code !== "ENOENT") throw cause;
+    }
+    // Exercise the exact no-overwrite atomic publication primitive before any
+    // registry request. The deterministic reservation blocks cooperating
+    // invocations while the final destination remains absent for publication.
+    await link(temporary, probe);
+    probeLinked = true;
+    await unlink(probe);
+    probeLinked = false;
+  } catch (cause) {
+    if (reservationHandle !== undefined) await reservationHandle.close().catch(() => {});
+    if (outputHandle !== undefined) await outputHandle.close().catch(() => {});
+    if (probeLinked) await unlink(probe).catch(() => {});
+    await unlink(temporary).catch(() => {});
+    if (reservationCreated) await unlink(reservation).catch(() => {});
+    if (cause?.code === "EEXIST") {
+      if (!reservationCreated) {
+        throw error(`--output reservation already exists for ${destination}`);
+      }
+      throw error(`refusing to overwrite existing --output file ${destination}`);
+    }
+    throw error(`could not reserve --output file ${destination}: ${cause?.message ?? cause}`);
+  }
+  let active = true;
+  return {
+    destination,
+    async commit(value) {
+      if (!active) throw error(`--output reservation is no longer active for ${destination}`);
+      try {
+        await outputHandle.writeFile(prettyJson(value), "utf8");
+        await outputHandle.sync();
+        await outputHandle.close();
+        outputHandle = undefined;
+        await link(temporary, destination);
+        active = false;
+        await unlink(temporary).catch(() => {});
+        await unlink(reservation).catch(() => {});
+        return destination;
+      } catch (cause) {
+        if (cause?.code === "EEXIST") {
+          throw error(`refusing to overwrite existing --output file ${destination}`);
+        }
+        throw error(`could not publish reserved --output file ${destination}: ${cause?.message ?? cause}`);
+      }
+    },
+    async abort() {
+      if (!active) return;
+      active = false;
+      if (outputHandle !== undefined) await outputHandle.close().catch(() => {});
+      await unlink(temporary).catch(() => {});
+      await unlink(reservation).catch(() => {});
+    },
+  };
+}
+
+export async function writeJsonFile(value, outputFile) {
+  const reserved = await reserveJsonFile(outputFile);
+  try {
+    return await reserved.commit(value);
+  } finally {
+    await reserved.abort();
+  }
+}
+
+async function emitJson(value, outputFile) {
+  if (outputFile === undefined) {
+    await writeJson(value);
+    return;
+  }
+  const destination = await writeJsonFile(value, outputFile);
+  console.error(`trusted-publisher-config: wrote exact JSON report to ${destination}`);
+}
+
+export async function reconcileTrustedPublishersToFile({
+  outputFile,
+  initialize = async () => {},
+  ...options
+}) {
+  const reserved = await reserveJsonFile(outputFile);
+  try {
+    await initialize();
+    const report = await reconcileTrustedPublishers(options);
+    const destination = await reserved.commit(report);
+    console.error(`trusted-publisher-config: wrote exact JSON report to ${destination}`);
+    return report;
+  } finally {
+    await reserved.abort();
+  }
 }
 
 async function main(argv) {
@@ -574,11 +865,14 @@ async function main(argv) {
     if (values.has("ecosystem") || values.has("batch") || values.has("confirm-lock-digest")) {
       throw error("--ecosystem, --batch, and --confirm-lock-digest require --audit or --apply");
     }
-    console.log(JSON.stringify(plan, null, 2));
+    await emitJson(plan, values.get("output"));
     return 0;
   }
   const ecosystem = values.get("ecosystem");
   const batch = values.has("batch") ? Number(values.get("batch")) : undefined;
+  if (ecosystem === "npm" && !values.has("output")) {
+    throw error("npm audit/apply requires --output FILE so TTY authentication cannot contaminate report evidence");
+  }
   if (booleans.has("apply")) {
     const confirmed = values.get("confirm-lock-digest");
     if (confirmed !== plan.lockDigest) {
@@ -590,19 +884,29 @@ async function main(argv) {
   let client;
   if (ecosystem === "npm") {
     client = createNpmTrustClient();
-    client.checkRuntime();
   } else if (ecosystem === "cargo") {
     client = createCratesIoTrustClient();
   }
-  const report = await reconcileTrustedPublishers({
+  const reconcileOptions = {
     plan,
     ecosystem,
     batch,
     apply: booleans.has("apply"),
     client,
     progress: (line) => console.error(line),
-  });
-  console.log(JSON.stringify(report, null, 2));
+  };
+  let report;
+  if (values.has("output")) {
+    report = await reconcileTrustedPublishersToFile({
+      ...reconcileOptions,
+      outputFile: values.get("output"),
+      initialize: async () => client?.checkRuntime?.(),
+    });
+  } else {
+    client?.checkRuntime?.();
+    report = await reconcileTrustedPublishers(reconcileOptions);
+    await writeJson(report);
+  }
   return report.missing.length === 0 && report.conflicts.length === 0 ? 0 : 1;
 }
 

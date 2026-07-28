@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
 import test from "node:test";
 
 import {
@@ -11,10 +16,20 @@ import {
   classifyNpmTrustConfigs,
   createCratesIoTrustClient,
   createNpmTrustClient,
+  npmTrustGithubArgs,
+  npmTrustListArgs,
   reconcileTrustedPublishers,
+  reconcileTrustedPublishersToFile,
+  reserveJsonFile,
   runNpmTrustCommand,
   selectTrustedPublisherIdentities,
+  writeJsonFile,
 } from "./trusted-publisher-config.mjs";
+
+const NPM_LIST_HELP = "Options: --json --registry";
+const NPM_GITHUB_HELP =
+  "Options: --file --repository --environment --allow-publish --json --registry --yes";
+const MODULE_URL = new URL("trusted-publisher-config.mjs", import.meta.url).href;
 
 function carrier(ecosystem, name, product = "one") {
   return {
@@ -111,31 +126,99 @@ test("classifies crates.io configuration strictly and treats extras as conflicts
   ], "oliphaunt-one").state, "conflict");
 });
 
-test("npm client checks the management CLI and sends exact non-staged flags", () => {
+test("npm client checks the management CLI and sends exact non-staged flags", async () => {
   const calls = [];
   const client = createNpmTrustClient({
-    runImpl(args) {
-      calls.push(args);
+    runImpl(args, _context, options) {
+      calls.push({ args, options });
       if (args[0] === "--version") return "11.15.0\n";
+      if (args[2] === "--help" && args[1] === "list") return NPM_LIST_HELP;
+      if (args[2] === "--help" && args[1] === "github") return NPM_GITHUB_HELP;
       if (args[1] === "list") return `${JSON.stringify(exactNpm())}\n`;
       return `${JSON.stringify(exactNpm())}\n`;
     },
   });
   assert.equal(client.checkRuntime(), "11.15.0");
-  assert.deepEqual(client.list("@oliphaunt/example"), [exactNpm()]);
+  client.authorizeAudit("@oliphaunt/example");
+  assert.deepEqual(await client.list("@oliphaunt/example"), [exactNpm()]);
   client.create("@oliphaunt/example");
-  assert.ok(calls[1].includes("--fetch-retries"));
-  assert.equal(calls[1][calls[1].indexOf("--fetch-retries") + 1], "3");
-  assert.deepEqual(calls[2].slice(0, 4), ["trust", "github", "@oliphaunt/example", "--file"]);
-  assert.ok(calls[2].includes("release.yml"));
-  assert.ok(calls[2].includes("release-publish"));
-  assert.ok(calls[2].includes("--allow-publish"));
-  assert.ok(!calls[2].includes("--allow-stage-publish"));
-  assert.equal(calls[2][calls[2].indexOf("--fetch-retries") + 1], "0");
-  assert.throws(() => createNpmTrustClient({ runImpl: () => "11.14.9\n" }).checkRuntime(), /too old/u);
+  assert.deepEqual(calls[3].args, npmTrustListArgs("@oliphaunt/example"));
+  assert.deepEqual(calls[3].options, { interactiveAudit: true });
+  assert.deepEqual(calls[4].args, npmTrustListArgs("@oliphaunt/example"));
+  assert.deepEqual(calls[5].args, npmTrustGithubArgs("@oliphaunt/example"));
+  assert.ok(calls[5].args.includes("release.yml"));
+  assert.ok(calls[5].args.includes("release-publish"));
+  assert.ok(calls[5].args.includes("--allow-publish"));
+  assert.ok(!calls[5].args.includes("--allow-stage-publish"));
+  assert.ok(calls.every(({ args }) => args.every((arg) => !arg.startsWith("--fetch-"))));
+  assert.throws(() => npmTrustListArgs("--fetch-retries"), /canonical bounded @oliphaunt identity/u);
+  assert.throws(() => npmTrustGithubArgs("@other/example"), /canonical bounded @oliphaunt identity/u);
+  assert.throws(
+    () => createNpmTrustClient({
+      runImpl: (args) => args[0] === "--version" ? "11.14.9\n" : "",
+    }).checkRuntime(),
+    /too old/u,
+  );
 });
 
-test("npm command policy captures bounded reads and reserves inherited TTYs for trust mutation", () => {
+test("npm captured list retries once through a read-only TTY warm-up only for OTP", async () => {
+  const events = [];
+  let capturedAttempts = 0;
+  const client = createNpmTrustClient({
+    runImpl(args, _context, options) {
+      if (options?.interactiveAudit === true) {
+        events.push("warm-up");
+        return "";
+      }
+      events.push("captured");
+      capturedAttempts += 1;
+      if (capturedAttempts === 1) {
+        throw Object.assign(new Error("npm error code EOTP"), {
+          npmAuthenticationRequired: true,
+        });
+      }
+      return `${JSON.stringify(exactNpm())}\n`;
+    },
+    sleepImpl: async (milliseconds) => events.push(`sleep:${milliseconds}`),
+  });
+  assert.deepEqual(await client.list("@oliphaunt/example"), [exactNpm()]);
+  assert.deepEqual(events, [
+    "captured",
+    "sleep:2000",
+    "warm-up",
+    "sleep:2000",
+    "captured",
+  ]);
+
+  let boundedCalls = 0;
+  const expired = createNpmTrustClient({
+    runImpl(_args, _context, options) {
+      boundedCalls += 1;
+      if (options?.interactiveAudit === true) return "";
+      throw Object.assign(new Error("npm error code EOTP"), {
+        npmAuthenticationRequired: true,
+      });
+    },
+    sleepImpl: async () => {},
+  });
+  await assert.rejects(
+    () => expired.list("@oliphaunt/example"),
+    /still requires OTP after the bounded read-only warm-up/u,
+  );
+  assert.equal(boundedCalls, 3);
+
+  let ordinaryCalls = 0;
+  const ordinaryFailure = createNpmTrustClient({
+    runImpl() {
+      ordinaryCalls += 1;
+      throw new Error("network unavailable");
+    },
+  });
+  await assert.rejects(() => ordinaryFailure.list("@oliphaunt/example"), /network unavailable/u);
+  assert.equal(ordinaryCalls, 1, "non-authentication failures must not be retried");
+});
+
+test("npm command policy captures bounded evidence and reserves inherited TTYs for warm-up and mutation", () => {
   const calls = [];
   const spawnImpl = (command, args, options) => {
     calls.push({ command, args, options });
@@ -153,7 +236,7 @@ test("npm command policy captures bounded reads and reserves inherited TTYs for 
   );
   assert.equal(
     runNpmTrustCommand(
-      ["trust", "list", "@oliphaunt/example", "--json"],
+      npmTrustListArgs("@oliphaunt/example"),
       "npm trust list @oliphaunt/example",
       { spawnImpl },
     ),
@@ -161,9 +244,22 @@ test("npm command policy captures bounded reads and reserves inherited TTYs for 
   );
   assert.equal(
     runNpmTrustCommand(
-      ["trust", "github", "@oliphaunt/example", "--yes"],
+      npmTrustListArgs("@oliphaunt/example"),
+      "npm trust list authentication warm-up for @oliphaunt/example",
+      {
+        spawnImpl,
+        interactiveAudit: true,
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+      },
+    ),
+    "",
+  );
+  assert.equal(
+    runNpmTrustCommand(
+      npmTrustGithubArgs("@oliphaunt/example"),
       "npm trust github @oliphaunt/example",
-      { spawnImpl },
+      { spawnImpl, stdinIsTTY: true, stdoutIsTTY: true },
     ),
     "",
   );
@@ -175,16 +271,176 @@ test("npm command policy captures bounded reads and reserves inherited TTYs for 
     assert.equal(call.options.maxBuffer, 256 * 1024);
     assert.equal(call.options.encoding, "utf8");
   }
-  const mutation = calls[2];
-  assert.equal(mutation.options.stdio, "inherit");
-  assert.equal(mutation.options.timeout, 5 * 60_000);
-  assert.equal("encoding" in mutation.options, false);
-  assert.equal("maxBuffer" in mutation.options, false);
+  assert.equal(calls[0].options.env.NPM_CONFIG_FETCH_RETRIES, "0");
+  assert.equal(calls[1].options.env.NPM_CONFIG_FETCH_RETRIES, "3");
+  assert.equal(calls[1].options.env.NPM_CONFIG_FETCH_RETRY_MINTIMEOUT, "1000");
+  assert.equal(calls[1].options.env.NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT, "5000");
+  assert.equal(calls[1].options.env.NPM_CONFIG_FETCH_TIMEOUT, "20000");
+  for (const interactive of calls.slice(2)) {
+    assert.equal(interactive.options.stdio, "inherit");
+    assert.equal(interactive.options.timeout, 5 * 60_000);
+    assert.equal("encoding" in interactive.options, false);
+    assert.equal("maxBuffer" in interactive.options, false);
+  }
+  assert.equal(calls[2].options.env.NPM_CONFIG_FETCH_RETRIES, "3");
+  assert.equal(calls[3].options.env.NPM_CONFIG_FETCH_RETRIES, "0");
+  assert.ok(calls.every(({ args }) => args.every((arg) => !arg.startsWith("--fetch-"))));
+  assert.throws(
+    () => runNpmTrustCommand(
+      [...npmTrustListArgs("@oliphaunt/example"), "--fetch-retries", "3"],
+      "npm trust list @oliphaunt/example",
+      { spawnImpl },
+    ),
+    /refusing unsupported npm trust list arguments/u,
+  );
   assert.throws(
     () => runNpmTrustCommand(["publish", "package.tgz"], "npm publish", { spawnImpl }),
     /refusing unsupported npm management command/u,
   );
-  assert.equal(calls.length, 3, "unsupported npm commands must fail before spawn");
+  assert.throws(
+    () => runNpmTrustCommand(
+      npmTrustGithubArgs("@oliphaunt/example"),
+      "npm trust github @oliphaunt/example",
+      { spawnImpl, stdinIsTTY: false, stdoutIsTTY: true },
+    ),
+    /requires an interactive terminal/u,
+  );
+  assert.equal(calls.length, 4, "unsupported and non-TTY npm commands must fail before spawn");
+
+  assert.throws(
+    () => runNpmTrustCommand(
+      npmTrustListArgs("@oliphaunt/example"),
+      "npm trust list @oliphaunt/example",
+      {
+        spawnImpl: () => ({
+          status: 1,
+          stdout: "",
+          stderr: "npm error code EOTP\nnpm error This operation requires a one-time password",
+        }),
+      },
+    ),
+    (cause) => cause.npmAuthenticationRequired === true,
+  );
+});
+
+test("awaited JSON output remains complete through a pipe beyond Bun's 64 KiB console boundary", async () => {
+  const script = [
+    `const { writeJson } = await import(${JSON.stringify(MODULE_URL)});`,
+    'await writeJson({ payload: "x".repeat(90_000), tail: "complete" });',
+  ].join("\n");
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--eval", script], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.once("error", reject);
+    child.once("close", (status, signal) => resolve({
+      signal,
+      status,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+      stdout: Buffer.concat(stdout),
+    }));
+  });
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.length > 80 * 1024);
+  assert.equal(result.stdout.at(-1), 0x0a);
+  assert.deepEqual(JSON.parse(result.stdout.toString("utf8")), {
+    payload: "x".repeat(90_000),
+    tail: "complete",
+  });
+});
+
+test("file reports are atomically created as mode 0600, complete, and never overwritten", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "oliphaunt-trust-report-"));
+  try {
+    const output = path.join(directory, "npm-audit.json");
+    const report = {
+      payload: "x".repeat(90_000),
+      tail: "complete",
+    };
+    assert.equal(await writeJsonFile(report, output), output);
+    assert.equal((await stat(output)).mode & 0o777, 0o600);
+    const bytes = await readFile(output, "utf8");
+    assert.ok(Buffer.byteLength(bytes) > 80 * 1024);
+    assert.equal(bytes.at(-1), "\n");
+    assert.deepEqual(JSON.parse(bytes), report);
+    await assert.rejects(
+      () => writeJsonFile({ replaced: true }, output),
+      /refusing to overwrite existing --output file/u,
+    );
+    assert.deepEqual(JSON.parse(await readFile(output, "utf8")), report);
+    assert.deepEqual(await readdir(directory), ["npm-audit.json"]);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("reservation never exposes the final path before a complete commit", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "oliphaunt-trust-atomic-"));
+  try {
+    const output = path.join(directory, "pending.json");
+    const reserved = await reserveJsonFile(output);
+    await assert.rejects(() => stat(output), (cause) => cause.code === "ENOENT");
+    const during = await readdir(directory);
+    assert.ok(during.some((entry) => entry.endsWith(".oliphaunt-reservation")));
+    assert.ok(during.some((entry) => entry.includes(".tmp-")));
+    assert.ok(!during.includes("pending.json"));
+    assert.ok(!during.some((entry) => entry.includes(".probe-")));
+    await reserved.abort();
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("report reservation fails before every registry or initialization call", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "oliphaunt-trust-reservation-"));
+  try {
+    const existing = path.join(directory, "existing.json");
+    await writeJsonFile({ existing: true }, existing);
+    const plan = buildTrustedPublisherPlan(lock([
+      carrier("npm", "@oliphaunt/example"),
+    ]));
+    let calls = 0;
+    const options = {
+      plan,
+      ecosystem: "npm",
+      batch: 1,
+      apply: true,
+      client: {
+        authorizeAudit() { calls += 1; },
+        async list() {
+          calls += 1;
+          return [];
+        },
+        async create() { calls += 1; },
+      },
+      initialize: async () => { calls += 1; },
+      sleepImpl: async () => {},
+    };
+    await assert.rejects(
+      () => reconcileTrustedPublishersToFile({
+        ...options,
+        outputFile: existing,
+      }),
+      /refusing to overwrite existing --output file/u,
+    );
+    await assert.rejects(
+      () => reconcileTrustedPublishersToFile({
+        ...options,
+        outputFile: path.join(directory, "missing-parent", "report.json"),
+      }),
+      /could not reserve --output file/u,
+    );
+    assert.equal(calls, 0, "output reservation must precede client initialization and registry calls");
+    assert.deepEqual(await readdir(directory), ["existing.json"]);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 });
 
 test("crates.io client uses scoped bearer auth, exact payload, and no delete path", async () => {
@@ -248,9 +504,15 @@ test("apply is pre-audited, idempotent, and verified after each missing configur
   ]);
   const creates = [];
   const sleeps = [];
+  const events = [];
   const client = {
-    async list(name) { return structuredClone(state.get(name)); },
+    async authorizeAudit(name) { events.push(`authorize:${name}`); },
+    async list(name) {
+      events.push(`list:${name}`);
+      return structuredClone(state.get(name));
+    },
     async create(name) {
+      events.push(`create:${name}`);
       creates.push(name);
       state.set(name, [exactNpm()]);
     },
@@ -261,14 +523,31 @@ test("apply is pre-audited, idempotent, and verified after each missing configur
     batch: 1,
     apply: true,
     client,
-    sleepImpl: async (milliseconds) => sleeps.push(milliseconds),
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+      events.push(`sleep:${milliseconds}`);
+    },
   });
   assert.equal(report.mode, "apply");
   assert.deepEqual(report.missing, []);
   assert.deepEqual(report.conflicts, []);
   assert.deepEqual(report.created, ["npm:@oliphaunt/two"]);
   assert.deepEqual(creates, ["@oliphaunt/two"]);
-  assert.equal(sleeps.length, 6);
+  assert.equal(sleeps.length, 8);
+  assert.deepEqual(events.slice(0, 7), [
+    "authorize:@oliphaunt/one",
+    "sleep:2000",
+    "list:@oliphaunt/one",
+    "sleep:2000",
+    "list:@oliphaunt/two",
+    "sleep:2000",
+    "create:@oliphaunt/two",
+  ]);
+  assert.equal(events.filter((event) => event.startsWith("authorize:")).length, 2);
+  assert.ok(
+    events.lastIndexOf("authorize:@oliphaunt/one") > events.indexOf("create:@oliphaunt/two"),
+    "the final audit pass must refresh the read-only authentication window",
+  );
 
   const second = await reconcileTrustedPublishers({
     plan,

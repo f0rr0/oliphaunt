@@ -167,6 +167,10 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       "src/runtimes/liboliphaunt/licenses/icu-76.1-LICENSE",
       ["liboliphaunt-native", "liboliphaunt-wasix"],
     ],
+    [
+      "src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh",
+      ["liboliphaunt-native"],
+    ],
     ["src/sources/third-party/shared/openssl.toml", ["oliphaunt-extension-contrib-pg18"]],
     [
       "src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt",

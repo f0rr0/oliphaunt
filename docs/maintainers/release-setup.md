@@ -315,10 +315,12 @@ Generated Cargo `*-part-NNN` crates are allowed only when a `.crate` would excee
    lock=target/release/publication-lock.json
    digest="$(jq -er .lockDigest "$lock")"
    tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
-     --audit --ecosystem npm --batch 1 --lock "$lock"
+     --audit --ecosystem npm --batch 1 --lock "$lock" \
+     --output target/release/npm-trust-batch-1-pre-audit.json
    tools/dev/bun.sh tools/release/trusted-publisher-config.mjs \
      --apply --confirm-lock-digest "$digest" \
-     --ecosystem npm --batch 1 --lock "$lock"
+     --ecosystem npm --batch 1 --lock "$lock" \
+     --output target/release/npm-trust-batch-1-apply.json
    ```
 
    Repeat with the next batch number, completing npm's 2FA prompt when a new
@@ -329,11 +331,20 @@ Generated Cargo `*-part-NNN` crates are allowed only when a `.crate` would excee
    authorized. After all batches, rerun `--audit` for every batch and retain
    the zero-missing, zero-conflict reports.
 
-   Run each npm `--apply` command directly in an interactive terminal. Read and
-   audit commands remain captured and bounded, while only `npm trust github`
-   inherits the terminal so npm can complete web or classic OTP authentication;
-   each such interactive mutation has a five-minute process deadline. Do not
-   pipe or redirect an apply command that may need a 2FA prompt.
+   Run every npm `--audit` and `--apply` command directly in an interactive
+   terminal. npm can require web or classic OTP even for `npm trust list`.
+   Before the initial and final classification passes, the helper therefore
+   runs one read-only list with inherited terminal streams and discards that
+   display, then performs separate bounded captured reads as evidence. If that
+   authentication window expires during a batch, an `EOTP` captured read gets
+   exactly one more read-only warm-up and one captured retry; no other failure
+   is retried. Every successful warm-up is followed by the same bounded
+   two-second management-request spacing as ordinary list/create requests.
+   Each interactive warm-up or mutation has a five-minute process deadline.
+   Select npm's five-minute authentication window when prompted. Do not pipe
+   or redirect npm audit/apply commands. `--output` atomically creates the
+   machine-readable mode-`0600` report and refuses to overwrite an earlier
+   report, so use a new output name for every final re-audit.
 4. Revoke `NPM_BOOTSTRAP_TOKEN`; normal publishing uses npm trusted publishing and no `NODE_AUTH_TOKEN`.
 
 Target-specific npm packages are intentional carriers. Routine payload-splitting packages are forbidden; an npm tarball contains the target payload directly and stays within the registry's documented limits.

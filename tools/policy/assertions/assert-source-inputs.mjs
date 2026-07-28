@@ -459,6 +459,10 @@ function checkToolchains() {
     '.github/actions/setup-npm-publisher/action.yml',
     '"$node_executable" tools/release/npm-trusted-publishing.mjs check-runtime',
   );
+  requireText(
+    '.github/actions/setup-npm-publisher/action.yml',
+    '"$node_executable" tools/release/npm-trusted-publishing.mjs check-trust-cli',
+  );
   rejectText(
     '.github/actions/setup-npm-publisher/action.yml',
     'tools/dev/bun.sh tools/release/npm-trusted-publishing.mjs',

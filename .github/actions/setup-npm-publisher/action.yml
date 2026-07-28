@@ -60,6 +60,9 @@ runs:
         "$node_executable" tools/release/npm-trusted-publishing.mjs check-runtime \
           --node "$node_version" \
           --npm "$npm_version"
+        "$node_executable" tools/release/npm-trusted-publishing.mjs check-trust-cli \
+          --node-executable "$node_executable" \
+          --npm-cli "$npm_cli"
         export_dir="$publisher_bin"
         output_node="$node_executable"
         output_npm_cli="$npm_cli"

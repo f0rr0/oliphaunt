@@ -8,11 +8,11 @@ export const RELEASE_PLEASE_DISPLACED_MAIN_SHA =
 // predecessor when an exact protected-main qualification exposes another
 // pre-publication defect; keep the metadata and bootstrap boundaries fixed.
 export const RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA =
-  "1f61976e9b508b5786e683c6772a126c6435b66e";
+  "e8e6c45c56c8c80a6317f0881caca3780224dcf7";
 // Every hosted qualification attempt gets an immutable evidence branch. Rotate
 // this branch after a failed attempt instead of rewriting the retained ref.
 export const RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH =
-  "f0rr0/history-repair-candidate-12";
+  "f0rr0/history-repair-candidate-13";
 export const RELEASE_PLEASE_INTRODUCTION_SUBJECT = "feat: introduce oliphaunt";
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";
