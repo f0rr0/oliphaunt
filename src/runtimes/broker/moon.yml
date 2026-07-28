@@ -1,0 +1,178 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-broker"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["runtime", "broker", "native", "postgres", "release-product"]
+dependsOn:
+  - "oliphaunt-rust"
+  - "liboliphaunt-native"
+
+project:
+  title: "Oliphaunt Broker"
+  description: "Process-isolated broker helper runtime used by Rust and TypeScript SDKs."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-broker"
+    packagePath: "src/runtimes/broker"
+    artifactTargets:
+      preset: "broker-helper"
+      publishedTargets:
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+
+owners:
+  defaultOwner: "@oliphaunt/broker"
+  paths:
+    "**/*.rs": ["@oliphaunt/broker"]
+    "Cargo.toml": ["@oliphaunt/broker"]
+
+tasks:
+  check:
+    tags: ["quality", "static", "ci-rust"]
+    command: "cargo check -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
+    deps:
+      - "oliphaunt-rust:check"
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "cargo test -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/test"
+    deps:
+      - "oliphaunt-rust:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package"]
+    command: "bash src/runtimes/broker/tools/check-package.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/package"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/runtimes/broker/tools/check-package.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  release-check:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "oliphaunt-broker:package"
+    inputs: []
+
+  release-assets:
+    tags: ["release", "artifact", "ci-broker-runtime"]
+    command: "bash tools/release/package-broker-assets.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/release-assets"
+      OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  aggregate-release-assets:
+    tags: ["release", "artifact-package", "ci-broker-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

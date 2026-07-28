@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: stub fork_process in embedded WASIX runtime
+
+The embedded Oliphaunt entrypoint is not a postmaster and must not fork
+backend children.  PostgreSQL 18 still builds postmaster/fork_process.c into
+the backend object graph, so provide a local ENOSYS implementation for this
+lane instead of requiring a WASIX fork import at final link.
+---
+ src/backend/postmaster/fork_process.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/backend/postmaster/fork_process.c b/src/backend/postmaster/fork_process.c
+index b6ff0ce761..d77fe53b9a 100644
+--- a/src/backend/postmaster/fork_process.c
++++ b/src/backend/postmaster/fork_process.c
+@@ -11,6 +11,7 @@
+  */
+ #include "postgres.h"
+
++#include <errno.h>
+ #include <fcntl.h>
+ #include <signal.h>
+ #include <time.h>
+@@ -22,6 +23,15 @@
+ #include "miscadmin.h"
+ #include "postmaster/fork_process.h"
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++pid_t
++fork_process(void)
++{
++	errno = ENOSYS;
++	return -1;
++}
++#else
++
+ #ifndef WIN32
+ /*
+  * Wrapper for fork(). Return values are the same as those for fork():
+@@ -126,3 +136,4 @@ fork_process(void)
+ }
+
+ #endif							/* ! WIN32 */
++#endif							/* OLIPHAUNT_WASM_SINGLE_USER */
+--
+2.49.0

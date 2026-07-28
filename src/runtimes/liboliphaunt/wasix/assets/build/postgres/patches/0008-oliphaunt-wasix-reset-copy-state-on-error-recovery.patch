@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: reset copy state on error recovery
+
+Top-level PostgreSQL error recovery aborts any active COPY subprotocol.
+Publish that boundary to the WASIX host before emitting the ErrorResponse so
+the host-side transport state does not treat the recovered backend as still
+being inside a PostgreSQL-owned COPY exchange.
+
+This does not switch the active transport back to buffered mode.  The host
+still owns transport restoration after a streaming handoff; PostgreSQL only
+reports that its COPY state is no longer active.
+---
+ src/backend/tcop/postgres.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 8017e5e97e..bb7f33f100 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -4478,6 +4478,14 @@ PostgresMainLongJmp(void)
+ 	/* Make sure libpq is in a good state */
+ 	pq_comm_reset();
+
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	/*
++	 * A top-level ERROR aborts COPY.  Keep the host-side protocol handoff
++	 * state aligned before the ErrorResponse is written.
++	 */
++	oliphaunt_wasix_protocol_report_copy_response(OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE);
++#endif
++
+ 	/* Report the error to the client and/or server log */
+ 	EmitErrorReport();
+
+--
+2.49.0

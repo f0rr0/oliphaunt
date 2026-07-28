@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: speed up hash_bytes unaligned loads
+
+PostgreSQL's unaligned little-endian hash_bytes() path builds each uint32 from
+four byte loads and shifts.  On WASIX this is visible in guest CPU profiles for
+hash-table-heavy query paths, and WebAssembly supports unaligned 32-bit loads.
+
+Use a tiny memcpy-based load helper for WASIX only.  This keeps the C semantics
+defined for unaligned input while giving clang/LLVM the pattern it can lower to
+a single little-endian wasm load.  Big-endian and non-WASIX builds keep the
+upstream byte-by-byte path.
+---
+ src/common/hashfn.c | 114 ++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 97 insertions(+), 17 deletions(-)
+
+diff --git a/src/common/hashfn.c b/src/common/hashfn.c
+index 8a6bd816ff..31c8ac9ee8 100644
+--- a/src/common/hashfn.c
++++ b/src/common/hashfn.c
+@@ -47,6 +47,17 @@
+
+ #define rot(x,k) pg_rotate_left32(x, k)
+
++#if defined(__wasi__) && !defined(WORDS_BIGENDIAN)
++static inline uint32
++oliphaunt_wasix_hash_load32(const unsigned char *ptr)
++{
++	uint32		value;
++
++	memcpy(&value, ptr, sizeof(value));
++	return value;
++}
++#endif
++
+ /*----------
+  * mix -- mix 3 32-bit values reversibly.
+  *
+@@ -265,9 +276,15 @@ hash_bytes(const unsigned char *k, int keylen)
+ 			b += (k[7] + ((uint32) k[6] << 8) + ((uint32) k[5] << 16) + ((uint32) k[4] << 24));
+ 			c += (k[11] + ((uint32) k[10] << 8) + ((uint32) k[9] << 16) + ((uint32) k[8] << 24));
+ #else							/* !WORDS_BIGENDIAN */
++#ifdef __wasi__
++			a += oliphaunt_wasix_hash_load32(k);
++			b += oliphaunt_wasix_hash_load32(k + 4);
++			c += oliphaunt_wasix_hash_load32(k + 8);
++#else
+ 			a += (k[0] + ((uint32) k[1] << 8) + ((uint32) k[2] << 16) + ((uint32) k[3] << 24));
+ 			b += (k[4] + ((uint32) k[5] << 8) + ((uint32) k[6] << 16) + ((uint32) k[7] << 24));
+ 			c += (k[8] + ((uint32) k[9] << 8) + ((uint32) k[10] << 16) + ((uint32) k[11] << 24));
++#endif
+ #endif							/* WORDS_BIGENDIAN */
+ 			mix(a, b, c);
+ 			k += 12;
+@@ -314,6 +331,46 @@ hash_bytes(const unsigned char *k, int keylen)
+ 				/* case 0: nothing left to add */
+ 		}
+ #else							/* !WORDS_BIGENDIAN */
++#ifdef __wasi__
++		switch (len)
++		{
++			case 11:
++				c += ((uint32) k[10] << 24);
++				/* fall through */
++			case 10:
++				c += ((uint32) k[9] << 16);
++				/* fall through */
++			case 9:
++				c += ((uint32) k[8] << 8);
++				/* fall through */
++			case 8:
++				/* the lowest byte of c is reserved for the length */
++				b += oliphaunt_wasix_hash_load32(k + 4);
++				a += oliphaunt_wasix_hash_load32(k);
++				break;
++			case 7:
++				b += ((uint32) k[6] << 16);
++				/* fall through */
++			case 6:
++				b += ((uint32) k[5] << 8);
++				/* fall through */
++			case 5:
++				b += k[4];
++				/* fall through */
++			case 4:
++				a += oliphaunt_wasix_hash_load32(k);
++				break;
++			case 3:
++				a += ((uint32) k[2] << 16);
++				/* fall through */
++			case 2:
++				a += ((uint32) k[1] << 8);
++				/* fall through */
++			case 1:
++				a += k[0];
++				/* case 0: nothing left to add */
++		}
++#else
+ 		switch (len)
+ 		{
+ 			case 11:
+@@ -351,6 +408,7 @@ hash_bytes(const unsigned char *k, int keylen)
+ 				a += k[0];
+ 				/* case 0: nothing left to add */
+ 		}
++#endif
+ #endif							/* WORDS_BIGENDIAN */
+ 	}
+
+@@ -504,9 +562,15 @@ hash_bytes_extended(const unsigned char *k, int keylen, uint64 seed)
+ 			b += (k[7] + ((uint32) k[6] << 8) + ((uint32) k[5] << 16) + ((uint32) k[4] << 24));
+ 			c += (k[11] + ((uint32) k[10] << 8) + ((uint32) k[9] << 16) + ((uint32) k[8] << 24));
+ #else							/* !WORDS_BIGENDIAN */
++#ifdef __wasi__
++			a += oliphaunt_wasix_hash_load32(k);
++			b += oliphaunt_wasix_hash_load32(k + 4);
++			c += oliphaunt_wasix_hash_load32(k + 8);
++#else
+ 			a += (k[0] + ((uint32) k[1] << 8) + ((uint32) k[2] << 16) + ((uint32) k[3] << 24));
+ 			b += (k[4] + ((uint32) k[5] << 8) + ((uint32) k[6] << 16) + ((uint32) k[7] << 24));
+ 			c += (k[8] + ((uint32) k[9] << 8) + ((uint32) k[10] << 16) + ((uint32) k[11] << 24));
++#endif
+ #endif							/* WORDS_BIGENDIAN */
+ 			mix(a, b, c);
+ 			k += 12;
+@@ -553,6 +617,46 @@ hash_bytes_extended(const unsigned char *k, int keylen, uint64 seed)
+ 				/* case 0: nothing left to add */
+ 		}
+ #else							/* !WORDS_BIGENDIAN */
++#ifdef __wasi__
++		switch (len)
++		{
++			case 11:
++				c += ((uint32) k[10] << 24);
++				/* fall through */
++			case 10:
++				c += ((uint32) k[9] << 16);
++				/* fall through */
++			case 9:
++				c += ((uint32) k[8] << 8);
++				/* fall through */
++			case 8:
++				/* the lowest byte of c is reserved for the length */
++				b += oliphaunt_wasix_hash_load32(k + 4);
++				a += oliphaunt_wasix_hash_load32(k);
++				break;
++			case 7:
++				b += ((uint32) k[6] << 16);
++				/* fall through */
++			case 6:
++				b += ((uint32) k[5] << 8);
++				/* fall through */
++			case 5:
++				b += k[4];
++				/* fall through */
++			case 4:
++				a += oliphaunt_wasix_hash_load32(k);
++				break;
++			case 3:
++				a += ((uint32) k[2] << 16);
++				/* fall through */
++			case 2:
++				a += ((uint32) k[1] << 8);
++				/* fall through */
++			case 1:
++				a += k[0];
++				/* case 0: nothing left to add */
++		}
++#else
+ 		switch (len)
+ 		{
+ 			case 11:
+@@ -590,6 +694,7 @@ hash_bytes_extended(const unsigned char *k, int keylen, uint64 seed)
+ 				a += k[0];
+ 				/* case 0: nothing left to add */
+ 		}
++#endif
+ #endif							/* WORDS_BIGENDIAN */
+ 	}
+
+--
+2.49.0

@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: route sysv shmem through port
+
+The embedded WASIX runtime emulates PostgreSQL's fixed shared-memory
+segment in the host bridge.  Make that PostgreSQL port behavior explicit in
+`wasix-dl.h` and provide local SysV shared-memory header declarations for
+toolchains that do not ship those interfaces.
+
+This removes another PG18 configure-script-wide syscall remap.  PostgreSQL
+source still calls `shmget`, `shmat`, `shmdt`, and `shmctl`; the `wasix-dl`
+port owns the mapping to the embedded runtime implementation.
+---
+ src/include/port/wasix-dl.h         | 12 ++++++++++++
+ src/include/port/wasix-dl/sys/ipc.h | 37 +++++++++++++++++++++++++++++++++++++
+ src/include/port/wasix-dl/sys/shm.h | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 79 insertions(+)
+ create mode 100644 src/include/port/wasix-dl/sys/ipc.h
+ create mode 100644 src/include/port/wasix-dl/sys/shm.h
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index c37ccbb546..5cfa325b50 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -10,6 +10,8 @@
+ #include <setjmp.h>
+ #include <pwd.h>
+ #include <sys/types.h>
++#include <sys/ipc.h>
++#include <sys/shm.h>
+
+ struct Port;
+
+@@ -29,6 +31,10 @@ extern gid_t oliphaunt_wasix_getgid(void);
+ extern struct passwd *oliphaunt_wasix_getpwuid(uid_t uid);
+ extern int oliphaunt_wasix_getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
+ 						  struct passwd **result);
++extern int oliphaunt_wasix_shmget(key_t key, size_t size, int shmflg);
++extern void *oliphaunt_wasix_shmat(int shmid, const void *shmaddr, int shmflg);
++extern int oliphaunt_wasix_shmdt(const void *shmaddr);
++extern int oliphaunt_wasix_shmctl(int shmid, int cmd, struct shmid_ds *buf);
+ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+
+ #define geteuid oliphaunt_wasix_geteuid
+@@ -37,6 +43,10 @@ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #define getgid oliphaunt_wasix_getgid
+ #define getpwuid oliphaunt_wasix_getpwuid
+ #define getpwuid_r oliphaunt_wasix_getpwuid_r
++#define shmget oliphaunt_wasix_shmget
++#define shmat oliphaunt_wasix_shmat
++#define shmdt oliphaunt_wasix_shmdt
++#define shmctl oliphaunt_wasix_shmctl
+ #endif
+
+ #endif
+diff --git a/src/include/port/wasix-dl/sys/ipc.h b/src/include/port/wasix-dl/sys/ipc.h
+new file mode 100644
+index 0000000000..0872fdb47f
+--- /dev/null
++++ b/src/include/port/wasix-dl/sys/ipc.h
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include <sys/types.h>
++
++#ifndef IPC_PRIVATE
++#define IPC_PRIVATE ((key_t) 0)
++#endif
++#ifndef IPC_CREAT
++#define IPC_CREAT 01000
++#endif
++#ifndef IPC_EXCL
++#define IPC_EXCL 02000
++#endif
++#ifndef IPC_NOWAIT
++#define IPC_NOWAIT 04000
++#endif
++
++#ifndef IPC_RMID
++#define IPC_RMID 0
++#endif
++#ifndef IPC_SET
++#define IPC_SET 1
++#endif
++#ifndef IPC_STAT
++#define IPC_STAT 2
++#endif
++
++struct ipc_perm
++{
++	key_t __key;
++	uid_t uid;
++	gid_t gid;
++	uid_t cuid;
++	gid_t cgid;
++	mode_t mode;
++	unsigned short __seq;
++};
+diff --git a/src/include/port/wasix-dl/sys/shm.h b/src/include/port/wasix-dl/sys/shm.h
+new file mode 100644
+index 0000000000..91f59d9e39
+--- /dev/null
++++ b/src/include/port/wasix-dl/sys/shm.h
+@@ -0,0 +1,30 @@
++#pragma once
++
++#include <stddef.h>
++#include <time.h>
++#include <sys/ipc.h>
++
++#ifndef SHM_RDONLY
++#define SHM_RDONLY 010000
++#endif
++#ifndef SHM_RND
++#define SHM_RND 020000
++#endif
++#ifndef SHMLBA
++#define SHMLBA 4096
++#endif
++
++struct shmid_ds
++{
++	struct ipc_perm shm_perm;
++	size_t shm_segsz;
++	time_t shm_atime;
++	time_t shm_dtime;
++	time_t shm_ctime;
++	unsigned long shm_nattch;
++};
++
++int shmget(key_t key, size_t size, int shmflg);
++void *shmat(int shmid, const void *shmaddr, int shmflg);
++int shmdt(const void *shmaddr);
++int shmctl(int shmid, int cmd, struct shmid_ds *buf);
+--
+2.49.0

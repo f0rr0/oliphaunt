@@ -1,0 +1,23 @@
+id = "oliphaunt-kotlin"
+owner = "@oliphaunt/sdk-android"
+kind = "sdk"
+publish_targets = ["maven-central"]
+registry_packages = [
+  "maven:dev.oliphaunt:oliphaunt-android",
+  "maven:dev.oliphaunt:oliphaunt-android-gradle-plugin",
+  "maven:dev.oliphaunt.android:dev.oliphaunt.android.gradle.plugin",
+]
+release_artifacts = [
+  "gradle-module-metadata",
+  "android-adapter-aar",
+  "android-consumer-gradle-plugin",
+  "android-consumer-gradle-plugin-marker",
+  "maven-publication",
+  "runtime-assets-external",
+]
+derived_version_files = ["src/sdks/kotlin/oliphaunt/build.gradle.kts", "src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts"]
+
+[compatibility_versions.oliphaunt-kotlin-liboliphaunt]
+source_product = "liboliphaunt-native"
+path = "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/liboliphaunt.version"
+parser = "raw"

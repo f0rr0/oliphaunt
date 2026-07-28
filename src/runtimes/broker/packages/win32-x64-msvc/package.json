@@ -1,0 +1,41 @@
+{
+  "name": "@oliphaunt/broker-win32-x64-msvc",
+  "version": "0.0.0",
+  "description": "Windows x64 MSVC oliphaunt-broker helper binary.",
+  "license": "MIT AND Apache-2.0 AND BSD-3-Clause AND CC-BY-3.0 AND ISC AND Unicode-3.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/broker/packages/win32-x64-msvc"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "brokerHelper": "oliphaunt-broker",
+    "target": "windows-x64-msvc",
+    "executableRelativePath": "bin/oliphaunt-broker.exe"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "executableFiles": [
+      "./bin/oliphaunt-broker.exe"
+    ]
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_LICENSES"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

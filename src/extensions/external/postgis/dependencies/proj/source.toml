@@ -1,0 +1,4 @@
+name = "proj"
+url = "https://github.com/OSGeo/PROJ.git"
+branch = "9.8.1"
+commit = "f08fa86c478c4bbbf003b1ec751dd84aa6eca486"

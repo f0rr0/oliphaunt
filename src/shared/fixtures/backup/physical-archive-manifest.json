@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "oliphaunt-physical-archive-metadata",
+  "format": "physicalArchive",
+  "requiredEntries": ["PG_VERSION", "global/pg_control", "base/"],
+  "restoreRules": {
+    "targetRootMustBeEmptyOrReplaceExisting": true,
+    "preservePgdataDirectoryName": true,
+    "rejectSqlArchive": true
+  }
+}

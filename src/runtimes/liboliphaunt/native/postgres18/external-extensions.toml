@@ -1,0 +1,36 @@
+schema = "liboliphaunt-external-extensions-v2"
+pg_major = 18
+
+[[extensions]]
+id = "pggraph"
+sql_name = "graph"
+module_stem = "graph"
+source_kind = "pgrx"
+upstream = "https://github.com/evokoa/pggraph.git"
+source_ref = "main"
+commit = "4ea3c3206811deda03de136b4f465a2cf9bc8e72"
+checkout = "target/oliphaunt-sources/checkouts/pggraph"
+source_subdir = "graph"
+license = "Apache-2.0"
+redistribution = "allowed"
+pgrx_version = "0.18.0"
+pg_feature = "pg18"
+requires_shared_preload = false
+release_state = "candidate"
+
+[[extensions]]
+id = "paradedb-pg-search"
+sql_name = "pg_search"
+module_stem = "pg_search"
+source_kind = "pgrx"
+upstream = "https://github.com/paradedb/paradedb.git"
+source_ref = "v0.23.4"
+commit = "c07921a78f3d24cbb0251b31a1150a7db600af5a"
+checkout = "target/oliphaunt-sources/checkouts/paradedb"
+source_subdir = "pg_search"
+license = "AGPL-3.0"
+redistribution = "requires-commercial-license"
+pgrx_version = "0.18.0"
+pg_feature = "pg18"
+requires_shared_preload = true
+release_state = "candidate"

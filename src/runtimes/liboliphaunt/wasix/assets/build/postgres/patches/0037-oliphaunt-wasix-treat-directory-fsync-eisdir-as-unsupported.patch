@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000037 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Sat, 30 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: treat directory fsync EISDIR as unsupported
+
+PostgreSQL already treats several directory fsync failures as a platform
+signal that directory fsync is unsupported or unnecessary.  WASIX can open a
+directory for the sync path, then report EISDIR from fsync itself.
+
+Treat EISDIR from directory fsync the same way as the existing unsupported
+directory fsync errors.  This keeps initdb's final sync phase working while
+preserving fatal error handling for regular files and non-directory errors.
+---
+ src/backend/storage/file/fd.c | 2 +-
+ src/common/file_utils.c       | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
+--- a/src/backend/storage/file/fd.c
++++ b/src/backend/storage/file/fd.c
+@@ -3845,1 +3845,1 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
+-	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
++	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
+diff --git a/src/common/file_utils.c b/src/common/file_utils.c
+--- a/src/common/file_utils.c
++++ b/src/common/file_utils.c
+@@ -416,1 +416,1 @@ fsync_fname(const char *fname, bool isdir)
+-	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
++	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
