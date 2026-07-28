@@ -1,0 +1,143 @@
+{
+  "base": {
+    "assets": [
+      {
+        "bytes": 14095898,
+        "format": "zip",
+        "member": "liboliphaunt.xcframework",
+        "name": "liboliphaunt-0.1.0-apple-spm-xcframework.zip",
+        "role": "base-xcframework",
+        "sha256": "dfabee421e3e94590c9d81218b84858499648ee0fb460444855bdb03e6ed3fc2",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v0.1.0/liboliphaunt-0.1.0-apple-spm-xcframework.zip"
+      },
+      {
+        "bytes": 12852582,
+        "format": "tar.gz",
+        "member": "oliphaunt",
+        "name": "liboliphaunt-0.1.0-runtime-resources.tar.gz",
+        "role": "runtime-resources",
+        "sha256": "7ab1e892f4b87e98cf058e2df8459e41bcff3250cd2c8be8d0b2a87b408291c3",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v0.1.0/liboliphaunt-0.1.0-runtime-resources.tar.gz"
+      },
+      {
+        "bytes": 13113165,
+        "format": "tar.gz",
+        "member": "share/icu",
+        "name": "liboliphaunt-0.1.0-icu-data.tar.gz",
+        "role": "icu-data",
+        "sha256": "762f4e64ab5121177064eff8031c03e02d7619e5e1be9918f3168baf80518761",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v0.1.0/liboliphaunt-0.1.0-icu-data.tar.gz"
+      }
+    ],
+    "product": "liboliphaunt-native",
+    "tag": "liboliphaunt-native-v0.1.0",
+    "version": "0.1.0"
+  },
+  "carriers": [],
+  "extensions": [],
+  "legal": {
+    "base": [
+      {
+        "assetRole": "base-xcframework",
+        "files": [
+          {
+            "bytes": 1085,
+            "kind": "license",
+            "member": "liboliphaunt.xcframework/LICENSE",
+            "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+          },
+          {
+            "bytes": 26487,
+            "kind": "license",
+            "member": "liboliphaunt.xcframework/THIRD_PARTY_LICENSES/ICU-LICENSE",
+            "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+          },
+          {
+            "bytes": 1198,
+            "kind": "license",
+            "member": "liboliphaunt.xcframework/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+            "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+          },
+          {
+            "bytes": 1149,
+            "kind": "notice",
+            "member": "liboliphaunt.xcframework/THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+            "sha256": "ca1c6626873f715f1ee4cebd4be93cb5dd6886df7e246332819aad26a8358372"
+          },
+          {
+            "bytes": 864,
+            "kind": "notice",
+            "member": "liboliphaunt.xcframework/THIRD_PARTY_NOTICES.md",
+            "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+          }
+        ],
+        "profile": "native-runtime",
+        "spdx": "MIT AND PostgreSQL AND Unicode-3.0"
+      },
+      {
+        "assetRole": "runtime-resources",
+        "files": [
+          {
+            "bytes": 1085,
+            "kind": "license",
+            "member": "LICENSE",
+            "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+          },
+          {
+            "bytes": 1198,
+            "kind": "license",
+            "member": "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
+            "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd"
+          },
+          {
+            "bytes": 1149,
+            "kind": "notice",
+            "member": "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+            "sha256": "ca1c6626873f715f1ee4cebd4be93cb5dd6886df7e246332819aad26a8358372"
+          },
+          {
+            "bytes": 864,
+            "kind": "notice",
+            "member": "THIRD_PARTY_NOTICES.md",
+            "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+          }
+        ],
+        "profile": "native-runtime-resources",
+        "spdx": "MIT AND PostgreSQL"
+      },
+      {
+        "assetRole": "icu-data",
+        "files": [
+          {
+            "bytes": 1085,
+            "kind": "license",
+            "member": "LICENSE",
+            "sha256": "6f8300e2f43c5a012d6f914fe5affa9090b97b0be39ddf3846f01b905edd8c10"
+          },
+          {
+            "bytes": 26487,
+            "kind": "license",
+            "member": "THIRD_PARTY_LICENSES/ICU-LICENSE",
+            "sha256": "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"
+          },
+          {
+            "bytes": 1149,
+            "kind": "notice",
+            "member": "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
+            "sha256": "ca1c6626873f715f1ee4cebd4be93cb5dd6886df7e246332819aad26a8358372"
+          },
+          {
+            "bytes": 864,
+            "kind": "notice",
+            "member": "THIRD_PARTY_NOTICES.md",
+            "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619"
+          }
+        ],
+        "profile": "native-icu-data",
+        "spdx": "MIT AND Unicode-3.0"
+      }
+    ],
+    "extensions": []
+  },
+  "schema": "oliphaunt-react-native-ios-carrier-v1"
+}
