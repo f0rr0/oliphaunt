@@ -577,6 +577,20 @@ test("CLI creates immutable canonical predicate bytes and revalidates them", () 
   );
   try {
     const values = fixture();
+    const env = {
+      ...process.env,
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_REPOSITORY: "f0rr0/oliphaunt",
+      GITHUB_RUN_ATTEMPT: String(values.controller.promotionRun.attempt),
+      GITHUB_RUN_ID: String(values.controller.promotionRun.id),
+      GITHUB_SHA: values.controller.source.commit,
+      GITHUB_WORKFLOW: "Release",
+      GITHUB_WORKFLOW_REF:
+        "f0rr0/oliphaunt/.github/workflows/release.yml@refs/heads/main",
+      GITHUB_WORKFLOW_SHA: values.controller.source.commit,
+    };
     const files = Object.fromEntries(
       ["lock", "controller", "provenanceRecord", "recoveryApproval", "subjects"]
         .map((name) => [name, path.join(root, `${name}.json`)]),
@@ -600,7 +614,7 @@ test("CLI creates immutable canonical predicate bytes and revalidates them", () 
     const created = execFileSync(
       process.execPath,
       [TOOL, "create", ...common, "--output", output],
-      { encoding: "utf8" },
+      { encoding: "utf8", env },
     );
     assert.match(created, new RegExp(RECOVERY_PROMOTION_PREDICATE_TYPE, "u"));
     const predicate = JSON.parse(readFileSync(output, "utf8"));
@@ -611,7 +625,7 @@ test("CLI creates immutable canonical predicate bytes and revalidates them", () 
     const verified = execFileSync(
       process.execPath,
       [TOOL, "verify", ...common, "--predicate", output],
-      { encoding: "utf8" },
+      { encoding: "utf8", env },
     );
     assert.match(verified, /verified https:/u);
 
@@ -664,7 +678,7 @@ test("CLI creates immutable canonical predicate bytes and revalidates them", () 
         "--github-output",
         prepared.githubOutput,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env },
     );
     assert.match(preparedResult, /prepared https:/u);
     assert.deepEqual(
@@ -694,7 +708,7 @@ test("CLI creates immutable canonical predicate bytes and revalidates them", () 
         execFileSync(
           process.execPath,
           [TOOL, "verify", ...common, "--predicate", output],
-          { encoding: "utf8", stdio: "pipe" },
+          { encoding: "utf8", env, stdio: "pipe" },
         ),
       /canonical sorted JSON/u,
     );
