@@ -513,6 +513,50 @@ test("the 49-product first release stays inside a bounded GitHub REST request bu
   assert.ok(restRequests < 200);
 });
 
+test("same-version recovery preflight requires every selected tag and release to be absent", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const absentTags = new Map(selected.map(({ tag }) => [tag, null]));
+  const context = {
+    budget: budget(),
+    command: "recovery-preflight",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  };
+  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+    readReleaseMap: () => new Map(),
+    readTagMap: () => new Map(absentTags),
+  }));
+
+  const existingTag = new Map(absentTags);
+  existingTag.set(selected[0].tag, {
+    ref: `refs/tags/${selected[0].tag}`,
+    sha: headRef,
+    type: "commit",
+  });
+  assert.throws(
+    () => reconcileSelectedReleasesSync(context, {
+      readReleaseMap: () => new Map(),
+      readTagMap: () => existingTag,
+    }),
+    /requires every selected product tag and GitHub release to be absent/u,
+  );
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync(context, {
+      readReleaseMap: () => new Map([[
+        selected[0].tag,
+        { ...selected[0].metadata, draft: true, id: 1 },
+      ]]),
+      readTagMap: () => new Map(absentTags),
+    }),
+    /requires every selected product tag and GitHub release to be absent/u,
+  );
+});
+
 test("batch staging reconciles ambiguous responses once and exact reruns issue no mutations", () => {
   const selected = selection(1);
   const headRef = "d".repeat(40);

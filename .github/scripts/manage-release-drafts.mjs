@@ -41,7 +41,7 @@ function error(message, options = {}) {
 
 function usageError() {
   return error(
-    "usage: manage-release-drafts.mjs <preflight|stage|verify|promote> "
+    "usage: manage-release-drafts.mjs <preflight|recovery-preflight|stage|verify|promote> "
       + "--products-json JSON --head-ref SHA [--state draft|public|staged]",
   );
 }
@@ -67,7 +67,7 @@ function selectedPublicationLock(command, products, headRef, environment) {
       ?? DEFAULT_PUBLICATION_LOCK,
   );
   if (!existsSync(file)) {
-    if (command === "preflight") return null;
+    if (command === "preflight" || command === "recovery-preflight") return null;
     throw error(`${command} requires the frozen publication lock: ${file}`);
   }
   const lock = loadPublicationLock(file);
@@ -563,6 +563,20 @@ export function reconcileSelectedReleasesSync(
     console.log(`${selected.length} selected product tag/release names are absent or exact-SHA resumable`);
     return;
   }
+  if (command === "recovery-preflight") {
+    const existing = selected.filter(({ tag }) =>
+      releasesByTag.has(tag) || tagsByName.get(tag) !== null);
+    if (existing.length > 0) {
+      throw error(
+        "same-version recovery requires every selected product tag and GitHub release "
+          + `to be absent; found ${existing.map(({ tag }) => tag).join(", ")}`,
+      );
+    }
+    console.log(
+      `${selected.length} selected product tag/release names are absent for same-version recovery`,
+    );
+    return;
+  }
 
   if (command === "stage") {
     for (const { product, tag } of selected) {
@@ -645,8 +659,8 @@ function defaultWindowForCommand(command) {
 
 export function main(argv, { environment = process.env, now = Date.now } = {}) {
   const { command, values } = parseArgs([...argv]);
-  if (!["preflight", "stage", "verify", "promote"].includes(command)) {
-    throw error("command must be preflight, stage, verify, or promote");
+  if (!["preflight", "recovery-preflight", "stage", "verify", "promote"].includes(command)) {
+    throw error("command must be preflight, recovery-preflight, stage, verify, or promote");
   }
   const repo = environment.GITHUB_REPOSITORY?.trim();
   if (!repo || !environment.GH_TOKEN) {

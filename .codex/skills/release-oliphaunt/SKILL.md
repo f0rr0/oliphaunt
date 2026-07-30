@@ -27,7 +27,7 @@ and do not treat target/ecosystem carriers as additional products.
 3. For a failed or partially public release, also read `references/recovery.md` before changing state.
 4. Record the candidate commit with `git rev-parse HEAD`; keep that SHA unchanged through qualification, lock creation, and publish.
 5. Inspect `git status`, product versions, existing product tags/releases, registry identities, and the latest exact-SHA CI run. Report any public collision before attempting a mutation.
-6. Run `tools/dev/bun.sh tools/release/audit-github-release-controls.mjs` with the truthful credential lifecycle before any external mutation. Use `--governance solo --bootstrap-state idle` for history repair, qualification, release-PR preparation, and dry-run while bootstrap tokens are absent. Rerun with `--bootstrap-state ready` only for an imminent first-identity bootstrap after every reviewed short-lived token required by the approved lock is installed (one registry or both; the current first release needs both); use `retired` after trusted publishers are configured and every provisioned token is revoked. Select `team` only with an independent maintainer. Treat `FAIL` as a blocker; report but do not promote `WARN` to a solo-release blocker.
+6. Run `tools/dev/bun.sh tools/release/audit-github-release-controls.mjs` with the truthful credential lifecycle before any external mutation. Use `--governance solo --bootstrap-state idle` for history repair, qualification, release-PR preparation, and dry-run while bootstrap tokens are absent. Rerun with `--bootstrap-state ready` only for an imminent first-identity bootstrap after every reviewed short-lived token required by the approved lock is installed (one registry or both). If exact inventory proves that all selected Cargo/npm identities already match, keep the credential lifecycle `idle` and provision neither token. Use `retired` after trusted publishers are configured and every provisioned token is revoked. Select `team` only with an independent maintainer. Treat `FAIL` as a blocker; report but do not promote `WARN` to a solo-release blocker.
 7. Generate trusted-publisher work from the approved publication lock with `tools/dev/bun.sh tools/release/trusted-publisher-config.mjs`. Its default mode is offline/read-only. Use authenticated `--audit` before considering `--apply`; mutation additionally requires the exact printed lock digest. Run npm audit and apply directly in a terminal because each classification pass starts with a discarded read-only TTY authentication warm-up before the bounded captured reads, and supply a fresh `--output` path for the atomically created mode-`0600` JSON evidence. Configure the direct workflow `release.yml` and `release-publish` environment. Keep release credentials only in their protected environments; do not add repository-level copies or a reusable-workflow secret bridge.
 8. On a generated release PR, treat Release Please as the direct-candidate
    authority and `sync-release-pr.mjs` as the deterministic dependent-candidate
@@ -99,8 +99,13 @@ When a shared packager, archive encoder, carrier generator, or public target
 contract changes, update its exact product ownership in
 `tools/release/release-semantic-inputs.toml`, run the synchronizer with
 `--write`, and inspect the product-local fingerprint diff before `--check`.
-Workflow, validation, registry-transport, test, and documentation-only files
-must remain outside that ownership map.
+Pure control-plane workflow, validation, registry-transport, test, and
+documentation inputs remain outside that ownership map. Compiler, SDK, linker,
+build-command, source-selection, target, and packaging choices are
+product-semantic and must be owned even when a workflow or local action
+currently carries them. Until such a choice has been extracted into an owned
+canonical input, treat a change to it as a release blocker rather than a
+zero-owner CI-only change.
 
 For a normalized generated release PR, also run the synchronizer in write mode
 and immediately in check mode. It follows only Moon production/peer edges,

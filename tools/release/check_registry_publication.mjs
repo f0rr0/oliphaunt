@@ -390,34 +390,45 @@ async function derivedExactExtensionRegistryPackages(product, version) {
   }));
 }
 
+export function productRegistryPackagesFromLock(
+  publicationLock,
+  product,
+  { versionOverride = undefined, registryKind = undefined } = {},
+) {
+  const productRow = publicationLock.products.find((row) => row.id === product);
+  if (productRow === undefined) {
+    fail(`publication lock does not contain release product ${JSON.stringify(product)}`);
+  }
+  if (versionOverride !== undefined && versionOverride !== productRow.version) {
+    fail(`${product} requested version ${versionOverride} does not match frozen publication-lock version ${productRow.version}`);
+  }
+  const ecosystemByKind = new Map([["crates", "cargo"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
+  if (registryKind !== undefined && !ecosystemByKind.has(registryKind)) {
+    fail(`unsupported registry kind ${JSON.stringify(registryKind)}`);
+  }
+  const ecosystem = registryKind === undefined ? undefined : ecosystemByKind.get(registryKind);
+  const kindByEcosystem = new Map([["cargo", "crates"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
+  const packages = lockedCarriers(publicationLock, { product, ecosystem }).map((carrier) => ({
+    kind: kindByEcosystem.get(carrier.ecosystem),
+    name: carrier.name,
+    version: carrier.version,
+  }));
+  if (registryKind !== undefined && packages.length === 0) {
+    fail(`${product} has no ${registryKind} registry packages in the publication lock`);
+  }
+  return packages;
+}
+
 export async function productRegistryPackages(product, { versionOverride = undefined, registryKind = undefined } = {}) {
   const publicationLockPath = process.env.OLIPHAUNT_PUBLICATION_LOCK;
   if (publicationLockPath) {
     if (caches.publicationLock === undefined) {
       caches.publicationLock = loadPublicationLock(path.resolve(ROOT, publicationLockPath));
     }
-    const productRow = caches.publicationLock.products.find((row) => row.id === product);
-    if (productRow === undefined) {
-      fail(`publication lock does not contain release product ${JSON.stringify(product)}`);
-    }
-    if (versionOverride !== undefined && versionOverride !== productRow.version) {
-      fail(`${product} requested version ${versionOverride} does not match frozen publication-lock version ${productRow.version}`);
-    }
-    const ecosystemByKind = new Map([["crates", "cargo"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
-    if (registryKind !== undefined && !ecosystemByKind.has(registryKind)) {
-      fail(`unsupported registry kind ${JSON.stringify(registryKind)}`);
-    }
-    const ecosystem = registryKind === undefined ? undefined : ecosystemByKind.get(registryKind);
-    const kindByEcosystem = new Map([["cargo", "crates"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
-    const packages = lockedCarriers(caches.publicationLock, { product, ecosystem }).map((carrier) => ({
-      kind: kindByEcosystem.get(carrier.ecosystem),
-      name: carrier.name,
-      version: carrier.version,
-    }));
-    if (registryKind !== undefined && packages.length === 0) {
-      fail(`${product} has no ${registryKind} registry packages in the publication lock`);
-    }
-    return packages;
+    return productRegistryPackagesFromLock(caches.publicationLock, product, {
+      versionOverride,
+      registryKind,
+    });
   }
   const config = await productConfig(product);
   const version = versionOverride || (await currentVersion(product));
