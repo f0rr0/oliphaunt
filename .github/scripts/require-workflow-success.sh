@@ -17,6 +17,7 @@ required_events=()
 expected_run_id=""
 selected_artifacts_json='[]'
 selected_gate_artifacts_json='[]'
+selected_run_attempt=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-id)
@@ -78,6 +79,7 @@ emit_run_id() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       echo "run_id=$run_id"
+      echo "run_attempt=$selected_run_attempt"
       echo "artifact_metadata_json=$selected_artifacts_json"
       echo "gate_artifact_metadata_json=$selected_gate_artifacts_json"
     } >> "$GITHUB_OUTPUT"
@@ -91,15 +93,15 @@ run_matches_request() {
   row="$(
     github_read "$workflow run $run_id metadata" \
       api "repos/$GH_REPO/actions/runs/$run_id" \
-      --jq '[.head_sha, .workflow_id, .event, .status, (.conclusion // "")] | @tsv'
+      --jq '[.head_sha, .workflow_id, .event, .status, (.conclusion // ""), .run_attempt] | @tsv'
   )" || {
     status=$?
     echo "failed to inspect $workflow run $run_id" >&2
     return "$status"
   }
 
-  local run_sha workflow_id run_event run_status run_conclusion workflow_name
-  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion <<< "$row"
+  local run_sha workflow_id run_event run_status run_conclusion run_attempt workflow_name
+  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion run_attempt <<< "$row"
   if [[ "$(printf '%s' "$run_sha" | normalize_sha)" != "$(printf '%s' "$sha" | normalize_sha)" ]]; then
     echo "$workflow run $run_id belongs to $run_sha, not $sha" >&2
     return 1
@@ -136,6 +138,11 @@ run_matches_request() {
     echo "$workflow run $run_id is $run_status/${run_conclusion:-<none>}, not completed/success" >&2
     return 1
   fi
+  if [[ ! "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$workflow run $run_id has an invalid run attempt" >&2
+    return 64
+  fi
+  selected_run_attempt="$run_attempt"
 }
 
 required_artifacts_present() {

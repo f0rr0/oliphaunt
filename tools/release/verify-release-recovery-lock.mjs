@@ -11,11 +11,10 @@ import { loadPublicationLock } from "./publication-lock.mjs";
 
 const TOOL = "verify-release-recovery-lock.mjs";
 export const RELEASE_RECOVERY_LOCK_EQUIVALENCE_SCHEMA =
-  "oliphaunt-release-recovery-lock-equivalence-v1";
+  "oliphaunt-release-recovery-lock-equivalence-v2";
 const SHA = /^[0-9a-f]{40}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const ARTIFACT_DIGEST = /^sha256:[0-9a-f]{64}$/u;
-const ALLOWED_DIFFERENT_FIELDS = new Set(["lockDigest", "source"]);
 
 function error(message) {
   return new Error(`${TOOL}: ${message}`);
@@ -52,12 +51,6 @@ function canonical(value) {
 
 function canonicalJson(value) {
   return JSON.stringify(canonical(value));
-}
-
-function immutableLockFields(lock) {
-  return Object.keys(lock)
-    .filter((field) => !ALLOWED_DIFFERENT_FIELDS.has(field))
-    .sort();
 }
 
 function requireLockIdentity(lock, expected, context) {
@@ -120,58 +113,55 @@ function originalLockArtifactEvidence(value) {
 
 export function verifyReleaseRecoveryLockEquivalence({
   original,
-  recovery,
+  replay,
   releaseSource,
-  publicationSource,
+  controllerSource,
   originalEvidence,
 } = {}) {
   if (!SHA.test(releaseSource?.commit ?? "") || !SHA.test(releaseSource?.tree ?? "")) {
     throw error("releaseSource must contain lowercase full commit/tree SHAs");
   }
   if (
-    !SHA.test(publicationSource?.commit ?? "")
-    || !SHA.test(publicationSource?.tree ?? "")
+    !SHA.test(controllerSource?.commit ?? "")
+    || !SHA.test(controllerSource?.tree ?? "")
   ) {
-    throw error("publicationSource must contain lowercase full commit/tree SHAs");
+    throw error("controllerSource must contain lowercase full commit/tree SHAs");
   }
   if (
-    releaseSource.commit === publicationSource.commit
-    || releaseSource.tree === publicationSource.tree
+    releaseSource.commit === controllerSource.commit
+    || releaseSource.tree === controllerSource.tree
   ) {
-    throw error("recovery publication must have a distinct commit and tree");
+    throw error("recovery controller must have a distinct commit and tree");
   }
   requireLockIdentity(original, releaseSource, "original publication lock");
-  requireLockIdentity(recovery, publicationSource, "recovery publication lock");
+  requireLockIdentity(replay, releaseSource, "replayed publication lock");
   const originalLockArtifact = originalLockArtifactEvidence(originalEvidence);
 
   const comparedFields = [...new Set([
-    ...immutableLockFields(original),
-    ...immutableLockFields(recovery),
+    ...Object.keys(original),
+    ...Object.keys(replay),
   ])].sort();
   for (const field of comparedFields) {
-    if (canonicalJson(original[field]) !== canonicalJson(recovery[field])) {
+    if (canonicalJson(original[field]) !== canonicalJson(replay[field])) {
       throw error(
-        `recovery publication lock changes immutable ${field}; `
+        `replayed publication lock changes ${field}; `
           + "the existing version cannot be recovered and must not be republished",
       );
     }
-  }
-  if (original.lockDigest === recovery.lockDigest) {
-    throw error("distinct source identities unexpectedly produced the same publication lock digest");
   }
 
   const receipt = {
     schema: RELEASE_RECOVERY_LOCK_EQUIVALENCE_SCHEMA,
     releaseSource,
-    publicationSource,
+    controllerSource,
     originalLockDigest: original.lockDigest,
-    recoveryLockDigest: recovery.lockDigest,
+    replayLockDigest: replay.lockDigest,
     originalLockArtifact,
-    catalogDigest: recovery.catalogDigest,
-    packageEnvelopeDigest: recovery.packageEnvelopeDigest,
-    productCount: recovery.products.length,
-    carrierCount: recovery.carriers.length,
-    productArtifactCount: recovery.productArtifacts.length,
+    catalogDigest: replay.catalogDigest,
+    packageEnvelopeDigest: replay.packageEnvelopeDigest,
+    productCount: replay.products.length,
+    carrierCount: replay.carriers.length,
+    productArtifactCount: replay.productArtifacts.length,
     comparedFields,
   };
   return {
@@ -183,18 +173,18 @@ export function verifyReleaseRecoveryLockEquivalence({
 function parseArgs(argv) {
   const options = {
     originalLock: "",
-    recoveryLock: "",
+    replayLock: "",
     releaseSha: "",
-    publicationSha: "",
+    controllerSha: "",
     originalRunId: "",
     originalArtifactMetadataJson: "",
     output: "",
   };
   const flags = new Map([
     ["--original-lock", "originalLock"],
-    ["--recovery-lock", "recoveryLock"],
+    ["--replay-lock", "replayLock"],
     ["--release-sha", "releaseSha"],
-    ["--publication-sha", "publicationSha"],
+    ["--controller-sha", "controllerSha"],
     ["--original-run-id", "originalRunId"],
     ["--original-artifact-metadata-json", "originalArtifactMetadataJson"],
     ["--output", "output"],
@@ -208,13 +198,13 @@ function parseArgs(argv) {
   if (Object.values(options).some((value) => !value)) {
     throw error(
       "usage: verify-release-recovery-lock.mjs "
-        + "--original-lock FILE --recovery-lock FILE "
-        + "--release-sha SHA --publication-sha SHA "
+        + "--original-lock FILE --replay-lock FILE "
+        + "--release-sha SHA --controller-sha SHA "
         + "--original-run-id ID --original-artifact-metadata-json JSON --output FILE",
     );
   }
-  if (!SHA.test(options.releaseSha) || !SHA.test(options.publicationSha)) {
-    throw error("--release-sha and --publication-sha must be lowercase full commit SHAs");
+  if (!SHA.test(options.releaseSha) || !SHA.test(options.controllerSha)) {
+    throw error("--release-sha and --controller-sha must be lowercase full commit SHAs");
   }
   if (!/^[1-9][0-9]*$/u.test(options.originalRunId)) {
     throw error("--original-run-id must be a positive integer");
@@ -231,12 +221,12 @@ if (import.meta.main) {
   try {
     const options = parseArgs(Bun.argv.slice(2));
     const original = loadPublicationLock(path.resolve(options.originalLock));
-    const recovery = loadPublicationLock(path.resolve(options.recoveryLock));
+    const replay = loadPublicationLock(path.resolve(options.replayLock));
     const receipt = verifyReleaseRecoveryLockEquivalence({
       original,
-      recovery,
+      replay,
       releaseSource: gitCommitAndTree(ROOT, options.releaseSha),
-      publicationSource: gitCommitAndTree(ROOT, options.publicationSha),
+      controllerSource: gitCommitAndTree(ROOT, options.controllerSha),
       originalEvidence: {
         runId: Number(options.originalRunId),
         artifacts: options.originalArtifactMetadata,
@@ -250,7 +240,7 @@ if (import.meta.main) {
       mode: 0o644,
     });
     console.log(
-      `verified same-version recovery envelope for ${receipt.carrierCount} carrier(s) `
+      `verified exact same-version recovery replay for ${receipt.carrierCount} carrier(s) `
         + `and ${receipt.productArtifactCount} product artifact(s)`,
     );
   } catch (cause) {

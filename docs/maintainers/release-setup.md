@@ -392,7 +392,7 @@ undeclared Kotlin Multiplatform/JVM root module.
 Product tags use `<product>-v<version>`. SwiftPM additionally consumes an unscoped semantic tag; because legacy unscoped tags occupy versions through `0.5.1`, the first Oliphaunt Swift version is `0.6.0`.
 
 Release Please owns product versions, changelogs, and the generated release PR.
-The root protected publish job first reads
+On the normal single-identity path, the root protected publish job first reads
 `oliphaunt-release-transport/<full-sha>`. When it is absent, or the job is on
 its first run attempt, the helper validates current `main` before creating or
 accepting the exact direct-commit tag. Only a genuine GitHub rerun
@@ -483,16 +483,32 @@ exact, still-unpublished first-release rollback qualification transport in
 step 2 above; it is a direct child of the displaced bump solely to prove the
 corrected unreleased introduction tree.
 
-`release_commit` is only an equality assertion for the workflow commit; it
+On the normal single-identity path, `release_commit` is only an equality
+assertion for the workflow commit; it
 cannot select an older commit. On a root dispatch, the workflow ref must be
 `main`; on a continuation it must be
 `oliphaunt-release-transport/<release_commit>`. Release tooling fixes create a
-new candidate SHA and require new qualification. There is no temporary Release
-Please target branch.
+new candidate SHA and require new qualification. The same-version dual-identity
+exception below still uses the current controller as `release_commit`; it
+resolves the older publication source only through the immutable recovery
+record. There is no temporary Release Please target branch.
 
 ## Recovery
 
-Publishing is resumable but not cross-registry atomic. On failure, preserve and validate the complete content-addressed checkpoint chain, then inventory all selected identities against the frozen lock. Matching immutable versions may be skipped only after registry bytes are proved; a mismatched version/tag/asset or ledger checkpoint stops the release. Product-semantic repository changes require a new version and new exact-SHA qualification. A zero-owner release-control/test fix after partial immutable publication may instead use the documented same-version recovery: fresh exact-SHA CI and dry-run, exact old/new package-envelope proof, an inventory derived from the exhaustive frozen lock (including generated payload-part carriers), a new lock-bound reconciliation ledger, no second upload of any public immutable version, and publication only of absent identities. Use `.codex/skills/release-oliphaunt/references/recovery.md` for that recovery and the separate pre-publication history-repair procedure.
+Publishing is resumable but not cross-registry atomic. On failure, preserve and validate the complete content-addressed checkpoint chain, then inventory all selected identities against the frozen lock. Matching immutable versions may be skipped only after registry bytes are proved; a mismatched version/tag/asset or ledger checkpoint stops the release. Product-semantic repository changes require a new version and new exact-SHA qualification.
+
+A zero-owner release-control/test fix after partial immutable publication may
+instead use the documented same-version recovery. It keeps the original
+release commit/tree, exact pinned payload CI inventory, approved lock/capsule,
+and terminal ledger as the publication source. A later current-main controller
+receives fresh full CI and an approved control-equivalence dry-run, but supplies
+only workflow/transport/OIDC/pacing code. Lock replay must be byte-identical to
+the original, including source and lock digest; tags/releases/assets remain
+source-bound. Recovery bootstrap and continuations are disabled, and an
+interruption is resumed through an idempotent root `publish` rerun. No matching
+public immutable identity is uploaded again. Use
+`.codex/skills/release-oliphaunt/references/recovery.md` for that recovery and
+the separate pre-publication history-repair procedure.
 
 ## External readiness checklist
 

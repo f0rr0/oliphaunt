@@ -128,9 +128,11 @@ const HAS_RELEASE_CHANGES = "steps.release_plan.outputs.has_release_changes == '
 const PUBLISH_OPERATION = "inputs.operation == 'publish'";
 const BOOTSTRAP_REQUIRED = "steps.bootstrap_scope.outputs.required == 'true'";
 const COMMAND_BOUNDARY = String.raw`(?:^|[\n;|&()])\s*`;
+const COMMAND_ENV_PREFIX =
+  String.raw`(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+))\s+)*`;
 
 function commandPattern(command) {
-  return new RegExp(`${COMMAND_BOUNDARY}${command}`, "mu");
+  return new RegExp(`${COMMAND_BOUNDARY}${COMMAND_ENV_PREFIX}${command}`, "mu");
 }
 
 function workflowSecretReferences(value, context) {
@@ -1926,9 +1928,12 @@ export function assertReleaseEntryWorkflow(workflow) {
   for (const [jobId, { operation, parent }] of Object.entries(dispatchers)) {
     const job = workflow.jobs[jobId];
     assertExactNeeds(workflow, jobId, [parent]);
+    const expectedCondition = jobId === "dispatch-publish-continuation"
+      ? `\${{ needs.${parent}.outputs.continuation_required == 'true' && needs.${parent}.outputs.release_control_sha == needs.${parent}.outputs.release_source_sha }}`
+      : `\${{ needs.${parent}.outputs.continuation_required == 'true' }}`;
     invariant(
-      normalized(job.if) === `\${{ needs.${parent}.outputs.continuation_required == 'true' }}`,
-      `${jobId} must run only for a verified deferred parent result`,
+      normalized(job.if) === expectedCondition,
+      `${jobId} must run only for a verified deferred parent result, and normal publication continuation must retain one source/control identity`,
     );
     invariant(
       job.environment === undefined
@@ -2036,14 +2041,20 @@ const GITHUB_STAGE_PHASES = [
   "registry_needs",
   "verify_oidc_identity",
   "verify_publication_candidate",
+  "release_identity",
+  "recovery_source",
   "verify_release_recovery_github_absence",
   "assert_release_please_markable",
   "verify_maven_signing",
   "ci_qualification",
+  "recovery_payload_ci_qualification",
+  "release_artifact_source",
   "verify_qualification",
   "recovery_original_publication_lock",
   "download_recovery_original_publication_lock",
   "approved_publication_lock",
+  "approved_recovery_control",
+  "download_approved_recovery_control",
   "setup_github_stage_npm",
   "freeze_publication_lock",
   "verify_release_recovery_lock",
@@ -2065,6 +2076,8 @@ const GITHUB_STAGE_PHASES = [
   "verify_product_tags",
   "verify_github_staging",
   "publish_github_assets",
+  "recovery_promotion_attestation",
+  "attest_recovery_promotion",
   "extension_attestation_subjects",
   "attest_extensions_1",
   "attest_extensions_2",
@@ -2139,10 +2152,8 @@ const BOOTSTRAP_PHASES = [
   "verify_bootstrap_qualification",
   "inspect_bootstrap_continuation",
   "approved_bootstrap_capsule",
-  "download_bootstrap_recovery_evidence",
   "verify_bootstrap_capsule",
   "verify_bootstrap_lock",
-  "verify_bootstrap_recovery_publication",
   "restore_bootstrap_checkpoint",
   "require_bootstrap_credentials",
   "ensure_bootstrap_transport_ref",
@@ -2187,8 +2198,17 @@ function assertNormalStageConditions(workflow) {
       "attest_broker",
       "attest_node_direct",
       "attest_wasix",
-      "publish_swift_source_tag",
-    ]) assertStepCondition(workflow, jobId, id, [HAS_RELEASE_CHANGES, PUBLISH_OPERATION]);
+    ]) {
+      assertStepCondition(workflow, jobId, id, [
+        HAS_RELEASE_CHANGES,
+        PUBLISH_OPERATION,
+        "steps.verify_publication_candidate.outputs.mode != 'release-recovery'",
+      ]);
+    }
+    assertStepCondition(workflow, jobId, "publish_swift_source_tag", [
+      HAS_RELEASE_CHANGES,
+      PUBLISH_OPERATION,
+    ]);
   }
 
   const dryRunRequired = [HAS_RELEASE_CHANGES, "inputs.operation == 'publish-dry-run'"];
@@ -2197,7 +2217,12 @@ function assertNormalStageConditions(workflow) {
       "freeze_bootstrap_capsule",
       "preserve_publication_lock",
       "preserve_bootstrap_capsule",
-    ]) assertStepCondition(workflow, jobId, id, dryRunRequired);
+    ]) {
+      assertStepCondition(workflow, jobId, id, [
+        ...dryRunRequired,
+        "steps.verify_publication_candidate.outputs.mode != 'release-recovery'",
+      ]);
+    }
   }
 }
 
@@ -2314,7 +2339,7 @@ function assertCriticalReleaseCommands(workflow) {
   invariant(
     JSON.stringify(canonicalShellLines(finalLifecycle.run)) === JSON.stringify([
       markableCommand("promote_github_releases"),
-      'bun .github/scripts/manage-release-drafts.mjs promote --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA"',
+      'bun .github/scripts/manage-release-drafts.mjs promote --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_SOURCE_SHA"',
       markTaggedCommand,
     ])
       && finalLifecycle.if === undefined
@@ -2427,7 +2452,7 @@ function assertCriticalReleaseCommands(workflow) {
   assertActiveTokens(mavenBundle, [
     '"$PUBLICATION_LOCK_PATH"',
     '"$PRODUCTS_JSON"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
   ], "pre-mutation Maven Central bundle preflight");
   const swiftPreflight = stepById(workflow, "publish", "preflight_swift_source_tag");
   invariant(
@@ -2438,7 +2463,7 @@ function assertCriticalReleaseCommands(workflow) {
   );
   assertActiveTokens(swiftPreflight, [
     '"$PUBLICATION_LOCK_PATH"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
   ], "pre-mutation SwiftPM source-tag preflight");
   for (const stepId of ["github_request_budget", "final_github_request_budget"]) {
     const admission = stepById(workflow, "publish", stepId).step;
@@ -2464,7 +2489,7 @@ function assertCriticalReleaseCommands(workflow) {
     "--registry-admission",
     '"$ADMISSION_FILE"',
     '"$PUBLICATION_LOCK_PATH"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
   ], "registry publication");
   const assets = stepById(workflow, "publish", "publish_github_assets");
   assertActiveTokens(assets, ["--step github-release-assets", '"$PUBLICATION_LOCK_PATH"'], "GitHub asset publication");
@@ -2719,7 +2744,7 @@ function assertReleaseTiming(workflow) {
   const registrySteps = workflowSteps(workflow, "publish-registry");
   const registryBounded = registrySteps.slice(
     stepById(workflow, "publish-registry", "registry_job_deadline").index + 1,
-  ).filter((step) => !new Set([
+  ).filter((step) => step.name !== "Reject same-version recovery continuation" && !new Set([
     "continued_release_plan",
     "inspect_registry_continuation",
     "download_continued_github_stage_handoff",
@@ -2857,6 +2882,15 @@ function assertAttestations(workflow) {
       entry.step["timeout-minutes"] * 60_000 === GITHUB_RELEASE_ATTESTATION_STEP_TIMEOUT_MS,
       `publish.${id} must use the bounded attestation timeout`,
     );
+    assertConditionRequires(
+      entry.step.if,
+      [
+        HAS_RELEASE_CHANGES,
+        PUBLISH_OPERATION,
+        "steps.verify_publication_candidate.outputs.mode != 'release-recovery'",
+      ],
+      `publish.${id}`,
+    );
     const reservation = workflowSteps(workflow, "publish")[entry.index - 1];
     invariant(reservation !== undefined, `publish.${id} must have a preceding pacer reservation`);
     invariant(
@@ -2869,6 +2903,111 @@ function assertAttestations(workflow) {
       `publish.${id} reservation and attestation guards must be identical`,
     );
   }
+
+  const recoveryPrepare = assertRunInvocation(
+    workflow,
+    "publish",
+    "recovery_promotion_attestation",
+    commandPattern(
+      "tools/dev/bun[.]sh\\s+tools/release/recovery-promotion-attestation[.]mjs\\s+prepare\\b",
+    ),
+    "the dual-identity recovery promotion predicate builder",
+  );
+  const recoveryCondition =
+    "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  invariant(
+    normalized(recoveryPrepare.step.if) === recoveryCondition
+      && recoveryPrepare.step["continue-on-error"] === undefined
+      && recoveryPrepare.step["timeout-minutes"] === 2
+      && sameSet(Object.keys(recoveryPrepare.step.env ?? {}), [
+        "CONTROLLER_APPROVAL_ARTIFACTS_JSON",
+        "CONTROLLER_APPROVAL_RUN_ATTEMPT",
+        "CONTROLLER_APPROVAL_RUN_ID",
+        "CONTROLLER_CI_ARTIFACTS_JSON",
+        "CONTROLLER_CI_RUN_ATTEMPT",
+        "CONTROLLER_CI_RUN_ID",
+        "CONTROLLER_TREE",
+      ])
+      && recoveryPrepare.step.env?.CONTROLLER_TREE
+        === "${{ steps.release_identity.outputs.controller_tree }}"
+      && recoveryPrepare.step.env?.CONTROLLER_CI_RUN_ID
+        === "${{ steps.ci_qualification.outputs.run_id }}"
+      && recoveryPrepare.step.env?.CONTROLLER_CI_RUN_ATTEMPT
+        === "${{ steps.ci_qualification.outputs.run_attempt }}"
+      && recoveryPrepare.step.env?.CONTROLLER_CI_ARTIFACTS_JSON
+        === "${{ steps.ci_qualification.outputs.artifact_metadata_json }}"
+      && recoveryPrepare.step.env?.CONTROLLER_APPROVAL_RUN_ID
+        === "${{ steps.approved_recovery_control.outputs.run_id }}"
+      && recoveryPrepare.step.env?.CONTROLLER_APPROVAL_RUN_ATTEMPT
+        === "${{ steps.approved_recovery_control.outputs.run_attempt }}"
+      && recoveryPrepare.step.env?.CONTROLLER_APPROVAL_ARTIFACTS_JSON
+        === "${{ steps.approved_recovery_control.outputs.artifact_metadata_json }}",
+    "recovery promotion predicate must bind the current controller tree, CI, approval, and exact frozen source evidence",
+  );
+  assertActiveTokens(recoveryPrepare, [
+    '--lock "$PUBLICATION_LOCK_PATH"',
+    "--provenance tools/release/same-version-recovery-sources.json",
+    "--approval target/release/recovery-evidence/lock-equivalence.json",
+    '--approval-run-id "$CONTROLLER_APPROVAL_RUN_ID"',
+    '--approval-run-attempt "$CONTROLLER_APPROVAL_RUN_ATTEMPT"',
+    '--approval-artifacts-json "$CONTROLLER_APPROVAL_ARTIFACTS_JSON"',
+    '--controller-sha "$RELEASE_CONTROL_SHA"',
+    '--controller-tree "$CONTROLLER_TREE"',
+    '--qualification-run-id "$CONTROLLER_CI_RUN_ID"',
+    '--qualification-run-attempt "$CONTROLLER_CI_RUN_ATTEMPT"',
+    '--qualification-artifacts-json "$CONTROLLER_CI_ARTIFACTS_JSON"',
+    '--promotion-run-id "$GITHUB_RUN_ID"',
+    '--promotion-run-attempt "$GITHUB_RUN_ATTEMPT"',
+    "--controller-output target/release/recovery-evidence/promotion-controller.json",
+    "--subjects-output target/release/recovery-evidence/promotion-subjects.json",
+    "--predicate-output target/release/recovery-evidence/promotion-predicate.json",
+    "--checksums-output target/release/recovery-evidence/promotion-subjects.sha256",
+  ], "dual-identity recovery promotion predicate");
+  const recoveryAttestation = assertActionStep(
+    workflow,
+    "publish",
+    "attest_recovery_promotion",
+    "actions/attest@",
+  );
+  const recoveryReservation = workflowSteps(workflow, "publish")[
+    recoveryAttestation.index - 1
+  ];
+  invariant(
+    recoveryAttestation.step.uses
+      === "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d"
+      && normalized(recoveryAttestation.step.if)
+        === "${{ steps.recovery_promotion_attestation.outcome == 'success' }}"
+      && recoveryAttestation.step["continue-on-error"] === undefined
+      && recoveryAttestation.step["timeout-minutes"] === 5
+      && sameSet(Object.keys(recoveryAttestation.step.with ?? {}), [
+        "predicate-path",
+        "predicate-type",
+        "subject-checksums",
+      ])
+      && recoveryAttestation.step.with?.["subject-checksums"]
+        === "${{ steps.recovery_promotion_attestation.outputs.checksums_path }}"
+      && recoveryAttestation.step.with?.["predicate-type"]
+        === "${{ steps.recovery_promotion_attestation.outputs.predicate_type }}"
+      && recoveryAttestation.step.with?.["predicate-path"]
+        === "${{ steps.recovery_promotion_attestation.outputs.predicate_path }}",
+    "recovery promotion must use exactly the pinned custom-predicate attestation action and prepared subjects",
+  );
+  invariant(
+    recoveryReservation !== undefined
+      && normalized(recoveryReservation.if) === normalized(recoveryAttestation.step.if)
+      && commandPattern(
+        "tools/dev/bun[.]sh\\s+tools/release/github-content-write-pacer[.]mjs\\s+reserve\\b",
+      ).test(executableShell(recoveryReservation.run))
+      && commandPattern(
+        "tools/dev/bun[.]sh\\s+tools/release/github-core-request-journal[.]mjs\\s+reserve\\b",
+      ).test(executableShell(recoveryReservation.run)),
+    "the custom recovery attestation must immediately follow matching durable content-write and API reservations",
+  );
+  invariant(
+    recoveryPrepare.index < recoveryAttestation.index,
+    "the exact recovery predicate and subjects must be prepared before attestation",
+  );
+
   invariant(
     stepById(workflow, "publish", "attest_extensions_1").step.with?.["subject-path"]
       === "${{ steps.extension_attestation_subjects.outputs.paths_1 }}"
@@ -2883,6 +3022,7 @@ function assertAttestations(workflow) {
     LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE: "attest_liboliphaunt_native",
     BROKER_ATTESTATION_BUNDLE: "attest_broker",
     NODE_DIRECT_ATTESTATION_BUNDLE: "attest_node_direct",
+    RECOVERY_PROMOTION_ATTESTATION_BUNDLE: "attest_recovery_promotion",
     WASIX_ATTESTATION_BUNDLE: "attest_wasix",
   };
   for (const [environment, id] of Object.entries(expectedBundles)) {
@@ -2891,6 +3031,13 @@ function assertAttestations(workflow) {
       `attestation evidence must bind ${id}'s whole bundle`,
     );
   }
+  assertActiveTokens({ step: evidence }, [
+    '"$RECOVERY_PROMOTION_ATTESTATION_BUNDLE"',
+    "--recovery-controller target/release/recovery-evidence/promotion-controller.json",
+    "--recovery-provenance tools/release/same-version-recovery-sources.json",
+    "--recovery-approval target/release/recovery-evidence/lock-equivalence.json",
+    '--head-ref "$RELEASE_SOURCE_SHA"',
+  ], "recovery promotion attestation verification");
 }
 
 function assertNormalRecovery(workflow) {
@@ -2961,7 +3108,7 @@ function assertNormalRecovery(workflow) {
   const deferredFiles = deferredPath.split(/\s+/u).filter(Boolean);
   invariant(
     normalized(deferred.if)
-      === "${{ steps.require_registry_execution_decision.outputs.deferred == 'true' }}"
+      === "${{ steps.require_registry_execution_decision.outputs.deferred == 'true' && steps.registry_release_identity.outputs.controller_sha == steps.registry_release_identity.outputs.source_sha }}"
       && deferred.with?.["if-no-files-found"] === "error"
       && deferred.with?.["compression-level"] === 0
       && deferredPath.includes("normal-publication-checkpoint.json")
@@ -2992,6 +3139,31 @@ function assertNormalRecovery(workflow) {
 }
 
 function assertRegistryAdmission(workflow) {
+  const registrySteps = workflowSteps(workflow, "publish-registry");
+  const recoveryContinuationRejects = registrySteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => step.name === "Reject same-version recovery continuation");
+  invariant(
+    recoveryContinuationRejects.length === 1,
+    "registry publication must contain one explicit same-version recovery continuation rejection",
+  );
+  const [recoveryContinuationReject] = recoveryContinuationRejects;
+  invariant(
+    normalized(recoveryContinuationReject.step.if)
+      === "${{ inputs.continuation_pointer != '' }}"
+      && recoveryContinuationReject.step["continue-on-error"] === undefined
+      && recoveryContinuationReject.step["timeout-minutes"] === 2,
+    "every registry continuation must fail closed if it resolves to same-version recovery",
+  );
+  assertActiveTokens(recoveryContinuationReject, [
+    "tools/dev/bun.sh tools/release/verify-publication-candidate.mjs",
+    '--head-ref "$RELEASE_HEAD_SHA"',
+    "--github-output \"$candidate_output\"",
+    '[[ "$mode" == release-recovery ]]',
+    "Same-version recovery continuations are disabled",
+    "exit 1",
+  ], "same-version recovery continuation rejection");
+
   const capacityDeadline = stepById(
     workflow,
     "publish-registry",
@@ -3089,6 +3261,8 @@ function assertRegistryAdmission(workflow) {
     '[[ "$DEFERRAL_MODE" == pre-mutation-deadline ]]',
     '[[ "$DEFERRAL_MODE" == rate-limit ]]',
     '[[ "$DEFERRAL_MODE" == progress ]]',
+    '[[ "$DEFERRED" == true && "$RELEASE_CONTROL_SHA" != "$RELEASE_SOURCE_SHA" ]]',
+    "Same-version recovery cannot create a continuation",
     'echo "complete=$COMPLETE"',
     'echo "deferred=$DEFERRED"',
   ], "typed registry execution decision");
@@ -3096,7 +3270,7 @@ function assertRegistryAdmission(workflow) {
   const prepareEnv = prepare.env ?? {};
   invariant(
     normalized(prepare.if)
-      === "${{ steps.require_registry_execution_decision.outputs.deferred == 'true' }}"
+      === "${{ steps.require_registry_execution_decision.outputs.deferred == 'true' && steps.registry_release_identity.outputs.controller_sha == steps.registry_release_identity.outputs.source_sha }}"
       && sameSet(Object.keys(prepareEnv), [
         "APPROVED_ARTIFACT_METADATA_JSON",
         "APPROVED_RUN_ID",
@@ -3195,14 +3369,18 @@ function assertReleaseHandoffs(workflow) {
       "approved_run_id",
       "has_release_changes",
       "products_json",
+      "release_control_sha",
       "release_head_sha",
+      "release_source_sha",
       "stage_handoff_artifact_digest",
       "stage_handoff_artifact_id",
     ])
       && stageOutputs.has_release_changes
         === "${{ steps.release_plan.outputs.has_release_changes }}"
       && stageOutputs.products_json === "${{ steps.release_plan.outputs.products_json }}"
-      && stageOutputs.release_head_sha === "${{ steps.release_head.outputs.sha }}"
+      && stageOutputs.release_head_sha === "${{ steps.release_identity.outputs.controller_sha }}"
+      && stageOutputs.release_control_sha === "${{ steps.release_identity.outputs.controller_sha }}"
+      && stageOutputs.release_source_sha === "${{ steps.release_identity.outputs.source_sha }}"
       && stageOutputs.approved_run_id
         === "${{ steps.approved_publication_lock.outputs.run_id }}"
       && stageOutputs.approved_artifact_metadata_json
@@ -3224,7 +3402,9 @@ function assertReleaseHandoffs(workflow) {
       "continuation_required",
       "products_json",
       "publication_complete",
+      "release_control_sha",
       "release_head_sha",
+      "release_source_sha",
       "root_run_id",
       "registry_handoff_artifact_digest",
       "registry_handoff_artifact_id",
@@ -3232,6 +3412,10 @@ function assertReleaseHandoffs(workflow) {
       && registryOutputs.publication_complete
         === "${{ steps.require_registry_execution_decision.outputs.complete }}"
       && registryOutputs.release_head_sha === "${{ steps.registry_release_head.outputs.sha }}"
+      && registryOutputs.release_control_sha
+        === "${{ steps.registry_release_identity.outputs.controller_sha }}"
+      && registryOutputs.release_source_sha
+        === "${{ steps.registry_release_identity.outputs.source_sha }}"
       && registryOutputs.products_json === "${{ steps.registry_inputs.outputs.products_json }}"
       && registryOutputs.approved_run_id === "${{ steps.registry_inputs.outputs.approved_run_id }}"
       && registryOutputs.approved_artifact_metadata_json
@@ -3256,7 +3440,7 @@ function assertReleaseHandoffs(workflow) {
   assertActiveTokens(stageSeal, [
     "--phase github-staged",
     '"$PRODUCTS_JSON"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
     '"$APPROVED_RUN_ID"',
     '"$APPROVED_ARTIFACT_METADATA_JSON"',
     '"$RUNNER_TEMP/github-stage-handoff"',
@@ -3292,7 +3476,7 @@ function assertReleaseHandoffs(workflow) {
     "download_approved_publication_inputs",
   );
   assertActiveTokens(approvedInputs, [
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
     '"$APPROVED_RUN_ID"',
     '"$APPROVED_ARTIFACT_METADATA_JSON"',
     "--artifact oliphaunt-publication-lock",
@@ -3331,7 +3515,7 @@ function assertReleaseHandoffs(workflow) {
   assertActiveTokens(stageInstall, [
     "--phase github-staged",
     '"$PRODUCTS_JSON"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
     '"$APPROVED_RUN_ID"',
     '"$APPROVED_ARTIFACT_METADATA_JSON"',
     '"$RUNNER_TEMP/github-stage-handoff"',
@@ -3374,7 +3558,7 @@ function assertReleaseHandoffs(workflow) {
   assertActiveTokens(registrySeal, [
     "--phase registry-published",
     '"$PRODUCTS_JSON"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
     '"$APPROVED_RUN_ID"',
     '"$APPROVED_ARTIFACT_METADATA_JSON"',
     '"$RUNNER_TEMP/registry-published-handoff"',
@@ -3414,7 +3598,7 @@ function assertReleaseHandoffs(workflow) {
   assertActiveTokens(registryInstall, [
     "--phase registry-published",
     '"$PRODUCTS_JSON"',
-    '"$RELEASE_HEAD_SHA"',
+    '"$RELEASE_SOURCE_SHA"',
     '"$APPROVED_RUN_ID"',
     '"$APPROVED_ARTIFACT_METADATA_JSON"',
     '"$RUNNER_TEMP/registry-published-handoff"',
@@ -3431,10 +3615,24 @@ function assertReleaseHandoffs(workflow) {
 }
 
 function assertDryRunEvidence(workflow) {
+  const normalDryRunCondition =
+    "${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' && steps.verify_publication_candidate.outputs.mode != 'release-recovery' }}";
+  const recoveryCondition =
+    "${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  const recoveryModeCondition =
+    "${{ steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  const recoveryAbsenceCondition =
+    "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  const recoveryDryRunCondition =
+    "${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  const recoveryPublishCondition =
+    "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+
   const capsule = stepById(workflow, "publish-dry-run", "freeze_bootstrap_capsule");
   assertActiveTokens(capsule, [
     "--lock",
     '"$PUBLICATION_LOCK_PATH"',
+    '--head-ref "$RELEASE_SOURCE_SHA"',
     "--output target/release/oliphaunt-bootstrap-capsule.tar",
   ], "dry-run bootstrap capsule");
   const lock = assertUploadById(workflow, "publish-dry-run", "preserve_publication_lock", {
@@ -3446,29 +3644,117 @@ function assertDryRunEvidence(workflow) {
     path: "target/release/oliphaunt-bootstrap-capsule.tar",
   });
   invariant(
-    lock.index < capsuleUpload.index
+    normalized(capsule.step.if) === normalDryRunCondition
+      && normalized(lock.step.if) === normalDryRunCondition
+      && normalized(capsuleUpload.step.if) === normalDryRunCondition
+      && capsule.step["continue-on-error"] === undefined
+      && lock.step["continue-on-error"] === undefined
+      && capsuleUpload.step["continue-on-error"] === undefined
+      && lock.step.with?.["if-no-files-found"] === "error"
+      && capsuleUpload.step.with?.["if-no-files-found"] === "error"
+      && lock.step.with?.overwrite === true
+      && capsuleUpload.step.with?.overwrite === true
+      && lock.step.with?.["retention-days"] === 90
+      && capsuleUpload.step.with?.["retention-days"] === 90
+      && lock.index < capsuleUpload.index
       && capsule.index < lock.index,
-    "dry-run must freeze one capsule before preserving its exact lock and transport",
+    "normal dry-run alone must freeze and retain one exact source-bound lock and capsule",
   );
+
   const approval = stepById(workflow, "publish", "approved_publication_lock");
+  invariant(
+    normalized(approval.step.if)
+      === "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}"
+      && approval.step["continue-on-error"] === undefined
+      && sameSet(Object.keys(approval.step.env ?? {}), [
+        "CANDIDATE_MODE",
+        "GH_REPO",
+        "GH_TOKEN",
+        "PINNED_ARTIFACT_METADATA_JSON",
+        "PINNED_DRY_RUN_ID",
+      ])
+      && approval.step.env?.CANDIDATE_MODE
+        === "${{ steps.verify_publication_candidate.outputs.mode }}"
+      && approval.step.env?.GH_REPO === "${{ github.repository }}"
+      && approval.step.env?.GH_TOKEN === "${{ secrets.GITHUB_TOKEN }}"
+      && approval.step.env?.PINNED_ARTIFACT_METADATA_JSON
+        === "${{ steps.recovery_source.outputs.approved_dry_run_artifact_metadata_json }}"
+      && approval.step.env?.PINNED_DRY_RUN_ID
+        === "${{ steps.recovery_source.outputs.approved_dry_run_id }}",
+    "approved publication inputs must select either the current source dry-run or the exact committed recovery dry-run",
+  );
   assertActiveTokens(approval, [
+    'approval_sha="$RELEASE_SOURCE_SHA"',
+    "approval_timeout=300",
+    '[[ "$CANDIDATE_MODE" == release-recovery ]]',
+    "approval_timeout=0",
+    'pinned_run_args=(--run-id "$PINNED_DRY_RUN_ID")',
+    '"$approval_sha"',
+    '"$approval_timeout"',
     "--event workflow_dispatch",
     "--artifact oliphaunt-publication-lock",
     "--artifact oliphaunt-bootstrap-capsule",
-    "steps.verify_publication_candidate.outputs.mode",
-    "--gate-artifact oliphaunt-release-recovery-equivalence",
-  ], "approved dry-run selection");
+    "Approved recovery inputs differ from the pinned recovery provenance.",
+  ], "approved source-bound dry-run selection");
 
-  const recoveryCondition =
-    "${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}";
+  const releaseIdentity = stepById(workflow, "publish", "release_identity");
+  invariant(
+    normalized(releaseIdentity.step.if)
+      === "${{ steps.release_plan.outputs.has_release_changes == 'true' }}"
+      && releaseIdentity.step["continue-on-error"] === undefined
+      && sameSet(Object.keys(releaseIdentity.step.env ?? {}), [
+        "CANDIDATE_MODE",
+        "CONTROL_SHA",
+        "RECOVERY_RELEASE_SHA",
+      ])
+      && releaseIdentity.step.env?.CANDIDATE_MODE
+        === "${{ steps.verify_publication_candidate.outputs.mode }}"
+      && releaseIdentity.step.env?.CONTROL_SHA === "${{ steps.release_head.outputs.sha }}"
+      && releaseIdentity.step.env?.RECOVERY_RELEASE_SHA
+        === "${{ steps.verify_publication_candidate.outputs.release_sha }}",
+    "release identity must resolve one explicit controller and immutable payload source",
+  );
+  assertActiveTokens(releaseIdentity, [
+    'source_sha="$CONTROL_SHA"',
+    '[[ "$CANDIDATE_MODE" == release-recovery ]]',
+    'source_sha="$RECOVERY_RELEASE_SHA"',
+    '"controller:$CONTROL_SHA"',
+    '"source:$source_sha"',
+    'controller_tree="$(git show -s --format=%T "$CONTROL_SHA^{commit}")"',
+    'echo "controller_sha=$CONTROL_SHA"',
+    'echo "controller_tree=$controller_tree"',
+    'echo "source_sha=$source_sha"',
+    'echo "RELEASE_CONTROL_SHA=$CONTROL_SHA"',
+    'echo "RELEASE_SOURCE_SHA=$source_sha"',
+  ], "dual release identity");
+
+  const recoverySource = assertRunInvocation(
+    workflow,
+    "publish",
+    "recovery_source",
+    commandPattern(
+      "tools/dev/bun[.]sh\\s+tools/release/same-version-recovery-source[.]mjs\\b",
+    ),
+    "the committed same-version recovery provenance selector",
+  );
+  invariant(
+    normalized(recoverySource.step.if) === recoveryCondition
+      && recoverySource.step["continue-on-error"] === undefined
+      && recoverySource.step["timeout-minutes"] === 1,
+    "same-version recovery must resolve its exact committed provenance before external evidence selection",
+  );
+  assertActiveTokens(recoverySource, [
+    '--release-sha "$RELEASE_SOURCE_SHA"',
+    '--github-output "$GITHUB_OUTPUT"',
+  ], "committed same-version recovery provenance");
+
   const recoveryGithubAbsence = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "verify_release_recovery_github_absence",
   );
   invariant(
-    normalized(recoveryGithubAbsence.step.if)
-        === "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}"
+    normalized(recoveryGithubAbsence.step.if) === recoveryAbsenceCondition
       && recoveryGithubAbsence.step["continue-on-error"] === undefined
       && recoveryGithubAbsence.step["timeout-minutes"] === 5
       && sameSet(Object.keys(recoveryGithubAbsence.step.env ?? {}), [
@@ -3483,39 +3769,114 @@ function assertDryRunEvidence(workflow) {
   assertActiveTokens(recoveryGithubAbsence, [
     "recovery-preflight",
     '--products-json "$PRODUCTS_JSON"',
-    '--head-ref "$RELEASE_HEAD_SHA"',
+    '--head-ref "$RELEASE_SOURCE_SHA"',
   ], "same-version recovery GitHub absence proof");
+
+  const controllerQualification = stepById(workflow, "publish", "ci_qualification");
+  assertActiveTokens(controllerQualification, [
+    '"$RELEASE_CONTROL_SHA"',
+    "--job Builds",
+    "--job Required",
+    "--job Qualified",
+  ], "controller-bound current CI qualification");
+
+  const payloadQualification = stepById(
+    workflow,
+    "publish",
+    "recovery_payload_ci_qualification",
+  );
+  invariant(
+    normalized(payloadQualification.step.if) === recoveryCondition
+      && payloadQualification.step["continue-on-error"] === undefined
+      && sameSet(Object.keys(payloadQualification.step.env ?? {}), [
+        "GH_REPO",
+        "GH_TOKEN",
+        "PINNED_ARTIFACT_METADATA_JSON",
+        "PINNED_PAYLOAD_CI_RUN_ID",
+        "RECOVERY_RELEASE_SHA",
+      ])
+      && payloadQualification.step.env?.PINNED_ARTIFACT_METADATA_JSON
+        === "${{ steps.recovery_source.outputs.payload_ci_artifact_metadata_json }}"
+      && payloadQualification.step.env?.PINNED_PAYLOAD_CI_RUN_ID
+        === "${{ steps.recovery_source.outputs.payload_ci_run_id }}"
+      && payloadQualification.step.env?.RECOVERY_RELEASE_SHA
+        === "${{ steps.verify_publication_candidate.outputs.release_sha }}",
+    "same-version recovery must select the exact pinned frozen-payload CI run and complete artifact inventory",
+  );
+  assertActiveTokens(payloadQualification, [
+    '"$RECOVERY_RELEASE_SHA"',
+    '--run-id "$PINNED_PAYLOAD_CI_RUN_ID"',
+    "--job Builds",
+    "--job Required",
+    "--job Qualified",
+    'qualification_args+=(--artifact "$artifact")',
+    "PINNED_ARTIFACT_METADATA_JSON",
+    "Frozen-payload CI artifact inventory differs from the pinned recovery provenance.",
+    'cat "$gate_output" >> "$GITHUB_OUTPUT"',
+  ], "pinned frozen-payload CI qualification");
+
+  const artifactSource = stepById(workflow, "publish", "release_artifact_source");
+  invariant(
+    normalized(artifactSource.step.if)
+      === "${{ steps.release_plan.outputs.has_release_changes == 'true' }}"
+      && artifactSource.step.env?.CONTROL_CI_RUN_ID
+        === "${{ steps.ci_qualification.outputs.run_id }}"
+      && artifactSource.step.env?.PUBLICATION_SHA
+        === "${{ steps.release_identity.outputs.source_sha }}"
+      && artifactSource.step.env?.RECOVERY_PAYLOAD_CI_RUN_ID
+        === "${{ steps.recovery_source.outputs.payload_ci_run_id }}",
+    "artifact download identity must select current controller evidence normally and the pinned source evidence only in recovery",
+  );
+  assertActiveTokens(artifactSource, [
+    'artifact_sha="$PUBLICATION_SHA"',
+    'artifact_ci_run_id="$CONTROL_CI_RUN_ID"',
+    '[[ "$CANDIDATE_MODE" == release-recovery ]]',
+    'artifact_sha="$RECOVERY_RELEASE_SHA"',
+    'artifact_ci_run_id="$RECOVERY_PAYLOAD_CI_RUN_ID"',
+    'echo "sha=$artifact_sha"',
+    'echo "ci_run_id=$artifact_ci_run_id"',
+  ], "exact artifact source selection");
+
   const recoverySelector = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "recovery_original_publication_lock",
   );
   invariant(
-    normalized(recoverySelector.step.if)
-        === "${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}"
+    normalized(recoverySelector.step.if) === recoveryCondition
       && recoverySelector.step["continue-on-error"] === undefined
       && recoverySelector.step["timeout-minutes"] === 5
       && sameSet(Object.keys(recoverySelector.step.env ?? {}), [
         "GH_REPO",
         "GH_TOKEN",
+        "PINNED_ARTIFACT_METADATA_JSON",
+        "PINNED_DRY_RUN_ID",
         "RECOVERY_RELEASE_SHA",
       ])
       && recoverySelector.step.env?.GH_REPO === "${{ github.repository }}"
       && recoverySelector.step.env?.GH_TOKEN === "${{ secrets.GITHUB_TOKEN }}"
+      && recoverySelector.step.env?.PINNED_ARTIFACT_METADATA_JSON
+        === "${{ steps.recovery_source.outputs.approved_dry_run_artifact_metadata_json }}"
+      && recoverySelector.step.env?.PINNED_DRY_RUN_ID
+        === "${{ steps.recovery_source.outputs.approved_dry_run_id }}"
       && recoverySelector.step.env?.RECOVERY_RELEASE_SHA
         === "${{ steps.verify_publication_candidate.outputs.release_sha }}",
-    "same-version recovery must select the original release lock only for an exact verified recovery",
+    "same-version recovery must select the exact committed original dry-run lock and capsule",
   );
   assertActiveTokens(recoverySelector, [
     "Release",
     '"$RECOVERY_RELEASE_SHA"',
+    '--run-id "$PINNED_DRY_RUN_ID"',
     "--event workflow_dispatch",
     "--artifact oliphaunt-publication-lock",
-  ], "original same-version recovery lock selection");
+    "--artifact oliphaunt-bootstrap-capsule",
+    "Original dry-run artifact inventory differs from the pinned recovery provenance.",
+    'cat "$gate_output" >> "$GITHUB_OUTPUT"',
+  ], "original same-version recovery dry-run selection");
 
   const recoveryDownload = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "download_recovery_original_publication_lock",
   );
   invariant(
@@ -3547,30 +3908,74 @@ function assertDryRunEvidence(workflow) {
     "--artifact oliphaunt-publication-lock",
   ], "original same-version recovery lock download");
 
-  const prelockRegistryValidation = stepById(
+  const controlApproval = stepById(
     workflow,
-    "publish-dry-run",
-    "validate_release_registry_state",
+    "publish",
+    "approved_recovery_control",
   );
-  const prelockRegistryShell = executableShell(prelockRegistryValidation.step.run);
   invariant(
-    commandPattern(
-      "tools/dev/bun[.]sh\\s+tools/release/check_release_versions[.]mjs\\b",
-    ).test(prelockRegistryShell)
-      && commandPattern(
-        "tools/dev/bun[.]sh\\s+tools/release/release-check-registries[.]mjs\\b",
-      ).test(prelockRegistryShell)
-      && !/--registry-inventory-output\b/u.test(prelockRegistryShell),
-    "pre-lock release validation must defer recovery inventory until every dynamic carrier is frozen",
+    normalized(controlApproval.step.if) === recoveryPublishCondition
+      && controlApproval.step["continue-on-error"] === undefined
+      && controlApproval.step["timeout-minutes"] === 5
+      && sameSet(Object.keys(controlApproval.step.env ?? {}), ["GH_REPO", "GH_TOKEN"])
+      && controlApproval.step.env?.GH_REPO === "${{ github.repository }}"
+      && controlApproval.step.env?.GH_TOKEN === "${{ secrets.GITHUB_TOKEN }}",
+    "recovery publish must require a separate successful controller dry-run equivalence proof",
   );
+  assertActiveTokens(controlApproval, [
+    "Release",
+    '"$RELEASE_CONTROL_SHA"',
+    "300",
+    "--event workflow_dispatch",
+    "--artifact oliphaunt-release-recovery-equivalence",
+  ], "controller-bound recovery approval");
+
+  const controlDownload = stepById(
+    workflow,
+    "publish",
+    "download_approved_recovery_control",
+  );
+  invariant(
+    normalized(controlDownload.step.if)
+      === "${{ steps.approved_recovery_control.outcome == 'success' }}"
+      && controlDownload.step["continue-on-error"] === undefined
+      && controlDownload.step["timeout-minutes"] === 5
+      && controlDownload.step.env?.RECOVERY_APPROVAL_RUN_ID
+        === "${{ steps.approved_recovery_control.outputs.run_id }}"
+      && controlDownload.step.env?.RECOVERY_APPROVAL_ARTIFACT_METADATA_JSON
+        === "${{ steps.approved_recovery_control.outputs.artifact_metadata_json }}",
+    "recovery publish must download only the exact controller-approved equivalence artifact",
+  );
+  assertActiveTokens(controlDownload, [
+    "Release",
+    '"$RELEASE_CONTROL_SHA"',
+    '"$RECOVERY_APPROVAL_RUN_ID"',
+    '"$RECOVERY_APPROVAL_ARTIFACT_METADATA_JSON"',
+    "--artifact-metadata-json",
+    "--artifact oliphaunt-release-recovery-equivalence",
+  ], "controller-approved recovery evidence transfer");
+
+  const freezeLock = stepById(workflow, "publish", "freeze_publication_lock");
+  assertActiveTokens(freezeLock, [
+    'lock_output=target/release/publication-lock.json',
+    'lock_source="$RELEASE_SOURCE_SHA"',
+    '[[ "$CANDIDATE_MODE" == release-recovery ]]',
+    "lock_output=target/release/replayed-publication-lock.json",
+    'lock_source="$RELEASE_ARTIFACT_SHA"',
+    '--head-ref "$lock_source"',
+    'original_lock="$RUNNER_TEMP/recovery-original-publication-lock/publication-lock.json"',
+    'cmp -s "$original_lock" "$lock_output"',
+    'cp "$original_lock" "$PUBLICATION_LOCK_PATH"',
+    "--lock target/release/publication-lock.json",
+  ], "byte-identical source-bound recovery lock replay");
 
   const recoveryProof = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "verify_release_recovery_lock",
   );
   invariant(
-    normalized(recoveryProof.step.if) === recoveryCondition
+    normalized(recoveryProof.step.if) === recoveryModeCondition
       && recoveryProof.step["continue-on-error"] === undefined
       && recoveryProof.step["timeout-minutes"] === 2
       && sameSet(Object.keys(recoveryProof.step.env ?? {}), [
@@ -3581,28 +3986,29 @@ function assertDryRunEvidence(workflow) {
       && recoveryProof.step.env?.RECOVERY_LOCK_RUN_ID
         === "${{ steps.recovery_original_publication_lock.outputs.run_id }}"
       && recoveryProof.step.env?.RECOVERY_LOCK_ARTIFACT_METADATA_JSON
-        === "${{ steps.recovery_original_publication_lock.outputs.artifact_metadata_json }}"
+        === "${{ steps.recovery_source.outputs.approved_lock_artifact_metadata_json }}"
       && recoveryProof.step.env?.RECOVERY_RELEASE_SHA
         === "${{ steps.verify_publication_candidate.outputs.release_sha }}",
-    "same-version recovery must prove the original and current lock envelopes before approval",
+    "same-version recovery must prove the original and byte-identical replay lock before approval",
   );
   assertActiveTokens(recoveryProof, [
     '--original-lock "$RUNNER_TEMP/recovery-original-publication-lock/publication-lock.json"',
-    '--recovery-lock "$PUBLICATION_LOCK_PATH"',
+    "--replay-lock target/release/replayed-publication-lock.json",
     '--release-sha "$RECOVERY_RELEASE_SHA"',
-    '--publication-sha "$RELEASE_HEAD_SHA"',
+    '--controller-sha "$RELEASE_CONTROL_SHA"',
     '--original-run-id "$RECOVERY_LOCK_RUN_ID"',
     '--original-artifact-metadata-json "$RECOVERY_LOCK_ARTIFACT_METADATA_JSON"',
     "--output target/release/recovery-evidence/lock-equivalence.json",
-  ], "same-version recovery byte-envelope proof");
+    'cmp -s "$approved" target/release/recovery-evidence/lock-equivalence.json',
+  ], "same-version recovery v2 byte-envelope proof");
 
   const recoveryInventory = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "inventory_release_recovery_registries",
   );
   invariant(
-    normalized(recoveryInventory.step.if) === recoveryCondition
+    normalized(recoveryInventory.step.if) === recoveryModeCondition
       && recoveryInventory.step["continue-on-error"] === undefined
       && recoveryInventory.step["timeout-minutes"] === 20
       && sameSet(Object.keys(recoveryInventory.step.env ?? {}), [
@@ -3622,17 +4028,17 @@ function assertDryRunEvidence(workflow) {
   assertActiveTokens(recoveryInventory, [
     "tools/dev/bun.sh tools/release/release-check-registries.mjs",
     '--products-json "$PRODUCTS_JSON"',
-    '--head-ref "$RELEASE_HEAD_SHA"',
+    '--head-ref "$RELEASE_SOURCE_SHA"',
     "--registry-inventory-output target/release/recovery-registry-inventory.json",
   ], "same-version recovery frozen registry inventory");
 
   const recoveryPublication = stepById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "verify_release_recovery_publication",
   );
   invariant(
-    normalized(recoveryPublication.step.if) === recoveryCondition
+    normalized(recoveryPublication.step.if) === recoveryModeCondition
       && recoveryPublication.step["continue-on-error"] === undefined
       && recoveryPublication.step["timeout-minutes"] === 20
       && sameSet(Object.keys(recoveryPublication.step.env ?? {}), ["PRODUCTS_JSON"])
@@ -3650,7 +4056,7 @@ function assertDryRunEvidence(workflow) {
 
   const recoveryEvidence = assertUploadById(
     workflow,
-    "publish-dry-run",
+    "publish",
     "preserve_release_recovery_equivalence",
     {
       name: "oliphaunt-release-recovery-equivalence",
@@ -3658,7 +4064,7 @@ function assertDryRunEvidence(workflow) {
     },
   );
   invariant(
-    normalized(recoveryEvidence.step.if) === recoveryCondition
+    normalized(recoveryEvidence.step.if) === recoveryDryRunCondition
       && recoveryEvidence.step["continue-on-error"] === undefined
       && recoveryEvidence.step["timeout-minutes"] === 5
       && recoveryEvidence.step.with?.["if-no-files-found"] === "error"
@@ -3668,8 +4074,51 @@ function assertDryRunEvidence(workflow) {
       && recoveryProof.index < recoveryInventory.index
       && recoveryInventory.index < recoveryPublication.index
       && recoveryPublication.index < recoveryEvidence.index,
-    "same-version recovery equivalence evidence must be mandatory, immutable, and retained",
+    "recovery dry-run must retain only mandatory source/controller equivalence evidence, not relabeled release inputs",
   );
+
+  const publishSteps = workflowSteps(workflow, "publish");
+  const ledgerDownload = publishSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => step.name === "Download immutable registry bootstrap ledger");
+  invariant(
+    ledgerDownload.length === 1,
+    "same-version recovery must have one immutable bootstrap-ledger selector",
+  );
+  const [ledger] = ledgerDownload;
+  invariant(
+    normalized(ledger.step.if)
+      === "${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}"
+      && ledger.step.env?.CANDIDATE_MODE
+        === "${{ steps.verify_publication_candidate.outputs.mode }}"
+      && ledger.step.env?.PINNED_LEDGER_ARTIFACT_METADATA_JSON
+        === "${{ steps.recovery_source.outputs.bootstrap_ledger_artifact_metadata_json }}"
+      && ledger.step.env?.PINNED_LEDGER_RUN_ID
+        === "${{ steps.recovery_source.outputs.bootstrap_ledger_run_id }}",
+    "bootstrap ledger restoration must switch to the exact committed terminal ledger in recovery",
+  );
+  assertActiveTokens(ledger, [
+    '"$RELEASE_SOURCE_SHA"',
+    "--artifact oliphaunt-bootstrap-ledger",
+    '[[ "$CANDIDATE_MODE" == release-recovery ]]',
+    '--run-id "$PINNED_LEDGER_RUN_ID"',
+    '--artifact-metadata-json "$PINNED_LEDGER_ARTIFACT_METADATA_JSON"',
+  ], "pinned terminal bootstrap ledger transfer");
+  const ledgerVerify = publishSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) =>
+      step.name === "Verify immutable bootstrap ledger and registry existence");
+  invariant(
+    ledgerVerify.length === 1
+      && ledger.index < ledgerVerify[0].index
+      && normalized(ledgerVerify[0].step.if) === normalized(ledger.step.if),
+    "the exact terminal bootstrap ledger must be verified against the frozen lock and live registries",
+  );
+  assertActiveTokens(ledgerVerify[0], [
+    '--lock "$PUBLICATION_LOCK_PATH"',
+    '--ledger "$BOOTSTRAP_LEDGER_PATH"',
+    "--verify-registries",
+  ], "terminal bootstrap ledger verification");
 }
 
 function assertOidcBoundaries(workflow) {
@@ -3735,9 +4184,7 @@ function assertBootstrapJob(workflow) {
     ["verify_bootstrap_qualification", "node\\s+[.]github/scripts/verify-release-candidate[.]mjs\\b", "the candidate verifier"],
     ["inspect_bootstrap_continuation", "node\\s+[.]github/scripts/inspect-release-continuation[.]mjs\\b", "the exact parent continuation inspector"],
     ["approved_bootstrap_capsule", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the approved capsule selector"],
-    ["download_bootstrap_recovery_evidence", "node\\s+[.]github/scripts/download-build-artifacts[.]mjs\\b", "the exact same-version recovery evidence downloader"],
     ["verify_bootstrap_capsule", "tools/dev/bun[.]sh\\s+tools/release/bootstrap-publication-capsule[.]mjs\\s+verify-extract\\b", "capsule verification"],
-    ["verify_bootstrap_recovery_publication", "tools/dev/bun[.]sh\\s+tools/release/verify-release-recovery-publication[.]mjs\\b", "the retained same-version partial-publication verifier"],
     ["restore_bootstrap_checkpoint", "node\\s+[.]github/scripts/download-bootstrap-ledger[.]mjs\\b", "bootstrap checkpoint recovery"],
     ["ensure_bootstrap_transport_ref", "node\\s+[.]github/scripts/release-transport-ref[.]mjs\\s+ensure\\b", "the immutable exact-SHA bootstrap continuation transport"],
     ["bootstrap_registry_identities", "bun\\s+[.]github/scripts/bootstrap-registry-identities[.]mjs\\b", "registry identity bootstrap"],
@@ -3777,36 +4224,43 @@ function assertBootstrapJob(workflow) {
     "bootstrap root branch alone may select an approved dry-run",
   );
   assertActiveTokens(approval, [
+    '"$RELEASE_HEAD_SHA"',
     "--event workflow_dispatch",
     "--artifact oliphaunt-publication-lock",
     "--artifact oliphaunt-bootstrap-capsule",
-    "steps.verify_bootstrap_publication_candidate.outputs.mode",
-    "--gate-artifact oliphaunt-release-recovery-equivalence",
   ], "approved bootstrap dry-run selection");
-  const recoveryRootCondition =
-    "${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' && steps.verify_bootstrap_publication_candidate.outputs.mode == 'release-recovery' }}";
-  const recoveryDownload = stepById(
-    workflow,
-    "publish-bootstrap",
-    "download_bootstrap_recovery_evidence",
-  );
+
+  const bootstrapSteps = workflowSteps(workflow, "publish-bootstrap");
+  const recoveryRejects = bootstrapSteps
+    .map((step, index) => ({ index, step }))
+    .filter(({ step }) => step.name === "Reject same-version recovery bootstrap mutation");
   invariant(
-    normalized(recoveryDownload.step.if) === recoveryRootCondition
-      && recoveryDownload.step["continue-on-error"] === undefined
-      && recoveryDownload.step["timeout-minutes"] === 5
-      && recoveryDownload.step.env?.DRY_RUN_ID
-        === "${{ steps.approved_bootstrap_capsule.outputs.run_id }}"
-      && recoveryDownload.step.env?.RECOVERY_ARTIFACT_METADATA_JSON
-        === "${{ steps.approved_bootstrap_capsule.outputs.gate_artifact_metadata_json }}",
-    "bootstrap recovery must download its separately gated exact dry-run evidence",
+    recoveryRejects.length === 1,
+    "publish-bootstrap must contain one explicit same-version recovery mutation rejection",
   );
-  assertActiveTokens(recoveryDownload, [
-    '"$RELEASE_HEAD_SHA"',
-    '"$DRY_RUN_ID"',
-    '"$RECOVERY_ARTIFACT_METADATA_JSON"',
-    "--artifact-metadata-json",
-    "--artifact oliphaunt-release-recovery-equivalence",
-  ], "bootstrap same-version recovery evidence transfer");
+  const [recoveryReject] = recoveryRejects;
+  invariant(
+    normalized(recoveryReject.step.if)
+      === "${{ steps.bootstrap_scope.outputs.required == 'true' && steps.verify_bootstrap_publication_candidate.outputs.mode == 'release-recovery' }}"
+      && recoveryReject.step["continue-on-error"] === undefined
+      && recoveryReject.index
+        > stepById(workflow, "publish-bootstrap", "verify_bootstrap_publication_candidate").index
+      && recoveryReject.index
+        < stepById(workflow, "publish-bootstrap", "bootstrap_registry_identities").index,
+    "same-version recovery must fail closed before any publish-bootstrap approval or mutation",
+  );
+  assertActiveTokens(recoveryReject, [
+    "Same-version recovery cannot run publish-bootstrap.",
+    "pinned terminal bootstrap ledger",
+    "exit 1",
+  ], "same-version recovery bootstrap rejection");
+  invariant(
+    bootstrapSteps.every((step) =>
+      !executableShell(step.run).includes("oliphaunt-release-recovery-equivalence")
+        && !executableShell(step.run).includes("verify-release-recovery-publication.mjs")),
+    "publish-bootstrap must not accept recovery equivalence as authority; recovery reuses the pinned terminal ledger through root publish",
+  );
+
   const approvedDownloads = workflowSteps(workflow, "publish-bootstrap")
     .map((step, index) => ({ index, step }))
     .filter((entry) => activeRun(entry).includes(".github/scripts/download-build-artifacts.mjs")
@@ -3836,27 +4290,6 @@ function assertBootstrapJob(workflow) {
     "$RUNNER_TEMP/approved-bootstrap/publication-lock.json",
   ], "bootstrap capsule");
   assertActiveTokens(lock, ["cmp -s", "publication-lock.mjs verify", '"$RELEASE_HEAD_SHA"'], "bootstrap lock");
-  const recoveryPublication = stepById(
-    workflow,
-    "publish-bootstrap",
-    "verify_bootstrap_recovery_publication",
-  );
-  invariant(
-    normalized(recoveryPublication.step.if) === recoveryRootCondition
-      && recoveryPublication.step["continue-on-error"] === undefined
-      && recoveryPublication.step["timeout-minutes"] === 2
-      && recoveryPublication.step.env?.PRODUCTS_JSON
-        === "${{ steps.release_plan.outputs.products_json }}"
-      && recoveryDownload.index < recoveryPublication.index
-      && lock.index < recoveryPublication.index,
-    "bootstrap recovery must validate its retained public-byte proof after installing the exact lock",
-  );
-  assertActiveTokens(recoveryPublication, [
-    '--lock "$PUBLICATION_LOCK_PATH"',
-    '--products-json "$PRODUCTS_JSON"',
-    '--verify-receipt "$RUNNER_TEMP/approved-recovery-evidence/publication-state.json"',
-    '--github-output "$GITHUB_OUTPUT"',
-  ], "bootstrap retained same-version recovery proof");
 
   const credentials = stepById(
     workflow,
@@ -3866,30 +4299,29 @@ function assertBootstrapJob(workflow) {
   invariant(
     normalized(credentials.step.if)
       === "${{ steps.bootstrap_scope.outputs.required == 'true' }}"
-      && credentials.step.env?.CANDIDATE_MODE
-        === "${{ steps.verify_bootstrap_publication_candidate.outputs.mode }}"
-      && credentials.step.env?.CONTINUATION_POINTER === "${{ inputs.continuation_pointer }}"
-      && credentials.step.env?.RECOVERY_NEEDS_CARGO
-        === "${{ steps.verify_bootstrap_recovery_publication.outputs.needs_cargo_token }}"
-      && credentials.step.env?.RECOVERY_NEEDS_NPM
-        === "${{ steps.verify_bootstrap_recovery_publication.outputs.needs_npm_token }}"
+      && sameSet(Object.keys(credentials.step.env ?? {}), [
+        "CRATES_IO_BOOTSTRAP_TOKEN",
+        "NPM_BOOTSTRAP_TOKEN",
+        "SELECTED_NEEDS_CARGO",
+        "SELECTED_NEEDS_NPM",
+      ])
       && credentials.step.env?.SELECTED_NEEDS_CARGO
         === "${{ steps.registry_needs.outputs.needs_cargo }}"
       && credentials.step.env?.SELECTED_NEEDS_NPM
         === "${{ steps.registry_needs.outputs.needs_npm }}"
-      && String(credentials.step.env?.CRATES_IO_BOOTSTRAP_TOKEN).includes(
-        "steps.verify_bootstrap_recovery_publication.outputs.needs_cargo_token",
-      )
-      && String(credentials.step.env?.NPM_BOOTSTRAP_TOKEN).includes(
-        "steps.verify_bootstrap_recovery_publication.outputs.needs_npm_token",
-      )
-      && recoveryPublication.index < credentials.index,
-    "bootstrap credentials must be requested only for identities the approved recovery proof leaves absent",
+      && credentials.step.env?.CRATES_IO_BOOTSTRAP_TOKEN
+        === "${{ secrets.CRATES_IO_BOOTSTRAP_TOKEN }}"
+      && credentials.step.env?.NPM_BOOTSTRAP_TOKEN
+        === "${{ secrets.NPM_BOOTSTRAP_TOKEN }}"
+      && lock.index < credentials.index
+      && recoveryReject.index < credentials.index,
+    "normal bootstrap credentials must be requested only after candidate, recovery rejection, and exact lock verification",
   );
   assertActiveTokens(credentials, [
-    '[[ "$CANDIDATE_MODE" == release-recovery && -z "$CONTINUATION_POINTER" ]]',
-    'needs_cargo="$RECOVERY_NEEDS_CARGO"',
-    'needs_npm="$RECOVERY_NEEDS_NPM"',
+    'needs_cargo="$SELECTED_NEEDS_CARGO"',
+    'needs_npm="$SELECTED_NEEDS_NPM"',
+    '[[ "$needs_cargo" != true && "$needs_cargo" != false ]]',
+    '[[ "$needs_npm" != true && "$needs_npm" != false ]]',
     'echo "needs_cargo_token=$needs_cargo"',
     'echo "needs_npm_token=$needs_npm"',
   ], "bootstrap conditional credential decision");
@@ -4095,6 +4527,7 @@ export function assertReleaseOperationWorkflow(workflow) {
   }, "publish dry run");
   assertPermissions(workflow.jobs.publish.permissions, {
     actions: "read",
+    "artifact-metadata": "write",
     attestations: "write",
     contents: "write",
     "id-token": "write",
@@ -4316,6 +4749,7 @@ export function assertReleaseOperationWorkflow(workflow) {
       "publish-registry.exact_registry_publish",
     ],
     attestation: [
+      "publish.attest_recovery_promotion",
       "publish.attest_extensions_1",
       "publish.attest_extensions_2",
       "publish.attest_liboliphaunt_native",

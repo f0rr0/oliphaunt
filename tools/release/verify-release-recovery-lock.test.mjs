@@ -41,9 +41,9 @@ function lock(source, lockDigest) {
 function verify(original, recovery) {
   return verifyReleaseRecoveryLockEquivalence({
     original,
-    recovery,
+    replay: recovery,
     releaseSource: { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
-    publicationSource: { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
+    controllerSource: { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
     originalEvidence: {
       runId: 123,
       artifacts: [{
@@ -56,19 +56,19 @@ function verify(original, recovery) {
   });
 }
 
-test("accepts only a distinct-source lock with an identical immutable byte envelope", () => {
+test("accepts only an exact original-source lock replay under a distinct controller", () => {
   const original = lock(
     { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
     "9".repeat(64),
   );
   const recovery = lock(
-    { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
-    "a".repeat(64),
+    { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
+    "9".repeat(64),
   );
   const receipt = verify(original, recovery);
   assert.equal(receipt.schema, RELEASE_RECOVERY_LOCK_EQUIVALENCE_SCHEMA);
   assert.equal(receipt.originalLockDigest, "9".repeat(64));
-  assert.equal(receipt.recoveryLockDigest, "a".repeat(64));
+  assert.equal(receipt.replayLockDigest, "9".repeat(64));
   assert.equal(receipt.productCount, 1);
   assert.equal(receipt.carrierCount, 1);
   assert.equal(receipt.productArtifactCount, 1);
@@ -88,16 +88,18 @@ test("accepts only a distinct-source lock with an identical immutable byte envel
       "carriers",
       "catalogDigest",
       "catalogSchema",
+      "lockDigest",
       "packageEnvelopeDigest",
       "productArtifacts",
       "products",
       "schema",
+      "source",
     ],
   );
   assert.match(receipt.evidenceDigest, /^[0-9a-f]{64}$/u);
 });
 
-test("rejects every changed immutable envelope field and mismatched source identity", () => {
+test("rejects every changed lock field and mismatched source identity", () => {
   const original = lock(
     { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
     "9".repeat(64),
@@ -111,8 +113,8 @@ test("rejects every changed immutable envelope field and mismatched source ident
     "packageEnvelopeDigest",
   ]) {
     const recovery = lock(
-      { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
-      "a".repeat(64),
+      { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
+      "9".repeat(64),
     );
     recovery[field] = field.endsWith("Digest")
       ? "b".repeat(64)
@@ -121,33 +123,33 @@ test("rejects every changed immutable envelope field and mismatched source ident
         : [];
     assert.throws(
       () => verify(original, recovery),
-      new RegExp(`changes immutable ${field}`, "u"),
+      new RegExp(`changes ${field}`, "u"),
     );
   }
 
   const wrongSource = lock(
     { commit: "f".repeat(40), tree: PUBLICATION_TREE },
-    "a".repeat(64),
+    "9".repeat(64),
   );
   assert.throws(
     () => verify(original, wrongSource),
-    /recovery publication lock source/u,
+    /replayed publication lock source/u,
   );
 
   const futureOriginal = structuredClone(original);
   const futureRecovery = lock(
-    { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
-    "a".repeat(64),
+    { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
+    "9".repeat(64),
   );
   futureOriginal.futureEnvelope = { digest: "c".repeat(64) };
   futureRecovery.futureEnvelope = { digest: "d".repeat(64) };
   assert.throws(
     () => verify(futureOriginal, futureRecovery),
-    /changes immutable futureEnvelope/u,
+    /changes futureEnvelope/u,
   );
 });
 
-test("rejects relabeling the original source as a recovery and digest reuse", () => {
+test("rejects relabeling the original lock to the controller source", () => {
   const original = lock(
     { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
     "9".repeat(64),
@@ -158,14 +160,14 @@ test("rejects relabeling the original source as a recovery and digest reuse", ()
   );
   assert.throws(
     () => verify(original, recovery),
-    /same publication lock digest/u,
+    /replayed publication lock source/u,
   );
   assert.throws(
     () => verifyReleaseRecoveryLockEquivalence({
       original,
-      recovery: original,
+      replay: original,
       releaseSource: { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
-      publicationSource: { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
+      controllerSource: { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
       originalEvidence: {
         runId: 123,
         artifacts: [{
@@ -186,8 +188,8 @@ test("binds one exact original lock run/artifact identity", () => {
     "9".repeat(64),
   );
   const recovery = lock(
-    { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
-    "a".repeat(64),
+    { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
+    "9".repeat(64),
   );
   for (const originalEvidence of [
     undefined,
@@ -206,9 +208,9 @@ test("binds one exact original lock run/artifact identity", () => {
     assert.throws(
       () => verifyReleaseRecoveryLockEquivalence({
         original,
-        recovery,
+        replay: recovery,
         releaseSource: { commit: RELEASE_COMMIT, tree: RELEASE_TREE },
-        publicationSource: { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
+        controllerSource: { commit: PUBLICATION_COMMIT, tree: PUBLICATION_TREE },
         originalEvidence,
       }),
       /original lock evidence/u,

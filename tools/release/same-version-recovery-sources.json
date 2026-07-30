@@ -1,0 +1,622 @@
+{
+  "records": [
+    {
+      "approvedDryRun": {
+        "artifactInventory": {
+          "artifacts": [
+            {
+              "digest": "sha256:a7cab90276460daca53801d558ba708040253d22a4db4c5fdad7a70547102126",
+              "id": 8692161467,
+              "name": "oliphaunt-bootstrap-capsule",
+              "size": 411152632
+            },
+            {
+              "digest": "sha256:b5513012c3260112a484ff25a9d62fd0fb93087f2125448bbd20658a17cd81e5",
+              "id": 8692153698,
+              "name": "oliphaunt-publication-lock",
+              "size": 41287
+            }
+          ],
+          "count": 2,
+          "inventoryDigest": "c81e0528f5255e1cb9642ccb53c504e481ecba6e351f2ae282b4760c745cb5a8",
+          "totalSize": 411193919
+        },
+        "capsuleManifest": {
+          "carrierCount": 279,
+          "catalogDigest": "b8294c0c0030a7b77977635f864854f3503a3ac01c1e9c65da79425b087f9a43",
+          "file": {
+            "path": "target/release/bootstrap-capsule-manifest.json",
+            "sha256": "3dc600ee9fc837505f942c730cf4158045f858adbfbc1a41ea84a1a516b886e8",
+            "size": 182232
+          },
+          "lockDigest": "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
+          "packageEnvelopeDigest": "229aaba1d027719172b0801dca2ff70dde22967b8de9f57acad8cafe1ee686c2",
+          "productCount": 18,
+          "publicationLock": {
+            "path": "target/release/publication-lock.json",
+            "sha256": "e46df2d82e83533c724c8e9d08a32ad0ef7fc96df6ce8c2984c522b65ddfd8fd",
+            "size": 438770
+          },
+          "schema": "oliphaunt-bootstrap-publication-capsule-v1",
+          "source": {
+            "commit": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+            "tree": "396cf3b10adb1a5b625e66c5ebacf8c3d364b543"
+          }
+        },
+        "run": {
+          "attempt": 1,
+          "conclusion": "success",
+          "event": "workflow_dispatch",
+          "headSha": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+          "id": 30366650928,
+          "status": "completed"
+        },
+        "workflow": {
+          "id": 265799825,
+          "name": "Release",
+          "path": ".github/workflows/release.yml"
+        }
+      },
+      "bootstrapLedger": {
+        "artifactInventory": {
+          "artifacts": [
+            {
+              "digest": "sha256:2ad99b147c6e9fd5bc2da921c521c24bc050946313bd21479dc4de8e25e00442",
+              "id": 8761717044,
+              "name": "oliphaunt-bootstrap-ledger",
+              "size": 271894
+            }
+          ],
+          "count": 1,
+          "inventoryDigest": "93799e236a9f8622202302130a2794741589f215c88ac0930600aa53dc481337",
+          "totalSize": 271894
+        },
+        "run": {
+          "attempt": 1,
+          "conclusion": "success",
+          "event": "workflow_dispatch",
+          "headSha": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+          "id": 30548314727,
+          "status": "completed"
+        },
+        "terminalCheckpoint": {
+          "catalogDigest": "b8294c0c0030a7b77977635f864854f3503a3ac01c1e9c65da79425b087f9a43",
+          "checkpointDigest": "5b09ea1f1a4ef9fcef7c6e263ae0aeea2d4da10330d2592be0264b32d3e42ffb",
+          "complete": true,
+          "file": {
+            "path": "checkpoint-000007-5b09ea1f1a4ef9fcef7c6e263ae0aeea2d4da10330d2592be0264b32d3e42ffb.json",
+            "sha256": "bfc04f4f4e7187895c2d7def9a314a05e043782f2c01ca67b11389615e33df1c",
+            "size": 392933
+          },
+          "lockDigest": "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
+          "packageEnvelopeDigest": "229aaba1d027719172b0801dca2ff70dde22967b8de9f57acad8cafe1ee686c2",
+          "previousCheckpointDigest": "fd8fba4faae523d4d7fa01a7e51a6f7768108264e269fc0f899fb066818a6fc2",
+          "productCount": 18,
+          "publicationCount": 279,
+          "receiptCount": 279,
+          "schema": "oliphaunt-bootstrap-ledger-checkpoint-v1",
+          "sequence": 7,
+          "source": {
+            "commit": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+            "tree": "396cf3b10adb1a5b625e66c5ebacf8c3d364b543"
+          }
+        },
+        "workflow": {
+          "id": 265799825,
+          "name": "Release",
+          "path": ".github/workflows/release.yml"
+        }
+      },
+      "payloadQualification": {
+        "artifactInventory": {
+          "artifacts": [
+            {
+              "digest": "sha256:548b9e4c5273cadbc32751a4b77fd43afa09d78f6cf06edda642b5ca010db7b7",
+              "id": 8687752452,
+              "name": "artifact-build-plan",
+              "size": 2798
+            },
+            {
+              "digest": "sha256:7c1d365cea4f9393cdede218a65be5fd1bce2da17d8a4097fd80621bc758dd3e",
+              "id": 8688015181,
+              "name": "f0rr0~oliphaunt~LAT2UF.dockerbuild",
+              "size": 34336
+            },
+            {
+              "digest": "sha256:e3ec5992e4f5b35b6c87daaa9c0183295e8d51d0674e731ee5f52fc49f2b4b0b",
+              "id": 8688964385,
+              "name": "liboliphaunt-native-extension-artifacts-android-arm64-v8a",
+              "size": 68641264
+            },
+            {
+              "digest": "sha256:fb3280fbe275adb4e98a36c21e081642633086b056ece62afe7f2174688e50d4",
+              "id": 8688899524,
+              "name": "liboliphaunt-native-extension-artifacts-android-x86_64",
+              "size": 26061093
+            },
+            {
+              "digest": "sha256:aa5a2155a0701f4c2869b275d7bad2bf67e98c4ffb33b85b66e41f82f0a9c648",
+              "id": 8689873496,
+              "name": "liboliphaunt-native-extension-artifacts-ios-xcframework",
+              "size": 74733971
+            },
+            {
+              "digest": "sha256:ef05edceebc811d38fbe57bb48822bc8682c22ae3754e2f9d1ff69810f9616ff",
+              "id": 8688429289,
+              "name": "liboliphaunt-native-extension-artifacts-linux-arm64-gnu",
+              "size": 18118924
+            },
+            {
+              "digest": "sha256:65fcc1c15ecd7e2c8f69556a60623ebd6a65cf03173e137054e5f07d98733f85",
+              "id": 8688580446,
+              "name": "liboliphaunt-native-extension-artifacts-linux-x64-gnu",
+              "size": 18694304
+            },
+            {
+              "digest": "sha256:2208a62fb02901e1c3e1ab9a831c0ae18e235251d0c03ee3c2ff0e4a2d256c67",
+              "id": 8688582028,
+              "name": "liboliphaunt-native-extension-artifacts-macos-arm64",
+              "size": 21960905
+            },
+            {
+              "digest": "sha256:d8323b0c905899b96db7e1020c174c4b694be3103a298cdb66277670e91a2a97",
+              "id": 8688589164,
+              "name": "liboliphaunt-native-extension-artifacts-windows-x64-msvc",
+              "size": 18743649
+            },
+            {
+              "digest": "sha256:2e73fa998a9acc475f40b58911441bc376465e58a6a6d03052fa4f57ba64aca5",
+              "id": 8688141404,
+              "name": "liboliphaunt-native-icu-data",
+              "size": 13014774
+            },
+            {
+              "digest": "sha256:9be9303056a3c03458a1482f9aaf5377e9911a9180718255d863513791317236",
+              "id": 8688947128,
+              "name": "liboliphaunt-native-release-assets",
+              "size": 117399144
+            },
+            {
+              "digest": "sha256:a0cd5e77a557f77416bc890effe4fec776efa8278127bbc4a10fc9443ae5558f",
+              "id": 8688350208,
+              "name": "liboliphaunt-native-release-assets-android-arm64-v8a",
+              "size": 5258271
+            },
+            {
+              "digest": "sha256:f0a130c448bd358425828a86e6d80059db3de0ac50f5552787741a3024d0964f",
+              "id": 8688442358,
+              "name": "liboliphaunt-native-release-assets-android-x86_64",
+              "size": 5470033
+            },
+            {
+              "digest": "sha256:55dee4cdca35112345dda5530d6442cbe18702586da3cf664c6802b178e6ff96",
+              "id": 8688854951,
+              "name": "liboliphaunt-native-release-assets-ios-xcframework",
+              "size": 54179165
+            },
+            {
+              "digest": "sha256:f11592787cd7bca41df9014c994c5444882bdb5c3982cec303af8ddb040ae2ef",
+              "id": 8687998048,
+              "name": "liboliphaunt-native-release-assets-linux-arm64-gnu",
+              "size": 13861960
+            },
+            {
+              "digest": "sha256:4b39997769f44e41ac15f3463a358d7717f1c3499a1a5bfe5fb2701ea53b8b15",
+              "id": 8688064403,
+              "name": "liboliphaunt-native-release-assets-linux-x64-gnu",
+              "size": 14254941
+            },
+            {
+              "digest": "sha256:8d36df8343549fbb390b9d35fb2b1bdb0405fabb5d8cc61946c4431c43ef4f02",
+              "id": 8688140869,
+              "name": "liboliphaunt-native-release-assets-macos-arm64",
+              "size": 12516808
+            },
+            {
+              "digest": "sha256:329e5142a445939113f36879d28e8a9275661996a8d60437b4c3c3b68e4d4a24",
+              "id": 8688296547,
+              "name": "liboliphaunt-native-release-assets-windows-x64-msvc",
+              "size": 11857179
+            },
+            {
+              "digest": "sha256:681b5b3223acb89ff05b910961418aa0c848fd73999a8e99db9ec05640dec626",
+              "id": 8688352057,
+              "name": "liboliphaunt-native-target-android-arm64-v8a",
+              "size": 20211885
+            },
+            {
+              "digest": "sha256:214e280fb84c705e3f515748a8d0dd10a0e9b8405ca8fac3505eaf11097bdc13",
+              "id": 8688444081,
+              "name": "liboliphaunt-native-target-android-x86_64",
+              "size": 20331521
+            },
+            {
+              "digest": "sha256:9955b58bfa4ef2d503efd2fca72981e615e217f7440c3bd10d21b07ab628fa19",
+              "id": 8688858402,
+              "name": "liboliphaunt-native-target-ios-xcframework",
+              "size": 36656302
+            },
+            {
+              "digest": "sha256:b75b23d25a3f2dfab7e9d4f616f4241fc51b618e36e829efde0a102859816df6",
+              "id": 8688436770,
+              "name": "liboliphaunt-wasix-extension-aot-linux-arm64-gnu",
+              "size": 13431480
+            },
+            {
+              "digest": "sha256:960becf87a8f2b1fcb1267035e3d4ea20ae8db8b7fdbd3bfbe47ff4873fca41d",
+              "id": 8688457623,
+              "name": "liboliphaunt-wasix-extension-aot-linux-x64-gnu",
+              "size": 13824714
+            },
+            {
+              "digest": "sha256:289f5a5288c975b13bff1b425c9a4e8a1d285afad4d5d56337e038ce9209d840",
+              "id": 8688476156,
+              "name": "liboliphaunt-wasix-extension-aot-macos-arm64",
+              "size": 12835709
+            },
+            {
+              "digest": "sha256:2ce660a929f71a08f9037ed708319755431f18ee20a32e3638bf1ff4ebc13089",
+              "id": 8688654420,
+              "name": "liboliphaunt-wasix-extension-aot-windows-x64-msvc",
+              "size": 13509056
+            },
+            {
+              "digest": "sha256:a4463428afb0f4721b4a073c8ac88fc4cbc5969d9054373e1f7016bd809abcce",
+              "id": 8688103873,
+              "name": "liboliphaunt-wasix-extension-artifacts-wasix-portable",
+              "size": 9195916
+            },
+            {
+              "digest": "sha256:4768c100970a38078d0fd5642a7421c412fb2a30f1c0c87a65b80e71b88969f4",
+              "id": 8688743725,
+              "name": "liboliphaunt-wasix-release-assets",
+              "size": 54104192
+            },
+            {
+              "digest": "sha256:99d085ba49e94381455c042a1a3b2d582b054ac8aca31d00d9ebb1bd84b4a817",
+              "id": 8688435966,
+              "name": "liboliphaunt-wasix-runtime-aot-linux-arm64-gnu",
+              "size": 9072547
+            },
+            {
+              "digest": "sha256:eb6ff16126b9c37a59bca37b30a0b86e68a80d41cf9e491f4fe49a7dd90b826d",
+              "id": 8688456364,
+              "name": "liboliphaunt-wasix-runtime-aot-linux-x64-gnu",
+              "size": 9400749
+            },
+            {
+              "digest": "sha256:e57bb30a35703a188701a9b91f25e3f5e7de0f18118629c3654cac06dba7c007",
+              "id": 8688475560,
+              "name": "liboliphaunt-wasix-runtime-aot-macos-arm64",
+              "size": 8613917
+            },
+            {
+              "digest": "sha256:4fe1b394579c4624bc07d99e5c80086a537599ef47a3dfd6f42930918b19269f",
+              "id": 8688653755,
+              "name": "liboliphaunt-wasix-runtime-aot-windows-x64-msvc",
+              "size": 9118220
+            },
+            {
+              "digest": "sha256:32d5422362e5eb5cc2ae3c59969d4eae8fb326759138224e86bb7c51a2314ca9",
+              "id": 8688014332,
+              "name": "liboliphaunt-wasix-runtime-portable",
+              "size": 58944991
+            },
+            {
+              "digest": "sha256:4bdd90df95ba09c1a8d9a08ea80c4c86c3d59786bc8f3f5f4484b0b15eb7724a",
+              "id": 8689913951,
+              "name": "native-extension-lifecycle-evidence",
+              "size": 36693
+            },
+            {
+              "digest": "sha256:fc081a134f2a44994e0e1f8c78b6e738bbf3bbabd543902d530e2321824ee819",
+              "id": 8689906437,
+              "name": "native-extension-lifecycle-evidence-0",
+              "size": 10626
+            },
+            {
+              "digest": "sha256:af625cd25e1f65a0c764977ca018f7ab904a0592d83f0e5a90db84b7b02f964c",
+              "id": 8689900875,
+              "name": "native-extension-lifecycle-evidence-1",
+              "size": 10599
+            },
+            {
+              "digest": "sha256:7010ded5a3776c5bfa3114acd949e9d917b981a75f9c1b9648d032886b0fb99f",
+              "id": 8689905691,
+              "name": "native-extension-lifecycle-evidence-2",
+              "size": 10962
+            },
+            {
+              "digest": "sha256:783ec4a6463ae0454be43f06d629bfed9f7bd809d7fa6f47ac5bee8569cb15ca",
+              "id": 8687832576,
+              "name": "oliphaunt-broker-release-assets-linux-arm64-gnu",
+              "size": 484218
+            },
+            {
+              "digest": "sha256:d20a09563a70af5a1f2ce2b69eb2a7f0258c2a65a057b7267417f407d608394a",
+              "id": 8688091392,
+              "name": "oliphaunt-broker-release-assets-linux-x64-gnu",
+              "size": 538269
+            },
+            {
+              "digest": "sha256:ea5c17ba920ee214d798f2132d5e44f51bc45de7e6a51aade05d01df761468b3",
+              "id": 8687827073,
+              "name": "oliphaunt-broker-release-assets-macos-arm64",
+              "size": 468962
+            },
+            {
+              "digest": "sha256:dec6288ac01195ad97a5508d9769b4871d49d3c87862a5db8c6cff3c9f16ad0f",
+              "id": 8688100146,
+              "name": "oliphaunt-broker-release-assets-windows-x64-msvc",
+              "size": 619276
+            },
+            {
+              "digest": "sha256:50cd3b365cff5a543058252cd768510847284f2377ca058c28c3c1c6f69b6813",
+              "id": 8690232316,
+              "name": "oliphaunt-extension-package-artifacts",
+              "size": 351075265
+            },
+            {
+              "digest": "sha256:6ef24ed1cfbfc7870a7aafc7f14bafb4f6847cd599327b443843413102351057",
+              "id": 8689992578,
+              "name": "oliphaunt-js-exact-candidate-consumer-linux-arm64-gnu",
+              "size": 76207
+            },
+            {
+              "digest": "sha256:9448ce95b7c8f25230603104b294bdb6989cf6616d4b3b3368c11b2ff1c60ba3",
+              "id": 8690008043,
+              "name": "oliphaunt-js-exact-candidate-consumer-linux-x64-gnu",
+              "size": 76638
+            },
+            {
+              "digest": "sha256:e68864c02d6810d234848c5b91f36ac4d2ce7728aff1847e9c1ba580ede932fa",
+              "id": 8689979791,
+              "name": "oliphaunt-js-exact-candidate-consumer-macos-arm64",
+              "size": 76193
+            },
+            {
+              "digest": "sha256:6a96e3ed8bc32c4b06cb911eb344d243e8d3ca453b635fa2b95bf17cde06c94d",
+              "id": 8690089913,
+              "name": "oliphaunt-js-exact-candidate-consumer-windows-x64-msvc",
+              "size": 83663
+            },
+            {
+              "digest": "sha256:907c1742318e5dc13a84ac6e308e40746ec37d2de22c4fde78d23ac609d77458",
+              "id": 8687812139,
+              "name": "oliphaunt-js-sdk-package-artifacts",
+              "size": 304393
+            },
+            {
+              "digest": "sha256:d432ee86a4ad4275db5e5712aa701ce499b70b0b26ef98e299bf8cfea8648a21",
+              "id": 8687915429,
+              "name": "oliphaunt-kotlin-sdk-package-artifacts",
+              "size": 1884334
+            },
+            {
+              "digest": "sha256:3e3a3bdfd9974ee7c502b3359a5eeba8a2f3e071aa86d85322d1e3dbdad1de02",
+              "id": 8689934034,
+              "name": "oliphaunt-mobile-extension-package-artifacts",
+              "size": 198788737
+            },
+            {
+              "digest": "sha256:734eb4f4b3a634d0ee262fdd0526fcd3c8dc181addca13f2849f992c26e58457",
+              "id": 8687887050,
+              "name": "oliphaunt-native-extension-proof-linux-x64-gnu",
+              "size": 636300
+            },
+            {
+              "digest": "sha256:7da51a0f75f46800ff58fecbd1923d764e8f5c0956e8efd4c133015c354c01a0",
+              "id": 8687861797,
+              "name": "oliphaunt-node-direct-npm-package-linux-arm64-gnu",
+              "size": 24906
+            },
+            {
+              "digest": "sha256:cae3fe8b4d57c84f250459c724f54f31c3dd33bb4cc994367ea740ca0b0ea4fe",
+              "id": 8687856084,
+              "name": "oliphaunt-node-direct-npm-package-linux-x64-gnu",
+              "size": 26172
+            },
+            {
+              "digest": "sha256:19e55d9e81ce70328422fa5396f374b9a082191b0a5bf4e1772e919ca98defcc",
+              "id": 8687815574,
+              "name": "oliphaunt-node-direct-npm-package-macos-arm64",
+              "size": 19570
+            },
+            {
+              "digest": "sha256:6ed48344ccb0eab31e03c952af74aff79d043cb048ee7f8c7fa7582b09f54726",
+              "id": 8688127768,
+              "name": "oliphaunt-node-direct-npm-package-windows-x64-msvc",
+              "size": 84951
+            },
+            {
+              "digest": "sha256:38b14fad0e10741be60ce94b0fe4e1f3dcb375455b5a34c53abd6a73dabade29",
+              "id": 8687861391,
+              "name": "oliphaunt-node-direct-release-assets-linux-arm64-gnu",
+              "size": 24720
+            },
+            {
+              "digest": "sha256:f554bca9a46a7d507d5ba8aa0d82ff7e4435c95234741dd0418474e8704fa5a4",
+              "id": 8687855723,
+              "name": "oliphaunt-node-direct-release-assets-linux-x64-gnu",
+              "size": 26155
+            },
+            {
+              "digest": "sha256:9c5b648f78a4727fc980687d7f76a57aeca98daaa3c483556b0d4e7945dd01e1",
+              "id": 8687815126,
+              "name": "oliphaunt-node-direct-release-assets-macos-arm64",
+              "size": 19495
+            },
+            {
+              "digest": "sha256:fef0ce5bb7f68a9a4d5895635a03b6ee58d42abab5a91e33b6f6575aebaf4c8e",
+              "id": 8688127207,
+              "name": "oliphaunt-node-direct-release-assets-windows-x64-msvc",
+              "size": 82146
+            },
+            {
+              "digest": "sha256:bdfaac7d4afffa2979aa888442c2b815cdd57a01c49fde421480f6f02a59e957",
+              "id": 8690691725,
+              "name": "oliphaunt-react-native-ios-carriers",
+              "size": 123095
+            },
+            {
+              "digest": "sha256:1639bea1ef0f0802aefd817970a614087f015f6a184e1b20792e0cb723296a83",
+              "id": 8688924637,
+              "name": "oliphaunt-react-native-sdk-package-artifacts",
+              "size": 146894
+            },
+            {
+              "digest": "sha256:324135375658ab6c76b13d8fb0f2988215ea50abcb9cb8c498cab8374a5602ab",
+              "id": 8690971529,
+              "name": "oliphaunt-release-candidate",
+              "size": 1161
+            },
+            {
+              "digest": "sha256:9d52ad0f6994d310527d0cec55c90fea5ec0db70ad15b683b6a76cdedf832274",
+              "id": 8689922129,
+              "name": "oliphaunt-rust-exact-candidate-consumer-evidence",
+              "size": 5030
+            },
+            {
+              "digest": "sha256:bba60740be13f22db93d04576d169101faa9fd4c620b34e02eed97390b1b731b",
+              "id": 8687868633,
+              "name": "oliphaunt-rust-sdk-package-artifacts",
+              "size": 258465
+            },
+            {
+              "digest": "sha256:e02108a37e441ee4f547d52e552d9a784297516e76c104fb747f1e192239f8f3",
+              "id": 8689050114,
+              "name": "oliphaunt-swift-exact-candidate-consumer-evidence",
+              "size": 136460
+            },
+            {
+              "digest": "sha256:53c19efb03851656615dd2f0eb163ef412a7df5b6a8d61b3729d0aebb62fc506",
+              "id": 8689052563,
+              "name": "oliphaunt-swift-sdk-package-artifacts",
+              "size": 15114567
+            },
+            {
+              "digest": "sha256:501082acdf57b9f4a7f1b50915bcd10d97660ab35482105e10f5680da69bd1af",
+              "id": 8688800700,
+              "name": "oliphaunt-wasix-rust-exact-candidate-consumer-evidence",
+              "size": 34313
+            },
+            {
+              "digest": "sha256:58ea645c3ed1ef8b011da24096c1bc4b39893bb8df9ab1dde82ebc678fae7ae0",
+              "id": 8687973820,
+              "name": "oliphaunt-wasix-rust-package-artifacts",
+              "size": 363144
+            },
+            {
+              "digest": "sha256:e5c6cfbdae6fbe075b0f206a6c21f31823aad67a263d70f10d760826ef14d8b5",
+              "id": 8690432460,
+              "name": "react-native-mobile-android-app-android-arm64-v8a",
+              "size": 58753812
+            },
+            {
+              "digest": "sha256:e60e4a9727cc78896d2d3ed82bb80a3cad70c25864cb20c366d113372e3e5bd5",
+              "id": 8690338245,
+              "name": "react-native-mobile-android-app-android-x86_64",
+              "size": 59319208
+            },
+            {
+              "digest": "sha256:de41a5d7ed59b063ee9eac4558c04eb384a92a2e8393919809e343e8637fdc32",
+              "id": 8690517414,
+              "name": "react-native-mobile-android-e2e-reports",
+              "size": 7189
+            },
+            {
+              "digest": "sha256:af459783da56e56c69c57f7ca60705ce5203a81ad2f812c81afa10e478617f01",
+              "id": 8690690551,
+              "name": "react-native-mobile-ios-app",
+              "size": 41706064
+            },
+            {
+              "digest": "sha256:aa3463802d8d2ee2dd4ca0c4c9a990fe7e04232f3055a74299993598475a5618",
+              "id": 8690688584,
+              "name": "react-native-mobile-ios-build-logs",
+              "size": 805466
+            },
+            {
+              "digest": "sha256:12d461714fdb7bbbbc4e85406536c56b9aa1a67c4652a191244c676ed60410a6",
+              "id": 8690928757,
+              "name": "react-native-mobile-ios-e2e-reports",
+              "size": 40807
+            },
+            {
+              "digest": "sha256:027f20b594a53768aada589ad6bde47267c40337cb1a0d74618613b38c999dd8",
+              "id": 8688901265,
+              "name": "wasix-release-regression-evidence",
+              "size": 13652
+            }
+          ],
+          "count": 73,
+          "inventoryDigest": "1d60fba40b040b98bcb3ccde9eedae53df440d77f85724123790f2e49fd7454c",
+          "totalSize": 1516373495
+        },
+        "requiredArtifactNames": [
+          "artifact-build-plan",
+          "liboliphaunt-native-release-assets",
+          "liboliphaunt-wasix-release-assets",
+          "liboliphaunt-wasix-runtime-aot-linux-arm64-gnu",
+          "liboliphaunt-wasix-runtime-aot-linux-x64-gnu",
+          "liboliphaunt-wasix-runtime-aot-macos-arm64",
+          "liboliphaunt-wasix-runtime-aot-windows-x64-msvc",
+          "liboliphaunt-wasix-runtime-portable",
+          "oliphaunt-broker-release-assets-linux-arm64-gnu",
+          "oliphaunt-broker-release-assets-linux-x64-gnu",
+          "oliphaunt-broker-release-assets-macos-arm64",
+          "oliphaunt-broker-release-assets-windows-x64-msvc",
+          "oliphaunt-extension-package-artifacts",
+          "oliphaunt-js-sdk-package-artifacts",
+          "oliphaunt-kotlin-sdk-package-artifacts",
+          "oliphaunt-node-direct-npm-package-linux-arm64-gnu",
+          "oliphaunt-node-direct-npm-package-linux-x64-gnu",
+          "oliphaunt-node-direct-npm-package-macos-arm64",
+          "oliphaunt-node-direct-npm-package-windows-x64-msvc",
+          "oliphaunt-node-direct-release-assets-linux-arm64-gnu",
+          "oliphaunt-node-direct-release-assets-linux-x64-gnu",
+          "oliphaunt-node-direct-release-assets-macos-arm64",
+          "oliphaunt-node-direct-release-assets-windows-x64-msvc",
+          "oliphaunt-react-native-sdk-package-artifacts",
+          "oliphaunt-release-candidate",
+          "oliphaunt-rust-sdk-package-artifacts",
+          "oliphaunt-swift-sdk-package-artifacts",
+          "oliphaunt-wasix-rust-package-artifacts",
+          "wasix-release-regression-evidence"
+        ],
+        "run": {
+          "attempt": 1,
+          "conclusion": "success",
+          "event": "workflow_dispatch",
+          "headSha": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+          "id": 30358387218,
+          "status": "completed"
+        },
+        "workflow": {
+          "id": 265767525,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml"
+        }
+      },
+      "releaseEnvelope": {
+        "carrierCount": 303,
+        "catalogDigest": "b8294c0c0030a7b77977635f864854f3503a3ac01c1e9c65da79425b087f9a43",
+        "lockDigest": "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
+        "packageEnvelopeDigest": "229aaba1d027719172b0801dca2ff70dde22967b8de9f57acad8cafe1ee686c2",
+        "productArtifactCount": 152,
+        "productCount": 18,
+        "publicationLock": {
+          "path": "target/release/publication-lock.json",
+          "sha256": "e46df2d82e83533c724c8e9d08a32ad0ef7fc96df6ce8c2984c522b65ddfd8fd",
+          "size": 438770
+        },
+        "schema": "oliphaunt-publication-lock-v1"
+      },
+      "releaseSource": {
+        "commit": "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+        "tree": "396cf3b10adb1a5b625e66c5ebacf8c3d364b543"
+      }
+    }
+  ],
+  "schema": "oliphaunt-same-version-recovery-sources-v1"
+}
