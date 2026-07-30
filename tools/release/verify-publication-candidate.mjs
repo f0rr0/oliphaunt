@@ -303,6 +303,29 @@ export function derivePublicationProducts({
   return deriveReleaseProducts({ repo, headRef: releaseCommit }).products;
 }
 
+/**
+ * Return a fully verified recovery context when HEAD explicitly carries the
+ * recovery trailer. Ordinary source and release-bump commits return null so
+ * general repository checks retain their existing behavior.
+ */
+export function verifyPublicationRecoveryCandidate({
+  repo = ROOT,
+  headRef = "HEAD",
+  deriveRecoveryProducts = releaseProductsForRange,
+} = {}) {
+  const publicationCommit = git(
+    repo,
+    ["rev-parse", "--verify", `${headRef}^{commit}`],
+  ).trimEnd();
+  if (recoveryTrailer(repo, publicationCommit) === null) return null;
+  return verifyPublicationCandidate({
+    repo,
+    headRef: publicationCommit,
+    products: derivePublicationProducts({ repo, headRef: publicationCommit }),
+    deriveRecoveryProducts,
+  });
+}
+
 export function verifyPublicationCandidate({
   repo = ROOT,
   headRef = "HEAD",

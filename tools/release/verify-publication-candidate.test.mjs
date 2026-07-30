@@ -11,6 +11,7 @@ import {
   derivePublicationProducts,
   RELEASE_RECOVERY_TRAILER,
   verifyPublicationCandidate,
+  verifyPublicationRecoveryCandidate,
 } from "./verify-publication-candidate.mjs";
 
 const PRODUCT = "alpha";
@@ -111,6 +112,34 @@ test("accepts normal release commits and explicit control-only recovery chains",
     derivePublicationProducts({ repo, headRef: first }),
     [PRODUCT],
   );
+  assert.equal(
+    verifyPublicationRecoveryCandidate({
+      repo,
+      headRef: release,
+      deriveRecoveryProducts: () => [],
+    }),
+    null,
+  );
+  git(repo, "switch", "-q", "-c", "untrailed-control", release);
+  write(repo, "tools/test/untrailed.txt", "untrailed\n");
+  const untrailed = commit(repo, "fix: untrailed publication control");
+  assert.equal(
+    verifyPublicationRecoveryCandidate({
+      repo,
+      headRef: untrailed,
+      deriveRecoveryProducts: () => [],
+    }),
+    null,
+  );
+  git(repo, "switch", "-q", "--detach", first);
+  assert.equal(
+    verifyPublicationRecoveryCandidate({
+      repo,
+      headRef: first,
+      deriveRecoveryProducts: () => [],
+    })?.releaseSha,
+    release,
+  );
   const verifiedFirst = verify(repo, first);
   assert.equal(verifiedFirst.mode, "release-recovery");
   assert.equal(verifiedFirst.publicationSha, first);
@@ -134,6 +163,14 @@ test("rejects product-owned, release-metadata, nonlinear, and ambiguously author
   const owned = recovery(repo, release, "src/product/nested.txt", "changed\n");
   assert.throws(
     () => verify(repo, owned),
+    /product-semantic path.*src\/product\/nested[.]txt/u,
+  );
+  assert.throws(
+    () => verifyPublicationRecoveryCandidate({
+      repo,
+      headRef: owned,
+      deriveRecoveryProducts: () => [],
+    }),
     /product-semantic path.*src\/product\/nested[.]txt/u,
   );
 
