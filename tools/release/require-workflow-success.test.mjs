@@ -53,6 +53,7 @@ if (args[0] === "api") {
       head_sha: "${SHA}",
       status: "completed",
       conclusion: "success",
+      run_attempt: 3,
       html_url: "https://example.invalid/run/77",
       event: "push",
     };
@@ -111,7 +112,7 @@ if (args[0] === "api") {
       : process.env.FAKE_MODE === "failed-run"
         ? "failure"
         : "success";
-    process.stdout.write(sha + "\\t9\\tpush\\t" + status + "\\t" + conclusion + "\\n");
+    process.stdout.write(sha + "\\t9\\tpush\\t" + status + "\\t" + conclusion + "\\t3\\n");
     process.exit(0);
   }
   if (/actions\\/workflows\\/9$/.test(endpoint)) {
@@ -159,7 +160,7 @@ test("a transient exact-SHA run-inventory failure does not abort the long-lived 
   assert.match(result.stdout, /selected CI run 77/u);
   assert.equal(
     readFileSync(f.output, "utf8"),
-    `run_id=77\nartifact_metadata_json=${JSON.stringify([{
+    `run_id=77\nrun_attempt=3\nartifact_metadata_json=${JSON.stringify([{
       digest: `sha256:${"1".repeat(64)}`,
       id: 901,
       name: "required-artifact",
@@ -254,7 +255,7 @@ test("gate-only artifacts authorize a run without contaminating transfer metadat
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     readFileSync(f.output, "utf8"),
-    `run_id=77\nartifact_metadata_json=${JSON.stringify([{
+    `run_id=77\nrun_attempt=3\nartifact_metadata_json=${JSON.stringify([{
       digest: `sha256:${"1".repeat(64)}`,
       id: 901,
       name: "required-artifact",

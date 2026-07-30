@@ -226,6 +226,15 @@ const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "oliphaunt-node-direct",
 ]);
 
+function activePublicationSourceRef(environment = process.env) {
+  const configured = environment.RELEASE_SOURCE_SHA?.trim();
+  if (configured === undefined || configured === "") return "HEAD";
+  if (!/^[0-9a-f]{40}$/u.test(configured)) {
+    fail("RELEASE_SOURCE_SHA must be a full lowercase commit SHA when provided");
+  }
+  return configured;
+}
+
 if (command === "-h" || command === "--help") {
   usage();
   process.exit(0);
@@ -242,7 +251,10 @@ if (BOOTSTRAP_IDENTITIES && command !== "publish") {
 if (command === "publish") {
   try {
     ACTIVE_PUBLICATION_LOCK = loadPublicationLock(PUBLICATION_LOCK_PATH);
-    assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, "HEAD");
+    assertPublicationLockSource(
+      ACTIVE_PUBLICATION_LOCK,
+      activePublicationSourceRef(),
+    );
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }

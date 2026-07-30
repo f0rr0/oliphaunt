@@ -1990,7 +1990,7 @@ test("dry-run evidence cannot be relabeled as publish evidence or omit the capsu
       .replace("--artifact oliphaunt-bootstrap-capsule", "");
   assert.throws(
     () => assertReleaseOperationWorkflow(missingCapsule),
-    /approved dry-run selection must actively bind --artifact oliphaunt-bootstrap-capsule/u,
+    /approved source-bound dry-run selection must actively bind --artifact oliphaunt-bootstrap-capsule/u,
   );
 
   const mislabeledLock = candidate();
@@ -2259,7 +2259,7 @@ test("same-version recovery identity and byte-equivalence gates are non-bypassab
       (workflow) => {
         step(workflow, "publish", "verify_release_recovery_lock")["continue-on-error"] = true;
       },
-      /original and current lock envelopes/u,
+      /original and byte-identical replay lock/u,
     ],
     [
       "equivalence evidence",
@@ -2273,22 +2273,93 @@ test("same-version recovery identity and byte-equivalence gates are non-bypassab
       /artifact path must be target[/]release[/]recovery-evidence|oliphaunt-release-recovery-equivalence/u,
     ],
     [
-      "normal publication approval",
+      "source-bound original approval",
       (workflow) => {
-          step(workflow, "publish", "approved_publication_lock").run =
+        step(workflow, "publish", "approved_publication_lock").run =
           step(workflow, "publish", "approved_publication_lock").run
-            .replace("--gate-artifact oliphaunt-release-recovery-equivalence", "");
+            .replace('approval_sha="$RELEASE_SOURCE_SHA"', 'approval_sha="$RELEASE_CONTROL_SHA"');
       },
-      /approved dry-run selection/u,
+      /approved source-bound dry-run selection/u,
     ],
     [
-      "bootstrap publication approval",
+      "bootstrap recovery rejection",
       (workflow) => {
-          step(workflow, "publish-bootstrap", "approved_bootstrap_capsule").run =
-          step(workflow, "publish-bootstrap", "approved_bootstrap_capsule").run
-            .replace("--gate-artifact oliphaunt-release-recovery-equivalence", "");
+        namedStep(
+          workflow,
+          "publish-bootstrap",
+          "Reject same-version recovery bootstrap mutation",
+        ).run = "echo assumed-safe";
       },
-      /approved bootstrap dry-run selection/u,
+      /same-version recovery bootstrap rejection/u,
+    ],
+    [
+      "pinned frozen-payload CI inventory",
+      (workflow) => {
+        step(workflow, "publish", "recovery_payload_ci_qualification").env
+          .PINNED_ARTIFACT_METADATA_JSON = "[]";
+      },
+      /exact pinned frozen-payload CI run and complete artifact inventory/u,
+    ],
+    [
+      "committed recovery provenance",
+      (workflow) => {
+        step(workflow, "publish", "recovery_source").run = "echo assumed";
+      },
+      /committed same-version recovery provenance selector/u,
+    ],
+    [
+      "byte-identical lock replay",
+      (workflow) => {
+        step(workflow, "publish", "freeze_publication_lock").run =
+          step(workflow, "publish", "freeze_publication_lock").run
+            .replace('cmp -s "$original_lock" "$lock_output"', "true");
+      },
+      /byte-identical source-bound recovery lock replay/u,
+    ],
+    [
+      "controller recovery approval",
+      (workflow) => {
+        step(workflow, "publish", "approved_recovery_control").run =
+          step(workflow, "publish", "approved_recovery_control").run
+            .replace('"$RELEASE_CONTROL_SHA"', '"$RELEASE_SOURCE_SHA"');
+      },
+      /controller-bound recovery approval/u,
+    ],
+    [
+      "pinned terminal bootstrap ledger",
+      (workflow) => {
+        namedStep(workflow, "publish", "Download immutable registry bootstrap ledger").env
+          .PINNED_LEDGER_RUN_ID = "0";
+      },
+      /exact committed terminal ledger/u,
+    ],
+    [
+      "custom recovery attestation pin",
+      (workflow) => {
+        step(workflow, "publish", "attest_recovery_promotion").uses =
+          "actions/attest@0000000000000000000000000000000000000000";
+      },
+      /pinned custom-predicate attestation action/u,
+    ],
+    [
+      "ordinary provenance excluded from recovery",
+      (workflow) => {
+        step(workflow, "publish", "attest_broker").if =
+          step(workflow, "publish", "attest_broker").if
+            .replace(" && steps.verify_publication_candidate.outputs.mode != 'release-recovery'", "");
+      },
+      /condition does not guarantee/u,
+    ],
+    [
+      "registry recovery continuation rejection",
+      (workflow) => {
+        namedStep(
+          workflow,
+          "publish-registry",
+          "Reject same-version recovery continuation",
+        ).run = "echo assumed-safe";
+      },
+      /same-version recovery continuation rejection/u,
     ],
     [
       "final lifecycle identity verifier",

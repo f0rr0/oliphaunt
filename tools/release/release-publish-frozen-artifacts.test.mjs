@@ -86,6 +86,9 @@ describe("real publication consumes frozen artifacts", () => {
     expect(publisher).toContain("if (provenReceipts.has(operation.carrierId)) return true");
     expect(publisher).toContain("covered by the complete immutable bootstrap ledger; skipping redundant registry reconciliation");
     expect(publisher).toContain("const execution = await executeNormalPublicationPlan");
+    expect(publisher).toContain("activePublicationSourceRef()");
+    expect(publisher).toContain("environment.RELEASE_SOURCE_SHA?.trim()");
+    expect(publisher).toContain("RELEASE_SOURCE_SHA must be a full lowercase commit SHA");
     expect(publisher).toContain("operationResults: execution.operationResults");
     expect(publisher).toContain("collectNormalPublicationReceipts({");
     expect(publisher).toContain("verifyLockedRegistryIntegrity(ACTIVE_PUBLICATION_LOCK");
