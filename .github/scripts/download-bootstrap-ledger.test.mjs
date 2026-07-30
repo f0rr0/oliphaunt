@@ -14,6 +14,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "../../tools/test/fd-backed-spawn-sync.mjs";
+import { isolatedGitHubTestEnvironment } from "../../tools/test/isolated-github-test-environment.mjs";
 import test from "node:test";
 
 import {
@@ -226,8 +227,7 @@ function invoke(fixture, {
   return spawnSync("node", [SCRIPT], {
     encoding: "utf8",
     timeout: BOOTSTRAP_LEDGER_PROCESS_TIMEOUT_MS,
-    env: {
-      ...process.env,
+    env: isolatedGitHubTestEnvironment({
       PATH: `${fixture.bin}${path.delimiter}${process.env.PATH}`,
       BOOTSTRAP_LEDGER_PATH: fixture.destination,
       FAKE_ARTIFACTS_BY_RUN: JSON.stringify(artifactsByRun),
@@ -239,13 +239,16 @@ function invoke(fixture, {
       FAKE_RUNS: JSON.stringify(runs),
       FAKE_ZIPS_BY_ARTIFACT: JSON.stringify(zipsByArtifact),
       GH_REPO: "f0rr0/oliphaunt",
+      GH_TOKEN: "test-token",
       GITHUB_OUTPUT: fixture.output,
+      GITHUB_REPOSITORY: "f0rr0/oliphaunt",
       GITHUB_RUN_ATTEMPT: String(attempt),
       GITHUB_RUN_ID: "900",
+      GITHUB_SHA: SHA,
       RELEASE_HEAD_SHA: SHA,
       OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
       OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-    },
+    }),
   });
 }
 

@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-28. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-30. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -113,16 +113,28 @@ It is an admission optimization, not a substitute for the full write/check,
 metadata, asset, extension, and package gates on the normalized head.
 
 Shared code that can change published bytes or a declared public target must
-have one exact ownership rule in `release-semantic-inputs.toml`. The generated
-`.release-semantic-inputs.json` file under each affected product root gives
-Release Please a content-addressed trigger without treating workflow,
-validator, registry-transport, test, or documentation edits as product
-releases. After changing an owned shared input or its ownership, run
+have one exact ownership rule in `release-semantic-inputs.toml`. This includes
+compiler, SDK, linker, build-command, source-selection, and packaging choices
+even when their current implementation lives in a workflow or local action.
+The generated `.release-semantic-inputs.json` file under each affected product
+root gives Release Please a content-addressed trigger without treating pure
+control-plane orchestration, validators, registry transport, tests, or
+documentation as product releases. After changing an owned shared input or its ownership, run
 `tools/dev/bun.sh tools/release/sync-release-semantic-inputs.mjs --write` and
 then `--check`; do not hand-edit the fingerprints. On a generated release PR,
 use `sync-release-pr.mjs` instead: it refreshes these files only after its final
 derived semantic input has converged, so interruption recovery and a second
 write/check pass are idempotent.
+
+Conversely, a pure control-plane workflow, validator, registry-transport, test,
+or documentation change with zero semantic owners does not bump a product.
+Running `prepare-release-pr` after only those changes reports no releasable
+products, creates no release PR, and performs no registry publication. This is
+true regardless of a `ci:` commit subject: ownership follows changed semantics,
+not the commit label. If another unreleased product change is already present,
+Release Please may still prepare that product's release. A manually constructed
+`chore(release):` commit without an actual manifest/version/changelog
+transition is rejected by the structured release-commit verifier.
 
 ### Generated dependent candidates
 
@@ -229,7 +241,7 @@ The `Release` workflow has four operations:
 
 1. `prepare-release-pr` — run from current `main`; creates/updates the single generated release PR and syncs derived files.
 2. `publish-dry-run` — downloads exact-SHA CI artifacts, performs package/registry preflight and clean-consumer checks, freezes/verifies the lock, and emits the lock-bound Cargo/npm bootstrap capsule without write credentials.
-3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass for this noninteractive first publication; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. The current first release needs both Cargo and npm credentials, while a future single-registry identity addition must provision only that registry's token.
+3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. Provision only credentials required by the exact missing-identity inventory; a recovery in which every Cargo/npm version already matches requires neither token.
 4. `publish` — normal trusted release. It uses short-lived Cargo/npm/JSR credentials, Maven protected secrets, the frozen lock, and idempotent publication checks.
 
 Only a successful `publish-dry-run` uploads the canonical
@@ -740,7 +752,32 @@ possible values but never creates extension support by default.
 
 ## Recovery and history repair
 
-On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Repository changes require a new version and candidate.
+On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Product-semantic repository changes require a new version and candidate.
+
+If immutable packages are already public but the failure requires only a
+zero-owner release-control/test fix, use the explicit same-version control
+recovery instead of manufacturing a duplicate release. Keep the original
+release-bump commit immutable. The later linear `fix(release):` commit carries
+exactly one `Oliphaunt-Release-Recovery-Of: <original-release-sha>` trailer.
+The publication-candidate verifier requires the authoritative base/head release
+plan to select zero products, rejects every changed shared path with a semantic
+owner, and proves versions and release metadata are unchanged. The later SHA
+receives fresh complete CI, dry-run artifacts, attestations, and lock.
+Dry-run also downloads the original approved lock and requires exact equality
+of products, catalog, all carrier/artifact bytes, and package-envelope digest;
+only the source identity and source-bound lock digest may differ. After that
+proof, the registry inventory is derived from the new exhaustive frozen lock,
+not just the static catalog, so generated payload-part carriers are included.
+
+Bootstrap then creates a fresh later-SHA ledger by checksum/SRI reconciliation.
+Already-public Cargo/npm versions are verified skips and never reach a
+publisher. Any mismatch fails closed and requires a new version. Normal publish
+reconciles every registry carrier in the lock and creates only identities whose
+exact version is absent; GitHub product tags/releases must be wholly absent
+before recovery staging. It points those new tags/releases at the later
+qualified publication SHA and completes the original Release Please PR
+lifecycle. The original lock, CI artifacts, ledger, or attestations are never
+relabeled or attached to the later SHA.
 
 A deferred extension is never a recoverable missing publication. If it appears
 in a release PR, dry-run artifact set, or lock, reject that candidate, remove

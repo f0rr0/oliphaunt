@@ -13,11 +13,12 @@ PostgreSQL model. Applications own their database roots, choose an honest
 runtime mode for their platform, and package only the exact PostgreSQL
 extensions they select.
 
-> **Release status:** this source tree is preparing Oliphaunt's first
-> independently versioned public releases. Source versions intentionally remain
-> `0.0.0` until the generated release PR advances them. Package names and
-> install examples describe the release contract; they are not evidence that a
-> registry package has already been published.
+> **Release availability:** Oliphaunt products are independently versioned and
+> can become visible on different registries at different times during a
+> publication transaction. Release Please-generated version metadata in the
+> exact source tree is the version authority; an install example is a contract,
+> while the corresponding registry entry or promoted GitHub product tag is the
+> availability evidence.
 
 ## Product model
 
@@ -65,7 +66,7 @@ and physical-iOS boundaries.
 
 ## SDK entry points
 
-The planned public entry points are:
+The declared public entry points are:
 
 | App surface | Package entry point | Distribution boundary |
 | --- | --- | --- |

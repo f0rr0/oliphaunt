@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { isolatedGitHubTestEnvironment } from "../test/isolated-github-test-environment.mjs";
+
 import {
   GitHubReadError,
   RetryableReadError,
@@ -25,6 +27,7 @@ function deterministic(overrides = {}) {
     attemptTimeoutMs: 50,
     baseDelayMs: 10,
     deadlineMs: 1_000,
+    environment: {},
     maxAttempts: 4,
     maxDelayMs: 40,
     now: () => time,
@@ -463,12 +466,11 @@ test("CLI entrypoint runs through Bun with both repository-relative and absolute
   const script = path.resolve("tools/release/github-read.mjs");
   const common = {
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: isolatedGitHubTestEnvironment({
       PATH: `${temporary}${path.delimiter}${process.env.PATH}`,
       OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
       OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-    },
+    }),
   };
   for (const entrypoint of [path.relative(process.cwd(), script), script]) {
     const result = spawnSync(

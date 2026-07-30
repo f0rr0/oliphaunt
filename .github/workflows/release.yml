@@ -386,12 +386,27 @@ jobs:
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
-      - name: Prove workflow HEAD is the release-bump commit
+      - name: Prove workflow HEAD is a release or same-version recovery commit
+        id: verify_publication_candidate
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        timeout-minutes: 2
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Prove same-version recovery has no staged GitHub release state
+        id: verify_release_recovery_github_absence
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          bun .github/scripts/manage-release-drafts.mjs recovery-preflight \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
 
@@ -404,7 +419,7 @@ jobs:
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
             assert-markable \
-            --release-sha "$RELEASE_HEAD_SHA" \
+            --release-sha "${{ steps.verify_publication_candidate.outputs.release_sha }}" \
             --base main
 
       - name: Preflight selected product tag and release collisions
@@ -544,6 +559,41 @@ jobs:
             --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
             --wasix-evidence-root target/release-candidate/wasix-evidence
 
+      - name: Select original approved lock for same-version recovery
+        id: recovery_original_publication_lock
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RECOVERY_RELEASE_SHA: ${{ steps.verify_publication_candidate.outputs.release_sha }}
+        run: |
+          bash .github/scripts/require-workflow-success.sh \
+            Release \
+            "$RECOVERY_RELEASE_SHA" \
+            0 \
+            --event workflow_dispatch \
+            --artifact oliphaunt-publication-lock
+
+      - name: Download original approved lock for same-version recovery
+        id: download_recovery_original_publication_lock
+        if: ${{ steps.recovery_original_publication_lock.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RECOVERY_LOCK_RUN_ID: ${{ steps.recovery_original_publication_lock.outputs.run_id }}
+          RECOVERY_LOCK_ARTIFACT_METADATA_JSON: ${{ steps.recovery_original_publication_lock.outputs.artifact_metadata_json }}
+          RECOVERY_RELEASE_SHA: ${{ steps.verify_publication_candidate.outputs.release_sha }}
+        run: |
+          node .github/scripts/download-build-artifacts.mjs \
+            Release \
+            "$RECOVERY_RELEASE_SHA" \
+            "$RUNNER_TEMP/recovery-original-publication-lock" \
+            --run-id "$RECOVERY_LOCK_RUN_ID" \
+            --artifact-metadata-json "$RECOVERY_LOCK_ARTIFACT_METADATA_JSON" \
+            --artifact oliphaunt-publication-lock
+
       - name: Require one approved dry-run lock and capsule
         id: approved_publication_lock
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -551,13 +601,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          approved_artifacts=(
+            --artifact oliphaunt-publication-lock
+            --artifact oliphaunt-bootstrap-capsule
+          )
+          if [[ "${{ steps.verify_publication_candidate.outputs.mode }}" == release-recovery ]]; then
+            approved_artifacts+=(--gate-artifact oliphaunt-release-recovery-equivalence)
+          fi
           bash .github/scripts/require-workflow-success.sh \
             Release \
             "$RELEASE_HEAD_SHA" \
             300 \
             --event workflow_dispatch \
-            --artifact oliphaunt-publication-lock \
-            --artifact oliphaunt-bootstrap-capsule
+            "${approved_artifacts[@]}"
 
       - name: Download prior approved publication lock
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -576,12 +632,27 @@ jobs:
             --artifact oliphaunt-publication-lock
 
       - name: Validate product versions and registry state
+        id: validate_release_registry_state
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+        run: |
+          registry_args=(
+            --products-json "$PRODUCTS_JSON"
+            --head-ref "$RELEASE_HEAD_SHA"
+          )
+          if [[ "${{ steps.verify_publication_candidate.outputs.mode }}" == release-recovery ]]; then
+            # Dynamic payload-part carriers do not exist until the exhaustive
+            # publication lock is frozen. Validate version/dependency state
+            # here, then inventory every exact carrier from that lock below.
+            tools/dev/bun.sh tools/release/check_release_versions.mjs \
+              "${registry_args[@]}"
+          else
+            tools/dev/bun.sh tools/release/release-check-registries.mjs \
+              "${registry_args[@]}"
+          fi
 
       - name: Download WASIX runtime build artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
@@ -947,6 +1018,53 @@ jobs:
             --lock target/release/publication-lock.json \
             --head-ref "$RELEASE_HEAD_SHA"
 
+      - name: Prove same-version recovery byte envelope is unchanged
+        id: verify_release_recovery_lock
+        if: ${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 2
+        env:
+          RECOVERY_LOCK_ARTIFACT_METADATA_JSON: ${{ steps.recovery_original_publication_lock.outputs.artifact_metadata_json }}
+          RECOVERY_LOCK_RUN_ID: ${{ steps.recovery_original_publication_lock.outputs.run_id }}
+          RECOVERY_RELEASE_SHA: ${{ steps.verify_publication_candidate.outputs.release_sha }}
+        run: |
+          tools/dev/bun.sh tools/release/verify-release-recovery-lock.mjs \
+            --original-lock "$RUNNER_TEMP/recovery-original-publication-lock/publication-lock.json" \
+            --recovery-lock "$PUBLICATION_LOCK_PATH" \
+            --release-sha "$RECOVERY_RELEASE_SHA" \
+            --publication-sha "$RELEASE_HEAD_SHA" \
+            --original-run-id "$RECOVERY_LOCK_RUN_ID" \
+            --original-artifact-metadata-json "$RECOVERY_LOCK_ARTIFACT_METADATA_JSON" \
+            --output target/release/recovery-evidence/lock-equivalence.json
+
+      - name: Inventory exact frozen registry state for same-version recovery
+        id: inventory_release_recovery_registries
+        if: ${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLIPHAUNT_PUBLICATION_LOCK: ${{ env.PUBLICATION_LOCK_PATH }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/release-check-registries.mjs \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --registry-inventory-output target/release/recovery-registry-inventory.json
+
+      - name: Prove same-version recovery follows a partial immutable publication
+        id: verify_release_recovery_publication
+        if: ${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 20
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/verify-release-recovery-publication.mjs \
+            --lock "$PUBLICATION_LOCK_PATH" \
+            --inventory target/release/recovery-registry-inventory.json \
+            --products-json "$PRODUCTS_JSON" \
+            --output target/release/recovery-evidence/publication-state.json \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Match prior approved publication lock
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         run: |
@@ -1101,6 +1219,18 @@ jobs:
         with:
           name: oliphaunt-bootstrap-capsule
           path: target/release/oliphaunt-bootstrap-capsule.tar
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+      - name: Upload same-version recovery equivalence evidence
+        id: preserve_release_recovery_equivalence
+        if: ${{ inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-release-recovery-equivalence
+          path: target/release/recovery-evidence
           if-no-files-found: error
           overwrite: true
           retention-days: 90
@@ -2071,6 +2201,17 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Re-prove release lifecycle identity
+        id: finalize_publication_candidate
+        timeout-minutes: 1
+        env:
+          PRODUCTS_JSON: ${{ needs.publish-registry.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Install and verify exact registry-published handoff
         id: install_registry_handoff
         timeout-minutes: 5
@@ -2227,14 +2368,14 @@ jobs:
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
             assert-markable \
-            --release-sha "$RELEASE_HEAD_SHA" \
+            --release-sha "${{ steps.finalize_publication_candidate.outputs.release_sha }}" \
             --base main
           bun .github/scripts/manage-release-drafts.mjs promote \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
             mark-tagged \
-            --release-sha "$RELEASE_HEAD_SHA" \
+            --release-sha "${{ steps.finalize_publication_candidate.outputs.release_sha }}" \
             --base main
 
   publish-bootstrap:
@@ -2349,14 +2490,17 @@ jobs:
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
-      - name: Prove workflow HEAD is the release-bump commit
+      - name: Prove workflow HEAD is a release or same-version recovery commit
+        id: verify_bootstrap_publication_candidate
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
+        timeout-minutes: 2
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
             --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA"
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Prove Release Please PR can complete after bootstrap publication
         id: assert_bootstrap_release_please_markable
@@ -2367,7 +2511,7 @@ jobs:
         run: |
           tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
             assert-markable \
-            --release-sha "$RELEASE_HEAD_SHA" \
+            --release-sha "${{ steps.verify_bootstrap_publication_candidate.outputs.release_sha }}" \
             --base main
 
       - name: Preflight selected product tag and release collisions
@@ -2488,13 +2632,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          approved_artifacts=(
+            --artifact oliphaunt-publication-lock
+            --artifact oliphaunt-bootstrap-capsule
+          )
+          if [[ "${{ steps.verify_bootstrap_publication_candidate.outputs.mode }}" == release-recovery ]]; then
+            approved_artifacts+=(--gate-artifact oliphaunt-release-recovery-equivalence)
+          fi
           bash .github/scripts/require-workflow-success.sh \
             Release \
             "$RELEASE_HEAD_SHA" \
             0 \
             --event workflow_dispatch \
-            --artifact oliphaunt-publication-lock \
-            --artifact oliphaunt-bootstrap-capsule
+            "${approved_artifacts[@]}"
 
       - name: Download approved lock and capsule from one dry-run
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -2512,6 +2662,24 @@ jobs:
             --artifact-metadata-json "$APPROVED_ARTIFACT_METADATA_JSON" \
             --artifact oliphaunt-publication-lock \
             --artifact oliphaunt-bootstrap-capsule
+
+      - name: Download approved same-version recovery evidence
+        id: download_bootstrap_recovery_evidence
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' && steps.verify_bootstrap_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN_ID: ${{ steps.approved_bootstrap_capsule.outputs.run_id }}
+          RECOVERY_ARTIFACT_METADATA_JSON: ${{ steps.approved_bootstrap_capsule.outputs.gate_artifact_metadata_json }}
+        run: |
+          node .github/scripts/download-build-artifacts.mjs \
+            Release \
+            "$RELEASE_HEAD_SHA" \
+            "$RUNNER_TEMP/approved-recovery-evidence" \
+            --run-id "$DRY_RUN_ID" \
+            --artifact-metadata-json "$RECOVERY_ARTIFACT_METADATA_JSON" \
+            --artifact oliphaunt-release-recovery-equivalence
 
       - name: Verify and install approved bootstrap capsule
         id: verify_bootstrap_capsule
@@ -2542,6 +2710,19 @@ jobs:
             --lock "$PUBLICATION_LOCK_PATH" \
             --head-ref "$RELEASE_HEAD_SHA"
 
+      - name: Verify approved same-version recovery publication state
+        id: verify_bootstrap_recovery_publication
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' && steps.verify_bootstrap_publication_candidate.outputs.mode == 'release-recovery' }}
+        timeout-minutes: 2
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/verify-release-recovery-publication.mjs \
+            --lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --verify-receipt "$RUNNER_TEMP/approved-recovery-evidence/publication-state.json" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Restore prior bootstrap checkpoint chain
         id: restore_bootstrap_checkpoint
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
@@ -2553,21 +2734,44 @@ jobs:
         run: node .github/scripts/download-bootstrap-ledger.mjs
 
       - name: Require bootstrap credentials before mutation
+        id: require_bootstrap_credentials
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
-          CRATES_IO_BOOTSTRAP_TOKEN: ${{ secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
-          NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-          NEEDS_CARGO: ${{ steps.registry_needs.outputs.needs_cargo }}
-          NEEDS_NPM: ${{ steps.registry_needs.outputs.needs_npm }}
+          CANDIDATE_MODE: ${{ steps.verify_bootstrap_publication_candidate.outputs.mode }}
+          CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
+          CRATES_IO_BOOTSTRAP_TOKEN: ${{ (steps.verify_bootstrap_publication_candidate.outputs.mode != 'release-recovery' || inputs.continuation_pointer != '' || steps.verify_bootstrap_recovery_publication.outputs.needs_cargo_token == 'true') && secrets.CRATES_IO_BOOTSTRAP_TOKEN || '' }}
+          NPM_BOOTSTRAP_TOKEN: ${{ (steps.verify_bootstrap_publication_candidate.outputs.mode != 'release-recovery' || inputs.continuation_pointer != '' || steps.verify_bootstrap_recovery_publication.outputs.needs_npm_token == 'true') && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
+          RECOVERY_NEEDS_CARGO: ${{ steps.verify_bootstrap_recovery_publication.outputs.needs_cargo_token }}
+          RECOVERY_NEEDS_NPM: ${{ steps.verify_bootstrap_recovery_publication.outputs.needs_npm_token }}
+          SELECTED_NEEDS_CARGO: ${{ steps.registry_needs.outputs.needs_cargo }}
+          SELECTED_NEEDS_NPM: ${{ steps.registry_needs.outputs.needs_npm }}
         run: |
-          if [[ "$NEEDS_CARGO" == true && -z "$CRATES_IO_BOOTSTRAP_TOKEN" ]]; then
+          needs_cargo="$SELECTED_NEEDS_CARGO"
+          needs_npm="$SELECTED_NEEDS_NPM"
+          if [[ "$CANDIDATE_MODE" == release-recovery && -z "$CONTINUATION_POINTER" ]]; then
+            needs_cargo="$RECOVERY_NEEDS_CARGO"
+            needs_npm="$RECOVERY_NEEDS_NPM"
+          fi
+          if [[ "$needs_cargo" != true && "$needs_cargo" != false ]]; then
+            echo 'bootstrap Cargo credential decision is not boolean' >&2
+            exit 1
+          fi
+          if [[ "$needs_npm" != true && "$needs_npm" != false ]]; then
+            echo 'bootstrap npm credential decision is not boolean' >&2
+            exit 1
+          fi
+          if [[ "$needs_cargo" == true && -z "$CRATES_IO_BOOTSTRAP_TOKEN" ]]; then
             echo 'selected products require CRATES_IO_BOOTSTRAP_TOKEN in the release-bootstrap environment' >&2
             exit 1
           fi
-          if [[ "$NEEDS_NPM" == true && -z "$NPM_BOOTSTRAP_TOKEN" ]]; then
+          if [[ "$needs_npm" == true && -z "$NPM_BOOTSTRAP_TOKEN" ]]; then
             echo 'selected products require NPM_BOOTSTRAP_TOKEN in the release-bootstrap environment' >&2
             exit 1
           fi
+          {
+            echo "needs_cargo_token=$needs_cargo"
+            echo "needs_npm_token=$needs_npm"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Admit or recover exact immutable release transport ref
         id: ensure_bootstrap_transport_ref
@@ -2603,7 +2807,8 @@ jobs:
           echo "Bootstrap registry mutation must stop before Unix time $deadline."
 
       - name: Configure npm identity-bootstrap authentication
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.registry_needs.outputs.needs_npm == 'true' }}
+        id: configure_bootstrap_npm_auth
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.require_bootstrap_credentials.outputs.needs_npm_token == 'true' }}
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
         run: |
@@ -2615,7 +2820,7 @@ jobs:
         id: bootstrap_registry_identities
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.require_bootstrap_credentials.outputs.needs_cargo_token == 'true' && secrets.CRATES_IO_BOOTSTRAP_TOKEN || '' }}
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/oliphaunt-bootstrap.npmrc
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER: ${{ vars.REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER || '30' }}

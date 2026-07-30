@@ -2236,3 +2236,75 @@ test("Release Please lifecycle checks are bounded, exact-SHA-bound, and non-bypa
     /performs unapproved release_please_lifecycle mutation/u,
   );
 });
+
+test("same-version recovery identity and byte-equivalence gates are non-bypassable", () => {
+  for (const [name, mutate, pattern] of [
+    [
+      "publication identity verifier",
+      (workflow) => {
+        step(workflow, "publish", "verify_publication_candidate").run = "echo assumed";
+      },
+      /publication[/]lifecycle identity|same-version recovery candidate verifier/u,
+    ],
+    [
+      "lifecycle identity output",
+      (workflow) => {
+        step(workflow, "publish", "assert_release_please_markable").run =
+          'tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs assert-markable --release-sha "$RELEASE_HEAD_SHA" --base main';
+      },
+      /markability assertion/u,
+    ],
+    [
+      "immutable-envelope proof",
+      (workflow) => {
+        step(workflow, "publish", "verify_release_recovery_lock")["continue-on-error"] = true;
+      },
+      /original and current lock envelopes/u,
+    ],
+    [
+      "equivalence evidence",
+      (workflow) => {
+        step(
+          workflow,
+          "publish",
+          "preserve_release_recovery_equivalence",
+        ).with.path = "target/release/unverified.json";
+      },
+      /artifact path must be target[/]release[/]recovery-evidence|oliphaunt-release-recovery-equivalence/u,
+    ],
+    [
+      "normal publication approval",
+      (workflow) => {
+          step(workflow, "publish", "approved_publication_lock").run =
+          step(workflow, "publish", "approved_publication_lock").run
+            .replace("--gate-artifact oliphaunt-release-recovery-equivalence", "");
+      },
+      /approved dry-run selection/u,
+    ],
+    [
+      "bootstrap publication approval",
+      (workflow) => {
+          step(workflow, "publish-bootstrap", "approved_bootstrap_capsule").run =
+          step(workflow, "publish-bootstrap", "approved_bootstrap_capsule").run
+            .replace("--gate-artifact oliphaunt-release-recovery-equivalence", "");
+      },
+      /approved bootstrap dry-run selection/u,
+    ],
+    [
+      "final lifecycle identity verifier",
+      (workflow) => {
+        step(workflow, "publish-finalize", "finalize_publication_candidate").run =
+          "echo assumed";
+      },
+      /final release lifecycle identity verifier|publication[/]lifecycle identity/u,
+    ],
+  ]) {
+    const bypass = candidate();
+    mutate(bypass);
+    assert.throws(
+      () => assertReleaseWorkflow(bypass),
+      pattern,
+      name,
+    );
+  }
+});

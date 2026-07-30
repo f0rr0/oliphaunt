@@ -9,6 +9,58 @@
 5. Resume in dependency order from the newest validated checkpoint. Re-inventory the complete exact lock first: a carrier accepted before an ambiguous response or checkpoint interruption is recovery input, not permission to upload again. Skip it only after its registry checksum/SRI/payload/file manifest matches the frozen bytes. Bootstrap resumes with one sequential Cargo lane and one sequential npm lane, preserves cross-lane dependency barriers, and serializes canonical checkpoint appends.
 6. Seal bootstrap only after every expected identity has a receipt. Promote draft GitHub releases only after the final all-registry receipt proof and exact-lock anonymous public-consumer probes produce their deterministic receipt-bound evidence. Retry a transient visibility failure only from a fresh cache under the original shared deadline; do not retry an exact identity/source/closure mismatch. Swift remains a source-tag/manifest probe before promotion because draft binary-target assets are not anonymously public. npm's normal tag is attached by its immutable version publish because OIDC does not authorize a later dist-tag mutation.
 
+### Same-version control recovery after partial publication
+
+Use this path only when at least one immutable carrier is already public, no
+product tag/release has been promoted, and the required repository fix has no
+release-semantic product owner.
+
+1. Keep the original release-bump commit and public history immutable. Every
+   recovery commit must be a linear descendant with subject
+   `fix(release): ...` and exactly one
+   `Oliphaunt-Release-Recovery-Of: <lowercase-full-release-sha>` trailer naming
+   the same original generated release-bump commit.
+2. `verify-publication-candidate.mjs` must prove the anchor is the valid
+   release-bump commit for the exact selected products, every intervening
+   commit has the same authorization, release metadata and versions are
+   unchanged, the authoritative base/head release plan selects zero products,
+   and every changed shared path has zero owners in
+   `release-semantic-inputs.toml`. Do not use this path for a source, carrier,
+   compatibility, target-support, version, changelog, or owned byte-producer
+   change.
+3. Run fresh complete CI and `publish-dry-run` on the recovery head. Never
+   attach the original qualification, artifacts, lock, capsule, checkpoint, or
+   attestation to the later SHA.
+4. Download the original successful dry-run lock by exact workflow, run,
+   artifact identity, and release SHA. The recovery dry-run must prove exact
+   equality of the products, catalog digest, carriers and every carrier file,
+   product artifacts, and package-envelope digest. Only `source` and the
+   source-bound `lockDigest` may differ. Preserve the equivalence receipt with
+   the new lock and capsule.
+5. After proving lock equality, derive the exhaustive Cargo/npm/Maven/JSR
+   inventory from the complete frozen lock so generated payload-part carriers
+   cannot disappear behind the static catalog. Bootstrap a fresh recovery-head
+   ledger for its Cargo/npm subset. Add a receipt only after each public
+   identity's checksum/SRI and frozen files match the new lock. A matching
+   public identity is a read-only recovery skip, never a publisher invocation.
+   Any byte conflict stops the release and requires a new version.
+6. Normal publication consumes only that complete new lock-bound ledger and
+   invokes a publisher only for an exact locked identity whose version is
+   absent. Matching identities remain verified skips. It stages tags/releases
+   at the recovery publication head. Release Please lifecycle completion is
+   applied to the original release-bump PR named by the trailer. The recovery
+   head, product tags, attestations, lock source, registry receipts, and public
+   consumer evidence must agree exactly.
+
+This is not the normal response to a CI-only change. Before a release PR, pure
+control-plane workflow, test, documentation, and transport-only commits select
+no products; Release Please creates no release and no registry operation runs.
+A workflow or action change that alters compiler, SDK, build, source-selection,
+target, or packaging semantics is product-semantic regardless of its `ci:`
+subject and requires the affected product versions to advance. The exception
+exists only to finish an already-partial immutable release without fabricating
+a duplicate version.
+
 ## Pre-publication main-history repair
 
 This path is forbidden after any affected product tag/package is public.
