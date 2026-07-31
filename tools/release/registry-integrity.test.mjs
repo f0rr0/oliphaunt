@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  jsrPublishedFileProof,
   validateLockedRegistryReceipts,
   validateRegistryReceiptEvidence,
   verifyLockedCarrierIntegrity,
@@ -163,9 +164,71 @@ test("proves Cargo checksum and npm SRI against frozen archive bytes and rejects
       if (previousDeadline === undefined) delete process.env.REGISTRY_MUTATION_DEADLINE_EPOCH;
       else process.env.REGISTRY_MUTATION_DEADLINE_EPOCH = previousDeadline;
     }
+
+    rmSync(crateFile);
+    rmSync(npmFile);
+    assert.equal(validateRegistryReceiptEvidence(evidenceFile, lock, {
+      products: ["alpha"],
+      ecosystems: ["cargo", "npm"],
+      receiptMode: "sealed",
+    }).receipts.length, 2);
+    assert.throws(() => validateRegistryReceiptEvidence(evidenceFile, lock, {
+      products: ["alpha"],
+      ecosystems: ["cargo", "npm"],
+    }), /locked artifact is unavailable/u);
+
+    const changedCargo = structuredClone(bulk);
+    changedCargo[0].registryProof.digest = "0".repeat(64);
+    assert.throws(() => validateLockedRegistryReceipts(lock, {
+      products: ["alpha"],
+      ecosystems: ["cargo", "npm"],
+      receiptMode: "sealed",
+      receipts: changedCargo,
+    }), /sealed Cargo proof changed/u);
+    const changedNpm = structuredClone(bulk);
+    changedNpm[1].registryProof.digest = "not-base64";
+    assert.throws(() => validateLockedRegistryReceipts(lock, {
+      products: ["alpha"],
+      ecosystems: ["cargo", "npm"],
+      receiptMode: "sealed",
+      receipts: changedNpm,
+    }), /canonical SHA-512 base64/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("applies only the exact source-bound JSR publish normalization", () => {
+  const lock = {
+    lockDigest: "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
+    source: {
+      commit: "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
+      tree: "396cf3b10adb1a5b625e66c5ebacf8c3d364b543",
+    },
+  };
+  const carrier = {
+    id: "jsr:@oliphaunt/ts",
+    version: "0.1.0",
+  };
+  const raw = {
+    checksum: "sha256-9951733bc3dd68542ac51fef522b10121ab782562b650857e102eb42495038a0",
+    size: 938,
+  };
+  const published = {
+    checksum: "sha256-5deab23099b38b44af86bcafbcdc8a4fb487444880e23b260e74d1c8b6379774",
+    size: 938,
+  };
+
+  assert.deepEqual(jsrPublishedFileProof(lock, carrier, "/src/jsr.ts", raw), published);
+  assert.equal(jsrPublishedFileProof(lock, carrier, "/README.md", raw), raw);
+  assert.equal(
+    jsrPublishedFileProof({ ...lock, lockDigest: "0".repeat(64) }, carrier, "/src/jsr.ts", raw),
+    raw,
+  );
+  assert.throws(
+    () => jsrPublishedFileProof(lock, carrier, "/src/jsr.ts", { ...raw, size: raw.size + 1 }),
+    /no longer matches its exact publish-time normalization record/u,
+  );
 });
 
 test("proves every frozen Maven payload and the exact JSR file manifest before an immutable-version skip", async () => {

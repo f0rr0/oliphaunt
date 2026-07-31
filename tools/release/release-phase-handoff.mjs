@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import {
   constants,
+  chmodSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -53,6 +54,7 @@ const LOCK_ARTIFACT = "oliphaunt-publication-lock";
 const REGISTRY_SUPPORT_PRODUCTS = new Set(["oliphaunt-react-native"]);
 const WORKSPACE = "workspace";
 const RUNNER = "runner";
+const CANONICAL_HANDOFF_DATA_FILE_MODE = 0o644;
 const CONTROL_FILES = Object.freeze({
   publicationLock: "target/release/publication-lock.json",
   normalPlan: "target/release/normal-publication-plan.json",
@@ -282,8 +284,16 @@ function readJson(file, context) {
   }
 }
 
-function addFile(entries, seen, { destination, source, target }) {
+function addFile(entries, seen, {
+  destination,
+  source,
+  target,
+  canonicalMode = null,
+}) {
   if (!new Set([WORKSPACE, RUNNER]).has(destination)) throw error(`invalid destination ${destination}`);
+  if (canonicalMode !== null && canonicalMode !== CANONICAL_HANDOFF_DATA_FILE_MODE) {
+    throw error(`unsupported canonical handoff file mode ${canonicalMode}`);
+  }
   const safeTarget = safeRelative(target, "handoff target");
   if (destination === WORKSPACE && !safeTarget.startsWith("target/")) {
     throw error(`workspace handoff target must remain under target/: ${safeTarget}`);
@@ -292,7 +302,7 @@ function addFile(entries, seen, { destination, source, target }) {
     throw error(`runner handoff target must be a flat file name: ${safeTarget}`);
   }
   const sourceStat = regularFile(source, source);
-  if ((sourceStat.mode & 0o111) !== 0) {
+  if ((sourceStat.mode & 0o111) !== 0 && canonicalMode === null) {
     throw error(
       `handoff source ${source} is executable; pre-archive permission-sensitive payloads before Actions transport`,
     );
@@ -301,20 +311,31 @@ function addFile(entries, seen, { destination, source, target }) {
   const key = `${destination}:${safeTarget}`;
   const prior = seen.get(key);
   if (prior !== undefined) {
-    if (prior.sha256 !== envelope.sha256 || prior.size !== envelope.size) {
+    if (
+      prior.sha256 !== envelope.sha256
+      || prior.size !== envelope.size
+      || prior.canonicalMode !== canonicalMode
+    ) {
       throw error(`two handoff sources disagree for ${key}`);
     }
     return;
   }
   const row = { destination, path: safeTarget, ...envelope };
-  entries.push({ ...row, source });
-  seen.set(key, row);
+  entries.push({ ...row, source, canonicalMode });
+  seen.set(key, { ...row, canonicalMode });
 }
 
-function addDirectory(entries, seen, { destination, source, target, ignoreBuildDirectories = false }) {
+function addDirectory(entries, seen, {
+  destination,
+  source,
+  target,
+  ignoreBuildDirectories = false,
+  canonicalMode = null,
+}) {
   for (const file of walkFiles(source, { ignoreBuildDirectories })) {
     const relative = path.relative(source, file).split(path.sep).join("/");
     addFile(entries, seen, {
+      canonicalMode,
       destination,
       source: file,
       target: `${safeRelative(target, "handoff directory target")}/${relative}`,
@@ -343,8 +364,14 @@ function assertGithubReceipt(file, lock, repository) {
   return validateGithubAttestationReceipt(readJson(file, "GitHub attestation receipt"), lock, { repo: repository });
 }
 
-function assertCheckpoint(file, lock, products, plan) {
-  const checkpoint = openNormalPublicationCheckpoint({ file, lock, products, plan }).checkpoint;
+function assertCheckpoint(file, lock, products, plan, { receiptMode = "local" } = {}) {
+  const checkpoint = openNormalPublicationCheckpoint({
+    file,
+    lock,
+    products,
+    plan,
+    receiptMode,
+  }).checkpoint;
   if (checkpoint.completedOperations.length !== plan.operations.length) {
     throw error(
       `registry-published checkpoint proves ${checkpoint.completedOperations.length}/${plan.operations.length} completed operations`,
@@ -552,12 +579,24 @@ export function sealReleasePhaseHandoff({
       });
     }
     const artifacts = phase === "github-staged" ? registryHandoffArtifacts(lock, root) : [];
+    const jsrDataDirectories = new Set(
+      lock.carriers
+        .filter(({ ecosystem }) => ecosystem === "jsr")
+        .flatMap(({ artifacts: carrierArtifacts }) => carrierArtifacts.map(({ path: artifactPath }) => artifactPath)),
+    );
     for (const artifact of artifacts) {
       const source = within(root, artifact.path, `carrier artifact ${artifact.path}`);
       if (artifact.type === "file") {
         addFile(entries, seen, { destination: WORKSPACE, source, target: artifact.path });
       } else {
         addDirectory(entries, seen, {
+          // JSR publishes an explicit source-file allowlist, and its frozen
+          // directory identity binds canonical paths and bytes rather than
+          // filesystem modes. Canonicalize only this data-only transport tree;
+          // any other executable directory payload still fails closed.
+          canonicalMode: jsrDataDirectories.has(artifact.path)
+            ? CANONICAL_HANDOFF_DATA_FILE_MODE
+            : null,
           destination: WORKSPACE,
           source,
           target: artifact.path,
@@ -593,7 +632,7 @@ export function sealReleasePhaseHandoff({
       approvedDryRun: approved,
       hasBootstrapLedger,
       registryArtifacts: artifacts,
-      files: entries.map(({ source: _source, ...entry }) => entry),
+      files: entries.map(({ source: _source, canonicalMode: _canonicalMode, ...entry }) => entry),
     };
     const handoffBytes = manifest.files.reduce((total, { size }) => total + size, 0);
     const capsuleBytes = approved.artifacts.find(({ name }) => name === CAPSULE_ARTIFACT).size;
@@ -623,6 +662,7 @@ export function sealReleasePhaseHandoff({
       const target = within(stage, `${entry.destination}/${entry.path}`, `staged ${entry.destination} file`);
       mkdirSync(path.dirname(target), { recursive: true });
       copyFileSync(entry.source, target, constants.COPYFILE_EXCL);
+      if (entry.canonicalMode !== null) chmodSync(target, entry.canonicalMode);
     }
     writeSafely(path.join(stage, RELEASE_PHASE_HANDOFF_MANIFEST), canonicalJson(manifest));
     renameSync(stage, destination);
@@ -725,11 +765,16 @@ function validateManifest(directory, { phase, products, headRef, workspaceRoot, 
       lock,
       selected,
       plan,
+      { receiptMode: "sealed" },
     );
     validateRegistryReceiptEvidence(
       within(directory, `${WORKSPACE}/${CONTROL_FILES.registryReceipts}`, "embedded registry receipts"),
       lock,
-      { products: selected, ecosystems: ["cargo", "npm", "maven", "jsr"] },
+      {
+        products: selected,
+        ecosystems: ["cargo", "npm", "maven", "jsr"],
+        receiptMode: "sealed",
+      },
     );
   }
   for (const name of RUNNER_FILES) {

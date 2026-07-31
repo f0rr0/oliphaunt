@@ -3,6 +3,7 @@ import { lstatSync } from "node:fs";
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { isolatedGitHubTestEnvironment } from "../test/isolated-github-test-environment.mjs";
 import { run } from "./release-cli-utils.mjs";
 
 const TOOL = "release-check.mjs";
@@ -13,6 +14,10 @@ export const DEDICATED_GATE_TESTS = new Set([
   "tools/release/toolchain-bootstrap.test.mjs",
 ]);
 export const MUTATION_TEST_TIMEOUT_MS = 30_000;
+
+export function mutationTestEnvironment(inheritedEnvironment = process.env) {
+  return isolatedGitHubTestEnvironment({}, inheritedEnvironment);
+}
 
 export function mutationTests(
   root,
@@ -96,7 +101,9 @@ function main(argv) {
     `--timeout=${MUTATION_TEST_TIMEOUT_MS}`,
     ...mutationTests("tools/policy"),
     ...mutationTests("tools/release"),
-  ]);
+  ], {
+    environment: mutationTestEnvironment(),
+  });
 }
 
 if (import.meta.main) {

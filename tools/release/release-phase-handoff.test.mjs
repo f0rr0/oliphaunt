@@ -98,6 +98,7 @@ function npmFixture(stageRoot, artifacts, name, version) {
 function jsrFixture(artifacts, name, version) {
   const directory = path.join(artifacts, "jsr-source");
   mkdirSync(path.join(directory, "src"), { recursive: true });
+  mkdirSync(path.join(directory, "tools"), { recursive: true });
   writeFileSync(path.join(directory, "jsr.json"), `${JSON.stringify({
     name,
     version,
@@ -105,6 +106,9 @@ function jsrFixture(artifacts, name, version) {
     publish: { include: ["jsr.json", "src/mod.ts"] },
   }, null, 2)}\n`);
   writeFileSync(path.join(directory, "src/mod.ts"), "export const handoffFixture = true;\n");
+  const checkScript = path.join(directory, "tools/check-sdk.sh");
+  writeFileSync(checkScript, "#!/bin/sh\nexit 0\n");
+  chmodSync(checkScript, 0o755);
 }
 
 function copyWorkspaceArtifact(source, workspace, relative) {
@@ -191,7 +195,7 @@ function fixture(t, products) {
     const stat = statSync(from);
     if (stat.isFile()) copyWorkspaceArtifact(from, source, artifact.path);
     else {
-      for (const file of ["jsr.json", "src/mod.ts"]) {
+      for (const file of ["jsr.json", "src/mod.ts", "tools/check-sdk.sh"]) {
         const child = path.join(from, file);
         if (statSync(child, { throwIfNoEntry: false })?.isFile()) {
           copyWorkspaceArtifact(child, source, `${artifact.path}/${file}`);
@@ -279,6 +283,11 @@ test("installs a manifest-exact GitHub-stage handoff beside the approved Cargo/n
     readFileSync(path.join(f.source, "target/release/publication-lock.json"), "utf8"),
   );
   const jsr = f.lock.carriers.find(({ ecosystem }) => ecosystem === "jsr").artifacts[0].path;
+  assert.equal(
+    statSync(path.join(output, "workspace", jsr, "tools/check-sdk.sh")).mode & 0o777,
+    0o644,
+    "locked directory artifacts must use canonical data-file modes in Actions transport",
+  );
   assert.ok(statSync(path.join(destination, jsr, "jsr.json")).isFile());
   assert.ok(statSync(path.join(destinationRunner, "oliphaunt-github-core-request-journal.json")).isFile());
 });
@@ -391,6 +400,9 @@ test("registry handoff requires a complete checkpoint and immutable receipt enve
   assert.equal(manifest.files.some(({ path: file }) => file.endsWith("registry-integrity-receipts.json")), true);
   assert.ok(statSync(path.join(output, RELEASE_PHASE_HANDOFF_MANIFEST)).isFile());
 
+  // publish-finalize starts from a clean checkout. The registry-published
+  // handoff intentionally transfers receipts, not the registry payloads.
+  rmSync(f.original, { recursive: true, force: true });
   const destination = path.join(f.root, "installed-registry");
   const destinationRunner = path.join(f.root, "installed-registry-runner");
   mkdirSync(destination, { recursive: true });

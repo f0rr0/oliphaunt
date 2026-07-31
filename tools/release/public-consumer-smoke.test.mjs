@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   PUBLIC_CONSUMER_EVIDENCE_SCHEMA,
+  cargoEntryFeatureNames,
   publicConsumerEvidence,
   publicConsumerPlan,
   runBoundedCommand,
@@ -229,6 +230,102 @@ checksum = "${"d".repeat(64)}"
     [{ id: "jsr:@example/alpha", version: "1.2.3", integrity: "d".repeat(64) }],
   );
   assert.throws(() => validateJsrResolution({ version: "5", jsr: {} }, jsrCarrier), /omitted from clean resolution/u);
+});
+
+test("selects every opt-in Cargo entry feature for exhaustive carrier resolution", () => {
+  const entry = carrier("cargo:facade", "alpha", 1);
+  entry.artifacts = [{
+    path: "target/cargo/facade-1.2.3.crate",
+    sha256: "d".repeat(64),
+    size: 1,
+  }];
+  assert.deepEqual(cargoEntryFeatureNames({
+    version: {
+      crate: "facade",
+      num: "1.2.3",
+      checksum: "d".repeat(64),
+      crate_size: 1,
+      yanked: false,
+      features: {
+        wasix: ["dep:facade-wasix"],
+        default: ["native"],
+        native: ["dep:facade-linux"],
+      },
+      features2: {
+        "wasix-aot-x86_64-unknown-linux-gnu": ["dep:facade-wasix", "dep:facade-aot-linux"],
+      },
+    },
+  }, entry), [
+    "native",
+    "wasix",
+    "wasix-aot-x86_64-unknown-linux-gnu",
+  ]);
+  assert.throws(
+    () => cargoEntryFeatureNames({
+      version: {
+        crate: "facade",
+        num: "9.9.9",
+        checksum: "d".repeat(64),
+        crate_size: 1,
+        yanked: false,
+        features: {},
+      },
+    }, entry),
+    /metadata does not match/u,
+  );
+  assert.throws(
+    () => cargoEntryFeatureNames({
+      version: {
+        crate: "facade",
+        num: "1.2.3",
+        checksum: "d".repeat(64),
+        crate_size: 1,
+        yanked: false,
+        features: { broken: [null] },
+      },
+    }, entry),
+    /invalid Cargo feature declaration/u,
+  );
+  assert.throws(
+    () => cargoEntryFeatureNames({
+      version: {
+        crate: "facade",
+        num: "1.2.3",
+        checksum: "d".repeat(64),
+        crate_size: 2,
+        yanked: false,
+        features: {},
+      },
+    }, entry),
+    /metadata does not match/u,
+  );
+  assert.throws(
+    () => cargoEntryFeatureNames({
+      version: {
+        crate: "facade",
+        num: "1.2.3",
+        checksum: "d".repeat(64),
+        crate_size: 1,
+        yanked: true,
+        features: {},
+      },
+    }, entry),
+    /metadata does not match/u,
+  );
+  assert.throws(
+    () => cargoEntryFeatureNames({
+      version: {
+        crate: "facade",
+        num: "1.2.3",
+        checksum: "d".repeat(64),
+        crate_size: 1,
+        yanked: false,
+        features: { wasix: ["dep:facade-wasix"] },
+        features2: { wasix: ["dep:substituted"] },
+      },
+    }, entry),
+    /features and features2 disagree/u,
+  );
 });
 
 test("public probes discard inherited credentials and package-manager substitution settings", () => {

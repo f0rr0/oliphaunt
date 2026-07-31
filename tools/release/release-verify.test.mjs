@@ -13,6 +13,7 @@ describe("release verification composition", () => {
     expect(source).toContain('"finalize"');
     expect(source).toContain("verify_github_release_attestations.mjs");
     expect(source).toContain("registry-integrity.mjs");
+    expect(source).toContain("--sealed-receipts");
     expect(source).not.toContain("release-consumer-shape.mjs");
   });
 });

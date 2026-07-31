@@ -461,7 +461,10 @@ function detectedMutations(step) {
     }
   }
   const uses = String(step.uses ?? "");
-  if (uses.startsWith("actions/attest-build-provenance@")) mutations.push("attestation");
+  if (
+    uses.startsWith("actions/attest-build-provenance@")
+    || uses.startsWith("actions/attest@")
+  ) mutations.push("attestation");
   if (uses.startsWith("googleapis/release-please-action@")) mutations.push("release_please");
   return mutations;
 }

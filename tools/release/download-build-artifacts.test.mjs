@@ -18,6 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { isolatedGitHubTestEnvironment } from "../test/isolated-github-test-environment.mjs";
+
 const SCRIPT = path.resolve(".github/scripts/download-build-artifacts.mjs");
 const CHECKSUM_MERGER = path.resolve(".github/scripts/merge-checksum-manifest.mjs");
 const SHA = "a".repeat(40);
@@ -25,7 +27,10 @@ const ARTIFACT = "exact-artifact";
 const DOWNLOAD_PROCESS_TIMEOUT_MS = 10_000;
 
 test("the workflow Node runtime reaches argument validation without a Bun global", () => {
-  const result = spawnSync("node", [SCRIPT], { encoding: "utf8" });
+  const result = spawnSync("node", [SCRIPT], {
+    encoding: "utf8",
+    env: isolatedGitHubTestEnvironment(),
+  });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /usage: download-build-artifacts[.]mjs/u);
   assert.doesNotMatch(result.stderr, /Bun is not defined|ERR_INVALID_ARG_TYPE/u);
@@ -171,8 +176,7 @@ function invoke(f, mode, extra = [], environment = {}) {
     {
       encoding: "utf8",
       timeout: DOWNLOAD_PROCESS_TIMEOUT_MS,
-      env: {
-        ...process.env,
+      env: isolatedGitHubTestEnvironment({
         PATH: `${f.bin}${path.delimiter}${process.env.PATH}`,
         FAKE_ARTIFACT_ARCHIVE: f.archive,
         FAKE_GH_LOG: f.log,
@@ -184,7 +188,7 @@ function invoke(f, mode, extra = [], environment = {}) {
         OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR: f.snapshots,
         OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
         OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-      },
+      }),
     },
   );
 }
@@ -196,8 +200,7 @@ function invokeFallback(f, candidateMode) {
     {
       encoding: "utf8",
       timeout: DOWNLOAD_PROCESS_TIMEOUT_MS,
-      env: {
-        ...process.env,
+      env: isolatedGitHubTestEnvironment({
         PATH: `${f.bin}${path.delimiter}${process.env.PATH}`,
         FAKE_ARTIFACT_ARCHIVE: f.archive,
         FAKE_CANDIDATE_MODE: candidateMode,
@@ -209,7 +212,7 @@ function invokeFallback(f, candidateMode) {
         OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR: f.snapshots,
         OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
         OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-      },
+      }),
     },
   );
 }
@@ -304,8 +307,7 @@ test("exact run, workflow, job, SHA, and artifact name remain mandatory", (t) =>
     {
       encoding: "utf8",
       timeout: DOWNLOAD_PROCESS_TIMEOUT_MS,
-      env: {
-        ...process.env,
+      env: isolatedGitHubTestEnvironment({
         PATH: `${f.bin}${path.delimiter}${process.env.PATH}`,
         FAKE_ARTIFACT_ARCHIVE: f.archive,
         FAKE_GH_LOG: f.log,
@@ -316,7 +318,7 @@ test("exact run, workflow, job, SHA, and artifact name remain mandatory", (t) =>
         OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR: f.snapshots,
         OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
         OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-      },
+      }),
     },
   );
   assert.equal(result.status, 1);

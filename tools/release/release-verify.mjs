@@ -53,6 +53,7 @@ function main(rawArgv) {
       productsJson,
       "--verify-receipts",
       receipts.value,
+      "--sealed-receipts",
     ], { failExitCode: 2 });
     run(TOOL, [process.execPath, "tools/release/check_release_versions.mjs", ...argv], { failExitCode: 2 });
     run(TOOL, [

@@ -288,7 +288,7 @@ function readCheckpoint(file) {
   }
 }
 
-function validateCheckpoint(raw, expected, lock) {
+function validateCheckpoint(raw, expected, lock, receiptMode) {
   exactKeys(raw, [
     "schema",
     "lock",
@@ -329,6 +329,7 @@ function validateCheckpoint(raw, expected, lock) {
   const completedCarrierIds = completedOperations.flatMap((id) => operationById.get(id).carrierIds);
   const receipts = validateLockedRegistryReceipts(lock, {
     carrierIds: completedCarrierIds,
+    receiptMode,
     receipts: raw.receipts,
   });
   return checkpointDocument({
@@ -351,6 +352,7 @@ export function openNormalPublicationCheckpoint({
   products,
   plan,
   initialReceipts = [],
+  receiptMode = "local",
 } = {}) {
   const expected = {
     lock: lockBinding(lock),
@@ -376,12 +378,16 @@ export function openNormalPublicationCheckpoint({
     initialById.set(receipt.id, receipt);
   }
   if (initialReceipts.length > 0) {
-    validateLockedRegistryReceipts(lock, { carrierIds: [...initialById.keys()], receipts: initialReceipts });
+    validateLockedRegistryReceipts(lock, {
+      carrierIds: [...initialById.keys()],
+      receiptMode,
+      receipts: initialReceipts,
+    });
   }
 
   const empty = checkpointDocument({ ...expected, completedOperations: [], receipts: [] });
   const raw = readCheckpoint(file);
-  let current = raw === null ? empty : validateCheckpoint(raw, expected, lock);
+  let current = raw === null ? empty : validateCheckpoint(raw, expected, lock, receiptMode);
   if (raw === null) atomicWrite(file, current);
   const operationById = new Map(expected.plan.operations.map((operation) => [operation.id, operation]));
 

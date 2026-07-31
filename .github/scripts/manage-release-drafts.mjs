@@ -10,6 +10,11 @@ import {
   createGitHubOperationBudget,
   exactReleaseMetadata,
   exactTagRefPayload,
+  GitHubReleaseSnapshotRaceError,
+  GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS,
+  GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS,
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_WINDOW_MS,
   readReleaseByTagSync,
   readReleaseMapSync,
   readTagRefSync,
@@ -18,7 +23,14 @@ import {
   remainingGitHubReadOptions,
   runGitHubMutationSync,
 } from "../../tools/release/github-release-mutations.mjs";
+import {
+  RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES,
+} from "../../tools/release/release-finalization-budget.mjs";
 import { loadGraph } from "../../tools/release/release-graph.mjs";
+import {
+  RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS,
+  RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS,
+} from "../../tools/release/release-please-pr-lifecycle.mjs";
 import {
   DEFAULT_PUBLICATION_LOCK,
   loadPublicationLock,
@@ -27,6 +39,16 @@ import {
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS = 60_000;
 const DEFAULT_FAST_MUTATION_TIMEOUT_MS = 60_000;
+export const GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS = 10_000;
+export const GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS = 30_000;
+const GITHUB_RELEASE_PROMOTION_LIFECYCLE_MARGIN_MS = 30_000;
+const GITHUB_RELEASE_PROMOTION_STEP_WINDOW_MS =
+  RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES.promoteDrafts * 60_000;
+export const GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS =
+  GITHUB_RELEASE_PROMOTION_STEP_WINDOW_MS
+  - RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS
+  - RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS
+  - GITHUB_RELEASE_PROMOTION_LIFECYCLE_MARGIN_MS;
 
 export {
   assertResumableReleaseMetadata,
@@ -41,7 +63,7 @@ function error(message, options = {}) {
 
 function usageError() {
   return error(
-    "usage: manage-release-drafts.mjs <preflight|stage|verify|promote> "
+    "usage: manage-release-drafts.mjs <preflight|recovery-preflight|stage|verify|promote> "
       + "--products-json JSON --head-ref SHA [--state draft|public|staged]",
   );
 }
@@ -67,7 +89,7 @@ function selectedPublicationLock(command, products, headRef, environment) {
       ?? DEFAULT_PUBLICATION_LOCK,
   );
   if (!existsSync(file)) {
-    if (command === "preflight") return null;
+    if (command === "preflight" || command === "recovery-preflight") return null;
     throw error(`${command} requires the frozen publication lock: ${file}`);
   }
   const lock = loadPublicationLock(file);
@@ -234,6 +256,117 @@ function validateExistingReleases(selected, releasesByTag) {
   }
 }
 
+function sleepSync(milliseconds) {
+  if (milliseconds <= 0) return;
+  const cell = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  Atomics.wait(cell, 0, 0, milliseconds);
+}
+
+function pendingRequiredReleases(selected, releasesByTag, requiredState) {
+  return selected.flatMap(({ tag }) => {
+    const release = releasesByTag.get(tag);
+    if (release === undefined) return [`${tag} (missing)`];
+    if (requiredState === "public" && release.draft) return [`${tag} (still draft)`];
+    if (requiredState === "draft" && !release.draft) return [`${tag} (already public)`];
+    return [];
+  });
+}
+
+function validateExpectedReleaseIds(selected, releasesByTag, expectedReleaseIds) {
+  if (expectedReleaseIds === undefined) return;
+  if (!(expectedReleaseIds instanceof Map)) {
+    throw error("expected release identities must be a Map");
+  }
+  for (const { tag } of selected) {
+    const expectedId = expectedReleaseIds.get(tag);
+    if (!Number.isSafeInteger(expectedId) || expectedId <= 0) {
+      throw error(`expected release identity for ${tag} must be a positive integer`);
+    }
+    const release = releasesByTag.get(tag);
+    if (release !== undefined && release.id !== expectedId) {
+      throw error(`${tag} release id changed from ${expectedId} to ${release.id}`);
+    }
+  }
+}
+
+function readRequiredReleaseMapSync({
+  budget,
+  expectedReleaseIds,
+  readReleaseMap,
+  requiredState,
+  selected,
+  sleep = sleepSync,
+}) {
+  if (!new Set(["draft", "public", "staged"]).has(requiredState)) {
+    throw error("required release snapshot state must be draft, public, or staged");
+  }
+  if (typeof readReleaseMap !== "function" || typeof sleep !== "function") {
+    throw error("required release snapshot reader and sleep callback are required");
+  }
+  let lastTransientSnapshotError = null;
+  for (
+    let attempt = 0;
+    attempt <= GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.length;
+    attempt += 1
+  ) {
+    let pending;
+    try {
+      const releasesByTag = readReleaseMap();
+      validateExistingReleases(selected, releasesByTag);
+      validateExpectedReleaseIds(selected, releasesByTag, expectedReleaseIds);
+      pending = pendingRequiredReleases(selected, releasesByTag, requiredState);
+      if (pending.length === 0) return releasesByTag;
+      lastTransientSnapshotError = null;
+    } catch (cause) {
+      if (!(cause instanceof GitHubReleaseSnapshotRaceError)) throw cause;
+      if (cause.observedRelease !== undefined) {
+        const observedReleaseMap =
+          new Map([[cause.observedRelease.tag_name, cause.observedRelease]]);
+        validateExistingReleases(selected, observedReleaseMap);
+        validateExpectedReleaseIds(selected, observedReleaseMap, expectedReleaseIds);
+      }
+      lastTransientSnapshotError = cause;
+      pending = selected.map(({ tag }) => `${tag} (inconsistent paginated snapshot)`);
+    }
+    if (attempt === GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.length) {
+      throw error(
+        `GitHub release list did not converge to ${requiredState} state within `
+          + `${GITHUB_RELEASE_SNAPSHOT_VISIBILITY_WINDOW_MS}ms: ${pending.join(", ")}`,
+        { cause: lastTransientSnapshotError ?? undefined },
+      );
+    }
+    const remainingVisibilityWindowMs = GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS
+      .slice(attempt)
+      .reduce((total, delay) => total + delay, 0);
+    if (budget.deadlineMs - budget.now() < remainingVisibilityWindowMs) {
+      throw error(
+        `GitHub operation lacks the complete ${remainingVisibilityWindowMs}ms release-list `
+          + `visibility window required for: ${pending.join(", ")}`,
+        { cause: lastTransientSnapshotError ?? undefined },
+      );
+    }
+    sleep(GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS[attempt]);
+  }
+  throw error("required release snapshot loop ended unexpectedly");
+}
+
+function boundedReleaseSnapshotReadOptions(budget) {
+  const startedAtMs = budget.now();
+  const snapshotBudget = {
+    ...budget,
+    deadlineMs: Math.min(
+      budget.deadlineMs,
+      startedAtMs + GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS,
+    ),
+  };
+  return remainingGitHubReadOptions(snapshotBudget, {
+    attemptTimeoutMs: 4_000,
+    baseDelayMs: 500,
+    maxAttempts: GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+    maxDelayMs: 500,
+  });
+}
+
 function requireExactTags(selected, repo, headRef, budget) {
   for (const { product, tag } of selected) {
     const ref = readTagRefSync(repo, tag, remainingGitHubReadOptions(budget));
@@ -350,7 +483,18 @@ export function readSelectedRemoteTagMapSync(repo, selected, options = {}) {
     GIT_TERMINAL_PROMPT: "0",
     SSH_ASKPASS: "",
   };
-  const timeout = Math.max(1, Math.min(DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS, remainingMs));
+  const requestedTimeoutMs =
+    options.timeoutMs ?? DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(requestedTimeoutMs)
+    || requestedTimeoutMs < 1
+    || requestedTimeoutMs > DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS
+  ) {
+    throw error(
+      `remote tag snapshot timeout must be between 1 and ${DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS}ms`,
+    );
+  }
+  const timeout = Math.max(1, Math.min(requestedTimeoutMs, remainingMs));
   const result = options.spawn === undefined
     ? captureCommandOutput("git", gitArgs, {
         allowEmptyOutput: true,
@@ -407,15 +551,15 @@ function requireCollisionFreeTagSnapshot(selected, tagsByName, headRef) {
   }
 }
 
-function fastMutationTimeout(budget) {
+function fastMutationTimeout(budget, requiredTimeoutMs = DEFAULT_FAST_MUTATION_TIMEOUT_MS) {
   const remainingMs = budget.deadlineMs - budget.now();
-  if (remainingMs < DEFAULT_FAST_MUTATION_TIMEOUT_MS) {
+  if (remainingMs < requiredTimeoutMs) {
     throw error(
-      `GitHub operation requires a complete ${DEFAULT_FAST_MUTATION_TIMEOUT_MS}ms mutation timeout; `
+      `GitHub operation requires a complete ${requiredTimeoutMs}ms mutation timeout; `
         + `${Math.max(0, remainingMs)}ms remains`,
     );
   }
-  return DEFAULT_FAST_MUTATION_TIMEOUT_MS;
+  return requiredTimeoutMs;
 }
 
 function defaultTagMutation({ deadlineMs, environment, headRef, now, repo, tag, timeoutMs }) {
@@ -495,17 +639,31 @@ function stageMissingReleaseFromSnapshot(context, dependencies) {
     exactReleaseFromMutation(output, context.metadata, { draft: true });
     return { mutationAttempts: 1, recovered: false };
   } catch (cause) {
-    const result = stageExactDraftReleaseSync(context, {
-      createRelease: ({ deadlineMs, now, timeoutMs }) => mutateRelease({
-        ...context,
-        deadlineMs,
-        now,
-        timeoutMs,
-      }),
-      mutationOptions: dependencies.mutationOptions,
-      readRelease: dependencies.readRelease,
-    });
-    return { ...result, fastMutationError: cause };
+    let releasesByTag;
+    try {
+      releasesByTag = readRequiredReleaseMapSync({
+        budget: context.budget,
+        readReleaseMap: dependencies.readReleaseMap,
+        requiredState: "staged",
+        selected: [{ metadata: context.metadata, tag: context.tag }],
+        sleep: dependencies.releaseSnapshotSleep,
+      });
+    } catch (observationCause) {
+      const mutationDetail = redactGitHubReadDetail(
+        cause instanceof Error ? cause.message : String(cause),
+        context.environment,
+      );
+      throw error(
+        `${observationCause instanceof Error ? observationCause.message : String(observationCause)}; `
+          + `original draft mutation failure: ${mutationDetail || "unknown failure"}`,
+        { cause },
+      );
+    }
+    return {
+      fastMutationError: cause,
+      mutationAttempts: 1,
+      recovered: releasesByTag.has(context.tag),
+    };
   }
 }
 
@@ -516,22 +674,23 @@ function promoteReleaseFromSnapshot(context, dependencies) {
       ...context,
       deadlineMs: context.budget.deadlineMs,
       now: context.budget.now,
-      timeoutMs: fastMutationTimeout(context.budget),
+      timeoutMs: fastMutationTimeout(
+        context.budget,
+        GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS,
+      ),
     });
     exactReleaseFromMutation(output, context.metadata, { draft: false, expectedId: context.expectedId });
     return { mutationAttempts: 1, recovered: false };
   } catch (cause) {
-    const result = promoteExactReleaseSync(context, {
-      mutationOptions: dependencies.mutationOptions,
-      promoteRelease: ({ deadlineMs, now, timeoutMs }) => mutatePromotion({
-        ...context,
-        deadlineMs,
-        now,
-        timeoutMs,
-      }),
-      readRelease: dependencies.readRelease,
-    });
-    return { ...result, fastMutationError: cause };
+    // PATCH is idempotent, but replay is unnecessary and makes the bounded
+    // finalization proof depend on an error-shaped number of writes. Observe
+    // the whole selected batch once below; a rerun safely resumes any draft
+    // whose first PATCH was definitely not applied.
+    return {
+      fastMutationError: cause,
+      mutationAttempts: 1,
+      recovered: false,
+    };
   }
 }
 
@@ -539,10 +698,17 @@ export function reconcileSelectedReleasesSync(
   { budget, command, environment, expectedState, headRef, repo, selected },
   dependencies = {},
 ) {
-  const readReleaseMap = dependencies.readReleaseMap ?? ((targetRepo) =>
-    readReleaseMapSync(targetRepo, remainingGitHubReadOptions(budget)));
-  const readTagMap = dependencies.readTagMap ?? ((targetRepo, targetSelected) =>
-    readSelectedRemoteTagMapSync(targetRepo, targetSelected, { budget, environment }));
+  const readReleaseMap = dependencies.readReleaseMap ?? readReleaseMapSync;
+  const snapshotReleaseMap = () =>
+    readReleaseMap(repo, boundedReleaseSnapshotReadOptions(budget));
+  const readTagMap = dependencies.readTagMap ?? readSelectedRemoteTagMapSync;
+  const snapshotTagMap = () => readTagMap(repo, selected, {
+    budget,
+    environment,
+    timeoutMs: command === "promote"
+      ? GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS
+      : DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS,
+  });
   const perTagDependencies = {
     ...dependencies,
     readTagRef: dependencies.readTagRef ?? ((tag) =>
@@ -553,14 +719,40 @@ export function reconcileSelectedReleasesSync(
     readRelease: dependencies.readRelease ?? ((tag) =>
       readReleaseByTagSync(repo, tag, remainingGitHubReadOptions(budget))),
   };
+  const releaseSnapshotSleep = dependencies.releaseSnapshotSleep ?? sleepSync;
+  const requiredReleaseMap = (requiredState, { expectedReleaseIds } = {}) =>
+    readRequiredReleaseMapSync({
+      budget,
+      expectedReleaseIds,
+      readReleaseMap: snapshotReleaseMap,
+      requiredState,
+      selected,
+      sleep: releaseSnapshotSleep,
+    });
 
-  let releasesByTag = readReleaseMap(repo);
-  validateExistingReleases(selected, releasesByTag);
-  let tagsByName = readTagMap(repo, selected);
+  let releasesByTag;
+  if (command === "verify") {
+    releasesByTag = requiredReleaseMap(expectedState);
+  } else if (command === "promote") {
+    // No mutation has happened yet. A missing/stale precondition can fail and
+    // be rerun safely, so it does not need the post-mutation visibility wait.
+    releasesByTag = snapshotReleaseMap();
+    validateExistingReleases(selected, releasesByTag);
+  } else {
+    releasesByTag = snapshotReleaseMap();
+    validateExistingReleases(selected, releasesByTag);
+  }
+  let tagsByName = snapshotTagMap();
   requireCollisionFreeTagSnapshot(selected, tagsByName, headRef);
 
   if (command === "preflight") {
     console.log(`${selected.length} selected product tag/release names are absent or exact-SHA resumable`);
+    return;
+  }
+  if (command === "recovery-preflight") {
+    console.log(
+      `${selected.length} selected product tag/release names are absent or exact-SHA resumable for same-version recovery`,
+    );
     return;
   }
 
@@ -576,7 +768,7 @@ export function reconcileSelectedReleasesSync(
       );
       if (result.mutationAttempts > 0) console.log(`reconciled exact-SHA tag ${tag} for ${product}`);
     }
-    tagsByName = readTagMap(repo, selected);
+    tagsByName = snapshotTagMap();
     requireExactTagSnapshot(selected, tagsByName, headRef);
     for (const { metadata, tag } of selected) {
       if (releasesByTag.has(tag)) continue;
@@ -584,14 +776,15 @@ export function reconcileSelectedReleasesSync(
         { budget, environment, metadata, repo, tag },
         {
           ...perReleaseDependencies,
+          readReleaseMap: snapshotReleaseMap,
           readRelease: () => perReleaseDependencies.readRelease(tag),
+          releaseSnapshotSleep,
         },
       );
       if (result.mutationAttempts > 0) console.log(`reconciled draft GitHub release ${tag}`);
     }
-    releasesByTag = readReleaseMap(repo);
-    validateExistingReleases(selected, releasesByTag);
-    tagsByName = readTagMap(repo, selected);
+    releasesByTag = requiredReleaseMap("staged");
+    tagsByName = snapshotTagMap();
     requireExactTagSnapshot(selected, tagsByName, headRef);
   } else {
     requireExactTagSnapshot(selected, tagsByName, headRef);
@@ -602,6 +795,10 @@ export function reconcileSelectedReleasesSync(
   }
 
   if (command === "promote") {
+    const promotionFailures = [];
+    const expectedReleaseIds = new Map(
+      selected.map(({ tag }) => [tag, releasesByTag.get(tag).id]),
+    );
     for (const { metadata, tag } of selected) {
       const release = releasesByTag.get(tag);
       if (!release.draft) continue;
@@ -619,11 +816,30 @@ export function reconcileSelectedReleasesSync(
           readRelease: () => perReleaseDependencies.readRelease(tag),
         },
       );
+      if (result.fastMutationError !== undefined) {
+        promotionFailures.push({ cause: result.fastMutationError, tag });
+      }
       if (result.mutationAttempts > 0) console.log(`reconciled promotion of ${tag}`);
     }
-    releasesByTag = readReleaseMap(repo);
-    validateExistingReleases(selected, releasesByTag);
-    tagsByName = readTagMap(repo, selected);
+    try {
+      releasesByTag = requiredReleaseMap("public", { expectedReleaseIds });
+    } catch (observationCause) {
+      if (promotionFailures.length === 0) throw observationCause;
+      const firstFailure = promotionFailures[0];
+      const mutationDetail = redactGitHubReadDetail(
+        firstFailure.cause instanceof Error
+          ? firstFailure.cause.message
+          : String(firstFailure.cause),
+        environment,
+      );
+      throw error(
+        `${observationCause instanceof Error ? observationCause.message : String(observationCause)}; `
+          + `${promotionFailures.length} promotion mutation failure(s); first failure for `
+          + `${firstFailure.tag}: ${mutationDetail || "unknown failure"}`,
+        { cause: firstFailure.cause },
+      );
+    }
+    tagsByName = snapshotTagMap();
     requireExactTagSnapshot(selected, tagsByName, headRef);
   }
 
@@ -639,14 +855,33 @@ function defaultWindowForCommand(command) {
   if (command === "stage") return 30 * 60_000;
   // Promotion count is release-plan-derived. Keep the command inside the
   // mandatory finalization reserve while leaving a bounded contingency margin.
-  if (command === "promote") return 12 * 60_000;
+  if (command === "promote") return GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS;
   return 5 * 60_000;
+}
+
+export function createReleaseDraftOperationBudget(
+  command,
+  { environment = process.env, now = Date.now } = {},
+) {
+  const defaultWindowMs = defaultWindowForCommand(command);
+  const budget = createGitHubOperationBudget({
+    defaultWindowMs,
+    environment,
+    now,
+  });
+  if (command !== "promote") return budget;
+  const maximumDeadlineMs = budget.startedAtMs + defaultWindowMs;
+  if (budget.deadlineMs <= maximumDeadlineMs) return budget;
+  return Object.freeze({
+    ...budget,
+    deadlineMs: maximumDeadlineMs,
+  });
 }
 
 export function main(argv, { environment = process.env, now = Date.now } = {}) {
   const { command, values } = parseArgs([...argv]);
-  if (!["preflight", "stage", "verify", "promote"].includes(command)) {
-    throw error("command must be preflight, stage, verify, or promote");
+  if (!["preflight", "recovery-preflight", "stage", "verify", "promote"].includes(command)) {
+    throw error("command must be preflight, recovery-preflight, stage, verify, or promote");
   }
   const repo = environment.GITHUB_REPOSITORY?.trim();
   if (!repo || !environment.GH_TOKEN) {
@@ -678,15 +913,11 @@ export function main(argv, { environment = process.env, now = Date.now } = {}) {
   }
 
   const selected = selectedReleases(command, products, headRef, environment);
-  const budget = createGitHubOperationBudget({
-    defaultWindowMs: defaultWindowForCommand(command),
-    environment,
-    now,
-  });
+  const budget = createReleaseDraftOperationBudget(command, { environment, now });
   reconcileSelectedReleasesSync({
     budget,
     command,
-    environment,
+    environment: budget.environment,
     expectedState,
     headRef,
     repo,

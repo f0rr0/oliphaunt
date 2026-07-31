@@ -54,6 +54,7 @@ import {
   publicToolsFeatureDependencies,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { assertReleaseSemanticInputsCurrent } from "./release-semantic-inputs.mjs";
+import { verifyPublicationRecoveryCandidate } from "./verify-publication-candidate.mjs";
 
 const TOOL = "check-release-metadata.mjs";
 const STABLE_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
@@ -349,7 +350,12 @@ function compatibilityValue(entry, ref = null) {
 function validateCompatibility(graph) {
   const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true, prefix: TOOL });
   assert(new Set(entries.map((entry) => entry.id)).size === entries.length, "compatibility field ids must be globally unique");
-  const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: TOOL });
+  const recovery = verifyPublicationRecoveryCandidate({ repo: ROOT, headRef: "HEAD" });
+  const transitionHeadRef = recovery?.releaseSha ?? "HEAD";
+  const transitions = releasePleaseWorktreeTransitions(ROOT, {
+    headRef: transitionHeadRef,
+    prefix: TOOL,
+  });
   const transitionedProducts = new Set(transitions.map(({ product }) => product));
   const versionSources = new Map();
   for (const entry of entries) {
@@ -357,6 +363,7 @@ function validateCompatibility(graph) {
     let source = versionSources.get(entry.product);
     if (source === undefined) {
       source = compatibilityVersionSource(entry, graph.products, transitionedProducts, {
+        headRef: transitionHeadRef,
         prefix: TOOL,
         root: ROOT,
       });

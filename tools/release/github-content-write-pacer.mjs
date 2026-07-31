@@ -237,35 +237,28 @@ export function reserveGitHubContentWriteSync({
   const expectedIdentity = githubReleaseLineageIdentity(environment);
   mkdirSync(path.dirname(file), { recursive: true });
   const lock = acquireLock(file, { maxLockWaitMs: resolvedTiming.maxLockWaitMs, now, sleep });
+  let reservedAt;
+  let sequence;
+  let waitMs;
   try {
     const previous = parseState(file, expectedIdentity, resolvedTiming);
     const observedAt = now();
     if (!Number.isSafeInteger(observedAt) || observedAt < 0) fail("clock returned an invalid timestamp");
-    if (previous !== null && observedAt < previous.lastReservedAtMs) {
-      fail("clock moved backwards behind the last content-write reservation");
-    }
     // A fresh runner cannot prove whether an interrupted predecessor consumed
     // secondary-rate-limit write slots without leaving remote state. Charge a
-    // complete rolling-hour cooldown before its first write. Persisting the
-    // reservation before the request makes every later process in this job
-    // crash-conservative; a new runner starts the cooldown again.
+    // complete rolling-hour cooldown before its first write. Allocate and
+    // persist the next globally ordered slot while holding the lock briefly,
+    // then wait outside it. A crashed waiter burns its slot conservatively.
     const earliest = previous === null
       ? coldWindowStartedAtMs(environment, observedAt) + resolvedTiming.coldStartMs
       : previous.lastReservedAtMs + resolvedTiming.intervalMs;
-    const waitMs = Math.max(0, earliest - observedAt);
+    reservedAt = Math.max(observedAt, earliest);
+    waitMs = reservedAt - observedAt;
     const deadline = hardDeadlineMs(environment);
-    if (deadline !== null && earliest >= deadline) {
+    if (deadline !== null && reservedAt >= deadline) {
       fail("the next content-write reservation would reach the hard release deadline");
     }
-    sleep(waitMs);
-    const reservedAt = now();
-    if (!Number.isSafeInteger(reservedAt) || reservedAt < earliest) {
-      fail("clock did not advance through the required content-write pacing interval");
-    }
-    if (deadline !== null && reservedAt >= deadline) {
-      fail("the content-write reservation reached the hard release deadline while waiting");
-    }
-    const sequence = (previous?.sequence ?? 0) + 1;
+    sequence = (previous?.sequence ?? 0) + 1;
     const reservation = { label, reservedAtMs: reservedAt, sequence };
     const state = {
       schema: SCHEMA,
@@ -278,10 +271,20 @@ export function reserveGitHubContentWriteSync({
       reservations: [...(previous?.reservations ?? []), reservation],
     };
     writeState(file, state);
-    return { enabled: true, sequence: state.sequence, waitedMs: waitMs };
   } finally {
     rmSync(lock, { force: true });
   }
+
+  sleep(waitMs);
+  const observedAfterWait = now();
+  if (!Number.isSafeInteger(observedAfterWait) || observedAfterWait < reservedAt) {
+    fail("clock did not advance through the required content-write pacing interval");
+  }
+  const deadline = hardDeadlineMs(environment);
+  if (deadline !== null && observedAfterWait >= deadline) {
+    fail("the content-write reservation reached the hard release deadline while waiting");
+  }
+  return { enabled: true, sequence, waitedMs: waitMs };
 }
 
 function main(argv) {

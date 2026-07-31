@@ -4,7 +4,7 @@ Windows publishers must also follow the [Visual C++ runtime release
 contract](./windows-vc-runtime.md); it defines redistributable provenance,
 extension-provider ownership, app-local placement, and receipt evidence.
 
-Status: normative operation guide. Last verified: 2026-07-28. Owner: repository maintainers.
+Status: normative operation guide. Last verified: 2026-07-30. Owner: repository maintainers.
 
 Oliphaunt releases independent products from one monorepo. There is no repository-wide product version.
 
@@ -113,16 +113,28 @@ It is an admission optimization, not a substitute for the full write/check,
 metadata, asset, extension, and package gates on the normalized head.
 
 Shared code that can change published bytes or a declared public target must
-have one exact ownership rule in `release-semantic-inputs.toml`. The generated
-`.release-semantic-inputs.json` file under each affected product root gives
-Release Please a content-addressed trigger without treating workflow,
-validator, registry-transport, test, or documentation edits as product
-releases. After changing an owned shared input or its ownership, run
+have one exact ownership rule in `release-semantic-inputs.toml`. This includes
+compiler, SDK, linker, build-command, source-selection, and packaging choices
+even when their current implementation lives in a workflow or local action.
+The generated `.release-semantic-inputs.json` file under each affected product
+root gives Release Please a content-addressed trigger without treating pure
+control-plane orchestration, validators, registry transport, tests, or
+documentation as product releases. After changing an owned shared input or its ownership, run
 `tools/dev/bun.sh tools/release/sync-release-semantic-inputs.mjs --write` and
 then `--check`; do not hand-edit the fingerprints. On a generated release PR,
 use `sync-release-pr.mjs` instead: it refreshes these files only after its final
 derived semantic input has converged, so interruption recovery and a second
 write/check pass are idempotent.
+
+Conversely, a pure control-plane workflow, validator, registry-transport, test,
+or documentation change with zero semantic owners does not bump a product.
+Running `prepare-release-pr` after only those changes reports no releasable
+products, creates no release PR, and performs no registry publication. This is
+true regardless of a `ci:` commit subject: ownership follows changed semantics,
+not the commit label. If another unreleased product change is already present,
+Release Please may still prepare that product's release. A manually constructed
+`chore(release):` commit without an actual manifest/version/changelog
+transition is rejected by the structured release-commit verifier.
 
 ### Generated dependent candidates
 
@@ -180,6 +192,15 @@ was not closed; it is never reported as “no releasable changes.”
 
 Root publication admission accepts only a current-main candidate with one non-cancelled CI run whose `head_sha` is exact and whose `Qualified` gate succeeded. That record covers required checks, tests, builds, policy, selected E2E, and named build artifacts. A successful `Builds` job alone is insufficient. After the root job pins the immutable release transport tag, downstream phases continue that exact transaction without re-evaluating the moving main branch.
 
+Normal publication has one identity: that qualified commit is both the
+workflow controller and the immutable publication source. The narrowly scoped
+same-version control recovery described below has two identities instead. Its
+current-main controller must receive fresh complete CI, while the publication
+source remains the original release-bump commit and tree. Controller
+qualification proves the repaired workflow, policy, transport, OIDC, and
+pacing implementation; it does not replace or relabel the qualified product
+payload.
+
 The `macos-26` publication runner is ARM64, but its current runner-image
 contract exposes the installed Java 17 path as `JAVA_HOME_17_arm64` (including
 that lowercase suffix). Release setup uses that exact variable first, permits
@@ -188,7 +209,9 @@ work unless the selected path contains an executable `bin/java`. Do not invent
 the variable name from the architecture or rely on the image's moving default
 Java version for Maven or Gradle publication.
 
-The publish workflow downloads artifacts by that run id and SHA, verifies their attestations/qualification record, assembles the selected product carriers, then freezes a publication lock containing:
+For a normal publication, the publish workflow downloads artifacts by that run
+id and SHA, verifies their attestations/qualification record, assembles the
+selected product carriers, then freezes a publication lock containing:
 
 - source commit/tree and catalog digest;
 - product/version and every actual registry identity;
@@ -196,6 +219,16 @@ The publish workflow downloads artifacts by that run id and SHA, verifies their 
 - corresponding GitHub release assets and bootstrap/trust state.
 
 Missing and extra identities both fail. Publish commands reverify the lock immediately before writes.
+
+A same-version control recovery does not perform that assembly from newly
+built controller artifacts. It resolves the committed immutable recovery
+record and selects the original payload CI run, approved dry-run lock and
+capsule, and terminal bootstrap ledger by their exact run and artifact
+IDs/digests/sizes. For the current first-release recovery, the record enumerates
+all 73 original CI artifacts; any missing, extra, expired, or metadata-mismatched
+artifact fails closed. The controller replays publication-lock construction
+from those frozen inputs, and the result must be byte-identical to the approved
+original lock, including its original `source` object and `lockDigest`.
 
 ## Operations
 
@@ -229,10 +262,17 @@ The `Release` workflow has four operations:
 
 1. `prepare-release-pr` — run from current `main`; creates/updates the single generated release PR and syncs derived files.
 2. `publish-dry-run` — downloads exact-SHA CI artifacts, performs package/registry preflight and clean-consumer checks, freezes/verifies the lock, and emits the lock-bound Cargo/npm bootstrap capsule without write credentials.
-3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass for this noninteractive first publication; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. The current first release needs both Cargo and npm credentials, while a future single-registry identity addition must provision only that registry's token.
+3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. Provision only credentials required by the exact missing-identity inventory; a recovery in which every Cargo/npm version already matches requires neither token.
 4. `publish` — normal trusted release. It uses short-lived Cargo/npm/JSR credentials, Maven protected secrets, the frozen lock, and idempotent publication checks.
 
-Only a successful `publish-dry-run` uploads the canonical
+Same-version control recovery disables `publish-bootstrap` and every bootstrap
+or normal-publish continuation. It consumes the exact terminal original
+bootstrap ledger and must be driven by a root `publish` dispatch on the current
+controller. If a recovery run is interrupted, rerun that same root operation;
+the frozen source lock and byte-verifying registry inventory make the rerun
+idempotent.
+
+On the normal path, only a successful `publish-dry-run` uploads the canonical
 `oliphaunt-publication-lock` and `oliphaunt-bootstrap-capsule` approval
 artifacts. Bootstrap selects one successful same-SHA dry-run that contains both
 artifacts, downloads both by that one run ID, verifies the embedded lock is
@@ -242,6 +282,12 @@ independently reassembles the complete candidate from the same exact-SHA CI
 artifacts, downloads the approved lock, and byte-compares the two locks before
 publication. A mutating run therefore cannot
 approve itself or silently combine artifacts from different dry-runs.
+
+A same-version recovery dry-run is an approval of the current controller, not
+a new product-payload approval. It selects the original approved lock and
+capsule by exact recorded metadata, verifies the byte-identical replay, and
+uploads only the recovery-control equivalence evidence. It never emits a
+replacement lock or capsule with the controller SHA.
 
 `.github/workflows/release.yml` is the one directly dispatched release
 workflow. Its operation jobs declare their own least-privilege permissions and
@@ -313,7 +359,7 @@ or non-hosted use, binds HEAD to `RELEASE_HEAD_SHA`, and reruns the fixed
 candidate/plan/WASIX-evidence verifier before omitting mutation tests. Workflow
 policy rejects extra full invocations or replay before candidate verification.
 
-`release_commit`, when supplied, is an assertion that must equal the workflow
+On the normal path, `release_commit`, when supplied, is an assertion that must equal the workflow
 commit. It cannot select historical code. A tooling fix is a new candidate and
 must pass new qualification. At the mutation boundary, a root
 `publish-bootstrap` or `publish` run first reads the lightweight
@@ -330,6 +376,15 @@ before and after any bounded delay and dispatches the child from the tag rather
 than from moving `main`. Registry and finalization jobs remain exact-SHA and
 lock/handoff bound; they deliberately do not require `main` to remain frozen
 after the first mutation.
+
+During same-version control recovery, `release_commit` still names the current
+controller and the transport tag still points directly to that controller.
+The separately verified publication source remains the original release
+commit/tree from the immutable recovery record. Product tags, draft/final
+GitHub releases, release assets, Swift source publication, registry receipts,
+and consumer evidence are source-bound. The controller supplies only workflow
+code and its transport/OIDC/pacing identity. Recovery provenance and handoffs
+bind both identities so neither can be substituted for the other.
 
 ## Publish order
 
@@ -362,6 +417,11 @@ repository read, receives no release environment or registry secret, and may
 dispatch only the immutable exact-parent pointer emitted by its direct parent.
 It dispatches `release.yml` at the SHA-derived transport tag; the child input
 gate rejects `main`, another tag, or a tag name derived from any other SHA.
+
+That continuation protocol is available only when normal publication has one
+source/controller identity. Same-version control recovery rejects continuation
+inputs and deferred continuation results; recovery always resumes by
+idempotently rerunning the root `publish` operation on the controller.
 
 The workflow does not encode a second product/ecosystem publish order. Before
 the first mutation it writes `normal-publication-plan.json` directly from the
@@ -455,7 +515,7 @@ left on a previous runner. Bootstrap and normal registry publication each have
 an independent six-hour hosted-job envelope. The normal GitHub-staging job has
 a 350-minute hard window plus ten minutes for cleanup; the registry job also
 has a 350-minute hard window plus ten minutes for cleanup; finalization has a
-114-minute hard window plus six minutes for cleanup. The executable phase-budget table accounts for setup, exact-ID
+118-minute hard window plus six minutes for cleanup. The executable phase-budget table accounts for setup, exact-ID
 transfer, validation, mutation, evidence/handoff, and cleanup and requires a
 strictly positive margin in every phase. A bootstrap root starts its registry window only after
 qualification, capsule/lock verification, checkpoint restoration, and the
@@ -465,7 +525,10 @@ The window is clamped to the earlier of 5.5 hours from that point or the job
 hard deadline. Normal registry mutation starts only after the
 approved capsule and GitHub-stage handoff have been independently verified,
 and the exact staged releases and recovery checkpoint have been revalidated at
-the release SHA. Before beginning GitHub mutation, the root staging job either
+the release SHA. GitHub exposes drafts only to callers with push access, so the
+registry job's content-write grant is used by a policy-constrained, verify-only
+live draft read; it does not stage or promote releases. Before beginning GitHub
+mutation, the root staging job either
 proved current `main` inside the transport boundary or, only on a genuine exact
 rerun, reused the tag that the prior attempt had already pinned; later
 registry and finalization jobs never substitute moving `main` for their exact
@@ -473,7 +536,7 @@ checkout, handoff, tag, draft, and publication-lock proofs. Registry publication
 rate-aware mutation allowance plus positive margin before the protected
 15-minute receipt/recovery handoff; a shortened residual window cannot admit a
 partial planned run unless the executor can close a dependency-safe checkpoint
-and issue an exact-parent continuation. Finalization refuses to start unless at least 48 minutes
+and issue an exact-parent continuation. Finalization refuses to start unless at least 52 minutes
 remain on its fresh deadline. Bootstrap additionally proves that the exact pending Cargo/npm
 inventory plus its reserve fits before mutation begins.
 
@@ -740,7 +803,60 @@ possible values but never creates extension support by default.
 
 ## Recovery and history repair
 
-On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Repository changes require a new version and candidate.
+On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Product-semantic repository changes require a new version and candidate.
+
+If immutable packages are already public but the failure requires only a
+zero-owner release-control/test fix, use the explicit same-version control
+recovery instead of manufacturing a duplicate release. Keep the original
+release-bump commit immutable. The later linear `fix(release):` commit carries
+exactly one `Oliphaunt-Release-Recovery-Of: <original-release-sha>` trailer.
+The publication-candidate verifier requires the authoritative base/head release
+plan to select zero products, rejects every changed shared path with a semantic
+owner, and proves versions and release metadata are unchanged.
+
+Treat the two identities as distinct and immutable:
+
+- the **publication source** is the original release-bump commit/tree. It owns
+  the product bytes, versions, approved publication lock/capsule, terminal
+  bootstrap ledger, product tags/releases/assets, Swift source tag, registry
+  receipts, and consumer-facing provenance;
+- the **controller** is the later current-main recovery commit. It owns only
+  the executing workflow, fresh complete control CI, immutable release
+  transport, OIDC claims, request journals, pacing, and the recovery run
+  identity.
+
+The controller must pass a fresh full `Qualified` CI run and a separate
+successful recovery dry-run whose control-equivalence evidence is approved
+before mutation. The recovery record selects the original source commit/tree,
+the complete original 73-artifact CI payload, original approved lock/capsule,
+and terminal bootstrap ledger by exact workflow run and artifact
+ID/digest/size. Selection by “latest,” name alone, or merely matching SHA is
+forbidden. Replaying the lock from those frozen inputs must produce a file
+byte-identical to the approved lock, including `source` and `lockDigest`; a
+rebound controller-source lock is not equivalent.
+
+Recovery never invokes `publish-bootstrap`, never creates a controller-bound
+replacement ledger, and never uses an automatic continuation. It verifies the
+terminal source-bound ledger, inventories the exhaustive original lock
+(including generated payload parts), and runs only the root `publish`
+operation. Existing exact registry identities are skipped only after their
+bytes match the lock. An absent identity may be published once from the frozen
+source payload; any conflict fails closed and requires a new product version.
+Product tags, releases, assets, Swift source publication, and every product
+subject/source field target the original source, never the controller. The
+controller-issued recovery attestation uses the dedicated dual-identity
+predicate to bind the frozen source evidence and fresh control evidence
+together. An interrupted recovery is resumed by rerunning root `publish`,
+which reconciles already-completed exact state before any write.
+
+Ordinary clean-state control-plane workflow, policy, validator,
+registry-transport, test, or documentation changes do not use recovery and do
+not create a release. With no other unreleased product change,
+`prepare-release-pr` reports no releasable products and creates no PR; a direct
+publish selects no release changes and performs no registry work. A change to a
+compiler, SDK, linker, build command, source selection, target, or packaging
+semantic is product-owned even if it lives in CI and therefore requires the
+affected versions to advance.
 
 A deferred extension is never a recoverable missing publication. If it appears
 in a release PR, dry-run artifact set, or lock, reject that candidate, remove
@@ -780,4 +896,4 @@ If that exact-main run exposes another defect, do not layer a fix commit onto th
 
 ## Handoff evidence
 
-Record the candidate SHA/tree, exact CI run, selected product versions, catalog/lock digests, artifact attestations, registry bootstrap/trust status, publication ledger, promoted release URLs, and clean-install results. “The workflow passed” is not sufficient release evidence without those identities.
+Record the candidate SHA/tree, exact CI run, selected product versions, catalog/lock digests, artifact attestations, registry bootstrap/trust status, publication ledger, promoted release URLs, and clean-install results. For same-version control recovery, record both the immutable publication source SHA/tree and current controller SHA/tree, plus every pinned original and approved control run/artifact identity. “The workflow passed” is not sufficient release evidence without those identities.
