@@ -17,6 +17,7 @@ import {test} from 'node:test';
 
 import {
   assertHttpsUrl,
+  canonicalGnuArchiveFallbackUrl,
   createSourceFetcher,
   curlDownloadArgs,
   curlPlatformTlsArgs,
@@ -193,6 +194,30 @@ function archiveSource(fixture, name = 'fixture') {
   };
 }
 
+function gnuArchiveSource(fixture) {
+  return {
+    ...archiveSource(fixture, 'libiconv'),
+    url: 'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz',
+  };
+}
+
+function archiveTransport(fixture, requests, responseForUrl) {
+  return (specification) => {
+    if (specification.command !== 'curl') {
+      return defaultRunProcess(specification);
+    }
+    const url = specification.args.at(specification.args.indexOf('--url') + 1);
+    const output = specification.args.at(specification.args.indexOf('--output') + 1);
+    requests.push(url);
+    const response = responseForUrl(url);
+    if (response instanceof Error) {
+      throw response;
+    }
+    copyFileSync(fixture, output);
+    return '';
+  };
+}
+
 function writeArchiveManifest(manifestPath, source) {
   writeFileSync(
     manifestPath,
@@ -304,6 +329,152 @@ test('archive transport is HTTPS-only and bounded', () => {
     '--remove-on-error',
   ]) {
     assert.ok(args.includes(token), `missing bounded transport argument ${token}`);
+  }
+});
+
+test('GNU archive transport keeps a healthy pinned mirror as the sole request', async () => {
+  const root = makeRoot('source-gnu-primary');
+  try {
+    createTarFixtures(root);
+    const fixture = path.join(root, 'valid.tar.gz');
+    const source = gnuArchiveSource(fixture);
+    const requests = [];
+    await sourceFetcher(root, {
+      runProcess: archiveTransport(fixture, requests, () => undefined),
+    }).materialize(source);
+
+    assert.deepEqual(requests, [source.url]);
+    const marker = readFileSync(
+      path.join(root, 'checkouts', source.name, '.oliphaunt-source-pin'),
+      'utf8',
+    );
+    assert.equal(marker.split('\n').includes(`url=${source.url}`), true);
+    assert.doesNotMatch(marker, /ftp\.gnu\.org/u);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('GNU archive transport retries the canonical host after a bounded pinned-mirror failure', async () => {
+  const root = makeRoot('source-gnu-fallback');
+  try {
+    createTarFixtures(root);
+    const fixture = path.join(root, 'valid.tar.gz');
+    const source = gnuArchiveSource(fixture);
+    const fallback = 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz';
+    const requests = [];
+    await sourceFetcher(root, {
+      runProcess: archiveTransport(fixture, requests, (url) =>
+        url === source.url ? new Error('injected bounded primary transport failure') : undefined),
+    }).materialize(source);
+
+    assert.deepEqual(requests, [source.url, fallback]);
+    const marker = readFileSync(
+      path.join(root, 'checkouts', source.name, '.oliphaunt-source-pin'),
+      'utf8',
+    );
+    assert.equal(marker.split('\n').includes(`url=${source.url}`), true);
+    assert.doesNotMatch(marker, /ftp\.gnu\.org/u);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('GNU archive fallback bytes must still satisfy the pinned checksum before promotion', async () => {
+  const root = makeRoot('source-gnu-fallback-checksum');
+  try {
+    createTarFixtures(root);
+    const fixture = path.join(root, 'valid.tar.gz');
+    const wrongFixture = path.join(root, 'updated.tar.gz');
+    const source = gnuArchiveSource(fixture);
+    const fallback = 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz';
+    const requests = [];
+    await assert.rejects(
+      sourceFetcher(root, {
+        runProcess: archiveTransport(wrongFixture, requests, (url) =>
+          url === source.url ? new Error('injected bounded primary transport failure') : undefined),
+      }).materialize(source),
+      new RegExp(`libiconv archive sha256: expected ${source.sha256}, got [0-9a-f]{64}`, 'u'),
+    );
+
+    assert.deepEqual(requests, [source.url, fallback]);
+    assert.deepEqual(readdirSync(path.join(root, 'archives')), []);
+    assert.equal(existsSync(path.join(root, 'checkouts', source.name)), false);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('GNU archive transport preserves both diagnostics when both bounded endpoints fail', async () => {
+  const root = makeRoot('source-gnu-both-fail');
+  try {
+    createTarFixtures(root);
+    const fixture = path.join(root, 'valid.tar.gz');
+    const source = gnuArchiveSource(fixture);
+    const fallback = 'https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz';
+    const archiveRoot = path.join(root, 'archives');
+    const cached = path.join(archiveRoot, `${source.name}-${source.sha256}.tar.gz`);
+    mkdirSync(archiveRoot);
+    writeFileSync(cached, 'prior corrupt archive bytes');
+    const requests = [];
+    let failure;
+    try {
+      await sourceFetcher(root, {
+        runProcess: archiveTransport(fixture, requests, (url) =>
+          new Error(url === source.url ? 'primary diagnostic' : 'fallback diagnostic')),
+      }).materialize(source);
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure instanceof AggregateError);
+    assert.match(failure.message, /primary diagnostic/u);
+    assert.match(failure.message, /fallback diagnostic/u);
+    assert.deepEqual(failure.errors.map((error) => error.message), [
+      'primary diagnostic',
+      'fallback diagnostic',
+    ]);
+    assert.deepEqual(requests, [source.url, fallback]);
+    assert.equal(readFileSync(cached, 'utf8'), 'prior corrupt archive bytes');
+    assert.deepEqual(readdirSync(archiveRoot), [`${source.name}-${source.sha256}.tar.gz`]);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('GNU archive fallback is unavailable to other hosts and noncanonical or unsafe paths', async () => {
+  const root = makeRoot('source-gnu-fallback-scope');
+  try {
+    createTarFixtures(root);
+    const fixture = path.join(root, 'valid.tar.gz');
+    const urls = [
+      'https://example.invalid/libiconv/libiconv-1.19.tar.gz',
+      'https://ftpmirror.gnu.org/libiconv/nested/libiconv-1.19.tar.gz',
+      'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz?mutable=1',
+      'https://ftpmirror.gnu.org/libiconv/%6cibiconv-1.19.tar.gz',
+      'https://ftpmirror.gnu.org/libiconv/../libiconv-1.19.tar.gz',
+    ];
+    assert.equal(
+      canonicalGnuArchiveFallbackUrl(
+        'https://ftpmirror.gnu.org/libiconv/libiconv-1.19.zip',
+      ),
+      undefined,
+    );
+    for (const [index, url] of urls.entries()) {
+      assert.equal(canonicalGnuArchiveFallbackUrl(url), undefined);
+      const source = {...archiveSource(fixture, `fixture-${index}`), url};
+      const requests = [];
+      await assert.rejects(
+        sourceFetcher(path.join(root, String(index)), {
+          runProcess: archiveTransport(fixture, requests, () =>
+            new Error(`injected primary-only failure ${index}`)),
+        }).materialize(source),
+        new RegExp(`injected primary-only failure ${index}`, 'u'),
+      );
+      assert.deepEqual(requests, [url]);
+    }
+  } finally {
+    rmSync(root, {recursive: true, force: true});
   }
 });
 

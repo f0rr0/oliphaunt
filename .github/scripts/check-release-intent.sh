@@ -415,6 +415,16 @@ if [[ "${is_release_pr}" == true ]]; then
     --head-ref "${head_ref}"
 fi
 
+# A same-version partial-publication recovery is not a product release, but it
+# must fail before expensive planning unless its exact original release,
+# linear trailer chain, zero-product impact, and unchanged metadata all verify.
+if git show -s --format=%B "${head_ref}^{commit}" |
+  grep -qi "^Oliphaunt-Release-Recovery-Of:"; then
+  tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+    --derive-products \
+    --head-ref "${head_ref}"
+fi
+
 release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
 release_products="$(
   bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"

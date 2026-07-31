@@ -49,6 +49,7 @@ import {
   stableJson,
   validateReleaseContinuationPointer,
 } from "../../tools/release/release-continuation-contract.mjs";
+import { resolveReleaseSourceCommit } from "../../tools/release/release-source-identity.mjs";
 import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 import { openContinuationEnvelope } from "./release-continuation-artifact.mjs";
 
@@ -364,7 +365,17 @@ export async function main() {
   const repo = required("GH_REPO");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo)) fail("GH_REPO must be owner/repository");
   const sha = required("RELEASE_HEAD_SHA");
-  if (!/^[0-9a-f]{40}$/u.test(sha)) fail("RELEASE_HEAD_SHA must be a full lowercase commit SHA");
+  let sourceSha;
+  try {
+    sourceSha = resolveReleaseSourceCommit({
+      controlCommit: sha,
+      sourceCommit: process.env.RELEASE_SOURCE_SHA,
+    }, { prefix: "download-normal-publication-checkpoint" });
+  } catch (cause) {
+    fail(cause instanceof Error
+      ? cause.message.replace(/^download-normal-publication-checkpoint:\s*/u, "")
+      : String(cause));
+  }
   const currentRunId = positiveInteger(required("GITHUB_RUN_ID"), "GITHUB_RUN_ID");
   const destination = path.resolve(
     ROOT,
@@ -373,7 +384,7 @@ export async function main() {
   const lockFile = path.resolve(ROOT, required("PUBLICATION_LOCK_PATH"));
   const products = productsFromEnvironment();
   const lock = loadPublicationLock(lockFile);
-  assertPublicationLockSource(lock, sha);
+  assertPublicationLockSource(lock, sourceSha);
   const plan = normalPublicationPlan(lock, products);
   const rawPointer = process.env.RELEASE_CONTINUATION_POINTER?.trim() ?? "";
   if (rawPointer !== "") {

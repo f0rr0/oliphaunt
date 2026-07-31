@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   createGitHubOperationBudget,
+  GitHubReleaseSnapshotRaceError,
   githubPaginatedArrayReadSync,
   githubJsonReadSync,
   githubOptionalJsonReadSync,
@@ -341,6 +342,74 @@ test("each paginated REST page retry is independently journaled and exact 200 ro
     readGitHubCoreRequestJournal({ environment, now: () => 20_000 }),
     { enabled: true, rollingCount: 3, sequence: 3 },
   );
+});
+
+test("a repeated release id across pagination is the only retryable snapshot race shape", () => {
+  const next = "https://api.github.com/repositories/42/releases?per_page=100&page=2";
+  const spawnWithSecondPage = (rows) => (_command, args) => {
+    const endpoint = args.at(-1);
+    if (endpoint.endsWith("page=1")) {
+      return {
+        status: 0,
+        stderr: "",
+        stdout: includedJson(releaseRows(1, 100), `<${next}>; rel="next"`),
+      };
+    }
+    return { status: 0, stderr: "", stdout: includedJson(rows) };
+  };
+  assert.throws(
+    () => readReleaseMapSync("o/r", {
+      baseDelayMs: 0,
+      deadlineMs: 1_000,
+      maxAttempts: 1,
+      spawn: spawnWithSecondPage(releaseRows(100, 1)),
+    }),
+    (cause) =>
+      cause instanceof GitHubReleaseSnapshotRaceError
+      && /repeated release 100 across one paginated snapshot/u.test(cause.message),
+  );
+
+  const conflictingTag = {
+    ...releaseRows(101, 1)[0],
+    tag_name: "v100",
+  };
+  assert.throws(
+    () => readReleaseMapSync("o/r", {
+      baseDelayMs: 0,
+      deadlineMs: 1_000,
+      maxAttempts: 1,
+      spawn: spawnWithSecondPage([conflictingTag]),
+    }),
+    (cause) =>
+      !(cause instanceof GitHubReleaseSnapshotRaceError)
+      && /duplicate releases for tag v100/u.test(cause.message),
+  );
+});
+
+test("one pagination deadline is shared across every physical page", () => {
+  let nowMs = 0;
+  const endpoints = [];
+  assert.throws(
+    () => githubPaginatedArrayReadSync("o/r", "releases", {
+      baseDelayMs: 0,
+      deadlineMs: 100,
+      maxAttempts: 1,
+      now: () => nowMs,
+      spawn: (_command, args) => {
+        const endpoint = args.at(-1);
+        endpoints.push(endpoint);
+        nowMs = 101;
+        const next = "https://api.github.com/repositories/42/releases?per_page=100&page=2";
+        return {
+          status: 0,
+          stderr: "",
+          stdout: includedJson(releaseRows(1, 100), `<${next}>; rel="next"`),
+        };
+      },
+    }),
+    /pagination deadline exhausted before page 2/u,
+  );
+  assert.deepEqual(endpoints, ["repos/o/r/releases?per_page=100&page=1"]);
 });
 
 test("paginated reads reject cross-endpoint and query-mutating next links", () => {

@@ -16,8 +16,10 @@ import { test } from "node:test";
 import {
   DEDICATED_GATE_TESTS,
   MUTATION_TEST_TIMEOUT_MS,
+  mutationTestEnvironment,
   mutationTests,
 } from "./release-check.mjs";
+import { uniqueValueFlag } from "./release-cli-utils.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const TOOLCHAIN_GATE = "tools/release/toolchain-bootstrap.test.mjs";
@@ -45,6 +47,42 @@ function read(relative) {
 function occurrences(source, needle) {
   return source.split(needle).length - 1;
 }
+
+test("release CLI value flags reject ambiguous duplicate identities", () => {
+  assert.equal(
+    uniqueValueFlag(["--head-ref", "a".repeat(40)], "--head-ref"),
+    "a".repeat(40),
+  );
+  assert.equal(
+    uniqueValueFlag(["--products-json=[\"sdk\"]"], "--products-json"),
+    "[\"sdk\"]",
+  );
+  assert.throws(
+    () => uniqueValueFlag(
+      ["--head-ref", "a".repeat(40), `--head-ref=${"b".repeat(40)}`],
+      "--head-ref",
+    ),
+    /--head-ref must be provided at most once/u,
+  );
+  assert.throws(
+    () => uniqueValueFlag(
+      ["--products-json=[\"sdk\"]", "--products-json", "[\"extension\"]"],
+      "--products-json",
+    ),
+    /--products-json must be provided at most once/u,
+  );
+  assert.throws(
+    () => uniqueValueFlag(
+      ["--head-ref", `--head-ref=${"b".repeat(40)}`],
+      "--head-ref",
+    ),
+    /--head-ref must be provided at most once/u,
+  );
+  assert.throws(
+    () => uniqueValueFlag(["--head-ref"], "--head-ref"),
+    /--head-ref requires a value/u,
+  );
+});
 
 test("canonical release check owns repository structure suites exactly once", () => {
   assert.deepEqual([...DEDICATED_GATE_TESTS], [...STRUCTURE_GATE_TESTS, TOOLCHAIN_GATE]);
@@ -184,14 +222,32 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   );
   assert.equal(MUTATION_TEST_TIMEOUT_MS, 30_000);
   assert.match(releaseCheck, /`--timeout=\$\{MUTATION_TEST_TIMEOUT_MS\}`/u);
+  assert.match(releaseCheck, /environment: mutationTestEnvironment[(][)]/u);
   assert.doesNotMatch(releaseCheck, /metadata-only/u);
   const publisher = read("tools/release/release-publish.mjs");
   assert.match(publisher, /qualifiedCi && allowDirty/u);
   assert.match(publisher, /process[.]env[.]GITHUB_ACTIONS !== "true"/u);
   assert.match(publisher, /assertQualifiedReplaySourceState/u);
+  assert.match(publisher, /headRef: process[.]env[.]RELEASE_HEAD_SHA/u);
+  assert.match(publisher, /expectedReleaseSourceSha: process[.]env[.]RELEASE_SOURCE_SHA/u);
   assert.match(publisher, /verify-release-candidate[.]mjs/u);
   assert.match(publisher, /target\/release-candidate\/oliphaunt-release-candidate[.]json/u);
   assert.match(publisher, /release-metadata-check[.]mjs/u);
+});
+
+test("release mutation tests cannot consume a live publish request journal", () => {
+  assert.deepEqual(
+    mutationTestEnvironment({
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "f0rr0/oliphaunt",
+      GITHUB_RUN_ID: "30593859032",
+      KEEP_ME: "preserved",
+      OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: "/live/journal.json",
+      OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: "true",
+      RELEASE_HEAD_SHA: "a".repeat(40),
+    }),
+    { KEEP_ME: "preserved" },
+  );
 });
 
 test("the canonical release gate is the single hosted repository-graph validator", () => {

@@ -42,6 +42,66 @@ test("qualified replay binds a clean checkout to one exact commit", () => {
   }
 });
 
+test("qualified replay separately binds a recovery controller and release source", () => {
+  const { repo, sha: releaseSourceSha } = fixture();
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "controller\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "--quiet", "-m", "fix(release): controller");
+    const controllerSha = git(repo, "rev-parse", "HEAD");
+
+    assert.deepEqual(
+      assertQualifiedReplaySourceState({
+        repo,
+        headRef: controllerSha,
+        expectedSha: controllerSha,
+        releaseSourceRef: releaseSourceSha,
+        expectedReleaseSourceSha: releaseSourceSha,
+      }),
+      { sha: controllerSha },
+    );
+    assert.throws(
+      () => assertQualifiedReplaySourceState({
+        repo,
+        headRef: controllerSha,
+        expectedSha: controllerSha,
+        releaseSourceRef: controllerSha,
+        expectedReleaseSourceSha: releaseSourceSha,
+      }),
+      /source mismatch/u,
+    );
+    assert.throws(
+      () => assertQualifiedReplaySourceState({
+        repo,
+        headRef: controllerSha,
+        expectedSha: controllerSha,
+        releaseSourceRef: releaseSourceSha,
+        expectedReleaseSourceSha: "abc",
+      }),
+      /exact 40-character RELEASE_SOURCE_SHA/u,
+    );
+
+    git(repo, "switch", "--quiet", "-c", "sibling-source", releaseSourceSha);
+    writeFileSync(path.join(repo, "tracked.txt"), "sibling\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "--quiet", "-m", "test: sibling source");
+    const siblingSourceSha = git(repo, "rev-parse", "HEAD");
+    git(repo, "switch", "--quiet", "--detach", controllerSha);
+    assert.throws(
+      () => assertQualifiedReplaySourceState({
+        repo,
+        headRef: controllerSha,
+        expectedSha: controllerSha,
+        releaseSourceRef: siblingSourceSha,
+        expectedReleaseSourceSha: siblingSourceSha,
+      }),
+      /is not an ancestor/u,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("qualified replay rejects tracked, staged, and untracked source changes", () => {
   for (const mutate of [
     (repo) => writeFileSync(path.join(repo, "tracked.txt"), "modified\n"),

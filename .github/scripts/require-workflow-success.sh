@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workflow="${1:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>...] [--artifact <name>...] [--event <event>...]}"
-sha="${2:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>...] [--artifact <name>...] [--event <event>...]}"
+workflow="${1:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>...] [--artifact <name>...] [--gate-artifact <name>...] [--event <event>...]}"
+sha="${2:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>...] [--artifact <name>...] [--gate-artifact <name>...] [--event <event>...]}"
 timeout="${3:-7200}"
 if [[ $# -ge 3 ]]; then
   shift 3
@@ -11,10 +11,13 @@ else
 fi
 
 required_artifacts=()
+gate_artifacts=()
 required_jobs=()
 required_events=()
 expected_run_id=""
 selected_artifacts_json='[]'
+selected_gate_artifacts_json='[]'
+selected_run_attempt=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-id)
@@ -27,6 +30,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact)
       required_artifacts+=("${2:?--artifact requires a name}")
+      shift 2
+      ;;
+    --gate-artifact)
+      gate_artifacts+=("${2:?--gate-artifact requires a name}")
       shift 2
       ;;
     --event)
@@ -72,7 +79,9 @@ emit_run_id() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       echo "run_id=$run_id"
+      echo "run_attempt=$selected_run_attempt"
       echo "artifact_metadata_json=$selected_artifacts_json"
+      echo "gate_artifact_metadata_json=$selected_gate_artifacts_json"
     } >> "$GITHUB_OUTPUT"
   fi
   echo "selected $workflow run $run_id"
@@ -84,15 +93,15 @@ run_matches_request() {
   row="$(
     github_read "$workflow run $run_id metadata" \
       api "repos/$GH_REPO/actions/runs/$run_id" \
-      --jq '[.head_sha, .workflow_id, .event, .status, (.conclusion // "")] | @tsv'
+      --jq '[.head_sha, .workflow_id, .event, .status, (.conclusion // ""), .run_attempt] | @tsv'
   )" || {
     status=$?
     echo "failed to inspect $workflow run $run_id" >&2
     return "$status"
   }
 
-  local run_sha workflow_id run_event run_status run_conclusion workflow_name
-  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion <<< "$row"
+  local run_sha workflow_id run_event run_status run_conclusion run_attempt workflow_name
+  IFS=$'\t' read -r run_sha workflow_id run_event run_status run_conclusion run_attempt <<< "$row"
   if [[ "$(printf '%s' "$run_sha" | normalize_sha)" != "$(printf '%s' "$sha" | normalize_sha)" ]]; then
     echo "$workflow run $run_id belongs to $run_sha, not $sha" >&2
     return 1
@@ -129,12 +138,18 @@ run_matches_request() {
     echo "$workflow run $run_id is $run_status/${run_conclusion:-<none>}, not completed/success" >&2
     return 1
   fi
+  if [[ ! "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$workflow run $run_id has an invalid run attempt" >&2
+    return 64
+  fi
+  selected_run_attempt="$run_attempt"
 }
 
 required_artifacts_present() {
   local run_id="$1"
-  if [[ "${#required_artifacts[@]}" -eq 0 ]]; then
+  if [[ "${#required_artifacts[@]}" -eq 0 && "${#gate_artifacts[@]}" -eq 0 ]]; then
     selected_artifacts_json='[]'
+    selected_gate_artifacts_json='[]'
     return 0
   fi
 
@@ -150,14 +165,31 @@ required_artifacts_present() {
     return "$status"
   }
   local required_json
-  required_json="$(printf '%s\n' "${required_artifacts[@]}" | bun -e '
+  if [[ "${#required_artifacts[@]}" -eq 0 ]]; then
+    required_json='[]'
+  else
+    required_json="$(printf '%s\n' "${required_artifacts[@]}" | bun -e '
 const names = (await Bun.stdin.text()).split(/\r?\n/u).filter(Boolean);
 process.stdout.write(JSON.stringify(names));
 ')"
-  local selected status
+  fi
+  local gate_json
+  if [[ "${#gate_artifacts[@]}" -eq 0 ]]; then
+    gate_json='[]'
+  else
+    gate_json="$(printf '%s\n' "${gate_artifacts[@]}" | bun -e '
+const names = (await Bun.stdin.text()).split(/\r?\n/u).filter(Boolean);
+process.stdout.write(JSON.stringify(names));
+')"
+  fi
+  local selection status
   # shellcheck disable=SC2016
-  if selected="$(REQUIRED_ARTIFACTS_JSON="$required_json" bun -e '
+  if selection="$(
+    REQUIRED_ARTIFACTS_JSON="$required_json" \
+    GATE_ARTIFACTS_JSON="$gate_json" \
+    bun -e '
 const expected = JSON.parse(process.env.REQUIRED_ARTIFACTS_JSON);
+const gates = JSON.parse(process.env.GATE_ARTIFACTS_JSON);
 let records;
 try {
   records = JSON.parse(await Bun.stdin.text());
@@ -165,7 +197,13 @@ try {
   console.error(`artifact inventory is not valid JSON: ${cause.message}`);
   process.exit(64);
 }
-if (!Array.isArray(expected) || expected.length === 0 || new Set(expected).size !== expected.length) {
+if (
+  !Array.isArray(expected)
+  || !Array.isArray(gates)
+  || expected.length + gates.length === 0
+  || [...expected, ...gates].some((name) => typeof name !== "string" || name.length === 0)
+  || new Set([...expected, ...gates]).size !== expected.length + gates.length
+) {
   console.error("required artifact identity list is malformed");
   process.exit(64);
 }
@@ -180,22 +218,43 @@ if (!Array.isArray(records) || records.some((entry) =>
   process.exit(64);
 }
 const selected = [];
-for (const name of expected) {
+const selectedGates = [];
+for (const name of [...expected, ...gates]) {
   const matches = records.filter((entry) => entry.name === name && entry.expired === false);
   if (matches.length !== 1) {
     console.error(`expected exactly one non-expired artifact named ${name}; found ${matches.length}`);
     process.exit(1);
   }
   const [entry] = matches;
-  selected.push({ digest: entry.digest, id: entry.id, name: entry.name, size: entry.size_in_bytes });
+  const record = {
+      digest: entry.digest,
+      id: entry.id,
+      name: entry.name,
+      size: entry.size_in_bytes,
+  };
+  (expected.includes(name) ? selected : selectedGates).push(record);
 }
 selected.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-process.stdout.write(JSON.stringify(selected));
-' <<< "$artifacts_json")"; then
-    selected_artifacts_json="$selected"
+selectedGates.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+process.stdout.write(JSON.stringify({ selected, selectedGates }));
+' <<< "$artifacts_json"
+  )"; then
+    selected_artifacts_json="$(
+      SELECTION_JSON="$selection" bun -e '
+const value = JSON.parse(process.env.SELECTION_JSON);
+process.stdout.write(JSON.stringify(value.selected));
+'
+    )"
+    selected_gate_artifacts_json="$(
+      SELECTION_JSON="$selection" bun -e '
+const value = JSON.parse(process.env.SELECTION_JSON);
+process.stdout.write(JSON.stringify(value.selectedGates));
+'
+    )"
   else
     status=$?
     selected_artifacts_json='[]'
+    selected_gate_artifacts_json='[]'
     return "$status"
   fi
 }

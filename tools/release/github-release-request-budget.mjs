@@ -26,7 +26,11 @@ import {
   readGitHubCoreRequestJournal,
 } from "./github-core-request-journal.mjs";
 import { isExtensionProduct, loadGraph } from "./release-graph.mjs";
-import { readReleaseMapSync } from "./github-release-mutations.mjs";
+import {
+  GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+  GITHUB_RELEASE_SNAPSHOT_MAX_READS,
+  readReleaseMapSync,
+} from "./github-release-mutations.mjs";
 import {
   loadPublicationLock,
   lockedProductArtifactPaths,
@@ -75,7 +79,7 @@ export const FIRST_RELEASE_TRANSFER_REQUESTS = Object.freeze({
 export const FIRST_RELEASE_TRANSFER_REQUEST_TOTAL = Object.values(
   FIRST_RELEASE_TRANSFER_REQUESTS,
 ).reduce((total, count) => total + count, 0);
-export const FIRST_RELEASE_RELEASE_API_REQUESTS = 299;
+export const FIRST_RELEASE_RELEASE_API_REQUESTS = 457;
 export const FIRST_RELEASE_ATTESTATION_API_REQUESTS = 6;
 export const FIRST_RELEASE_TRANSPORT_REF_WRITE_REQUESTS = 1;
 export const RELEASE_PLEASE_ASSERT_MARKABLE_API_REQUESTS = 3;
@@ -136,16 +140,33 @@ export function conservativeCoreRequestCount({
     return total + count;
   }, 0);
   if (countedAssets !== assetCount) fail("assetCount disagrees with per-product assetCounts");
-  // Preflight, stage (before/after), verify, and promotion (before/after) each
-  // read the complete release list. Tag/release/promotion mutations are one
-  // content request per product.
-  const draftManagementRequests = (3 * productCount) + (6 * releasePageCount);
+  // Preflight, stage-before, and promotion-before each read one complete
+  // release snapshot. Post-stage, three workflow verification points, and
+  // promotion-after each require a semantically complete snapshot and may
+  // consume the full bounded visibility retry schedule. Every draft POST may
+  // also lose its response and consume one complete no-replay observation
+  // schedule.
+  // Tag/release/promotion mutations are one content request per product.
+  const draftManagementPagePasses =
+    3 + ((5 + productCount) * GITHUB_RELEASE_SNAPSHOT_MAX_READS);
+  const draftManagementRequests =
+    (3 * productCount)
+    + (
+      draftManagementPagePasses
+      * releasePageCount
+      * GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS
+    );
   // Exact release-asset inventory never trusts an embedded release row. A
   // first publication snapshots nonempty products before and after upload;
-  // an empty product needs one proof. Charge every selected product even if a
-  // current publisher happens not to call the empty proof path.
+  // an empty product needs one proof. Initial tag-to-ID discovery reads the
+  // complete release list so drafts are visible; later snapshots use the
+  // immutable release ID. Charge every selected product even if a current
+  // publisher happens not to call the empty proof path.
   const releaseAssetRequests = assetCount + [...assetCounts.values()].reduce(
-    (total, count) => total + ((count > 0 ? 2 : 1) * (1 + pagesForRows(count))),
+    (total, count) => total
+      + releasePageCount
+      + pagesForRows(count)
+      + (count > 0 ? 1 + pagesForRows(count) : 0),
     0,
   );
   // Both pre-mutation and final receipts read all release pages and one exact

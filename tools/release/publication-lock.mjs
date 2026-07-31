@@ -1557,10 +1557,10 @@ function reactNativeReleaseInputs(files, product) {
   })];
 }
 
-export function discoverProductArtifacts(roots, products) {
+function discoverProductArtifactsForSelection(roots, products, selectedProducts) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const artifacts = [];
-  const hasSelectedExtensionProducts = products.some((product) =>
+  const hasSelectedExtensionProducts = selectedProducts.some((product) =>
     EXTENSION_PRODUCT_KINDS.has(product?.kind));
   for (const product of products) {
     if (typeof product?.id !== "string" || typeof product?.version !== "string") {
@@ -1584,6 +1584,10 @@ export function discoverProductArtifacts(roots, products) {
     throw error("product artifact discovery produced duplicate identities");
   }
   return artifacts.sort((left, right) => compareText(`${left.product}:${left.id}`, `${right.product}:${right.id}`));
+}
+
+export function discoverProductArtifacts(roots, products) {
+  return discoverProductArtifactsForSelection(roots, products, products);
 }
 
 function sourceIdentity(headRef) {
@@ -2293,7 +2297,7 @@ export function assertLockedProductArtifacts(lock, product, roots) {
   if (productRow === undefined) {
     throw error(`publication lock does not select product ${product}`);
   }
-  const actual = discoverProductArtifacts(roots, [productRow]);
+  const actual = discoverProductArtifactsForSelection(roots, [productRow], lock.products);
   const envelope = (artifacts) => artifacts
     .map(({ product: owner, id, role, kind, target, identity, name, sha256, size }) =>
       `${owner}:${id}:${role}:${kind}:${target ?? ""}:${identity ?? ""}:${name}:${sha256}:${size}`)
