@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { currentVersion } from "./product-version.mjs";
 import {
@@ -19,6 +20,7 @@ import {
 
 const TOOL = "check_release_versions.mjs";
 const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
+const REGISTRY_INVENTORY_SCHEMA = "oliphaunt-release-registry-inventory-v1";
 
 function fail(message) {
   console.error(`${TOOL}: ${message}`);
@@ -104,6 +106,22 @@ function registryQueryProductPublication(product) {
     fail("registry publication helper returned malformed publication status");
   }
   return data;
+}
+
+function registryInventoryPackages(packages, context) {
+  return packages.map((pkg, index) => {
+    if (
+      pkg === null
+      || Array.isArray(pkg)
+      || typeof pkg !== "object"
+      || typeof pkg.kind !== "string"
+      || typeof pkg.name !== "string"
+      || typeof pkg.version !== "string"
+    ) {
+      fail(`${context}[${index}] is not a registry package identity`);
+    }
+    return { kind: pkg.kind, name: pkg.name, version: pkg.version };
+  });
 }
 
 function verifyGithubReleaseAssets(product, version) {
@@ -288,30 +306,36 @@ async function validateProduct(product, config, headRef) {
 async function validateRegistryPublication(products, graph, currentTagAtHead, headRef) {
   const graphProducts = graph.products;
   const headCommit = commitForRef(headRef);
+  const inventory = [];
   for (const product of products) {
     const config = graphProducts[product];
     const targets = assertStringList(config.publish_targets ?? [], `${product}.publish_targets`);
     const registryTargets = targets.filter((target) => REGISTRY_TARGETS.has(target));
     if (registryTargets.length === 0) {
+      inventory.push({ product, packages: [], missing: [], published: [] });
       continue;
     }
     if (currentTagAtHead[product] === true) {
       const { packages, missing, published } = registryQueryProductPublication(product);
       if (packages.length === 0) {
         console.log(`${product} has no external registry packages to check`);
-        continue;
+      } else {
+        console.log(
+          `${product} registry completion check: ${published.length} published, ${missing.length} missing`,
+        );
       }
-      console.log(
-        `${product} registry completion check: ${published.length} published, ${missing.length} missing`,
-      );
+      inventory.push({
+        product,
+        packages: registryInventoryPackages(packages, `${product}.packages`),
+        missing: registryInventoryPackages(missing, `${product}.missing`),
+        published: registryInventoryPackages(published, `${product}.published`),
+      });
       continue;
     }
-    const { packages, published } = registryQueryProductPublication(product);
+    const { packages, missing, published } = registryQueryProductPublication(product);
     if (packages.length === 0) {
       console.log(`${product} has no external registry packages to check`);
-      continue;
-    }
-    if (published.length > 0) {
+    } else if (published.length > 0) {
       if (typeof config.tag_prefix !== "string" || config.tag_prefix.length === 0) {
         fail(`${product} must declare tag_prefix`);
       }
@@ -322,12 +346,24 @@ async function validateRegistryPublication(products, graph, currentTagAtHead, he
           .map((item) => String(item.label))
           .join(", ")}; ${currentTag} is not yet exact at ${headCommit}. The protected publish workflow must prove these versions with the immutable bootstrap ledger before it stages exact-SHA tags; never create product tags manually.`,
       );
-      continue;
+    } else {
+      console.log(
+        `${product} registry unpublished check passed: ${packages.map((item) => String(item.label)).join(", ")}`,
+      );
     }
-    console.log(
-      `${product} registry unpublished check passed: ${packages.map((item) => String(item.label)).join(", ")}`,
-    );
+    inventory.push({
+      product,
+      packages: registryInventoryPackages(packages, `${product}.packages`),
+      missing: registryInventoryPackages(missing, `${product}.missing`),
+      published: registryInventoryPackages(published, `${product}.published`),
+    });
   }
+  return {
+    schema: REGISTRY_INVENTORY_SCHEMA,
+    source: { commit: headCommit },
+    products: [...products],
+    results: inventory,
+  };
 }
 
 function releaseProductProjectId(product, products, projects) {
@@ -446,6 +482,7 @@ function parseArgs(argv) {
     productsJson: undefined,
     headRef: "HEAD",
     checkRegistries: false,
+    registryInventoryOutput: "",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -467,8 +504,16 @@ function parseArgs(argv) {
       args.headRef = value.slice("--head-ref=".length);
     } else if (value === "--check-registries") {
       args.checkRegistries = true;
+    } else if (value === "--registry-inventory-output") {
+      if (index + 1 >= argv.length) {
+        fail("--registry-inventory-output requires a value");
+      }
+      args.registryInventoryOutput = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--registry-inventory-output=")) {
+      args.registryInventoryOutput = value.slice("--registry-inventory-output=".length);
     } else if (value === "-h" || value === "--help") {
-      console.log("usage: tools/release/check_release_versions.mjs [--products-json JSON] [--head-ref REF] [--check-registries]");
+      console.log("usage: tools/release/check_release_versions.mjs [--products-json JSON] [--head-ref REF] [--check-registries] [--registry-inventory-output FILE]");
       process.exit(0);
     } else {
       fail(`unknown argument ${value}`);
@@ -481,6 +526,9 @@ async function main(argv) {
   const args = parseArgs(argv);
   const graph = loadGraph();
   const selected = parseProducts(args.productsJson, graph);
+  if (args.registryInventoryOutput && !args.checkRegistries) {
+    fail("--registry-inventory-output requires --check-registries");
+  }
   const currentTagAtHead = {};
   for (const product of selected) {
     currentTagAtHead[product] = await validateProduct(product, graph.products[product], args.headRef);
@@ -488,7 +536,21 @@ async function main(argv) {
   await validateRuntimeTiedContribRelease(selected, graph);
   await validateReleaseDependencies(selected, graph);
   if (args.checkRegistries) {
-    await validateRegistryPublication(selected, graph, currentTagAtHead, args.headRef);
+    const inventory = await validateRegistryPublication(
+      selected,
+      graph,
+      currentTagAtHead,
+      args.headRef,
+    );
+    if (args.registryInventoryOutput) {
+      const output = path.resolve(ROOT, args.registryInventoryOutput);
+      mkdirSync(path.dirname(output), { recursive: true });
+      writeFileSync(output, `${JSON.stringify(inventory, null, 2)}\n`, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o644,
+      });
+    }
   }
   console.log("release version checks passed");
 }

@@ -26,13 +26,14 @@ export const REGISTRY_INPUT_VALIDATION_ALLOWANCE_SECONDS = 25 * 60;
 export const REGISTRY_MUTATION_ALLOWANCE_SECONDS = 190 * 60;
 export const REGISTRY_EVIDENCE_HANDOFF_ALLOWANCE_SECONDS = 15 * 60;
 
-export const FINALIZE_JOB_TIMEOUT_SECONDS = 120 * 60;
-export const FINALIZE_JOB_HARD_WINDOW_SECONDS = 114 * 60;
+export const FINALIZE_JOB_TIMEOUT_SECONDS = 124 * 60;
+export const FINALIZE_JOB_HARD_WINDOW_SECONDS = 118 * 60;
 export const FINALIZE_JOB_CLEANUP_SECONDS = 6 * 60;
 // Includes checkout, exact handoff installation, digest-verified Node/npm and
-// the remaining finalization toolchains. The resulting phase still preserves
-// a six-minute hard-window margin before the independent cleanup reserve.
-export const FINALIZE_SETUP_HANDOFF_ALLOWANCE_SECONDS = 60 * 60;
+// the remaining finalization toolchains plus the explicit source/controller
+// identity proof. The resulting phase still preserves a five-minute
+// hard-window margin before the independent cleanup reserve.
+export const FINALIZE_SETUP_HANDOFF_ALLOWANCE_SECONDS = 61 * 60;
 
 export const RELEASE_PHASE_BUDGETS = Object.freeze({
   "github-staged": Object.freeze({

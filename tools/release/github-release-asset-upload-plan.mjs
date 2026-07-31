@@ -6,10 +6,10 @@ import {
 } from "./upload_github_release_assets.mjs";
 import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from "./github-content-write-pacer.mjs";
 
-// The durable content-write pacer holds its filesystem lock while it waits for
-// the next 10-second reservation. Keep a complete upload wave below the
-// pacer's 60-second production lock-wait ceiling even when every lane reaches
-// the pacer at once. A five-lane wave has at most four predecessors (40s).
+// The durable content-write pacer allocates future request slots while holding
+// its filesystem lock only for short state transitions. Keep uploader
+// concurrency bounded so transport overlap, abort draining, and the complete
+// wave deadline remain predictable.
 export const MAX_CONCURRENT_GITHUB_RELEASE_ASSET_PRODUCTS = 5;
 export const GITHUB_RELEASE_ASSET_WAVE_OVERHEAD_MS = 60_000;
 export const GITHUB_RELEASE_ASSET_SELECTION_VERIFY_MS = 60_000;

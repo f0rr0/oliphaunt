@@ -19,10 +19,24 @@ function git(repo, args, { allowEmptyOutput = false, stdoutTerminator = undefine
   return result.stdout.trim();
 }
 
-export function assertQualifiedReplaySourceState({ repo, headRef, expectedSha }) {
+export function assertQualifiedReplaySourceState({
+  repo,
+  headRef,
+  expectedSha,
+  releaseSourceRef = headRef,
+  expectedReleaseSourceSha = expectedSha,
+}) {
   const normalizedExpected = String(expectedSha ?? "").toLowerCase();
   if (!EXACT_SHA.test(normalizedExpected)) {
     throw new Error("qualified release replay requires an exact 40-character RELEASE_HEAD_SHA");
+  }
+  const normalizedExpectedReleaseSource = String(
+    expectedReleaseSourceSha ?? "",
+  ).toLowerCase();
+  if (!EXACT_SHA.test(normalizedExpectedReleaseSource)) {
+    throw new Error(
+      "qualified release replay requires an exact 40-character RELEASE_SOURCE_SHA",
+    );
   }
   const checkoutHead = git(repo, ["rev-parse", "HEAD^{commit}"]).toLowerCase();
   if (checkoutHead !== normalizedExpected) {
@@ -33,6 +47,25 @@ export function assertQualifiedReplaySourceState({ repo, headRef, expectedSha })
   const resolved = git(repo, ["rev-parse", `${headRef}^{commit}`]).toLowerCase();
   if (resolved !== normalizedExpected) {
     throw new Error(`qualified release replay head mismatch: expected ${normalizedExpected}, got ${resolved}`);
+  }
+  const resolvedReleaseSource = git(
+    repo,
+    ["rev-parse", `${releaseSourceRef}^{commit}`],
+  ).toLowerCase();
+  if (resolvedReleaseSource !== normalizedExpectedReleaseSource) {
+    throw new Error(
+      "qualified release replay source mismatch: "
+        + `expected ${normalizedExpectedReleaseSource}, got ${resolvedReleaseSource}`,
+    );
+  }
+  const mergeBase = git(
+    repo,
+    ["merge-base", resolvedReleaseSource, resolved],
+  ).toLowerCase();
+  if (mergeBase !== resolvedReleaseSource) {
+    throw new Error(
+      `qualified release replay source ${resolvedReleaseSource} is not an ancestor of ${resolved}`,
+    );
   }
   const suppressedIndexEntries = git(repo, ["ls-files", "-v", "-z"], {
     allowEmptyOutput: true,

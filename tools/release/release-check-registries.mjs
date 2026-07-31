@@ -21,7 +21,11 @@ function productsJsonArg(args) {
 
 function main(argv) {
   if (argv.includes("-h") || argv.includes("--help")) {
-    console.log("usage: tools/release/release-check-registries.mjs [--products-json JSON] [--head-ref REF] [--require-identities]");
+    console.log(
+      "usage: tools/release/release-check-registries.mjs "
+        + "[--products-json JSON] [--head-ref REF] "
+        + "[--registry-inventory-output FILE] [--require-identities]",
+    );
     process.exit(0);
   }
 

@@ -13,7 +13,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { ROOT, run, runOrThrow } from "./release-cli-utils.mjs";
+import {
+  ROOT,
+  run,
+  runOrThrow,
+  uniqueValueFlag,
+} from "./release-cli-utils.mjs";
 import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
 import {
   DEFAULT_PUBLICATION_LOCK,
@@ -117,7 +122,8 @@ handled in Bun.
 Product dry-runs normally run the full release gate. The protected workflow may
 pass --qualified-ci after downloading the exact-SHA Qualified record. That mode
 reverifies the fixed candidate/plan/evidence paths, binds a clean checkout to
-RELEASE_HEAD_SHA, and then runs every live metadata check without replaying the
+RELEASE_HEAD_SHA, binds --head-ref to RELEASE_SOURCE_SHA for product identity
+and tag checks, and then runs every live metadata check without replaying the
 already-proved mutation unit tests. --qualified-ci is incompatible with
 --allow-dirty and is rejected outside GitHub Actions.
 
@@ -173,17 +179,18 @@ function writeNormalExecutionResult(value) {
 
 function removeValueFlag(args, name) {
   const output = [];
-  let selected = null;
+  let selected;
+  try {
+    selected = uniqueValueFlag(args, name);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
     if (value === name) {
-      if (index + 1 >= args.length) {
-        throw new Error(`${name} requires a value`);
-      }
-      selected = args[index + 1];
       index += 1;
     } else if (value.startsWith(`${name}=`)) {
-      selected = value.slice(name.length + 1);
+      continue;
     } else {
       output.push(value);
     }
@@ -226,6 +233,15 @@ const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "oliphaunt-node-direct",
 ]);
 
+function activePublicationSourceRef(environment = process.env) {
+  const configured = environment.RELEASE_SOURCE_SHA?.trim();
+  if (configured === undefined || configured === "") return "HEAD";
+  if (!/^[0-9a-f]{40}$/u.test(configured)) {
+    fail("RELEASE_SOURCE_SHA must be a full lowercase commit SHA when provided");
+  }
+  return configured;
+}
+
 if (command === "-h" || command === "--help") {
   usage();
   process.exit(0);
@@ -236,13 +252,26 @@ if (!COMMANDS.has(command)) {
   fail(`expected publish or publish-dry-run, got ${command ?? "<missing>"}`);
 }
 
+for (const valueFlag of [
+  "--carrier-id",
+  "--head-ref",
+  "--product",
+  "--products-json",
+  "--step",
+]) {
+  flagValue(argv.slice(1), valueFlag);
+}
+
 if (BOOTSTRAP_IDENTITIES && command !== "publish") {
   fail("--bootstrap-identities is valid only for publish");
 }
 if (command === "publish") {
   try {
     ACTIVE_PUBLICATION_LOCK = loadPublicationLock(PUBLICATION_LOCK_PATH);
-    assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, "HEAD");
+    assertPublicationLockSource(
+      ACTIVE_PUBLICATION_LOCK,
+      activePublicationSourceRef(),
+    );
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -258,19 +287,11 @@ function selectsProducts(args) {
 }
 
 function flagValue(args, flag) {
-  for (let index = 0; index < args.length; index += 1) {
-    const value = args[index];
-    if (value === flag) {
-      if (index + 1 >= args.length) {
-        fail(`${flag} requires a value`);
-      }
-      return args[index + 1];
-    }
-    if (value.startsWith(`${flag}=`)) {
-      return value.slice(flag.length + 1);
-    }
+  try {
+    return uniqueValueFlag(args, flag);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-  return null;
 }
 
 function unexpectedValueFlagArguments(args, allowed) {
@@ -1666,7 +1687,13 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   if (process.env.GITHUB_ACTIONS !== "true") {
     fail("--qualified-ci is valid only inside the protected GitHub Actions release workflow");
   }
-  for (const name of ["CI_RUN_ID", "GITHUB_REPOSITORY", "RELEASE_HEAD_SHA", "WASIX_EVIDENCE_REQUIRED"]) {
+  for (const name of [
+    "CI_RUN_ID",
+    "GITHUB_REPOSITORY",
+    "RELEASE_HEAD_SHA",
+    "RELEASE_SOURCE_SHA",
+    "WASIX_EVIDENCE_REQUIRED",
+  ]) {
     if (!process.env[name]?.trim()) {
       fail(`--qualified-ci requires ${name}`);
     }
@@ -1674,12 +1701,17 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   if (!["true", "false"].includes(process.env.WASIX_EVIDENCE_REQUIRED)) {
     fail("--qualified-ci requires WASIX_EVIDENCE_REQUIRED to be true or false");
   }
-  const headRef = flagValue(productDryRunPlan.passthrough, "--head-ref") ?? "HEAD";
+  const releaseSourceRef = flagValue(
+    productDryRunPlan.passthrough,
+    "--head-ref",
+  ) ?? "HEAD";
   try {
     assertQualifiedReplaySourceState({
       repo: ROOT,
-      headRef,
+      headRef: process.env.RELEASE_HEAD_SHA,
       expectedSha: process.env.RELEASE_HEAD_SHA,
+      releaseSourceRef,
+      expectedReleaseSourceSha: process.env.RELEASE_SOURCE_SHA,
     });
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));

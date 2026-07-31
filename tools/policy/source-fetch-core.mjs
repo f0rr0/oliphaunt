@@ -28,6 +28,9 @@ const COMMAND_MAX_BUFFER = 16 * 1024 * 1024;
 const DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 const CHECKOUT_MAX_ENTRIES = 500_000;
 const CHECKOUT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+const GNU_MIRROR_ORIGIN = 'https://ftpmirror.gnu.org';
+const GNU_CANONICAL_ARCHIVE_ORIGIN = 'https://ftp.gnu.org/gnu';
+const GNU_ARCHIVE_PATH_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 
 const temporaryPaths = new Set();
 const activePromotions = [];
@@ -110,6 +113,32 @@ export function curlDownloadArgs(url, output, {platform = process.platform} = {}
     '--output',
     output,
   ];
+}
+
+export function canonicalGnuArchiveFallbackUrl(pinnedUrl) {
+  let parsed;
+  try {
+    parsed = assertHttpsUrl(pinnedUrl);
+  } catch {
+    return undefined;
+  }
+  if (
+    parsed.origin !== GNU_MIRROR_ORIGIN ||
+    parsed.search !== '' ||
+    parsed.href !== pinnedUrl
+  ) {
+    return undefined;
+  }
+  const [, project, file, ...extra] = parsed.pathname.split('/');
+  if (
+    extra.length !== 0 ||
+    !GNU_ARCHIVE_PATH_COMPONENT.test(project ?? '') ||
+    !GNU_ARCHIVE_PATH_COMPONENT.test(file ?? '') ||
+    (!file.endsWith('.tar.gz') && !file.endsWith('.tgz'))
+  ) {
+    return undefined;
+  }
+  return `${GNU_CANONICAL_ARCHIVE_ORIGIN}/${project}/${file}`;
 }
 
 export function defaultRunProcess({command, args, cwd, env = process.env, label, timeoutMs}) {
@@ -635,11 +664,36 @@ export function createSourceFetcher({
       }));
   const download =
     downloadFile ??
-    ((source, output) =>
-      run('curl', curlDownloadArgs(source.url, output), {
-        label: `download ${source.name} from pinned HTTPS URL`,
-        timeoutMs: ARCHIVE_DOWNLOAD_TIMEOUT_MS,
-      }));
+    ((source, output) => {
+      try {
+        return run('curl', curlDownloadArgs(source.url, output), {
+          label: `download ${source.name} from pinned HTTPS URL`,
+          timeoutMs: ARCHIVE_DOWNLOAD_TIMEOUT_MS,
+        });
+      } catch (primaryError) {
+        const fallbackUrl = canonicalGnuArchiveFallbackUrl(source.url);
+        if (fallbackUrl === undefined) {
+          throw primaryError;
+        }
+        removePath(output);
+        try {
+          return run('curl', curlDownloadArgs(fallbackUrl, output), {
+            label: `download ${source.name} from canonical GNU HTTPS archive`,
+            timeoutMs: ARCHIVE_DOWNLOAD_TIMEOUT_MS,
+          });
+        } catch (fallbackError) {
+          const primaryDiagnostic =
+            primaryError instanceof Error ? primaryError.message : String(primaryError);
+          const fallbackDiagnostic =
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          throw new AggregateError(
+            [primaryError, fallbackError],
+            `download ${source.name} failed from pinned GNU mirror: ${primaryDiagnostic}; ` +
+              `canonical GNU fallback also failed: ${fallbackDiagnostic}`,
+          );
+        }
+      }
+    });
 
   function git(source, args, cwd, env, options = {}) {
     // Pinned source bytes are part of release fingerprints and legal-data

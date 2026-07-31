@@ -7,6 +7,7 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import {
+  assertLockedProductArtifacts,
   buildPublicationCandidate,
   discoverPublicationArtifacts,
   discoverProductArtifacts,
@@ -1063,6 +1064,11 @@ describe("publication artifact discovery and freezing", () => {
       "release-input:swiftpm-extension-input.schema.json",
       "release-input:swiftpm-release-tree",
     ]);
+    expect(() => assertLockedProductArtifacts(
+      { productArtifacts: artifacts, products: catalog.products },
+      product.id,
+      [sdk, fixture],
+    )).not.toThrow();
     const frozenFixture = swiftArtifacts.find(({ id }) => id === "release-input:swiftpm-extension-consumer-fixture");
     writeFileSync(path.join(fixture, "Sources/OliphauntExtensionPgtap/Resources/extension-artifact/pgtap.control"), "tampered\n");
     const tamperedFixture = discoverProductArtifacts(selectedRoots, catalog.products)
