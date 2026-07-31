@@ -16,6 +16,7 @@ import { test } from "node:test";
 import {
   DEDICATED_GATE_TESTS,
   MUTATION_TEST_TIMEOUT_MS,
+  mutationTestEnvironment,
   mutationTests,
 } from "./release-check.mjs";
 
@@ -184,6 +185,7 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   );
   assert.equal(MUTATION_TEST_TIMEOUT_MS, 30_000);
   assert.match(releaseCheck, /`--timeout=\$\{MUTATION_TEST_TIMEOUT_MS\}`/u);
+  assert.match(releaseCheck, /environment: mutationTestEnvironment[(][)]/u);
   assert.doesNotMatch(releaseCheck, /metadata-only/u);
   const publisher = read("tools/release/release-publish.mjs");
   assert.match(publisher, /qualifiedCi && allowDirty/u);
@@ -192,6 +194,21 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   assert.match(publisher, /verify-release-candidate[.]mjs/u);
   assert.match(publisher, /target\/release-candidate\/oliphaunt-release-candidate[.]json/u);
   assert.match(publisher, /release-metadata-check[.]mjs/u);
+});
+
+test("release mutation tests cannot consume a live publish request journal", () => {
+  assert.deepEqual(
+    mutationTestEnvironment({
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "f0rr0/oliphaunt",
+      GITHUB_RUN_ID: "30593859032",
+      KEEP_ME: "preserved",
+      OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: "/live/journal.json",
+      OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: "true",
+      RELEASE_HEAD_SHA: "a".repeat(40),
+    }),
+    { KEEP_ME: "preserved" },
+  );
 });
 
 test("the canonical release gate is the single hosted repository-graph validator", () => {

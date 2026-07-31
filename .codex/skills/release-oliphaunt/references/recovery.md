@@ -5,9 +5,87 @@
 1. Freeze further publication and save the workflow URL, candidate SHA, publication lock, complete checkpoint chain, and registry responses.
 2. Validate every checkpoint digest and previous-checkpoint link. Confirm the source SHA/tree, lock/catalog digests, package envelope, and selected products are unchanged. Never hand-edit or truncate the chain.
 3. Query every expected identity and GitHub tag/release. Classify it as absent, present-and-byte-matching, or conflicting. An existence-only response is not matching evidence.
-4. Fix only the failed phase. Requalify a new commit if repository code/configuration changes; never attach old artifacts or a prior ledger to it.
+4. Fix only the failed phase. A product-semantic code/configuration change
+   requires a new version, new source commit, and new qualification. A
+   zero-owner control-only fix may use the explicit dual-identity exception
+   below; outside that exception, never attach old artifacts or a prior ledger
+   to a new commit.
 5. Resume in dependency order from the newest validated checkpoint. Re-inventory the complete exact lock first: a carrier accepted before an ambiguous response or checkpoint interruption is recovery input, not permission to upload again. Skip it only after its registry checksum/SRI/payload/file manifest matches the frozen bytes. Bootstrap resumes with one sequential Cargo lane and one sequential npm lane, preserves cross-lane dependency barriers, and serializes canonical checkpoint appends.
 6. Seal bootstrap only after every expected identity has a receipt. Promote draft GitHub releases only after the final all-registry receipt proof and exact-lock anonymous public-consumer probes produce their deterministic receipt-bound evidence. Retry a transient visibility failure only from a fresh cache under the original shared deadline; do not retry an exact identity/source/closure mismatch. Swift remains a source-tag/manifest probe before promotion because draft binary-target assets are not anonymously public. npm's normal tag is attached by its immutable version publish because OIDC does not authorize a later dist-tag mutation.
+
+### Same-version control recovery after partial publication
+
+Use this path only when at least one immutable carrier is already public, no
+product tag/release has been promoted, and the required repository fix has no
+release-semantic product owner.
+
+1. Keep the original release-bump commit and public history immutable. Every
+   recovery commit must be a linear descendant with subject
+   `fix(release): ...` and exactly one
+   `Oliphaunt-Release-Recovery-Of: <lowercase-full-release-sha>` trailer naming
+   the same original generated release-bump commit.
+2. `verify-publication-candidate.mjs` must prove the anchor is the valid
+   release-bump commit for the exact selected products, every intervening
+   commit has the same authorization, release metadata and versions are
+   unchanged, the authoritative base/head release plan selects zero products,
+   and every changed shared path has zero owners in
+   `release-semantic-inputs.toml`. Do not use this path for a source, carrier,
+   compatibility, target-support, version, changelog, or owned byte-producer
+   change.
+3. Name the identities explicitly. The trailer target is the immutable
+   **publication source**: it owns the original commit/tree, product bytes,
+   versions, approved publication lock/capsule, terminal bootstrap ledger,
+   product tags/releases/assets, Swift source tag, registry receipts, and
+   consumer-facing provenance. The later current-main recovery head is only the
+   **controller**: it owns workflow code, its fresh CI/run identity, the release
+   transport tag, OIDC claims, request journals, and pacing.
+4. Run fresh complete CI on the controller. Then run `publish-dry-run` on that
+   controller to produce and approve recovery-control equivalence evidence.
+   This dry-run must not upload a replacement publication lock or bootstrap
+   capsule.
+5. Resolve the committed immutable recovery record. Select the original source
+   SHA/tree, complete payload CI run, approved dry-run lock/capsule, and terminal
+   bootstrap ledger only by the exact recorded workflow run and artifact
+   ID/digest/size. For the current first-release recovery, compare the complete
+   observed CI inventory with all 73 recorded artifacts. Do not select “latest,”
+   fall back to artifact name alone, or accept a merely same-SHA run.
+6. Reassemble only from those pinned original payload artifacts. Replay
+   publication-lock construction at the original source and require the
+   resulting file to be byte-identical to the approved original lock, including
+   the `source` object and `lockDigest`. Preserve the controller/source
+   equivalence receipt. A lock rebound to the controller is a provenance
+   mismatch even when every package-envelope byte is equal.
+7. Verify the pinned terminal source-bound bootstrap ledger against the
+   original lock. Recovery bootstrap is disabled: do not create a new
+   controller-bound ledger, request bootstrap credentials, or invoke
+   `publish-bootstrap`.
+8. Derive the exhaustive Cargo/npm/Maven/JSR inventory from the original frozen
+   lock so generated payload-part carriers cannot disappear behind the static
+   catalog. A matching public identity is a read-only recovery skip and must
+   never reach a publisher. Publish an absent exact identity once from the
+   frozen source payload. Any byte conflict stops the release and requires a
+   new version.
+9. Stage and finalize every product tag, GitHub release, asset, Swift source
+   tag, registry receipt, product subject/source field, and public-consumer
+   proof at the original publication source. Use the controller-issued custom
+   recovery predicate to bind the fresh controller CI and approved control
+   equivalence to that frozen source evidence; never pretend the original
+   payload was built by the controller. Complete the original Release Please PR
+   lifecycle named by the trailer.
+10. Bootstrap and publish continuations are disabled for dual-identity
+    recovery. If any recovery job is interrupted, rerun root `publish` on the
+    current controller. It must reselect the same pinned source evidence,
+    byte-reconcile already completed immutable state, and write only identities
+    that remain absent.
+
+This is not the normal response to a CI-only change. Before a release PR, pure
+control-plane workflow, test, documentation, and transport-only commits select
+no products; Release Please creates no release and no registry operation runs.
+A workflow or action change that alters compiler, SDK, build, source-selection,
+target, or packaging semantics is product-semantic regardless of its `ci:`
+subject and requires the affected product versions to advance. The exception
+exists only to finish an already-partial immutable release without fabricating
+a duplicate version.
 
 ## Pre-publication main-history repair
 

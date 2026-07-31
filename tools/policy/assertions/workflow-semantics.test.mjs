@@ -1990,7 +1990,7 @@ test("dry-run evidence cannot be relabeled as publish evidence or omit the capsu
       .replace("--artifact oliphaunt-bootstrap-capsule", "");
   assert.throws(
     () => assertReleaseOperationWorkflow(missingCapsule),
-    /approved dry-run selection must actively bind --artifact oliphaunt-bootstrap-capsule/u,
+    /approved source-bound dry-run selection must actively bind --artifact oliphaunt-bootstrap-capsule/u,
   );
 
   const mislabeledLock = candidate();
@@ -2235,4 +2235,147 @@ test("Release Please lifecycle checks are bounded, exact-SHA-bound, and non-bypa
     () => assertReleaseWorkflow(extraEarlyMutation),
     /performs unapproved release_please_lifecycle mutation/u,
   );
+});
+
+test("same-version recovery identity and byte-equivalence gates are non-bypassable", () => {
+  for (const [name, mutate, pattern] of [
+    [
+      "publication identity verifier",
+      (workflow) => {
+        step(workflow, "publish", "verify_publication_candidate").run = "echo assumed";
+      },
+      /publication[/]lifecycle identity|same-version recovery candidate verifier/u,
+    ],
+    [
+      "lifecycle identity output",
+      (workflow) => {
+        step(workflow, "publish", "assert_release_please_markable").run =
+          'tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs assert-markable --release-sha "$RELEASE_HEAD_SHA" --base main';
+      },
+      /markability assertion/u,
+    ],
+    [
+      "immutable-envelope proof",
+      (workflow) => {
+        step(workflow, "publish", "verify_release_recovery_lock")["continue-on-error"] = true;
+      },
+      /original and byte-identical replay lock/u,
+    ],
+    [
+      "equivalence evidence",
+      (workflow) => {
+        step(
+          workflow,
+          "publish",
+          "preserve_release_recovery_equivalence",
+        ).with.path = "target/release/unverified.json";
+      },
+      /artifact path must be target[/]release[/]recovery-evidence|oliphaunt-release-recovery-equivalence/u,
+    ],
+    [
+      "source-bound original approval",
+      (workflow) => {
+        step(workflow, "publish", "approved_publication_lock").run =
+          step(workflow, "publish", "approved_publication_lock").run
+            .replace('approval_sha="$RELEASE_SOURCE_SHA"', 'approval_sha="$RELEASE_CONTROL_SHA"');
+      },
+      /approved source-bound dry-run selection/u,
+    ],
+    [
+      "bootstrap recovery rejection",
+      (workflow) => {
+        namedStep(
+          workflow,
+          "publish-bootstrap",
+          "Reject same-version recovery bootstrap mutation",
+        ).run = "echo assumed-safe";
+      },
+      /same-version recovery bootstrap rejection/u,
+    ],
+    [
+      "pinned frozen-payload CI inventory",
+      (workflow) => {
+        step(workflow, "publish", "recovery_payload_ci_qualification").env
+          .PINNED_ARTIFACT_METADATA_JSON = "[]";
+      },
+      /exact pinned frozen-payload CI run and complete artifact inventory/u,
+    ],
+    [
+      "committed recovery provenance",
+      (workflow) => {
+        step(workflow, "publish", "recovery_source").run = "echo assumed";
+      },
+      /committed same-version recovery provenance selector/u,
+    ],
+    [
+      "byte-identical lock replay",
+      (workflow) => {
+        step(workflow, "publish", "freeze_publication_lock").run =
+          step(workflow, "publish", "freeze_publication_lock").run
+            .replace('cmp -s "$original_lock" "$lock_output"', "true");
+      },
+      /byte-identical source-bound recovery lock replay/u,
+    ],
+    [
+      "controller recovery approval",
+      (workflow) => {
+        step(workflow, "publish", "approved_recovery_control").run =
+          step(workflow, "publish", "approved_recovery_control").run
+            .replace('"$RELEASE_CONTROL_SHA"', '"$RELEASE_SOURCE_SHA"');
+      },
+      /controller-bound recovery approval/u,
+    ],
+    [
+      "pinned terminal bootstrap ledger",
+      (workflow) => {
+        namedStep(workflow, "publish", "Download immutable registry bootstrap ledger").env
+          .PINNED_LEDGER_RUN_ID = "0";
+      },
+      /exact committed terminal ledger/u,
+    ],
+    [
+      "custom recovery attestation pin",
+      (workflow) => {
+        step(workflow, "publish", "attest_recovery_promotion").uses =
+          "actions/attest@0000000000000000000000000000000000000000";
+      },
+      /pinned custom-predicate attestation action/u,
+    ],
+    [
+      "ordinary provenance excluded from recovery",
+      (workflow) => {
+        step(workflow, "publish", "attest_broker").if =
+          step(workflow, "publish", "attest_broker").if
+            .replace(" && steps.verify_publication_candidate.outputs.mode != 'release-recovery'", "");
+      },
+      /condition does not guarantee/u,
+    ],
+    [
+      "registry recovery continuation rejection",
+      (workflow) => {
+        namedStep(
+          workflow,
+          "publish-registry",
+          "Reject same-version recovery continuation",
+        ).run = "echo assumed-safe";
+      },
+      /same-version recovery continuation rejection/u,
+    ],
+    [
+      "final lifecycle identity verifier",
+      (workflow) => {
+        step(workflow, "publish-finalize", "finalize_publication_candidate").run =
+          "echo assumed";
+      },
+      /final release lifecycle identity verifier|publication[/]lifecycle identity/u,
+    ],
+  ]) {
+    const bypass = candidate();
+    mutate(bypass);
+    assert.throws(
+      () => assertReleaseWorkflow(bypass),
+      pattern,
+      name,
+    );
+  }
 });

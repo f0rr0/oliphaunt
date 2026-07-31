@@ -11,7 +11,7 @@ export const RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES = Object.freeze({
   preserveConsumerEvidence: 2,
   reverifyPublicationLock: 2,
   preservePacingEvidence: 2,
-  promoteDrafts: 12,
+  promoteDrafts: 16,
 });
 
 export const RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS = Object.values(
@@ -28,4 +28,4 @@ export const RELEASE_MINIMUM_FINALIZATION_SECONDS =
 // Registry mutation stops two minutes before the finalization entry gate's
 // minimum, so the registry executor can seal local receipts and return without
 // consuming the protected finalization/cleanup envelope.
-export const RELEASE_FINALIZATION_RESERVE_SECONDS = 50 * 60;
+export const RELEASE_FINALIZATION_RESERVE_SECONDS = 54 * 60;

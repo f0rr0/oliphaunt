@@ -16,7 +16,9 @@ moon run :test
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.
 The protected `publish-dry-run` operation is a release-candidate check: run it
 from the GitHub `Release` workflow after the exact release-bump commit has a
-successful `Qualified` CI record. It is not a routine source-PR check.
+successful `Qualified` CI record. The documented same-version control recovery
+uses a separately qualified linear recovery head bound to that original
+release-bump commit. It is not a routine source-PR check.
 
 Install local hooks with:
 
@@ -53,3 +55,9 @@ owns exact-SHA product tags and draft GitHub releases. Product-local release
 metadata owns publish targets and artifact shape; Moon dependency scopes
 provide release coupling. See `docs/maintainers/release.md` for release intent,
 trusted publishing, and workflow details.
+
+A pure control-plane `ci:` change has no release-semantic owners, so preparing
+a release after only that change creates no release PR and performs no registry
+operation. A workflow or action change that alters compiler, SDK, build,
+source-selection, target, or packaging behavior is product-semantic regardless
+of its commit label and must advance the affected product versions.

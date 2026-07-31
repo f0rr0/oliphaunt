@@ -28,6 +28,7 @@ import {
   stableJson,
   validateReleaseExecutionResult,
 } from "./release-continuation-contract.mjs";
+import { resolveReleaseSourceCommit } from "./release-source-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_RESULT = "target/release/normal-publication-execution-result.json";
@@ -188,7 +189,11 @@ function atomicJson(file, value) {
 
 export async function main(environment = process.env) {
   const selectedProducts = products(required("PRODUCTS_JSON", environment));
-  const releaseCommit = required("RELEASE_HEAD_SHA", environment);
+  const releaseControlCommit = required("RELEASE_HEAD_SHA", environment);
+  const releaseSourceCommit = resolveReleaseSourceCommit({
+    controlCommit: releaseControlCommit,
+    sourceCommit: environment.RELEASE_SOURCE_SHA,
+  }, { prefix: "record-normal-publication-capacity-deferral" });
   const admission = validateCapacityDeferralAdmission({
     authoritativeWindowSeconds: positiveInteger(
       required("NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS", environment),
@@ -208,7 +213,7 @@ export async function main(environment = process.env) {
   });
   const lockFile = path.resolve(ROOT, required("PUBLICATION_LOCK_PATH", environment));
   const lock = loadPublicationLock(lockFile);
-  assertPublicationLockSource(lock, releaseCommit);
+  assertPublicationLockSource(lock, releaseSourceCommit);
   const plan = normalPublicationPlan(lock, selectedProducts);
   const frozenPlanFile = path.resolve(
     ROOT,
