@@ -49,6 +49,11 @@ static void liboliphaunt_smoke_static_init(void) {
 
 static void push_query(unsigned char **buf, size_t *len, const char *sql) {
     size_t sql_len = strlen(sql) + 1;
+    if (sql_len == 0 || sql_len > SIZE_MAX - 5) {
+        *buf = NULL;
+        *len = 0;
+        return;
+    }
     size_t frame_len = sql_len + 4;
     *len = frame_len + 1;
     *buf = (unsigned char *)calloc(*len, 1);
