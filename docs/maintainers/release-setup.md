@@ -1,6 +1,6 @@
 # Release setup
 
-Status: normative external-setup guide. Last verified: 2026-07-28. Owner: repository maintainers.
+Status: normative external-setup guide. Last verified: 2026-07-30. Owner: repository maintainers.
 
 This document covers state that cannot live in the repository. The executable
 contract is the direct least-privilege workflow in
@@ -128,6 +128,10 @@ only their required staging, registry, or finalization grants. Bootstrap's
 content write is solely for the root generation to create the immutable
 release transport tag immediately before its first registry mutation;
 continuation generations do not create, move, or delete repository refs.
+The normal registry job also declares `contents: write` because GitHub's release
+list omits drafts from tokens without push access. Its workflow contract permits
+only the live `manage-release-drafts.mjs verify --state staged` read at that
+boundary and rejects staging or promotion there.
 Dry-run and publish share one YAML-anchored step list but remain separate
 permission and environment boundaries.
 
@@ -161,9 +165,9 @@ authorization shortcut:
 - `ready` is valid only after every reviewed short-lived Cargo/npm token
   required by the approved lock has been installed for an imminent
   `publish-bootstrap` dispatch; it accepts either registry token or both, and
-  requires at least one. The current first release requires both registries;
-  a later lock that introduces identities in only one registry must not force
-  provisioning an unrelated credential; and
+  requires at least one. Provision only the registries whose exact locked
+  identities remain absent. A recovery in which every selected Cargo/npm
+  version already matches stays `idle` and requires neither token; and
 - `retired` is valid only after bootstrap sealed, trusted publishers were
   configured, and both tokens were revoked and removed; it also requires the
   token names to be absent.
@@ -181,7 +185,7 @@ release.
 
 ## Registry ownership
 
-The publication catalog is the identity inventory. Generate/query it rather than maintaining a package list in this document. Bootstrap accepts exactly two registry states: the locked first version is already public with lock-matching bytes (a recovery skip), or the package name is wholly absent (a first-version mutation). An existing name without the locked exact version is a hard blocker and must use a later normal release; it is never treated as bootstrap work. A resumed run reconciles and checkpoints every matching public version, then invokes publishers only for names that remain absent. A conflicting public identity is a blocker, not a reason to rename an artifact silently.
+The publication catalog defines stable carrier topology; the frozen publication lock is the exhaustive candidate identity inventory, including generated payload parts. Generate/query them rather than maintaining a package list in this document. Bootstrap accepts exactly two registry states: the locked first version is already public with lock-matching bytes (a recovery skip), or the package name is wholly absent (a first-version mutation). An existing name without the locked exact version is a hard blocker and must use a later normal release; it is never treated as bootstrap work. A resumed run reconciles and checkpoints every matching public version, then invokes publishers only for names that remain absent. A conflicting public identity is a blocker, not a reason to rename an artifact silently.
 
 ### crates.io
 
@@ -392,7 +396,7 @@ undeclared Kotlin Multiplatform/JVM root module.
 Product tags use `<product>-v<version>`. SwiftPM additionally consumes an unscoped semantic tag; because legacy unscoped tags occupy versions through `0.5.1`, the first Oliphaunt Swift version is `0.6.0`.
 
 Release Please owns product versions, changelogs, and the generated release PR.
-The root protected publish job first reads
+On the normal single-identity path, the root protected publish job first reads
 `oliphaunt-release-transport/<full-sha>`. When it is absent, or the job is on
 its first run attempt, the helper validates current `main` before creating or
 accepting the exact direct-commit tag. Only a genuine GitHub rerun
@@ -483,16 +487,32 @@ exact, still-unpublished first-release rollback qualification transport in
 step 2 above; it is a direct child of the displaced bump solely to prove the
 corrected unreleased introduction tree.
 
-`release_commit` is only an equality assertion for the workflow commit; it
+On the normal single-identity path, `release_commit` is only an equality
+assertion for the workflow commit; it
 cannot select an older commit. On a root dispatch, the workflow ref must be
 `main`; on a continuation it must be
 `oliphaunt-release-transport/<release_commit>`. Release tooling fixes create a
-new candidate SHA and require new qualification. There is no temporary Release
-Please target branch.
+new candidate SHA and require new qualification. The same-version dual-identity
+exception below still uses the current controller as `release_commit`; it
+resolves the older publication source only through the immutable recovery
+record. There is no temporary Release Please target branch.
 
 ## Recovery
 
-Publishing is resumable but not cross-registry atomic. On failure, preserve and validate the complete content-addressed checkpoint chain, then inventory all selected identities against the frozen lock. Matching immutable versions may be skipped only after registry bytes are proved; a mismatched version/tag/asset or ledger checkpoint stops the release. Repository changes require a new version and new exact-SHA qualification. Use `.codex/skills/release-oliphaunt/references/recovery.md` for the recovery and pre-publication history-repair procedure.
+Publishing is resumable but not cross-registry atomic. On failure, preserve and validate the complete content-addressed checkpoint chain, then inventory all selected identities against the frozen lock. Matching immutable versions may be skipped only after registry bytes are proved; a mismatched version/tag/asset or ledger checkpoint stops the release. Product-semantic repository changes require a new version and new exact-SHA qualification.
+
+A zero-owner release-control/test fix after partial immutable publication may
+instead use the documented same-version recovery. It keeps the original
+release commit/tree, exact pinned payload CI inventory, approved lock/capsule,
+and terminal ledger as the publication source. A later current-main controller
+receives fresh full CI and an approved control-equivalence dry-run, but supplies
+only workflow/transport/OIDC/pacing code. Lock replay must be byte-identical to
+the original, including source and lock digest; tags/releases/assets remain
+source-bound. Recovery bootstrap and continuations are disabled, and an
+interruption is resumed through an idempotent root `publish` rerun. No matching
+public immutable identity is uploaded again. Use
+`.codex/skills/release-oliphaunt/references/recovery.md` for that recovery and
+the separate pre-publication history-repair procedure.
 
 ## External readiness checklist
 

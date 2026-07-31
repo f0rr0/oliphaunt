@@ -20,6 +20,15 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 const MAX_MUTATION_CAPTURE_BYTES = 4 * 1024 * 1024;
 const RECONCILIATION_KINDS = new Set(["absent", "conflict", "desired", "unchanged"]);
 
+export const GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS =
+  Object.freeze([2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+export const GITHUB_RELEASE_SNAPSHOT_MAX_READS =
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.length + 1;
+export const GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS = 10_000;
+export const GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS = 1;
+export const GITHUB_RELEASE_SNAPSHOT_VISIBILITY_WINDOW_MS =
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
+
 export class GitHubReleaseMutationError extends Error {
   constructor(message, options = {}) {
     super(message, options);
@@ -27,8 +36,20 @@ export class GitHubReleaseMutationError extends Error {
   }
 }
 
+export class GitHubReleaseSnapshotRaceError extends GitHubReleaseMutationError {
+  constructor(message, { observedRelease = undefined, ...options } = {}) {
+    super(message, options);
+    this.name = "GitHubReleaseSnapshotRaceError";
+    this.observedRelease = observedRelease;
+  }
+}
+
 function mutationError(message, options = {}) {
   return new GitHubReleaseMutationError(message, options);
+}
+
+function releaseSnapshotRaceError(message, options = {}) {
+  return new GitHubReleaseSnapshotRaceError(message, options);
 }
 
 function nonNegativeInteger(environment, name, fallback, { maximum = Number.MAX_SAFE_INTEGER, minimum = 0 } = {}) {
@@ -265,11 +286,27 @@ export function readReleaseMapSync(repo, options = {}) {
   const label = "GitHub release list";
   const releases = githubPaginatedArrayReadSync(repo, "releases", { ...options, label });
   const byTag = new Map();
+  const byId = new Map();
   for (const release of releases) {
     assertReleaseShape(release);
+    const priorId = byId.get(release.id);
+    if (priorId !== undefined) {
+      const stableFields = ["body", "name", "prerelease", "tag_name", "target_commitish"];
+      const changedField = stableFields.find((field) => priorId[field] !== release[field]);
+      if (changedField !== undefined) {
+        throw mutationError(
+          `GitHub returned release ${release.id} more than once with conflicting ${changedField} metadata`,
+        );
+      }
+      throw releaseSnapshotRaceError(
+        `GitHub release list repeated release ${release.id} across one paginated snapshot`,
+        { observedRelease: release },
+      );
+    }
     if (byTag.has(release.tag_name)) {
       throw mutationError(`GitHub returned duplicate releases for tag ${release.tag_name}`);
     }
+    byId.set(release.id, release);
     byTag.set(release.tag_name, release);
   }
   return byTag;

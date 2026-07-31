@@ -27,9 +27,13 @@ function run(command, args) {
 }
 
 requireEnv("GITHUB_TOKEN");
-const releaseSha = process.env.RELEASE_HEAD_SHA ?? process.env.GITHUB_SHA ?? "";
+const releaseSha =
+  process.env.RELEASE_ARTIFACT_SHA
+  ?? process.env.RELEASE_HEAD_SHA
+  ?? process.env.GITHUB_SHA
+  ?? "";
 if (releaseSha === "") {
-  fail("RELEASE_HEAD_SHA or GITHUB_SHA is required", 2);
+  fail("RELEASE_ARTIFACT_SHA, RELEASE_HEAD_SHA, or GITHUB_SHA is required", 2);
 }
 
 // Installs the portable and AOT WASIX runtime outputs from the selected release

@@ -5,6 +5,7 @@ import {
   assertReleasePhaseBudget,
   FINALIZE_JOB_HARD_WINDOW_SECONDS,
   FINALIZE_JOB_TIMEOUT_SECONDS,
+  FINALIZE_SETUP_HANDOFF_ALLOWANCE_SECONDS,
   GITHUB_STAGE_HANDOFF_ALLOWANCE_SECONDS,
   GITHUB_STAGE_JOB_HARD_WINDOW_SECONDS,
   GITHUB_STAGE_JOB_TIMEOUT_SECONDS,
@@ -34,6 +35,12 @@ test("all three normal release phases retain explicit positive margins", () => {
   assert.equal(registry.components.registryMutation, 190 * 60);
   assert.equal(REGISTRY_MUTATION_ALLOWANCE_SECONDS, 190 * 60);
   assert.equal(finalize.jobTimeoutSeconds, FINALIZE_JOB_TIMEOUT_SECONDS);
+  assert.equal(FINALIZE_SETUP_HANDOFF_ALLOWANCE_SECONDS, 61 * 60);
+  assert.equal(
+    finalize.components.checkoutToolchainsAndReceiptHandoff,
+    FINALIZE_SETUP_HANDOFF_ALLOWANCE_SECONDS,
+  );
+  assert.equal(finalize.hardWindowMarginSeconds, 5 * 60);
 });
 
 test("stage equality and overflow fail closed rather than consuming cleanup", () => {

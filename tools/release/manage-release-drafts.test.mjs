@@ -7,8 +7,12 @@ import test from "node:test";
 
 import {
   assertResumableReleaseMetadata,
+  createReleaseDraftOperationBudget,
   exactReleaseMetadata,
   exactTagRefPayload,
+  GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS,
+  GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS,
+  GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS,
   promoteExactReleaseSync,
   readSelectedRemoteTagMapSync,
   reconcileSelectedReleasesSync,
@@ -16,6 +20,12 @@ import {
   stageExactDraftReleaseSync,
   stageExactTagSync,
 } from "../../.github/scripts/manage-release-drafts.mjs";
+import {
+  GitHubReleaseSnapshotRaceError,
+  GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+  GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS,
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS,
+} from "./github-release-mutations.mjs";
 
 function budget() {
   return { deadlineMs: 180_000, environment: {}, now: () => 0, startedAtMs: 0 };
@@ -279,6 +289,7 @@ test("batch promotion resumes an exact partially public release set without repl
     readRelease: (tag) => releases.get(tag) ?? null,
     readReleaseMap: () => new Map(releases),
     readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: () => {},
   };
   const reconcile = () => reconcileSelectedReleasesSync({
     budget: budget(),
@@ -290,16 +301,23 @@ test("batch promotion resumes an exact partially public release set without repl
     selected,
   }, dependencies);
 
-  assert.throws(reconcile, /exhausted 3 mutation attempt.*runner interruption/u);
+  assert.throws(
+    reconcile,
+    (cause) =>
+      cause.cause instanceof Error
+      && cause.cause.message === "simulated runner interruption before PATCH"
+      && /did not converge to public state/u.test(cause.message)
+      && /first failure for/u.test(cause.message),
+  );
   assert.equal(releases.get(selected[0].tag).draft, false);
   assert.equal(releases.get(interruptedTag).draft, true);
-  assert.equal(releases.get(selected[2].tag).draft, true);
+  assert.equal(releases.get(selected[2].tag).draft, false);
 
   interrupted = false;
   assert.doesNotThrow(reconcile);
   assert.ok([...releases.values()].every(({ draft }) => draft === false));
   assert.equal(mutations.filter((tag) => tag === selected[0].tag).length, 1);
-  assert.equal(mutations.filter((tag) => tag === interruptedTag).length, 5);
+  assert.equal(mutations.filter((tag) => tag === interruptedTag).length, 2);
   assert.equal(mutations.filter((tag) => tag === selected[2].tag).length, 1);
 });
 
@@ -511,6 +529,572 @@ test("the 49-product first release stays inside a bounded GitHub REST request bu
   assert.equal(restRequests, 153, "all four commands use only 153 REST requests for 49 products");
   assert.equal(tagSnapshots, 7);
   assert.ok(restRequests < 200);
+});
+
+test("batch staging waits for the complete draft list without replaying successful POSTs", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const tags = new Map(selected.map(({ tag }) => [tag, null]));
+  const releases = new Map();
+  const mutations = [];
+  const sleeps = [];
+  let releaseListReads = 0;
+  const dependencies = {
+    mutationOptions,
+    mutateRelease: ({ metadata }) => {
+      mutations.push(metadata.tag_name);
+      const release = { ...metadata, draft: true, id: releases.size + 1 };
+      releases.set(metadata.tag_name, release);
+      return JSON.stringify(release);
+    },
+    mutateTag: ({ headRef: target, tag }) => {
+      const ref = { ref: `refs/tags/${tag}`, sha: target, type: "commit" };
+      tags.set(tag, ref);
+      return JSON.stringify({ ref: ref.ref, object: { sha: ref.sha, type: ref.type } });
+    },
+    readReleaseMap: () => {
+      releaseListReads += 1;
+      if (releaseListReads === 1) return new Map();
+      if (releaseListReads <= 4) {
+        return new Map([...releases].filter(([tag]) => tag !== selected.at(-1).tag));
+      }
+      return new Map(releases);
+    },
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+  };
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "stage",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, dependencies);
+
+  assert.deepEqual(mutations, selected.map(({ tag }) => tag));
+  assert.equal(releaseListReads, 5);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.slice(0, 3));
+});
+
+test("an applied draft POST with a lost response is observed before any replay", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const tag = selected[0].tag;
+  const metadata = selected[0].metadata;
+  const tags = new Map([[tag, null]]);
+  const releases = new Map();
+  const sleeps = [];
+  let releaseListReads = 0;
+  let releaseMutations = 0;
+  const dependencies = {
+    mutationOptions,
+    mutateRelease: () => {
+      releaseMutations += 1;
+      releases.set(tag, { ...metadata, draft: true, id: 1 });
+      throw new Error("response lost after draft creation");
+    },
+    mutateTag: ({ headRef: target }) => {
+      const ref = { ref: `refs/tags/${tag}`, sha: target, type: "commit" };
+      tags.set(tag, ref);
+      return JSON.stringify({ ref: ref.ref, object: { sha: ref.sha, type: ref.type } });
+    },
+    readRelease: () => {
+      throw new Error("draft recovery must not use the by-tag REST endpoint");
+    },
+    readReleaseMap: () => {
+      releaseListReads += 1;
+      if (releaseListReads <= 3) return new Map();
+      return new Map(releases);
+    },
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+  };
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "stage",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, dependencies);
+
+  assert.equal(releaseMutations, 1);
+  assert.equal(releaseListReads, 5);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.slice(0, 2));
+});
+
+test("failed draft visibility preserves the original mutation cause without replay", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const tag = selected[0].tag;
+  const tags = new Map([[tag, null]]);
+  const mutationFailure = new Error("HTTP 503 after draft POST");
+  let releaseMutations = 0;
+  const dependencies = {
+    mutationOptions,
+    mutateRelease: () => {
+      releaseMutations += 1;
+      throw mutationFailure;
+    },
+    mutateTag: ({ headRef: target }) => {
+      const ref = { ref: `refs/tags/${tag}`, sha: target, type: "commit" };
+      tags.set(tag, ref);
+      return JSON.stringify({ ref: ref.ref, object: { sha: ref.sha, type: ref.type } });
+    },
+    readReleaseMap: () => new Map(),
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: () => {},
+  };
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "stage",
+      environment: {},
+      expectedState: "staged",
+      headRef,
+      repo: "o/r",
+      selected,
+    }, dependencies),
+    (cause) =>
+      cause.cause === mutationFailure
+      && /original draft mutation failure: HTTP 503 after draft POST/u.test(cause.message)
+      && /did not converge to staged state/u.test(cause.message),
+  );
+  assert.equal(releaseMutations, 1);
+});
+
+test("required snapshots retry only a recognized duplicate-across-pagination race", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const releases = releaseState(selected);
+  const tags = tagState(selected, headRef);
+  const sleeps = [];
+  let reads = 0;
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "verify",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, {
+    readReleaseMap: () => {
+      reads += 1;
+      if (reads === 1) {
+        throw new GitHubReleaseSnapshotRaceError(
+          "GitHub release list repeated release 1 across one paginated snapshot",
+        );
+      }
+      return new Map(releases);
+    },
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+  });
+
+  assert.equal(reads, 2);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.slice(0, 1));
+});
+
+test("release-list snapshots receive a strict complete-read budget", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const releases = releaseState(selected);
+  const tags = tagState(selected, headRef);
+  const readOptions = [];
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "verify",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, {
+    readReleaseMap: (_repo, options) => {
+      readOptions.push(options);
+      return new Map(releases);
+    },
+    readTagMap: () => new Map(tags),
+  });
+
+  assert.equal(GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS, 645_000);
+  assert.equal(
+    createReleaseDraftOperationBudget("promote", {
+      environment: { OLIPHAUNT_GITHUB_MUTATION_WINDOW_MS: "3600000" },
+      now: () => 0,
+    }).deadlineMs,
+    GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS,
+  );
+  assert.equal(
+    createReleaseDraftOperationBudget("promote", {
+      environment: { OLIPHAUNT_GITHUB_MUTATION_WINDOW_MS: "123000" },
+      now: () => 0,
+    }).deadlineMs,
+    123_000,
+  );
+  assert.equal(readOptions.length, 1);
+  assert.equal(readOptions[0].deadlineMs, GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS);
+  assert.equal(readOptions[0].attemptTimeoutMs, 4_000);
+  assert.equal(
+    readOptions[0].maxAttempts,
+    GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+  );
+  assert.equal(GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS, 1);
+});
+
+test("promotion uses one bounded precondition snapshot and does not wait before mutation", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  let releaseListReads = 0;
+  let promotionMutations = 0;
+  let sleeps = 0;
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "promote",
+      environment: {},
+      expectedState: "public",
+      headRef,
+      repo: "o/r",
+      selected,
+    }, {
+      mutatePromotion: () => {
+        promotionMutations += 1;
+      },
+      readReleaseMap: () => {
+        releaseListReads += 1;
+        return new Map();
+      },
+      readTagMap: () => tagState(selected, headRef),
+      releaseSnapshotSleep: () => {
+        sleeps += 1;
+      },
+    }),
+    /does not exist/u,
+  );
+
+  assert.equal(releaseListReads, 1);
+  assert.equal(promotionMutations, 0);
+  assert.equal(sleeps, 0);
+});
+
+test("promotion mutation and tag snapshot transports use their conservative sub-bounds", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const releases = releaseState(selected);
+  const observedMutationTimeouts = [];
+  const observedTagTimeouts = [];
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "promote",
+    environment: {},
+    expectedState: "public",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, {
+    mutatePromotion: ({ metadata, timeoutMs }) => {
+      observedMutationTimeouts.push(timeoutMs);
+      const promoted = { ...releases.get(metadata.tag_name), draft: false };
+      releases.set(metadata.tag_name, promoted);
+      return JSON.stringify(promoted);
+    },
+    readReleaseMap: () => new Map(releases),
+    readTagMap: (_repo, _selected, options) => {
+      observedTagTimeouts.push(options?.timeoutMs);
+      return tagState(selected, headRef);
+    },
+  });
+
+  assert.deepEqual(observedMutationTimeouts, [
+    GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS,
+  ]);
+  assert.deepEqual(observedTagTimeouts, [
+    GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS,
+    GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS,
+  ]);
+  assert.equal(GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS, 30_000);
+});
+
+test("verification waits for a semantically complete release snapshot without mutation", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const releases = releaseState(selected);
+  const tags = tagState(selected, headRef);
+  const sleeps = [];
+  let releaseListReads = 0;
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "verify",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, {
+    readReleaseMap: () => {
+      releaseListReads += 1;
+      if (releaseListReads <= 2) {
+        return new Map([...releases].filter(([tag]) => tag !== selected.at(-1).tag));
+      }
+      return new Map(releases);
+    },
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+  });
+
+  assert.equal(releaseListReads, 3);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.slice(0, 2));
+});
+
+test("promotion waits for stale draft rows to become public without replaying PATCH", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const tags = tagState(selected, headRef);
+  const releases = releaseState(selected);
+  const mutations = [];
+  const sleeps = [];
+  let releaseListReads = 0;
+  const dependencies = {
+    mutationOptions,
+    mutatePromotion: ({ expectedId, metadata }) => {
+      const release = releases.get(metadata.tag_name);
+      assert.equal(release.id, expectedId);
+      mutations.push(metadata.tag_name);
+      const promoted = { ...release, draft: false };
+      releases.set(metadata.tag_name, promoted);
+      return JSON.stringify(promoted);
+    },
+    readReleaseMap: () => {
+      releaseListReads += 1;
+      if (releaseListReads === 1 || releaseListReads >= 4) return new Map(releases);
+      const stale = new Map(releases);
+      const finalTag = selected.at(-1).tag;
+      stale.set(finalTag, { ...stale.get(finalTag), draft: true });
+      return stale;
+    },
+    readTagMap: () => new Map(tags),
+    releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+  };
+
+  reconcileSelectedReleasesSync({
+    budget: budget(),
+    command: "promote",
+    environment: {},
+    expectedState: "public",
+    headRef,
+    repo: "o/r",
+    selected,
+  }, dependencies);
+
+  assert.deepEqual(mutations, selected.map(({ tag }) => tag));
+  assert.equal(releaseListReads, 4);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.slice(0, 2));
+});
+
+test("promotion rejects a same-metadata release id replacement before lifecycle closure", () => {
+  const selected = selection(1);
+  const headRef = "d".repeat(40);
+  const original = releaseState(selected);
+  const replacement = new Map([[
+    selected[0].tag,
+    { ...original.get(selected[0].tag), draft: false, id: 99 },
+  ]]);
+  let releaseListReads = 0;
+  let promotionMutations = 0;
+  let sleeps = 0;
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "promote",
+      environment: {},
+      expectedState: "public",
+      headRef,
+      repo: "o/r",
+      selected,
+    }, {
+      mutatePromotion: ({ expectedId, metadata }) => {
+        promotionMutations += 1;
+        return JSON.stringify({
+          ...original.get(metadata.tag_name),
+          draft: false,
+          id: expectedId,
+        });
+      },
+      readReleaseMap: () => {
+        releaseListReads += 1;
+        return releaseListReads === 1 ? new Map(original) : new Map(replacement);
+      },
+      readTagMap: () => tagState(selected, headRef),
+      releaseSnapshotSleep: () => {
+        sleeps += 1;
+      },
+    }),
+    /release id changed from 1 to 99/u,
+  );
+
+  assert.equal(releaseListReads, 2);
+  assert.equal(promotionMutations, 1);
+  assert.equal(sleeps, 0);
+});
+
+test("required release snapshots fail boundedly when state never becomes visible", () => {
+  const selected = selection(1);
+  const sleeps = [];
+  let releaseListReads = 0;
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "verify",
+      environment: {},
+      expectedState: "staged",
+      headRef: "d".repeat(40),
+      repo: "o/r",
+      selected,
+    }, {
+      readReleaseMap: () => {
+        releaseListReads += 1;
+        return new Map();
+      },
+      readTagMap: () => tagState(selected, "d".repeat(40)),
+      releaseSnapshotSleep: (milliseconds) => sleeps.push(milliseconds),
+    }),
+    new RegExp(
+      `did not converge to staged state.*${selected[0].tag} \\(missing\\)`,
+      "u",
+    ),
+  );
+  assert.equal(releaseListReads, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS.length + 1);
+  assert.deepEqual(sleeps, GITHUB_RELEASE_SNAPSHOT_VISIBILITY_DELAYS_MS);
+});
+
+test("required release snapshots reject conflicting metadata without waiting", () => {
+  const selected = selection(1);
+  let sleeps = 0;
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "verify",
+      environment: {},
+      expectedState: "staged",
+      headRef: "d".repeat(40),
+      repo: "o/r",
+      selected,
+    }, {
+      readReleaseMap: () => new Map([[
+        selected[0].tag,
+        { ...selected[0].metadata, body: "conflict", draft: true, id: 1 },
+      ]]),
+      readTagMap: () => tagState(selected, "d".repeat(40)),
+      releaseSnapshotSleep: () => {
+        sleeps += 1;
+      },
+    }),
+    /conflicts with frozen release metadata/u,
+  );
+  assert.equal(sleeps, 0);
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync({
+      budget: budget(),
+      command: "verify",
+      environment: {},
+      expectedState: "staged",
+      headRef: "d".repeat(40),
+      repo: "o/r",
+      selected,
+    }, {
+      readReleaseMap: () => {
+        const observedRelease = {
+          ...selected[0].metadata,
+          body: "conflict",
+          draft: true,
+          id: 1,
+        };
+        throw new GitHubReleaseSnapshotRaceError(
+          "duplicate across pages",
+          { observedRelease },
+        );
+      },
+      readTagMap: () => tagState(selected, "d".repeat(40)),
+      releaseSnapshotSleep: () => {
+        sleeps += 1;
+      },
+    }),
+    /conflicts with frozen release metadata/u,
+  );
+  assert.equal(sleeps, 0);
+});
+
+test("same-version recovery preflight accepts only absent or exact-SHA resumable state", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const absentTags = new Map(selected.map(({ tag }) => [tag, null]));
+  const context = {
+    budget: budget(),
+    command: "recovery-preflight",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  };
+  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+    readReleaseMap: () => new Map(),
+    readTagMap: () => new Map(absentTags),
+  }));
+
+  const exactTags = tagState(selected, headRef);
+  const exactReleases = new Map(selected.map(({ metadata, tag }, index) => [
+    tag,
+    { ...metadata, draft: index === 0, id: index + 1 },
+  ]));
+  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+    readReleaseMap: () => exactReleases,
+    readTagMap: () => exactTags,
+  }));
+
+  const partialTags = new Map(absentTags);
+  partialTags.set(selected[0].tag, exactTags.get(selected[0].tag));
+  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+    readReleaseMap: () => new Map([[selected[0].tag, exactReleases.get(selected[0].tag)]]),
+    readTagMap: () => partialTags,
+  }));
+
+  const conflictingTag = new Map(exactTags);
+  conflictingTag.set(selected[0].tag, {
+    ref: `refs/tags/${selected[0].tag}`,
+    sha: "e".repeat(40),
+    type: "commit",
+  });
+  assert.throws(() => reconcileSelectedReleasesSync(context, {
+    readReleaseMap: () => exactReleases,
+    readTagMap: () => conflictingTag,
+  }), /targets commit:/u);
+
+  assert.throws(
+    () => reconcileSelectedReleasesSync(context, {
+      readReleaseMap: () => new Map([[
+        selected[0].tag,
+        { ...selected[0].metadata, body: "conflict", draft: true, id: 1 },
+      ]]),
+      readTagMap: () => exactTags,
+    }),
+    /conflicts with frozen release metadata/u,
+  );
 });
 
 test("batch staging reconciles ambiguous responses once and exact reruns issue no mutations", () => {

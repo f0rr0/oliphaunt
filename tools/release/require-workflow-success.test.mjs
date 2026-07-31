@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { isolatedGitHubTestEnvironment } from "../test/isolated-github-test-environment.mjs";
+
 const SCRIPT = path.resolve(".github/scripts/require-workflow-success.sh");
 const SHA = "a".repeat(40);
 const WORKFLOW_HELPER_PROCESS_TIMEOUT_MS = 15_000;
@@ -51,6 +53,7 @@ if (args[0] === "api") {
       head_sha: "${SHA}",
       status: "completed",
       conclusion: "success",
+      run_attempt: 3,
       html_url: "https://example.invalid/run/77",
       event: "push",
     };
@@ -78,13 +81,22 @@ if (args[0] === "api") {
       digest: "sha256:" + "1".repeat(64),
       expired: false,
     };
+    const gateArtifact = {
+      id: 903,
+      name: "gate-artifact",
+      size_in_bytes: 456,
+      digest: "sha256:" + "2".repeat(64),
+      expired: false,
+    };
     const artifacts = process.env.FAKE_MODE === "duplicate-artifact"
       ? [artifact, { ...artifact, id: 902 }]
       : process.env.FAKE_MODE === "expired-artifact"
         ? [{ ...artifact, expired: true }]
+        : process.env.FAKE_MODE === "missing-gate-artifact"
+          ? [artifact]
         : process.env.FAKE_MODE === "malformed-artifact-metadata"
           ? [{ ...artifact, digest: undefined }]
-          : [artifact];
+          : [artifact, gateArtifact];
     process.stdout.write("HTTP/2.0 200 OK\\n\\n" + JSON.stringify({ artifacts }));
     process.exit(0);
   }
@@ -100,7 +112,7 @@ if (args[0] === "api") {
       : process.env.FAKE_MODE === "failed-run"
         ? "failure"
         : "success";
-    process.stdout.write(sha + "\\t9\\tpush\\t" + status + "\\t" + conclusion + "\\n");
+    process.stdout.write(sha + "\\t9\\tpush\\t" + status + "\\t" + conclusion + "\\t3\\n");
     process.exit(0);
   }
   if (/actions\\/workflows\\/9$/.test(endpoint)) {
@@ -123,8 +135,7 @@ function invoke(f, mode, args = ["CI", SHA, "10", "--job", "Qualified", "--artif
   return spawnSync("bash", [SCRIPT, ...args], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: isolatedGitHubTestEnvironment({
       PATH: `${f.bin}${path.delimiter}${process.env.PATH}`,
       FAKE_LOG: f.log,
       FAKE_MODE: mode,
@@ -136,7 +147,7 @@ function invoke(f, mode, args = ["CI", SHA, "10", "--job", "Qualified", "--artif
       OLIPHAUNT_GITHUB_READ_DEADLINE_MS: "1000",
       OLIPHAUNT_GITHUB_READ_MAX_ATTEMPTS: "1",
       OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
-    },
+    }),
     timeout: WORKFLOW_HELPER_PROCESS_TIMEOUT_MS,
   });
 }
@@ -149,12 +160,12 @@ test("a transient exact-SHA run-inventory failure does not abort the long-lived 
   assert.match(result.stdout, /selected CI run 77/u);
   assert.equal(
     readFileSync(f.output, "utf8"),
-    `run_id=77\nartifact_metadata_json=${JSON.stringify([{
+    `run_id=77\nrun_attempt=3\nartifact_metadata_json=${JSON.stringify([{
       digest: `sha256:${"1".repeat(64)}`,
       id: 901,
       name: "required-artifact",
       size: 123,
-    }])}\n`,
+    }])}\ngate_artifact_metadata_json=[]\n`,
   );
   assert.equal(readFileSync(f.state, "utf8"), "2");
 });
@@ -227,6 +238,61 @@ test("artifact gates require exactly one non-expired artifact identity", (t) => 
     assert.match(result.stderr, /exactly one non-expired artifact/u);
     assert.equal(readFileSync(f.output, "utf8"), "");
   }
+});
+
+test("gate-only artifacts authorize a run without contaminating transfer metadata", (t) => {
+  const f = fixture(t);
+  const args = [
+    "CI",
+    SHA,
+    "0",
+    "--artifact",
+    "required-artifact",
+    "--gate-artifact",
+    "gate-artifact",
+  ];
+  const result = invoke(f, "", args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(f.output, "utf8"),
+    `run_id=77\nrun_attempt=3\nartifact_metadata_json=${JSON.stringify([{
+      digest: `sha256:${"1".repeat(64)}`,
+      id: 901,
+      name: "required-artifact",
+      size: 123,
+    }])}\ngate_artifact_metadata_json=${JSON.stringify([{
+      digest: `sha256:${"2".repeat(64)}`,
+      id: 903,
+      name: "gate-artifact",
+      size: 456,
+    }])}\n`,
+  );
+
+  const missing = fixture(t);
+  const missingResult = invoke(missing, "missing-gate-artifact", args);
+  assert.equal(missingResult.status, 1, missingResult.stderr);
+  assert.match(missingResult.stderr, /gate-artifact.*found 0/u);
+  assert.equal(readFileSync(missing.output, "utf8"), "");
+});
+
+test("transfer and gate artifact identities must be globally unique", (t) => {
+  const f = fixture(t);
+  const result = invoke(
+    f,
+    "",
+    [
+      "CI",
+      SHA,
+      "0",
+      "--artifact",
+      "required-artifact",
+      "--gate-artifact",
+      "required-artifact",
+    ],
+  );
+  assert.equal(result.status, 64, result.stderr);
+  assert.match(result.stderr, /artifact identity list is malformed/u);
+  assert.equal(readFileSync(f.output, "utf8"), "");
 });
 
 test("malformed artifact metadata is a permanent protocol failure, not a retryable absence", (t) => {
