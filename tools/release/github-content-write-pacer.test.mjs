@@ -15,7 +15,18 @@ import {
   GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE,
   reserveGitHubContentWriteSync,
 } from "./github-content-write-pacer.mjs";
-import { runGitHubMutationSync } from "./github-release-mutations.mjs";
+import {
+  GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS,
+  GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS,
+  GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS,
+} from "../../.github/scripts/manage-release-drafts.mjs";
+import {
+  GITHUB_RELEASE_SNAPSHOT_MAX_READS,
+  GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+  GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS,
+  GITHUB_RELEASE_SNAPSHOT_VISIBILITY_WINDOW_MS,
+  runGitHubMutationSync,
+} from "./github-release-mutations.mjs";
 import { loadGraph } from "./release-graph.mjs";
 import {
   allArtifactTargets,
@@ -332,36 +343,61 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   assert.equal(budget.preRegistryContentWrites, 185);
   assert.equal(budget.totalContentWrites, 209);
   assert.equal(FIRST_RELEASE_TRANSFER_REQUEST_TOTAL, 88);
-  assert.equal(FIRST_RELEASE_NOMINAL_CORE_REQUESTS, 421);
-  assert.equal(budget.conservativeCoreRequests, 421);
+  assert.equal(FIRST_RELEASE_NOMINAL_CORE_REQUESTS, 579);
+  assert.equal(budget.conservativeCoreRequests, 579);
   assert.equal(conservativeCoreRequestCount({
     assetCount: 141,
     assetCounts,
     attestationWrites: 6,
     productCount,
-  }), 421);
+  }), 579);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR, 361);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE, 7);
+  assert.equal(
+    GITHUB_RELEASE_SNAPSHOT_MAX_READ_ATTEMPTS,
+    1,
+    "every admitted snapshot page has exactly one physical request attempt",
+  );
 
   // Put every non-content request at the busiest possible instant. Even this
   // conservative concentration plus a full rolling hour of paced writes is
   // well inside the 1,000-request primary limit.
   // The SwiftPM git push is a paced content write but not a REST request, so
   // subtract only REST-backed writes from the nominal core request count.
-  assert.equal(budget.futureNonContentRequests, 153);
-  assert.equal(budget.projectedRollingCoreRequests, 674);
+  assert.equal(budget.futureNonContentRequests, 311);
+  assert.equal(budget.projectedRollingCoreRequests, 832);
   assert.ok(budget.projectedRollingCoreRequests < 900);
   assert.ok(500 - GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR >= 130);
   assert.equal(budget.totalPacingMs, GITHUB_CONTENT_WRITE_COLD_START_MS + (209 * 10_000));
   assert.ok((2 * productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (30 * 60_000), "draft staging fits its operation budget");
   assert.ok((Math.max(...assetCounts.values()) * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (20 * 60_000), "largest product pacing fits its count-derived upload budget");
-  assert.ok((productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (12 * 60_000), "draft promotion fits finalization timeout");
+  assert.ok(
+    (productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS)
+      < GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS,
+    "draft promotion pacing fits its command window",
+  );
+  const worstCasePromotionMs =
+    ((1 + GITHUB_RELEASE_SNAPSHOT_MAX_READS) * GITHUB_RELEASE_SNAPSHOT_READ_WINDOW_MS)
+    + GITHUB_RELEASE_SNAPSHOT_VISIBILITY_WINDOW_MS
+    + (2 * GITHUB_RELEASE_PROMOTION_TAG_SNAPSHOT_TIMEOUT_MS)
+    + (
+      productCount
+      * (
+        GITHUB_CONTENT_WRITE_INTERVAL_MS
+        + GITHUB_RELEASE_PROMOTION_MUTATION_TIMEOUT_MS
+      )
+    );
+  assert.ok(
+    worstCasePromotionMs < GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS,
+    "two tag snapshots, one precondition read, every PATCH/pacing bound, and the complete "
+      + "post-promotion visibility observer fit the bounded promotion command",
+  );
   assert.ok(
     RELEASE_PLEASE_ASSERT_MARKABLE_WINDOW_MS
-      + (productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS)
+      + GITHUB_RELEASE_PROMOTION_COMMAND_WINDOW_MS
       + RELEASE_PLEASE_MARK_TAGGED_WINDOW_MS
       < RELEASE_FINALIZATION_STEP_TIMEOUT_MINUTES.promoteDrafts * 60_000,
-    "pre-promotion assertion, draft pacing, and lifecycle reconciliation fit the final step",
+    "the promotion command preserves a strict downstream lifecycle margin",
   );
   assert.ok(
     budget.assetUploadPlan.productCount === 12
@@ -391,7 +427,7 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   assert.equal(admitted.finalizationStepTimeoutSeconds, RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS);
   assert.equal(admitted.cleanupMarginSeconds, RELEASE_FINALIZATION_CLEANUP_MARGIN_SECONDS);
   assert.equal(admitted.minimumFinalizationSeconds, RELEASE_MINIMUM_FINALIZATION_SECONDS);
-  assert.equal(admitted.simulatedRegistryDeadlineEpochSeconds, 3_750);
+  assert.equal(admitted.simulatedRegistryDeadlineEpochSeconds, 3_510);
   assert.ok(
     admitted.simulatedRegistryDeadlineEpochSeconds < independentLaneUpperBoundSeconds,
     "the staging simulation honestly exercises dependency-closed subset admission instead of pretending every npm carrier fits",
@@ -407,6 +443,31 @@ test("release-list admission scales at exact 100-row page boundaries", () => {
   assert.deepEqual(
     [0, 49, 99, 100, 149, 200].map((count) => releasePageUpperBound(count, 49)),
     [1, 1, 2, 2, 2, 3],
+  );
+});
+
+test("asset upload admission charges complete-list draft discovery for every product", () => {
+  const assetCounts = new Map([
+    ["asset-backed", 1],
+    ["source-only", 0],
+  ]);
+  const requests = (releasePageCount) => conservativeCoreRequestCount({
+    assetCount: 1,
+    assetCounts,
+    attestationWrites: 0,
+    productCount: 2,
+    releasePageCount,
+    transportTagWrites: 0,
+  });
+  const draftManagementPagePasses =
+    3 + ((5 + assetCounts.size) * GITHUB_RELEASE_SNAPSHOT_MAX_READS);
+  assert.equal(
+    requests(2) - requests(1),
+    draftManagementPagePasses
+      + assetCounts.size
+      + 2,
+    "one extra release-list page is charged for draft management, each uploader's initial "
+      + "tag-to-ID discovery, and both receipt snapshots",
   );
 });
 

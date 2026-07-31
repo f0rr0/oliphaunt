@@ -46,14 +46,14 @@ env:
   REGISTRY_MUTATION_WINDOW_SECONDS: 19800
   GITHUB_STAGE_JOB_HARD_WINDOW_SECONDS: 21000
   REGISTRY_JOB_HARD_WINDOW_SECONDS: 21000
-  FINALIZE_JOB_HARD_WINDOW_SECONDS: 6840
+  FINALIZE_JOB_HARD_WINDOW_SECONDS: 7080
   NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS: 11400
   REGISTRY_EVIDENCE_HANDOFF_RESERVE_SECONDS: 900
-  # Finalization has its own two-hour job. Its entry gate requires 48 intact
-  # minutes: every finalization step's 45-minute hard bound plus a separate
+  # Finalization has its own 124-minute job. Its entry gate requires 52 intact
+  # minutes: every finalization step's 49-minute hard bound plus a separate
   # three-minute runner/action transition margin.
-  RELEASE_FINALIZATION_RESERVE_SECONDS: 3000
-  RELEASE_MINIMUM_FINALIZATION_SECONDS: 2880
+  RELEASE_FINALIZATION_RESERVE_SECONDS: 3240
+  RELEASE_MINIMUM_FINALIZATION_SECONDS: 3120
   RELEASE_FINALIZATION_CLEANUP_MARGIN_SECONDS: 180
   # Public consumer lanes run concurrently under one 13-minute internal
   # deadline and stop with ten minutes preserved for evidence, lock proof, and
@@ -2589,7 +2589,7 @@ jobs:
       - validate-inputs
       - publish-registry
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 124
     if: ${{ always() && inputs.operation == 'publish' && needs.validate-inputs.result == 'success' && needs.publish-registry.result == 'success' && needs.publish-registry.outputs.publication_complete == 'true' }}
     environment: release-publish
     permissions:
@@ -2837,7 +2837,7 @@ jobs:
 
       - name: Promote verified GitHub release drafts
         id: promote_github_releases
-        timeout-minutes: 12
+        timeout-minutes: 16
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ needs.publish-registry.outputs.products_json }}

@@ -26,7 +26,8 @@ import {
   createGitHubOperationBudget,
   exactReleaseMetadata,
   readReleaseAssetsSync,
-  readReleaseByTagSync,
+  readReleaseByIdSync,
+  readReleaseMapSync,
   releaseNotesForVersion,
   remainingGitHubReadOptions,
   runGitHubMutationSync,
@@ -393,12 +394,25 @@ export function readExactReleaseAssetSnapshotSync(
 ) {
   const context = { expectedReleaseId, phase, plan };
   const readOptions = () => singleSnapshotReadOptions(budget, dependencies);
-  const readRelease = dependencies.readRelease ?? (() =>
-    readReleaseByTagSync(plan.repo, plan.tag, readOptions()));
+  const readReleaseMap = dependencies.readReleaseMap ?? (() =>
+    readReleaseMapSync(plan.repo, readOptions()));
+  const readReleaseById = dependencies.readReleaseById ?? ((releaseId) =>
+    readReleaseByIdSync(plan.repo, releaseId, readOptions()));
   const readAssets = dependencies.readAssets ?? ((releaseId) =>
     readReleaseAssetsSync(plan.repo, releaseId, readOptions()));
 
-  const release = readRelease(context);
+  let release;
+  if (expectedReleaseId === undefined) {
+    const releasesByTag = readReleaseMap(context);
+    if (!(releasesByTag instanceof Map)) {
+      throw permanentError(
+        `${plan.product} GitHub release ${plan.tag} returned a non-canonical release inventory`,
+      );
+    }
+    release = releasesByTag.get(plan.tag) ?? null;
+  } else {
+    release = readReleaseById(expectedReleaseId, context);
+  }
   if (release === null) {
     throw permanentError(
       `${plan.product} GitHub release ${plan.tag} does not exist. `

@@ -515,7 +515,7 @@ left on a previous runner. Bootstrap and normal registry publication each have
 an independent six-hour hosted-job envelope. The normal GitHub-staging job has
 a 350-minute hard window plus ten minutes for cleanup; the registry job also
 has a 350-minute hard window plus ten minutes for cleanup; finalization has a
-114-minute hard window plus six minutes for cleanup. The executable phase-budget table accounts for setup, exact-ID
+118-minute hard window plus six minutes for cleanup. The executable phase-budget table accounts for setup, exact-ID
 transfer, validation, mutation, evidence/handoff, and cleanup and requires a
 strictly positive margin in every phase. A bootstrap root starts its registry window only after
 qualification, capsule/lock verification, checkpoint restoration, and the
@@ -533,7 +533,7 @@ checkout, handoff, tag, draft, and publication-lock proofs. Registry publication
 rate-aware mutation allowance plus positive margin before the protected
 15-minute receipt/recovery handoff; a shortened residual window cannot admit a
 partial planned run unless the executor can close a dependency-safe checkpoint
-and issue an exact-parent continuation. Finalization refuses to start unless at least 48 minutes
+and issue an exact-parent continuation. Finalization refuses to start unless at least 52 minutes
 remain on its fresh deadline. Bootstrap additionally proves that the exact pending Cargo/npm
 inventory plus its reserve fits before mutation begins.
 

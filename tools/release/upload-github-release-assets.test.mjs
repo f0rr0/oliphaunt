@@ -11,7 +11,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { exactReleaseMetadata } from "./github-release-mutations.mjs";
+import {
+  exactReleaseMetadata,
+  readReleaseByTagSync,
+} from "./github-release-mutations.mjs";
 import {
   allArtifactTargets,
   exactExtensionProducts,
@@ -21,6 +24,7 @@ import {
   FIRST_RELEASE_NOMINAL_CORE_REQUESTS,
   FIRST_RELEASE_TRANSFER_REQUEST_TOTAL,
 } from "./github-release-request-budget.mjs";
+import { readGitHubCoreRequestJournal } from "./github-core-request-journal.mjs";
 import { expectedExtensionGithubReleaseAssetCount } from "./publication-lock.mjs";
 import {
   assertExactFrozenUploadSelection,
@@ -29,6 +33,7 @@ import {
   githubReleaseAssetUploadWindowMs,
   GITHUB_RELEASE_ASSET_UPLOAD_SNAPSHOT_RESERVE_MS,
   MAX_SAFE_EMBEDDED_RELEASE_ASSETS,
+  readExactReleaseAssetSnapshotSync,
   uploadFrozenReleaseAssetsSync,
   withStagedFrozenAssetSync,
 } from "./upload_github_release_assets.mjs";
@@ -36,8 +41,8 @@ import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from "./github-content-write-pacer.m
 
 const HEAD = "a".repeat(40);
 
-function budget() {
-  return { deadlineMs: 60_000, environment: {}, now: () => 0, startedAtMs: 0 };
+function budget(environment = {}) {
+  return { deadlineMs: 60_000, environment, now: () => 0, startedAtMs: 0 };
 }
 
 function frozenAsset(name, index, size = index + 1) {
@@ -99,6 +104,15 @@ function deterministicReads(maxAttempts = 1) {
   };
 }
 
+function includedJson(data) {
+  return [
+    "HTTP/2.0 200 OK",
+    "Content-Type: application/json; charset=utf-8",
+    "",
+    JSON.stringify(data),
+  ].join("\n");
+}
+
 test("the upload operation window is derived from the exact frozen asset count", () => {
   const assetCount = 19;
   const required = (assetCount * (
@@ -121,9 +135,15 @@ function uploadDependencies(uploadPlan, remote, overrides = {}) {
   return {
     budget: budget(),
     environment: {},
-    readRelease: (...args) => {
+    readReleaseById: (...args) => {
       lastRelease = selectedReadRelease(...args);
       return lastRelease;
+    },
+    readReleaseMap: (...args) => {
+      lastRelease = selectedReadRelease(...args);
+      return lastRelease === null
+        ? new Map()
+        : new Map([[lastRelease.tag_name, lastRelease]]);
     },
     readAssets: (...args) => selectedReadAssets(...args),
     snapshotReadOptions: deterministicReads(),
@@ -188,6 +208,89 @@ test("the upload request is bound to one immutable release id and frozen asset n
       repo: "o/r",
     }),
     /retain its frozen asset name/u,
+  );
+});
+
+test("draft upload discovery uses the complete release list, then the exact release id", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-draft-upload-discovery-"));
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const environment = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_REPOSITORY: "o/r",
+    GITHUB_RUN_ATTEMPT: "1",
+    GITHUB_RUN_ID: "123",
+    GITHUB_SHA: HEAD,
+    OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: path.join(root, "journal.json"),
+    OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: "true",
+  };
+  const uploadPlan = plan();
+  const draft = releaseFor(uploadPlan, new Map(), { draft: true, id: 73 });
+  const endpoints = [];
+  const spawn = (_command, args) => {
+    const endpoint = args.at(-1);
+    endpoints.push(endpoint);
+    if (endpoint.includes("/releases/tags/")) {
+      return { status: 1, stderr: "gh: Not Found (HTTP 404)", stdout: "" };
+    }
+    if (endpoint === "repos/o/r/releases?per_page=100&page=1") {
+      return { status: 0, stderr: "", stdout: includedJson([draft]) };
+    }
+    if (endpoint === "repos/o/r/releases/73") {
+      return { status: 0, stderr: "", stdout: JSON.stringify(draft) };
+    }
+    if (endpoint === "repos/o/r/releases/73/assets?per_page=100&page=1") {
+      return { status: 0, stderr: "", stdout: includedJson([]) };
+    }
+    return { status: 1, stderr: `unexpected endpoint ${endpoint}`, stdout: "" };
+  };
+  const readOptions = {
+    baseDelayMs: 0,
+    coreJournalOptions: { now: () => 20_000 },
+    deadlineMs: 10_000,
+    environment,
+    maxAttempts: 1,
+    maxDelayMs: 0,
+    now: () => 20_000,
+    sleep: () => {},
+    spawn,
+  };
+
+  assert.equal(
+    readReleaseByTagSync("o/r", uploadPlan.tag, readOptions),
+    null,
+    "GitHub's by-tag endpoint does not expose the draft",
+  );
+  endpoints.length = 0;
+
+  const initial = readExactReleaseAssetSnapshotSync({
+    budget: budget(environment),
+    expectedReleaseId: undefined,
+    phase: "pre-upload",
+    plan: uploadPlan,
+  }, { singleReadOptions: readOptions });
+  assert.equal(initial.release.draft, true);
+  assert.equal(initial.releaseId, 73);
+  assert.deepEqual(endpoints, [
+    "repos/o/r/releases?per_page=100&page=1",
+    "repos/o/r/releases/73/assets?per_page=100&page=1",
+  ]);
+
+  endpoints.length = 0;
+  const later = readExactReleaseAssetSnapshotSync({
+    budget: budget(environment),
+    expectedReleaseId: 73,
+    phase: "post-upload",
+    plan: uploadPlan,
+  }, { singleReadOptions: readOptions });
+  assert.equal(later.release.draft, true);
+  assert.equal(later.releaseId, 73);
+  assert.deepEqual(endpoints, [
+    "repos/o/r/releases/73",
+    "repos/o/r/releases/73/assets?per_page=100&page=1",
+  ]);
+  assert.deepEqual(
+    readGitHubCoreRequestJournal({ environment, now: () => 20_000 }),
+    { enabled: true, rollingCount: 5, sequence: 5 },
   );
 });
 

@@ -659,6 +659,13 @@ export function runGitHubPaginatedJsonSync(endpoint, options = {}) {
   const label = options.label ?? "GitHub paginated JSON read";
   const itemsField = options.itemsField ?? null;
   const maxPages = options.maxPages ?? GITHUB_PAGINATION_MAX_PAGES;
+  const settings = githubReadOptionsFromEnv(options.environment ?? process.env, options);
+  const now = settings.now ?? Date.now;
+  const paginationStartedAtMs = now();
+  const paginationDeadlineMs = paginationStartedAtMs + settings.deadlineMs;
+  if (!Number.isSafeInteger(paginationDeadlineMs)) {
+    throw new GitHubReadError(`${label} pagination deadline exceeds the safe timestamp range`);
+  }
   if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > GITHUB_PAGINATION_MAX_PAGES) {
     throw new GitHubReadError(`paginated JSON maxPages must be between 1 and ${GITHUB_PAGINATION_MAX_PAGES}`);
   }
@@ -673,8 +680,32 @@ export function runGitHubPaginatedJsonSync(endpoint, options = {}) {
     query.set("page", String(page));
     const pageEndpoint = `${expected.requestedPath.slice(1)}?${query.toString()}`;
     const pageLabel = `${label} page ${page}`;
+    const pageStartedAtMs = now();
+    const remainingPaginationMs = paginationDeadlineMs - pageStartedAtMs;
+    if (remainingPaginationMs <= 0) {
+      throw new GitHubReadError(`${label}: pagination deadline exhausted before page ${page}`, {
+        deadlineExhausted: true,
+        retryable: true,
+      });
+    }
+    let pageClockAnchored = false;
+    const pageNow = () => {
+      if (!pageClockAnchored) {
+        pageClockAnchored = true;
+        return pageStartedAtMs;
+      }
+      return now();
+    };
     const { data, link } = parseIncludedGithubJson(
-      runGitHubReadSync(["api", "--include", pageEndpoint], { ...options, label: pageLabel }),
+      runGitHubReadSync(
+        ["api", "--include", pageEndpoint],
+        {
+          ...options,
+          deadlineMs: remainingPaginationMs,
+          label: pageLabel,
+          now: pageNow,
+        },
+      ),
       pageLabel,
     );
     const pageRows = itemsField === null
