@@ -8,10 +8,20 @@ export function fail(tool, message, exitCode = 1) {
   process.exit(exitCode);
 }
 
-export function run(tool, args, { failExitCode = 1, cwd = ROOT, timeout = undefined } = {}) {
+export function run(
+  tool,
+  args,
+  {
+    failExitCode = 1,
+    cwd = ROOT,
+    environment = undefined,
+    timeout = undefined,
+  } = {},
+) {
   console.log(`\n==> ${args.join(" ")}`);
   const result = spawnSync(args[0], args.slice(1), {
     cwd,
+    env: environment,
     stdio: "inherit",
     timeout,
   });

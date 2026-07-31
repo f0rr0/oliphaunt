@@ -942,7 +942,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_RUN_ID: ${{ steps.release_artifact_source.outputs.ci_run_id }}
-          RELEASE_HEAD_SHA: ${{ steps.release_artifact_source.outputs.sha }}
+          RELEASE_ARTIFACT_SHA: ${{ steps.release_artifact_source.outputs.sha }}
         run: bun .github/scripts/download-wasix-runtime-build-artifacts.mjs
 
       - name: Download WASIX release assets
