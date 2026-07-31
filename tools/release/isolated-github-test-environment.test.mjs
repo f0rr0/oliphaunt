@@ -9,6 +9,7 @@ test("synthetic GitHub fixtures discard hostile credentials, state, lineage, and
   const inherited = {
     ACTIONS_ID_TOKEN_REQUEST_TOKEN: "live-oidc-token",
     BOOTSTRAP_LEDGER_PATH: "/live/bootstrap-ledger",
+    CI_RUN_ID: "30358387218",
     GH_TOKEN: "live-gh-token",
     GITHUB_OUTPUT: "/live/github-output",
     GITHUB_REPOSITORY: "live/repository",
