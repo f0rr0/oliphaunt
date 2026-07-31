@@ -133,8 +133,13 @@ test("dry-run separately qualifies control HEAD and reuses the frozen release pa
     /release_artifact_source[.]outputs[.]ci_run_id/u,
   );
   assert.match(
-    wasixPayload.env.RELEASE_HEAD_SHA,
+    wasixPayload.env.RELEASE_ARTIFACT_SHA,
     /release_artifact_source[.]outputs[.]sha/u,
+  );
+  assert.equal(
+    wasixPayload.env.RELEASE_HEAD_SHA,
+    undefined,
+    "the payload selector must not replace the controller-bound release lineage",
   );
 
   const productDryRun = namedStep(
