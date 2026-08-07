@@ -29,6 +29,7 @@ test("the exact mobile catalog produces a bounded authoritative receipt", () => 
       extensions,
       extensionProofCount: extensions.length + 1,
       extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+      icuRuntimeProof: true,
     });
     const event = `${EXPO_SMOKE_PASS_TAG} ${serialized}`;
     assert(Buffer.byteLength(event) <= EXPO_SMOKE_PASS_EVENT_MAX_BYTES);
@@ -36,6 +37,7 @@ test("the exact mobile catalog produces a bounded authoritative receipt", () => 
       "extensionCatalogSha256",
       "extensionCount",
       "extensionProofCount",
+      "icuRuntimeProof",
       "platform",
       "runner",
       "schema",
@@ -51,8 +53,19 @@ test("receipt serialization fails closed on proof drift and remains constant-siz
       extensions,
       extensionProofCount: extensions.length - 1,
       extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+      icuRuntimeProof: false,
     }),
     /extension proof mismatch/u,
+  );
+  assert.throws(
+    () => serializeExpoSmokePassReceipt({
+      platform: "ios",
+      extensions,
+      extensionProofCount: extensions.length + 1,
+      extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+      icuRuntimeProof: "yes",
+    }),
+    /ICU runtime proof boolean/u,
   );
   const largeCatalog = Array.from({ length: 500 }, (_, index) => `extension_${index}`);
   const serialized = serializeExpoSmokePassReceipt({
@@ -60,6 +73,7 @@ test("receipt serialization fails closed on proof drift and remains constant-siz
     extensions: largeCatalog,
     extensionProofCount: largeCatalog.length + 1,
     extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+    icuRuntimeProof: false,
   });
   assert(Buffer.byteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`) <= EXPO_SMOKE_PASS_EVENT_MAX_BYTES);
   assert.equal(Object.hasOwn(JSON.parse(serialized), "extensions"), false);

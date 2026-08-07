@@ -88,12 +88,24 @@ import {
   brokerDependencyLicenseMembers,
   normalizeBrokerDependencyLicenseModes,
 } from "./broker-dependency-license-contract.mjs";
+import {
+  ICU_DATA_RELATIVE_PATH,
+  ICU_PODSPEC,
+  ICU_REACT_NATIVE_CONFIG,
+  assertIcuPackedDataMatchesSource,
+  assertIcuPackageManifest,
+  assertIcuPodspec,
+  assertIcuReactNativeConfig,
+  assertPackedIcuCarrier,
+} from "./icu-npm-carrier-contract.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 const TOOL = "local-registry-publish.mjs";
 const DEFAULT_REPO = "f0rr0/oliphaunt";
 const DEFAULT_WORKFLOW = "CI";
 const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-current");
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
+const LIBOLIPHAUNT_ICU_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm");
 const VERDACCIO_RUNTIME_INSTALLER = path.join(ROOT, "tools/release/install-verdaccio-runtime.sh");
 const VERDACCIO_RUNTIME_ROOT = path.join(ROOT, "tools/release/verdaccio-runtime");
 // npm does not impose crates.io's 10 MiB package limit. Keep one deliberately
@@ -1400,39 +1412,48 @@ function packedPackageContains(tarball, packageName, version, requiredMembers, {
   }
 }
 
-function packedIcuPackageContains(tarball, packageName, version) {
-  const members = new Set(tarballMembers(tarball));
-  if (!members.has("package/package.json")) {
+function packedIcuPackageContains(tarball, packageName, version, sourceArchive) {
+  let entries;
+  let sourceEntries;
+  try {
+    entries = readPortableArchiveEntries(tarball);
+    sourceEntries = readPortableArchiveEntries(sourceArchive);
+  } catch (error) {
+    fail(TOOL, `ICU carrier archives are invalid: ${error.message}`);
+  }
+  if (!entries.has("package/package.json")) {
     fail(TOOL, `${rel(tarball)} is missing package/package.json`);
   }
-  const packageJson = tarballPackageJson(tarball);
+  let packageJson;
+  try {
+    packageJson = JSON.parse(Buffer.from(entries.get("package/package.json").data()).toString("utf8"));
+  } catch (error) {
+    fail(TOOL, `${rel(tarball)} package/package.json is not valid JSON: ${error.message}`);
+  }
   if (packageJson.name !== packageName) {
     fail(TOOL, `${rel(tarball)} package name must be ${packageName}, got ${JSON.stringify(packageJson.name)}`);
   }
   if (packageJson.version !== version) {
     fail(TOOL, `${rel(tarball)} package version must be ${version}, got ${JSON.stringify(packageJson.version)}`);
   }
-  const metadata = packageJson.oliphaunt;
-  if (
-    metadata?.product !== "oliphaunt-icu" ||
-    metadata?.kind !== "icu-data" ||
-    metadata?.target !== "portable" ||
-    metadata?.dataRelativePath !== "share/icu"
-  ) {
-    fail(TOOL, `${rel(tarball)} package.json must declare portable oliphaunt-icu metadata`);
-  }
-  if (!members.has("package/OliphauntICU.podspec")) {
-    fail(TOOL, `${rel(tarball)} is missing package/OliphauntICU.podspec`);
-  }
-  const hasIcuData = [...members].some((member) => {
-    if (!member.startsWith("package/share/icu/")) {
-      return false;
-    }
-    const relative = member.slice("package/share/icu/".length).split("/").filter(Boolean);
-    return relative.length > 0 && relative[0].startsWith("icudt");
-  });
-  if (!hasIcuData) {
-    fail(TOOL, `${rel(tarball)} is missing package/share/icu/icudt* data files`);
+  try {
+    assertPackedIcuCarrier({
+      entries: [...entries].map(([name, entry]) => ({ name, isFile: entry.isFile })),
+      packageJson,
+      packedConfig: entries.get(`package/${ICU_REACT_NATIVE_CONFIG}`)?.data(),
+      packedPodspec: entries.get(`package/${ICU_PODSPEC}`)?.data(),
+      sourceConfig: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_REACT_NATIVE_CONFIG)),
+      sourcePodspec: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_PODSPEC)),
+      label: rel(tarball),
+    });
+    assertIcuPackedDataMatchesSource({
+      packedEntries: entries,
+      sourceEntries,
+      label: rel(tarball),
+      sourceLabel: rel(sourceArchive),
+    });
+  } catch (error) {
+    fail(TOOL, error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -1510,18 +1531,34 @@ function stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir) {
   const packageName = "@oliphaunt/icu";
   const stage = stageNpmPackageDescriptor(
     packageName,
-    path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm"),
+    LIBOLIPHAUNT_ICU_PACKAGE_ROOT,
     stageRoot,
     version,
-    { extraDescriptors: ["OliphauntICU.podspec"], target: "portable" },
+    { extraDescriptors: [ICU_PODSPEC, ICU_REACT_NATIVE_CONFIG], target: "portable" },
   );
   extractArchiveTree(
     path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
     "share/icu",
-    path.join(stage, "share/icu"),
+    path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/")),
   );
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
+  try {
+    assertIcuPackageManifest(
+      readJsonFile(path.join(stage, "package.json")),
+      `${rel(stage)} package.json`,
+    );
+    assertIcuReactNativeConfig(
+      readFileSync(path.join(stage, ICU_REACT_NATIVE_CONFIG)),
+      `${rel(stage)} ${ICU_REACT_NATIVE_CONFIG}`,
+    );
+    assertIcuPodspec(
+      readFileSync(path.join(stage, ICU_PODSPEC)),
+      `${rel(stage)} ${ICU_PODSPEC}`,
+    );
+  } catch (error) {
+    fail(TOOL, error instanceof Error ? error.message : String(error));
+  }
   return stage;
 }
 
@@ -1590,9 +1627,10 @@ function liboliphauntNpmTarballs(
   }
   if (includeIcu) {
     const packageName = "@oliphaunt/icu";
+    const sourceArchive = path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`);
     const stage = stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir);
     const tarball = pnpmPackForNpmPublish(stage, tarballRoot);
-    packedIcuPackageContains(tarball, packageName, version);
+    packedIcuPackageContains(tarball, packageName, version, sourceArchive);
     assertReleaseNoticesInArchive(tarball, { profile: "native-icu-data", prefix: "package" });
     packages.push([packageName, tarball]);
   }

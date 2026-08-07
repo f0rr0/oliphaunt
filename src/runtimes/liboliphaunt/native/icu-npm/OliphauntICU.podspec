@@ -7,7 +7,5 @@ Pod::Spec.new do |s|
   s.author = { 'Oliphaunt Maintainers' => 'https://github.com/f0rr0' }
   s.source = { :path => '.' }
   s.platforms = { :ios => '17.0', :osx => '14.0' }
-  s.resource_bundles = {
-    'OliphauntICU' => ['share/icu/**/*']
-  }
+  s.resources = 'OliphauntICU.bundle'
 end

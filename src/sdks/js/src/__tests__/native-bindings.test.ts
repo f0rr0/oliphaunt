@@ -447,7 +447,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
               product: 'oliphaunt-icu',
               kind: 'icu-data',
               target: 'portable',
-              dataRelativePath: 'share/icu',
+              dataRelativePath: 'OliphauntICU.bundle/share/icu',
             },
           });
         }
