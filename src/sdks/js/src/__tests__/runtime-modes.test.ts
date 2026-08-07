@@ -234,7 +234,7 @@ async function testDenoBrokerModeValidatesExplicitExtensionRuntime(): Promise<vo
               product: 'oliphaunt-icu',
               kind: 'icu-data',
               target: 'portable',
-              dataRelativePath: 'share/icu',
+              dataRelativePath: 'OliphauntICU.bundle/share/icu',
             },
           });
         }

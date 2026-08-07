@@ -111,6 +111,12 @@ benchmark_preset="${OLIPHAUNT_EXPO_ANDROID_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MO
 crash_root_override="${OLIPHAUNT_EXPO_ANDROID_CRASH_ROOT:-}"
 crash_root="${crash_root_override:-/data/data/$app_id/files/oliphaunt-crash-recovery-root-$crash_root_suffix}"
 mobile_template_initdb="${OLIPHAUNT_EXPO_ANDROID_INITDB:-}"
+case "${OLIPHAUNT_EXPO_ANDROID_ICU:-0}" in
+  1|true|TRUE|yes|YES|on|ON) android_icu_enabled=1 ;;
+  0|false|FALSE|no|NO|off|OFF) android_icu_enabled=0 ;;
+  *) fail "OLIPHAUNT_EXPO_ANDROID_ICU must be a boolean value" ;;
+esac
+android_icu_data_dir="${OLIPHAUNT_EXPO_ANDROID_ICU_DATA_DIR:-}"
 react_native_package_extra_excludes=(--exclude ios/vendor)
 metro_pid=""
 metro_bundle_runner=""
@@ -425,6 +431,42 @@ prepare_jni_libs() {
   printf '%s\n' "$jni_root"
 }
 
+runtime_manifest_has_icu() {
+  local manifest="$1"
+  awk -F= '$1 == "runtimeFeatures" { print substr($0, index($0, "=") + 1) }' "$manifest" |
+    tr ',' '\n' |
+    grep -Fxq icu
+}
+
+assert_android_icu_payload() {
+  local manifest="$1"
+  local candidate="$2"
+  local expected_source="$3"
+  local label="$4"
+  [ -f "$manifest" ] || fail "$label is missing its runtime manifest: $manifest"
+  [ "$(grep -c '^runtimeFeatures=' "$manifest" || true)" = "1" ] ||
+    fail "$label runtime manifest must contain exactly one runtimeFeatures property"
+
+  if [ "$android_icu_enabled" = "1" ]; then
+    [ -d "$expected_source" ] || fail "selected Android ICU source is missing: $expected_source"
+    [ -d "$candidate" ] || fail "$label is missing selected ICU data: $candidate"
+    runtime_manifest_has_icu "$manifest" ||
+      fail "$label runtime manifest does not record selected ICU data"
+    [ -z "$(find "$candidate" -type l -print -quit)" ] ||
+      fail "$label ICU payload contains a symbolic link"
+    [ -n "$(find "$candidate" -type f -print -quit)" ] ||
+      fail "$label ICU payload is empty: $candidate"
+    if ! diff -qr "$expected_source" "$candidate" >&2; then
+      fail "$label ICU payload does not exactly match its selected source"
+    fi
+  else
+    if runtime_manifest_has_icu "$manifest"; then
+      fail "$label unexpectedly records ICU when it was not selected"
+    fi
+    [ ! -e "$candidate" ] || fail "$label unexpectedly contains unselected ICU data: $candidate"
+  fi
+}
+
 prepare_runtime_resources() {
   local static_registry_source="$1"
 
@@ -456,22 +498,45 @@ prepare_runtime_resources() {
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
   local package_root="$scratch_root/runtime-resources"
-  if oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
+  if [ "$android_icu_enabled" = "1" ]; then
+    [ -n "$android_icu_data_dir" ] ||
+      fail "OLIPHAUNT_EXPO_ANDROID_ICU_DATA_DIR is required when Android ICU is selected"
+    [ -d "$android_icu_data_dir" ] ||
+      fail "selected Android ICU data directory is missing: $android_icu_data_dir"
+  fi
+  local prepared_package
+  if prepared_package="$(oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
     Android \
     "$runtime_source" \
     "$mobile_template_initdb" \
     "$selected_extensions" \
-    "$package_root"; then
+    "$package_root" \
+    "$android_icu_enabled" \
+    "$android_icu_data_dir")"; then
+    assert_android_icu_payload \
+      "$prepared_package/oliphaunt/runtime/manifest.properties" \
+      "$prepared_package/oliphaunt/runtime/files/share/icu" \
+      "$android_icu_data_dir" \
+      "staged Android runtime resources"
+    printf '%s\n' "$prepared_package"
     return 0
   fi
-  prepare_mobile_runtime_resource_package \
+  [ "$android_icu_enabled" = "0" ] ||
+    fail "selected Android ICU data could not be staged by the exact runtime resource packager"
+  prepared_package="$(prepare_mobile_runtime_resource_package \
     Android \
     "$runtime_source" \
     "$template_source" \
     "$static_registry_source" \
     "$selected_extensions" \
     "${OLIPHAUNT_EXPO_ANDROID_REPACKAGE_ASSETS:-0}" \
-    "$package_root"
+    "$package_root")"
+  assert_android_icu_payload \
+    "$prepared_package/oliphaunt/runtime/manifest.properties" \
+    "$prepared_package/oliphaunt/runtime/files/share/icu" \
+    "" \
+    "staged Android runtime resources"
+  printf '%s\n' "$prepared_package"
 }
 
 install_kotlin_sdk_maven_artifacts_if_required() {
@@ -619,6 +684,19 @@ build_apk() {
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
   oliphaunt_dev_assert_runtime_file_list "$selected_extensions" "Android" <"$apk_files"
+
+  local apk_payload_root="$scratch_root/apk-runtime-verification"
+  rm -rf "$apk_payload_root"
+  mkdir -p "$apk_payload_root"
+  unzip -q "$apk" "assets/oliphaunt/runtime/manifest.properties" -d "$apk_payload_root"
+  if [ "$android_icu_enabled" = "1" ]; then
+    unzip -q "$apk" "assets/oliphaunt/runtime/files/share/icu/*" -d "$apk_payload_root"
+  fi
+  assert_android_icu_payload \
+    "$apk_payload_root/assets/oliphaunt/runtime/manifest.properties" \
+    "$apk_payload_root/assets/oliphaunt/runtime/files/share/icu" \
+    "$runtime_resources/oliphaunt/runtime/files/share/icu" \
+    "built Android APK"
 }
 
 start_metro_if_needed() {
@@ -703,6 +781,7 @@ write_android_build_artifact_report() {
     "$scratch_root" \
     buildType "$build_type" \
     abi "$android_abi" \
+    icu "$android_icu_enabled" \
     androidLinkEvidence "$android_link_evidence"
   cp "$report" "$scratch_root/reports/build-report.json"
   echo "Android mobile build artifact: $apk_copy"
@@ -720,8 +799,10 @@ main() {
   ensure_android_env
   if is_truthy "$e2e_only"; then
     need_cmd node
+    need_cmd unzip
     [ -f "$apk" ] ||
       fail "Android E2E-only mode requires an existing APK at $apk; run mobile-build:android first or set OLIPHAUNT_EXPO_ANDROID_SCRATCH to its scratch root"
+    export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"
     install_and_launch
     local apk_bytes rn_package_bytes
     apk_bytes="$(wc -c <"$apk" | tr -d '[:space:]')"
@@ -730,6 +811,10 @@ main() {
     exit 0
   fi
   need_cmd zipinfo
+  need_cmd unzip
+  if [ "$android_icu_enabled" = "1" ]; then
+    need_cmd diff
+  fi
   prepare_expo_example_workspace
   pack_react_native_sdk_if_needed
   ensure_android_project
@@ -740,6 +825,7 @@ main() {
   jni_libs="$(prepare_jni_libs "$source_so")"
   publish_local_kotlin_sdk "$runtime_resources" "$jni_libs"
   build_apk "$runtime_resources" "$jni_libs"
+  export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
   write_android_build_artifact_report "$selected_extensions"

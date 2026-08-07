@@ -330,14 +330,15 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
           product: 'oliphaunt-icu',
           kind: 'icu-data',
           target: 'portable',
-          dataRelativePath: 'share/icu',
+          dataRelativePath: 'OliphauntICU.bundle/share/icu',
         },
       }),
       'utf8',
     );
-    await mkdir(join(root, 'share/icu'), { recursive: true });
-    await writeFile(join(root, 'share/icu/icudt76l.dat'), 'icu');
-    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), join(root, 'share/icu'));
+    const dataDirectory = join(root, 'OliphauntICU.bundle/share/icu');
+    await mkdir(dataDirectory, { recursive: true });
+    await writeFile(join(dataDirectory, 'icudt76l.dat'), 'icu');
+    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), dataDirectory);
     await assert.rejects(
       () => resolveNodeIcuDataDirectory('9.9.8', root),
       /does not match @oliphaunt\/ts icuVersion/,
