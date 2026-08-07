@@ -91,6 +91,7 @@ if (target === "android-arm64-v8a") {
   buildLinuxRuntimeAssets();
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-arm64/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
+  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
 } else if (target === "android-x86_64") {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-android-x86_64.sh", [], {
     env: {
@@ -101,6 +102,7 @@ if (target === "android-arm64-v8a") {
   buildLinuxRuntimeAssets();
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-x86_64/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
+  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
 } else if (target === "ios-xcframework") {
   run("src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh");
   buildMacosRuntimeAssets();

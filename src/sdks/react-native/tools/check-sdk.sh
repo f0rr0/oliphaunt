@@ -552,6 +552,10 @@ case "$mode" in
     run tar -xzf "$ios_fixture_tarball" -C "$ios_clean_install" --strip-components=1
     run node "$ios_clean_install/tools/verify-ios-package.mjs" \
       --package-dir "$ios_clean_install"
+    run node "$package_dir/tools/ios-icu-autolinking.test.mjs" \
+      --react-native-tarball "$ios_fixture_tarball" \
+      --icu-source "$root/src/runtimes/liboliphaunt/native/icu-npm" \
+      --expo-project "$root/src/sdks/react-native/examples/expo"
     if tar -tzf "$ios_fixture_tarball" | grep -Eq \
       '^package/ios/(resources|frameworks|extension-frameworks|generated)/'; then
       echo "selection-neutral React Native npm tarball contains app-specific iOS payload" >&2

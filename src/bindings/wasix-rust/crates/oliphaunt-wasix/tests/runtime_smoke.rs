@@ -122,6 +122,21 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 }
 
 #[test]
+fn core_english_snowball_text_search_loads_runtime_module_and_data() -> anyhow::Result<()> {
+    let mut db = Oliphaunt::builder().temporary().open()?;
+    let result = db.query(
+        "SELECT CASE WHEN \
+         to_tsvector('pg_catalog.english', 'the quick foxes running') \
+         @@ to_tsquery('pg_catalog.english', 'run & fox') \
+         THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&result)?["value"], json!("english-snowball-ok"));
+    Ok(())
+}
+
+#[test]
 fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder().temporary().open()?;
     let mut ids = Vec::new();

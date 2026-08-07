@@ -489,6 +489,29 @@ impl BuildOutputs {
                 .build_dir
                 .join("src/backend/snowball/snowball_create.sql"),
         )?;
+        for language in [
+            "danish",
+            "dutch",
+            "english",
+            "finnish",
+            "french",
+            "german",
+            "hungarian",
+            "italian",
+            "nepali",
+            "norwegian",
+            "portuguese",
+            "russian",
+            "spanish",
+            "swedish",
+            "turkish",
+        ] {
+            ensure_file(
+                &self
+                    .source_dir
+                    .join(format!("src/backend/snowball/stopwords/{language}.stop")),
+            )?;
+        }
         Ok(())
     }
 
@@ -2097,6 +2120,11 @@ fn stage_runtime_tree(build: &Path, source: &Path, runtime: &Path) -> Result<()>
 
     copy_tree_filtered(
         &source.join("src/backend/tsearch/dicts"),
+        &share.join("tsearch_data"),
+        None,
+    )?;
+    copy_tree_filtered(
+        &source.join("src/backend/snowball/stopwords"),
         &share.join("tsearch_data"),
         None,
     )?;

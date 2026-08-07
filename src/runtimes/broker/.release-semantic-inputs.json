@@ -56,7 +56,7 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "57ad442a50cf492ec6824fc336d730648be8de54b724331bce6a6392eea694d2"
+          "sha256": "75a037a255473f83fd6d2bb927ad426add98aded6d350b8fb8c46b1a1f84aadc"
         }
       ]
     },
@@ -457,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "ee4150d84771b12a1e437e932d4e9716403ccbc80a6df41bb5c19bb5d890e83b"
+  "sha256": "ac4b1e4f3938b48f5c03aa4404d553864b7a448d63b74337105204f3db7a43eb"
 }

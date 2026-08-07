@@ -29,19 +29,27 @@ async function fixture() {
 
 test("Deno runtime staging separates embedded modules from canonical subprocess modules", async () => {
   const { source, canonicalModules, destination } = await fixture();
+  await writeFile(path.join(canonicalModules, "dict_snowball.so"), "canonical initdb dict_snowball\n");
   await writeFile(path.join(canonicalModules, "plpgsql.so"), "canonical initdb plpgsql\n");
   await writeFile(path.join(canonicalModules, "hstore.so"), "canonical hstore\n");
+  await writeFile(path.join(source, "dict_snowball.so"), "embedded-linked dict_snowball\n");
   await writeFile(path.join(source, "plpgsql.so"), "embedded-linked plpgsql\n");
   await writeFile(path.join(source, "hstore.so"), "embedded hstore\n");
   await writeFile(path.join(source, "vector.so"), "selected external module\n");
 
   const result = await stageDenoModuleDirectory(source, destination);
 
+  expect(await readFile(path.join(canonicalModules, "dict_snowball.so"), "utf8")).toBe(
+    "canonical initdb dict_snowball\n",
+  );
   expect(await readFile(path.join(canonicalModules, "plpgsql.so"), "utf8")).toBe(
     "canonical initdb plpgsql\n",
   );
   expect(await readFile(path.join(canonicalModules, "hstore.so"), "utf8")).toBe(
     "canonical hstore\n",
+  );
+  expect(await readFile(path.join(destination, "dict_snowball.so"), "utf8")).toBe(
+    "embedded-linked dict_snowball\n",
   );
   expect(await readFile(path.join(destination, "plpgsql.so"), "utf8")).toBe(
     "embedded-linked plpgsql\n",
@@ -53,7 +61,7 @@ test("Deno runtime staging separates embedded modules from canonical subprocess 
     "selected external module\n",
   );
   expect(result).toEqual({
-    copiedFiles: ["hstore.so", "plpgsql.so", "vector.so"],
+    copiedFiles: ["dict_snowball.so", "hstore.so", "plpgsql.so", "vector.so"],
   });
 });
 
@@ -85,9 +93,12 @@ test("Deno prepared runtime reserves lib/modules for separately materialized mod
   await mkdir(separateModules, { recursive: true });
   await mkdir(path.join(runtimeSource, "share", "postgresql", "extension"), { recursive: true });
   await writeFile(path.join(runtimeSource, "share", "postgresql", "extension", "vector.control"), "runtime control\n");
+  await writeFile(path.join(canonicalModules, "dict_snowball.so"), "canonical subprocess dict_snowball\n");
   await writeFile(path.join(canonicalModules, "plpgsql.so"), "canonical subprocess module\n");
   await writeFile(path.join(runtimeModules, "runtime-only.so"), "must be excluded\n");
   await writeFile(path.join(runtimeModules, "vector.so"), "runtime copy\n");
+  await writeFile(path.join(separateModules, "dict_snowball.so"), "separate dict_snowball\n");
+  await writeFile(path.join(separateModules, "plpgsql.so"), "separate plpgsql\n");
   await writeFile(path.join(separateModules, "vector.so"), "separately materialized\n");
   await writeFile(path.join(separateModules, "hstore.so"), "separate hstore\n");
 
@@ -105,6 +116,9 @@ test("Deno prepared runtime reserves lib/modules for separately materialized mod
     path.join(destination, "share", "postgresql", "extension", "vector.control"),
     "utf8",
   )).toBe("runtime control\n");
+  expect(await readFile(path.join(destination, "lib", "postgresql", "dict_snowball.so"), "utf8")).toBe(
+    "canonical subprocess dict_snowball\n",
+  );
   expect(await readFile(path.join(destination, "lib", "postgresql", "plpgsql.so"), "utf8")).toBe(
     "canonical subprocess module\n",
   );
@@ -114,16 +128,23 @@ test("Deno prepared runtime reserves lib/modules for separately materialized mod
   expect(await readFile(path.join(destinationModules, "hstore.so"), "utf8")).toBe(
     "separate hstore\n",
   );
+  expect(await readFile(path.join(destinationModules, "dict_snowball.so"), "utf8")).toBe(
+    "separate dict_snowball\n",
+  );
+  expect(await readFile(path.join(destinationModules, "plpgsql.so"), "utf8")).toBe(
+    "separate plpgsql\n",
+  );
   await expect(access(path.join(destinationModules, "runtime-only.so"))).rejects.toMatchObject({
     code: "ENOENT",
   });
   expect(result).toEqual({
     moduleDirectory: destinationModules,
     moduleStaging: {
-      copiedFiles: ["hstore.so", "vector.so"],
+      copiedFiles: ["dict_snowball.so", "hstore.so", "plpgsql.so", "vector.so"],
     },
     runtimeStaging: {
       copiedFiles: [
+        "lib/postgresql/dict_snowball.so",
         "lib/postgresql/plpgsql.so",
         "share/postgresql/extension/vector.control",
       ],

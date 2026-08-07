@@ -2684,6 +2684,8 @@ jobs:
           OLIPHAUNT_EXPO_ANDROID_ABI: ${{ matrix.abi }}
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_EXTENSIONS: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
+          OLIPHAUNT_EXPO_ANDROID_ICU: "1"
+          OLIPHAUNT_EXPO_ANDROID_ICU_DATA_DIR: ${{ github.workspace }}/target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"
           OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
           OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO: ${{ github.workspace }}/${{ matrix.build-root }}/out/liboliphaunt.so
@@ -2753,6 +2755,19 @@ jobs:
         with:
           name: liboliphaunt-native-release-assets-ios-xcframework
           path: target/liboliphaunt/release-assets
+
+      - name: Qualify standalone ICU CocoaPods carrier
+        run: |
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/release-assets -maxdepth 1 -type f \
+            -name 'liboliphaunt-*-icu-data.tar.gz' | LC_ALL=C sort)
+          if [ "$#" -ne 1 ]; then
+            echo "Expected exactly one ICU data release asset; found $#" >&2
+            exit 1
+          fi
+          tools/release/check-icu-npm-cocoapods-consumer.sh "$1"
 
       - name: Download Swift SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2890,6 +2905,7 @@ jobs:
           OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS: "1"
           OLIPHAUNT_EXPO_SDK_ARTIFACT_ROOT: ${{ github.workspace }}/target/sdk-artifacts
           OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
+          OLIPHAUNT_EXPO_IOS_ICU: "1"
           OLIPHAUNT_EXPO_IOS_EXTENSIONS: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
           OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"

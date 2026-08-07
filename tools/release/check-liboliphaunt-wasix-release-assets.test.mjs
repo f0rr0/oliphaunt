@@ -23,7 +23,10 @@ import {
 } from "./check-liboliphaunt-wasix-release-assets.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
-import { AOT_TARGET_TRIPLES } from "./wasix-cargo-artifact-contract.mjs";
+import {
+  AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
+} from "./wasix-cargo-artifact-contract.mjs";
 import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
 
 function fixture(t) {
@@ -108,9 +111,12 @@ function stagePortablePayload(stage, runtimeBytes) {
 
 function runtimeArchive(root, name = "runtime.tar.zst") {
   const stage = path.join(root, `${name}-stage`, "oliphaunt");
-  mkdirSync(path.join(stage, "bin"), { recursive: true });
-  writeFileSync(path.join(stage, "bin/initdb"), "initdb\n");
-  writeFileSync(path.join(stage, "bin/postgres"), "postgres\n");
+  for (const member of CORE_RUNTIME_ARCHIVE_FILES) {
+    const relative = member.replace(/^oliphaunt\//u, "");
+    const file = path.join(stage, relative);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${relative}\n`);
+  }
   return readFileSync(archiveStage(stage, path.join(root, name), "oliphaunt"));
 }
 

@@ -39,6 +39,11 @@ case "$platform" in
     export OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER="${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-maestro}"
     export OLIPHAUNT_EXPO_ANDROID_SCRATCH="$mobile_scratch"
     if [ "$mobile_runner" = "smoke" ]; then
+      command -v unzip >/dev/null 2>&1 || {
+        echo "Android mobile E2E requires unzip to inspect the exact APK runtime manifest." >&2
+        exit 1
+      }
+      export_mobile_e2e_icu_expectation_from_android_apk "$apk" "Android APK"
       rm -f \
         "$mobile_scratch/reports/smoke-report.json" \
         "$mobile_scratch/reports/smoke-extension-receipt.json"
@@ -68,6 +73,9 @@ case "$platform" in
     export OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER="${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-maestro}"
     export OLIPHAUNT_EXPO_IOS_SCRATCH="$mobile_scratch"
     if [ "$mobile_runner" = "smoke" ]; then
+      export_mobile_e2e_icu_expectation_from_manifest \
+        "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
+        "iOS app"
       rm -f \
         "$mobile_scratch/reports/smoke-report.json" \
         "$mobile_scratch/reports/smoke-extension-receipt.json"

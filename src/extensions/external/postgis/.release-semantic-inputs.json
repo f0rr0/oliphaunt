@@ -79,27 +79,27 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
-          "sha256": "b772a154f5961626b98b26f4f318b59e9e345edde15a0e58420bd0b448fe74ba"
+          "sha256": "f8dfc471bae4cfc7cbe2b79aeaad7fc145eb86618b06b2831debee81780654f4"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
-          "sha256": "1fa85b23f5c2fbcbd515ff6a8f8d55160e212b8b2bc09446f92610184fd593bb"
+          "sha256": "67a29354a108e5e8b60a563eb307a8e3d26c0aae9262313453a65466803cdfd1"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
-          "sha256": "cb5f273ddade32cca058457c6737c9251fc566b086a481fa876b666af929be4a"
+          "sha256": "b8a343474f7c96e59fc818e6b9de5dd22462b1523ffc2e972456c5752e055102"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
-          "sha256": "6b431153dd62d87b94293e8d9125647d79bd0433fda36920f68b05a8c6f39237"
+          "sha256": "9db828239b4db912b323fbba3de3051aadfb2947e0852deac3ec2cd04a5d1cc6"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-          "sha256": "e60a34da21b426a5d11f26dd75c6a2563834347f78c3732c27a5bcea129f81a2"
+          "sha256": "d288b748b91bab933bd5872692db50d74fd2bdfc4edec88317604848996db2c6"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "fa4a87dfac5a508b7001303f379a33b5afc682059ed29027299f50deabb4543f"
+          "sha256": "7b8a432feff478f27944c261162eee67394be938d644d7870c076f0c632b4440"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
@@ -260,7 +260,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4154f50916121441975b3ce9a37a8dddf1e619c487e75fb26199e4415572fc25"
+          "sha256": "e9a6ffa80496580efac390d344a936588a020cf46cc40e6dddbafd659c8103f9"
         }
       ]
     },
@@ -390,5 +390,5 @@
       ]
     }
   ],
-  "sha256": "6ed047c1bf9ba0ae127a1fb234e727876eff9db09a3c330b2d856bfc0a5b3066"
+  "sha256": "da2b760c1e63977924e013f248163c3bfeb246069c1a175a8beb76a425cc6909"
 }

@@ -1269,6 +1269,7 @@ fn check_postgres_packaging_inputs(source: &Path) -> Result<()> {
         "src/backend/snowball/snowball_create.pl",
         "src/backend/snowball/snowball.sql.in",
         "src/backend/snowball/snowball_func.sql.in",
+        "src/backend/snowball/stopwords/english.stop",
         "src/timezone/data/tzdata.zi",
         "src/timezone/tznames/Default",
     ] {

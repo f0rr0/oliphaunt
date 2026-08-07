@@ -35,6 +35,23 @@ export const NATIVE_PACKAGED_TOOL_STEMS = Object.freeze([
   ...NATIVE_RUNTIME_TOOL_STEMS,
   ...NATIVE_TOOLS_TOOL_STEMS,
 ]);
+export const SNOWBALL_STOPWORD_LANGUAGES = Object.freeze([
+  "danish",
+  "dutch",
+  "english",
+  "finnish",
+  "french",
+  "german",
+  "hungarian",
+  "italian",
+  "nepali",
+  "norwegian",
+  "portuguese",
+  "russian",
+  "spanish",
+  "swedish",
+  "turkish",
+]);
 
 const DEV_RUNTIME_DIRS = Object.freeze([...POLICY.devRuntimeDirs]);
 const DEV_RUNTIME_SUFFIXES = Object.freeze([...POLICY.devRuntimeSuffixes]);
@@ -164,6 +181,22 @@ export function requiredRuntimeMemberPaths(target, prefix) {
 
 export function requiredToolsMemberPaths(target, prefix) {
   return requiredToolsPackageTools(target).map((tool) => `${prefix.replace(/\/+$/, "")}/${tool}`);
+}
+
+export function requiredCoreRuntimePaths(target, runtimeDir = null) {
+  const moduleSuffix = isWindowsTarget(target, runtimeDir)
+    ? ".dll"
+    : target?.startsWith("macos-") ? ".dylib" : ".so";
+  return [
+    `lib/postgresql/dict_snowball${moduleSuffix}`,
+    `lib/postgresql/plpgsql${moduleSuffix}`,
+    "share/postgresql/extension/plpgsql--1.0.sql",
+    "share/postgresql/extension/plpgsql.control",
+    "share/postgresql/snowball_create.sql",
+    ...SNOWBALL_STOPWORD_LANGUAGES.map(
+      (language) => `share/postgresql/tsearch_data/${language}.stop`,
+    ),
+  ];
 }
 
 function runtimeDirFor(root) {
@@ -462,6 +495,14 @@ function validateRuntimeTree(root, target, requireRuntime, { toolSet = "packaged
         }
       } else if (!requiredTools.has(name)) {
         errors.push(`${rel(path)} is an extra runtime tool`);
+      }
+    }
+  }
+
+  if (requireRuntime && toolSet !== "tools") {
+    for (const relativePath of requiredCoreRuntimePaths(target, runtimeDir)) {
+      if (!isFile(join(runtimeDir, ...relativePath.split("/")))) {
+        errors.push(`${rel(runtimeDir)} is missing required core runtime file ${relativePath}`);
       }
     }
   }

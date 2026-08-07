@@ -8,6 +8,7 @@ export type ExpoSmokePassReceiptInput = {
   readonly extensions: readonly string[];
   readonly extensionProofCount: number;
   readonly extensionCatalogSha256: string;
+  readonly icuRuntimeProof: boolean;
 };
 
 function utf8ByteLength(value: string): number {
@@ -29,6 +30,9 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   if (!/^[0-9a-f]{64}$/u.test(input.extensionCatalogSha256)) {
     throw new Error('installed-app receipt requires a lowercase SHA-256 extension catalog digest');
   }
+  if (typeof input.icuRuntimeProof !== 'boolean') {
+    throw new Error('installed-app receipt requires an ICU runtime proof boolean');
+  }
 
   const extensions = [...input.extensions].sort();
   if (extensions.length === 0 || new Set(extensions).size !== extensions.length) {
@@ -47,12 +51,13 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
 
   const serialized = JSON.stringify({
-    schema: 'oliphaunt-expo-smoke-pass-v1',
+    schema: 'oliphaunt-expo-smoke-pass-v2',
     runner: 'smoke',
     platform: input.platform,
     extensionCount: extensions.length,
     extensionProofCount: input.extensionProofCount,
     extensionCatalogSha256: input.extensionCatalogSha256,
+    icuRuntimeProof: input.icuRuntimeProof,
   });
   const eventBytes = utf8ByteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`);
   if (eventBytes > EXPO_SMOKE_PASS_EVENT_MAX_BYTES) {

@@ -8,7 +8,7 @@ import { ROOT } from "./release-graph.mjs";
 const selfHashingScripts = [
   {
     path: "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-    selfHashCount: 3,
+    selfHashCount: 4,
   },
   {
     path: "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",

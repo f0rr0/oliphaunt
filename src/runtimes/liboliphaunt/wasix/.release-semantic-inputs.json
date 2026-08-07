@@ -162,7 +162,7 @@
         },
         {
           "path": "tools/xtask/src/asset_pipeline.rs",
-          "sha256": "4bf91b0968a0de6ac2245f1fa3081ca36e44f5b20c532996ffea9a2393a8d396"
+          "sha256": "be930c198af0b31432a9fa0dbd98fe5cad31d46474f8948660f4be3c2725ad47"
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
@@ -178,7 +178,7 @@
         },
         {
           "path": "tools/xtask/src/postgres_guard.rs",
-          "sha256": "5414e25bbcef932cc984a593a444e5314f2536785fc961dc6867ee327585d764"
+          "sha256": "0ccadf939d2e52a8a3f1a3445e6e1d401085ead7f788085c443e6563b0e19064"
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
@@ -212,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "423683b9fd36424fd207df04406d0b2ae829bdec73df7adcfba6753339cb284a"
+          "sha256": "e3243ad69b16db40230ea472ab66787caeafcc23adaa25739da6ccd57d380e18"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -288,7 +288,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4154f50916121441975b3ce9a37a8dddf1e619c487e75fb26199e4415572fc25"
+          "sha256": "e9a6ffa80496580efac390d344a936588a020cf46cc40e6dddbafd659c8103f9"
         }
       ]
     },
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "b303a6f340d89c9209637048a6ac8198f77e85a9051f537d33017a86a820f3ec"
+  "sha256": "49e935c966c9acc0c5480a729abc62ec37dea65ba86d8838aa857609cccccbe7"
 }

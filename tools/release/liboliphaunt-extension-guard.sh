@@ -43,7 +43,7 @@ oliphaunt_assert_base_runtime_has_no_optional_extensions() {
 oliphaunt_assert_base_embedded_modules_exact() {
   local module_dir="${1:?missing embedded module directory}"
   local suffix="${2:?missing embedded module suffix}"
-  local expected="plpgsql.$suffix"
+  local expected_modules=("dict_snowball.$suffix" "plpgsql.$suffix")
   local failures=()
 
   if [ ! -d "$module_dir" ] || [ -L "$module_dir" ]; then
@@ -51,16 +51,20 @@ oliphaunt_assert_base_embedded_modules_exact() {
     return 1
   fi
 
-  local expected_path="$module_dir/$expected"
-  if [ ! -f "$expected_path" ] || [ -L "$expected_path" ]; then
-    failures+=("missing-or-nonregular:$expected")
-  fi
+  local expected expected_path
+  for expected in "${expected_modules[@]}"; do
+    expected_path="$module_dir/$expected"
+    if [ ! -f "$expected_path" ] || [ -L "$expected_path" ]; then
+      failures+=("missing-or-nonregular:$expected")
+    fi
+  done
 
   local entry
   while IFS= read -r -d '' entry; do
-    if [ "$(basename "$entry")" != "$expected" ]; then
-      failures+=("unexpected:$(basename "$entry")")
-    fi
+    case "$(basename "$entry")" in
+      "dict_snowball.$suffix"|"plpgsql.$suffix") ;;
+      *) failures+=("unexpected:$(basename "$entry")") ;;
+    esac
   done < <(find "$module_dir" -mindepth 1 -maxdepth 1 -print0)
 
   if [ "${#failures[@]}" -gt 0 ]; then
