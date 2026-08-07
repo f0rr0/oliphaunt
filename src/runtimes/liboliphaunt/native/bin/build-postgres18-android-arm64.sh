@@ -79,6 +79,8 @@ plpgsql_objects=(
   src/pl/plpgsql/src/pl_scanner.o
 )
 
+snowball_objects=()
+
 jit_objects=(
   src/backend/jit/jit.o
 )
@@ -151,6 +153,7 @@ llvm_ranlib="$toolchain_dir/bin/llvm-ranlib"
 [ -x "$llvm_nm" ] || fail "Android llvm-nm not found: $llvm_nm"
 [ -x "$llvm_ar" ] || fail "Android llvm-ar not found: $llvm_ar"
 [ -x "$llvm_ranlib" ] || fail "Android llvm-ranlib not found: $llvm_ranlib"
+snowball_nm=("$llvm_nm")
 oliphaunt_icu_require_source "$icu_source_dir"
 
 cc=("$clang_path")
@@ -173,7 +176,7 @@ cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
 postgres_cppflags="-D_GNU_SOURCE"
 native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM -Wno-unused-command-line-argument)"
-liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
+liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL -DOLIPHAUNT_BUILTIN_DICT_SNOWBALL"
 pg_extension_cflags="$native_cflags $postgres_cppflags $icu_cflags"
 jobs="${OLIPHAUNT_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -299,6 +302,7 @@ artifact_ready() {
   local linked_symbols
   linked_symbols="$("$llvm_nm" --defined-only "$lib_out" 2>/dev/null || true)"
   oliphaunt_icu_linked_symbols_ready "$linked_symbols" || return 1
+  oliphaunt_mobile_builtin_snowball_linked_symbols_ready "$linked_symbols" || return 1
   local undefined_symbols
   undefined_symbols="$("$llvm_nm" -D --undefined-only "$lib_out" 2>/dev/null || true)"
   if printf '%s\n' "$undefined_symbols" | rg -q 'shm(get|ctl|dt)|shm_open|sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)'; then
@@ -361,6 +365,9 @@ report_artifact_not_ready() {
   printf '%s\n' "$undefined_symbols" | rg 'shm(get|ctl|dt)|shm_open|sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)' >&2 || true
   if ! oliphaunt_icu_linked_symbols_ready "$linked_symbols"; then
     echo "ICU static link validation failed" >&2
+  fi
+  if ! oliphaunt_mobile_builtin_snowball_linked_symbols_ready "$linked_symbols"; then
+    echo "built-in dict_snowball static link validation failed" >&2
   fi
   if [ -f "$make_log" ]; then
     echo "tail of PostgreSQL Android $android_abi make log:" >&2
@@ -906,6 +913,7 @@ write_objects_response_file() {
       printf '%s\n' "${jit_objects[@]}"
       printf 'src/timezone/localtime.o src/timezone/pgtz.o src/timezone/strftime.o\n'
       printf '%s\n' "${plpgsql_objects[@]}"
+      printf '%s\n' "${snowball_objects[@]}"
     } | tr '[:space:]' '\n' | sed '/^$/d' | awk '!seen[$0]++' > "$objects_rsp"
   )
 }
@@ -954,7 +962,7 @@ case "$script_mode" in
     prepare_source
     build_icu
     configure_source
-    if artifact_ready && (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "$lib_out"
       exit 0
     fi
@@ -962,6 +970,7 @@ case "$script_mode" in
     build_jit_objects
     build_timezone_objects
     build_plpgsql_objects
+    oliphaunt_build_mobile_builtin_snowball
     build_liboliphaunt_objects
     build_mobile_static_dependencies
     build_mobile_static_extension_objects
@@ -977,7 +986,7 @@ case "$script_mode" in
     echo "$lib_out"
     ;;
   --check-current)
-    if artifact_ready && (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "Android $android_abi liboliphaunt shared library is current"
       exit 0
     fi

@@ -346,7 +346,7 @@ export function validateRuntimePayload(root) {
     return entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0;
   }).sort(compareText);
   if (missingCoreRuntimeFiles.length > 0) {
-    fail(`WASIX runtime Cargo payload must bundle postgres/initdb inside oliphaunt.wasix.tar.zst; missing ${missingCoreRuntimeFiles.join(", ")}`);
+    fail(`WASIX runtime Cargo payload must bundle the core runtime closure inside oliphaunt.wasix.tar.zst; missing ${missingCoreRuntimeFiles.join(", ")}`);
   }
   const bundledIcu = runtimeMembers.filter((member) => member === "oliphaunt/share/icu" || member.startsWith("oliphaunt/share/icu/"));
   if (bundledIcu.length > 0) {

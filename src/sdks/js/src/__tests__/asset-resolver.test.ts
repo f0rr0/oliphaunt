@@ -507,8 +507,10 @@ async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void
   const deno = fsBackedDenoValidationRuntime();
   try {
     await writePreparedHstoreRuntime(runtime, 'linux-x64-gnu');
+    await writeFile(join(runtimeModules, 'dict_snowball.so'), 'canonical subprocess dict_snowball');
     await writeFile(join(runtimeModules, 'plpgsql.so'), 'canonical subprocess plpgsql');
     await mkdir(embeddedModules, { recursive: true });
+    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
     await writeFile(join(embeddedModules, 'plpgsql.so'), 'embedded plpgsql');
     await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
 
@@ -534,6 +536,19 @@ async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void
     );
 
     await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
+    await rm(join(embeddedModules, 'dict_snowball.so'));
+    await assert.rejects(
+      () =>
+        validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: runtime,
+          extensions: ['hstore'],
+          source: 'Deno test runtime',
+        }),
+      /module directory is missing required file dict_snowball[.]so/,
+    );
+
+    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
     await rm(join(embeddedModules, 'plpgsql.so'));
     await assert.rejects(
       () =>

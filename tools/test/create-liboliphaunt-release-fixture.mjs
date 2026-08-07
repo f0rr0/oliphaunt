@@ -17,6 +17,23 @@ import {
 
 const NATIVE_RUNTIME_TOOL_STEMS = ['initdb', 'pg_ctl', 'postgres'];
 const NATIVE_TOOLS_TOOL_STEMS = ['pg_dump', 'psql'];
+const SNOWBALL_STOPWORDS = [
+  'danish.stop',
+  'dutch.stop',
+  'english.stop',
+  'finnish.stop',
+  'french.stop',
+  'german.stop',
+  'hungarian.stop',
+  'italian.stop',
+  'nepali.stop',
+  'norwegian.stop',
+  'portuguese.stop',
+  'russian.stop',
+  'spanish.stop',
+  'swedish.stop',
+  'turkish.stop',
+];
 const WINDOWS_VC_RUNTIME_DLLS = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
 
 function windowsVcRuntimeEntries() {
@@ -59,6 +76,7 @@ function nativeBinary(target, { provider = false } = {}) {
 function nativeRuntimeEntries(target) {
   const windows = target === 'windows-x64-msvc';
   const suffix = windows ? '.exe' : '';
+  const moduleSuffix = windows ? '.dll' : target === 'macos-arm64' ? '.dylib' : '.so';
   const entries = Object.fromEntries(
     NATIVE_RUNTIME_TOOL_STEMS.map((tool) => [
       `runtime/bin/${tool}${suffix}`,
@@ -67,6 +85,17 @@ function nativeRuntimeEntries(target) {
   );
   entries['runtime/share/postgresql/README.release-fixture'] =
     'release-shaped native runtime fixture\n';
+  entries[`runtime/lib/postgresql/dict_snowball${moduleSuffix}`] = nativeBinary(target);
+  entries[`runtime/lib/postgresql/plpgsql${moduleSuffix}`] = nativeBinary(target);
+  entries['runtime/share/postgresql/extension/plpgsql.control'] =
+    "default_version = '1.0'\n";
+  entries['runtime/share/postgresql/extension/plpgsql--1.0.sql'] =
+    '-- release-shaped PL/pgSQL fixture\n';
+  entries['runtime/share/postgresql/snowball_create.sql'] =
+    '-- release-shaped Snowball dictionary fixture\n';
+  for (const stopword of SNOWBALL_STOPWORDS) {
+    entries[`runtime/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
+  }
   return entries;
 }
 
@@ -147,6 +176,16 @@ function runtimeResourceEntries() {
       'postgres-template-pgdata-v1',
     ),
   };
+  entries['oliphaunt/runtime/files/share/postgresql/extension/plpgsql.control'] =
+    "default_version = '1.0'\n";
+  entries['oliphaunt/runtime/files/share/postgresql/extension/plpgsql--1.0.sql'] =
+    '-- release-shaped PL/pgSQL fixture\n';
+  entries['oliphaunt/runtime/files/share/postgresql/snowball_create.sql'] =
+    '-- release-shaped Snowball dictionary fixture\n';
+  for (const stopword of SNOWBALL_STOPWORDS) {
+    entries[`oliphaunt/runtime/files/share/postgresql/tsearch_data/${stopword}`] =
+      `${stopword}\n`;
+  }
   entries['oliphaunt/package-size.tsv'] = runtimeResourcePackageSizeReport(entries);
   return entries;
 }
@@ -304,6 +343,7 @@ async function writeFixtureAssets(assetDir, version) {
     path.join(assetDir, `liboliphaunt-${version}-macos-arm64.tar.gz`),
     {
       'lib/liboliphaunt.dylib': nativeBinary('macos-arm64'),
+      'lib/modules/dict_snowball.dylib': nativeBinary('macos-arm64'),
       'lib/modules/plpgsql.dylib': nativeBinary('macos-arm64'),
       ...nativeRuntimeEntries('macos-arm64'),
     },
@@ -320,6 +360,7 @@ async function writeFixtureAssets(assetDir, version) {
     path.join(assetDir, `liboliphaunt-${version}-linux-x64-gnu.tar.gz`),
     {
       'lib/liboliphaunt.so': nativeBinary('linux-x64-gnu'),
+      'lib/modules/dict_snowball.so': nativeBinary('linux-x64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-x64-gnu'),
       ...nativeRuntimeEntries('linux-x64-gnu'),
     },
@@ -336,6 +377,7 @@ async function writeFixtureAssets(assetDir, version) {
     path.join(assetDir, `liboliphaunt-${version}-linux-arm64-gnu.tar.gz`),
     {
       'lib/liboliphaunt.so': nativeBinary('linux-arm64-gnu'),
+      'lib/modules/dict_snowball.so': nativeBinary('linux-arm64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-arm64-gnu'),
       ...nativeRuntimeEntries('linux-arm64-gnu'),
     },
@@ -369,6 +411,7 @@ async function writeFixtureAssets(assetDir, version) {
     {
       'bin/oliphaunt.dll': nativeBinary('windows-x64-msvc', { provider: true }),
       'lib/oliphaunt.lib': windowsImportLibraryFixture(),
+      'lib/modules/dict_snowball.dll': nativeBinary('windows-x64-msvc', { provider: true }),
       'lib/modules/plpgsql.dll': nativeBinary('windows-x64-msvc', { provider: true }),
       ...nativeRuntimeEntries('windows-x64-msvc'),
       ...windowsVcRuntimeEntries(),

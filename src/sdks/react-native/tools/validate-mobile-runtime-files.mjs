@@ -6,6 +6,26 @@ import { fileURLToPath } from "node:url";
 
 const TOOL = "validate-mobile-runtime-files.mjs";
 const BASELINE_EXTENSION_SQL_NAMES = new Set(["plpgsql"]);
+export const CORE_SNOWBALL_RUNTIME_DATA_FILES = Object.freeze([
+  "share/postgresql/snowball_create.sql",
+  ...[
+    "danish",
+    "dutch",
+    "english",
+    "finnish",
+    "french",
+    "german",
+    "hungarian",
+    "italian",
+    "nepali",
+    "norwegian",
+    "portuguese",
+    "russian",
+    "spanish",
+    "swedish",
+    "turkish",
+  ].map((language) => `share/postgresql/tsearch_data/${language}.stop`),
+]);
 const PORTABLE_SQL_NAME = /^[A-Za-z0-9_-]{1,128}$/u;
 const PORTABLE_SQL_FILE_NAME = /^[A-Za-z0-9_.-]{1,256}\.sql$/u;
 const PORTABLE_SQL_FILE_PREFIX = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -231,6 +251,11 @@ export function validateMobileRuntimeFiles({
     fail("runtimePaths must be a set of portable runtime-relative file paths");
   }
   const contracts = extensionContracts(metadata, metadataLabel);
+  for (const required of CORE_SNOWBALL_RUNTIME_DATA_FILES) {
+    if (!runtimePaths.has(required)) {
+      fail(`${platform} app is missing PostgreSQL core Snowball runtime data: ${required}`);
+    }
+  }
   const contractsBySqlName = new Map(contracts.map((contract) => [contract.sqlName, contract]));
   const selectedNames = selectedSqlNames(selected);
   for (const sqlName of selectedNames) {

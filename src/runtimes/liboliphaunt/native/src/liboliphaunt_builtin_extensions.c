@@ -18,8 +18,26 @@ static const OliphauntStaticExtensionSymbol plpgsql_symbols[] = {
     {.name = "plpgsql_validator", .address = (void *)plpgsql_validator},
     {.name = "pg_finfo_plpgsql_validator", .address = (void *)pg_finfo_plpgsql_validator},
 };
+#endif
 
+#ifdef OLIPHAUNT_BUILTIN_DICT_SNOWBALL
+extern const void *oliphaunt_builtin_dict_snowball_Pg_magic_func(void);
+extern void dsnowball_init(void);
+extern void pg_finfo_dsnowball_init(void);
+extern void dsnowball_lexize(void);
+extern void pg_finfo_dsnowball_lexize(void);
+
+static const OliphauntStaticExtensionSymbol dict_snowball_symbols[] = {
+    {.name = "dsnowball_init", .address = (void *)dsnowball_init},
+    {.name = "pg_finfo_dsnowball_init", .address = (void *)pg_finfo_dsnowball_init},
+    {.name = "dsnowball_lexize", .address = (void *)dsnowball_lexize},
+    {.name = "pg_finfo_dsnowball_lexize", .address = (void *)pg_finfo_dsnowball_lexize},
+};
+#endif
+
+#if defined(OLIPHAUNT_BUILTIN_PLPGSQL) || defined(OLIPHAUNT_BUILTIN_DICT_SNOWBALL)
 static const OliphauntStaticExtension builtin_static_extensions[] = {
+#ifdef OLIPHAUNT_BUILTIN_PLPGSQL
     {
         .abi_version = OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION,
         .name = "plpgsql",
@@ -29,11 +47,23 @@ static const OliphauntStaticExtension builtin_static_extensions[] = {
         .symbol_count = sizeof(plpgsql_symbols) / sizeof(plpgsql_symbols[0]),
         .reserved_flags = 0,
     },
+#endif
+#ifdef OLIPHAUNT_BUILTIN_DICT_SNOWBALL
+    {
+        .abi_version = OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION,
+        .name = "dict_snowball",
+        .magic = oliphaunt_builtin_dict_snowball_Pg_magic_func,
+        .init = NULL,
+        .symbols = dict_snowball_symbols,
+        .symbol_count = sizeof(dict_snowball_symbols) / sizeof(dict_snowball_symbols[0]),
+        .reserved_flags = 0,
+    },
+#endif
 };
 #endif
 
 const OliphauntStaticExtension *liboliphaunt_builtin_static_extensions(size_t *count) {
-#ifdef OLIPHAUNT_BUILTIN_PLPGSQL
+#if defined(OLIPHAUNT_BUILTIN_PLPGSQL) || defined(OLIPHAUNT_BUILTIN_DICT_SNOWBALL)
     if (count != NULL) {
         *count = sizeof(builtin_static_extensions) / sizeof(builtin_static_extensions[0]);
     }

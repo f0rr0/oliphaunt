@@ -55,6 +55,7 @@ import {
   prepareOliphauntWasixReleaseSource,
 } from "./package_oliphaunt_wasix_sdk_crate.mjs";
 import {
+  requiredCoreRuntimePaths,
   requiredRuntimeTools,
   requiredToolsPackageTools,
 } from "./optimize_native_runtime_payload.mjs";
@@ -1239,13 +1240,14 @@ function requiredToolsMemberPaths(target, prefix) {
   return requiredToolsPackageTools(target).map((tool) => `${prefix.replace(/\/+$/u, "")}/${tool}`);
 }
 
-function embeddedCoreModuleMember(target, prefix) {
-  const filename = target === "windows-x64-msvc"
-    ? "plpgsql.dll"
+function embeddedCoreModuleMembers(target, prefix) {
+  const suffix = target === "windows-x64-msvc"
+    ? ".dll"
     : target === "macos-arm64"
-      ? "plpgsql.dylib"
-      : "plpgsql.so";
-  return `${prefix.replace(/\/+$/u, "")}/${filename}`;
+      ? ".dylib"
+      : ".so";
+  const normalizedPrefix = prefix.replace(/\/+$/u, "");
+  return ["dict_snowball", "plpgsql"].map((stem) => `${normalizedPrefix}/${stem}${suffix}`);
 }
 
 export function stageWindowsVcRuntimeMembers(
@@ -1544,10 +1546,14 @@ function liboliphauntNpmTarballs(
     }
     const payload = runtimeStages.get(packageName);
     const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
+    const coreRuntimeMembers = requiredCoreRuntimePaths(target.target).map(
+      (member) => `package/runtime/${member}`,
+    );
     const requiredMembers = [
       `package/${target.libraryRelativePath}`,
-      embeddedCoreModuleMember(target.target, "package/lib/modules"),
+      ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
+      ...coreRuntimeMembers,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
       ...releaseNoticeRows({ profile: "native-runtime" }).map((row) => `package/${row.member}`),
     ];

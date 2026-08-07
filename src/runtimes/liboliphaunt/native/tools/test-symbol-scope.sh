@@ -113,6 +113,20 @@ if [ "$(grep -c 'embedded_plpgsql_avoids_provider_collisions' <<< "$plpgsql_buil
   exit 1
 fi
 
+dict_snowball_builder="$(
+  awk '
+    /^build_embedded_dict_snowball_module\(\) \{/ { in_function = 1 }
+    in_function { print }
+    in_function && /^}$/ { exit }
+  ' "$macos_build_script"
+)"
+if ! grep -q 'embedded_dict_snowball_build_stamp' <<< "$dict_snowball_builder" ||
+  ! grep -q 'desired_build_hash' <<< "$dict_snowball_builder" ||
+  ! grep -q 'embedded_dict_snowball_module_ready' <<< "$dict_snowball_builder"; then
+  echo "embedded dict_snowball reuse and promotion are not bound to the current PostgreSQL build and provider audit" >&2
+  exit 1
+fi
+
 for generation_input in \
   "generation_schema=2" \
   "pg_version=%s" \
@@ -221,10 +235,10 @@ for dependency_build_root in json-c sqlite geos libxml2 proj; do
   fi
 done
 
-if ! grep -Fq '! -name plpgsql.dylib -exec rm -rf {} +' "$macos_build_script" ||
-  ! grep -Fq 'rm -rf "$embedded_modules_dir/plpgsql.dylib"' "$macos_build_script" ||
+if ! grep -Fq 'for core_module in dict_snowball.dylib plpgsql.dylib' "$macos_build_script" ||
+  ! grep -Fq '! -name dict_snowball.dylib ! -name plpgsql.dylib -exec rm -rf {} +' "$macos_build_script" ||
   ! grep -Fq 'base_embedded_module_closure_ready' "$macos_build_script"; then
-  echo "base macOS runtime does not self-heal and enforce an exact embedded plpgsql-only closure" >&2
+  echo "base macOS runtime does not self-heal and enforce the exact embedded core-module closure" >&2
   exit 1
 fi
 

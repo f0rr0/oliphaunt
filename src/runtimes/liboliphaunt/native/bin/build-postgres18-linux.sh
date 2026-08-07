@@ -616,10 +616,40 @@ configure_source() {
   fi
 }
 
+snowball_runtime_ready() {
+  local module="$install_dir/lib/postgresql/dict_snowball.so"
+  local sql="$install_dir/share/postgresql/snowball_create.sql"
+  [ -s "$module" ] && [ ! -L "$module" ] || return 1
+  [ -s "$sql" ] && [ ! -L "$sql" ] || return 1
+
+  local stopword
+  for stopword in \
+    danish.stop \
+    dutch.stop \
+    english.stop \
+    finnish.stop \
+    french.stop \
+    german.stop \
+    hungarian.stop \
+    italian.stop \
+    nepali.stop \
+    norwegian.stop \
+    portuguese.stop \
+    russian.stop \
+    spanish.stop \
+    swedish.stop \
+    turkish.stop
+  do
+    local file="$install_dir/share/postgresql/tsearch_data/$stopword"
+    [ -s "$file" ] && [ ! -L "$file" ] || return 1
+  done
+}
+
 runtime_installed() {
   [ -x "$install_dir/bin/initdb" ] &&
     [ -x "$install_dir/bin/postgres" ] &&
     [ -f "$install_dir/share/postgresql/postgresql.conf.sample" ] &&
+    snowball_runtime_ready &&
     oliphaunt_icu_files_data_ready "$icu_data_dir" &&
     [ -f "$runtime_stamp" ] &&
     [ "$(cat "$runtime_stamp")" = "$(desired_hash)" ] &&
@@ -641,6 +671,9 @@ explain_runtime_install_state() {
   done
   if [ ! -f "$install_dir/share/postgresql/postgresql.conf.sample" ]; then
     echo "missing runtime file: $install_dir/share/postgresql/postgresql.conf.sample" >&2
+  fi
+  if ! snowball_runtime_ready; then
+    echo "missing canonical Snowball runtime module, SQL, or stopword data under $install_dir" >&2
   fi
   if ! oliphaunt_icu_files_data_ready "$icu_data_dir"; then
     echo "missing native ICU sidecar data files under $icu_data_dir" >&2
@@ -843,23 +876,32 @@ prune_base_runtime_optional_extensions() {
     rm -rf "$embedded_modules_dir"
   fi
   mkdir -p "$embedded_modules_dir"
-  if [ -L "$embedded_modules_dir/plpgsql.so" ] ||
-    { [ -e "$embedded_modules_dir/plpgsql.so" ] && [ ! -f "$embedded_modules_dir/plpgsql.so" ]; }; then
-    rm -rf "$embedded_modules_dir/plpgsql.so"
-  fi
-  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name plpgsql.so -exec rm -rf {} +
+  local core_module
+  for core_module in dict_snowball.so plpgsql.so; do
+    if [ -L "$embedded_modules_dir/$core_module" ] ||
+      { [ -e "$embedded_modules_dir/$core_module" ] && [ ! -f "$embedded_modules_dir/$core_module" ]; }; then
+      rm -rf "$embedded_modules_dir/$core_module"
+    fi
+  done
+  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name dict_snowball.so ! -name plpgsql.so -exec rm -rf {} +
   rm -rf "$install_dir/share/postgresql/contrib" "$install_dir/share/postgresql/proj"
 }
 
 base_embedded_module_closure_ready() {
   [ -d "$embedded_modules_dir" ] || return 1
   [ ! -L "$embedded_modules_dir" ] || return 1
-  [ -f "$embedded_modules_dir/plpgsql.so" ] || return 1
-  [ ! -L "$embedded_modules_dir/plpgsql.so" ] || return 1
+  local core_module
+  for core_module in dict_snowball.so plpgsql.so; do
+    [ -f "$embedded_modules_dir/$core_module" ] || return 1
+    [ ! -L "$embedded_modules_dir/$core_module" ] || return 1
+  done
 
   local entry
   while IFS= read -r -d '' entry; do
-    [ "$(basename "$entry")" = plpgsql.so ] || return 1
+    case "$(basename "$entry")" in
+      dict_snowball.so|plpgsql.so) ;;
+      *) return 1 ;;
+    esac
   done < <(find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
@@ -876,6 +918,32 @@ native_extension_artifacts_current() {
 
 embedded_plpgsql_module_ready() {
   module_depends_on_liboliphaunt "$embedded_modules_dir/plpgsql.so"
+}
+
+embedded_dict_snowball_module_ready() {
+  module_depends_on_liboliphaunt "$embedded_modules_dir/dict_snowball.so"
+}
+
+build_embedded_dict_snowball_module() {
+  (
+    cd "$build_dir"
+    if embedded_dict_snowball_module_ready; then
+      echo "reusing PostgreSQL $target_id embedded Snowball dictionary module" >&2
+      return
+    fi
+    make -C src/backend/snowball clean >> "$make_log" 2>&1
+    make -C src/backend/snowball \
+      CC="$cc_string" \
+      CUSTOM_COPT="$postgres_embedded_copt" \
+      BE_DLLLIBS="$embedded_module_be_dllibs" \
+      all >> "$make_log" 2>&1
+    mkdir -p "$embedded_modules_dir"
+    cp -p src/backend/snowball/dict_snowball.so "$embedded_modules_dir/dict_snowball.so"
+    embedded_dict_snowball_module_ready || {
+      tail -120 "$make_log" >&2 || true
+      fail "PostgreSQL Linux embedded Snowball dictionary module is not linked against liboliphaunt"
+    }
+  )
 }
 
 build_embedded_plpgsql_module() {
@@ -1549,6 +1617,7 @@ link_liboliphaunt() {
 
 artifact_ready() {
   [ -f "$lib_out" ] || return 1
+  embedded_dict_snowball_module_ready || return 1
   embedded_plpgsql_module_ready || return 1
   { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != "0" ] || base_embedded_module_closure_ready; } || return 1
   oliphaunt_icu_artifacts_ready "$icu_prefix" || return 1
@@ -1610,6 +1679,7 @@ case "$script_mode" in
     build_liboliphaunt_objects
     write_objects_response_file
     link_liboliphaunt
+    build_embedded_dict_snowball_module
     build_embedded_plpgsql_module
     build_native_extension_artifacts
     artifact_ready || fail "Linux liboliphaunt shared library did not pass export checks"

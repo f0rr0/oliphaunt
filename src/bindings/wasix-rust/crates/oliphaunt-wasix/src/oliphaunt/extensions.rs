@@ -797,7 +797,12 @@ mod candidate_tests {
             ],
             "pg_textsearch" => &[
                 "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_am WHERE amname = 'bm25') THEN RAISE EXCEPTION 'bm25 access method missing'; END IF; END $$",
-                "SELECT to_bm25query('postgres wasm')",
+                "DROP TABLE IF EXISTS oxide_pg_textsearch_english",
+                "CREATE TABLE oxide_pg_textsearch_english (id bigint PRIMARY KEY, body text NOT NULL)",
+                "INSERT INTO oxide_pg_textsearch_english (id, body) VALUES (1, 'PostgreSQL databases support reliable runners'), (2, 'An unrelated document about walking')",
+                "CREATE INDEX oxide_pg_textsearch_english_bm25 ON oxide_pg_textsearch_english USING bm25 (body) WITH (text_config = 'pg_catalog.english')",
+                "DO $$ DECLARE hit bigint; BEGIN SELECT id INTO hit FROM oxide_pg_textsearch_english ORDER BY body <@> to_bm25query('running database', 'oxide_pg_textsearch_english_bm25') LIMIT 1; IF hit IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'pg_textsearch English BM25 smoke returned id %, expected 1', hit; END IF; END $$",
+                "DROP TABLE oxide_pg_textsearch_english",
             ],
             "pg_trgm" => &[
                 "DO $$ DECLARE score float8; BEGIN SELECT similarity('postgres', 'postgrex') INTO score; IF score <= 0 THEN RAISE EXCEPTION 'pg_trgm similarity failed: %', score; END IF; END $$",

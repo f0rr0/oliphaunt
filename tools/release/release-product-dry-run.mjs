@@ -49,6 +49,7 @@ import {
   validateWasixExtensionArtifactInventory,
 } from "./wasix-extension-cargo-artifact-inventory.mjs";
 import {
+  requiredCoreRuntimePaths,
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
   requiredToolsPackageTools,
@@ -852,13 +853,14 @@ function liboliphauntToolsNpmPackageTargets(version) {
   });
 }
 
-function embeddedCoreModuleMember(target, prefix) {
-  const filename = target === "windows-x64-msvc"
-    ? "plpgsql.dll"
+function embeddedCoreModuleMembers(target, prefix) {
+  const suffix = target === "windows-x64-msvc"
+    ? ".dll"
     : target === "macos-arm64"
-      ? "plpgsql.dylib"
-      : "plpgsql.so";
-  return `${prefix.replace(/\/+$/u, "")}/${filename}`;
+      ? ".dylib"
+      : ".so";
+  const normalizedPrefix = prefix.replace(/\/+$/u, "");
+  return ["dict_snowball", "plpgsql"].map((stem) => `${normalizedPrefix}/${stem}${suffix}`);
 }
 
 export function stageWindowsVcRuntimeMembers(
@@ -1028,10 +1030,14 @@ export function liboliphauntNpmTarballs(version) {
     const payload = runtimeStages.get(packageName);
     const libraryRelativePath = target.libraryRelativePath ?? target.library_relative_path;
     const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
+    const coreRuntimeMembers = requiredCoreRuntimePaths(target.target).map(
+      (member) => `package/runtime/${member}`,
+    );
     const requiredMembers = [
       `package/${libraryRelativePath}`,
-      embeddedCoreModuleMember(target.target, "package/lib/modules"),
+      ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
+      ...coreRuntimeMembers,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
       ...releaseNoticeRows({ profile: "native-runtime" }).map((row) => `package/${row.member}`),
     ];

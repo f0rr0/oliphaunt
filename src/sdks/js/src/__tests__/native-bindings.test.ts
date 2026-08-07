@@ -602,8 +602,10 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     await writeFile(join(runtime, 'share/postgresql/extension/hstore.control'), 'extension');
     await writeFile(join(runtime, 'share/postgresql/extension/hstore--1.0.sql'), 'install');
     await writeFile(join(runtime, 'lib/postgresql/hstore.so'), 'subprocess hstore');
+    await writeFile(join(runtime, 'lib/postgresql/dict_snowball.so'), 'subprocess dict_snowball');
     await writeFile(join(runtime, 'lib/postgresql/plpgsql.so'), 'subprocess plpgsql');
     await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
+    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
     await writeFile(join(embeddedModules, 'plpgsql.so'), 'embedded plpgsql');
 
     const deno = fsBackedDenoRuntime(root, () => false) as Record<string, unknown>;
