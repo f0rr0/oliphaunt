@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+### Dependencies
+
+* **dependencies:** align with `liboliphaunt-native` 0.1.1 (release compatibility field `oliphaunt-node-direct-liboliphaunt`)
+* **dependencies:** align with `liboliphaunt-native` 0.1.1 (Moon production dependency: `liboliphaunt-native` -> `oliphaunt-node-direct`)
+
 ## 0.1.0 (2026-07-28)
 
 
