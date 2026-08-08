@@ -37,12 +37,9 @@ Architecture, Expo config-plugin, CocoaPods project integration, and Gradle
 integration to resolve prebuilt release assets.
 
 Base React Native installs do not include full ICU data. Applications that need
-PostgreSQL ICU collations install the ICU sidecar npm package and enable the
-config plugin flag:
-
-```bash
-pnpm add @oliphaunt/react-native @oliphaunt/icu
-```
+PostgreSQL ICU collations enable the config plugin flag shown below. The
+`icu: true` selection is sufficient; React Native applications install only
+`@oliphaunt/react-native` and do not need to install `@oliphaunt/icu`.
 
 ```json
 {
@@ -54,10 +51,13 @@ pnpm add @oliphaunt/react-native @oliphaunt/icu
 }
 ```
 
-On iOS, the config plugin adds the `OliphauntICU` local podspec from
-`@oliphaunt/icu`. On Android, it sets `oliphauntIcu=true` so the app-applied
-Gradle plugin resolves `dev.oliphaunt.runtime:oliphaunt-icu`. Leave `icu` false
-for applications that do not use ICU collations.
+On iOS, the config plugin selects the checksum-covered ICU release asset and
+stages it inside the app-owned `OliphauntReactNativePayload` resource bundle.
+On Android, it sets `oliphauntIcu=true` so the app-applied Gradle plugin resolves
+`dev.oliphaunt.runtime:oliphaunt-icu`. The `@oliphaunt/icu` carrier disables
+React Native autolinking on both platforms so its standalone CocoaPods resource
+does not compete with the app-owned payload. Leave `icu` false for applications
+that do not use ICU collations.
 
 ## Compatibility
 

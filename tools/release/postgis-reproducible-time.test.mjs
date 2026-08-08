@@ -90,7 +90,7 @@ test("every POSIX PostGIS producer enables canonical time before generation", ()
     ],
     [
       "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-      "build_embedded_plpgsql_module() {",
+      "build_embedded_dict_snowball_module() {",
       "macOS PostGIS producer",
     ],
   ]) {

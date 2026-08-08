@@ -54,10 +54,11 @@ describe("Windows embedded extension module provider", () => {
     );
     expect(source).toContain("meson compile -C $EmbeddedBuildDir @targetNames");
     expect(source).toContain("$selectedModules = @(Get-SelectedEmbeddedExtensionModules)");
+    expect(source).toContain('$EmbeddedCoreModuleStems = @("dict_snowball", "plpgsql")');
+    expect(source).toContain("Assert-CompatibleModuleProfiles $server $embedded");
     expect(source).not.toContain(
       'Copy-Item -LiteralPath $staged -Destination $installed -Force',
     );
-    expect(source).toContain("Assert-CompatibleModuleProfiles $server $embedded");
   });
 
   test("classifies selected modules by imports, rejects crossed providers, and permits only neutral identical profiles", async () => {
@@ -72,13 +73,11 @@ describe("Windows embedded extension module provider", () => {
     expect(source).toMatch(/postgres\\\.exe/u);
     expect(source).toContain('return "crossed"');
     expect(source).toContain('return "neutral"');
-    expect(source).toContain(
-      'Assert-EmbeddedModuleHostContract $plpgsqlSource $true',
-    );
+    expect(source).toContain('Assert-EmbeddedModuleHostContract $source $true');
     expect(source).not.toContain('$stem -eq "plpgsql"');
     expect(source).toContain("Assert-EmbeddedModuleHostContract $source");
     expect(source).toContain(
-      "Test-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true",
+      "Test-EmbeddedModuleHostContract $embedded $true",
     );
     expect(source).toContain(
       "may be host-neutral or import postgres.exe",

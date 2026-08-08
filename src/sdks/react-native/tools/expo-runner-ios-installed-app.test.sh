@@ -30,13 +30,19 @@ export FAKE_MAESTRO_MODE=success
 export FAKE_MAESTRO_RECEIPT=""
 export OLIPHAUNT_EXPO_IOS_LOG_CAPTURE_STARTUP_SECONDS=0.1
 export OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS=3
+export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
 export CI_HEAD_SHA="$(git rev-parse HEAD)"
 
 receipt_json_for_platform() {
-  node - "$root/src/extensions/generated/sdk/react-native.json" "$1" <<'NODE'
+  local icu_runtime_proof="${2:-$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU}"
+  node - "$root/src/extensions/generated/sdk/react-native.json" "$1" "$icu_runtime_proof" <<'NODE'
 const fs = require('node:fs');
 const metadata = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const platform = process.argv[3];
+const icuRuntimeProof = process.argv[4];
+if (icuRuntimeProof !== '0' && icuRuntimeProof !== '1') {
+  throw new Error(`invalid ICU runtime proof fixture: ${icuRuntimeProof}`);
+}
 const extensions = (metadata.extensions ?? [])
   .filter(row => row['mobile-release-ready'] === true && (
     row.support?.mobile?.[platform] === undefined || row.support.mobile[platform] === 'supported'
@@ -44,12 +50,15 @@ const extensions = (metadata.extensions ?? [])
   .map(row => row['sql-name'])
   .sort();
 process.stdout.write(JSON.stringify({
-  schema: 'oliphaunt-expo-smoke-pass-v1',
+  schema: 'oliphaunt-expo-smoke-pass-v3',
   runner: 'smoke',
   platform,
   extensionCount: extensions.length,
-  extensionProofCount: extensions.length + 1,
+  allExtensionsActivated: true,
+  extensionCatalogComplete: true,
+  pgTextsearchEnglishBm25: extensions.includes('pg_textsearch'),
   extensionCatalogSha256: metadata['extension-catalog-sha256'],
+  icuRuntimeProof: icuRuntimeProof === '1',
 }));
 NODE
 }
@@ -293,6 +302,46 @@ grep -Fq 'app PASS receipt keys mismatch' "$test_root/rich-pass.stderr" ||
 [ ! -e "$scratch_root/reports/smoke-extension-receipt.json" ] ||
   fail_test "semantically invalid PASS retained an extension receipt"
 
+# The compact receipt carries semantic facts, not an extensible check-array
+# length. Each required fact must fail closed in both validation layers.
+for proof_field in allExtensionsActivated extensionCatalogComplete pgTextsearchEnglishBm25; do
+  false_proof_json="$(node - "$valid_receipt_json" "$proof_field" <<'NODE'
+const payload = JSON.parse(process.argv[2]);
+payload[process.argv[3]] = false;
+process.stdout.write(JSON.stringify(payload));
+NODE
+)"
+  false_proof_line="07-18 12:00:03.244 ReactNativeJS: '$success_tag', '$false_proof_json'"
+  rejected=0
+  if ! write_runner_report "$false_proof_line" \
+    >"$test_root/$proof_field-inner.stdout" 2>"$test_root/$proof_field-inner.stderr"; then
+    rejected=1
+  fi
+  [ "$rejected" -eq 1 ] || fail_test "inner validator accepted false $proof_field"
+  grep -Fq 'must prove exact activation, catalog completeness, and required functional checks' \
+    "$test_root/$proof_field-inner.stderr" ||
+    fail_test "false $proof_field omitted its semantic inner diagnostic"
+
+  write_runner_report "$valid_pass_line" ||
+    fail_test "failed to recreate valid $proof_field outer fixture"
+  node - "$scratch_root/reports/smoke-report.json" "$proof_field" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+payload[process.argv[3]] = false;
+fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`);
+NODE
+  rejected=0
+  if ! verify_mobile_e2e_smoke_receipt ios "$scratch_root" \
+    >"$test_root/$proof_field-outer.stdout" 2>"$test_root/$proof_field-outer.stderr"; then
+    rejected=1
+  fi
+  [ "$rejected" -eq 1 ] || fail_test "outer validator accepted false $proof_field"
+  grep -Fq 'does not prove the exact generated extension set' \
+    "$test_root/$proof_field-outer.stderr" ||
+    fail_test "false $proof_field omitted its semantic outer diagnostic"
+done
+
 # The outer postcondition independently binds the durable receipt to its exact
 # parsed report and candidate. Tampering either side must fail closed.
 write_runner_report "$valid_pass_line" || fail_test "failed to recreate valid report fixture"
@@ -304,9 +353,12 @@ const reordered = {
   runner: report.runner,
   schema: report.schema,
   platform: report.platform,
-  extensionProofCount: report.extensionProofCount,
+  allExtensionsActivated: report.allExtensionsActivated,
+  extensionCatalogComplete: report.extensionCatalogComplete,
+  pgTextsearchEnglishBm25: report.pgTextsearchEnglishBm25,
   extensionCount: report.extensionCount,
   extensionCatalogSha256: report.extensionCatalogSha256,
+  icuRuntimeProof: report.icuRuntimeProof,
 };
 fs.writeFileSync(file, `${JSON.stringify(reordered, null, 2)}\n`);
 NODE
@@ -377,9 +429,12 @@ const reordered = {
   runner: report.runner,
   schema: report.schema,
   platform: report.platform,
-  extensionProofCount: report.extensionProofCount,
+  allExtensionsActivated: report.allExtensionsActivated,
+  extensionCatalogComplete: report.extensionCatalogComplete,
+  pgTextsearchEnglishBm25: report.pgTextsearchEnglishBm25,
   extensionCount: report.extensionCount,
   extensionCatalogSha256: report.extensionCatalogSha256,
+  icuRuntimeProof: report.icuRuntimeProof,
 };
 fs.writeFileSync(file, `${JSON.stringify(reordered, null, 2)}\n`);
 NODE
@@ -392,6 +447,49 @@ NODE
   grep -Fq 'mobile E2E report/receipt digest mismatch' "$test_root/$platform-report-hash.stderr" ||
     fail_test "$platform report hash mismatch omitted its typed diagnostic"
 done
+mobile_platform="ios"
+
+# Both platform identities must accept an ICU-selected artifact only after the
+# app emitted the semantic proof, and both validation layers must reject an
+# artifact/receipt mismatch.
+for platform in ios android; do
+  mobile_platform="$platform"
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=1
+  icu_receipt_json="$(receipt_json_for_platform "$platform" 1)"
+  icu_pass_line="07-18 12:00:03.244 ReactNativeJS: '$success_tag', '$icu_receipt_json'"
+  write_runner_report "$icu_pass_line" ||
+    fail_test "$platform inner validator rejected a matching ICU runtime proof"
+  verify_mobile_e2e_smoke_receipt "$platform" "$scratch_root" ||
+    fail_test "$platform outer validator rejected a matching ICU runtime proof"
+
+  missing_icu_receipt_json="$(receipt_json_for_platform "$platform" 0)"
+  missing_icu_pass_line="07-18 12:00:03.244 ReactNativeJS: '$success_tag', '$missing_icu_receipt_json'"
+  rejected=0
+  if ! write_runner_report "$missing_icu_pass_line" \
+    >"$test_root/$platform-missing-icu-inner.stdout" \
+    2>"$test_root/$platform-missing-icu-inner.stderr"; then
+    rejected=1
+  fi
+  [ "$rejected" -eq 1 ] || fail_test "$platform inner validator accepted a missing ICU runtime proof"
+  grep -Fq 'ICU runtime proof does not match the exact artifact selection' \
+    "$test_root/$platform-missing-icu-inner.stderr" ||
+    fail_test "$platform inner ICU mismatch omitted its typed diagnostic"
+
+  write_runner_report "$icu_pass_line" ||
+    fail_test "$platform failed to recreate its matching ICU proof fixture"
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+  rejected=0
+  if ! verify_mobile_e2e_smoke_receipt "$platform" "$scratch_root" \
+    >"$test_root/$platform-missing-icu-outer.stdout" \
+    2>"$test_root/$platform-missing-icu-outer.stderr"; then
+    rejected=1
+  fi
+  [ "$rejected" -eq 1 ] || fail_test "$platform outer validator accepted an artifact/ICU-proof mismatch"
+  grep -Fq 'ICU runtime proof does not match the exact artifact selection' \
+    "$test_root/$platform-missing-icu-outer.stderr" ||
+    fail_test "$platform outer ICU mismatch omitted its typed diagnostic"
+done
+export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
 mobile_platform="ios"
 
 echo "iOS Maestro exact-launch receipt tests passed"

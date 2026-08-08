@@ -14,6 +14,11 @@ const IOS_BUILD_SCRIPTS = [
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
 ];
 
+const COMMON_SCRIPT = path.join(
+  ROOT,
+  "src/runtimes/liboliphaunt/native/bin/common.sh",
+);
+
 const REQUIRED_GENERATED_HEADERS = [
   "src/include/catalog/pg_proc_d.h",
   "src/include/catalog/schemapg.h",
@@ -132,7 +137,8 @@ for (const script of IOS_BUILD_SCRIPTS) {
     assert.ok(!source.includes("trap 'report_failure \"$?\" \"$LINENO\"' ERR"));
     assert.match(diagnostics, /failure_phase/u);
     assert.match(diagnostics, /"\$configure_log" "\$make_log"/u);
-    assert.match(diagnostics, /tail -160/u);
+    assert.match(diagnostics, /oliphaunt_tail_log_excerpt "\$log" 20/u);
+    assert.doesNotMatch(diagnostics, /tail -[0-9]+/u);
     assert.match(diagnostics, /if \[ "\$status" -eq 0 \]; then/u);
     assert.match(diagnostics, /trap - EXIT/u);
     assert.match(branch, /failure_phase="generate PostgreSQL headers"/u);
@@ -149,6 +155,7 @@ for (const script of IOS_BUILD_SCRIPTS) {
 set -euo pipefail
 configure_log="$1/configure.log"
 make_log="$1/make.log"
+. "$2"
 failure_phase="nested generated-header phase"
 report_failure() {${diagnostics}
 }
@@ -158,9 +165,11 @@ nested_build_phase() {
 }
 nested_build_phase
 `;
-      const result = spawnSync("bash", ["-c", harness, "ios-failure-harness", temporaryRoot], {
-        encoding: "utf8",
-      });
+      const result = spawnSync(
+        "bash",
+        ["-c", harness, "ios-failure-harness", temporaryRoot, COMMON_SCRIPT],
+        { encoding: "utf8" },
+      );
       assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
       assert.equal(
         result.stderr.match(/build failed during nested generated-header phase/gu)?.length,

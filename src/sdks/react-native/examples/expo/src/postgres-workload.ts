@@ -66,12 +66,52 @@ export type PostgresGamutOptions = {
   onCheckStage?: (stage: WorkloadCheckStage) => void;
 };
 
+export type MobileReleaseExtensionProofResult = {
+  readonly checks: OperationCheck[];
+  readonly activatedExtensions: string[];
+  readonly extensionCatalogComplete: boolean;
+  readonly pgTextsearchEnglishBm25: boolean;
+};
+
+async function provePgTextsearchEnglishSnowball(db: OliphauntDatabase): Promise<string> {
+  const table = 'oliphaunt_mobile_pg_textsearch_english';
+  const index = 'oliphaunt_mobile_pg_textsearch_english_bm25';
+  await db.execute(`DROP TABLE IF EXISTS ${table}`);
+  try {
+    await executeStatements(db, [
+      `CREATE TABLE ${table} (
+        id bigint PRIMARY KEY,
+        body text NOT NULL
+      )`,
+      `INSERT INTO ${table} (id, body) VALUES
+        (1, 'PostgreSQL databases support reliable runners'),
+        (2, 'An unrelated document about walking')`,
+      `CREATE INDEX ${index}
+        ON ${table}
+        USING bm25 (body)
+        WITH (text_config = 'pg_catalog.english')`,
+    ]);
+    const result = await db.query(
+      `SELECT id::text AS id
+       FROM ${table}
+       ORDER BY body <@> to_bm25query('running database', '${index}')
+       LIMIT 1`,
+    );
+    assertEqual(requiredText(result, 0, 'id'), '1', 'pg_textsearch English BM25 result');
+    return 'nonempty English BM25 index loaded dict_snowball and returned the expected stemmed match';
+  } finally {
+    await db.execute(`DROP TABLE IF EXISTS ${table}`);
+  }
+}
+
 export async function runMobileReleaseExtensionProof(
   db: OliphauntDatabase,
   plan: readonly MobileReleaseExtensionProof[],
   onCheckStage?: (stage: WorkloadCheckStage) => void,
-): Promise<OperationCheck[]> {
+): Promise<MobileReleaseExtensionProofResult> {
   const checks: OperationCheck[] = [];
+  const activatedExtensions: string[] = [];
+  let pgTextsearchEnglishBm25 = false;
   for (const extension of plan) {
     await record(
       checks,
@@ -104,6 +144,16 @@ export async function runMobileReleaseExtensionProof(
       },
       onCheckStage,
     );
+    activatedExtensions.push(extension.sqlName);
+    if (extension.sqlName === 'pg_textsearch') {
+      await record(
+        checks,
+        'extension functional proof: pg_textsearch English BM25',
+        () => provePgTextsearchEnglishSnowball(db),
+        onCheckStage,
+      );
+      pgTextsearchEnglishBm25 = true;
+    }
   }
 
   await record(
@@ -126,7 +176,12 @@ export async function runMobileReleaseExtensionProof(
     },
     onCheckStage,
   );
-  return checks;
+  return {
+    checks,
+    activatedExtensions,
+    extensionCatalogComplete: true,
+    pgTextsearchEnglishBm25,
+  };
 }
 
 type MutablePerf = {
@@ -188,6 +243,21 @@ export async function runPostgresGamutWorkload(
     assertEqual(ruleCount, '1', 'tasks audit rule registration');
     perf.schemaMs = now() - started;
     return 'projects, tasks, dependencies, events, metrics, JSONB/array GIN indexes';
+  });
+
+  await recordCheck('core English Snowball text search', async () => {
+    const result = await db.query(
+      `SELECT
+         (to_tsvector('pg_catalog.english', 'PostgreSQL databases are reliable')
+           @@ plainto_tsquery('pg_catalog.english', 'database'))::text AS matches,
+         array_to_string(
+           ts_lexize('pg_catalog.english_stem', 'databases'),
+           ','
+         )::text AS lexeme`,
+    );
+    assertEqual(requiredText(result, 0, 'matches'), 'true', 'English Snowball text-search match');
+    assertEqual(requiredText(result, 0, 'lexeme'), 'databas', 'English Snowball lexeme');
+    return 'pg_catalog.english loaded dict_snowball and stemmed databases to databas';
   });
 
   await recordCheck('DDL event trigger', async () => {

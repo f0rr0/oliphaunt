@@ -6,8 +6,11 @@ export type ExpoSmokePassPlatform = 'android' | 'ios';
 export type ExpoSmokePassReceiptInput = {
   readonly platform: ExpoSmokePassPlatform;
   readonly extensions: readonly string[];
-  readonly extensionProofCount: number;
+  readonly activatedExtensions: readonly string[];
+  readonly extensionCatalogComplete: boolean;
+  readonly pgTextsearchEnglishBm25: boolean;
   readonly extensionCatalogSha256: string;
+  readonly icuRuntimeProof: boolean;
 };
 
 function utf8ByteLength(value: string): number {
@@ -23,11 +26,11 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   if (input.platform !== 'android' && input.platform !== 'ios') {
     throw new Error(`unsupported installed-app receipt platform: ${String(input.platform)}`);
   }
-  if (!Number.isSafeInteger(input.extensionProofCount) || input.extensionProofCount <= 0) {
-    throw new Error('installed-app receipt requires a positive extension proof count');
-  }
   if (!/^[0-9a-f]{64}$/u.test(input.extensionCatalogSha256)) {
     throw new Error('installed-app receipt requires a lowercase SHA-256 extension catalog digest');
+  }
+  if (typeof input.icuRuntimeProof !== 'boolean') {
+    throw new Error('installed-app receipt requires an ICU runtime proof boolean');
   }
 
   const extensions = [...input.extensions].sort();
@@ -39,20 +42,38 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
       throw new Error(`installed-app receipt contains a noncanonical extension name: ${extension}`);
     }
   }
-  const expectedProofCount = extensions.length + 1;
-  if (input.extensionProofCount !== expectedProofCount) {
+  if (!Array.isArray(input.activatedExtensions)) {
+    throw new Error('installed-app receipt requires an activated extension set');
+  }
+  const activatedExtensions = [...input.activatedExtensions].sort();
+  if (
+    new Set(activatedExtensions).size !== activatedExtensions.length ||
+    JSON.stringify(activatedExtensions) !== JSON.stringify(extensions)
+  ) {
     throw new Error(
-      `installed-app receipt extension proof mismatch: expected ${expectedProofCount}, got ${input.extensionProofCount}`,
+      `installed-app receipt activated extension mismatch: expected ${extensions.join(',')}, got ${activatedExtensions.join(',')}`,
+    );
+  }
+  if (input.extensionCatalogComplete !== true) {
+    throw new Error('installed-app receipt requires extension catalog completeness');
+  }
+  const expectedPgTextsearchProof = extensions.includes('pg_textsearch');
+  if (input.pgTextsearchEnglishBm25 !== expectedPgTextsearchProof) {
+    throw new Error(
+      `installed-app receipt pg_textsearch English BM25 proof mismatch: expected ${expectedPgTextsearchProof}, got ${String(input.pgTextsearchEnglishBm25)}`,
     );
   }
 
   const serialized = JSON.stringify({
-    schema: 'oliphaunt-expo-smoke-pass-v1',
+    schema: 'oliphaunt-expo-smoke-pass-v3',
     runner: 'smoke',
     platform: input.platform,
     extensionCount: extensions.length,
-    extensionProofCount: input.extensionProofCount,
+    allExtensionsActivated: true,
+    extensionCatalogComplete: true,
+    pgTextsearchEnglishBm25: input.pgTextsearchEnglishBm25,
     extensionCatalogSha256: input.extensionCatalogSha256,
+    icuRuntimeProof: input.icuRuntimeProof,
   });
   const eventBytes = utf8ByteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`);
   if (eventBytes > EXPO_SMOKE_PASS_EVENT_MAX_BYTES) {

@@ -26,6 +26,57 @@ NODE
   fi
 }
 
+export_mobile_e2e_icu_expectation_from_manifest() {
+  local manifest="$1"
+  local label="$2"
+  local runtime_feature_rows runtime_features
+  [ -s "$manifest" ] || {
+    echo "$label runtime manifest is missing or empty: $manifest" >&2
+    return 1
+  }
+  runtime_feature_rows="$(grep -c '^runtimeFeatures=' "$manifest" || true)"
+  [ "$runtime_feature_rows" = "1" ] || {
+    echo "$label runtime manifest must contain exactly one runtimeFeatures property" >&2
+    return 1
+  }
+  runtime_features="$(
+    awk -F= '$1 == "runtimeFeatures" { print substr($0, index($0, "=") + 1) }' "$manifest" |
+      tr -d '\r'
+  )"
+  if printf '%s\n' "$runtime_features" | tr ',' '\n' | grep -Fxq icu; then
+    export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=1
+  else
+    export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+  fi
+}
+
+export_mobile_e2e_icu_expectation_from_android_apk() {
+  local apk="$1"
+  local label="$2"
+  local manifest
+  [ -f "$apk" ] || {
+    echo "$label is missing: $apk" >&2
+    return 1
+  }
+  manifest="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-android-runtime-manifest.XXXXXX")" || {
+    echo "failed to create a temporary $label runtime manifest" >&2
+    return 1
+  }
+  local extract_status=0
+  unzip -p "$apk" "assets/oliphaunt/runtime/manifest.properties" >"$manifest" ||
+    extract_status=$?
+  if [ "$extract_status" -ne 0 ]; then
+    rm -f "$manifest"
+    echo "$label is missing its runtime manifest: $apk" >&2
+    return 1
+  fi
+  local expectation_status=0
+  export_mobile_e2e_icu_expectation_from_manifest "$manifest" "$label" ||
+    expectation_status=$?
+  rm -f "$manifest"
+  return "$expectation_status"
+}
+
 write_runner_report() {
   local line="$1"
   local reports_dir="$scratch_root/reports"
@@ -198,9 +249,12 @@ if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
   throw new Error(`${platform} app PASS receipt must be a JSON object`);
 }
 const expectedKeys = [
+  'allExtensionsActivated',
   'extensionCatalogSha256',
+  'extensionCatalogComplete',
   'extensionCount',
-  'extensionProofCount',
+  'icuRuntimeProof',
+  'pgTextsearchEnglishBm25',
   'platform',
   'runner',
   'schema',
@@ -209,8 +263,15 @@ const actualKeys = Object.keys(payload).sort();
 if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
   throw new Error(`${platform} app PASS receipt keys mismatch: expected=${expectedKeys.join(',')}; actual=${actualKeys.join(',')}`);
 }
-if (payload.schema !== 'oliphaunt-expo-smoke-pass-v1' || payload.runner !== 'smoke' || payload.platform !== platform) {
+if (payload.schema !== 'oliphaunt-expo-smoke-pass-v3' || payload.runner !== 'smoke' || payload.platform !== platform) {
   throw new Error(`${platform} app PASS receipt schema, runner, or platform identity mismatch`);
+}
+const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
+if (expectedIcu !== '0' && expectedIcu !== '1') {
+  throw new Error(`${platform} app PASS receipt requires an exact artifact ICU expectation`);
+}
+if (payload.icuRuntimeProof !== (expectedIcu === '1')) {
+  throw new Error(`${platform} app PASS ICU runtime proof does not match the exact artifact selection`);
 }
 const passEventBytes = Buffer.byteLength(`OLIPHAUNT_EXPO_SMOKE_PASS ${JSON.stringify(payload)}`);
 if (passEventBytes > 768) {
@@ -227,9 +288,11 @@ if (expected.length === 0 || new Set(expected).size !== expected.length) {
 }
 if (
   payload.extensionCount !== expected.length ||
-  payload.extensionProofCount !== expected.length + 1
+  payload.allExtensionsActivated !== true ||
+  payload.extensionCatalogComplete !== true ||
+  payload.pgTextsearchEnglishBm25 !== expected.includes('pg_textsearch')
 ) {
-  throw new Error(`${platform} app PASS receipt must prove the exact derived extension and activation-check counts`);
+  throw new Error(`${platform} app PASS receipt must prove exact activation, catalog completeness, and required functional checks`);
 }
 const catalogSha256 = metadata['extension-catalog-sha256'];
 if (!/^[0-9a-f]{64}$/.test(catalogSha256) || payload.extensionCatalogSha256 !== catalogSha256) {
@@ -296,9 +359,12 @@ const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
 const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
 const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
 const expectedReportKeys = [
+  'allExtensionsActivated',
   'extensionCatalogSha256',
+  'extensionCatalogComplete',
   'extensionCount',
-  'extensionProofCount',
+  'icuRuntimeProof',
+  'pgTextsearchEnglishBm25',
   'platform',
   'runner',
   'schema',
@@ -306,6 +372,13 @@ const expectedReportKeys = [
 const actualReportKeys = Object.keys(report).sort();
 if (JSON.stringify(actualReportKeys) !== JSON.stringify(expectedReportKeys)) {
   throw new Error(`${platform} mobile E2E PASS report keys mismatch`);
+}
+const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
+if (expectedIcu !== '0' && expectedIcu !== '1') {
+  throw new Error(`${platform} mobile E2E PASS report requires an exact artifact ICU expectation`);
+}
+if (report.icuRuntimeProof !== (expectedIcu === '1')) {
+  throw new Error(`${platform} mobile E2E ICU runtime proof does not match the exact artifact selection`);
 }
 const expectedKeys = [
   'appPassPayloadSha256',
@@ -337,11 +410,13 @@ const expected = (metadata.extensions ?? [])
   .sort();
 if (
   expected.length === 0 ||
-  report.schema !== 'oliphaunt-expo-smoke-pass-v1' ||
+  report.schema !== 'oliphaunt-expo-smoke-pass-v3' ||
   report.runner !== 'smoke' ||
   report.platform !== platform ||
   report.extensionCount !== expected.length ||
-  report.extensionProofCount !== expected.length + 1 ||
+  report.allExtensionsActivated !== true ||
+  report.extensionCatalogComplete !== true ||
+  report.pgTextsearchEnglishBm25 !== expected.includes('pg_textsearch') ||
   report.extensionCatalogSha256 !== metadata['extension-catalog-sha256'] ||
   Buffer.byteLength(`OLIPHAUNT_EXPO_SMOKE_PASS ${JSON.stringify(report)}`) > 768 ||
   receipt.extensionCount !== expected.length ||

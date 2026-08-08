@@ -39,20 +39,45 @@ export {
   validateWasixConsumerDependencyPins,
 };
 
+const LINUX_X64_GNU_TARGET =
+  'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))';
+
+function dependencyBinding(name, tableParts) {
+  return Object.freeze({
+    name,
+    entryParts: Object.freeze([...tableParts, name]),
+  });
+}
+
+function exampleCargoPolicy({ dependencyBindings, runtime = undefined, ...policy }) {
+  const frozenBindings = Object.freeze(dependencyBindings);
+  return Object.freeze({
+    ...policy,
+    dependencyBindings: frozenBindings,
+    directPackages: Object.freeze(frozenBindings.map(({ name }) => name)),
+    ...(runtime === undefined ? {} : { runtime: Object.freeze(runtime) }),
+  });
+}
+
 export const EXAMPLE_CARGO_POLICIES = Object.freeze([
-  Object.freeze({
+  exampleCargoPolicy({
     id: "native-tauri",
     crateDir: "examples/tauri/src-tauri",
     ignoredLock: "examples/tauri/src-tauri/Cargo.lock",
     wasixToolchain: false,
-    directPackages: Object.freeze([
-      "oliphaunt",
-      "oliphaunt-build",
-      "oliphaunt-tools",
-      "liboliphaunt-native-linux-x64-gnu",
-      "oliphaunt-broker-linux-x64-gnu",
-      "oliphaunt-extension-contrib-pg18-linux-x64-gnu",
-    ]),
+    dependencyBindings: [
+      dependencyBinding("oliphaunt-build", ["build-dependencies"]),
+      dependencyBinding("oliphaunt", ["dependencies"]),
+      dependencyBinding("oliphaunt-tools", ["dependencies"]),
+      dependencyBinding("liboliphaunt-native-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+      dependencyBinding("oliphaunt-broker-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+      dependencyBinding("oliphaunt-extension-contrib-pg18-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+    ],
+    runtime: {
+      product: "liboliphaunt-native",
+      productParts: Object.freeze(["package", "metadata", "oliphaunt", "runtime"]),
+      versionParts: Object.freeze(["package", "metadata", "oliphaunt", "runtime-version"]),
+    },
     requiredPackages: Object.freeze([
       "oliphaunt",
       "oliphaunt-build",
@@ -62,17 +87,17 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-extension-contrib-pg18-linux-x64-gnu",
     ]),
   }),
-  Object.freeze({
+  exampleCargoPolicy({
     id: "wasix-tauri",
     crateDir: "examples/tauri-wasix/src-tauri",
     ignoredLock: "examples/tauri-wasix/src-tauri/Cargo.lock",
     wasixToolchain: true,
-    directPackages: Object.freeze([
-      "oliphaunt-wasix",
-      "oliphaunt-wasix-tools",
-      "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    ]),
+    dependencyBindings: [
+      dependencyBinding("oliphaunt-wasix", ["dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools", ["dependencies"]),
+      dependencyBinding("liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+    ],
     requiredPackages: Object.freeze([
       "oliphaunt-wasix",
       "oliphaunt-wasix-tools",
@@ -82,17 +107,17 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     ]),
   }),
-  Object.freeze({
+  exampleCargoPolicy({
     id: "wasix-electron-sidecar",
     crateDir: "examples/electron-wasix/src-wasix",
     ignoredLock: "examples/electron-wasix/src-wasix/Cargo.lock",
     wasixToolchain: true,
-    directPackages: Object.freeze([
-      "oliphaunt-wasix",
-      "oliphaunt-wasix-tools",
-      "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    ]),
+    dependencyBindings: [
+      dependencyBinding("oliphaunt-wasix", ["dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools", ["dependencies"]),
+      dependencyBinding("liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+    ],
     requiredPackages: Object.freeze([
       "oliphaunt-wasix",
       "oliphaunt-wasix-tools",
@@ -102,17 +127,17 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     ]),
   }),
-  Object.freeze({
+  exampleCargoPolicy({
     id: "wasix-tauri-sqlx",
     crateDir: "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri",
     ignoredLock: "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock",
     wasixToolchain: true,
-    directPackages: Object.freeze([
-      "oliphaunt-wasix",
-      "oliphaunt-wasix-tools",
-      "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    ]),
+    dependencyBindings: [
+      dependencyBinding("oliphaunt-wasix", ["dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools", ["dependencies"]),
+      dependencyBinding("liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+      dependencyBinding("oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
+    ],
     requiredPackages: Object.freeze([
       "oliphaunt-wasix",
       "oliphaunt-wasix-tools",
@@ -170,6 +195,55 @@ function expectedCarrierVersion(name, context) {
   return effectivePublishVersion(carrier.version, context.initialVersion);
 }
 
+function expectedProductVersion(product, context) {
+  const rows = context.catalog.products.filter(({ id }) => id === product);
+  if (rows.length !== 1) {
+    fail(`release product ${JSON.stringify(product)} must appear exactly once in the publication catalog`);
+  }
+  return effectivePublishVersion(rows[0].version, context.initialVersion);
+}
+
+export function exampleCargoReleaseVersionBindings() {
+  const context = catalogContext();
+  const bindings = [];
+  for (const policy of EXAMPLE_CARGO_POLICIES) {
+    const file = `${policy.crateDir}/Cargo.toml`;
+    for (const dependency of policy.dependencyBindings) {
+      const carrier = resolveActualCarrier(context.catalog, "cargo", dependency.name, TOOL);
+      const entryParts = [...dependency.entryParts];
+      bindings.push(Object.freeze({
+        kind: "dependency",
+        policyId: policy.id,
+        file,
+        name: dependency.name,
+        entryParts: Object.freeze(entryParts),
+        versionPaths: Object.freeze([
+          Object.freeze(entryParts),
+          Object.freeze([...entryParts, "version"]),
+        ]),
+        sourceProduct: carrier.product,
+        expected: `=${effectivePublishVersion(carrier.version, context.initialVersion)}`,
+        wrapped: true,
+      }));
+    }
+    if (policy.runtime !== undefined) {
+      const entryParts = [...policy.runtime.versionParts];
+      bindings.push(Object.freeze({
+        kind: "runtime",
+        policyId: policy.id,
+        file,
+        name: "runtime-version",
+        entryParts: Object.freeze(entryParts),
+        versionPaths: Object.freeze([Object.freeze(entryParts)]),
+        sourceProduct: policy.runtime.product,
+        expected: expectedProductVersion(policy.runtime.product, context),
+        wrapped: false,
+      }));
+    }
+  }
+  return Object.freeze(bindings);
+}
+
 export function isOliphauntCargoName(name) {
   return name === "oliphaunt" || name.startsWith("oliphaunt-") || name.startsWith("liboliphaunt-");
 }
@@ -196,8 +270,78 @@ function dependencyVersion(spec) {
   return typeof spec?.version === "string" ? spec.version : null;
 }
 
+function valueAt(root, parts) {
+  let current = root;
+  for (const part of parts) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+export function validateExampleManifestPolicy(policy, manifest, bindings) {
+  const manifestLabel = `${policy.crateDir}/Cargo.toml`;
+  const failures = [];
+  if (Object.hasOwn(manifest, "patch")) {
+    failures.push(`${manifestLabel} must not commit candidate registry patches`);
+  }
+
+  const dependencyBindings = bindings.filter(({ kind }) => kind === "dependency");
+  const expectedByName = new Map(dependencyBindings.map((binding) => [binding.name, binding]));
+  const seen = [];
+  for (const table of dependencyTables(manifest)) {
+    for (const [name, spec] of Object.entries(table)) {
+      if (!isOliphauntCargoName(name)) continue;
+      seen.push(name);
+      if (typeof spec === "object" && spec !== null && Object.hasOwn(spec, "registry")) {
+        failures.push(`${manifestLabel} ${name} must use normal crates.io resolution`);
+      }
+      const expected = expectedByName.get(name)?.expected;
+      const actual = dependencyVersion(spec);
+      if (expected !== undefined && actual !== expected) {
+        failures.push(`${manifestLabel} ${name} uses ${JSON.stringify(actual)}; expected ${expected}`);
+      }
+    }
+  }
+
+  const expectedDirect = [...policy.directPackages].sort();
+  const actualDirect = [...seen].sort();
+  if (JSON.stringify(actualDirect) !== JSON.stringify(expectedDirect)) {
+    failures.push(
+      `${policy.id} direct Oliphaunt dependencies are ${JSON.stringify(actualDirect)}; expected ${JSON.stringify(expectedDirect)}`,
+    );
+  }
+  for (const binding of dependencyBindings) {
+    if (valueAt(manifest, binding.entryParts) === undefined) {
+      failures.push(
+        `${manifestLabel} ${binding.name} must remain at TOML path ${binding.entryParts.join(".")}`,
+      );
+    }
+  }
+
+  if (policy.runtime !== undefined) {
+    const actualProduct = valueAt(manifest, policy.runtime.productParts);
+    if (actualProduct !== policy.runtime.product) {
+      failures.push(
+        `${manifestLabel} runtime uses ${JSON.stringify(actualProduct)}; expected ${policy.runtime.product}`,
+      );
+    }
+    const binding = bindings.find(({ kind }) => kind === "runtime");
+    const actualVersion = valueAt(manifest, policy.runtime.versionParts);
+    if (binding === undefined) {
+      failures.push(`${manifestLabel} has no release binding for runtime-version`);
+    } else if (actualVersion !== binding.expected) {
+      failures.push(
+        `${manifestLabel} runtime-version uses ${JSON.stringify(actualVersion)}; expected ${binding.expected}`,
+      );
+    }
+  }
+  return failures;
+}
+
 export function validateExampleManifests() {
   const context = catalogContext();
+  const releaseBindings = exampleCargoReleaseVersionBindings();
   const failures = [];
   const toolchainVersions = canonicalWasixCargoToolchainVersions(ROOT);
   failures.push(...validateWasixConsumerDependencyPins(
@@ -210,43 +354,14 @@ export function validateExampleManifests() {
     if (existsSync(path.join(ROOT, policy.ignoredLock))) {
       failures.push(`${policy.ignoredLock} must be ephemeral and untracked`);
     }
-    if (Object.hasOwn(manifest, "patch")) {
-      failures.push(`${policy.crateDir}/Cargo.toml must not commit candidate registry patches`);
-    }
-    const seen = new Set();
-    for (const table of dependencyTables(manifest)) {
-      for (const [name, spec] of Object.entries(table)) {
-        if (!isOliphauntCargoName(name)) continue;
-        seen.add(name);
-        if (typeof spec === "object" && spec !== null && Object.hasOwn(spec, "registry")) {
-          failures.push(`${policy.crateDir}/Cargo.toml ${name} must use normal crates.io resolution`);
-        }
-        let expected;
-        try {
-          expected = `=${expectedCarrierVersion(name, context)}`;
-        } catch (error) {
-          failures.push(error.message);
-          continue;
-        }
-        const actual = dependencyVersion(spec);
-        if (actual !== expected) {
-          failures.push(`${policy.crateDir}/Cargo.toml ${name} uses ${JSON.stringify(actual)}; expected ${expected}`);
-        }
-      }
-    }
+    const policyBindings = releaseBindings.filter(({ policyId }) => policy.id === policyId);
+    failures.push(...validateExampleManifestPolicy(policy, manifest, policyBindings));
     for (const required of policy.requiredPackages) {
       try {
         expectedCarrierVersion(required, context);
       } catch (error) {
         failures.push(`${policy.id} required package: ${error.message}`);
       }
-    }
-    const expectedDirect = [...policy.directPackages].sort();
-    const actualDirect = [...seen].sort();
-    if (JSON.stringify(actualDirect) !== JSON.stringify(expectedDirect)) {
-      failures.push(
-        `${policy.id} direct Oliphaunt dependencies are ${JSON.stringify(actualDirect)}; expected ${JSON.stringify(expectedDirect)}`,
-      );
     }
   }
   return failures;

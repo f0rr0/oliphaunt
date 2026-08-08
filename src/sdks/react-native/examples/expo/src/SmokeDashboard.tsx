@@ -75,6 +75,7 @@ type AppReport = {
   activity?: ActivityItem[];
   checks?: OperationCheck[];
   lifecycle?: OperationCheck;
+  icuProof?: OperationCheck;
   extensionProof?: OperationCheck[];
 };
 
@@ -150,11 +151,14 @@ export default function HomeScreen() {
         stage('metadata:start');
         const [modes, packageSize] = await Promise.all([
           Oliphaunt.supportedModes(),
-          Oliphaunt.packageSizeReport().catch(() => null),
+          Oliphaunt.packageSizeReport(),
         ]);
+        if (packageSize === null) {
+          throw new Error('installed mobile release proof requires a package-size report');
+        }
         stage('metadata:done', {
           modes: modes.length,
-          packageBytes: packageSize?.packageBytes ?? null,
+          packageBytes: packageSize.packageBytes,
         });
         if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
           throw new Error(`installed mobile release proof does not support platform ${Platform.OS}`);
@@ -175,7 +179,7 @@ export default function HomeScreen() {
         stage('capabilities:done', { engine: capabilities.engine });
 
         stage('extensions:activation:start', { count: extensionPlan.length });
-        const extensionProof = await runMobileReleaseExtensionProof(
+        const extensionProofResult = await runMobileReleaseExtensionProof(
           db,
           extensionPlan,
           check =>
@@ -184,6 +188,7 @@ export default function HomeScreen() {
               checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
             }),
         );
+        const extensionProof = extensionProofResult.checks;
         stage('extensions:activation:done', { checks: extensionProof.length });
 
         stage('query:select1:start');
@@ -207,14 +212,20 @@ export default function HomeScreen() {
           checks: workload.checks.length,
           rows: workload.perf.rows,
         });
+        const icuProof = await runSelectedIcuRuntimeProof(
+          db,
+          packageSize?.runtimeFeatures ?? [],
+          stage,
+        );
         const lifecycle = await runLifecycleResumeValidation(db, stage);
         liveness.stop();
-        const checks = lifecycle
-          ? [...extensionProof, ...workload.checks, lifecycle]
-          : [...extensionProof, ...workload.checks];
-        const perf = lifecycle
-          ? { ...workload.perf, checks: String(checks.length) }
-          : workload.perf;
+        const checks = [
+          ...extensionProof,
+          ...workload.checks,
+          ...(icuProof ? [icuProof] : []),
+          ...(lifecycle ? [lifecycle] : []),
+        ];
+        const perf = { ...workload.perf, checks: String(checks.length) };
 
         const smoke = {
           engine: capabilities.engine,
@@ -234,13 +245,17 @@ export default function HomeScreen() {
           activity: workload.activity,
           checks,
           lifecycle,
+          icuProof,
           extensionProof,
         };
         const smokePassReceipt = serializeExpoSmokePassReceipt({
           platform: Platform.OS,
           extensions,
-          extensionProofCount: extensionProof.length,
+          activatedExtensions: extensionProofResult.activatedExtensions,
+          extensionCatalogComplete: extensionProofResult.extensionCatalogComplete,
+          pgTextsearchEnglishBm25: extensionProofResult.pgTextsearchEnglishBm25,
           extensionCatalogSha256: MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
+          icuRuntimeProof: icuProof !== undefined,
         });
         setReport(nextReport);
         (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_SMOKE_REPORT__ = nextReport;
@@ -477,6 +492,52 @@ async function runLifecycleResumeValidation(
   const detail = `${check.detail}; app states ${transition.states.join(' -> ')}`;
   stage('lifecycle:sql:done', { elapsedMs: check.elapsedMs, detail });
   return { ...check, detail };
+}
+
+async function runSelectedIcuRuntimeProof(
+  db: OliphauntDatabase,
+  runtimeFeatures: readonly string[],
+  stage: (name: string, extra?: Record<string, unknown>) => void,
+): Promise<OperationCheck | undefined> {
+  if (!runtimeFeatures.includes('icu')) {
+    return undefined;
+  }
+
+  const started = now();
+  stage('icu:runtime:start');
+  await db.execute('DROP COLLATION IF EXISTS public.oliphaunt_icu_numeric');
+  await db.execute(`
+    CREATE COLLATION public.oliphaunt_icu_numeric (
+      provider = icu,
+      locale = 'und-u-kn-true',
+      deterministic = true
+    )
+  `);
+  const metadata = await db.query(`
+    SELECT collprovider::text AS provider,
+           coalesce(collversion, '')::text AS version
+    FROM pg_collation
+    WHERE oid = 'public.oliphaunt_icu_numeric'::regcollation
+  `);
+  const provider = metadata.getText(0, 'provider') ?? '';
+  if (provider !== 'i') {
+    throw new Error(`ICU collation provider mismatch: expected i, got '${provider}'`);
+  }
+
+  const ordered = await db.query(`
+    SELECT string_agg(value, ',' ORDER BY value COLLATE public.oliphaunt_icu_numeric) AS values
+    FROM (VALUES ('10'::text), ('2'::text), ('1'::text)) AS input(value)
+  `);
+  const values = ordered.getText(0, 'values') ?? '';
+  if (values !== '1,2,10') {
+    throw new Error(`ICU numeric collation mismatch: expected 1,2,10, got '${values}'`);
+  }
+
+  const elapsedMs = now() - started;
+  const version = metadata.getText(0, 'version') ?? '';
+  const detail = `provider=icu; numeric order ${values}${version ? `; version ${version}` : ''}`;
+  stage('icu:runtime:done', { detail, elapsedMs });
+  return { name: 'ICU numeric collation', detail, elapsedMs };
 }
 
 function waitForBackgroundAndForeground(

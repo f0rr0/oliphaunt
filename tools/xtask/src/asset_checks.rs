@@ -1503,11 +1503,14 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
     }
 
     let runtime_entries = archive_entries(&runtime_archive)?;
-    let required_paths = vec![
+    let required_paths = [
         "oliphaunt/bin/oliphaunt",
         "oliphaunt/bin/postgres",
         "oliphaunt/bin/initdb",
+        "oliphaunt/lib/postgresql/dict_snowball.so",
         "oliphaunt/lib/postgresql/plpgsql.so",
+        "oliphaunt/share/postgresql/snowball_create.sql",
+        "oliphaunt/share/postgresql/extension/plpgsql--1.0.sql",
         "oliphaunt/share/postgresql/extension/plpgsql.control",
         "oliphaunt/share/postgresql/timezone/UTC",
         "oliphaunt/share/postgresql/timezone/America/New_York",
@@ -1515,6 +1518,31 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
     ];
     for required in required_paths {
         if !runtime_entries.contains(required) {
+            bail!(
+                "runtime archive {} is missing canonical path {required}",
+                runtime_archive.display()
+            );
+        }
+    }
+    for language in [
+        "danish",
+        "dutch",
+        "english",
+        "finnish",
+        "french",
+        "german",
+        "hungarian",
+        "italian",
+        "nepali",
+        "norwegian",
+        "portuguese",
+        "russian",
+        "spanish",
+        "swedish",
+        "turkish",
+    ] {
+        let required = format!("oliphaunt/share/postgresql/tsearch_data/{language}.stop");
+        if !runtime_entries.contains(required.as_str()) {
             bail!(
                 "runtime archive {} is missing canonical path {required}",
                 runtime_archive.display()

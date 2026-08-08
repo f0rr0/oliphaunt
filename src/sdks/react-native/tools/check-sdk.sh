@@ -327,6 +327,7 @@ if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/verify-android-apk.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-mobile-extension-proof.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
@@ -552,6 +553,10 @@ case "$mode" in
     run tar -xzf "$ios_fixture_tarball" -C "$ios_clean_install" --strip-components=1
     run node "$ios_clean_install/tools/verify-ios-package.mjs" \
       --package-dir "$ios_clean_install"
+    run node "$package_dir/tools/ios-icu-autolinking.test.mjs" \
+      --react-native-tarball "$ios_fixture_tarball" \
+      --icu-source "$root/src/runtimes/liboliphaunt/native/icu-npm" \
+      --expo-project "$root/src/sdks/react-native/examples/expo"
     if tar -tzf "$ios_fixture_tarball" | grep -Eq \
       '^package/ios/(resources|frameworks|extension-frameworks|generated)/'; then
       echo "selection-neutral React Native npm tarball contains app-specific iOS payload" >&2

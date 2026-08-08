@@ -330,14 +330,15 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
           product: 'oliphaunt-icu',
           kind: 'icu-data',
           target: 'portable',
-          dataRelativePath: 'share/icu',
+          dataRelativePath: 'OliphauntICU.bundle/share/icu',
         },
       }),
       'utf8',
     );
-    await mkdir(join(root, 'share/icu'), { recursive: true });
-    await writeFile(join(root, 'share/icu/icudt76l.dat'), 'icu');
-    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), join(root, 'share/icu'));
+    const dataDirectory = join(root, 'OliphauntICU.bundle/share/icu');
+    await mkdir(dataDirectory, { recursive: true });
+    await writeFile(join(dataDirectory, 'icudt76l.dat'), 'icu');
+    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), dataDirectory);
     await assert.rejects(
       () => resolveNodeIcuDataDirectory('9.9.8', root),
       /does not match @oliphaunt\/ts icuVersion/,
@@ -507,8 +508,10 @@ async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void
   const deno = fsBackedDenoValidationRuntime();
   try {
     await writePreparedHstoreRuntime(runtime, 'linux-x64-gnu');
+    await writeFile(join(runtimeModules, 'dict_snowball.so'), 'canonical subprocess dict_snowball');
     await writeFile(join(runtimeModules, 'plpgsql.so'), 'canonical subprocess plpgsql');
     await mkdir(embeddedModules, { recursive: true });
+    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
     await writeFile(join(embeddedModules, 'plpgsql.so'), 'embedded plpgsql');
     await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
 
@@ -534,6 +537,19 @@ async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void
     );
 
     await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
+    await rm(join(embeddedModules, 'dict_snowball.so'));
+    await assert.rejects(
+      () =>
+        validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: runtime,
+          extensions: ['hstore'],
+          source: 'Deno test runtime',
+        }),
+      /module directory is missing required file dict_snowball[.]so/,
+    );
+
+    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
     await rm(join(embeddedModules, 'plpgsql.so'));
     await assert.rejects(
       () =>

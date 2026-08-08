@@ -72,13 +72,64 @@ function quoteIdentifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+async function verifyCoreEnglishTextSearch(database) {
+  const result = await database.query(
+    "SELECT CASE WHEN "
+      + "to_tsvector('pg_catalog.english', 'the quick foxes running') "
+      + "@@ to_tsquery('pg_catalog.english', 'run & fox') "
+      + "THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
+  );
+  assert.equal(
+    result.getText(0, "value"),
+    "english-snowball-ok",
+    "every runtime mode must load PostgreSQL core dict_snowball and its English stopword data",
+  );
+}
+
+async function verifyPgTextsearchEnglishBm25(database) {
+  await database.query("DROP TABLE IF EXISTS exact_candidate_pg_textsearch_english");
+  await database.query(
+    "CREATE TABLE exact_candidate_pg_textsearch_english (id bigint PRIMARY KEY, body text NOT NULL)",
+  );
+  await database.query(
+    "INSERT INTO exact_candidate_pg_textsearch_english (id, body) VALUES "
+      + "(1, 'PostgreSQL databases support reliable runners'), "
+      + "(2, 'An unrelated document about walking')",
+  );
+  await database.query(
+    "CREATE INDEX exact_candidate_pg_textsearch_english_bm25 "
+      + "ON exact_candidate_pg_textsearch_english USING bm25 (body) "
+      + "WITH (text_config = 'pg_catalog.english')",
+  );
+  const result = await database.query(
+    "SELECT id::text AS id FROM exact_candidate_pg_textsearch_english "
+      + "ORDER BY body <@> to_bm25query("
+      + "'running database', 'exact_candidate_pg_textsearch_english_bm25') LIMIT 1",
+  );
+  assert.equal(result.getText(0, "id"), "1", "pg_textsearch English BM25 must stem and rank the matching row");
+  await database.query("DROP TABLE exact_candidate_pg_textsearch_english");
+  return {
+    sqlName: "pg_textsearch",
+    scenario: "nonempty-english-bm25-create-and-query",
+    topId: "1",
+  };
+}
+
+async function verifyExtensionFunctionality(database, extensions) {
+  const functional = [];
+  if (extensions.some((extension) => extension.sqlName === "pg_textsearch")) {
+    functional.push(await verifyPgTextsearchEnglishBm25(database));
+  }
+  return functional;
+}
+
 async function activateAndVerifyExtensions(
   database,
   extensions,
   checkpoint,
   procSignalSentinel,
 ) {
-  if (extensions.length === 0) return { activated: [], catalog: [], loaded: [] };
+  if (extensions.length === 0) return { activated: [], catalog: [], functional: [], loaded: [] };
   const loaded = [];
   for (const extension of extensions) {
     const detail = { sqlName: extension.sqlName };
@@ -109,9 +160,12 @@ async function activateAndVerifyExtensions(
   const catalog = result.rows.map((row) => row.text(0));
   assert.deepEqual(catalog, expectedCatalog, "the database extension catalog must match the exact promoted set");
   await checkpoint("extension-catalog-verified", { count: catalog.length });
+  const functional = await verifyExtensionFunctionality(database, extensions);
+  await checkpoint("extension-functionality-verified", { count: functional.length });
   return {
     activated: extensions.map((extension) => extension.sqlName).sort(),
     catalog,
+    functional,
     loaded: loaded.sort(),
   };
 }
@@ -199,6 +253,7 @@ async function main() {
       await checkpoint("database-open-after", { root: "restored" });
       const selected = await restored.query("SELECT value FROM exact_candidate_proof");
       assert.equal(selected.getText(0, "value"), state.queryMarker);
+      await verifyCoreEnglishTextSearch(restored);
       await checkpoint("restored-query-verified");
       if (engine === "nativeDirect") {
         await verifyNativeDirectProcSignalSurvival(
@@ -216,6 +271,7 @@ async function main() {
       );
       assert.deepEqual(extensionProof.activated, state.extensionProof.activated);
       assert.deepEqual(extensionProof.catalog, state.extensionProof.catalog);
+      assert.deepEqual(extensionProof.functional, state.extensionProof.functional);
     } finally {
       try {
         await checkpoint("database-close-before", { root: "restored" });
@@ -273,6 +329,7 @@ async function main() {
     await database.query(`INSERT INTO exact_candidate_proof (value) VALUES ('${marker}')`);
     const selected = await database.query("SELECT value FROM exact_candidate_proof");
     assert.equal(selected.getText(0, "value"), marker);
+    await verifyCoreEnglishTextSearch(database);
     await checkpoint("source-query-verified");
     if (engine === "nativeDirect") {
       await verifyNativeDirectProcSignalSurvival(

@@ -25,6 +25,7 @@ import {
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import {
   AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
   wasixExtensionAotPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
@@ -279,9 +280,12 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     const root = mkdtempSync(path.join(ROOT, "target/wasix-runtime-validation-test-"));
     directories.push(root);
     const runtimeSource = path.join(root, "runtime-source", "oliphaunt");
-    mkdirSync(path.join(runtimeSource, "bin"), { recursive: true });
-    writeFileSync(path.join(runtimeSource, "bin/initdb"), "initdb\n");
-    writeFileSync(path.join(runtimeSource, "bin/postgres"), "postgres\n");
+    for (const member of CORE_RUNTIME_ARCHIVE_FILES) {
+      const relative = member.replace(/^oliphaunt\//u, "");
+      const file = path.join(runtimeSource, relative);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${relative}\n`);
+    }
     const runtimeBytes = zstdCompressSync(createDeterministicTar(runtimeSource, "oliphaunt", {
       fail(message) {
         throw new Error(message);

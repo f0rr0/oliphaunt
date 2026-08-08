@@ -18,6 +18,7 @@ import {
   validatePackagedMobileRuntimeFiles,
   validateSwiftSourceFixtureEntries,
 } from "./check-staged-artifacts.mjs";
+import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
 
 test("WASIX Cargo packages accept only the generated legal members", () => {
   const listed = ["Cargo.toml", "README.md", "src/lib.rs"];
@@ -76,9 +77,12 @@ const EXPO_IOS_RUNNER = path.join(
 );
 
 function packagedMobileRuntimeNames(prefix, extensionAssets) {
-  return extensionAssets.map(
-    (name) => `${prefix}runtime/files/share/postgresql/extension/${name}`,
-  );
+  return [
+    ...CORE_SNOWBALL_RUNTIME_DATA_FILES.map((name) => `${prefix}runtime/files/${name}`),
+    ...extensionAssets.map(
+      (name) => `${prefix}runtime/files/share/postgresql/extension/${name}`,
+    ),
+  ];
 }
 
 test("staged iOS evidence and the Expo runner share the Payload CocoaPods file-list contract", () => {
@@ -367,6 +371,17 @@ test("mobile artifact gate uses generated ownership for ancillary extension SQL"
       registry: MOBILE_STATIC_REGISTRY,
       selected: ["pgtap"],
     }));
+    assert.throws(
+      () => validatePackagedMobileRuntimeFiles({
+        artifactNames: artifactNames.filter((name) => !name.endsWith("/english.stop")),
+        metadata: REACT_NATIVE_METADATA,
+        platform,
+        prefix,
+        registry: MOBILE_STATIC_REGISTRY,
+        selected: ["pgtap"],
+      }),
+      /missing PostgreSQL core Snowball runtime data: .*english[.]stop/u,
+    );
     assert.throws(
       () => validatePackagedMobileRuntimeFiles({
         artifactNames,

@@ -263,8 +263,17 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   local initdb_source="$3"
   local selected_extensions="$4"
   local package_root="$5"
+  local icu_enabled="${6:-0}"
+  local icu_data_dir="${7:-}"
 
-  [ -n "$selected_extensions" ] || return 1
+  case "$icu_enabled" in
+    0|1) ;;
+    *) fail "prebuilt mobile runtime ICU selection must be 0 or 1" ;;
+  esac
+  [ -n "$selected_extensions" ] || [ "$icu_enabled" = "1" ] || return 1
+  if [ "$icu_enabled" = "1" ]; then
+    [ -d "$icu_data_dir" ] || fail "selected $platform ICU data directory is missing: $icu_data_dir"
+  fi
 
   local prebuilt_runtime_artifacts native_runtime_version stable_semver_re
   need_cmd cargo
@@ -288,10 +297,13 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
       ;;
     *) extension_target="host" ;;
   esac
-  if ! prebuilt_runtime_artifacts="$(oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection "$selected_extensions" "$extension_target")"; then
-    return 1
+  prebuilt_runtime_artifacts=""
+  if [ -n "$selected_extensions" ]; then
+    if ! prebuilt_runtime_artifacts="$(oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection "$selected_extensions" "$extension_target")"; then
+      return 1
+    fi
+    [ -n "$prebuilt_runtime_artifacts" ] || return 1
   fi
-  [ -n "$prebuilt_runtime_artifacts" ] || return 1
   local module_stems
   module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
   local -a package_args=(
@@ -306,6 +318,9 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   if [ -n "$module_stems" ]; then
     package_args+=(--mobile-static-module "$module_stems")
   fi
+  if [ "$icu_enabled" = "1" ]; then
+    package_args+=(--runtime-feature icu)
+  fi
   local artifact
   while IFS= read -r artifact; do
     [ -n "$artifact" ] || continue
@@ -316,8 +331,11 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   if [ -n "$initdb_source" ]; then
     resource_env+=(OLIPHAUNT_INITDB="$initdb_source")
   fi
+  if [ "$icu_enabled" = "1" ]; then
+    resource_env+=(OLIPHAUNT_ICU_DATA_DIR="$icu_data_dir")
+  fi
 
-  echo "Preparing $platform runtime resources from exact-extension package artifacts: $selected_extensions" >&2
+  echo "Preparing $platform runtime resources from exact-extension package artifacts (extensions=$selected_extensions, icu=$icu_enabled)" >&2
   if ! env "${resource_env[@]}" cargo "${package_args[@]}" >&2; then
     if [ "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}" = "1" ]; then
       fail "failed to prepare $platform runtime resources from exact-extension package artifacts: $selected_extensions"

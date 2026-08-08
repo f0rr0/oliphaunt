@@ -48,7 +48,24 @@ $ObjDir = Join-Path $OutDir "obj"
 $DllOut = Join-Path $OutDir "bin/oliphaunt.dll"
 $ImportLibOut = Join-Path $OutDir "lib/oliphaunt.lib"
 $EmbeddedModulesDir = Join-Path $OutDir "modules"
-$EmbeddedPlpgsqlDllOut = Join-Path $EmbeddedModulesDir "plpgsql.dll"
+$EmbeddedCoreModuleStems = @("dict_snowball", "plpgsql")
+$SnowballStopwordFiles = @(
+    "danish.stop",
+    "dutch.stop",
+    "english.stop",
+    "finnish.stop",
+    "french.stop",
+    "german.stop",
+    "hungarian.stop",
+    "italian.stop",
+    "nepali.stop",
+    "norwegian.stop",
+    "portuguese.stop",
+    "russian.stop",
+    "spanish.stop",
+    "swedish.stop",
+    "turkish.stop"
+)
 $VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-closure.mjs"
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
@@ -2408,12 +2425,33 @@ function Get-SelectedEmbeddedExtensionModules {
     }
 }
 
+function Test-SnowballRuntimeClosure {
+    $requiredFiles = @(
+        (Join-Path $InstallDir "lib/postgresql/dict_snowball.dll"),
+        (Join-Path $InstallDir "share/postgresql/snowball_create.sql")
+    )
+    foreach ($stopword in $SnowballStopwordFiles) {
+        $requiredFiles += (Join-Path $InstallDir "share/postgresql/tsearch_data/$stopword")
+    }
+    foreach ($required in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            return $false
+        }
+        $file = Get-Item -LiteralPath $required -Force
+        if (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.Length -le 0) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Runtime-Installed([string]$DesiredHash) {
     return (Test-Path (Join-Path $InstallDir "bin/initdb.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/postgres.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/pg_config.exe")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/postgresql.conf.sample")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/timezone/UTC")) -and
+        (Test-SnowballRuntimeClosure) -and
         (Test-Path (Join-Path $InstallDir ".oliphaunt-postgres-runtime.sha256")) -and
         ((Get-Content (Join-Path $InstallDir ".oliphaunt-postgres-runtime.sha256") -Raw).Trim() -eq $DesiredHash) -and
         (($BuildExtensions -ne "0") -or (BaseRuntimeOptionalExtensionsAbsent))
@@ -2878,7 +2916,7 @@ function Build-EmbeddedModules {
     }
 
     $selectedModules = @(Get-SelectedEmbeddedExtensionModules)
-    $targetNames = @("plpgsql") + @($selectedModules | ForEach-Object { $_.Stem })
+    $targetNames = @($EmbeddedCoreModuleStems) + @($selectedModules | ForEach-Object { $_.Stem })
     $targetNames = @($targetNames | Sort-Object -Unique)
     $provider = Meson-Path $ImportLibOut
     Invoke-Logged "meson-embedded-module-provider.log" {
@@ -2890,10 +2928,13 @@ function Build-EmbeddedModules {
 
     Remove-EmbeddedModuleStage
     New-Item -ItemType Directory -Force -Path $EmbeddedModulesDir | Out-Null
-    $plpgsqlSource = Find-EmbeddedModuleBinary "plpgsql"
-    Assert-EmbeddedModuleHostContract $plpgsqlSource $true
-    Copy-Item -LiteralPath $plpgsqlSource -Destination $EmbeddedPlpgsqlDllOut -Force
-    Assert-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $source = Find-EmbeddedModuleBinary $stem
+        Assert-EmbeddedModuleHostContract $source $true
+        $staged = Join-Path $EmbeddedModulesDir "$stem.dll"
+        Copy-Item -LiteralPath $source -Destination $staged -Force
+        Assert-EmbeddedModuleHostContract $staged $true
+    }
 
     foreach ($module in $selectedModules) {
         $source = Find-EmbeddedModuleBinary $module.Stem
@@ -2904,6 +2945,11 @@ function Build-EmbeddedModules {
     }
 
     $installedModuleDir = Join-Path $InstallDir "lib/postgresql"
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $server = Join-Path $installedModuleDir "$stem.dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$stem.dll"
+        Assert-CompatibleModuleProfiles $server $embedded
+    }
     foreach ($module in $selectedModules) {
         $server = Join-Path $installedModuleDir "$($module.Stem).dll"
         $embedded = Join-Path $EmbeddedModulesDir "$($module.Stem).dll"
@@ -2912,8 +2958,14 @@ function Build-EmbeddedModules {
 }
 
 function Embedded-ModulesReady {
-    if (-not (Test-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true)) {
-        return $false
+    $installedModuleDir = Join-Path $InstallDir "lib/postgresql"
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $server = Join-Path $installedModuleDir "$stem.dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$stem.dll"
+        if (-not (Test-EmbeddedModuleHostContract $embedded $true) -or
+            -not (Test-CompatibleModuleProfiles $server $embedded)) {
+            return $false
+        }
     }
     foreach ($module in @(Get-SelectedEmbeddedExtensionModules)) {
         $server = Join-Path $InstallDir "lib/postgresql/$($module.Stem).dll"
