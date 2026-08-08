@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-swift-v0.6.0...oliphaunt-swift-v0.6.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **runtime:** close mobile package and readiness gaps [skip ci] ([60b9df9](https://github.com/f0rr0/oliphaunt/commit/60b9df9de1d710d6faeb34114ac66409b689cf22))
+
 ## 0.6.0 (2026-07-28)
 
 
