@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -9,13 +10,17 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  EXAMPLE_CARGO_POLICIES,
   REQUIRED_WASIX_CONSUMER_PINS,
+  exampleCargoReleaseVersionBindings,
   validateCandidateLock,
   validateCandidateSourceSelection,
+  validateExampleManifestPolicy,
   validateResolvedPackagePolicy,
   validateWasixConsumerDependencyPins,
 } from "./example-cargo-policy.mjs";
 
+const ROOT = path.resolve(import.meta.dir, "../..");
 const cratesIo = "registry+https://github.com/rust-lang/crates.io-index";
 const toolchainVersions = {
   wasmer: "7.2.0",
@@ -40,6 +45,42 @@ const wasmerPackages = [
 ].map(([name, version]) => ({ name, version, source: cratesIo }));
 
 describe("ephemeral example Cargo policy", () => {
+  test("owns every registry example version and native runtime binding", () => {
+    const bindings = exampleCargoReleaseVersionBindings();
+    expect(bindings.filter(({ kind }) => kind === "dependency")).toHaveLength(18);
+    expect(bindings.filter(({ kind }) => kind === "runtime")).toHaveLength(1);
+    expect(new Set(bindings.map(({ file }) => file))).toEqual(new Set(
+      EXAMPLE_CARGO_POLICIES.map(({ crateDir }) => `${crateDir}/Cargo.toml`),
+    ));
+    for (const policy of EXAMPLE_CARGO_POLICIES) {
+      expect(bindings.filter(({ policyId, kind }) => policyId === policy.id && kind === "dependency"))
+        .toHaveLength(policy.directPackages.length);
+    }
+  });
+
+  test("rejects stale runtime metadata, duplicate dependencies, and dependency scope drift", () => {
+    const policy = EXAMPLE_CARGO_POLICIES.find(({ id }) => id === "native-tauri");
+    const bindings = exampleCargoReleaseVersionBindings().filter(({ policyId }) => policyId === policy.id);
+    const runtimeBinding = bindings.find(({ kind }) => kind === "runtime");
+    const manifest = Bun.TOML.parse(readFileSync(path.join(ROOT, policy.crateDir, "Cargo.toml"), "utf8"));
+
+    manifest.package.metadata.oliphaunt["runtime-version"] = "9.9.9";
+    manifest["dev-dependencies"] = { oliphaunt: bindings.find(({ name }) => name === "oliphaunt").expected };
+    delete manifest.dependencies.oliphaunt;
+    const failures = validateExampleManifestPolicy(policy, manifest, bindings);
+    expect(failures).toContain(
+      `${policy.crateDir}/Cargo.toml runtime-version uses "9.9.9"; expected ${runtimeBinding.expected}`,
+    );
+    expect(failures).toContain(
+      `${policy.crateDir}/Cargo.toml oliphaunt must remain at TOML path dependencies.oliphaunt`,
+    );
+
+    manifest.dependencies.oliphaunt = bindings.find(({ name }) => name === "oliphaunt").expected;
+    expect(validateExampleManifestPolicy(policy, manifest, bindings).some(
+      (failure) => failure.includes("direct Oliphaunt dependencies"),
+    )).toBe(true);
+  });
+
   test("requires exact non-optional pins for the published WASIX family closure", () => {
     const dependencies = Object.fromEntries(
       REQUIRED_WASIX_CONSUMER_PINS.map((name) => [
