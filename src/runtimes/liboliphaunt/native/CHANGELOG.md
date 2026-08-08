@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/f0rr0/oliphaunt/compare/liboliphaunt-native-v0.1.0...liboliphaunt-native-v0.1.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **runtime:** close mobile package and readiness gaps [skip ci] ([dc8218a](https://github.com/f0rr0/oliphaunt/commit/dc8218af8807cfb1db97c69c92399b86ddb176a4))
+
 ## 0.1.0 (2026-07-28)
 
 
