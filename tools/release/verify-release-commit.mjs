@@ -5,6 +5,7 @@ import process from "node:process";
 
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { exampleCargoReleaseVersionBindings } from "./example-cargo-policy.mjs";
 import { typescriptOptionalRuntimePackageProducts } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import {
@@ -373,6 +374,12 @@ function derivedVersionRules() {
       addText(entry.path, { type: "rust-const", name: expression, sourceProduct: entry.sourceProduct });
     } else {
       throw error(`${entry.id} uses unsupported compatibility parser ${JSON.stringify(entry.parser)}`);
+    }
+  }
+
+  for (const { file, versionPaths, sourceProduct, wrapped } of exampleCargoReleaseVersionBindings()) {
+    for (const parts of versionPaths) {
+      addStructured("toml", file, parts, sourceProduct, wrapped);
     }
   }
 
