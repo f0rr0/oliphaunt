@@ -23,6 +23,10 @@ import {
   requireCompleteRuntimeLinkedTransitions,
 } from "./release-please-transition.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
+import {
+  EXAMPLE_CARGO_POLICIES,
+  exampleCargoReleaseVersionBindings,
+} from "./example-cargo-policy.mjs";
 import { synchronizeDependentReleaseCandidates } from "./release-dependent-candidates.mjs";
 import {
   releaseSemanticFingerprintPath,
@@ -585,6 +589,182 @@ function syncCargoPathDependencyPins(changes, { write }) {
   }
 }
 
+function valueAt(root, parts) {
+  let current = root;
+  for (const part of parts) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function tomlAssignmentMatches(text, key) {
+  const escaped = escapeRegExp(key);
+  const pattern = new RegExp(
+    `^(\\s*(?:${escaped}|"${escaped}"|'${escaped}')\\s*=\\s*)`,
+    "gmu",
+  );
+  return [...text.matchAll(pattern)].map((match) => ({
+    assignmentStart: match.index,
+    valueStart: match.index + match[0].length,
+  }));
+}
+
+function quotedTomlStringEnd(text, start) {
+  const quote = text[start];
+  let escaped = false;
+  for (let index = start + 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote === '"' && character === "\\" && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (character === quote && !escaped) return index;
+    escaped = false;
+  }
+  return -1;
+}
+
+function inlineTomlTableEnd(text, start) {
+  let depth = 0;
+  let quote;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote !== undefined) {
+      if (quote === '"' && character === "\\" && !escaped) {
+        escaped = true;
+        continue;
+      }
+      if (character === quote && !escaped) quote = undefined;
+      escaped = false;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return -1;
+}
+
+function replaceUniqueDependencyVersion(text, binding, label) {
+  const matches = tomlAssignmentMatches(text, binding.name);
+  if (matches.length !== 1) {
+    throw new Error(
+      `${label} must declare ${binding.name} exactly once as a direct TOML assignment, found ${matches.length}`,
+    );
+  }
+  const { valueStart } = matches[0];
+  const first = text[valueStart];
+  if (first === '"' || first === "'") {
+    const end = quotedTomlStringEnd(text, valueStart);
+    if (end === -1) throw new Error(`${label} has an unterminated version string for ${binding.name}`);
+    const actual = text.slice(valueStart + 1, end);
+    return {
+      text: actual === binding.expected
+        ? text
+        : `${text.slice(0, valueStart + 1)}${binding.expected}${text.slice(end)}`,
+      detail: actual === binding.expected
+        ? undefined
+        : `${binding.name} ${JSON.stringify(actual)} -> ${JSON.stringify(binding.expected)}`,
+    };
+  }
+  if (first !== "{") {
+    throw new Error(`${label} ${binding.name} must use a string or inline-table dependency specification`);
+  }
+  const end = inlineTomlTableEnd(text, valueStart);
+  if (end === -1) throw new Error(`${label} has an unterminated inline table for ${binding.name}`);
+  const table = text.slice(valueStart, end);
+  const versionPattern = /(\bversion\s*=\s*)(?:"([^"]*)"|'([^']*)')/gu;
+  const versions = [...table.matchAll(versionPattern)];
+  if (versions.length !== 1) {
+    throw new Error(`${label} ${binding.name} inline table must declare version exactly once, found ${versions.length}`);
+  }
+  const match = versions[0];
+  const actual = match[2] ?? match[3];
+  if (actual === binding.expected) return { text, detail: undefined };
+  const quote = match[2] === undefined ? "'" : '"';
+  const replacement = `${match[1]}${quote}${binding.expected}${quote}`;
+  const versionStart = valueStart + match.index;
+  return {
+    text: `${text.slice(0, versionStart)}${replacement}${text.slice(versionStart + match[0].length)}`,
+    detail: `${binding.name} ${JSON.stringify(actual)} -> ${JSON.stringify(binding.expected)}`,
+  };
+}
+
+function replaceUniqueStringAssignment(text, binding, label) {
+  const matches = tomlAssignmentMatches(text, binding.name);
+  if (matches.length !== 1) {
+    throw new Error(`${label} must declare ${binding.name} exactly once, found ${matches.length}`);
+  }
+  const { valueStart } = matches[0];
+  const quote = text[valueStart];
+  if (quote !== '"' && quote !== "'") {
+    throw new Error(`${label} ${binding.name} must be a TOML string`);
+  }
+  const end = quotedTomlStringEnd(text, valueStart);
+  if (end === -1) throw new Error(`${label} has an unterminated string for ${binding.name}`);
+  const actual = text.slice(valueStart + 1, end);
+  return {
+    text: actual === binding.expected
+      ? text
+      : `${text.slice(0, valueStart + 1)}${binding.expected}${text.slice(end)}`,
+    detail: actual === binding.expected
+      ? undefined
+      : `${binding.name} ${JSON.stringify(actual)} -> ${JSON.stringify(binding.expected)}`,
+  };
+}
+
+export function syncExampleCargoManifestText(text, { policy, bindings, label = `${policy.crateDir}/Cargo.toml` }) {
+  const manifest = Bun.TOML.parse(text);
+  const details = [];
+  let updated = text;
+  for (const binding of bindings) {
+    if (valueAt(manifest, binding.entryParts) === undefined) {
+      throw new Error(`${label} is missing release-bound TOML path ${binding.entryParts.join(".")}`);
+    }
+    const result = binding.kind === "dependency"
+      ? replaceUniqueDependencyVersion(updated, binding, label)
+      : replaceUniqueStringAssignment(updated, binding, label);
+    updated = result.text;
+    if (result.detail !== undefined) details.push(result.detail);
+  }
+  if (policy.runtime !== undefined) {
+    const actualProduct = valueAt(manifest, policy.runtime.productParts);
+    if (actualProduct !== policy.runtime.product) {
+      throw new Error(
+        `${label} runtime uses ${JSON.stringify(actualProduct)}; expected ${policy.runtime.product}`,
+      );
+    }
+  }
+  return { text: updated, details };
+}
+
+function syncExampleCargoRegistryPins(changes, { write }) {
+  const bindings = exampleCargoReleaseVersionBindings();
+  for (const policy of EXAMPLE_CARGO_POLICIES) {
+    const file = path.join(ROOT, policy.crateDir, "Cargo.toml");
+    let result;
+    try {
+      result = syncExampleCargoManifestText(readText(file), {
+        policy,
+        bindings: bindings.filter(({ policyId }) => policyId === policy.id),
+        label: rel(file),
+      });
+    } catch (cause) {
+      fail(cause.message);
+    }
+    if (result.details.length > 0) {
+      writeTextIfChanged(file, result.text, changes, result.details.join("; "), { write });
+    }
+  }
+}
+
 function stringKey(line, key) {
   const [body] = stripNewline(line);
   const match = STRING_KEY_RE.exec(body);
@@ -827,6 +1007,7 @@ async function main(argv) {
   syncElectronExampleDependencies(changes, { write });
   await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
   syncCargoPathDependencyPins(changes, { write });
+  syncExampleCargoRegistryPins(changes, { write });
   syncLockfiles(changes, { write });
   if (!args.generatedReleaseCheck) {
     syncAssetInputFingerprint(changes, { write });

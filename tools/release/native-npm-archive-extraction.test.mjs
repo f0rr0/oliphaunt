@@ -48,6 +48,7 @@ test("native npm ZIP assembly preserves complete nested runtime trees", () => {
     for (const [relativePath, contents] of runtimeFiles) {
       writeFixtureFile(path.join(source, "runtime"), relativePath, contents);
     }
+    writeFixtureFile(source, "lib/modules/dict_snowball.dll", "embedded dict_snowball\n");
     writeFixtureFile(source, "lib/modules/plpgsql.dll", "embedded plpgsql\n");
     writeFixtureFile(source, "outside/not-packaged.txt", "outside\n");
 
@@ -69,6 +70,9 @@ test("native npm ZIP assembly preserves complete nested runtime trees", () => {
       }
       const modules = path.join(root, name, "lib/modules");
       extract(archive, "lib/modules", modules);
+      expect(readFileSync(path.join(modules, "dict_snowball.dll"), "utf8")).toBe(
+        "embedded dict_snowball\n",
+      );
       expect(readFileSync(path.join(modules, "plpgsql.dll"), "utf8")).toBe("embedded plpgsql\n");
       expect(existsSync(path.join(root, name, "outside", "not-packaged.txt"))).toBe(false);
     }

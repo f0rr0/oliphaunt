@@ -568,14 +568,50 @@ install_pods() {
 validate_app_owned_payload_pod_source() {
   local lockfile="$example_dir/ios/Podfile.lock"
   local expected_root="$example_dir/ios/oliphaunt"
+  local require_icu=0
   [ -f "$lockfile" ] || fail "CocoaPods did not produce $lockfile"
   [ -f "$expected_root/OliphauntReactNativePayload.podspec" ] ||
     fail "app-owned iOS payload podspec is missing from $expected_root"
+  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
+    require_icu=1
+    node - \
+      "$expected_root/selection.json" \
+      "$expected_root/resources/OliphauntReactNativeResources.bundle/oliphaunt/runtime/files/share/icu" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
 
-  ruby - "$lockfile" "$expected_root" <<'RUBY'
+const [selectionFile, icuRoot] = process.argv.slice(2);
+const selection = JSON.parse(fs.readFileSync(selectionFile, "utf8"));
+if (selection.icu !== true) {
+  throw new Error(`app-owned iOS selection did not record ICU: ${selectionFile}`);
+}
+if (!fs.statSync(icuRoot).isDirectory()) {
+  throw new Error(`app-owned iOS ICU payload is not a directory: ${icuRoot}`);
+}
+
+const files = [];
+const pending = [icuRoot];
+while (pending.length > 0) {
+  const directory = pending.pop();
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isDirectory()) pending.push(candidate);
+    else if (entry.isFile()) files.push(path.relative(icuRoot, candidate));
+  }
+}
+if (files.length === 0) {
+  throw new Error(`app-owned iOS ICU payload is empty: ${icuRoot}`);
+}
+if (!files.some((file) => file.split(path.sep).length > 1)) {
+  throw new Error(`app-owned iOS ICU payload lost its directory structure: ${icuRoot}`);
+}
+NODE
+  fi
+
+  ruby - "$lockfile" "$expected_root" "$require_icu" <<'RUBY'
 require "yaml"
 
-lockfile, expected_root = ARGV
+lockfile, expected_root, require_icu = ARGV
 # CocoaPods serializes external-source keys as Ruby symbols. Keep object
 # loading closed to every other class and to symbols outside this exact source
 # contract so Ruby/Psych upgrades cannot turn lockfile validation into either
@@ -609,6 +645,16 @@ resolved = File.expand_path(path, File.dirname(lockfile))
 expected = File.expand_path(expected_root)
 unless resolved == expected
   abort "OliphauntReactNativePayload path resolved to #{resolved}, expected #{expected}"
+end
+
+if require_icu == "1"
+  pod_names = document.fetch("PODS", []).map do |entry|
+    entry.is_a?(Hash) ? entry.keys.first : entry
+  end.compact.map { |entry| entry.to_s.split(/[\s(]/, 2).first }
+  checksums = document.fetch("SPEC CHECKSUMS", {})
+  if pod_names.include?("OliphauntICU") || checksums.key?("OliphauntICU") || sources.key?("OliphauntICU")
+    abort "OliphauntICU must not be linked separately from the app-owned ICU payload"
+  end
 end
 RUBY
 }
@@ -778,6 +824,19 @@ build_ios_app() {
     [ -e "$required" ] || fail "iOS app is missing packaged Oliphaunt resource: $required"
     echo "bundled: $required" >&2
   done
+  if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
+    local built_icu_root="$resource_root/runtime/files/share/icu"
+    local built_icu_file built_nested_icu_file
+    [ -d "$built_icu_root" ] ||
+      fail "iOS app is missing selected ICU data: $built_icu_root"
+    built_icu_file="$(find "$built_icu_root" -type f -print -quit)"
+    [ -n "$built_icu_file" ] ||
+      fail "iOS app contains an empty selected ICU data directory: $built_icu_root"
+    built_nested_icu_file="$(find "$built_icu_root" -mindepth 2 -type f -print -quit)"
+    [ -n "$built_nested_icu_file" ] ||
+      fail "iOS app ICU data lost its directory structure: $built_icu_root"
+    echo "bundled ICU: $built_icu_root ($(directory_files "$built_icu_root") files, $(directory_bytes "$built_icu_root") bytes)" >&2
+  fi
   if [ -e "$resource_root/lib/liboliphaunt.dylib" ]; then
     echo "bundled: $resource_root/lib/liboliphaunt.dylib" >&2
   fi
@@ -904,6 +963,9 @@ main() {
   if is_truthy "$e2e_only"; then
     local app
     app="$(resolve_prebuilt_ios_app)"
+    export_mobile_e2e_icu_expectation_from_manifest \
+      "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
+      "iOS app"
     install_and_launch "$app"
     local ios_app_bytes rn_package_bytes
     ios_app_bytes="$(directory_bytes "$app")"
@@ -953,6 +1015,9 @@ main() {
   validate_app_owned_payload_pod_source
   stamp_expo_modules_jsi_prebuilt
   app="$(build_ios_app)"
+  export_mobile_e2e_icu_expectation_from_manifest \
+    "$app/OliphauntReactNativeResources.bundle/oliphaunt/runtime/manifest.properties" \
+    "iOS app"
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
   write_ios_build_artifact_report "$app" "$selected_extensions"

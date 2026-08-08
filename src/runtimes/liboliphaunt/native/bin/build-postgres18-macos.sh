@@ -32,6 +32,7 @@ generation_stamp="$work_root/.oliphaunt-macos-generation.sha256"
 postgis_dependency_log="$work_root/postgis-native-dependencies.log"
 liboliphaunt_build_stamp="$out_dir/liboliphaunt.dylib.inputs.sha256"
 extension_build_stamp="$out_dir/native-extension-artifacts.sha256"
+embedded_dict_snowball_build_stamp="$out_dir/dict_snowball.dylib.inputs.sha256"
 embedded_plpgsql_build_stamp="$out_dir/plpgsql.dylib.inputs.sha256"
 postgres_runtime_stamp="$install_dir/.oliphaunt-postgres-runtime.sha256"
 macos_module_nm_audit="$repo_root/src/runtimes/liboliphaunt/native/tools/audit-macos-module-nm.awk"
@@ -738,6 +739,35 @@ liboliphaunt_build_fingerprint() {
   } | shasum -a 256 | awk '{print $1}'
 }
 
+snowball_runtime_ready() {
+  local module="$install_dir/lib/postgresql/dict_snowball.dylib"
+  local sql="$install_dir/share/postgresql/snowball_create.sql"
+  [ -s "$module" ] && [ ! -L "$module" ] || return 1
+  [ -s "$sql" ] && [ ! -L "$sql" ] || return 1
+
+  local stopword
+  for stopword in \
+    danish.stop \
+    dutch.stop \
+    english.stop \
+    finnish.stop \
+    french.stop \
+    german.stop \
+    hungarian.stop \
+    italian.stop \
+    nepali.stop \
+    norwegian.stop \
+    portuguese.stop \
+    russian.stop \
+    spanish.stop \
+    swedish.stop \
+    turkish.stop
+  do
+    local file="$install_dir/share/postgresql/tsearch_data/$stopword"
+    [ -s "$file" ] && [ ! -L "$file" ] || return 1
+  done
+}
+
 liboliphaunt_artifacts_current() {
   [ -d "$build_dir" ] || return 1
   [ -f "$build_stamp" ] || return 1
@@ -746,11 +776,14 @@ liboliphaunt_artifacts_current() {
   [ -f "$liboliphaunt_build_stamp" ] || return 1
   [ -x "$install_dir/bin/initdb" ] || return 1
   [ -x "$install_dir/bin/postgres" ] || return 1
+  snowball_runtime_ready || return 1
   postgres_install_icu_ready || return 1
   [ -f "$objects_rsp" ] || return 1
   [ -f src/common/libpgcommon_srv.a ] || return 1
   [ -f src/port/libpgport_srv.a ] || return 1
   liboliphaunt_artifact_ready || return 1
+  embedded_dict_snowball_module_ready || return 1
+  embedded_plpgsql_module_ready || return 1
 
   local desired_liboliphaunt_hash
   if ! desired_liboliphaunt_hash="$(liboliphaunt_build_fingerprint)"; then
@@ -937,7 +970,7 @@ embedded_extension_modules_avoid_provider_collisions() {
     rm -f "$engine_symbols"
     return 1
   fi
-  for module in "${required_extension_modules[@]}" plpgsql; do
+  for module in "${required_extension_modules[@]}" dict_snowball plpgsql; do
     module_path="$embedded_modules_dir/$module.dylib"
     [ -f "$module_path" ] || continue
     if ! nm -m "$module_path" 2>/dev/null |
@@ -952,9 +985,10 @@ embedded_extension_modules_avoid_provider_collisions() {
   rm -f "$engine_symbols"
 }
 
-embedded_plpgsql_avoids_provider_collisions() {
+embedded_core_module_avoids_provider_collisions() {
+  local module="$1"
   local engine_symbols
-  local module_path="$embedded_modules_dir/plpgsql.dylib"
+  local module_path="$embedded_modules_dir/$module.dylib"
   [ -f "$module_path" ] || return 1
   engine_symbols="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-engine-symbols.XXXXXX")"
   if ! nm -gU "$lib_out" > "$engine_symbols"; then
@@ -969,6 +1003,14 @@ embedded_plpgsql_avoids_provider_collisions() {
     return 1
   fi
   rm -f "$engine_symbols"
+}
+
+embedded_dict_snowball_avoids_provider_collisions() {
+  embedded_core_module_avoids_provider_collisions dict_snowball
+}
+
+embedded_plpgsql_avoids_provider_collisions() {
+  embedded_core_module_avoids_provider_collisions plpgsql
 }
 
 native_extension_artifacts_ready() {
@@ -997,7 +1039,8 @@ native_extension_artifacts_ready() {
       return 1
     fi
   done
-  [ -f "$embedded_modules_dir/plpgsql.dylib" ] || return 1
+  embedded_dict_snowball_module_ready || return 1
+  embedded_plpgsql_module_ready || return 1
   if native_extensions_include_postgis; then
     [ -f "$install_dir/share/postgresql/proj/proj.db" ] || return 1
   fi
@@ -1053,11 +1096,14 @@ prune_base_runtime_optional_extensions() {
     rm -rf "$embedded_modules_dir"
   fi
   mkdir -p "$embedded_modules_dir"
-  if [ -L "$embedded_modules_dir/plpgsql.dylib" ] ||
-    { [ -e "$embedded_modules_dir/plpgsql.dylib" ] && [ ! -f "$embedded_modules_dir/plpgsql.dylib" ]; }; then
-    rm -rf "$embedded_modules_dir/plpgsql.dylib"
-  fi
-  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name plpgsql.dylib -exec rm -rf {} +
+  local core_module
+  for core_module in dict_snowball.dylib plpgsql.dylib; do
+    if [ -L "$embedded_modules_dir/$core_module" ] ||
+      { [ -e "$embedded_modules_dir/$core_module" ] && [ ! -f "$embedded_modules_dir/$core_module" ]; }; then
+      rm -rf "$embedded_modules_dir/$core_module"
+    fi
+  done
+  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name dict_snowball.dylib ! -name plpgsql.dylib -exec rm -rf {} +
 
   rm -rf "$install_dir/share/postgresql/contrib" "$install_dir/share/postgresql/proj"
 }
@@ -1065,12 +1111,18 @@ prune_base_runtime_optional_extensions() {
 base_embedded_module_closure_ready() {
   [ -d "$embedded_modules_dir" ] || return 1
   [ ! -L "$embedded_modules_dir" ] || return 1
-  [ -f "$embedded_modules_dir/plpgsql.dylib" ] || return 1
-  [ ! -L "$embedded_modules_dir/plpgsql.dylib" ] || return 1
+  local core_module
+  for core_module in dict_snowball.dylib plpgsql.dylib; do
+    [ -f "$embedded_modules_dir/$core_module" ] || return 1
+    [ ! -L "$embedded_modules_dir/$core_module" ] || return 1
+  done
 
   local entry
   while IFS= read -r -d '' entry; do
-    [ "$(basename "$entry")" = plpgsql.dylib ] || return 1
+    case "$(basename "$entry")" in
+      dict_snowball.dylib|plpgsql.dylib) ;;
+      *) return 1 ;;
+    esac
   done < <(find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
@@ -1340,6 +1392,7 @@ runtime_installed() {
   [ -x "$install_dir/bin/initdb" ] &&
     [ -x "$install_dir/bin/postgres" ] &&
     [ -f "$install_dir/share/postgresql/postgresql.conf.sample" ] &&
+    snowball_runtime_ready &&
     oliphaunt_icu_files_data_ready "$icu_data_dir" &&
     [ -f "$postgres_runtime_stamp" ] &&
     [ "$(cat "$postgres_runtime_stamp")" = "$desired_build_hash" ] &&
@@ -2172,6 +2225,58 @@ build_postgis_extension() {
   stage_postgis_data_files "$postgis_build_dir"
 }
 
+embedded_core_module_ready() {
+  local stem="$1"
+  local module="$embedded_modules_dir/$stem.dylib"
+  module_depends_on_liboliphaunt "$module" &&
+    module_has_postgres_symbols_bound_to_liboliphaunt "$module" &&
+    embedded_core_module_avoids_provider_collisions "$stem"
+}
+
+embedded_dict_snowball_module_ready() {
+  embedded_core_module_ready dict_snowball
+}
+
+embedded_plpgsql_module_ready() {
+  embedded_core_module_ready plpgsql
+}
+
+build_embedded_dict_snowball_module() {
+  local module="$embedded_modules_dir/dict_snowball.dylib"
+  local desired_module_hash
+  local stamp_stage
+  desired_module_hash="$(
+    {
+      printf 'pg_version=%s\n' "$pg_version"
+      printf 'build_hash=%s\n' "$desired_build_hash"
+      printf 'cc=%s\n' "$CC"
+      printf 'embedded_be_dllibs=%s\n' "$embedded_module_be_dllibs"
+      shasum -a 256 "$script_path" | awk '{print "script=" $1}'
+    } | shasum -a 256 | awk '{print $1}'
+  )"
+  if [ -f "$embedded_dict_snowball_build_stamp" ] &&
+    [ "$(cat "$embedded_dict_snowball_build_stamp")" = "$desired_module_hash" ] &&
+    embedded_dict_snowball_module_ready; then
+    return
+  fi
+  rm -f "$module" "$embedded_dict_snowball_build_stamp"
+  make -C src/backend/snowball clean
+  make -C src/backend/snowball \
+    CC="$CC" \
+    CFLAGS="$native_cflags" \
+    BE_DLLLIBS="$embedded_module_be_dllibs" \
+    all
+  mkdir -p "$embedded_modules_dir"
+  cp -p src/backend/snowball/dict_snowball.dylib "$module"
+  if ! embedded_dict_snowball_module_ready; then
+    echo "embedded dict_snowball does not bind PostgreSQL symbols to liboliphaunt without provider collisions: $module" >&2
+    exit 1
+  fi
+  stamp_stage="$embedded_dict_snowball_build_stamp.tmp.$$"
+  printf '%s\n' "$desired_module_hash" > "$stamp_stage"
+  mv -f "$stamp_stage" "$embedded_dict_snowball_build_stamp"
+}
+
 build_embedded_plpgsql_module() {
   local module="$embedded_modules_dir/plpgsql.dylib"
   local desired_module_hash
@@ -2352,7 +2457,9 @@ native_backend_objects_ready() {
       return 1
     fi
   done
-  nm -g src/backend/tcop/postgres.o | grep -q '_oliphaunt_embedded_main' || return 1
+  local symbols
+  symbols="$(nm -g src/backend/tcop/postgres.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "oliphaunt_embedded_main" || return 1
   native_backend_support_libraries_ready || return 1
 }
 
@@ -2394,13 +2501,18 @@ make -C src/timezone CC="$CC" CFLAGS="$native_cflags" localtime.o pgtz.o strftim
 } | tr '[:space:]' '\n' | sed '/^$/d' > "$objects_rsp"
 
 build_liboliphaunt_dylib
+build_embedded_dict_snowball_module
 build_embedded_plpgsql_module
+if ! embedded_dict_snowball_avoids_provider_collisions; then
+  echo "embedded dict_snowball has an invalid liboliphaunt symbol provider: $embedded_modules_dir/dict_snowball.dylib" >&2
+  exit 1
+fi
 if ! embedded_plpgsql_avoids_provider_collisions; then
   echo "embedded plpgsql has an invalid liboliphaunt symbol provider: $embedded_modules_dir/plpgsql.dylib" >&2
   exit 1
 fi
 if [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" = "0" ] && ! base_embedded_module_closure_ready; then
-  echo "base macOS runtime must contain exactly one regular embedded module: $embedded_modules_dir/plpgsql.dylib" >&2
+  echo "base macOS runtime must contain exactly regular embedded dict_snowball.dylib and plpgsql.dylib modules" >&2
   exit 1
 fi
 build_native_extension_artifacts

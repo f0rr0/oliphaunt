@@ -63,7 +63,7 @@ src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaun
 
 [ -f "$lib" ] || fail "missing Linux liboliphaunt shared library at $lib"
 oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" so ||
-  fail "base $target_id embedded module inventory must contain only a regular plpgsql.so"
+  fail "base $target_id embedded module inventory must contain only regular dict_snowball.so and plpgsql.so modules"
 for tool in initdb pg_ctl pg_dump postgres psql; do
   [ -x "$runtime/bin/$tool" ] || fail "missing Linux $tool at $runtime/bin/$tool"
 done

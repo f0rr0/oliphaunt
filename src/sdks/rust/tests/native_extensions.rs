@@ -714,6 +714,27 @@ CREATE INDEX liboliphaunt_pg_search_docs_bm25
 "#,
         )
         .map(|_| ()),
+        Extension::PgTextsearch => exec_extension_sql(
+            db,
+            mode,
+            extension,
+            "functional setup",
+            r#"
+DROP TABLE IF EXISTS liboliphaunt_pg_textsearch_english CASCADE;
+CREATE TABLE liboliphaunt_pg_textsearch_english (
+  id bigint PRIMARY KEY,
+  body text NOT NULL
+);
+INSERT INTO liboliphaunt_pg_textsearch_english (id, body) VALUES
+  (1, 'PostgreSQL databases support reliable runners'),
+  (2, 'An unrelated document about walking');
+CREATE INDEX liboliphaunt_pg_textsearch_english_bm25
+  ON liboliphaunt_pg_textsearch_english
+  USING bm25 (body)
+  WITH (text_config = 'pg_catalog.english');
+"#,
+        )
+        .map(|_| ()),
         _ => Ok(()),
     }
 }
@@ -892,6 +913,31 @@ FROM paradedb.tokenize(
                 extension,
                 "regression paradedb.tokenize stopwords",
                 &["else,something"],
+            );
+            Ok(())
+        }
+        Extension::PgTextsearch => {
+            let response = exec_extension_sql(
+                db,
+                mode,
+                extension,
+                "functional English BM25 query",
+                r#"
+SELECT id::text AS id
+FROM liboliphaunt_pg_textsearch_english
+ORDER BY body <@> to_bm25query(
+  'running database',
+  'liboliphaunt_pg_textsearch_english_bm25'
+)
+LIMIT 1;
+"#,
+            )?;
+            assert_first_data_row_text_values(
+                response.as_bytes(),
+                mode,
+                extension,
+                "functional English BM25 query",
+                &["1"],
             );
             Ok(())
         }

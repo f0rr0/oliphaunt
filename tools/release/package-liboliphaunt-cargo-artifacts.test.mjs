@@ -17,6 +17,7 @@ import {
   assertReleaseNoticesInArchive,
   stageReleaseNotices,
 } from "./release-notices.mjs";
+import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -78,6 +79,17 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     writeFileSync(path.join(runtime, "runtime/lib/liboliphaunt.so"), fixtureElf);
     for (const name of ["initdb", "pg_ctl", "postgres"]) {
       writeExecutable(path.join(runtime, "runtime/bin", name), fixtureElf);
+    }
+    for (const relativePath of requiredCoreRuntimePaths(
+      "linux-x64-gnu",
+      path.join(runtime, "runtime"),
+    )) {
+      const file = path.join(runtime, "runtime", ...relativePath.split("/"));
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(
+        file,
+        relativePath.startsWith("lib/postgresql/") ? fixtureElf : `${relativePath}\n`,
+      );
     }
     for (const name of ["pg_dump", "psql"]) {
       writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);

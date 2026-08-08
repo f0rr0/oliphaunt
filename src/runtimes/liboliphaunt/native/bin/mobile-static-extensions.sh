@@ -292,3 +292,111 @@ oliphaunt_mobile_static_hash_tree() {
     -name 'Makefile.in' \
   \) -print | LC_ALL=C sort
 }
+
+# PostgreSQL installs dict_snowball as a loadable runtime-support module even
+# though its SQL objects live in pg_catalog rather than in a CREATE EXTENSION
+# product. Mobile runtimes cannot dlopen that module, so build the exact pinned
+# PostgreSQL sources into liboliphaunt and expose them through the built-in
+# static-extension registry.
+oliphaunt_mobile_builtin_snowball_prefix() {
+  printf '%s\n' 'oliphaunt_builtin_dict_snowball'
+}
+
+oliphaunt_mobile_builtin_snowball_source_files() {
+  local postgres_build_dir="${1:?missing PostgreSQL build dir}"
+  local source_root="$postgres_build_dir/src/backend/snowball"
+  printf '%s\n' \
+    "$source_root/dict_snowball.c" \
+    "$source_root/libstemmer/api.c" \
+    "$source_root/libstemmer/utilities.c"
+  find "$source_root/libstemmer" -maxdepth 1 -type f -name 'stem_*.c' -print | LC_ALL=C sort
+}
+
+oliphaunt_mobile_builtin_snowball_sources_ready() {
+  local postgres_build_dir="${1:?missing PostgreSQL build dir}"
+  local source_root="$postgres_build_dir/src/backend/snowball"
+  [ -f "$source_root/dict_snowball.c" ] &&
+    [ -f "$source_root/libstemmer/api.c" ] &&
+    [ -f "$source_root/libstemmer/utilities.c" ] &&
+    [ -f "$source_root/libstemmer/stem_UTF_8_english.c" ]
+}
+
+oliphaunt_mobile_builtin_snowball_object_path() {
+  local postgres_build_dir="${1:?missing PostgreSQL build dir}"
+  local output_dir="${2:?missing output dir}"
+  local source="${3:?missing Snowball source}"
+  local source_root="$postgres_build_dir/src/backend/snowball"
+  local source_rel="${source#"$source_root"/}"
+  printf '%s/runtime-support/dict_snowball/%s.o\n' "$output_dir" "${source_rel%.c}"
+}
+
+oliphaunt_mobile_builtin_snowball_refresh_objects() {
+  oliphaunt_mobile_builtin_snowball_sources_ready "$build_dir" || return 1
+  local source object
+  snowball_objects=()
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
+    object="$(oliphaunt_mobile_builtin_snowball_object_path "$build_dir" "$out_dir" "$source")"
+    snowball_objects+=("$object")
+  done < <(oliphaunt_mobile_builtin_snowball_source_files "$build_dir")
+}
+
+oliphaunt_mobile_builtin_snowball_linked_symbols_ready() {
+  local symbols="${1-}"
+  local prefix
+  prefix="$(oliphaunt_mobile_builtin_snowball_prefix)"
+  local symbol
+  for symbol in \
+    "${prefix}_Pg_magic_func" \
+    dsnowball_init \
+    pg_finfo_dsnowball_init \
+    dsnowball_lexize \
+    pg_finfo_dsnowball_lexize
+  do
+    oliphaunt_text_has_nm_symbol "$symbols" "$symbol" || return 1
+  done
+}
+
+oliphaunt_mobile_builtin_snowball_objects_ready() {
+  oliphaunt_mobile_builtin_snowball_refresh_objects || return 1
+  local object
+  for object in ${snowball_objects[@]+"${snowball_objects[@]}"}; do
+    [ -s "$object" ] || return 1
+  done
+  local dict_object="$out_dir/runtime-support/dict_snowball/dict_snowball.o"
+  local symbols
+  symbols="$("${snowball_nm[@]}" -g "$dict_object" 2>/dev/null || true)"
+  oliphaunt_mobile_builtin_snowball_linked_symbols_ready "$symbols"
+}
+
+oliphaunt_build_mobile_builtin_snowball() {
+  oliphaunt_mobile_builtin_snowball_refresh_objects || {
+    echo "PostgreSQL Snowball sources are incomplete under $build_dir" >&2
+    return 1
+  }
+  local prefix source object
+  prefix="$(oliphaunt_mobile_builtin_snowball_prefix)"
+  rm -rf "$out_dir/runtime-support/dict_snowball"
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
+    object="$(oliphaunt_mobile_builtin_snowball_object_path "$build_dir" "$out_dir" "$source")"
+    mkdir -p "$(dirname "$object")"
+    if ! "${cc[@]}" $pg_extension_cflags \
+      -DPg_magic_func="${prefix}_Pg_magic_func" \
+      -I"$build_dir/src/include" \
+      -I"$build_dir/src/include/port" \
+      -I"$build_dir/src/include/snowball" \
+      -I"$build_dir/src/include/snowball/libstemmer" \
+      -c "$source" \
+      -o "$object" >> "$make_log" 2>&1
+    then
+      echo "failed to compile built-in dict_snowball source: $source" >&2
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
+      return 1
+    fi
+  done < <(oliphaunt_mobile_builtin_snowball_source_files "$build_dir")
+  if ! oliphaunt_mobile_builtin_snowball_objects_ready; then
+    echo "built-in dict_snowball object closure is incomplete" >&2
+    return 1
+  fi
+}

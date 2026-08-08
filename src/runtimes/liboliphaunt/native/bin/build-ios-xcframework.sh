@@ -32,7 +32,7 @@ done
   exit 1
 }
 runtime_version="$(tr -d '\r\n' <"$runtime_version_file")"
-if ! printf '%s\n' "$runtime_version" | rg -q '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$'; then
+if ! oliphaunt_text_matches_ere "$runtime_version" '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$'; then
   echo "liboliphaunt VERSION must be stable x.y.z, got: $runtime_version" >&2
   exit 1
 fi
@@ -88,7 +88,10 @@ desired_hash() {
 }
 
 library_platform() {
-  xcrun vtool -show-build "$1" 2>/dev/null | awk '/platform /{print $2; exit}'
+  xcrun vtool -show-build "$1" 2>/dev/null | awk '
+    /platform / && !found { platform = $2; found = 1 }
+    END { if (found) print platform; else exit 1 }
+  '
 }
 
 assert_library_slice() {
@@ -105,11 +108,11 @@ assert_library_slice() {
     return 1
   }
   local symbols
-  symbols="$(nm -g "$library" 2>/dev/null || true)"
+  symbols="$(nm -g "$library" 2>/dev/null)" || return 1
   if [ "$expected_platform" != "MACOS" ]; then
     local undefined_symbols
-    undefined_symbols="$(nm -u "$library" 2>/dev/null || true)"
-    if printf '%s\n' "$undefined_symbols" | rg -q '_shm(get|ctl|dt)|_shm_open|_sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)'; then
+    undefined_symbols="$(nm -u "$library" 2>/dev/null)" || return 1
+    if oliphaunt_text_matches_ere "$undefined_symbols" '_shm(get|ctl|dt)|_shm_open|_sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)'; then
       echo "liboliphaunt library imports mobile-forbidden shared-memory/semaphore APIs: $library" >&2
       return 1
     fi

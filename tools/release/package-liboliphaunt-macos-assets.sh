@@ -56,7 +56,7 @@ OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
 
 [ -f "$lib" ] || fail "missing macOS liboliphaunt dylib at $lib"
 oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" dylib ||
-  fail "base $target_id embedded module inventory must contain only a regular plpgsql.dylib"
+  fail "base $target_id embedded module inventory must contain only regular dict_snowball.dylib and plpgsql.dylib modules"
 for tool in initdb pg_ctl pg_dump postgres psql; do
   [ -x "$runtime/bin/$tool" ] || fail "missing macOS $tool at $runtime/bin/$tool"
 done

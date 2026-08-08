@@ -80,6 +80,29 @@ const scratch = [];
 const RELEASE_GRAPH_TIMEOUT = { timeout: 300_000 };
 const posixTest = process.platform === "win32" ? test.skip : test;
 
+test("exact JavaScript candidate proves pg_textsearch English Snowball indexing", () => {
+  const runtimeFixture = readFileSync(
+    path.join(ROOT, "tools/release/fixtures/js-exact-candidate-runtime.mjs"),
+    "utf8",
+  );
+  expect(runtimeFixture).toContain("verifyPgTextsearchEnglishBm25");
+  expect(runtimeFixture).toContain("PostgreSQL databases support reliable runners");
+  expect(runtimeFixture).toContain("WITH (text_config = 'pg_catalog.english')");
+  expect(runtimeFixture).toContain("nonempty-english-bm25-create-and-query");
+});
+
+test("every exact JavaScript runtime mode proves core English Snowball text search", () => {
+  const runtimeFixture = readFileSync(
+    path.join(ROOT, "tools/release/fixtures/js-exact-candidate-runtime.mjs"),
+    "utf8",
+  );
+  expect(runtimeFixture).toContain("verifyCoreEnglishTextSearch");
+  expect(runtimeFixture).toContain("to_tsvector('pg_catalog.english', 'the quick foxes running')");
+  expect(runtimeFixture).toContain("to_tsquery('pg_catalog.english', 'run & fox')");
+  expect(runtimeFixture).toContain("english-snowball-ok");
+  expect(runtimeFixture.match(/await verifyCoreEnglishTextSearch\(/gu)).toHaveLength(2);
+});
+
 afterEach(() => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
 });

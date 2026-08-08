@@ -10,6 +10,7 @@ import test from "node:test";
 import { extensionSqlNamesForProducts } from "../graph/ci_plan.mjs";
 import { exactExtensionProducts } from "../release/release-artifact-targets.mjs";
 import { ROOT } from "../release/release-graph.mjs";
+import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
 
 const METADATA_FILE = path.join(ROOT, "src/extensions/generated/sdk/react-native.json");
 const REGISTRY_FILE = path.join(ROOT, "src/extensions/generated/mobile/static-registry.json");
@@ -101,11 +102,22 @@ function runHelper(
 
 function packagedRuntimeFileList(extensionFiles, dataFiles = []) {
   return [
+    ...CORE_SNOWBALL_RUNTIME_DATA_FILES.map(
+      (file) => `assets/oliphaunt/runtime/files/${file}`,
+    ),
     ...extensionFiles.map(
       (file) => `assets/oliphaunt/runtime/files/share/postgresql/extension/${file}`,
     ),
     ...dataFiles.map((file) => `assets/oliphaunt/runtime/files/${file}`),
   ].join("\n");
+}
+
+function writeCoreSnowballRuntimeData(runtimeRoot) {
+  for (const relativePath of CORE_SNOWBALL_RUNTIME_DATA_FILES) {
+    const file = path.join(runtimeRoot, ...relativePath.split("/"));
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "core Snowball runtime data fixture\n");
+  }
 }
 
 function inspect(selection, platform) {
@@ -314,6 +326,7 @@ test("pgtap ancillary SQL cannot satisfy the canonical install-script contract",
 test("directory and packaged-list validation share the same ancillary ownership contract", () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-mobile-runtime-tree-"));
   try {
+    writeCoreSnowballRuntimeData(temp);
     const extensionDirectory = path.join(temp, "share/postgresql/extension");
     mkdirSync(extensionDirectory, { recursive: true });
     for (const file of [

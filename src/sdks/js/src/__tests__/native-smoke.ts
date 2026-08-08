@@ -83,6 +83,16 @@ async function smokeMode(engine: EngineMode, config: OpenConfig): Promise<void> 
     const result = await db.query(`SELECT '${engine}'::text AS value`);
     assert.equal(result.getText(0, 'value'), engine);
 
+    const textSearch = await db.query(
+      `SELECT CASE WHEN
+         to_tsvector('pg_catalog.english', 'the quick foxes running')
+         @@ to_tsquery('pg_catalog.english', 'run & fox')
+       THEN 'english-snowball-ok'
+       ELSE 'english-snowball-failed'
+       END AS value`,
+    );
+    assert.equal(textSearch.getText(0, 'value'), 'english-snowball-ok');
+
     const chunks: Uint8Array[] = [];
     await db.execProtocolStream(
       new TextEncoder().encode('Q\0\0\0\u0016SELECT 1 AS value\0'),

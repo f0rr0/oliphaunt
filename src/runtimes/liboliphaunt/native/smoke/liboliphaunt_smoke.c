@@ -1752,6 +1752,18 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
+    if (exec_query_expect_bytes(
+            db,
+            "SELECT CASE WHEN "
+            "to_tsvector('pg_catalog.english', 'the quick foxes running') "
+            "@@ to_tsquery('pg_catalog.english', 'run & fox') "
+            "THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
+            "english-snowball-ok") != 0) {
+        fprintf(stderr, "PostgreSQL core English Snowball text search failed\n");
+        oliphaunt_close(db);
+        return 1;
+    }
+
     if (exec_query_expect_bytes(db, "SELECT current_setting('application_name')", "liboliphaunt_smoke") != 0) {
         oliphaunt_close(db);
         return 1;

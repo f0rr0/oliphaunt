@@ -25,7 +25,10 @@ import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
 } from "./portable-archive.mjs";
-import { AOT_TARGET_TRIPLES } from "./wasix-cargo-artifact-contract.mjs";
+import {
+  AOT_TARGET_TRIPLES,
+  CORE_RUNTIME_ARCHIVE_FILES,
+} from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
 
 const TOOL = "check-liboliphaunt-wasix-release-assets.mjs";
@@ -40,10 +43,7 @@ const SPLIT_TOOL_PAYLOAD_MEMBERS = new Set([
 const FORBIDDEN_PORTABLE_ASSET_MEMBERS = new Set([
   "target/oliphaunt-wasix/assets/bin/pg_ctl.wasix.wasm",
 ]);
-const CORE_RUNTIME_MEMBERS = new Set([
-  "oliphaunt/bin/initdb",
-  "oliphaunt/bin/postgres",
-]);
+const CORE_RUNTIME_MEMBERS = new Set(CORE_RUNTIME_ARCHIVE_FILES);
 const FORBIDDEN_RUNTIME_MEMBERS = new Set([
   "oliphaunt/bin/pg_ctl",
   "oliphaunt/bin/pg_dump",
@@ -448,7 +448,7 @@ export function validatePortableReleaseAsset(archive) {
     })
     .sort(compareText);
   if (missing.length > 0) {
-    fail(`${rel(archive)} must bundle core WASIX runtime binaries inside ${PORTABLE_RUNTIME_ARCHIVE_MEMBER}: ${missing.join(", ")}`);
+    fail(`${rel(archive)} must bundle the core WASIX runtime closure inside ${PORTABLE_RUNTIME_ARCHIVE_MEMBER}: ${missing.join(", ")}`);
   }
   const bundledIcu = [...runtimeMembers]
     .filter((member) => member === "oliphaunt/share/icu" || member.startsWith("oliphaunt/share/icu/"))
