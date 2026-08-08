@@ -162,11 +162,11 @@
         },
         {
           "path": "tools/xtask/src/asset_pipeline.rs",
-          "sha256": "4bf91b0968a0de6ac2245f1fa3081ca36e44f5b20c532996ffea9a2393a8d396"
+          "sha256": "be930c198af0b31432a9fa0dbd98fe5cad31d46474f8948660f4be3c2725ad47"
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
-          "sha256": "c7a999c87bcada023c7bb0e73d5ba6727d502afde911ab8e1657f89f70ebff26"
+          "sha256": "c67f61826704e8ff71265af85f8552b1a134fba1252b46921d10dea6d51e854a"
         },
         {
           "path": "tools/xtask/src/fs_utils.rs",
@@ -178,7 +178,7 @@
         },
         {
           "path": "tools/xtask/src/postgres_guard.rs",
-          "sha256": "5414e25bbcef932cc984a593a444e5314f2536785fc961dc6867ee327585d764"
+          "sha256": "0ccadf939d2e52a8a3f1a3445e6e1d401085ead7f788085c443e6563b0e19064"
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
@@ -212,23 +212,23 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "423683b9fd36424fd207df04406d0b2ae829bdec73df7adcfba6753339cb284a"
+          "sha256": "f7b8a419d994cea00f8f0f8835fdbd525efc02539d6a502cd966f464bd5383f8"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "19e35779507fccfe56c9aec2e750d7a472f50f0e82a24ea983b78adcab0f93bd"
+          "sha256": "e0741112aeb1d1a187ba3fda06a06302026048eceef08b389f2e55a94343cd69"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
-          "sha256": "6f5b3e306601d58a9f82ae185465064d7ac462df883cf16e72236ac03a85d43c"
+          "sha256": "24dceceb89d3f91da6c66bc309c4767408b71908bafd32027d784b2a5f975ca5"
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "f80b3ee2d7c5b9a030ecdc54c00f830e72701f765cffa04f4c5f9f6fe252e1a1"
+          "sha256": "79ba39ba702d247fd975089cc812fbb4c3624ebd325f0fe1f6255dd575efddb7"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
-          "sha256": "0f059d4d5cc3b7abcf507473a61e8dda32901a413702e74a30488947654fd2fb"
+          "sha256": "4bff991f8fce3c66f1da9428fd84861c4700a0e7c744cce51c1c5837f0cafd5d"
         },
         {
           "path": "src/extensions/generated/mobile/static-registry.json",
@@ -240,19 +240,19 @@
         },
         {
           "path": "src/extensions/generated/sdk/js.json",
-          "sha256": "9989e346d7bbc8434d6b11c8d77948c3b1b76f41b471f46e8c5a6789abfc9cb7"
+          "sha256": "d312d3d2b1b4f175eedb8c94c2fdffdf2d7959bcd5c58066137ed3e7f7522568"
         },
         {
           "path": "src/extensions/generated/sdk/react-native.json",
-          "sha256": "a87c048075c55abc75a4679c85eb83ea7f9d1a78a15c5138e2f2b8675507351d"
+          "sha256": "a6a2a40751ab03ec43e6f4c4122951fdfd447535b380f5c10a6fef5e262ac446"
         },
         {
           "path": "src/extensions/generated/sdk/rust.json",
-          "sha256": "1b23f33dec30cfa8105353be9cc910dbc0b3d78f87f2457c06f06dadde1a9138"
+          "sha256": "fb62026022e218d3aa0cb0a920cd3da47a76e05d03b8066a42e1524894e500c3"
         },
         {
           "path": "src/extensions/generated/wasix/extensions.json",
-          "sha256": "ea6cc4ea44cfc73628ebefffa09c113fd9e382b089bbbaac120b25ba15ac3c9f"
+          "sha256": "68c213ed758bede5ff2231cad64e41ac93500633e811b8d352cfafb5cde9a641"
         }
       ]
     },
@@ -264,7 +264,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/kotlin.json",
-          "sha256": "7cc0df19dab8949ebe7215d48a4053aac24c553c6545453d939b5d4831454187"
+          "sha256": "e6a713ed46ca57edfc92855317865114a54c8b415736759668294cc9c592713b"
         }
       ]
     },
@@ -276,7 +276,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/swift.json",
-          "sha256": "ba8db32c5856e112c5933a5ad3ebf858515c745e017b6c5ea61ae2f5c0375001"
+          "sha256": "48a6d606f83ab8b28afc7770068671d9e462d7ae5f47360df29a4f798ba374c3"
         }
       ]
     },
@@ -288,7 +288,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4154f50916121441975b3ce9a37a8dddf1e619c487e75fb26199e4415572fc25"
+          "sha256": "e9a6ffa80496580efac390d344a936588a020cf46cc40e6dddbafd659c8103f9"
         }
       ]
     },
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "b303a6f340d89c9209637048a6ac8198f77e85a9051f537d33017a86a820f3ec"
+  "sha256": "217aa727d8774acf7335106bbcf05b0fd83a74a4530cf935e9a112954eb630d8"
 }

@@ -41,7 +41,8 @@ pub(super) fn packaged_extension_module_files() -> BTreeSet<String> {
 }
 
 pub(super) fn embedded_core_module_files() -> BTreeSet<String> {
-    [format!("plpgsql{}", std::env::consts::DLL_SUFFIX)]
+    ["dict_snowball", "plpgsql"]
+        .map(|stem| format!("{stem}{}", std::env::consts::DLL_SUFFIX))
         .into_iter()
         .collect()
 }

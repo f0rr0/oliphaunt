@@ -187,6 +187,11 @@ impl WasixBackendSession {
         &self.startup_config
     }
 
+    #[cfg(feature = "extensions")]
+    pub(crate) fn postgres_config(&self) -> &PostgresConfig {
+        &self.postgres_config
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
         self.pg.guest_bridge_allocation_counts()
@@ -370,6 +375,11 @@ impl BackendSession {
         self.0.startup_config()
     }
 
+    #[cfg(feature = "extensions")]
+    pub(crate) fn postgres_config(&self) -> &PostgresConfig {
+        self.0.postgres_config()
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
         self.0.guest_bridge_allocation_counts()
@@ -423,11 +433,6 @@ impl BackendSession {
     #[cfg(feature = "extensions")]
     pub(crate) fn preload_extension_module(&mut self, extension: Extension) -> Result<()> {
         self.0.preload_extension_module(extension)
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn preload_installed_extension(&mut self, extension: Extension) -> Result<()> {
-        self.0.preload_installed_extension(extension)
     }
 
     #[cfg(feature = "extensions")]

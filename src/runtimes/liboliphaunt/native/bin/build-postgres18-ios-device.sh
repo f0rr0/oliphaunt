@@ -52,7 +52,7 @@ report_failure() {
   for log in "$configure_log" "$make_log"; do
     if [ -s "$log" ]; then
       printf '%s\n' "--- tail of $log ---" >&2
-      tail -160 "$log" >&2 || true
+      oliphaunt_tail_log_excerpt "$log" 20 >&2 || true
     fi
   done
   exit "$status"
@@ -80,6 +80,8 @@ plpgsql_objects=(
   src/pl/plpgsql/src/pl_handler.o
   src/pl/plpgsql/src/pl_scanner.o
 )
+
+snowball_objects=()
 
 jit_objects=(
   src/backend/jit/jit.o
@@ -154,8 +156,9 @@ if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
 fi
 cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
+snowball_nm=(nm)
 native_cflags="$(oliphaunt_native_release_cflags -fPIC -march=armv8-a+crc -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM)"
-liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
+liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL -DOLIPHAUNT_BUILTIN_DICT_SNOWBALL"
 pg_extension_cflags="$native_cflags $icu_cflags"
 jobs="${OLIPHAUNT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -245,6 +248,7 @@ desired_hash() {
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
     shasum -a 256 "$script_dir/postgres-backend-objects.mk"
     shasum -a 256 "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
+    shasum -a 256 "$(oliphaunt_mobile_static_specs_tsv)"
     shasum -a 256 \
       "$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh" \
       "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
@@ -275,15 +279,18 @@ patched_source_ready() {
 artifact_ready() {
   [ -f "$lib_out" ] || return 1
   oliphaunt_icu_artifacts_ready "$icu_prefix" || return 1
-  xcrun vtool -show-build "$lib_out" 2>/dev/null | rg -q "platform IOS" || return 1
+  local build_metadata
+  build_metadata="$(xcrun vtool -show-build "$lib_out" 2>/dev/null)" || return 1
+  oliphaunt_text_matches_ere "$build_metadata" '(^|[[:space:]])platform[[:space:]]+IOS([[:space:]]|$)' || return 1
   local symbols
-  symbols="$(nm -g "$lib_out" 2>/dev/null || true)"
+  symbols="$(nm -g "$lib_out" 2>/dev/null)" || return 1
   local linked_symbols
-  linked_symbols="$(nm "$lib_out" 2>/dev/null || true)"
+  linked_symbols="$(nm "$lib_out" 2>/dev/null)" || return 1
   oliphaunt_icu_linked_symbols_ready "$linked_symbols" || return 1
+  oliphaunt_mobile_builtin_snowball_linked_symbols_ready "$linked_symbols" || return 1
   local undefined_symbols
-  undefined_symbols="$(nm -u "$lib_out" 2>/dev/null || true)"
-  if printf '%s\n' "$undefined_symbols" | rg -q '_shm(get|ctl|dt)|_shm_open|_sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)'; then
+  undefined_symbols="$(nm -u "$lib_out" 2>/dev/null)" || return 1
+  if oliphaunt_text_matches_ere "$undefined_symbols" '_shm(get|ctl|dt)|_shm_open|_sem(get|ctl|op|open|close|unlink|wait|post|trywait|init|destroy)'; then
     return 1
   fi
   local symbol
@@ -335,7 +342,9 @@ backend_objects_ready() {
   for objfile in src/backend/*/objfiles.txt; do
     [ -s "$objfile" ] || return 1
   done
-  nm -g src/backend/tcop/postgres.o | rg -q "_oliphaunt_embedded_main" || return 1
+  local symbols
+  symbols="$(nm -g src/backend/tcop/postgres.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "oliphaunt_embedded_main" || return 1
 }
 
 support_libraries_ready() {
@@ -359,7 +368,9 @@ plpgsql_objects_ready() {
   for object in "${plpgsql_objects[@]}"; do
     [ -f "$object" ] || return 1
   done
-  nm -g src/pl/plpgsql/src/pl_handler.o | rg -q "_plpgsql_call_handler" || return 1
+  local symbols
+  symbols="$(nm -g src/pl/plpgsql/src/pl_handler.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "plpgsql_call_handler" || return 1
 }
 
 jit_objects_ready() {
@@ -367,7 +378,9 @@ jit_objects_ready() {
   for object in "${jit_objects[@]}"; do
     [ -f "$object" ] || return 1
   done
-  nm -g src/backend/jit/jit.o | rg -q "_pg_jit_available" || return 1
+  local symbols
+  symbols="$(nm -g src/backend/jit/jit.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "pg_jit_available" || return 1
 }
 
 generated_headers_ready() {
@@ -534,7 +547,7 @@ build_backend_objects() {
       oliphaunt-backend-objects >> "$make_log" 2>&1
 
     if ! backend_objects_ready; then
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       echo "PostgreSQL iOS device backend objects are incomplete" >&2
       exit 1
     fi
@@ -593,7 +606,7 @@ build_plpgsql_objects() {
       pl_comp.o pl_exec.o pl_funcs.o pl_gram.o pl_handler.o pl_scanner.o >> "$make_log" 2>&1
 
     if ! plpgsql_objects_ready; then
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       echo "PostgreSQL iOS device PL/pgSQL objects are incomplete" >&2
       exit 1
     fi
@@ -614,7 +627,7 @@ build_jit_objects() {
       jit.o >> "$make_log" 2>&1
 
     if ! jit_objects_ready; then
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       echo "PostgreSQL iOS device JIT stub objects are incomplete" >&2
       exit 1
     fi
@@ -955,6 +968,7 @@ write_objects_response_file() {
       printf '%s\n' "${jit_objects[@]}"
       printf 'src/timezone/localtime.o src/timezone/pgtz.o src/timezone/strftime.o\n'
       printf '%s\n' "${plpgsql_objects[@]}"
+      printf '%s\n' "${snowball_objects[@]}"
     } | tr '[:space:]' '\n' | sed '/^$/d' | awk '!seen[$0]++' > "$objects_rsp"
   )
 }
@@ -1009,7 +1023,7 @@ case "$script_mode" in
     build_icu
     failure_phase="configure PostgreSQL"
     configure_source
-    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "$lib_out"
       exit 0
     fi
@@ -1026,6 +1040,8 @@ case "$script_mode" in
     build_timezone_objects
     failure_phase="build PL/pgSQL objects"
     build_plpgsql_objects
+    failure_phase="build built-in dict_snowball objects"
+    oliphaunt_build_mobile_builtin_snowball
     failure_phase="build liboliphaunt objects"
     build_liboliphaunt_objects
     failure_phase="build mobile static dependencies"
@@ -1045,7 +1061,7 @@ case "$script_mode" in
     echo "$lib_out"
     ;;
   --check-current)
-    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && oliphaunt_mobile_builtin_snowball_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "iOS device liboliphaunt dylib is current"
       exit 0
     fi

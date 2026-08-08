@@ -30,7 +30,8 @@ use crate::oliphaunt::engine::EngineCapabilities;
 use crate::oliphaunt::errors::OliphauntError;
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::{
-    Extension, by_sql_name, extension_session_setup_sql, extension_setup_sql, resolve_extension_set,
+    Extension, by_sql_name, ensure_extension_startup_config_is_active, extension_setup_sql,
+    resolve_extension_set,
 };
 use crate::oliphaunt::interface::{
     DataTransferContainer, DescribeQueryParam, DescribeQueryResult, DescribeResultField,
@@ -215,8 +216,51 @@ impl Oliphaunt {
         postgres_config: PostgresConfig,
         startup_config: StartupConfig,
     ) -> Result<Self> {
+        Self::new_prepared_with_config_inner(
+            outcome,
+            postgres_config,
+            startup_config,
+            #[cfg(feature = "extensions")]
+            &[],
+        )
+    }
+
+    #[cfg(feature = "extensions")]
+    pub(crate) fn new_prepared_with_config_and_extension_preload(
+        outcome: InstallOutcome,
+        postgres_config: PostgresConfig,
+        startup_config: StartupConfig,
+        extensions: &[Extension],
+    ) -> Result<Self> {
+        Self::new_prepared_with_config_inner(outcome, postgres_config, startup_config, extensions)
+    }
+
+    fn new_prepared_with_config_inner(
+        outcome: InstallOutcome,
+        postgres_config: PostgresConfig,
+        startup_config: StartupConfig,
+        #[cfg(feature = "extensions")] extensions: &[Extension],
+    ) -> Result<Self> {
         let _phase = timing::phase("oliphaunt.open");
         let session_startup_config = startup_config.clone();
+        #[cfg(feature = "extensions")]
+        let backend = if extensions.is_empty() {
+            BackendSession::open(
+                outcome,
+                postgres_config,
+                startup_config,
+                BackendOpenKind::Direct,
+            )?
+        } else {
+            BackendSession::open_with_extension_preload(
+                outcome,
+                postgres_config,
+                startup_config,
+                BackendOpenKind::Direct,
+                extensions,
+            )?
+        };
+        #[cfg(not(feature = "extensions"))]
         let backend = BackendSession::open(
             outcome,
             postgres_config,
@@ -260,9 +304,15 @@ impl Oliphaunt {
     }
 
     /// Install and enable a bundled Postgres extension.
+    ///
+    /// Extensions that require startup configuration must instead be selected
+    /// on [`OliphauntBuilder`](crate::OliphauntBuilder) before the database is
+    /// opened. This method returns an actionable error when the running backend
+    /// does not already satisfy such a requirement.
     #[cfg(feature = "extensions")]
     pub fn enable_extension(&mut self, extension: Extension) -> Result<()> {
         let _phase = timing::phase("extension.enable");
+        ensure_extension_startup_config_is_active(self.backend.postgres_config(), extension)?;
         let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
             anyhow!(
                 "extension asset '{}' is not bundled in this oliphaunt-wasix build",
@@ -278,13 +328,9 @@ impl Oliphaunt {
     }
 
     #[cfg(feature = "extensions")]
-    pub(crate) fn enable_preinstalled_extension(&mut self, extension: Extension) -> Result<()> {
-        let _phase = timing::phase("extension.enable_preinstalled");
-        self.backend.preload_installed_extension(extension)?;
-        for sql in extension_session_setup_sql(extension) {
-            self.exec(&sql, None)?;
-        }
-        Ok(())
+    pub(crate) fn enable_startup_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
+        let _phase = timing::phase("extension.enable_startup");
+        self.backend.enable_extensions(extensions)
     }
 
     /// Refresh direct API array parser and serializer registrations.

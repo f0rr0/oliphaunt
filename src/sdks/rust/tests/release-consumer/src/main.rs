@@ -176,6 +176,15 @@ fn create_and_select_vector(
     mode: &str,
     vector: &str,
 ) -> Result<(), Box<dyn Error>> {
+    require_query_value(
+        db,
+        "SELECT CASE WHEN \
+         to_tsvector('pg_catalog.english', 'the quick foxes running') \
+         @@ to_tsquery('pg_catalog.english', 'run & fox') \
+         THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
+        "english-snowball-ok",
+        &format!("{mode} core English Snowball text search"),
+    )?;
     block_on(db.query("CREATE EXTENSION vector"))?;
     require_query_value(
         db,

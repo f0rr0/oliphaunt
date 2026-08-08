@@ -218,6 +218,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["tools/release/npm-trusted-publishing.mjs", extensionProducts],
     ["tools/release/package-extension-cargo-facades.mjs", extensionProducts],
     ["tools/release/release-product-dry-run.mjs", releaseProductDryRunDirectByteProducts],
+    ["tools/release/icu-npm-carrier-contract.mjs", ["liboliphaunt-native"]],
     ["tools/xtask/Cargo.toml", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/aot_serializer.rs", ["liboliphaunt-wasix"]],
     ["tools/xtask/src/asset_fingerprint.rs", ["liboliphaunt-wasix"]],

@@ -184,7 +184,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/kotlin.json",
-          "sha256": "7cc0df19dab8949ebe7215d48a4053aac24c553c6545453d939b5d4831454187"
+          "sha256": "e6a713ed46ca57edfc92855317865114a54c8b415736759668294cc9c592713b"
         }
       ]
     },
@@ -213,7 +213,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "4154f50916121441975b3ce9a37a8dddf1e619c487e75fb26199e4415572fc25"
+          "sha256": "e9a6ffa80496580efac390d344a936588a020cf46cc40e6dddbafd659c8103f9"
         }
       ]
     },
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "849c3b4185f11ced9cfc180261d40b0b2174d77b090e58352a9c4ac9f4bf719f"
+  "sha256": "28f688e7859ceaff1c9bf98016692907db2da66115d656100748f017c222eeb4"
 }

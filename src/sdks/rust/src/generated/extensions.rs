@@ -624,7 +624,7 @@ pub(super) const fn required_shared_preload_library(extension: Extension) -> Opt
         Extension::PgIvm => None,
         Extension::PgSearch => Some("pg_search"),
         Extension::PgSurgery => None,
-        Extension::PgTextsearch => None,
+        Extension::PgTextsearch => Some("pg_textsearch"),
         Extension::PgTrgm => None,
         Extension::PgUuidv7 => None,
         Extension::PgVisibility => None,

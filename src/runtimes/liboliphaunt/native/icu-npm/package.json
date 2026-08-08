@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Portable ICU data files for Oliphaunt runtimes.",
   "license": "MIT AND Unicode-3.0",
-  "type": "module",
+  "type": "commonjs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/f0rr0/oliphaunt.git",
@@ -17,15 +17,16 @@
     "product": "oliphaunt-icu",
     "kind": "icu-data",
     "target": "portable",
-    "dataRelativePath": "share/icu"
+    "dataRelativePath": "OliphauntICU.bundle/share/icu"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "files": [
-    "share",
+    "OliphauntICU.bundle",
     "OliphauntICU.podspec",
+    "react-native.config.js",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

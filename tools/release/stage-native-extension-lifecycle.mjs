@@ -373,6 +373,7 @@ function stageBaseRuntime(runtimeAssets, output, extensionRows) {
   const toolsEntries = readCanonicalTarGz(toolsArchive);
   for (const required of [
     "lib/liboliphaunt.so",
+    "lib/modules/dict_snowball.so",
     "lib/modules/plpgsql.so",
     ...requiredRuntimeMemberPaths(TARGET, "runtime/bin"),
   ]) requireArchiveFile(runtimeEntries, required, runtimeArchive);

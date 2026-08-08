@@ -1,6 +1,10 @@
 use std::collections::BTreeSet;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
+
+use crate::oliphaunt::config::PostgresConfig;
+
+const SHARED_PRELOAD_LIBRARIES: &str = "shared_preload_libraries";
 
 #[path = "generated_extensions.rs"]
 mod generated;
@@ -48,6 +52,7 @@ pub struct Extension {
 pub(crate) struct ExtensionSetup {
     create_extension: bool,
     create_schema: Option<&'static str>,
+    startup_config: &'static [&'static str],
     load_sql: &'static [&'static str],
     post_create_sql: &'static [&'static str],
 }
@@ -56,12 +61,14 @@ impl ExtensionSetup {
     pub(crate) const fn new(
         create_extension: bool,
         create_schema: Option<&'static str>,
+        startup_config: &'static [&'static str],
         load_sql: &'static [&'static str],
         post_create_sql: &'static [&'static str],
     ) -> Self {
         Self {
             create_extension,
             create_schema,
+            startup_config,
             load_sql,
             post_create_sql,
         }
@@ -69,7 +76,7 @@ impl ExtensionSetup {
 }
 
 impl Extension {
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) const fn new(
         name: &'static str,
         sql_name: &'static str,
@@ -159,6 +166,127 @@ pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Exte
     Ok(resolved)
 }
 
+/// Merge startup settings required by selected extensions into the caller's
+/// PostgreSQL configuration before either a template or a backend is started.
+///
+/// `shared_preload_libraries` is a list-valued GUC, so caller-provided and
+/// extension-required entries are unioned in stable first-seen order. Other
+/// extension startup settings may reuse an identical caller value, but a
+/// conflicting value is rejected instead of silently weakening the extension
+/// contract.
+pub(crate) fn postgres_config_with_extension_startup(
+    mut postgres_config: PostgresConfig,
+    extensions: &[Extension],
+) -> Result<PostgresConfig> {
+    let mut shared_preload_libraries = Vec::new();
+    let mut seen_shared_preload_libraries = BTreeSet::new();
+    if let Some(configured) = postgres_config.get(SHARED_PRELOAD_LIBRARIES) {
+        append_unique_csv_values(
+            configured,
+            &mut shared_preload_libraries,
+            &mut seen_shared_preload_libraries,
+        );
+    }
+
+    for extension in extensions {
+        for assignment in extension.setup().startup_config {
+            let (name, value) = parse_startup_config_assignment(*extension, assignment)?;
+
+            if name == SHARED_PRELOAD_LIBRARIES {
+                append_unique_csv_values(
+                    value,
+                    &mut shared_preload_libraries,
+                    &mut seen_shared_preload_libraries,
+                );
+                continue;
+            }
+
+            if let Some(configured) = postgres_config.get(name) {
+                ensure!(
+                    configured == value,
+                    "extension '{}' requires PostgreSQL startup config {name}={value}, but the caller configured {name}={configured}",
+                    extension.sql_name()
+                );
+            } else {
+                postgres_config.insert(name, value);
+            }
+        }
+    }
+
+    if !shared_preload_libraries.is_empty() {
+        postgres_config.insert(SHARED_PRELOAD_LIBRARIES, shared_preload_libraries.join(","));
+    }
+    postgres_config.validate()?;
+    Ok(postgres_config)
+}
+
+pub(crate) fn ensure_extension_startup_config_is_active(
+    postgres_config: &PostgresConfig,
+    extension: Extension,
+) -> Result<()> {
+    for assignment in extension.setup().startup_config {
+        let (name, required) = parse_startup_config_assignment(extension, assignment)?;
+        let configured = postgres_config.get(name);
+        let satisfied = if name == SHARED_PRELOAD_LIBRARIES {
+            let configured_values = configured
+                .into_iter()
+                .flat_map(comma_separated_values)
+                .collect::<BTreeSet<_>>();
+            comma_separated_values(required).all(|value| configured_values.contains(value))
+        } else {
+            configured == Some(required)
+        };
+
+        if !satisfied {
+            let configured = configured
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("<unset>");
+            bail!(
+                "extension '{}' requires PostgreSQL startup config {name}={required} before PostgreSQL starts, but the already-running backend has {name}={configured}; reopen the database with this extension selected on OliphauntBuilder (call .extension(...) before .open()), because it cannot be enabled safely after startup",
+                extension.sql_name()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn parse_startup_config_assignment(extension: Extension, assignment: &str) -> Result<(&str, &str)> {
+    let (name, value) = assignment.split_once('=').ok_or_else(|| {
+        anyhow::anyhow!(
+            "extension '{}' has invalid startup config assignment '{assignment}'; expected name=value",
+            extension.sql_name()
+        )
+    })?;
+    let name = name.trim();
+    let value = value.trim();
+    ensure!(
+        !name.is_empty(),
+        "extension '{}' has an empty startup config name in assignment '{assignment}'",
+        extension.sql_name()
+    );
+    ensure!(
+        !value.is_empty(),
+        "extension '{}' has an empty startup config value in assignment '{assignment}'",
+        extension.sql_name()
+    );
+    Ok((name, value))
+}
+
+fn append_unique_csv_values(value: &str, ordered: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    for item in comma_separated_values(value) {
+        if seen.insert(item.to_owned()) {
+            ordered.push(item.to_owned());
+        }
+    }
+}
+
+fn comma_separated_values(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+}
+
 fn visit_extension(
     extension: Extension,
     visiting: &mut BTreeSet<&'static str>,
@@ -227,6 +355,29 @@ pub(crate) fn extension_session_setup_sql(extension: Extension) -> Vec<String> {
     statements.extend(setup.load_sql.iter().map(|sql| (*sql).to_owned()));
     statements.extend(setup.post_create_sql.iter().map(|sql| (*sql).to_owned()));
     statements
+}
+
+#[cfg(test)]
+mod startup_config_tests {
+    use super::*;
+
+    #[test]
+    fn late_pg_textsearch_enable_requires_active_preload() {
+        let error =
+            ensure_extension_startup_config_is_active(&PostgresConfig::default(), PG_TEXTSEARCH)
+                .unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("shared_preload_libraries=pg_textsearch"));
+        assert!(message.contains("already-running backend"));
+        assert!(message.contains(".extension(...) before .open()"));
+
+        let active = PostgresConfig::new().set(
+            "shared_preload_libraries",
+            "auto_explain, pg_textsearch,pg_textsearch",
+        );
+        ensure_extension_startup_config_is_active(&active, PG_TEXTSEARCH).unwrap();
+    }
 }
 
 #[cfg(all(test, feature = "extensions"))]
@@ -797,7 +948,12 @@ mod candidate_tests {
             ],
             "pg_textsearch" => &[
                 "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_am WHERE amname = 'bm25') THEN RAISE EXCEPTION 'bm25 access method missing'; END IF; END $$",
-                "SELECT to_bm25query('postgres wasm')",
+                "DROP TABLE IF EXISTS oxide_pg_textsearch_english",
+                "CREATE TABLE oxide_pg_textsearch_english (id bigint PRIMARY KEY, body text NOT NULL)",
+                "INSERT INTO oxide_pg_textsearch_english (id, body) VALUES (1, 'PostgreSQL databases support reliable runners'), (2, 'An unrelated document about walking')",
+                "CREATE INDEX oxide_pg_textsearch_english_bm25 ON oxide_pg_textsearch_english USING bm25 (body) WITH (text_config = 'pg_catalog.english')",
+                "DO $$ DECLARE hit bigint; BEGIN SELECT id INTO hit FROM oxide_pg_textsearch_english ORDER BY body <@> to_bm25query('running database', 'oxide_pg_textsearch_english_bm25') LIMIT 1; IF hit IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'pg_textsearch English BM25 smoke returned id %, expected 1', hit; END IF; END $$",
+                "DROP TABLE oxide_pg_textsearch_english",
             ],
             "pg_trgm" => &[
                 "DO $$ DECLARE score float8; BEGIN SELECT similarity('postgres', 'postgrex') INTO score; IF score <= 0 THEN RAISE EXCEPTION 'pg_trgm similarity failed: %', score; END IF; END $$",

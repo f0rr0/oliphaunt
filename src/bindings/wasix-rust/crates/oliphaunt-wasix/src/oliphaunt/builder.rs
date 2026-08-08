@@ -2,11 +2,15 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
+#[cfg(feature = "extensions")]
+use crate::oliphaunt::base::install_missing_extension_archives;
 use crate::oliphaunt::base::{PreparedRoot, RootPlan, RootSource, RootTarget, prepare_root};
 use crate::oliphaunt::client::Oliphaunt;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::oliphaunt::extensions::{Extension, resolve_extension_set};
+use crate::oliphaunt::extensions::{
+    Extension, postgres_config_with_extension_startup, resolve_extension_set,
+};
 use crate::oliphaunt::interface::DebugLevel;
 
 /// Builder for opening persistent or temporary [`Oliphaunt`] databases.
@@ -187,7 +191,11 @@ impl OliphauntBuilder {
 
     /// Install, initialize, and start the selected database.
     pub fn open(self) -> Result<Oliphaunt> {
-        self.postgres_config.validate()?;
+        #[cfg(feature = "extensions")]
+        let (extensions, postgres_config) = self.resolved_extension_startup()?;
+        #[cfg(not(feature = "extensions"))]
+        let postgres_config = self.postgres_config.clone();
+        postgres_config.validate()?;
         self.startup_config.validate()?;
         let target = match self.target.clone() {
             Some(OliphauntTarget::Path(root)) => RootTarget::Path(root),
@@ -214,26 +222,33 @@ impl OliphauntBuilder {
         } else {
             RootSource::FreshInitdb
         };
-        #[cfg(feature = "extensions")]
-        let extensions = resolve_extension_set(&self.extensions)?;
         let plan = RootPlan::new(target, source);
         #[cfg(feature = "extensions")]
-        let plan = plan.with_extensions(extensions.clone(), self.postgres_config.clone());
+        let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
         let prepared = prepare_root(plan)?;
         #[cfg(feature = "extensions")]
         {
-            self.open_prepared_root(prepared, extensions)
+            self.open_prepared_root(prepared, extensions, postgres_config)
         }
         #[cfg(not(feature = "extensions"))]
         {
-            self.open_prepared_root(prepared)
+            self.open_prepared_root(prepared, postgres_config)
         }
+    }
+
+    #[cfg(feature = "extensions")]
+    fn resolved_extension_startup(&self) -> Result<(Vec<Extension>, PostgresConfig)> {
+        let extensions = resolve_extension_set(&self.extensions)?;
+        let postgres_config =
+            postgres_config_with_extension_startup(self.postgres_config.clone(), &extensions)?;
+        Ok((extensions, postgres_config))
     }
 
     fn open_prepared_root(
         self,
         prepared: PreparedRoot,
         #[cfg(feature = "extensions")] extensions: Vec<Extension>,
+        postgres_config: PostgresConfig,
     ) -> Result<Oliphaunt> {
         let PreparedRoot {
             temp_dir,
@@ -242,12 +257,17 @@ impl OliphauntBuilder {
             ..
         } = prepared;
         #[cfg(feature = "extensions")]
-        let preinstalled_extensions = outcome.preinstalled_extensions.clone();
-        let mut instance = Oliphaunt::new_prepared_with_config(
+        install_missing_extension_archives(&outcome, &extensions)?;
+        #[cfg(feature = "extensions")]
+        let mut instance = Oliphaunt::new_prepared_with_config_and_extension_preload(
             outcome,
-            self.postgres_config,
+            postgres_config,
             self.startup_config,
+            &extensions,
         )?;
+        #[cfg(not(feature = "extensions"))]
+        let mut instance =
+            Oliphaunt::new_prepared_with_config(outcome, postgres_config, self.startup_config)?;
         if let Some(lock) = root_lock {
             instance.attach_root_lock(lock);
         }
@@ -255,18 +275,38 @@ impl OliphauntBuilder {
             instance.attach_temp_dir(temp_dir);
         }
         #[cfg(feature = "extensions")]
-        let mut instance = instance;
-        #[cfg(feature = "extensions")]
-        for extension in extensions {
-            if preinstalled_extensions
-                .iter()
-                .any(|sql_name| sql_name == extension.sql_name())
-            {
-                instance.enable_preinstalled_extension(extension)?;
-            } else {
-                instance.enable_extension(extension)?;
-            }
-        }
+        instance.enable_startup_extensions(&extensions)?;
         Ok(instance)
+    }
+}
+
+#[cfg(all(test, feature = "extensions"))]
+mod tests {
+    use super::*;
+    use crate::oliphaunt::extensions::PG_TEXTSEARCH;
+
+    #[test]
+    fn direct_path_merges_pg_textsearch_preload_once_before_open() {
+        let builder = OliphauntBuilder::new()
+            .postgres_config("shared_preload_libraries", "auto_explain")
+            .postgres_config("work_mem", "16MB")
+            .extensions([PG_TEXTSEARCH, PG_TEXTSEARCH]);
+
+        let (_, postgres_config) = builder.resolved_extension_startup().unwrap();
+
+        assert_eq!(
+            postgres_config.get("shared_preload_libraries"),
+            Some("auto_explain,pg_textsearch")
+        );
+        assert_eq!(postgres_config.get("work_mem"), Some("16MB"));
+        assert_eq!(
+            postgres_config
+                .get("shared_preload_libraries")
+                .unwrap()
+                .split(',')
+                .filter(|library| *library == "pg_textsearch")
+                .count(),
+            1
+        );
     }
 }

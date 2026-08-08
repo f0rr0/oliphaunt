@@ -27,6 +27,7 @@ import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
 } from "./release-notices.mjs";
+import { SNOWBALL_STOPWORD_LANGUAGES } from "./optimize_native_runtime_payload.mjs";
 
 const PREFIX = "check-liboliphaunt-release-assets.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -361,6 +362,19 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
   }
   if ([...names].some((name) => name.startsWith(`${runtimePrefix}share/icu/`))) {
     fail(`${file} base runtime must not contain ICU data under ${runtimePrefix}share/icu`);
+  }
+  for (const required of [
+    `${runtimePrefix}share/postgresql/extension/plpgsql--1.0.sql`,
+    `${runtimePrefix}share/postgresql/extension/plpgsql.control`,
+    `${runtimePrefix}share/postgresql/snowball_create.sql`,
+    ...SNOWBALL_STOPWORD_LANGUAGES.map(
+      (language) => `${runtimePrefix}share/postgresql/tsearch_data/${language}.stop`,
+    ),
+  ]) {
+    const entry = entries.get(required);
+    if (entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0) {
+      fail(`${file} base runtime is missing required core PostgreSQL resource ${required}`);
+    }
   }
   for (const [sqlName, metadata] of extensionMetadata) {
     const control = `${runtimePrefix}share/postgresql/extension/${sqlName}.control`;

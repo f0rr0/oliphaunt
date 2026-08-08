@@ -30,6 +30,11 @@ impl PostgresConfig {
         self.settings.insert(name.into(), value.into());
     }
 
+    #[cfg(feature = "extensions")]
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
+        self.settings.get(name).map(String::as_str)
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         for (name, value) in &self.settings {
             validate_guc_name(name)?;

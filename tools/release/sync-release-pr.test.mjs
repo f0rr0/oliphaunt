@@ -11,6 +11,7 @@ import {
   extensionEvidenceSummaryCommand,
   releaseDerivedPathInventory,
   releaseSemanticFingerprintDerivedEntries,
+  syncExampleCargoManifestText,
   syncLockfile,
 } from "./sync-release-pr.mjs";
 
@@ -123,6 +124,79 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("release sync closes registry example pins and runtime metadata across Cargo scopes", () => {
+  const target = 'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))';
+  const policy = {
+    crateDir: "fixture",
+    runtime: {
+      product: "liboliphaunt-native",
+      productParts: ["package", "metadata", "oliphaunt", "runtime"],
+    },
+  };
+  const dependency = (name, entryParts) => ({
+    kind: "dependency",
+    name,
+    entryParts,
+    expected: "=0.1.1",
+  });
+  const bindings = [
+    dependency("oliphaunt-build", ["build-dependencies", "oliphaunt-build"]),
+    dependency("oliphaunt", ["dependencies", "oliphaunt"]),
+    dependency("oliphaunt-dev", ["dev-dependencies", "oliphaunt-dev"]),
+    dependency("oliphaunt-target", ["target", target, "dependencies", "oliphaunt-target"]),
+    {
+      kind: "runtime",
+      name: "runtime-version",
+      entryParts: ["package", "metadata", "oliphaunt", "runtime-version"],
+      expected: "0.1.1",
+    },
+  ];
+  const initial = `[package]
+name = "fixture"
+version = "0.0.0"
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "0.1.0" # exact native payload contract
+
+[build-dependencies]
+oliphaunt-build = { version = "=0.1.0" }
+
+[dependencies]
+oliphaunt = "=0.1.0"
+
+[dev-dependencies]
+'oliphaunt-dev' = { version = '=0.1.0', optional = false }
+
+[target.'${target}'.dependencies]
+oliphaunt-target = { version = "=0.1.0", features = [
+  "preserved-feature",
+] }
+`;
+
+  const first = syncExampleCargoManifestText(initial, { policy, bindings, label: "fixture/Cargo.toml" });
+  assert.equal(first.details.length, 5);
+  assert.equal((first.text.match(/0[.]1[.]1/gu) ?? []).length, 5);
+  assert.equal(first.text.includes("0.1.0"), false);
+  assert.match(first.text, /features = \[\n  "preserved-feature",\n\]/u);
+  assert.match(first.text, /runtime-version = "0[.]1[.]1" # exact native payload contract/u);
+
+  const second = syncExampleCargoManifestText(first.text, { policy, bindings, label: "fixture/Cargo.toml" });
+  assert.equal(second.text, first.text);
+  assert.deepEqual(second.details, []);
+
+  const duplicate = initial.replace("[dev-dependencies]\n", "[dev-dependencies]\noliphaunt = \"=0.1.0\"\n");
+  assert.throws(
+    () => syncExampleCargoManifestText(duplicate, { policy, bindings, label: "fixture/Cargo.toml" }),
+    /must declare oliphaunt exactly once.*found 2/u,
+  );
+  const unsupported = initial.replace('oliphaunt = "=0.1.0"', "oliphaunt = true");
+  assert.throws(
+    () => syncExampleCargoManifestText(unsupported, { policy, bindings, label: "fixture/Cargo.toml" }),
+    /must use a string or inline-table dependency specification/u,
+  );
 });
 
 test("release sync refreshes the evidence summary after the asset fingerprint", () => {

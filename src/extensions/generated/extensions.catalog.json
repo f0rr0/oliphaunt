@@ -1347,7 +1347,7 @@
       "bundle-size": 55062,
       "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
       "control": {
-        "default-version": "0.5.1",
+        "default-version": "0.6.1",
         "module-pathname": "$libdir/pg_textsearch",
         "requires": [],
         "relocatable": "true"
@@ -1360,10 +1360,12 @@
         "create-schema": "pg_catalog",
         "load-sql": [],
         "post-create-sql": [],
-        "startup-config": [],
-        "preload-required": false,
-        "restart-required": false,
-        "shared-memory-required": false
+        "startup-config": [
+          "shared_preload_libraries=pg_textsearch"
+        ],
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true
       },
       "smoke": {
         "direct": "passed",
@@ -1382,7 +1384,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/pg_textsearch.tar.zst",
-        "module-sha256": "e60486a4a5ccc6bd16da8f3d13b6218975606a9ff896eec7e63af97b56b6052c"
+        "module-sha256": "f69272228918d34b77efbe8cebd6a4e970dd598ca00dd22bc71c6c06951aadf5"
       },
       "notes": []
     },

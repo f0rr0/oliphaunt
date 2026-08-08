@@ -125,14 +125,21 @@ if (($EmbeddedModulesInfo.Attributes -band [System.IO.FileAttributes]::ReparsePo
     Fail "Windows embedded module directory must not be a reparse point: $EmbeddedModules"
 }
 $EmbeddedModuleEntries = @(Get-ChildItem -LiteralPath $EmbeddedModules -Force)
-if ($EmbeddedModuleEntries.Count -ne 1 -or $EmbeddedModuleEntries[0].Name -cne "plpgsql.dll") {
+$EmbeddedModuleNames = @($EmbeddedModuleEntries | ForEach-Object { $_.Name } | Sort-Object)
+$ExpectedEmbeddedModuleNames = @("dict_snowball.dll", "plpgsql.dll")
+$EmbeddedModuleDifferences = @(
+    Compare-Object -ReferenceObject $ExpectedEmbeddedModuleNames -DifferenceObject $EmbeddedModuleNames -CaseSensitive
+)
+if ($EmbeddedModuleNames.Count -ne $ExpectedEmbeddedModuleNames.Count -or
+    $EmbeddedModuleDifferences.Count -ne 0) {
     $EmbeddedModuleNames = [string]::Join(", ", @($EmbeddedModuleEntries | ForEach-Object { $_.Name }))
-    Fail "base Windows embedded module inventory must contain exactly plpgsql.dll; found: $EmbeddedModuleNames"
+    Fail "base Windows embedded module inventory must contain exactly dict_snowball.dll and plpgsql.dll; found: $EmbeddedModuleNames"
 }
-$EmbeddedPlpgsql = $EmbeddedModuleEntries[0]
-if (-not ($EmbeddedPlpgsql -is [System.IO.FileInfo]) -or
-    ($EmbeddedPlpgsql.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-    Fail "Windows embedded plpgsql module must be a regular non-link file: $($EmbeddedPlpgsql.FullName)"
+foreach ($EmbeddedModule in $EmbeddedModuleEntries) {
+    if (-not ($EmbeddedModule -is [System.IO.FileInfo]) -or
+        ($EmbeddedModule.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Fail "Windows embedded module must be a regular non-link file: $($EmbeddedModule.FullName)"
+    }
 }
 foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
     $ToolPath = Join-Path (Join-Path $Runtime "bin") $Tool

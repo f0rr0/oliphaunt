@@ -597,6 +597,7 @@ def validate_external_recipes() -> None:
         if isinstance(row, dict)
     }
     validate_external_source_pins(build_by_sql_name, source_names)
+    validate_pg_textsearch_mobile_version_flag()
     for recipe in sorted(EXTERNAL_ROOT.glob("*/recipe.toml")):
         data = read_toml(recipe)
         if data.get("schema") != "oliphaunt-extension-recipe-v1":
@@ -751,6 +752,28 @@ def validate_external_recipes() -> None:
         for module in artifacts.get("native_modules", []):
             if module not in generated_modules:
                 fail(f"{rel(recipe)} native module {module!r} must match generated load-order")
+
+
+def validate_pg_textsearch_mobile_version_flag() -> None:
+    extension_dir = EXTERNAL_ROOT / "pg_textsearch"
+    source_path = extension_dir / "source.toml"
+    target_path = extension_dir / "targets/native-static-registry.toml"
+    source = read_toml(source_path)
+    control = source.get("extension-control")
+    if not isinstance(control, dict):
+        fail(f"{rel(source_path)} must declare extension-control metadata")
+    version = control.get("default-version")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        fail(f"{rel(source_path)} extension-control.default-version must be a semantic version")
+
+    target = read_toml(target_path)
+    cflags = validate_string_list(target.get("cflags"), f"{rel(target_path)} cflags")
+    expected = f'-DPG_TEXTSEARCH_VERSION="{version}"'
+    if cflags.count(expected) != 1:
+        fail(
+            f"{rel(target_path)} cflags must contain exactly {expected!r} so Android and iOS "
+            "static builds match the pinned pg_textsearch control version"
+        )
 
 
 def validate_external_source_pins(build_by_sql_name: dict[str, dict], source_names: set[str]) -> None:

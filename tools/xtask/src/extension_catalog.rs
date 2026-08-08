@@ -686,6 +686,7 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
     text.push_str("use super::{Extension, ExtensionNativeModule, ExtensionSetup};\n\n");
     text.push_str("const EMPTY_SQL_NAMES: &[&str] = &[];\n");
     text.push_str("const EMPTY_SQL: &[&str] = &[];\n");
+    text.push_str("const EMPTY_STARTUP_CONFIG: &[&str] = &[];\n");
     text.push_str("const EMPTY_NATIVE_MODULES: &[ExtensionNativeModule] = &[];\n\n");
 
     for extension in &candidates {
@@ -722,6 +723,16 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
                 rust_string_array(&extension.lifecycle.post_create_sql)
             ));
         }
+        if extension.lifecycle.startup_config.is_empty() {
+            text.push_str(&format!(
+                "const {candidate_const}_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;\n"
+            ));
+        } else {
+            text.push_str(&format!(
+                "const {candidate_const}_STARTUP_CONFIG: &[&str] = &{};\n",
+                rust_string_array(&extension.lifecycle.startup_config)
+            ));
+        }
         let native_support_modules = api_native_support_modules(extension)?;
         if native_support_modules.is_empty() {
             text.push_str(&format!(
@@ -756,7 +767,7 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
                 .then(|| format!("extension:{}", extension.sql_name)),
         );
         text.push_str(&format!(
-            "pub(crate) const {candidate_const}: Extension = Extension::new(\n    {:?},\n    {:?},\n    {:?},\n    {candidate_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {candidate_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {candidate_const}_LOAD_SQL,\n        {candidate_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
+            "pub(crate) const {candidate_const}: Extension = Extension::new(\n    {:?},\n    {:?},\n    {:?},\n    {candidate_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {candidate_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {candidate_const}_STARTUP_CONFIG,\n        {candidate_const}_LOAD_SQL,\n        {candidate_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
             extension.display_name,
             extension.sql_name,
             archive,

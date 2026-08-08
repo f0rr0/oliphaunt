@@ -17,7 +17,9 @@ use crate::oliphaunt::base::{
 };
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::oliphaunt::extensions::{Extension, resolve_extension_set};
+use crate::oliphaunt::extensions::{
+    Extension, postgres_config_with_extension_startup, resolve_extension_set,
+};
 use crate::oliphaunt::interface::DebugLevel;
 #[cfg(feature = "tools")]
 use crate::oliphaunt::pg_dump::{
@@ -341,11 +343,12 @@ impl OliphauntServerBuilder {
 
     /// Install the runtime if needed, initialize the cluster, and start serving.
     pub fn start(self) -> Result<OliphauntServer> {
-        self.postgres_config.validate()?;
-        self.startup_config.validate()?;
         #[cfg(feature = "extensions")]
-        let extensions = resolve_extension_set(&self.extensions)?;
+        let (extensions, postgres_config) = self.resolved_extension_startup()?;
+        #[cfg(not(feature = "extensions"))]
         let postgres_config = self.postgres_config.clone();
+        postgres_config.validate()?;
+        self.startup_config.validate()?;
         let startup_config = self.startup_config.clone();
 
         let prepared_root = {
@@ -410,6 +413,14 @@ impl OliphauntServerBuilder {
             shutdown,
             handle: Some(handle),
         })
+    }
+
+    #[cfg(feature = "extensions")]
+    fn resolved_extension_startup(&self) -> Result<(Vec<Extension>, PostgresConfig)> {
+        let extensions = resolve_extension_set(&self.extensions)?;
+        let postgres_config =
+            postgres_config_with_extension_startup(self.postgres_config.clone(), &extensions)?;
+        Ok((extensions, postgres_config))
     }
 }
 
@@ -563,15 +574,45 @@ fn percent_encode_query_value(value: &str) -> String {
     encoded
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::percent_encode_query_value;
+    #[cfg(feature = "extensions")]
+    use super::*;
+    #[cfg(feature = "extensions")]
+    use crate::oliphaunt::extensions::PG_TEXTSEARCH;
 
+    #[cfg(unix)]
     #[test]
     fn unix_socket_uri_host_is_query_encoded() {
         assert_eq!(
             percent_encode_query_value("/tmp/Application Support/oliphaunt"),
             "/tmp/Application%20Support/oliphaunt"
+        );
+    }
+
+    #[cfg(feature = "extensions")]
+    #[test]
+    fn server_path_merges_pg_textsearch_preload_once_before_start() {
+        let builder = OliphauntServerBuilder::new()
+            .postgres_config("shared_preload_libraries", "auto_explain,pg_textsearch")
+            .extensions([PG_TEXTSEARCH, PG_TEXTSEARCH]);
+
+        let (_, postgres_config) = builder.resolved_extension_startup().unwrap();
+
+        assert_eq!(
+            postgres_config.get("shared_preload_libraries"),
+            Some("auto_explain,pg_textsearch")
+        );
+        assert_eq!(
+            postgres_config
+                .get("shared_preload_libraries")
+                .unwrap()
+                .split(',')
+                .filter(|library| *library == "pg_textsearch")
+                .count(),
+            1
         );
     }
 }

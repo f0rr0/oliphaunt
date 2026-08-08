@@ -238,6 +238,13 @@ products = [
 ]
 
 [[rules]]
+id = "native-icu-npm-carrier-producer"
+# This shared contract supplies the canonical ICU npm bundle path to both
+# packagers and validates the exact descriptors and packed byte inventory.
+paths = ["tools/release/icu-npm-carrier-contract.mjs"]
+products = ["liboliphaunt-native"]
+
+[[rules]]
 id = "maven-runtime-extension-carrier-producer"
 paths = [
   "tools/release/build_maven_artifact_manifest.mjs",

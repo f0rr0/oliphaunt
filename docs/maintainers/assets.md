@@ -68,7 +68,13 @@ or corrupted runtime.
 ## Extension Assets
 
 Extensions are demand-driven. An extension archive is installed into the
-database root only when the builder requests it or `enable_extension` is called:
+database root only when the builder requests it or, for an extension with no
+startup requirements, `enable_extension` is called. Extensions whose generated
+lifecycle declares startup configuration (including
+`shared_preload_libraries`) must be selected on the builder before `open()` or
+server `start()`. Their archive and native module must exist before PostgreSQL
+starts, so post-open activation fails with an actionable error instead of
+attempting a partially initialized extension:
 
 ```rust,no_run
 use oliphaunt_wasix::{extensions, Oliphaunt};

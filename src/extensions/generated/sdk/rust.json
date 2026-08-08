@@ -1,6 +1,6 @@
 {
   "consumer": "rust",
-  "extension-catalog-sha256": "c73b96459c6d5b86d34ecd34e3af89d383320de8851f2988368552352bf349bc",
+  "extension-catalog-sha256": "cd1ce8a2c4746a2f0697595c9203977f2eaf5308e5b6a118212116547a9e8ac7",
   "extensions": [
     {
       "archive": "extensions/amcheck.tar.zst",
@@ -839,7 +839,9 @@
       "runtime-environment": [],
       "runtime-share-data-files": [],
       "selected-extension-dependencies": [],
-      "shared-preload-libraries": [],
+      "shared-preload-libraries": [
+        "pg_textsearch"
+      ],
       "source-kind": "oliphaunt-other-extension",
       "sql-name": "pg_textsearch",
       "stable": true,

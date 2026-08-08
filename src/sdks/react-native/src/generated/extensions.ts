@@ -38,7 +38,7 @@ export type GeneratedExtensionMetadata = {
 };
 
 export const GENERATED_EXTENSION_METADATA_SHA256 =
-  'c8b0f5da02b60d68b141b273da7e3c3cad626bfe295bb0725241b483b1eda8b9' as const;
+  '112d2060de12e08bf955c9f0f487b075f4ddb7273cb8130f60dc629733b4d4db' as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
@@ -870,7 +870,7 @@ export const GENERATED_EXTENSION_METADATA = [
     runtimeBound: false,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
-    sharedPreloadLibraries: [],
+    sharedPreloadLibraries: ['pg_textsearch'],
     sourceKind: 'oliphaunt-other-extension',
     sqlName: 'pg_textsearch',
     stable: true,

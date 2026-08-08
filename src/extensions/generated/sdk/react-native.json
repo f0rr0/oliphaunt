@@ -1,6 +1,6 @@
 {
   "consumer": "react-native",
-  "extension-catalog-sha256": "c8b0f5da02b60d68b141b273da7e3c3cad626bfe295bb0725241b483b1eda8b9",
+  "extension-catalog-sha256": "112d2060de12e08bf955c9f0f487b075f4ddb7273cb8130f60dc629733b4d4db",
   "extensions": [
     {
       "archive": "extensions/amcheck.tar.zst",
@@ -863,7 +863,9 @@
       "runtime-environment": [],
       "runtime-share-data-files": [],
       "selected-extension-dependencies": [],
-      "shared-preload-libraries": [],
+      "shared-preload-libraries": [
+        "pg_textsearch"
+      ],
       "source-kind": "oliphaunt-other-extension",
       "sql-name": "pg_textsearch",
       "stable": true,

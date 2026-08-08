@@ -48,7 +48,24 @@ $ObjDir = Join-Path $OutDir "obj"
 $DllOut = Join-Path $OutDir "bin/oliphaunt.dll"
 $ImportLibOut = Join-Path $OutDir "lib/oliphaunt.lib"
 $EmbeddedModulesDir = Join-Path $OutDir "modules"
-$EmbeddedPlpgsqlDllOut = Join-Path $EmbeddedModulesDir "plpgsql.dll"
+$EmbeddedCoreModuleStems = @("dict_snowball", "plpgsql")
+$SnowballStopwordFiles = @(
+    "danish.stop",
+    "dutch.stop",
+    "english.stop",
+    "finnish.stop",
+    "french.stop",
+    "german.stop",
+    "hungarian.stop",
+    "italian.stop",
+    "nepali.stop",
+    "norwegian.stop",
+    "portuguese.stop",
+    "russian.stop",
+    "spanish.stop",
+    "swedish.stop",
+    "turkish.stop"
+)
 $VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-closure.mjs"
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
@@ -1988,6 +2005,139 @@ function Add-UuidOsspMesonProducer {
         @("/I$portableUuidInclude", "/DHAVE_UUID_E2FS=1", "/DHAVE_UUID_UUID_H=1")
 }
 
+function Get-PgTextsearchMakefileList([string]$ExtensionDir, [string]$Variable) {
+    $makefile = Join-Path $ExtensionDir "Makefile"
+    if (-not (Test-Path -LiteralPath $makefile -PathType Leaf)) {
+        Fail "pg_textsearch checkout is missing its authoritative Makefile: $makefile"
+    }
+
+    $values = New-Object System.Collections.Generic.List[string]
+    $found = $false
+    $collecting = $false
+    $variablePattern = "^$([regex]::Escape($Variable))\s*=\s*(.*)$"
+    foreach ($line in Get-Content -Path $makefile) {
+        $fragment = $null
+        if (-not $collecting) {
+            if ($line -notmatch $variablePattern) {
+                continue
+            }
+            $found = $true
+            $collecting = $true
+            $fragment = $Matches[1].Trim()
+        } else {
+            $fragment = $line.Trim()
+        }
+
+        $continues = $fragment.EndsWith("\")
+        if ($continues) {
+            $fragment = $fragment.Substring(0, $fragment.Length - 1).TrimEnd()
+        }
+        if ($fragment) {
+            foreach ($value in ($fragment -split "\s+")) {
+                if ($value) {
+                    $values.Add($value) | Out-Null
+                }
+            }
+        }
+        if (-not $continues) {
+            break
+        }
+    }
+
+    if (-not $found) {
+        Fail "pg_textsearch Makefile is missing its $Variable assignment"
+    }
+    @($values)
+}
+
+function Assert-PgTextsearchWindowsPgxsManifest(
+    [string]$ExtensionDir,
+    [string[]]$Sources,
+    [string[]]$DataFiles
+) {
+    $expectedSources = @(
+        Get-PgTextsearchMakefileList $ExtensionDir "OBJS" |
+            ForEach-Object {
+                if (-not $_.EndsWith(".o", [System.StringComparison]::Ordinal)) {
+                    Fail "pg_textsearch Makefile OBJS contains a non-object entry: $_"
+                }
+                $_.Substring(0, $_.Length - 2) + ".c"
+            }
+    )
+    $expectedDataFiles = @(
+        @(Get-PgTextsearchMakefileList $ExtensionDir "DATA") +
+            @("pg_textsearch.control")
+    )
+    if (($Sources -join "`n") -ne ($expectedSources -join "`n")) {
+        Fail "pg_textsearch Windows sources differ from the pinned upstream Makefile: expected $($expectedSources -join ', '); got $($Sources -join ', ')"
+    }
+    if (($DataFiles -join "`n") -ne ($expectedDataFiles -join "`n")) {
+        Fail "pg_textsearch Windows SQL payload differs from the pinned upstream Makefile: expected $($expectedDataFiles -join ', '); got $($DataFiles -join ', ')"
+    }
+    foreach ($relativePath in @($Sources) + @($DataFiles)) {
+        $path = Join-Path $ExtensionDir $relativePath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            Fail "pg_textsearch Windows input declared by the pinned Makefile is missing: $relativePath"
+        }
+    }
+}
+
+function Get-PgTextsearchWindowsVersionDefine([string]$ExtensionDir) {
+    $control = Join-Path $ExtensionDir "pg_textsearch.control"
+    if (-not (Test-Path -LiteralPath $control -PathType Leaf)) {
+        Fail "pg_textsearch checkout is missing its control file: $control"
+    }
+
+    $controlText = Get-Content -Raw -Path $control
+    $versionMatches = [regex]::Matches(
+        $controlText,
+        "(?m)^\s*default_version\s*=\s*'([^']+)'\s*$"
+    )
+    if ($versionMatches.Count -ne 1) {
+        Fail "pg_textsearch control must declare exactly one single-quoted default_version; found $($versionMatches.Count)"
+    }
+    $version = $versionMatches[0].Groups[1].Value
+    if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        Fail "pg_textsearch control has unsupported default_version '$version'"
+    }
+
+    $makefile = Join-Path $ExtensionDir "Makefile"
+    $makefileText = Get-Content -Raw -Path $makefile
+    if (-not $makefileText.Contains('-DPG_TEXTSEARCH_VERSION=\"$(EXTVERSION)\"')) {
+        Fail "pg_textsearch Makefile no longer defines PG_TEXTSEARCH_VERSION from EXTVERSION"
+    }
+
+    # Keep the embedded quotes in one Meson argument. Meson/Ninja preserves
+    # them for cl.exe, so the macro expands to a C string literal.
+    "/DPG_TEXTSEARCH_VERSION=`"$version`""
+}
+
+function Patch-PgTextsearchWindowsTypeLayout(
+    [string]$Text,
+    [string]$TypeName,
+    [string]$Attribute,
+    [int]$Pack,
+    [int]$ExpectedSize,
+    [int]$ExpectedAlignment
+) {
+    $escapedTypeName = [regex]::Escape($TypeName)
+    $escapedAttribute = [regex]::Escape($Attribute)
+    $declarationPattern = "(?m)^typedef struct $escapedTypeName\r?$"
+    $closingPattern = "(?m)^} __attribute__\(\($escapedAttribute\)\) $escapedTypeName;\r?$"
+    $declarationMatches = [regex]::Matches($Text, $declarationPattern)
+    $closingMatches = [regex]::Matches($Text, $closingPattern)
+    if ($declarationMatches.Count -ne 1 -or $closingMatches.Count -ne 1) {
+        Fail "pg_textsearch $TypeName layout changed upstream; expected one declaration and one __attribute__(($Attribute)) closing, found $($declarationMatches.Count) and $($closingMatches.Count)"
+    }
+
+    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $declaration = "#ifdef _MSC_VER${newline}#pragma pack(push, $Pack)${newline}#endif${newline}typedef struct $TypeName"
+    $closing = "} $TypeName;${newline}#ifdef _MSC_VER${newline}#pragma pack(pop)${newline}StaticAssertDecl(sizeof($TypeName) == $ExpectedSize, `"$TypeName must remain $ExpectedSize bytes on Windows`");${newline}StaticAssertDecl(__alignof($TypeName) == $ExpectedAlignment, `"$TypeName must remain $ExpectedAlignment-byte aligned on Windows`");${newline}#endif"
+    $Text = [regex]::Replace($Text, $declarationPattern, $declaration)
+    $Text = [regex]::Replace($Text, $closingPattern, $closing)
+    $Text
+}
+
 function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
     $compat = Join-Path $ExtensionDir "src/oliphaunt_windows_compat.h"
     Set-Content -Path $compat -Encoding UTF8 -Value @"
@@ -2004,32 +2154,18 @@ function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
 "@
     $segmentHeader = Join-Path $ExtensionDir "src/segment/segment.h"
     $text = Get-Content -Raw -Path $segmentHeader
-    $text = $text.Replace("} __attribute__((aligned(4))) TpDictEntry;", "} TpDictEntry;")
-    $text = $text.Replace(
-        "typedef struct TpSegmentPosting",
-        "#ifdef _MSC_VER`n#pragma pack(push, 1)`n#endif`ntypedef struct TpSegmentPosting"
-    )
-    $text = $text.Replace(
-        "} __attribute__((packed)) TpSegmentPosting;",
-        "} TpSegmentPosting;`n#ifdef _MSC_VER`n#pragma pack(pop)`n#endif"
-    )
-    $text = $text.Replace(
-        "typedef struct TpSkipEntry",
-        "#ifdef _MSC_VER`n#pragma pack(push, 1)`n#endif`ntypedef struct TpSkipEntry"
-    )
-    $text = $text.Replace(
-        "} __attribute__((packed)) TpSkipEntry;",
-        "} TpSkipEntry;`n#ifdef _MSC_VER`n#pragma pack(pop)`n#endif"
-    )
-    $text = $text.Replace(
-        "typedef struct TpCtidMapEntry",
-        "#ifdef _MSC_VER`n#pragma pack(push, 1)`n#endif`ntypedef struct TpCtidMapEntry"
-    )
-    $text = $text.Replace(
-        "} __attribute__((packed)) TpCtidMapEntry;",
-        "} TpCtidMapEntry;`n#ifdef _MSC_VER`n#pragma pack(pop)`n#endif"
-    )
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntryV3" "aligned(4)" 4 12 4
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntry" "aligned(8)" 8 16 8
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSegmentPosting" "packed" 1 14 1
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntryV3" "packed" 1 16 1
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntry" "packed" 1 20 1
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpCtidMapEntry" "packed" 1 6 1
     Set-Content -Path $segmentHeader -Encoding UTF8 -Value $text
+
+    $expullHeader = Join-Path $ExtensionDir "src/memtable/expull.h"
+    $text = Get-Content -Raw -Path $expullHeader
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpExpullEntry" "packed" 1 7 1
+    Set-Content -Path $expullHeader -Encoding UTF8 -Value $text
 
     $amHeader = Join-Path $ExtensionDir "src/am/am.h"
     $text = Get-Content -Raw -Path $amHeader
@@ -2129,9 +2265,11 @@ function Add-ExternalPgxsMesonProducer(
         Patch-PgUuidv7WindowsSource $destination
     }
     if ($SqlName -eq "pg_textsearch") {
+        Assert-PgTextsearchWindowsPgxsManifest $destination $Sources $DataFiles
         Patch-PgTextsearchWindowsSource $destination
         $compatHeader = Meson-Path (Join-Path $destination "src/oliphaunt_windows_compat.h")
-        $CArgs = @($CArgs) + @("/FI$compatHeader")
+        $versionDefine = Get-PgTextsearchWindowsVersionDefine $destination
+        $CArgs = @($CArgs) + @($versionDefine, "/FI$compatHeader")
     }
     if ($SqlName -eq "vector") {
         Copy-Item -Force (Join-Path $destination "sql/vector.sql") (Join-Path $destination "sql/vector--0.8.2.sql")
@@ -2186,13 +2324,15 @@ function Add-ExternalPgxsMesonProducers {
             "src/source.c",
             "src/am/handler.c",
             "src/am/build.c",
+            "src/am/build_context.c",
             "src/am/build_parallel.c",
             "src/am/scan.c",
             "src/am/vacuum.c",
+            "src/memtable/arena.c",
+            "src/memtable/expull.c",
             "src/memtable/memtable.c",
             "src/memtable/posting.c",
             "src/memtable/stringtable.c",
-            "src/memtable/local_memtable.c",
             "src/memtable/scan.c",
             "src/memtable/source.c",
             "src/segment/segment.c",
@@ -2214,7 +2354,7 @@ function Add-ExternalPgxsMesonProducers {
             "src/debug/dump.c"
         ) `
         @(
-            "sql/pg_textsearch--0.5.1.sql",
+            "sql/pg_textsearch--0.6.1.sql",
             "sql/pg_textsearch--0.0.1--0.0.2.sql",
             "sql/pg_textsearch--0.0.2--0.0.3.sql",
             "sql/pg_textsearch--0.0.3--0.0.4.sql",
@@ -2226,7 +2366,9 @@ function Add-ExternalPgxsMesonProducers {
             "sql/pg_textsearch--0.4.0--0.4.1.sql",
             "sql/pg_textsearch--0.4.1--0.4.2.sql",
             "sql/pg_textsearch--0.4.2--0.5.0.sql",
-            "sql/pg_textsearch--0.5.0--0.5.1.sql",
+            "sql/pg_textsearch--0.5.0--0.6.1.sql",
+            "sql/pg_textsearch--0.5.1--0.6.1.sql",
+            "sql/pg_textsearch--0.6.0--0.6.1.sql",
             "pg_textsearch.control"
         ) `
         @("/D_CRT_SECURE_NO_WARNINGS") `
@@ -2408,12 +2550,33 @@ function Get-SelectedEmbeddedExtensionModules {
     }
 }
 
+function Test-SnowballRuntimeClosure {
+    $requiredFiles = @(
+        (Join-Path $InstallDir "lib/postgresql/dict_snowball.dll"),
+        (Join-Path $InstallDir "share/postgresql/snowball_create.sql")
+    )
+    foreach ($stopword in $SnowballStopwordFiles) {
+        $requiredFiles += (Join-Path $InstallDir "share/postgresql/tsearch_data/$stopword")
+    }
+    foreach ($required in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            return $false
+        }
+        $file = Get-Item -LiteralPath $required -Force
+        if (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.Length -le 0) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Runtime-Installed([string]$DesiredHash) {
     return (Test-Path (Join-Path $InstallDir "bin/initdb.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/postgres.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/pg_config.exe")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/postgresql.conf.sample")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/timezone/UTC")) -and
+        (Test-SnowballRuntimeClosure) -and
         (Test-Path (Join-Path $InstallDir ".oliphaunt-postgres-runtime.sha256")) -and
         ((Get-Content (Join-Path $InstallDir ".oliphaunt-postgres-runtime.sha256") -Raw).Trim() -eq $DesiredHash) -and
         (($BuildExtensions -ne "0") -or (BaseRuntimeOptionalExtensionsAbsent))
@@ -2878,7 +3041,7 @@ function Build-EmbeddedModules {
     }
 
     $selectedModules = @(Get-SelectedEmbeddedExtensionModules)
-    $targetNames = @("plpgsql") + @($selectedModules | ForEach-Object { $_.Stem })
+    $targetNames = @($EmbeddedCoreModuleStems) + @($selectedModules | ForEach-Object { $_.Stem })
     $targetNames = @($targetNames | Sort-Object -Unique)
     $provider = Meson-Path $ImportLibOut
     Invoke-Logged "meson-embedded-module-provider.log" {
@@ -2890,10 +3053,13 @@ function Build-EmbeddedModules {
 
     Remove-EmbeddedModuleStage
     New-Item -ItemType Directory -Force -Path $EmbeddedModulesDir | Out-Null
-    $plpgsqlSource = Find-EmbeddedModuleBinary "plpgsql"
-    Assert-EmbeddedModuleHostContract $plpgsqlSource $true
-    Copy-Item -LiteralPath $plpgsqlSource -Destination $EmbeddedPlpgsqlDllOut -Force
-    Assert-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $source = Find-EmbeddedModuleBinary $stem
+        Assert-EmbeddedModuleHostContract $source $true
+        $staged = Join-Path $EmbeddedModulesDir "$stem.dll"
+        Copy-Item -LiteralPath $source -Destination $staged -Force
+        Assert-EmbeddedModuleHostContract $staged $true
+    }
 
     foreach ($module in $selectedModules) {
         $source = Find-EmbeddedModuleBinary $module.Stem
@@ -2904,6 +3070,11 @@ function Build-EmbeddedModules {
     }
 
     $installedModuleDir = Join-Path $InstallDir "lib/postgresql"
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $server = Join-Path $installedModuleDir "$stem.dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$stem.dll"
+        Assert-CompatibleModuleProfiles $server $embedded
+    }
     foreach ($module in $selectedModules) {
         $server = Join-Path $installedModuleDir "$($module.Stem).dll"
         $embedded = Join-Path $EmbeddedModulesDir "$($module.Stem).dll"
@@ -2912,8 +3083,14 @@ function Build-EmbeddedModules {
 }
 
 function Embedded-ModulesReady {
-    if (-not (Test-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true)) {
-        return $false
+    $installedModuleDir = Join-Path $InstallDir "lib/postgresql"
+    foreach ($stem in $EmbeddedCoreModuleStems) {
+        $server = Join-Path $installedModuleDir "$stem.dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$stem.dll"
+        if (-not (Test-EmbeddedModuleHostContract $embedded $true) -or
+            -not (Test-CompatibleModuleProfiles $server $embedded)) {
+            return $false
+        }
     }
     foreach ($module in @(Get-SelectedEmbeddedExtensionModules)) {
         $server = Join-Path $InstallDir "lib/postgresql/$($module.Stem).dll"

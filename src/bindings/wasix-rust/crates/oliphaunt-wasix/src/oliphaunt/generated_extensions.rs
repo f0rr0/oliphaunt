@@ -4,11 +4,13 @@ use super::{Extension, ExtensionNativeModule, ExtensionSetup};
 
 const EMPTY_SQL_NAMES: &[&str] = &[];
 const EMPTY_SQL: &[&str] = &[];
+const EMPTY_STARTUP_CONFIG: &[&str] = &[];
 const EMPTY_NATIVE_MODULES: &[ExtensionNativeModule] = &[];
 
 const CANDIDATE_AMCHECK_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_AMCHECK_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_AMCHECK_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_AMCHECK_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_AMCHECK_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_AMCHECK: Extension = Extension::new(
@@ -22,6 +24,7 @@ pub(crate) const CANDIDATE_AMCHECK: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_AMCHECK_STARTUP_CONFIG,
         CANDIDATE_AMCHECK_LOAD_SQL,
         CANDIDATE_AMCHECK_POST_CREATE_SQL,
     ),
@@ -35,6 +38,7 @@ const CANDIDATE_AUTO_EXPLAIN_LOAD_SQL: &[&str] = &[
     "SET auto_explain.log_level = 'NOTICE';",
 ];
 const CANDIDATE_AUTO_EXPLAIN_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_AUTO_EXPLAIN_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_AUTO_EXPLAIN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -49,6 +53,7 @@ pub(crate) const CANDIDATE_AUTO_EXPLAIN: Extension = Extension::new(
     ExtensionSetup::new(
         false,
         None,
+        CANDIDATE_AUTO_EXPLAIN_STARTUP_CONFIG,
         CANDIDATE_AUTO_EXPLAIN_LOAD_SQL,
         CANDIDATE_AUTO_EXPLAIN_POST_CREATE_SQL,
     ),
@@ -57,6 +62,7 @@ pub(crate) const CANDIDATE_AUTO_EXPLAIN: Extension = Extension::new(
 const CANDIDATE_BLOOM_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_BLOOM_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_BLOOM_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_BLOOM_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_BLOOM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_BLOOM: Extension = Extension::new(
@@ -70,6 +76,7 @@ pub(crate) const CANDIDATE_BLOOM: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_BLOOM_STARTUP_CONFIG,
         CANDIDATE_BLOOM_LOAD_SQL,
         CANDIDATE_BLOOM_POST_CREATE_SQL,
     ),
@@ -78,6 +85,7 @@ pub(crate) const CANDIDATE_BLOOM: Extension = Extension::new(
 const CANDIDATE_BTREE_GIN_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_BTREE_GIN_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_BTREE_GIN_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_BTREE_GIN_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_BTREE_GIN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_BTREE_GIN: Extension = Extension::new(
@@ -91,6 +99,7 @@ pub(crate) const CANDIDATE_BTREE_GIN: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_BTREE_GIN_STARTUP_CONFIG,
         CANDIDATE_BTREE_GIN_LOAD_SQL,
         CANDIDATE_BTREE_GIN_POST_CREATE_SQL,
     ),
@@ -99,6 +108,7 @@ pub(crate) const CANDIDATE_BTREE_GIN: Extension = Extension::new(
 const CANDIDATE_BTREE_GIST_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_BTREE_GIST_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_BTREE_GIST_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_BTREE_GIST_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_BTREE_GIST_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_BTREE_GIST: Extension = Extension::new(
@@ -112,6 +122,7 @@ pub(crate) const CANDIDATE_BTREE_GIST: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_BTREE_GIST_STARTUP_CONFIG,
         CANDIDATE_BTREE_GIST_LOAD_SQL,
         CANDIDATE_BTREE_GIST_POST_CREATE_SQL,
     ),
@@ -120,6 +131,7 @@ pub(crate) const CANDIDATE_BTREE_GIST: Extension = Extension::new(
 const CANDIDATE_CITEXT_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_CITEXT_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_CITEXT_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_CITEXT_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_CITEXT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_CITEXT: Extension = Extension::new(
@@ -133,6 +145,7 @@ pub(crate) const CANDIDATE_CITEXT: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_CITEXT_STARTUP_CONFIG,
         CANDIDATE_CITEXT_LOAD_SQL,
         CANDIDATE_CITEXT_POST_CREATE_SQL,
     ),
@@ -141,6 +154,7 @@ pub(crate) const CANDIDATE_CITEXT: Extension = Extension::new(
 const CANDIDATE_CUBE_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_CUBE_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_CUBE_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_CUBE_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_CUBE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_CUBE: Extension = Extension::new(
@@ -154,6 +168,7 @@ pub(crate) const CANDIDATE_CUBE: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_CUBE_STARTUP_CONFIG,
         CANDIDATE_CUBE_LOAD_SQL,
         CANDIDATE_CUBE_POST_CREATE_SQL,
     ),
@@ -162,6 +177,7 @@ pub(crate) const CANDIDATE_CUBE: Extension = Extension::new(
 const CANDIDATE_DICT_INT_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_DICT_INT_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_DICT_INT_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_DICT_INT_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_DICT_INT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_DICT_INT: Extension = Extension::new(
@@ -175,6 +191,7 @@ pub(crate) const CANDIDATE_DICT_INT: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_DICT_INT_STARTUP_CONFIG,
         CANDIDATE_DICT_INT_LOAD_SQL,
         CANDIDATE_DICT_INT_POST_CREATE_SQL,
     ),
@@ -183,6 +200,7 @@ pub(crate) const CANDIDATE_DICT_INT: Extension = Extension::new(
 const CANDIDATE_DICT_XSYN_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_DICT_XSYN_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_DICT_XSYN_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_DICT_XSYN_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_DICT_XSYN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_DICT_XSYN: Extension = Extension::new(
@@ -196,6 +214,7 @@ pub(crate) const CANDIDATE_DICT_XSYN: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_DICT_XSYN_STARTUP_CONFIG,
         CANDIDATE_DICT_XSYN_LOAD_SQL,
         CANDIDATE_DICT_XSYN_POST_CREATE_SQL,
     ),
@@ -204,6 +223,7 @@ pub(crate) const CANDIDATE_DICT_XSYN: Extension = Extension::new(
 const CANDIDATE_EARTHDISTANCE_DEPENDENCIES: &[&str] = &["cube"];
 const CANDIDATE_EARTHDISTANCE_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_EARTHDISTANCE_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_EARTHDISTANCE_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_EARTHDISTANCE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -218,6 +238,7 @@ pub(crate) const CANDIDATE_EARTHDISTANCE: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_EARTHDISTANCE_STARTUP_CONFIG,
         CANDIDATE_EARTHDISTANCE_LOAD_SQL,
         CANDIDATE_EARTHDISTANCE_POST_CREATE_SQL,
     ),
@@ -226,6 +247,7 @@ pub(crate) const CANDIDATE_EARTHDISTANCE: Extension = Extension::new(
 const CANDIDATE_FILE_FDW_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_FILE_FDW_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_FILE_FDW_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_FILE_FDW_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_FILE_FDW_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_FILE_FDW: Extension = Extension::new(
@@ -239,6 +261,7 @@ pub(crate) const CANDIDATE_FILE_FDW: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_FILE_FDW_STARTUP_CONFIG,
         CANDIDATE_FILE_FDW_LOAD_SQL,
         CANDIDATE_FILE_FDW_POST_CREATE_SQL,
     ),
@@ -247,6 +270,7 @@ pub(crate) const CANDIDATE_FILE_FDW: Extension = Extension::new(
 const CANDIDATE_FUZZYSTRMATCH_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_FUZZYSTRMATCH_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_FUZZYSTRMATCH_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_FUZZYSTRMATCH_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_FUZZYSTRMATCH_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -261,6 +285,7 @@ pub(crate) const CANDIDATE_FUZZYSTRMATCH: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_FUZZYSTRMATCH_STARTUP_CONFIG,
         CANDIDATE_FUZZYSTRMATCH_LOAD_SQL,
         CANDIDATE_FUZZYSTRMATCH_POST_CREATE_SQL,
     ),
@@ -269,6 +294,7 @@ pub(crate) const CANDIDATE_FUZZYSTRMATCH: Extension = Extension::new(
 const CANDIDATE_HSTORE_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_HSTORE_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_HSTORE_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_HSTORE_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_HSTORE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_HSTORE: Extension = Extension::new(
@@ -282,6 +308,7 @@ pub(crate) const CANDIDATE_HSTORE: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_HSTORE_STARTUP_CONFIG,
         CANDIDATE_HSTORE_LOAD_SQL,
         CANDIDATE_HSTORE_POST_CREATE_SQL,
     ),
@@ -290,6 +317,7 @@ pub(crate) const CANDIDATE_HSTORE: Extension = Extension::new(
 const CANDIDATE_INTARRAY_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_INTARRAY_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_INTARRAY_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_INTARRAY_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_INTARRAY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_INTARRAY: Extension = Extension::new(
@@ -303,6 +331,7 @@ pub(crate) const CANDIDATE_INTARRAY: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_INTARRAY_STARTUP_CONFIG,
         CANDIDATE_INTARRAY_LOAD_SQL,
         CANDIDATE_INTARRAY_POST_CREATE_SQL,
     ),
@@ -311,6 +340,7 @@ pub(crate) const CANDIDATE_INTARRAY: Extension = Extension::new(
 const CANDIDATE_ISN_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_ISN_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_ISN_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_ISN_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_ISN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_ISN: Extension = Extension::new(
@@ -324,6 +354,7 @@ pub(crate) const CANDIDATE_ISN: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_ISN_STARTUP_CONFIG,
         CANDIDATE_ISN_LOAD_SQL,
         CANDIDATE_ISN_POST_CREATE_SQL,
     ),
@@ -332,6 +363,7 @@ pub(crate) const CANDIDATE_ISN: Extension = Extension::new(
 const CANDIDATE_LO_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_LO_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_LO_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_LO_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_LO_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_LO: Extension = Extension::new(
@@ -345,6 +377,7 @@ pub(crate) const CANDIDATE_LO: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_LO_STARTUP_CONFIG,
         CANDIDATE_LO_LOAD_SQL,
         CANDIDATE_LO_POST_CREATE_SQL,
     ),
@@ -353,6 +386,7 @@ pub(crate) const CANDIDATE_LO: Extension = Extension::new(
 const CANDIDATE_LTREE_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_LTREE_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_LTREE_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_LTREE_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_LTREE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_LTREE: Extension = Extension::new(
@@ -366,6 +400,7 @@ pub(crate) const CANDIDATE_LTREE: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_LTREE_STARTUP_CONFIG,
         CANDIDATE_LTREE_LOAD_SQL,
         CANDIDATE_LTREE_POST_CREATE_SQL,
     ),
@@ -374,6 +409,7 @@ pub(crate) const CANDIDATE_LTREE: Extension = Extension::new(
 const CANDIDATE_PAGEINSPECT_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PAGEINSPECT_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PAGEINSPECT_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PAGEINSPECT_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PAGEINSPECT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PAGEINSPECT: Extension = Extension::new(
@@ -387,6 +423,7 @@ pub(crate) const CANDIDATE_PAGEINSPECT: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PAGEINSPECT_STARTUP_CONFIG,
         CANDIDATE_PAGEINSPECT_LOAD_SQL,
         CANDIDATE_PAGEINSPECT_POST_CREATE_SQL,
     ),
@@ -395,6 +432,7 @@ pub(crate) const CANDIDATE_PAGEINSPECT: Extension = Extension::new(
 const CANDIDATE_PG_BUFFERCACHE_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_BUFFERCACHE_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_BUFFERCACHE_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_BUFFERCACHE_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_BUFFERCACHE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -409,6 +447,7 @@ pub(crate) const CANDIDATE_PG_BUFFERCACHE: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_BUFFERCACHE_STARTUP_CONFIG,
         CANDIDATE_PG_BUFFERCACHE_LOAD_SQL,
         CANDIDATE_PG_BUFFERCACHE_POST_CREATE_SQL,
     ),
@@ -417,6 +456,7 @@ pub(crate) const CANDIDATE_PG_BUFFERCACHE: Extension = Extension::new(
 const CANDIDATE_PG_FREESPACEMAP_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_FREESPACEMAP_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_FREESPACEMAP_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_FREESPACEMAP_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_FREESPACEMAP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -431,6 +471,7 @@ pub(crate) const CANDIDATE_PG_FREESPACEMAP: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_FREESPACEMAP_STARTUP_CONFIG,
         CANDIDATE_PG_FREESPACEMAP_LOAD_SQL,
         CANDIDATE_PG_FREESPACEMAP_POST_CREATE_SQL,
     ),
@@ -439,6 +480,7 @@ pub(crate) const CANDIDATE_PG_FREESPACEMAP: Extension = Extension::new(
 const CANDIDATE_PG_HASHIDS_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_HASHIDS_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_HASHIDS_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_HASHIDS_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_HASHIDS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PG_HASHIDS: Extension = Extension::new(
@@ -452,6 +494,7 @@ pub(crate) const CANDIDATE_PG_HASHIDS: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_HASHIDS_STARTUP_CONFIG,
         CANDIDATE_PG_HASHIDS_LOAD_SQL,
         CANDIDATE_PG_HASHIDS_POST_CREATE_SQL,
     ),
@@ -460,6 +503,7 @@ pub(crate) const CANDIDATE_PG_HASHIDS: Extension = Extension::new(
 const CANDIDATE_PG_IVM_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_IVM_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_IVM_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_IVM_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_IVM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PG_IVM: Extension = Extension::new(
@@ -473,6 +517,7 @@ pub(crate) const CANDIDATE_PG_IVM: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_IVM_STARTUP_CONFIG,
         CANDIDATE_PG_IVM_LOAD_SQL,
         CANDIDATE_PG_IVM_POST_CREATE_SQL,
     ),
@@ -481,6 +526,7 @@ pub(crate) const CANDIDATE_PG_IVM: Extension = Extension::new(
 const CANDIDATE_PG_SURGERY_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_SURGERY_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_SURGERY_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_SURGERY_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_SURGERY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PG_SURGERY: Extension = Extension::new(
@@ -494,6 +540,7 @@ pub(crate) const CANDIDATE_PG_SURGERY: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_SURGERY_STARTUP_CONFIG,
         CANDIDATE_PG_SURGERY_LOAD_SQL,
         CANDIDATE_PG_SURGERY_POST_CREATE_SQL,
     ),
@@ -502,6 +549,7 @@ pub(crate) const CANDIDATE_PG_SURGERY: Extension = Extension::new(
 const CANDIDATE_PG_TEXTSEARCH_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_TEXTSEARCH_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_TEXTSEARCH_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_TEXTSEARCH_STARTUP_CONFIG: &[&str] = &["shared_preload_libraries=pg_textsearch"];
 const CANDIDATE_PG_TEXTSEARCH_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -516,6 +564,7 @@ pub(crate) const CANDIDATE_PG_TEXTSEARCH: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_TEXTSEARCH_STARTUP_CONFIG,
         CANDIDATE_PG_TEXTSEARCH_LOAD_SQL,
         CANDIDATE_PG_TEXTSEARCH_POST_CREATE_SQL,
     ),
@@ -524,6 +573,7 @@ pub(crate) const CANDIDATE_PG_TEXTSEARCH: Extension = Extension::new(
 const CANDIDATE_PG_TRGM_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_TRGM_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_TRGM_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_TRGM_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_TRGM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PG_TRGM: Extension = Extension::new(
@@ -537,6 +587,7 @@ pub(crate) const CANDIDATE_PG_TRGM: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_TRGM_STARTUP_CONFIG,
         CANDIDATE_PG_TRGM_LOAD_SQL,
         CANDIDATE_PG_TRGM_POST_CREATE_SQL,
     ),
@@ -545,6 +596,7 @@ pub(crate) const CANDIDATE_PG_TRGM: Extension = Extension::new(
 const CANDIDATE_PG_UUIDV7_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_UUIDV7_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_UUIDV7_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_UUIDV7_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_UUIDV7_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PG_UUIDV7: Extension = Extension::new(
@@ -558,6 +610,7 @@ pub(crate) const CANDIDATE_PG_UUIDV7: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_UUIDV7_STARTUP_CONFIG,
         CANDIDATE_PG_UUIDV7_LOAD_SQL,
         CANDIDATE_PG_UUIDV7_POST_CREATE_SQL,
     ),
@@ -566,6 +619,7 @@ pub(crate) const CANDIDATE_PG_UUIDV7: Extension = Extension::new(
 const CANDIDATE_PG_VISIBILITY_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_VISIBILITY_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_VISIBILITY_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_VISIBILITY_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_VISIBILITY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -580,6 +634,7 @@ pub(crate) const CANDIDATE_PG_VISIBILITY: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_VISIBILITY_STARTUP_CONFIG,
         CANDIDATE_PG_VISIBILITY_LOAD_SQL,
         CANDIDATE_PG_VISIBILITY_POST_CREATE_SQL,
     ),
@@ -588,6 +643,7 @@ pub(crate) const CANDIDATE_PG_VISIBILITY: Extension = Extension::new(
 const CANDIDATE_PG_WALINSPECT_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PG_WALINSPECT_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PG_WALINSPECT_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PG_WALINSPECT_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PG_WALINSPECT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -602,6 +658,7 @@ pub(crate) const CANDIDATE_PG_WALINSPECT: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PG_WALINSPECT_STARTUP_CONFIG,
         CANDIDATE_PG_WALINSPECT_LOAD_SQL,
         CANDIDATE_PG_WALINSPECT_POST_CREATE_SQL,
     ),
@@ -610,6 +667,7 @@ pub(crate) const CANDIDATE_PG_WALINSPECT: Extension = Extension::new(
 const CANDIDATE_PGCRYPTO_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PGCRYPTO_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PGCRYPTO_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PGCRYPTO_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PGCRYPTO_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PGCRYPTO: Extension = Extension::new(
@@ -623,6 +681,7 @@ pub(crate) const CANDIDATE_PGCRYPTO: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         None,
+        CANDIDATE_PGCRYPTO_STARTUP_CONFIG,
         CANDIDATE_PGCRYPTO_LOAD_SQL,
         CANDIDATE_PGCRYPTO_POST_CREATE_SQL,
     ),
@@ -631,6 +690,7 @@ pub(crate) const CANDIDATE_PGCRYPTO: Extension = Extension::new(
 const CANDIDATE_PGTAP_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_PGTAP_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_PGTAP_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_PGTAP_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_PGTAP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_PGTAP: Extension = Extension::new(
@@ -644,6 +704,7 @@ pub(crate) const CANDIDATE_PGTAP: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_PGTAP_STARTUP_CONFIG,
         CANDIDATE_PGTAP_LOAD_SQL,
         CANDIDATE_PGTAP_POST_CREATE_SQL,
     ),
@@ -652,6 +713,7 @@ pub(crate) const CANDIDATE_PGTAP: Extension = Extension::new(
 const CANDIDATE_POSTGIS_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_POSTGIS_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_POSTGIS_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_POSTGIS_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_POSTGIS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     &[ExtensionNativeModule::new(
         "lib/postgresql/liboliphaunt_postgis_deps.so",
@@ -669,6 +731,7 @@ pub(crate) const CANDIDATE_POSTGIS: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         None,
+        CANDIDATE_POSTGIS_STARTUP_CONFIG,
         CANDIDATE_POSTGIS_LOAD_SQL,
         CANDIDATE_POSTGIS_POST_CREATE_SQL,
     ),
@@ -677,6 +740,7 @@ pub(crate) const CANDIDATE_POSTGIS: Extension = Extension::new(
 const CANDIDATE_SEG_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_SEG_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_SEG_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_SEG_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_SEG_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_SEG: Extension = Extension::new(
@@ -690,6 +754,7 @@ pub(crate) const CANDIDATE_SEG: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_SEG_STARTUP_CONFIG,
         CANDIDATE_SEG_LOAD_SQL,
         CANDIDATE_SEG_POST_CREATE_SQL,
     ),
@@ -698,6 +763,7 @@ pub(crate) const CANDIDATE_SEG: Extension = Extension::new(
 const CANDIDATE_TABLEFUNC_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_TABLEFUNC_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_TABLEFUNC_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_TABLEFUNC_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_TABLEFUNC_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_TABLEFUNC: Extension = Extension::new(
@@ -711,6 +777,7 @@ pub(crate) const CANDIDATE_TABLEFUNC: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_TABLEFUNC_STARTUP_CONFIG,
         CANDIDATE_TABLEFUNC_LOAD_SQL,
         CANDIDATE_TABLEFUNC_POST_CREATE_SQL,
     ),
@@ -719,6 +786,7 @@ pub(crate) const CANDIDATE_TABLEFUNC: Extension = Extension::new(
 const CANDIDATE_TCN_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_TCN_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_TCN_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_TCN_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_TCN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_TCN: Extension = Extension::new(
@@ -732,6 +800,7 @@ pub(crate) const CANDIDATE_TCN: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_TCN_STARTUP_CONFIG,
         CANDIDATE_TCN_LOAD_SQL,
         CANDIDATE_TCN_POST_CREATE_SQL,
     ),
@@ -740,6 +809,7 @@ pub(crate) const CANDIDATE_TCN: Extension = Extension::new(
 const CANDIDATE_TSM_SYSTEM_ROWS_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_TSM_SYSTEM_ROWS_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_TSM_SYSTEM_ROWS_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_TSM_SYSTEM_ROWS_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_TSM_SYSTEM_ROWS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -754,6 +824,7 @@ pub(crate) const CANDIDATE_TSM_SYSTEM_ROWS: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_TSM_SYSTEM_ROWS_STARTUP_CONFIG,
         CANDIDATE_TSM_SYSTEM_ROWS_LOAD_SQL,
         CANDIDATE_TSM_SYSTEM_ROWS_POST_CREATE_SQL,
     ),
@@ -762,6 +833,7 @@ pub(crate) const CANDIDATE_TSM_SYSTEM_ROWS: Extension = Extension::new(
 const CANDIDATE_TSM_SYSTEM_TIME_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_TSM_SYSTEM_TIME_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_TSM_SYSTEM_TIME_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_TSM_SYSTEM_TIME_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_TSM_SYSTEM_TIME_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     EMPTY_NATIVE_MODULES;
 
@@ -776,6 +848,7 @@ pub(crate) const CANDIDATE_TSM_SYSTEM_TIME: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_TSM_SYSTEM_TIME_STARTUP_CONFIG,
         CANDIDATE_TSM_SYSTEM_TIME_LOAD_SQL,
         CANDIDATE_TSM_SYSTEM_TIME_POST_CREATE_SQL,
     ),
@@ -784,6 +857,7 @@ pub(crate) const CANDIDATE_TSM_SYSTEM_TIME: Extension = Extension::new(
 const CANDIDATE_UNACCENT_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_UNACCENT_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_UNACCENT_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_UNACCENT_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_UNACCENT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_UNACCENT: Extension = Extension::new(
@@ -797,6 +871,7 @@ pub(crate) const CANDIDATE_UNACCENT: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_UNACCENT_STARTUP_CONFIG,
         CANDIDATE_UNACCENT_LOAD_SQL,
         CANDIDATE_UNACCENT_POST_CREATE_SQL,
     ),
@@ -805,6 +880,7 @@ pub(crate) const CANDIDATE_UNACCENT: Extension = Extension::new(
 const CANDIDATE_UUID_OSSP_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_UUID_OSSP_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_UUID_OSSP_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_UUID_OSSP_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_UUID_OSSP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_UUID_OSSP: Extension = Extension::new(
@@ -818,6 +894,7 @@ pub(crate) const CANDIDATE_UUID_OSSP: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_UUID_OSSP_STARTUP_CONFIG,
         CANDIDATE_UUID_OSSP_LOAD_SQL,
         CANDIDATE_UUID_OSSP_POST_CREATE_SQL,
     ),
@@ -826,6 +903,7 @@ pub(crate) const CANDIDATE_UUID_OSSP: Extension = Extension::new(
 const CANDIDATE_VECTOR_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_VECTOR_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_VECTOR_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
+const CANDIDATE_VECTOR_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const CANDIDATE_VECTOR_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 pub(crate) const CANDIDATE_VECTOR: Extension = Extension::new(
@@ -839,6 +917,7 @@ pub(crate) const CANDIDATE_VECTOR: Extension = Extension::new(
     ExtensionSetup::new(
         true,
         Some("pg_catalog"),
+        CANDIDATE_VECTOR_STARTUP_CONFIG,
         CANDIDATE_VECTOR_LOAD_SQL,
         CANDIDATE_VECTOR_POST_CREATE_SQL,
     ),

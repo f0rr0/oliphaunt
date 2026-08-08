@@ -413,3 +413,111 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
     /derived file.*package[.]1[.]version/u,
   );
 });
+
+test("binds example Cargo registry pins and runtime metadata to their release product", { timeout: 20_000 }, () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-example-cargo-"));
+  const nativeProduct = "liboliphaunt-native";
+  const nativePath = "src/runtimes/liboliphaunt/native";
+  const brokerProduct = "oliphaunt-broker";
+  const brokerPath = "src/runtimes/broker";
+  const exampleManifest = "examples/tauri/src-tauri/Cargo.toml";
+  const target = "cfg(all(target_os = \"linux\", target_arch = \"x86_64\", target_env = \"gnu\"))";
+
+  const releaseConfig = `${JSON.stringify({
+    packages: {
+      [nativePath]: {
+        "release-type": "simple",
+        component: nativeProduct,
+        "version-file": "VERSION",
+        "changelog-path": "CHANGELOG.md",
+      },
+      [brokerPath]: {
+        "release-type": "simple",
+        component: brokerProduct,
+        "version-file": "VERSION",
+        "changelog-path": "CHANGELOG.md",
+      },
+    },
+  }, null, 2)}\n`;
+  const releaseManifest = (nativeVersion, brokerVersion) => `${JSON.stringify({
+    [nativePath]: nativeVersion,
+    [brokerPath]: brokerVersion,
+  })}\n`;
+  const exampleCargo = ({ carrierVersion, runtimeVersion = carrierVersion, unrelatedVersion = "9.0.0" }) => `[package]
+name = "release-example"
+version = "0.0.0"
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "${runtimeVersion}"
+
+[target.'${target}'.dependencies]
+liboliphaunt-native-linux-x64-gnu = { version = "=${carrierVersion}" }
+unrelated = { version = "${unrelatedVersion}" }
+`;
+
+  git(repo, "init", "-q");
+  git(repo, "config", "user.name", "Release Test");
+  git(repo, "config", "user.email", "release@example.invalid");
+  write(repo, "release-please-config.json", releaseConfig);
+  write(repo, ".release-please-manifest.json", releaseManifest("0.1.0", "0.1.0"));
+  write(repo, `${nativePath}/VERSION`, "0.1.0\n");
+  write(repo, `${nativePath}/CHANGELOG.md`, "# Changelog\n");
+  write(repo, `${brokerPath}/VERSION`, "0.1.0\n");
+  write(repo, `${brokerPath}/CHANGELOG.md`, "# Changelog\n");
+  write(repo, exampleManifest, exampleCargo({ carrierVersion: "0.1.0" }));
+  const base = commit(repo, "feat: introduce registry example fixture");
+
+  const writeNativeRelease = ({
+    carrierVersion = "0.1.1",
+    runtimeVersion = "0.1.1",
+    unrelatedVersion = "9.0.0",
+  } = {}) => {
+    write(repo, ".release-please-manifest.json", releaseManifest("0.1.1", "0.1.0"));
+    write(repo, `${nativePath}/VERSION`, "0.1.1\n");
+    write(repo, `${nativePath}/CHANGELOG.md`, "# Changelog\n\n## 0.1.1 (2026-08-08)\n");
+    write(repo, exampleManifest, exampleCargo({ carrierVersion, runtimeVersion, unrelatedVersion }));
+  };
+
+  writeNativeRelease();
+  const exact = commit(repo, "chore(release): prepare exact registry example release");
+  assert.deepEqual(
+    verifyReleaseCommit({ repo, headRef: exact, products: [nativeProduct] }).products,
+    [nativeProduct],
+  );
+
+  git(repo, "switch", "-q", "-c", "wrong-registry-version", base);
+  writeNativeRelease({ carrierVersion: "0.1.2" });
+  const wrongRegistryVersion = commit(repo, "chore(release): prepare wrong registry example release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: wrongRegistryVersion, products: [nativeProduct] }),
+    /derived file.*liboliphaunt-native-linux-x64-gnu[.]version/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "wrong-runtime-version", base);
+  writeNativeRelease({ runtimeVersion: "0.1.2" });
+  const wrongRuntimeVersion = commit(repo, "chore(release): prepare wrong runtime example release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: wrongRuntimeVersion, products: [nativeProduct] }),
+    /derived file.*runtime-version/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "unrelated-registry-version", base);
+  writeNativeRelease({ unrelatedVersion: "9.0.1" });
+  const unrelatedRegistryVersion = commit(repo, "chore(release): prepare unrelated registry example release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: unrelatedRegistryVersion, products: [nativeProduct] }),
+    /derived file.*unrelated[.]version/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "missing-native-transition", base);
+  write(repo, ".release-please-manifest.json", releaseManifest("0.1.0", "0.1.1"));
+  write(repo, `${brokerPath}/VERSION`, "0.1.1\n");
+  write(repo, `${brokerPath}/CHANGELOG.md`, "# Changelog\n\n## 0.1.1 (2026-08-08)\n");
+  write(repo, exampleManifest, exampleCargo({ carrierVersion: "0.1.1" }));
+  const missingNativeTransition = commit(repo, "chore(release): prepare unrelated product release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: missingNativeTransition, products: [brokerProduct] }),
+    /derived file examples\/tauri\/src-tauri\/Cargo[.]toml contains a non-version semantic change/u,
+  );
+});

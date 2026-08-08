@@ -166,6 +166,9 @@ test("Linux and macOS compile every embedded dynamic module with the boundary en
     sliceBetween(linux, "build_postgis_extension() {", "build_native_extension_artifacts() {"),
   ).toContain('CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs"');
   expect(
+    sliceBetween(linux, "build_embedded_dict_snowball_module() {", "build_embedded_plpgsql_module() {"),
+  ).toContain('CUSTOM_COPT="$postgres_embedded_copt"');
+  expect(
     sliceBetween(linux, "build_embedded_plpgsql_module() {", "copy_embedded_modules_from_dir() {"),
   ).toContain('CUSTOM_COPT="$postgres_embedded_copt"');
 
@@ -191,8 +194,11 @@ test("Linux and macOS compile every embedded dynamic module with the boundary en
   expect(embeddedPgxsBuild).toContain('CFLAGS="$native_cflags"');
   expect(embeddedPgxsBuild).toContain("all");
   expect(
-    sliceBetween(macos, "build_postgis_extension() {", "build_embedded_plpgsql_module() {"),
+    sliceBetween(macos, "build_postgis_extension() {", "build_embedded_dict_snowball_module() {"),
   ).toContain('CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs"');
+  expect(
+    sliceBetween(macos, "build_embedded_dict_snowball_module() {", "build_embedded_plpgsql_module() {"),
+  ).toContain('CFLAGS="$native_cflags"');
   expect(
     sliceBetween(macos, "build_embedded_plpgsql_module() {", "build_native_extension_artifacts() {"),
   ).toContain('CFLAGS="$native_cflags"');

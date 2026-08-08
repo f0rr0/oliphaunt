@@ -23,7 +23,7 @@ pg_freespacemap	pg_freespacemap	contrib	contrib/pg_freespacemap
 pg_hashids	pg_hashids	external	target/oliphaunt-sources/checkouts/pg_hashids
 pg_ivm	pg_ivm	external	target/oliphaunt-sources/checkouts/pg_ivm											createas.c,matview.c,pg_ivm.c,ruleutils.c,subselect.c
 pg_surgery	pg_surgery	contrib	contrib/pg_surgery
-pg_textsearch	pg_textsearch	external	target/oliphaunt-sources/checkouts/pg_textsearch					source:src							src
+pg_textsearch	pg_textsearch	external	target/oliphaunt-sources/checkouts/pg_textsearch					source:src	-DPG_TEXTSEARCH_VERSION="0.6.1"						src
 pg_trgm	pg_trgm	contrib	contrib/pg_trgm
 pg_uuidv7	pg_uuidv7	external	target/oliphaunt-sources/checkouts/pg_uuidv7
 pg_visibility	pg_visibility	contrib	contrib/pg_visibility

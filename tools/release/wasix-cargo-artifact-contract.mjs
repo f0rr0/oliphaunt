@@ -12,9 +12,36 @@ export const TOOLS_PAYLOAD_FILES = [
   "bin/psql.wasix.wasm",
 ];
 
+export const SNOWBALL_STOPWORD_LANGUAGES = [
+  "danish",
+  "dutch",
+  "english",
+  "finnish",
+  "french",
+  "german",
+  "hungarian",
+  "italian",
+  "nepali",
+  "norwegian",
+  "portuguese",
+  "russian",
+  "spanish",
+  "swedish",
+  "turkish",
+];
+
 export const CORE_RUNTIME_ARCHIVE_FILES = [
+  "oliphaunt/bin/oliphaunt",
   "oliphaunt/bin/initdb",
   "oliphaunt/bin/postgres",
+  "oliphaunt/lib/postgresql/dict_snowball.so",
+  "oliphaunt/lib/postgresql/plpgsql.so",
+  "oliphaunt/share/postgresql/extension/plpgsql--1.0.sql",
+  "oliphaunt/share/postgresql/extension/plpgsql.control",
+  "oliphaunt/share/postgresql/snowball_create.sql",
+  ...SNOWBALL_STOPWORD_LANGUAGES.map(
+    (language) => `oliphaunt/share/postgresql/tsearch_data/${language}.stop`,
+  ),
 ];
 
 export const FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = [

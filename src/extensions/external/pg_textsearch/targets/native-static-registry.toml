@@ -4,3 +4,4 @@ status = "supported"
 build_kind = "pgxs-static-registry"
 source_recursive_dirs = ["src"]
 include_dirs = ["source:src"]
+cflags = ['-DPG_TEXTSEARCH_VERSION="0.6.1"']

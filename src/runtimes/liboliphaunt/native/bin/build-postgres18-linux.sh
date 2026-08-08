@@ -616,14 +616,51 @@ configure_source() {
   fi
 }
 
+snowball_runtime_ready() {
+  local module="$install_dir/lib/postgresql/dict_snowball.so"
+  local sql="$install_dir/share/postgresql/snowball_create.sql"
+  [ -s "$module" ] && [ ! -L "$module" ] || return 1
+  [ -s "$sql" ] && [ ! -L "$sql" ] || return 1
+
+  local stopword
+  for stopword in \
+    danish.stop \
+    dutch.stop \
+    english.stop \
+    finnish.stop \
+    french.stop \
+    german.stop \
+    hungarian.stop \
+    italian.stop \
+    nepali.stop \
+    norwegian.stop \
+    portuguese.stop \
+    russian.stop \
+    spanish.stop \
+    swedish.stop \
+    turkish.stop
+  do
+    local file="$install_dir/share/postgresql/tsearch_data/$stopword"
+    [ -s "$file" ] && [ ! -L "$file" ] || return 1
+  done
+}
+
+runtime_configured_with_icu() {
+  [ -x "$install_dir/bin/pg_config" ] || return 1
+  local configure_args
+  configure_args="$("$install_dir/bin/pg_config" --configure 2>/dev/null)" || return 1
+  oliphaunt_text_matches_ere "$configure_args" '--with-icu'
+}
+
 runtime_installed() {
   [ -x "$install_dir/bin/initdb" ] &&
     [ -x "$install_dir/bin/postgres" ] &&
     [ -f "$install_dir/share/postgresql/postgresql.conf.sample" ] &&
+    snowball_runtime_ready &&
     oliphaunt_icu_files_data_ready "$icu_data_dir" &&
     [ -f "$runtime_stamp" ] &&
     [ "$(cat "$runtime_stamp")" = "$(desired_hash)" ] &&
-    "$install_dir/bin/pg_config" --configure 2>/dev/null | rg -q -- "--with-icu" &&
+    runtime_configured_with_icu &&
     { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != "0" ] || base_runtime_optional_extensions_absent; }
 }
 
@@ -642,6 +679,9 @@ explain_runtime_install_state() {
   if [ ! -f "$install_dir/share/postgresql/postgresql.conf.sample" ]; then
     echo "missing runtime file: $install_dir/share/postgresql/postgresql.conf.sample" >&2
   fi
+  if ! snowball_runtime_ready; then
+    echo "missing canonical Snowball runtime module, SQL, or stopword data under $install_dir" >&2
+  fi
   if ! oliphaunt_icu_files_data_ready "$icu_data_dir"; then
     echo "missing native ICU sidecar data files under $icu_data_dir" >&2
   fi
@@ -650,8 +690,7 @@ explain_runtime_install_state() {
   elif [ "$(cat "$runtime_stamp")" != "$wanted" ]; then
     echo "stale runtime stamp: $runtime_stamp" >&2
   fi
-  if [ -x "$install_dir/bin/pg_config" ] &&
-     ! "$install_dir/bin/pg_config" --configure 2>/dev/null | rg -q -- "--with-icu"; then
+  if [ -x "$install_dir/bin/pg_config" ] && ! runtime_configured_with_icu; then
     echo "installed PostgreSQL runtime was not configured with ICU" >&2
     "$install_dir/bin/pg_config" --configure >&2 || true
   fi
@@ -672,7 +711,7 @@ install_runtime() {
   desired_hash > "$runtime_stamp"
   if ! runtime_installed; then
     explain_runtime_install_state
-    tail -120 "$make_log" >&2 || true
+    oliphaunt_tail_log_excerpt "$make_log" >&2 || true
     fail "PostgreSQL Linux runtime install is incomplete; see $make_log"
   fi
 }
@@ -720,7 +759,9 @@ plpgsql_objects_ready() {
   for object in "${plpgsql_objects[@]}"; do
     [ -f "$object" ] || return 1
   done
-  nm -g src/pl/plpgsql/src/pl_handler.o | rg -q "plpgsql_call_handler" || return 1
+  local symbols
+  symbols="$(nm -g src/pl/plpgsql/src/pl_handler.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "plpgsql_call_handler" || return 1
 }
 
 jit_objects_ready() {
@@ -728,7 +769,9 @@ jit_objects_ready() {
   for object in "${jit_objects[@]}"; do
     [ -f "$object" ] || return 1
   done
-  nm -g src/backend/jit/jit.o | rg -q "pg_jit_available" || return 1
+  local symbols
+  symbols="$(nm -g src/backend/jit/jit.o 2>/dev/null)" || return 1
+  oliphaunt_text_has_nm_symbol "$symbols" "pg_jit_available" || return 1
 }
 
 build_backend_objects() {
@@ -749,7 +792,7 @@ build_backend_objects() {
     make -C src/port CC="$cc_string" CUSTOM_COPT="$postgres_embedded_copt" libpgport_srv.a >> "$make_log" 2>&1
     backend_objects_ready || {
       explain_backend_object_state
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       fail "PostgreSQL Linux backend objects are incomplete"
     }
   )
@@ -776,21 +819,26 @@ build_plpgsql_objects() {
       CUSTOM_COPT="$postgres_embedded_copt" \
       pl_comp.o pl_exec.o pl_funcs.o pl_gram.o pl_handler.o pl_scanner.o >> "$make_log" 2>&1
     plpgsql_objects_ready || {
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       fail "PostgreSQL Linux PL/pgSQL objects are incomplete"
     }
   )
 }
 
-module_depends_on_liboliphaunt() {
+module_dynamic_section() {
   local module="$1"
   [ -f "$module" ] || return 1
-  readelf -d "$module" 2>/dev/null |
-    rg -q 'Shared library: \[liboliphaunt\.so\]'
+  readelf -d "$module" 2>/dev/null
+}
+
+module_depends_on_liboliphaunt() {
+  local dynamic_section
+  dynamic_section="$(module_dynamic_section "$1")" || return 1
+  oliphaunt_text_matches_ere "$dynamic_section" 'Shared library: [[]liboliphaunt[.]so[]]'
 }
 
 native_extension_artifacts_ready() {
-  local extension module
+  local extension module installed_dynamic_section embedded_dynamic_section
   for extension in "${required_extension_controls[@]}"; do
     [ -f "$install_dir/share/postgresql/extension/$extension.control" ] || return 1
     compgen -G "$install_dir/share/postgresql/extension/$extension--*.sql" >/dev/null || return 1
@@ -798,9 +846,13 @@ native_extension_artifacts_ready() {
 
   for module in "${required_extension_modules[@]}"; do
     [ -f "$install_dir/lib/postgresql/$module.so" ] || return 1
-    module_depends_on_liboliphaunt "$install_dir/lib/postgresql/$module.so" && return 1
+    installed_dynamic_section="$(module_dynamic_section "$install_dir/lib/postgresql/$module.so")" || return 1
+    if oliphaunt_text_matches_ere "$installed_dynamic_section" 'Shared library: [[]liboliphaunt[.]so[]]'; then
+      return 1
+    fi
     [ -f "$embedded_modules_dir/$module.so" ] || return 1
-    module_depends_on_liboliphaunt "$embedded_modules_dir/$module.so" || return 1
+    embedded_dynamic_section="$(module_dynamic_section "$embedded_modules_dir/$module.so")" || return 1
+    oliphaunt_text_matches_ere "$embedded_dynamic_section" 'Shared library: [[]liboliphaunt[.]so[]]' || return 1
   done
   if native_extensions_include_postgis; then
     [ -f "$install_dir/share/postgresql/proj/proj.db" ] || return 1
@@ -843,23 +895,32 @@ prune_base_runtime_optional_extensions() {
     rm -rf "$embedded_modules_dir"
   fi
   mkdir -p "$embedded_modules_dir"
-  if [ -L "$embedded_modules_dir/plpgsql.so" ] ||
-    { [ -e "$embedded_modules_dir/plpgsql.so" ] && [ ! -f "$embedded_modules_dir/plpgsql.so" ]; }; then
-    rm -rf "$embedded_modules_dir/plpgsql.so"
-  fi
-  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name plpgsql.so -exec rm -rf {} +
+  local core_module
+  for core_module in dict_snowball.so plpgsql.so; do
+    if [ -L "$embedded_modules_dir/$core_module" ] ||
+      { [ -e "$embedded_modules_dir/$core_module" ] && [ ! -f "$embedded_modules_dir/$core_module" ]; }; then
+      rm -rf "$embedded_modules_dir/$core_module"
+    fi
+  done
+  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name dict_snowball.so ! -name plpgsql.so -exec rm -rf {} +
   rm -rf "$install_dir/share/postgresql/contrib" "$install_dir/share/postgresql/proj"
 }
 
 base_embedded_module_closure_ready() {
   [ -d "$embedded_modules_dir" ] || return 1
   [ ! -L "$embedded_modules_dir" ] || return 1
-  [ -f "$embedded_modules_dir/plpgsql.so" ] || return 1
-  [ ! -L "$embedded_modules_dir/plpgsql.so" ] || return 1
+  local core_module
+  for core_module in dict_snowball.so plpgsql.so; do
+    [ -f "$embedded_modules_dir/$core_module" ] || return 1
+    [ ! -L "$embedded_modules_dir/$core_module" ] || return 1
+  done
 
   local entry
   while IFS= read -r -d '' entry; do
-    [ "$(basename "$entry")" = plpgsql.so ] || return 1
+    case "$(basename "$entry")" in
+      dict_snowball.so|plpgsql.so) ;;
+      *) return 1 ;;
+    esac
   done < <(find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
@@ -878,6 +939,32 @@ embedded_plpgsql_module_ready() {
   module_depends_on_liboliphaunt "$embedded_modules_dir/plpgsql.so"
 }
 
+embedded_dict_snowball_module_ready() {
+  module_depends_on_liboliphaunt "$embedded_modules_dir/dict_snowball.so"
+}
+
+build_embedded_dict_snowball_module() {
+  (
+    cd "$build_dir"
+    if embedded_dict_snowball_module_ready; then
+      echo "reusing PostgreSQL $target_id embedded Snowball dictionary module" >&2
+      return
+    fi
+    make -C src/backend/snowball clean >> "$make_log" 2>&1
+    make -C src/backend/snowball \
+      CC="$cc_string" \
+      CUSTOM_COPT="$postgres_embedded_copt" \
+      BE_DLLLIBS="$embedded_module_be_dllibs" \
+      all >> "$make_log" 2>&1
+    mkdir -p "$embedded_modules_dir"
+    cp -p src/backend/snowball/dict_snowball.so "$embedded_modules_dir/dict_snowball.so"
+    embedded_dict_snowball_module_ready || {
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
+      fail "PostgreSQL Linux embedded Snowball dictionary module is not linked against liboliphaunt"
+    }
+  )
+}
+
 build_embedded_plpgsql_module() {
   (
     cd "$build_dir"
@@ -894,7 +981,7 @@ build_embedded_plpgsql_module() {
     mkdir -p "$embedded_modules_dir"
     cp -p src/pl/plpgsql/src/plpgsql.so "$embedded_modules_dir/plpgsql.so"
     embedded_plpgsql_module_ready || {
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       fail "PostgreSQL Linux embedded PL/pgSQL module is not linked against liboliphaunt"
     }
   )
@@ -1482,7 +1569,7 @@ build_native_extension_artifacts() {
     fi
   done
   native_extension_artifacts_ready || {
-    tail -160 "$make_log" >&2 || true
+    oliphaunt_tail_log_excerpt "$make_log" 60 >&2 || true
     fail "Linux $target_id native extension build did not produce required artifacts"
   }
   extension_build_fingerprint > "$extension_build_stamp"
@@ -1497,7 +1584,7 @@ build_jit_objects() {
     fi
     make -C src/backend/jit CC="$cc_string" CUSTOM_COPT="$postgres_embedded_copt" jit.o >> "$make_log" 2>&1
     jit_objects_ready || {
-      tail -120 "$make_log" >&2 || true
+      oliphaunt_tail_log_excerpt "$make_log" >&2 || true
       fail "PostgreSQL Linux JIT stub objects are incomplete"
     }
   )
@@ -1549,6 +1636,7 @@ link_liboliphaunt() {
 
 artifact_ready() {
   [ -f "$lib_out" ] || return 1
+  embedded_dict_snowball_module_ready || return 1
   embedded_plpgsql_module_ready || return 1
   { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != "0" ] || base_embedded_module_closure_ready; } || return 1
   oliphaunt_icu_artifacts_ready "$icu_prefix" || return 1
@@ -1610,6 +1698,7 @@ case "$script_mode" in
     build_liboliphaunt_objects
     write_objects_response_file
     link_liboliphaunt
+    build_embedded_dict_snowball_module
     build_embedded_plpgsql_module
     build_native_extension_artifacts
     artifact_ready || fail "Linux liboliphaunt shared library did not pass export checks"

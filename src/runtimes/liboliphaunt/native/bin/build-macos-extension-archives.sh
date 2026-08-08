@@ -180,6 +180,7 @@ desired_hash() {
     printf 'dependencies=%s\n' "$(selected_dependencies | paste -sd ',' -)"
     printf 'postgis_source_date_epoch=%s\n' "$(oliphaunt_postgis_reproducible_epoch)"
     shasum -a 256 "$script_path" "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
+    shasum -a 256 "$(oliphaunt_mobile_static_specs_tsv)"
     shasum -a 256 \
       "$repo_root/src/extensions/external/postgis/tools/reproducible-time.sh" \
       "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"

@@ -124,7 +124,19 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "57ad442a50cf492ec6824fc336d730648be8de54b724331bce6a6392eea694d2"
+          "sha256": "75a037a255473f83fd6d2bb927ad426add98aded6d350b8fb8c46b1a1f84aadc"
+        }
+      ]
+    },
+    {
+      "id": "native-icu-npm-carrier-producer",
+      "paths": [
+        "tools/release/icu-npm-carrier-contract.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/icu-npm-carrier-contract.mjs",
+          "sha256": "2c1dbfaff27cbd86959ae891334fc3893a022bb23732c81832037381109ec21d"
         }
       ]
     },
@@ -232,11 +244,11 @@
       "inputs": [
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh",
-          "sha256": "387ca9f406c7df03cdaf3a0ea5cf6993a5430be5f38e2472b5030601b73063fc"
+          "sha256": "619dd5bab5b8bb6cb53cd44cc36bcba0f5e026d58c2875f9b3ac8e6cca8c61e2"
         },
         {
           "path": "tools/release/optimize_native_runtime_payload.mjs",
-          "sha256": "89d6bd4a7908909643ab425b17578e6a8df59bc73aecc645dc0912eb4fd32b72"
+          "sha256": "2d26d78cb4edb3392162b36df72c9d9c7285dbe0ad377b228f916645e3204543"
         },
         {
           "path": "tools/release/package-liboliphaunt-aggregate-assets.sh",
@@ -248,11 +260,11 @@
         },
         {
           "path": "tools/release/package-liboliphaunt-linux-assets.sh",
-          "sha256": "2ebae29ecd542e2f9355f99c1d7459ec1c3b0fc28e269fd2849f4cb3b4ba869c"
+          "sha256": "ad2f245d8b819d54d8c19987eea1306a89c46b75c566b55fd6da59b77244aa79"
         },
         {
           "path": "tools/release/package-liboliphaunt-macos-assets.sh",
-          "sha256": "4fe9b19f0db9d7089f079d339c4b2a12f154518258d70f73d5fa190f0d33d96d"
+          "sha256": "b2f5114a043899f3068daa8649a0e63938cc6e0652ac127478dd96a2b181c95f"
         },
         {
           "path": "tools/release/package-liboliphaunt-mobile-assets.sh",
@@ -260,7 +272,7 @@
         },
         {
           "path": "tools/release/package-liboliphaunt-windows-assets.ps1",
-          "sha256": "a941352065fffbb44809cf7c9420039b7c66de06f954c444ff9c510241480609"
+          "sha256": "c8f892ac8e0899a978f4f895a3f87464111a3865415338e40e04d97a01794735"
         }
       ]
     },
@@ -307,7 +319,7 @@
         },
         {
           "path": "src/sdks/rust/src/generated/extensions.rs",
-          "sha256": "fb185dd07d7bc4cb7114bdd7314ec755ee235b5a9b2eb8f5ae46547bccce0071"
+          "sha256": "d68a58370ffd30d3c9082f7a90c25de29386fc22f4fa9e58540b76fefd5e5c2d"
         },
         {
           "path": "src/sdks/rust/src/lib.rs",
@@ -327,7 +339,7 @@
         },
         {
           "path": "src/sdks/rust/src/liboliphaunt/root/extensions.rs",
-          "sha256": "c789ad9b4c07afd295c5f2b9f12761208c1c4c6180599c888cba6500e4f03183"
+          "sha256": "7c00ef165b6261e051fdb3396a13d9338862d7f09ab093dff8b777013dda909b"
         },
         {
           "path": "src/sdks/rust/src/liboliphaunt/root/files.rs",
@@ -445,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "c300d3b58fa8e8a6e31f742440ad5279a644b27caf70719f972b6227baf27ca0"
+  "sha256": "6cc6ea700410e04fed6b28ef076a02133ad59439bf5d2ff9a2bb2ff4384f0400"
 }

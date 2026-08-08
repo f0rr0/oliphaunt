@@ -842,10 +842,12 @@
         "create-schema": "pg_catalog",
         "load-sql": [],
         "post-create-sql": [],
-        "startup-config": [],
-        "preload-required": false,
-        "restart-required": false,
-        "shared-memory-required": false
+        "startup-config": [
+          "shared_preload_libraries=pg_textsearch"
+        ],
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true
       },
       "smoke": {
         "direct": "passed",

@@ -782,10 +782,10 @@
       "mobile-release-ready": true,
       "native-dependencies": [],
       "packaged": true,
-      "preload-required": false,
+      "preload-required": true,
       "promoted": true,
       "public": true,
-      "restart-required": false,
+      "restart-required": true,
       "smoke": {
         "direct": "passed",
         "dump-restore": "passed",
@@ -814,7 +814,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "0.5.1"
+      "version": "0.6.1"
     },
     {
       "activation": "CREATE EXTENSION",

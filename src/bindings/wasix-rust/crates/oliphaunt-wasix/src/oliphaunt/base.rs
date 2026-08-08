@@ -1324,14 +1324,14 @@ fn build_extension_pgdata_template_staging(
         runtime_layout,
         preinstalled_extensions: Vec::new(),
     };
-    let mut db = Oliphaunt::new_prepared_with_config(
+    install_missing_extension_archives(&outcome, extensions)?;
+    let mut db = Oliphaunt::new_prepared_with_config_and_extension_preload(
         outcome,
         postgres_config.clone(),
         StartupConfig::default(),
+        extensions,
     )?;
-    for extension in extensions {
-        db.enable_extension(*extension)?;
-    }
+    db.enable_startup_extensions(extensions)?;
     db.exec("CHECKPOINT", None)
         .context("checkpoint extension PGDATA template")?;
     db.close_for_template_cache()

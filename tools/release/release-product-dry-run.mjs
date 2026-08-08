@@ -49,6 +49,7 @@ import {
   validateWasixExtensionArtifactInventory,
 } from "./wasix-extension-cargo-artifact-inventory.mjs";
 import {
+  requiredCoreRuntimePaths,
   requiredRuntimeMemberPaths,
   requiredToolsMemberPaths,
   requiredToolsPackageTools,
@@ -71,7 +72,18 @@ import {
   brokerDependencyLicenseMembers,
   normalizeBrokerDependencyLicenseModes,
 } from "./broker-dependency-license-contract.mjs";
+import {
+  ICU_DATA_RELATIVE_PATH,
+  ICU_PODSPEC,
+  ICU_REACT_NATIVE_CONFIG,
+  assertIcuPackedDataMatchesSource,
+  assertIcuPackageManifest,
+  assertIcuPodspec,
+  assertIcuReactNativeConfig,
+  assertPackedIcuCarrier,
+} from "./icu-npm-carrier-contract.mjs";
 import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -852,13 +864,14 @@ function liboliphauntToolsNpmPackageTargets(version) {
   });
 }
 
-function embeddedCoreModuleMember(target, prefix) {
-  const filename = target === "windows-x64-msvc"
-    ? "plpgsql.dll"
+function embeddedCoreModuleMembers(target, prefix) {
+  const suffix = target === "windows-x64-msvc"
+    ? ".dll"
     : target === "macos-arm64"
-      ? "plpgsql.dylib"
-      : "plpgsql.so";
-  return `${prefix.replace(/\/+$/u, "")}/${filename}`;
+      ? ".dylib"
+      : ".so";
+  const normalizedPrefix = prefix.replace(/\/+$/u, "");
+  return ["dict_snowball", "plpgsql"].map((stem) => `${normalizedPrefix}/${stem}${suffix}`);
 }
 
 export function stageWindowsVcRuntimeMembers(
@@ -955,37 +968,55 @@ function stageLiboliphauntIcuNpmPayload(version) {
     LIBOLIPHAUNT_ICU_PACKAGE_ROOT,
     version,
     {
-      extraDescriptors: ["OliphauntICU.podspec"],
+      extraDescriptors: [ICU_PODSPEC, ICU_REACT_NATIVE_CONFIG],
       target: "portable",
     },
   );
   extractReleaseArchiveTree(
     path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
     "share/icu",
-    path.join(stage, "share/icu"),
+    path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/")),
   );
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
+  try {
+    assertIcuPackageManifest(
+      JSON.parse(readFileSync(path.join(stage, "package.json"), "utf8")),
+      `${rel(stage)} package.json`,
+    );
+    assertIcuReactNativeConfig(
+      readFileSync(path.join(stage, ICU_REACT_NATIVE_CONFIG)),
+      `${rel(stage)} ${ICU_REACT_NATIVE_CONFIG}`,
+    );
+    assertIcuPodspec(
+      readFileSync(path.join(stage, ICU_PODSPEC)),
+      `${rel(stage)} ${ICU_PODSPEC}`,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   return stage;
 }
 
-function validatePackedIcuPackage(packageName, version, tarball) {
+function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) {
   let entries;
+  let sourceEntries;
   try {
-    entries = readTarGzEntries(tarball);
+    entries = readPortableArchiveEntries(tarball);
+    sourceEntries = readPortableArchiveEntries(sourceArchive);
   } catch (error) {
-    fail(`${rel(tarball)} is not a valid ICU npm tarball: ${error.message}`);
+    fail(`ICU carrier archives are invalid: ${error.message}`);
   }
   if (!entries.has("package/package.json")) {
     fail(`${rel(tarball)} is missing package/package.json`);
   }
   let packageJson;
   try {
-    const packageData = readTarGzMember(tarball, "package/package.json");
-    if (packageData === null) {
+    const packageData = entries.get("package/package.json")?.data();
+    if (packageData === undefined) {
       fail(`${rel(tarball)} package/package.json could not be read`);
     }
-    packageJson = JSON.parse(packageData.toString("utf8"));
+    packageJson = JSON.parse(Buffer.from(packageData).toString("utf8"));
   } catch (error) {
     fail(`${rel(tarball)} package/package.json is not valid JSON: ${error.message}`);
   }
@@ -995,27 +1026,24 @@ function validatePackedIcuPackage(packageName, version, tarball) {
   if (packageJson.version !== version) {
     fail(`${rel(tarball)} package version must be ${version}, got ${JSON.stringify(packageJson.version)}`);
   }
-  const metadata = packageJson.oliphaunt;
-  if (
-    metadata?.product !== "oliphaunt-icu" ||
-    metadata?.kind !== "icu-data" ||
-    metadata?.target !== "portable" ||
-    metadata?.dataRelativePath !== "share/icu"
-  ) {
-    fail(`${rel(tarball)} package.json must declare portable oliphaunt-icu metadata`);
-  }
-  if (!entries.has("package/OliphauntICU.podspec")) {
-    fail(`${rel(tarball)} is missing package/OliphauntICU.podspec`);
-  }
-  const hasIcuData = [...entries.keys()].some((member) => {
-    if (!member.startsWith("package/share/icu/")) {
-      return false;
-    }
-    const relative = member.slice("package/share/icu/".length).split("/").filter(Boolean);
-    return relative.length > 0 && relative[0].startsWith("icudt");
-  });
-  if (!hasIcuData) {
-    fail(`${rel(tarball)} is missing package/share/icu/icudt* data files`);
+  try {
+    assertPackedIcuCarrier({
+      entries: [...entries].map(([name, entry]) => ({ name, isFile: entry.isFile })),
+      packageJson,
+      packedConfig: entries.get(`package/${ICU_REACT_NATIVE_CONFIG}`)?.data(),
+      packedPodspec: entries.get(`package/${ICU_PODSPEC}`)?.data(),
+      sourceConfig: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_REACT_NATIVE_CONFIG)),
+      sourcePodspec: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_PODSPEC)),
+      label: rel(tarball),
+    });
+    assertIcuPackedDataMatchesSource({
+      packedEntries: entries,
+      sourceEntries,
+      label: rel(tarball),
+      sourceLabel: rel(sourceArchive),
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   assertReleaseNoticesInArchive(tarball, { profile: "native-icu-data", prefix: "package" });
 }
@@ -1028,10 +1056,14 @@ export function liboliphauntNpmTarballs(version) {
     const payload = runtimeStages.get(packageName);
     const libraryRelativePath = target.libraryRelativePath ?? target.library_relative_path;
     const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
+    const coreRuntimeMembers = requiredCoreRuntimePaths(target.target).map(
+      (member) => `package/runtime/${member}`,
+    );
     const requiredMembers = [
       `package/${libraryRelativePath}`,
-      embeddedCoreModuleMember(target.target, "package/lib/modules"),
+      ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
+      ...coreRuntimeMembers,
       ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
       ...releaseNoticeRows({ profile: "native-runtime" }).map((row) => `package/${row.member}`),
     ];
@@ -1066,7 +1098,12 @@ export function liboliphauntNpmTarballs(version) {
   }
   const icuStage = stageLiboliphauntIcuNpmPayload(version);
   const icuTarball = pnpmPackForNpmPublish(icuStage);
-  validatePackedIcuPackage(LIBOLIPHAUNT_ICU_PACKAGE_NAME, version, icuTarball);
+  validatePackedIcuPackage(
+    LIBOLIPHAUNT_ICU_PACKAGE_NAME,
+    version,
+    icuTarball,
+    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
+  );
   packages.push([LIBOLIPHAUNT_ICU_PACKAGE_NAME, icuTarball]);
   return packages;
 }

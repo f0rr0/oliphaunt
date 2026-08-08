@@ -452,10 +452,12 @@
         "create-schema": "pg_catalog",
         "load-sql": [],
         "post-create-sql": [],
-        "preload-required": false,
-        "restart-required": false,
-        "shared-memory-required": false,
-        "startup-config": []
+        "preload-required": true,
+        "restart-required": true,
+        "shared-memory-required": true,
+        "startup-config": [
+          "shared_preload_libraries=pg_textsearch"
+        ]
       },
       "load-order": [],
       "native-module-file": "pg_textsearch.so",

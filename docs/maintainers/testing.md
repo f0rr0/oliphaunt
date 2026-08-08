@@ -378,8 +378,11 @@ fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-When an extension has bundled dependencies, prefer the builder path over
-post-open `enable_extension(...)`.
+Use the builder path for extension tests by default. It resolves bundled
+dependencies before startup. It is mandatory when generated lifecycle metadata
+declares startup configuration or preload requirements; post-open
+`enable_extension(...)` intentionally rejects those extensions because the
+running backend cannot safely acquire startup-only state.
 
 ## Snapshot Setup
 
