@@ -80,13 +80,19 @@ profiles = ["native-desktop-v1"]
   return { product, reason, root };
 }
 
-test("the live tree has no publication blockers and keeps the legal gate active", () => {
+test("the live tree keeps deferred PGMQ out of publication and the legal gate active", () => {
   assert.match(
     readFileSync("tools/release/release-metadata-check.mjs", "utf8"),
     /check-extension-publication-legal-clearance[.]mjs/u,
   );
-  assert.deepEqual(extensionQualificationCandidates(), []);
-  assert.deepEqual(declaredExtensionPublicationBlockers(), []);
+  assert.deepEqual(
+    extensionQualificationCandidates().map(({ sqlName }) => sqlName),
+    ["pgmq"],
+  );
+  assert.deepEqual(
+    declaredExtensionPublicationBlockers().map(({ product }) => product),
+    ["oliphaunt-extension-pgmq"],
+  );
   assert.deepEqual(activeBlockedExtensionPublications(), []);
   assert.doesNotThrow(() => assertExtensionPublicationLegalClearance());
 
@@ -94,7 +100,7 @@ test("the live tree has no publication blockers and keeps the legal gate active"
     "tools/release/check-extension-publication-legal-clearance.mjs",
   ], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /validated 0 deferred blocker[(]s[)]; 0 active blocked publications/u);
+  assert.match(result.stdout, /validated 1 deferred blocker[(]s[)]; 0 active blocked publications/u);
 });
 
 test("the legal gate validates a dormant fixture blocker and fails closed if it becomes active", (t) => {

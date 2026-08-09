@@ -1166,6 +1166,18 @@ fn validate_catalog(catalog: &ExtensionCatalog) -> Result<()> {
             "duplicate SQL extension name {}",
             extension.sql_name
         );
+        if let Some(source_path) = extension.upstream_import_path.as_deref() {
+            let source_path = Path::new(source_path);
+            ensure!(
+                !source_path.as_os_str().is_empty()
+                    && !source_path.is_absolute()
+                    && source_path
+                        .components()
+                        .all(|component| matches!(component, std::path::Component::Normal(_))),
+                "{} upstream-import-path must be a non-empty normalized relative path",
+                extension.id
+            );
+        }
         ensure!(
             !extension.promotion.promoted || extension.promotion.stable,
             "{} cannot be promoted without stable=true",
@@ -1459,7 +1471,27 @@ fn build_kind(
 }
 
 fn extension_source_dir(extension: &ExtensionCatalogEntry) -> String {
-    extension_source_dir_for(&extension.id, &extension.source_kind)
+    extension_source_dir_with_import_path(
+        &extension.id,
+        &extension.source_kind,
+        extension.upstream_import_path.as_deref(),
+    )
+}
+
+fn extension_source_dir_with_import_path(
+    extension_id: &str,
+    source_kind: &str,
+    upstream_import_path: Option<&str>,
+) -> String {
+    let root = extension_source_dir_for(extension_id, source_kind);
+    upstream_import_path
+        .map(|source_path| {
+            Path::new(&root)
+                .join(source_path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .unwrap_or(root)
 }
 
 fn pgxs_make_args(extension: &ExtensionCatalogEntry) -> Vec<String> {
@@ -1894,6 +1926,18 @@ mod tests {
             windows_checkout,
             expected
         ));
+    }
+
+    #[test]
+    fn external_source_dir_supports_a_nested_upstream_extension_root() {
+        assert_eq!(
+            extension_source_dir_with_import_path(
+                "pgmq",
+                "oliphaunt-other-extension",
+                Some("pgmq-extension"),
+            ),
+            "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension"
+        );
     }
 
     #[test]

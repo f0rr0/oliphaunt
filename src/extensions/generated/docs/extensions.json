@@ -980,6 +980,52 @@
     },
     {
       "activation": "CREATE EXTENSION",
+      "archive": "extensions/pgmq.tar.zst",
+      "blocker": "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.",
+      "dependencies": [],
+      "desktop-release-ready": false,
+      "display-name": "PGMQ",
+      "family": "External PGXS",
+      "id": "pgmq",
+      "mobile-release-ready": false,
+      "native-dependencies": [],
+      "packaged": false,
+      "preload-required": false,
+      "promoted": false,
+      "public": false,
+      "restart-required": false,
+      "smoke": {
+        "direct": "not-run",
+        "dump-restore": "not-run",
+        "restart": "not-run",
+        "server": "not-run"
+      },
+      "sql-name": "pgmq",
+      "stable": false,
+      "support": {
+        "mobile": {
+          "android": "unsupported",
+          "ios": "unsupported"
+        },
+        "native": {
+          "broker": "candidate",
+          "direct": "candidate",
+          "server": "candidate"
+        },
+        "wasix": {
+          "direct": "candidate",
+          "server": "candidate"
+        }
+      },
+      "target-status": {
+        "mobile": "unsupported",
+        "native": "candidate",
+        "wasix": "candidate"
+      },
+      "version": "1.12.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
       "archive": "extensions/pgtap.tar.zst",
       "blocker": "",
       "dependencies": [

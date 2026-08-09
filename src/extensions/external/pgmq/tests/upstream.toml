@@ -1,0 +1,6 @@
+schema = "oliphaunt-extension-upstream-tests-v1"
+runner = "pgxs-installcheck"
+status = "candidate"
+reason = "PGMQ's upstream regression and isolation suites remain qualification inputs; they must pass in the exact native and WASIX candidate jobs before publication."
+included_suites = ["pgmq"]
+excluded_suites = []

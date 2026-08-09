@@ -777,6 +777,11 @@ def validate_pg_textsearch_mobile_version_flag() -> None:
 
 
 def validate_external_source_pins(build_by_sql_name: dict[str, dict], source_names: set[str]) -> None:
+    source_catalog_by_sql_name = {
+        row.get("sql-name", row.get("id")): row
+        for row in read_json(SOURCE_CATALOG).get("extensions", [])
+        if isinstance(row, dict)
+    }
     for source_path in sorted(EXTERNAL_ROOT.glob("*/source.toml")):
         extension_dir = source_path.parent
         sql_name = validate_sql_name(extension_dir.name, f"{rel(source_path)} directory")
@@ -790,6 +795,10 @@ def validate_external_source_pins(build_by_sql_name: dict[str, dict], source_nam
         generated_source_dir = generated.get("source-dir")
         if isinstance(generated_source_dir, str) and generated_source_dir:
             expected_checkout = f"target/oliphaunt-sources/checkouts/{name}"
+            source_catalog_row = source_catalog_by_sql_name.get(sql_name) or {}
+            upstream_import_path = source_catalog_row.get("upstream-import-path")
+            if isinstance(upstream_import_path, str) and upstream_import_path:
+                expected_checkout = f"{expected_checkout}/{upstream_import_path}"
             if generated_source_dir != expected_checkout:
                 fail(
                     f"{rel(source_path)} source name {name!r} implies checkout "

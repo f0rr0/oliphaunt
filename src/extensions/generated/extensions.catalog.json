@@ -1659,6 +1659,62 @@
       "notes": []
     },
     {
+      "id": "pgmq",
+      "sql-name": "pgmq",
+      "rust-constant": "PGMQ",
+      "display-name": "PGMQ",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pgmq",
+      "upstream-import-path": "pgmq-extension",
+      "package-export": "./pgmq",
+      "tags": [
+        "postgres extension",
+        "qualification candidate"
+      ],
+      "control-file": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension/pgmq.control",
+      "control": {
+        "default-version": "1.12.0",
+        "module-pathname": "$libdir/pgmq",
+        "requires": [],
+        "relocatable": "false",
+        "schema": "pgmq"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "not-run",
+        "server": "not-run",
+        "restart": "not-run",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "src/extensions/external/pgmq/tests/smoke.sql"
+      ],
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": false,
+        "promoted": false,
+        "stable": false,
+        "archive": "extensions/pgmq.tar.zst",
+        "blocker": "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+      },
+      "notes": [
+        "promotion blocker: PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+      ]
+    },
+    {
       "id": "pgtap",
       "sql-name": "pgtap",
       "rust-constant": "PGTAP",

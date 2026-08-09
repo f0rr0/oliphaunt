@@ -1,0 +1,6 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "sql-only"
+status = "unsupported"
+dependencies = []
+module_files = []
+data_files = []

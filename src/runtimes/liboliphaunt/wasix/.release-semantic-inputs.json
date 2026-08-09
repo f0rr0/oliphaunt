@@ -166,7 +166,7 @@
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
-          "sha256": "c67f61826704e8ff71265af85f8552b1a134fba1252b46921d10dea6d51e854a"
+          "sha256": "1c0b472c2103246843becd05400907ead9081fc8740ae34c15fef9a502503e62"
         },
         {
           "path": "tools/xtask/src/fs_utils.rs",
@@ -212,19 +212,19 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "1b9ae33dc2ca239985c4cd5c1571e2669f2ea905acf45b6d81e4e31261e7f7bb"
+          "sha256": "06d258c1d288f73637f6f2874c087060f344c3c9fd58c201a540c9569009956a"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "e0741112aeb1d1a187ba3fda06a06302026048eceef08b389f2e55a94343cd69"
+          "sha256": "7a5483e122cf6726518b9e3c3ee5739d8990392564803424796332eaa8da2d22"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
-          "sha256": "24dceceb89d3f91da6c66bc309c4767408b71908bafd32027d784b2a5f975ca5"
+          "sha256": "0e03beee22c5ea838e65875bfceb9854c01e188b7680c310c4eab3cedb4bd058"
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "79ba39ba702d247fd975089cc812fbb4c3624ebd325f0fe1f6255dd575efddb7"
+          "sha256": "44b9675dc56796564dd82e6c61d9870e89ab4429a4e7ee84259c13da086da0da"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
@@ -236,7 +236,7 @@
         },
         {
           "path": "src/extensions/generated/pgxs-build.tsv",
-          "sha256": "89e3dedea42a4921cea9a180138cc0092808718ed6cc55e66858b074e005c29b"
+          "sha256": "486c94c8eb0c71ff59941eaa39f3806dd4d5ba7375044685402c23d046ac94aa"
         },
         {
           "path": "src/extensions/generated/sdk/js.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "763a5c1635efc9c5275c839eb4870379d19077cb6426f89cc690e9ae1890bbad"
+  "sha256": "7299ee177aeae9a95374981715177c695221caad83b3246b33281b126764a4f6"
 }

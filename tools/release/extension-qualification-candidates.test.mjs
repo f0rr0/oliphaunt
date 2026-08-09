@@ -22,6 +22,7 @@ import {
 import { loadPublicationCatalog } from "./publication-catalog.mjs";
 
 const POSTGIS_PRODUCT = "oliphaunt-extension-postgis";
+const PGMQ_BLOCKER = "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.";
 const NATIVE_TARGETS = [
   "android-arm64-v8a",
   "android-x86_64",
@@ -104,8 +105,21 @@ profiles = ["native-desktop-v1", "native-mobile-v1", "wasix-portable-v1"]
   return { blocker, root };
 }
 
-test("the live tree has no deferred qualification candidates", () => {
-  assert.deepEqual(extensionQualificationCandidates(), []);
+test("the live tree exposes only the exact deferred PGMQ qualification candidate", () => {
+  assert.deepEqual(extensionQualificationCandidates(), [
+    {
+      schema: "oliphaunt-extension-qualification-candidate-v1",
+      extensionId: "pgmq",
+      sqlName: "pgmq",
+      sourceName: "pgmq",
+      sourceVersion: "1.12.0",
+      sourceCommit: "08ace4087dbf00e51704c5a3d9df2e15fd566127",
+      requested: true,
+      stable: false,
+      blocker: PGMQ_BLOCKER,
+      targetProfiles: ["native-desktop-v1", "wasix-portable-v1"],
+    },
+  ]);
   const qualificationRows = readFileSync(
     "src/extensions/generated/mobile/qualification-static-extensions.tsv",
     "utf8",
@@ -281,11 +295,18 @@ test("deferred catalog dependencies retain the exact qualified closure without e
   );
 });
 
-test("keeps live build matrices candidate-free and PostGIS public", () => {
+test("keeps PGMQ target-scoped in live build matrices and PostGIS public", () => {
   const native = extensionArtifactsNativeMatrix().include;
   assert.deepEqual(native.map(({ target }) => target), NATIVE_TARGETS);
   for (const row of native) {
-    assert.deepEqual(csv(row.qualification_sql_names_csv), []);
+    assert.deepEqual(
+      csv(row.qualification_sql_names_csv),
+      row.target === "android-arm64-v8a"
+        || row.target === "android-x86_64"
+        || row.target === "ios-xcframework"
+        ? []
+        : ["pgmq"],
+    );
     assert.equal(csv(row.sql_names_csv).length, 39);
     assert.equal(csv(row.sql_names_csv).includes("postgis"), true);
     assert.equal(csv(row.extensions_csv).includes(POSTGIS_PRODUCT), true);
@@ -294,7 +315,7 @@ test("keeps live build matrices candidate-free and PostGIS public", () => {
   const wasix = extensionArtifactsWasixMatrix().include;
   assert.equal(wasix.length, 1);
   assert.equal(wasix[0].target, "wasix-portable");
-  assert.deepEqual(csv(wasix[0].qualification_sql_names_csv), []);
+  assert.deepEqual(csv(wasix[0].qualification_sql_names_csv), ["pgmq"]);
   assert.equal(csv(wasix[0].sql_names_csv).length, 39);
   assert.equal(csv(wasix[0].sql_names_csv).includes("postgis"), true);
   assert.equal(csv(wasix[0].extensions_csv).includes(POSTGIS_PRODUCT), true);
