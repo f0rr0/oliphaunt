@@ -7,7 +7,7 @@
       "kind": "git",
       "url": "https://github.com/timescale/pg_textsearch.git",
       "branch": "pinned",
-      "commit": "07936f7cd67f7a183659d3acd459c0a5efc93756"
+      "commit": "578ff529894992fb9e67cae4c69424e65c84868e"
     }
   ],
   "extension": {
@@ -19,7 +19,7 @@
         "destination": "share/licenses/pg_textsearch/LICENSE",
         "role": "license",
         "spdx": "PostgreSQL",
-        "license_url": "https://github.com/timescale/pg_textsearch/blob/07936f7cd67f7a183659d3acd459c0a5efc93756/LICENSE",
+        "license_url": "https://github.com/timescale/pg_textsearch/blob/578ff529894992fb9e67cae4c69424e65c84868e/LICENSE",
         "sha256": "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5"
       },
       {
@@ -28,7 +28,7 @@
         "destination": "share/licenses/pg_textsearch/NOTICE",
         "role": "notice",
         "spdx": "PostgreSQL",
-        "license_url": "https://github.com/timescale/pg_textsearch/blob/07936f7cd67f7a183659d3acd459c0a5efc93756/NOTICE",
+        "license_url": "https://github.com/timescale/pg_textsearch/blob/578ff529894992fb9e67cae4c69424e65c84868e/NOTICE",
         "sha256": "ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d"
       }
     ]

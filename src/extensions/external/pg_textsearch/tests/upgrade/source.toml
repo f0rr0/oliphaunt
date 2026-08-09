@@ -1,0 +1,4 @@
+name = "pg_textsearch_upgrade_0_6_1"
+url = "https://github.com/timescale/pg_textsearch.git"
+branch = "v0.6.1"
+commit = "07936f7cd67f7a183659d3acd459c0a5efc93756"

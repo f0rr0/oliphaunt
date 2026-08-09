@@ -2011,51 +2011,49 @@ function Get-PgTextsearchMakefileList([string]$ExtensionDir, [string]$Variable) 
         Fail "pg_textsearch checkout is missing its authoritative Makefile: $makefile"
     }
 
-    $values = New-Object System.Collections.Generic.List[string]
-    $found = $false
-    $collecting = $false
-    $variablePattern = "^$([regex]::Escape($Variable))\s*=\s*(.*)$"
-    foreach ($line in Get-Content -Path $makefile) {
-        $fragment = $null
-        if (-not $collecting) {
-            if ($line -notmatch $variablePattern) {
-                continue
-            }
-            $found = $true
-            $collecting = $true
-            $fragment = $Matches[1].Trim()
-        } else {
-            $fragment = $line.Trim()
-        }
-
-        $continues = $fragment.EndsWith("\")
-        if ($continues) {
-            $fragment = $fragment.Substring(0, $fragment.Length - 1).TrimEnd()
-        }
-        if ($fragment) {
-            foreach ($value in ($fragment -split "\s+")) {
-                if ($value) {
-                    $values.Add($value) | Out-Null
-                }
-            }
-        }
-        if (-not $continues) {
-            break
+    $lines = @(Get-Content -Path $makefile)
+    $assignmentPattern = "^\s*$([regex]::Escape($Variable))\s*=\s*(.*)$"
+    $assignmentIndexes = @()
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match $assignmentPattern) {
+            $assignmentIndexes += $index
         }
     }
-
-    if (-not $found) {
-        Fail "pg_textsearch Makefile is missing its $Variable assignment"
+    if ($assignmentIndexes.Count -ne 1) {
+        Fail "pg_textsearch Makefile must assign $Variable exactly once; found $($assignmentIndexes.Count)"
     }
-    @($values)
+
+    $index = $assignmentIndexes[0]
+    [void]($lines[$index] -match $assignmentPattern)
+    $fragments = @($Matches[1])
+    while ($fragments[-1].TrimEnd().EndsWith("\")) {
+        $trimmed = $fragments[-1].TrimEnd()
+        $fragments[-1] = $trimmed.Substring(0, $trimmed.Length - 1)
+        $index++
+        if ($index -ge $lines.Count) {
+            Fail "pg_textsearch Makefile $Variable continuation reaches end of file"
+        }
+        $fragments += $lines[$index]
+    }
+
+    $values = @(($fragments -join " ") -split "\s+" | Where-Object { $_ })
+    if ($values.Count -eq 0) {
+        Fail "pg_textsearch Makefile $Variable must not be empty"
+    }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($value in $values) {
+        if ($value -notmatch "^[A-Za-z0-9_./-]+$") {
+            Fail "pg_textsearch Makefile $Variable contains unsupported value '$value'"
+        }
+        if (-not $seen.Add($value)) {
+            Fail "pg_textsearch Makefile $Variable contains duplicate value '$value'"
+        }
+    }
+    return $values
 }
 
-function Assert-PgTextsearchWindowsPgxsManifest(
-    [string]$ExtensionDir,
-    [string[]]$Sources,
-    [string[]]$DataFiles
-) {
-    $expectedSources = @(
+function Get-PgTextsearchWindowsBuildManifest([string]$ExtensionDir) {
+    $sources = @(
         Get-PgTextsearchMakefileList $ExtensionDir "OBJS" |
             ForEach-Object {
                 if (-not $_.EndsWith(".o", [System.StringComparison]::Ordinal)) {
@@ -2064,21 +2062,19 @@ function Assert-PgTextsearchWindowsPgxsManifest(
                 $_.Substring(0, $_.Length - 2) + ".c"
             }
     )
-    $expectedDataFiles = @(
+    $dataFiles = @(
         @(Get-PgTextsearchMakefileList $ExtensionDir "DATA") +
             @("pg_textsearch.control")
     )
-    if (($Sources -join "`n") -ne ($expectedSources -join "`n")) {
-        Fail "pg_textsearch Windows sources differ from the pinned upstream Makefile: expected $($expectedSources -join ', '); got $($Sources -join ', ')"
-    }
-    if (($DataFiles -join "`n") -ne ($expectedDataFiles -join "`n")) {
-        Fail "pg_textsearch Windows SQL payload differs from the pinned upstream Makefile: expected $($expectedDataFiles -join ', '); got $($DataFiles -join ', ')"
-    }
-    foreach ($relativePath in @($Sources) + @($DataFiles)) {
+    foreach ($relativePath in @($sources) + @($dataFiles)) {
         $path = Join-Path $ExtensionDir $relativePath
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             Fail "pg_textsearch Windows input declared by the pinned Makefile is missing: $relativePath"
         }
+    }
+    return @{
+        Sources = $sources
+        DataFiles = $dataFiles
     }
 }
 
@@ -2138,6 +2134,20 @@ function Patch-PgTextsearchWindowsTypeLayout(
     $Text
 }
 
+function Replace-LiteralExactlyOnce(
+    [string]$Text,
+    [string]$Original,
+    [string]$Replacement,
+    [string]$Label
+) {
+    $first = $Text.IndexOf($Original, [System.StringComparison]::Ordinal)
+    $last = $Text.LastIndexOf($Original, [System.StringComparison]::Ordinal)
+    if ($first -lt 0 -or $first -ne $last) {
+        Fail "$Label must occur exactly once"
+    }
+    return $Text.Substring(0, $first) + $Replacement + $Text.Substring($first + $Original.Length)
+}
+
 function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
     $compat = Join-Path $ExtensionDir "src/oliphaunt_windows_compat.h"
     Set-Content -Path $compat -Encoding UTF8 -Value @"
@@ -2152,14 +2162,16 @@ function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
 #define OLIPHAUNT_PG_TEXTSEARCH_WINDOWS_UNISTD_H
 #endif
 "@
-    $segmentHeader = Join-Path $ExtensionDir "src/segment/segment.h"
-    $text = Get-Content -Raw -Path $segmentHeader
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntryV3" "aligned(4)" 4 12 4
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntry" "aligned(8)" 8 16 8
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSegmentPosting" "packed" 1 14 1
+    $formatHeader = Join-Path $ExtensionDir "src/segment/format.h"
+    $text = Get-Content -Raw -Path $formatHeader
     $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntryV3" "packed" 1 16 1
     $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntry" "packed" 1 20 1
     $text = Patch-PgTextsearchWindowsTypeLayout $text "TpCtidMapEntry" "packed" 1 6 1
+    Set-Content -Path $formatHeader -Encoding UTF8 -Value $text
+
+    $segmentHeader = Join-Path $ExtensionDir "src/segment/segment.h"
+    $text = Get-Content -Raw -Path $segmentHeader
+    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSegmentPosting" "packed" 1 14 1
     Set-Content -Path $segmentHeader -Encoding UTF8 -Value $text
 
     $expullHeader = Join-Path $ExtensionDir "src/memtable/expull.h"
@@ -2167,14 +2179,12 @@ function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
     $text = Patch-PgTextsearchWindowsTypeLayout $text "TpExpullEntry" "packed" 1 7 1
     Set-Content -Path $expullHeader -Encoding UTF8 -Value $text
 
-    $amHeader = Join-Path $ExtensionDir "src/am/am.h"
+    $amHeader = Join-Path $ExtensionDir "src/access/am.h"
     $text = Get-Content -Raw -Path $amHeader
     $original = "Datum tp_handler(PG_FUNCTION_ARGS);"
     $replacement = "extern PGDLLEXPORT Datum tp_handler(PG_FUNCTION_ARGS);"
-    if (-not $text.Contains($original)) {
-        Fail "pg_textsearch am.h is missing expected tp_handler declaration"
-    }
-    $text = $text.Replace($original, $replacement)
+    $text = Replace-LiteralExactlyOnce `
+        $text $original $replacement "pg_textsearch am.h tp_handler declaration"
     Set-Content -Path $amHeader -Encoding UTF8 -Value $text
 
     $vectorHeader = Join-Path $ExtensionDir "src/types/vector.h"
@@ -2182,10 +2192,8 @@ function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
     foreach ($functionName in @("tpvector_in", "tpvector_out", "tpvector_recv", "tpvector_send", "to_tpvector", "tpvector_eq")) {
         $original = "Datum $($functionName)(PG_FUNCTION_ARGS);"
         $replacement = "extern PGDLLEXPORT Datum $($functionName)(PG_FUNCTION_ARGS);"
-        if (-not $text.Contains($original)) {
-            Fail "pg_textsearch vector.h is missing expected $functionName declaration"
-        }
-        $text = $text.Replace($original, $replacement)
+        $text = Replace-LiteralExactlyOnce `
+            $text $original $replacement "pg_textsearch vector.h $functionName declaration"
     }
     Set-Content -Path $vectorHeader -Encoding UTF8 -Value $text
 
@@ -2200,14 +2208,14 @@ function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
         "to_tpquery_text_index",
         "bm25_text_bm25query_score",
         "bm25_text_text_score",
+        "bm25_textarray_bm25query_score",
+        "bm25_textarray_text_score",
         "tpquery_eq"
     )) {
         $original = "Datum $($functionName)(PG_FUNCTION_ARGS);"
         $replacement = "extern PGDLLEXPORT Datum $($functionName)(PG_FUNCTION_ARGS);"
-        if (-not $text.Contains($original)) {
-            Fail "pg_textsearch query.h is missing expected $functionName declaration"
-        }
-        $text = $text.Replace($original, $replacement)
+        $text = Replace-LiteralExactlyOnce `
+            $text $original $replacement "pg_textsearch query.h $functionName declaration"
     }
     Set-Content -Path $queryHeader -Encoding UTF8 -Value $text
 }
@@ -2265,7 +2273,6 @@ function Add-ExternalPgxsMesonProducer(
         Patch-PgUuidv7WindowsSource $destination
     }
     if ($SqlName -eq "pg_textsearch") {
-        Assert-PgTextsearchWindowsPgxsManifest $destination $Sources $DataFiles
         Patch-PgTextsearchWindowsSource $destination
         $compatHeader = Meson-Path (Join-Path $destination "src/oliphaunt_windows_compat.h")
         $versionDefine = Get-PgTextsearchWindowsVersionDefine $destination
@@ -2317,62 +2324,15 @@ function Add-ExternalPgxsMesonProducers {
             "sql/pg_uuidv7--1.7.sql",
             "pg_uuidv7.control"
         )
-    Add-ExternalPgxsMesonProducer `
-        "pg_textsearch" "pg_textsearch" "pg_textsearch" "pg_textsearch" `
-        @(
-            "src/mod.c",
-            "src/source.c",
-            "src/am/handler.c",
-            "src/am/build.c",
-            "src/am/build_context.c",
-            "src/am/build_parallel.c",
-            "src/am/scan.c",
-            "src/am/vacuum.c",
-            "src/memtable/arena.c",
-            "src/memtable/expull.c",
-            "src/memtable/memtable.c",
-            "src/memtable/posting.c",
-            "src/memtable/stringtable.c",
-            "src/memtable/scan.c",
-            "src/memtable/source.c",
-            "src/segment/segment.c",
-            "src/segment/dictionary.c",
-            "src/segment/scan.c",
-            "src/segment/merge.c",
-            "src/segment/docmap.c",
-            "src/segment/compression.c",
-            "src/query/bmw.c",
-            "src/query/score.c",
-            "src/types/vector.c",
-            "src/types/query.c",
-            "src/state/state.c",
-            "src/state/registry.c",
-            "src/state/metapage.c",
-            "src/state/limit.c",
-            "src/planner/hooks.c",
-            "src/planner/cost.c",
-            "src/debug/dump.c"
-        ) `
-        @(
-            "sql/pg_textsearch--0.6.1.sql",
-            "sql/pg_textsearch--0.0.1--0.0.2.sql",
-            "sql/pg_textsearch--0.0.2--0.0.3.sql",
-            "sql/pg_textsearch--0.0.3--0.0.4.sql",
-            "sql/pg_textsearch--0.0.4--0.0.5.sql",
-            "sql/pg_textsearch--0.0.5--0.1.0.sql",
-            "sql/pg_textsearch--0.1.0--0.2.0.sql",
-            "sql/pg_textsearch--0.2.0--0.3.0.sql",
-            "sql/pg_textsearch--0.3.0--0.4.0.sql",
-            "sql/pg_textsearch--0.4.0--0.4.1.sql",
-            "sql/pg_textsearch--0.4.1--0.4.2.sql",
-            "sql/pg_textsearch--0.4.2--0.5.0.sql",
-            "sql/pg_textsearch--0.5.0--0.6.1.sql",
-            "sql/pg_textsearch--0.5.1--0.6.1.sql",
-            "sql/pg_textsearch--0.6.0--0.6.1.sql",
-            "pg_textsearch.control"
-        ) `
-        @("/D_CRT_SECURE_NO_WARNINGS") `
-        @("src")
+    if (NativeExtension-Selected "pg_textsearch") {
+        $pgTextsearchManifest = Get-PgTextsearchWindowsBuildManifest (External-Checkout "pg_textsearch")
+        Add-ExternalPgxsMesonProducer `
+            "pg_textsearch" "pg_textsearch" "pg_textsearch" "pg_textsearch" `
+            $pgTextsearchManifest.Sources `
+            $pgTextsearchManifest.DataFiles `
+            @("/D_CRT_SECURE_NO_WARNINGS") `
+            @("src")
+    }
     Add-ExternalPgxsMesonProducer `
         "vector" "pgvector" "vector" "vector" `
         @(

@@ -934,7 +934,7 @@
       "control": {
         "module-pathname": "$libdir/pg_textsearch",
         "requires": [],
-        "relocatable": "true"
+        "relocatable": "false"
       },
       "dependencies": [],
       "native-dependencies": [],

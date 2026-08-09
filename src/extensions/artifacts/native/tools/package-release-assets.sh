@@ -601,6 +601,14 @@ package_desktop_target() {
   embedded_modules="$(host_extension_embedded_modules_root)"
   require_dir "$source_runtime" "$target_id extension runtime"
   require_dir "$embedded_modules" "$target_id embedded extension modules"
+  if [ "$target_id" = "linux-x64-gnu" ] && selected_sql_name_matches "pg_textsearch"; then
+    "$observed_phase" \
+      --label "qualify pg_textsearch pinned-version upgrade" \
+      --log /tmp/liboliphaunt-release-pg-textsearch-upgrade.log \
+      -- env \
+      OLIPHAUNT_PG_TEXTSEARCH_CURRENT_RUNTIME="$source_runtime" \
+      bash src/extensions/external/pg_textsearch/tests/upgrade.sh
+  fi
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
   if [ "$target_id" = "windows-x64-msvc" ]; then
     tools/dev/bun.sh tools/release/windows-vc-runtime-closure.mjs verify \

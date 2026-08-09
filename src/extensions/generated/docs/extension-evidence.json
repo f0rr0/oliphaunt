@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:d30cde83f40642f68c2dd7f2b1fe1bf1a9ca05122a7a6232fca42d624a06fed2",
+  "source-digest": "sha256:3f43d040ee855dade761732f63ade2743eea2c15165d415a37860f32960d9c53",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1363,6 +1363,7 @@
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
+    "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgtap/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
@@ -1386,6 +1387,7 @@
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/smoke.sql",
+    "src/extensions/external/pg_textsearch/tests/upgrade.sh",
     "src/extensions/external/pg_textsearch/tests/upstream.toml",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/moon.yml",

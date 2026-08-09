@@ -207,6 +207,8 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ],
     ["src/extensions/artifacts/native/tools/extension-artifact-packager.mjs", extensionProducts],
     ["src/extensions/artifacts/wasix/tools/package-release-assets.mjs", extensionProducts],
+    ["src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1", extensionProducts],
+    ["src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh", ["oliphaunt-extension-postgis"]],
     ["tools/release/bounded-gunzip-to-file.mjs", extensionProducts],
     ["tools/release/build-extension-ci-artifacts.mjs", extensionProducts],
     ["tools/release/extension-artifact-inventory.mjs", extensionProducts],
@@ -233,7 +235,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
     ["src/extensions/generated/extensions.catalog.json", ["liboliphaunt-wasix"]],
     [
       "src/extensions/generated/sdk/kotlin.json",
-      ["liboliphaunt-wasix", ...extensionProducts],
+      ["liboliphaunt-wasix"],
     ],
     [
       "src/extensions/generated/sdk/swift.json",
@@ -390,6 +392,35 @@ test("product-local upstream license data preserves independent extension releas
     assert.deepEqual(plan.semanticInputProducts, [], candidate);
     assert.deepEqual(plan.directProducts, [product], candidate);
     assert.deepEqual(plan.releaseProducts, [product], candidate);
+  }
+});
+
+test("product-local generated extension metadata preserves independent extension releases", () => {
+  const cases = [
+    [
+      "src/extensions/contrib",
+      "oliphaunt-extension-contrib-pg18",
+      ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-extension-contrib-pg18"],
+    ],
+    ["src/extensions/external/pg_hashids", "oliphaunt-extension-pg-hashids"],
+    ["src/extensions/external/pg_ivm", "oliphaunt-extension-pg-ivm"],
+    ["src/extensions/external/pg_textsearch", "oliphaunt-extension-pg-textsearch"],
+    ["src/extensions/external/pg_uuidv7", "oliphaunt-extension-pg-uuidv7"],
+    ["src/extensions/external/pgtap", "oliphaunt-extension-pgtap"],
+    ["src/extensions/external/postgis", "oliphaunt-extension-postgis"],
+    ["src/extensions/external/vector", "oliphaunt-extension-vector"],
+  ];
+  for (const [directory, product, releaseProducts = [product]] of cases) {
+    const candidate = `${directory}/.release-extension-metadata.json`;
+    assert.deepEqual(
+      releaseSemanticProductsForPath(manifest, candidate, { prefix: "release-semantic-inputs.test" }),
+      [],
+      `${candidate} is product-local and must not be duplicated in the shared semantic manifest`,
+    );
+    const plan = buildPlan(graph, [candidate], "release-semantic-inputs.test");
+    assert.deepEqual(plan.semanticInputProducts, [], candidate);
+    assert.deepEqual(plan.directProducts, [product], candidate);
+    assert.deepEqual(plan.releaseProducts, releaseProducts, candidate);
   }
 });
 
