@@ -103,7 +103,7 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
-          "sha256": "486ef696c48505ba03ca0f979525cabaed699e9e7a53281f37a9416254a693c1"
+          "sha256": "ac32b1994d06e9e7904414119ee0fe6de48892a5b604931836403e088683c7cc"
         }
       ]
     },
@@ -390,5 +390,5 @@
       ]
     }
   ],
-  "sha256": "ad61e99402000cb46d6bb9042ed56beaa13ab91e859e4f6012334636f6b7de8d"
+  "sha256": "409c477aa045c5b8a318767c9d4df382f3e0d5c2ecab1e4810fea3406ec74c55"
 }

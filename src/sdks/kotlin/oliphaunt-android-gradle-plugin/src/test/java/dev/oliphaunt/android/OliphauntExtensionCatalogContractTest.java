@@ -511,8 +511,8 @@ public final class OliphauntExtensionCatalogContractTest {
       OliphauntExtensionLegalCatalog.Contract postgis =
           OliphauntExtensionLegalCatalog.requireLeaf("postgis", target);
       equal("external-native", postgis.profile(), target + " PostGIS legal profile");
-      equal(16, postgis.licenseFiles().size(), target + " PostGIS upstream license count");
-      equal(18, postgis.members().size(), target + " PostGIS exact legal member count");
+      equal(17, postgis.licenseFiles().size(), target + " PostGIS upstream license count");
+      equal(19, postgis.members().size(), target + " PostGIS exact legal member count");
       for (OliphauntExtensionLegalCatalog.LegalMember member : postgis.members()) {
         equal(0644, member.mode(), target + " PostGIS legal mode " + member.path());
       }

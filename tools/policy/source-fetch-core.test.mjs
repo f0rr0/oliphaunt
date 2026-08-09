@@ -22,6 +22,7 @@ import {
   curlDownloadArgs,
   curlPlatformTlsArgs,
   defaultRunProcess,
+  gitPlatformConfigArgs,
   promotePathTransactional,
   sameDirectoryIdentity,
   sha256File,
@@ -58,6 +59,12 @@ test('directory identity accepts Windows short and long aliases for the same fil
     }),
     true,
   );
+});
+
+test('Git source fetches enable long paths only on Windows', () => {
+  assert.deepEqual(gitPlatformConfigArgs('win32'), ['-c', 'core.longpaths=true']);
+  assert.deepEqual(gitPlatformConfigArgs('linux'), []);
+  assert.deepEqual(gitPlatformConfigArgs('darwin'), []);
 });
 
 test('directory identity rejects different filesystem objects', () => {

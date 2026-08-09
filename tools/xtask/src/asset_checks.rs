@@ -1014,6 +1014,22 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
                 bail!("generated extension API is stale: missing {description} {needle}");
             }
         }
+        for native_module in &extension.native_modules {
+            if extension
+                .native_module
+                .as_deref()
+                .is_some_and(|primary| native_module.path == format!("lib/postgresql/{primary}"))
+            {
+                continue;
+            }
+            let needle = format!("{:?}", native_module.path);
+            if !generated.contains(&needle) {
+                bail!(
+                    "generated extension API is stale: missing native support module path {needle} for {}",
+                    extension.sql_name
+                );
+            }
+        }
         if extension.smoke_status.promoted {
             for (needle, description) in [
                 (

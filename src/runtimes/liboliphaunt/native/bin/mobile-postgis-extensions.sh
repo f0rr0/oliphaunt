@@ -306,7 +306,7 @@ build_postgis_gdal_dependency() {
   local libxml2_dir="$mobile_static_dependency_root/libxml2"
   local proj_dir="$mobile_static_dependency_root/proj"
   local sqlite_dir="$mobile_static_dependency_root/sqlite"
-  local -a iconv_args=()
+  local -a cmake_args
   local build_root="$work_root/gdal-$oliphaunt_mobile_target-build"
   local archive="$dependency_dir/lib/libgdal.a"
   if [ -f "$archive" ] && [ -f "$dependency_dir/include/gdal.h" ] && [ -x "$dependency_dir/bin/gdal-config" ]; then
@@ -315,11 +315,49 @@ build_postgis_gdal_dependency() {
   fi
   [ -f "$source_dir/CMakeLists.txt" ] || oliphaunt_postgis_fail "missing GDAL checkout: $source_dir"
   [ -f "$proj_dir/lib/libproj.a" ] || oliphaunt_postgis_fail "GDAL dependency requires PROJ first"
+  cmake_args=(
+    -DBASH_COMPLETIONS_DIR=
+    -DBUILD_SHARED_LIBS=OFF
+    -DBUILD_APPS=OFF
+    -DBUILD_CSHARP_BINDINGS=OFF
+    -DBUILD_JAVA_BINDINGS=OFF
+    -DBUILD_PYTHON_BINDINGS=OFF
+    -DBUILD_TESTING=OFF
+    -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF
+    -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON
+    -DOGR_BUILD_OPTIONAL_DRIVERS=OFF
+    -DGDAL_ENABLE_DRIVER_GTIFF=ON
+    -DGDAL_ENABLE_DRIVER_VRT=ON
+    -DOGR_ENABLE_DRIVER_GEOJSON=ON
+    -DOGR_ENABLE_DRIVER_SHAPE=ON
+    -DGDAL_USE_EXTERNAL_LIBS=OFF
+    -DGDAL_USE_INTERNAL_LIBS=ON
+    -DGDAL_USE_OPENMP=OFF
+    -DGDAL_USE_CURL=OFF
+    -DGDAL_USE_OPENSSL=OFF
+    -DGDAL_USE_GEOS=ON
+    "-DGEOS_INCLUDE_DIR=$geos_dir/include"
+    "-DGEOS_LIBRARY=$geos_dir/lib/libgeos_c.a"
+    -DGDAL_USE_JSONC=ON
+    -DGDAL_USE_JSONC_INTERNAL=OFF
+    "-DJSONC_INCLUDE_DIR=$jsonc_dir/include/json-c"
+    "-DJSONC_LIBRARY=$jsonc_dir/lib/libjson-c.a"
+    -DGDAL_USE_LIBXML2=ON
+    "-DLIBXML2_INCLUDE_DIR=$libxml2_dir/include/libxml2"
+    "-DLIBXML2_LIBRARY=$libxml2_dir/lib/libxml2.a"
+    -DGDAL_USE_PROJ=ON
+    "-DPROJ_INCLUDE_DIR=$proj_dir/include"
+    "-DPROJ_LIBRARY=$proj_dir/lib/libproj.a"
+    -DGDAL_USE_SQLITE3=ON
+    "-DSQLite3_INCLUDE_DIR=$sqlite_dir/include"
+    "-DSQLite3_LIBRARY=$sqlite_dir/lib/libsqlite3.a"
+    -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON
+  )
   case "$oliphaunt_mobile_target" in
     android-arm64 | android-x86_64)
       [ -f "$mobile_static_dependency_root/libiconv/lib/libiconv.a" ] ||
         oliphaunt_postgis_fail "GDAL dependency requires libiconv first on Android"
-      iconv_args=(
+      cmake_args+=(
         -DGDAL_USE_ICONV=ON
         "-DIconv_INCLUDE_DIR=$mobile_static_dependency_root/libiconv/include"
         "-DIconv_LIBRARY=$mobile_static_dependency_root/libiconv/lib/libiconv.a"
@@ -328,43 +366,7 @@ build_postgis_gdal_dependency() {
   esac
   rm -rf "$build_root" "$dependency_dir"
   oliphaunt_postgis_cmake_install "$source_dir" "$build_root" "$dependency_dir" \
-    -DBASH_COMPLETIONS_DIR= \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DBUILD_APPS=OFF \
-    -DBUILD_CSHARP_BINDINGS=OFF \
-    -DBUILD_JAVA_BINDINGS=OFF \
-    -DBUILD_PYTHON_BINDINGS=OFF \
-    -DBUILD_TESTING=OFF \
-    -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
-    -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON \
-    -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
-    -DGDAL_ENABLE_DRIVER_GTIFF=ON \
-    -DGDAL_ENABLE_DRIVER_VRT=ON \
-    -DOGR_ENABLE_DRIVER_GEOJSON=ON \
-    -DOGR_ENABLE_DRIVER_SHAPE=ON \
-    -DGDAL_USE_EXTERNAL_LIBS=OFF \
-    -DGDAL_USE_INTERNAL_LIBS=ON \
-    -DGDAL_USE_OPENMP=OFF \
-    -DGDAL_USE_CURL=OFF \
-    -DGDAL_USE_OPENSSL=OFF \
-    -DGDAL_USE_GEOS=ON \
-    "-DGEOS_INCLUDE_DIR=$geos_dir/include" \
-    "-DGEOS_LIBRARY=$geos_dir/lib/libgeos_c.a" \
-    -DGDAL_USE_JSONC=ON \
-    -DGDAL_USE_JSONC_INTERNAL=OFF \
-    "-DJSONC_INCLUDE_DIR=$jsonc_dir/include/json-c" \
-    "-DJSONC_LIBRARY=$jsonc_dir/lib/libjson-c.a" \
-    -DGDAL_USE_LIBXML2=ON \
-    "-DLIBXML2_INCLUDE_DIR=$libxml2_dir/include/libxml2" \
-    "-DLIBXML2_LIBRARY=$libxml2_dir/lib/libxml2.a" \
-    -DGDAL_USE_PROJ=ON \
-    "-DPROJ_INCLUDE_DIR=$proj_dir/include" \
-    "-DPROJ_LIBRARY=$proj_dir/lib/libproj.a" \
-    -DGDAL_USE_SQLITE3=ON \
-    "-DSQLite3_INCLUDE_DIR=$sqlite_dir/include" \
-    "-DSQLite3_LIBRARY=$sqlite_dir/lib/libsqlite3.a" \
-    -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON \
-    "${iconv_args[@]}"
+    "${cmake_args[@]}"
   [ -f "$archive" ] || oliphaunt_postgis_fail "GDAL build did not produce $archive"
   [ -x "$dependency_dir/bin/gdal-config" ] || oliphaunt_postgis_fail "GDAL build did not produce gdal-config"
   oliphaunt_postgis_dependency_archive gdal "$archive"
@@ -850,8 +852,11 @@ build_postgis_mobile_static_extension_objects() {
     make -j"$jobs" -C deps/flatgeobuf all >> "$make_log" 2>&1
     make -j"$jobs" -C postgis all >> "$make_log" 2>&1 || true
     make -j"$jobs" -C raster/rt_core all >> "$make_log" 2>&1
-    make -j"$jobs" -C raster/rt_pg all >> "$make_log" 2>&1 || true
-    [ -f raster/rt_pg/rtpostgis.o ] || oliphaunt_postgis_fail "PostGIS raster objects were not produced"
+    make -j"$jobs" -C raster/rt_pg postgis_raster-3.so >> "$make_log" 2>&1 || true
+    if [ ! -f raster/rt_pg/rtpostgis.o ]; then
+      tail -n 200 "$make_log" >&2 || true
+      oliphaunt_postgis_fail "PostGIS raster objects were not produced"
+    fi
     make -j1 -C extensions postgis_extension_helper.sql >> "$make_log" 2>&1
     make -j1 -C extensions all >> "$make_log" 2>&1
   )
