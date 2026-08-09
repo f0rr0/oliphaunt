@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:d30cde83f40642f68c2dd7f2b1fe1bf1a9ca05122a7a6232fca42d624a06fed2",
+  "source-digest": "sha256:c5c4209245d495e274c9241f5f3114cc2bf1ad6340c47f98f334894a1851f513",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1365,6 +1365,7 @@
     "src/extensions/external/pg_textsearch/source.toml",
     "src/extensions/external/pg_uuidv7/source.toml",
     "src/extensions/external/pgtap/source.toml",
+    "src/extensions/external/postgis/dependencies/gdal/source.toml",
     "src/extensions/external/postgis/dependencies/geos/source.toml",
     "src/extensions/external/postgis/dependencies/json-c/source.toml",
     "src/extensions/external/postgis/dependencies/libiconv/source.toml",

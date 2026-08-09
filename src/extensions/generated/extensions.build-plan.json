@@ -1079,11 +1079,15 @@
       "required-build-files": [
         "postgis/postgis-3.so",
         "postgis/liboliphaunt_postgis_deps.so",
+        "raster/rt_pg/postgis_raster-3.so",
         "extensions/postgis/postgis.control",
+        "extensions/postgis_raster/postgis_raster.control",
+        "share/gdal/gdalvrt.xsd",
         "share/proj/proj.db"
       ],
       "required-build-globs": [
-        "extensions/postgis/sql/postgis--*.sql"
+        "extensions/postgis/sql/postgis--*.sql",
+        "extensions/postgis_raster/sql/postgis_raster--*.sql"
       ],
       "source-dir": "target/oliphaunt-sources/checkouts/postgis",
       "module-file": "postgis-3.so",
@@ -1092,6 +1096,7 @@
       "stable": true,
       "dependencies": [],
       "native-dependencies": [
+        "gdal:3.13.2-static",
         "geos:3.14.1-static",
         "proj:9.8.1-static",
         "sqlite:3.53.1-static",
@@ -1105,12 +1110,17 @@
           "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so",
           "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
           "aot-file": "postgis_deps-llvm-opta.bin.zst"
+        },
+        {
+          "name": "postgis_raster",
+          "runtime-path": "lib/postgresql/postgis_raster-3.so",
+          "build-path": "postgis/raster/rt_pg/postgis_raster-3.so",
+          "aot-file": "postgis_raster-llvm-opta.bin.zst"
         }
       ],
       "excluded-sql-extensions": [
         "address_standardizer",
         "address_standardizer_data_us",
-        "postgis_raster",
         "postgis_sfcgal",
         "postgis_tiger_geocoder",
         "postgis_topology"
@@ -1123,6 +1133,14 @@
           {
             "source": "postgis/share/proj",
             "destination": "share/proj"
+          },
+          {
+            "source": "postgis/share/gdal",
+            "destination": "share/postgresql/gdal"
+          },
+          {
+            "source": "postgis/share/extension-raster",
+            "destination": "share/postgresql/extension"
           }
         ]
       },

@@ -4,8 +4,8 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 helper="$root/src/extensions/external/postgis/tools/reproducible-time.sh"
 shim="$root/src/extensions/external/postgis/tools/reproducible-bin/date"
-expected_epoch=1776193981
-expected_utc='2026-04-14 19:13:01'
+expected_epoch=1780943336
+expected_utc='2026-06-08 18:28:56'
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-postgis-time-test.XXXXXX")"
 original_path="$PATH"
 cleanup() {
@@ -37,14 +37,14 @@ fi
 grep -Fq 'exactly one canonical source_date_epoch' "$test_root/missing.err" ||
   fail "missing-key error was not actionable"
 
-printf 'source_date_epoch = "1776193981"\n' > "$fake_manifest"
+printf 'source_date_epoch = "1780943336"\n' > "$fake_manifest"
 if oliphaunt_postgis_source_date_epoch "$fake_root" >"$test_root/quoted.out" 2>"$test_root/quoted.err"; then
   fail "quoted source_date_epoch was accepted"
 fi
 grep -Fq 'canonical positive integer' "$test_root/quoted.err" ||
   fail "noncanonical-value error was not actionable"
 
-printf 'source_date_epoch = 1776193981\nsource_date_epoch = 1776193981\n' > "$fake_manifest"
+printf 'source_date_epoch = 1780943336\nsource_date_epoch = 1780943336\n' > "$fake_manifest"
 if oliphaunt_postgis_source_date_epoch "$fake_root" >"$test_root/duplicate.out" 2>"$test_root/duplicate.err"; then
   fail "duplicate source_date_epoch was accepted"
 fi

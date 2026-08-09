@@ -150,6 +150,7 @@ required_extension_controls=(
   pg_ivm
   pgcrypto
   postgis
+  postgis_raster
   pg_surgery
   pg_textsearch
   pg_trgm
@@ -192,6 +193,7 @@ required_extension_modules=(
   pg_ivm
   pgcrypto
   postgis-3
+  postgis_raster-3
   pg_surgery
   pg_textsearch
   pg_trgm
@@ -256,6 +258,8 @@ filter_native_extension_selection() {
         postgis)
           selected_external+=(postgis)
           module_file="postgis-3.so"
+          selected_controls+=(postgis_raster)
+          selected_modules+=(postgis_raster-3)
           ;;
         *)
           external_id="$(awk -F '\t' -v sql="$sql" 'NR > 1 && $2 == sql { print $1; found = 1; exit } END { exit found ? 0 : 1 }' "$pgxs_plan" || true)"
@@ -449,9 +453,17 @@ hash_extension_source_tree() {
     -name "meson_options.txt" \
   \) -print |
     LC_ALL=C sort |
-    while IFS= read -r file; do
-      shasum -a 256 "$file"
-    done
+    (
+      set --
+      while IFS= read -r file; do
+        set -- "$@" "$file"
+        if [ "$#" -ge 256 ]; then
+          shasum -a 256 "$@"
+          set --
+        fi
+      done
+      [ "$#" -eq 0 ] || shasum -a 256 "$@"
+    )
 }
 
 exact_checkout_identity() {
@@ -519,7 +531,7 @@ extension_build_fingerprint() {
       shasum -a 256 \
         "$postgis_time_helper" \
         "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
-      for dependency in geos proj sqlite json-c libxml2; do
+      for dependency in gdal geos proj sqlite json-c libxml2; do
         if [ -d "$repo_root/target/oliphaunt-sources/checkouts/$dependency" ]; then
           printf 'postgis-dependency:%s\n' "$dependency"
           local dependency_checkout="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
@@ -1157,6 +1169,7 @@ build_pgxs_extension() {
 
 native_postgis_dependency_root="${OLIPHAUNT_NATIVE_POSTGIS_DEPENDENCY_ROOT:-$work_root/postgis-native-dependencies}"
 native_postgis_dependency_build_roots=(
+  "$work_root/gdal-native-build"
   "$work_root/json-c-native-build"
   "$work_root/sqlite-native-build"
   "$work_root/geos-native-build"
@@ -1164,6 +1177,9 @@ native_postgis_dependency_build_roots=(
   "$work_root/proj-native-build"
 )
 native_postgis_dependency_required_outputs=(
+  "$native_postgis_dependency_root/gdal/bin/gdal-config"
+  "$native_postgis_dependency_root/gdal/include/gdal.h"
+  "$native_postgis_dependency_root/gdal/lib/libgdal.a"
   "$native_postgis_dependency_root/json-c/lib/libjson-c.a"
   "$native_postgis_dependency_root/sqlite/lib/libsqlite3.a"
   "$native_postgis_dependency_root/geos/lib/libgeos_c.a"
@@ -1213,7 +1229,7 @@ native_postgis_dependency_fingerprint() {
     shasum -a 256 "$source_manifest"
 
     local dependency source_dir
-    for dependency in geos proj sqlite json-c libxml2; do
+    for dependency in gdal geos proj sqlite json-c libxml2; do
       source_dir="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
       exact_checkout_identity "dependency.$dependency" "$source_dir" || return 1
       hash_extension_source_tree "$source_dir"
@@ -1352,6 +1368,61 @@ build_native_postgis_proj_dependency() {
   [ -f "$dependency_dir/share/proj/proj.db" ] || fail "PROJ build did not produce proj.db"
 }
 
+build_native_postgis_gdal_dependency() {
+  local source_dir="$repo_root/target/oliphaunt-sources/checkouts/gdal"
+  local dependency_dir="$native_postgis_dependency_root/gdal"
+  local geos_dir="$native_postgis_dependency_root/geos"
+  local jsonc_dir="$native_postgis_dependency_root/json-c"
+  local libxml2_dir="$native_postgis_dependency_root/libxml2"
+  local proj_dir="$native_postgis_dependency_root/proj"
+  local sqlite_dir="$native_postgis_dependency_root/sqlite"
+  local build_root="$work_root/gdal-native-build"
+  local archive="$dependency_dir/lib/libgdal.a"
+  [ -f "$archive" ] && [ -f "$dependency_dir/include/gdal.h" ] && [ -x "$dependency_dir/bin/gdal-config" ] && return 0
+  [ -f "$source_dir/CMakeLists.txt" ] || fail "missing GDAL checkout: $source_dir"
+  [ -f "$proj_dir/lib/libproj.a" ] || fail "GDAL dependency requires PROJ first"
+  rm -rf "$build_root" "$dependency_dir"
+  native_postgis_cmake_install "$source_dir" "$build_root" "$dependency_dir" \
+    -DBASH_COMPLETIONS_DIR= \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_APPS=OFF \
+    -DBUILD_CSHARP_BINDINGS=OFF \
+    -DBUILD_JAVA_BINDINGS=OFF \
+    -DBUILD_PYTHON_BINDINGS=OFF \
+    -DBUILD_TESTING=OFF \
+    -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
+    -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON \
+    -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
+    -DGDAL_ENABLE_DRIVER_GTIFF=ON \
+    -DGDAL_ENABLE_DRIVER_VRT=ON \
+    -DOGR_ENABLE_DRIVER_GEOJSON=ON \
+    -DOGR_ENABLE_DRIVER_SHAPE=ON \
+    -DGDAL_USE_EXTERNAL_LIBS=OFF \
+    -DGDAL_USE_INTERNAL_LIBS=ON \
+    -DGDAL_USE_OPENMP=OFF \
+    -DGDAL_USE_CURL=OFF \
+    -DGDAL_USE_OPENSSL=OFF \
+    -DGDAL_USE_GEOS=ON \
+    "-DGEOS_INCLUDE_DIR=$geos_dir/include" \
+    "-DGEOS_LIBRARY=$geos_dir/lib/libgeos_c.a" \
+    -DGDAL_USE_JSONC=ON \
+    -DGDAL_USE_JSONC_INTERNAL=OFF \
+    "-DJSONC_INCLUDE_DIR=$jsonc_dir/include/json-c" \
+    "-DJSONC_LIBRARY=$jsonc_dir/lib/libjson-c.a" \
+    -DGDAL_USE_LIBXML2=ON \
+    "-DLIBXML2_INCLUDE_DIR=$libxml2_dir/include/libxml2" \
+    "-DLIBXML2_LIBRARY=$libxml2_dir/lib/libxml2.a" \
+    -DGDAL_USE_PROJ=ON \
+    "-DPROJ_INCLUDE_DIR=$proj_dir/include" \
+    "-DPROJ_LIBRARY=$proj_dir/lib/libproj.a" \
+    -DGDAL_USE_SQLITE3=ON \
+    "-DSQLite3_INCLUDE_DIR=$sqlite_dir/include" \
+    "-DSQLite3_LIBRARY=$sqlite_dir/lib/libsqlite3.a" \
+    -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON
+  [ -f "$archive" ] || fail "GDAL build did not produce $archive"
+  [ -x "$dependency_dir/bin/gdal-config" ] || fail "GDAL build did not produce gdal-config"
+}
+
 build_native_postgis_dependencies() {
   native_postgis_require_tools
   local wanted
@@ -1367,6 +1438,7 @@ build_native_postgis_dependencies() {
   build_native_postgis_geos_dependency
   build_native_postgis_libxml2_dependency
   build_native_postgis_proj_dependency
+  build_native_postgis_gdal_dependency
   oliphaunt_postgis_dependency_cache_commit \
     "$native_postgis_dependency_root" \
     "$wanted" \
@@ -1383,6 +1455,24 @@ case "\${1:-}" in
   --cflags) echo "-I$native_postgis_dependency_root/geos/include" ;;
   --version) echo "3.14.0dev" ;;
   *) exec "$native_postgis_dependency_root/geos/bin/geos-config" "\$@" ;;
+esac
+EOF
+  chmod +x "$path"
+}
+
+native_postgis_gdal_config_script() {
+  local path="$1"
+  local real_config="$native_postgis_dependency_root/gdal/bin/gdal-config"
+  local real_libs
+  real_libs="$("$real_config" --libs)"
+  cat > "$path" <<EOF
+#!/bin/sh
+set -eu
+case "\${1:-}" in
+  --libs|--dep-libs)
+    echo "$real_libs -L$native_postgis_dependency_root/geos/lib -lgeos -L$native_postgis_dependency_root/sqlite/lib -lsqlite3"
+    ;;
+  *) exec "$real_config" "\$@" ;;
 esac
 EOF
   chmod +x "$path"
@@ -1432,9 +1522,11 @@ configure_postgis_configure_args() {
   rm -rf "$scripts_dir"
   mkdir -p "$scripts_dir"
   native_postgis_geos_config_script "$scripts_dir/geos-config"
+  native_postgis_gdal_config_script "$scripts_dir/gdal-config"
   native_postgis_pkg_config_script "$scripts_dir/pkg-config"
   postgis_proj_prefix="$native_postgis_dependency_root/proj"
   postgis_configure_args=(
+    "--with-gdalconfig=$scripts_dir/gdal-config"
     "--with-xml2config=$native_postgis_dependency_root/libxml2/bin/xml2-config"
   )
   postgis_configure_env=(
@@ -1444,26 +1536,27 @@ configure_postgis_configure_args() {
     "PKG_CONFIG_ALLOW_SYSTEM_LIBS=1"
     "PKG_CONFIG_LIBDIR=$native_postgis_dependency_root/json-c/lib/pkgconfig:$native_postgis_dependency_root/proj/lib/pkgconfig:$native_postgis_dependency_root/sqlite/lib/pkgconfig:$native_postgis_dependency_root/libxml2/lib/pkgconfig"
     "PKG_CONFIG_PATH=$native_postgis_dependency_root/json-c/lib/pkgconfig:$native_postgis_dependency_root/proj/lib/pkgconfig:$native_postgis_dependency_root/sqlite/lib/pkgconfig:$native_postgis_dependency_root/libxml2/lib/pkgconfig"
-    "CPPFLAGS=-I$native_postgis_dependency_root/libxml2/include/libxml2 -I$native_postgis_dependency_root/proj/include -I$native_postgis_dependency_root/json-c/include -I$native_postgis_dependency_root/json-c/include/json-c -I$native_postgis_dependency_root/geos/include"
-    "LDFLAGS=-L$native_postgis_dependency_root/geos/lib -L$native_postgis_dependency_root/proj/lib -L$native_postgis_dependency_root/sqlite/lib -L$native_postgis_dependency_root/json-c/lib -L$native_postgis_dependency_root/libxml2/lib"
+    "CPPFLAGS=-I$native_postgis_dependency_root/gdal/include -I$native_postgis_dependency_root/libxml2/include/libxml2 -I$native_postgis_dependency_root/proj/include -I$native_postgis_dependency_root/json-c/include -I$native_postgis_dependency_root/json-c/include/json-c -I$native_postgis_dependency_root/geos/include"
+    "LDFLAGS=-L$native_postgis_dependency_root/gdal/lib -L$native_postgis_dependency_root/geos/lib -L$native_postgis_dependency_root/proj/lib -L$native_postgis_dependency_root/sqlite/lib -L$native_postgis_dependency_root/json-c/lib -L$native_postgis_dependency_root/libxml2/lib"
     "LIBS=-lsqlite3 -lstdc++ -lm"
     "JSONC_CFLAGS=-I$native_postgis_dependency_root/json-c/include -I$native_postgis_dependency_root/json-c/include/json-c"
     "JSONC_LIBS=-L$native_postgis_dependency_root/json-c/lib -ljson-c"
     "CXX=$native_cxx"
   )
   postgis_make_args=(
-    "LDFLAGS=-L$native_postgis_dependency_root/geos/lib -L$native_postgis_dependency_root/proj/lib -L$native_postgis_dependency_root/sqlite/lib -L$native_postgis_dependency_root/json-c/lib -L$native_postgis_dependency_root/libxml2/lib"
-    "LIBS=-lgeos_c -lgeos -lproj -lsqlite3 -ljson-c -lxml2 -lstdc++ -lm"
+    "LDFLAGS=-L$native_postgis_dependency_root/gdal/lib -L$native_postgis_dependency_root/geos/lib -L$native_postgis_dependency_root/proj/lib -L$native_postgis_dependency_root/sqlite/lib -L$native_postgis_dependency_root/json-c/lib -L$native_postgis_dependency_root/libxml2/lib"
+    "LIBS=-lgdal -lgeos_c -lgeos -lproj -lsqlite3 -ljson-c -lxml2 -lstdc++ -lm"
   )
 }
 
 copy_embedded_postgis_module() {
   local source_dir="$1"
+  local stem="$2"
   mkdir -p "$embedded_modules_dir"
-  [ -f "$source_dir/postgis-3.so" ] || fail "PostGIS embedded module was not produced under $source_dir"
-  cp -p "$source_dir/postgis-3.so" "$embedded_modules_dir/postgis-3.so"
-  module_depends_on_liboliphaunt "$embedded_modules_dir/postgis-3.so" ||
-    fail "embedded PostGIS is not linked against liboliphaunt: $embedded_modules_dir/postgis-3.so"
+  [ -f "$source_dir/$stem.so" ] || fail "PostGIS embedded module $stem was not produced under $source_dir"
+  cp -p "$source_dir/$stem.so" "$embedded_modules_dir/$stem.so"
+  module_depends_on_liboliphaunt "$embedded_modules_dir/$stem.so" ||
+    fail "embedded PostGIS is not linked against liboliphaunt: $embedded_modules_dir/$stem.so"
 }
 
 stage_postgis_data_files() {
@@ -1487,6 +1580,11 @@ stage_postgis_data_files() {
   [ -n "$proj_db" ] || fail "PostGIS requires proj/proj.db; set OLIPHAUNT_PROJ_DATADIR"
   mkdir -p "$install_dir/share/postgresql/proj"
   cp -p "$proj_db" "$install_dir/share/postgresql/proj/proj.db"
+  local gdal_data="$native_postgis_dependency_root/gdal/share/gdal"
+  [ -f "$gdal_data/gdalvrt.xsd" ] || fail "PostGIS requires the pinned GDAL runtime data"
+  rm -rf "$install_dir/share/postgresql/gdal"
+  mkdir -p "$install_dir/share/postgresql/gdal"
+  cp -a "$gdal_data/." "$install_dir/share/postgresql/gdal/"
 }
 
 patch_postgis_generated_makefiles() {
@@ -1522,7 +1620,6 @@ build_postgis_extension() {
       --with-pgconfig="$install_dir/bin/pg_config" \
       "${postgis_configure_args[@]}" \
       --without-protobuf \
-      --without-raster \
       --without-topology \
       --without-sfcgal \
       --without-address-standardizer \
@@ -1534,13 +1631,18 @@ build_postgis_extension() {
     make postgis_revision.h >> "$make_log" 2>&1
     make -C doc CC="$native_cc" "${postgis_make_args[@]}" comments-install >> "$make_log" 2>&1
     make -j"$jobs" -C postgis CC="$native_cc" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
+    make -j"$jobs" -C raster/rt_core CC="$native_cc" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -j"$jobs" -C raster/rt_pg CC="$native_cc" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -j1 -C extensions CC="$native_cc" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
     make -j1 -C extensions CC="$native_cc" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -C postgis clean >> "$make_log" 2>&1 || true
     make postgis_revision.h >> "$make_log" 2>&1
     make -j"$jobs" -C postgis CC="$native_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -C raster/rt_pg clean >> "$make_log" 2>&1 || true
+    make -j"$jobs" -C raster/rt_pg CC="$native_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
   )
-  copy_embedded_postgis_module "$postgis_build_dir/postgis"
+  copy_embedded_postgis_module "$postgis_build_dir/postgis" postgis-3
+  copy_embedded_postgis_module "$postgis_build_dir/raster/rt_pg" postgis_raster-3
   stage_postgis_data_files "$postgis_build_dir"
 }
 
@@ -1684,7 +1786,8 @@ case "$script_mode" in
     configure_source
     install_runtime
     prune_base_runtime_optional_extensions
-    if artifact_ready &&
+    if [ "${OLIPHAUNT_FORCE_EXTENSION_REBUILD:-0}" != "1" ] &&
+      artifact_ready &&
       (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) &&
       [ -f "$stamp" ] &&
       [ "$(cat "$stamp")" = "$(desired_hash)" ]; then

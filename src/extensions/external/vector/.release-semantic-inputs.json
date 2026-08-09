@@ -184,7 +184,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/kotlin.json",
-          "sha256": "e6a713ed46ca57edfc92855317865114a54c8b415736759668294cc9c592713b"
+          "sha256": "39a8f931f2ebb049a51f7a01e5f583895b3bd745ec61c75cc4a057dd71a4cef1"
         }
       ]
     },
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "f97b62f53ca3ddf959883c4f057a4a077b08a9f0529169768bc426468a8b5d27"
+  "sha256": "bbbc8601954d8ad75eefa03a0749eae7e6ba1aee98828b90153504bfe4d49276"
 }

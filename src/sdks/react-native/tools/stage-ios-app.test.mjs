@@ -815,7 +815,7 @@ async function createFixture(root) {
     if (fixture.sqlName === "postgis") {
       assert.deepEqual(
         generated["ios-static-dependencies"],
-        ["geos", "geos-c", "json-c", "libxml2", "proj", "sqlite"],
+        ["gdal", "geos", "geos-c", "json-c", "libxml2", "proj", "sqlite"],
       );
     }
     const config = {
@@ -977,6 +977,7 @@ async function main() {
 
     const frameworkNames = (await fs.readdir(path.join(output, "frameworks", "extensions"))).sort();
     assert.deepEqual(frameworkNames, [
+      "liboliphaunt_dependency_gdal.xcframework",
       "liboliphaunt_dependency_geos-c.xcframework",
       "liboliphaunt_dependency_geos.xcframework",
       "liboliphaunt_dependency_json-c.xcframework",

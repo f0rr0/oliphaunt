@@ -1800,6 +1800,10 @@ fn runtime_extension_sql_file_belongs(
                 .extension_sql_file_prefixes
                 .iter()
                 .any(|prefix| file_name.starts_with(prefix)))
+        || extension
+            .extension_sql_file_prefixes
+            .iter()
+            .any(|prefix| file_name == format!("{prefix}.control"))
 }
 
 fn require_mobile_static_registry_ready(metadata: &MobileStaticRegistryMetadata) -> Result<()> {

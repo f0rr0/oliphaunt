@@ -565,7 +565,7 @@ test("the complete aggregate-extension asset path leaves bounded API headroom", 
   }));
   assert.equal(products.length, 8);
   assert.equal(products.includes("oliphaunt-extension-postgis"), true);
-  assert.equal(catalog.reduce((total, { assetCount }) => total + assetCount, 0), 108);
+  assert.equal(catalog.reduce((total, { assetCount }) => total + assetCount, 0), 109);
   assert.equal(MAX_SAFE_EMBEDDED_RELEASE_ASSETS, 0);
   let requests = 0;
   let assetIndex = 0;
@@ -591,7 +591,7 @@ test("the complete aggregate-extension asset path leaves bounded API headroom", 
       },
     }));
   }
-  assert.equal(requests, 108 + (4 * products.length));
+  assert.equal(requests, 109 + (4 * products.length));
 
   const binaryProducts = [
     "liboliphaunt-native",
@@ -613,7 +613,7 @@ test("the complete aggregate-extension asset path leaves bounded API headroom", 
     // Swift, Kotlin, and React Native each read one release and one dedicated
     // exact asset inventory to prove an empty set.
     + 6;
-  assert.equal(allUploaderRequests, 195);
+  assert.equal(allUploaderRequests, 196);
 
   const selectedProductCount = Object.keys(
     loadGraph("upload-github-release-assets.test").products,
@@ -626,7 +626,7 @@ test("the complete aggregate-extension asset path leaves bounded API headroom", 
   const releaseApiRequests = allUploaderRequests
     + ((3 * selectedProductCount) + 6)
     + (2 * (1 + selectedProductCount));
-  assert.equal(releaseApiRequests, 293);
+  assert.equal(releaseApiRequests, 294);
   assert.ok(
     releaseApiRequests + FIRST_RELEASE_TRANSFER_REQUEST_TOTAL + 6
       <= FIRST_RELEASE_NOMINAL_CORE_REQUESTS,

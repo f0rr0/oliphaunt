@@ -602,6 +602,12 @@
           "build-path": "postgis/postgis/liboliphaunt_postgis_deps.so",
           "name": "postgis_deps",
           "runtime-path": "lib/postgresql/liboliphaunt_postgis_deps.so"
+        },
+        {
+          "aot-file": "postgis_raster-llvm-opta.bin.zst",
+          "build-path": "postgis/raster/rt_pg/postgis_raster-3.so",
+          "name": "postgis_raster",
+          "runtime-path": "lib/postgresql/postgis_raster-3.so"
         }
       ],
       "sql-name": "postgis"

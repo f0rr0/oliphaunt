@@ -6,11 +6,15 @@ fail() {
   exit 1
 }
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="${OLIPHAUNT_PINNED_TOOL_ROOT:-}"
 if [ -z "$root" ]; then
-  root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must run inside the Oliphaunt checkout"
+  if ! root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    root="$(cd "$script_dir/../.." && pwd)"
+    [ -f "$root/package.json" ] && [ -d "$root/src/runtimes/liboliphaunt" ] ||
+      fail "must run inside the Oliphaunt checkout"
+  fi
 fi
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tool="${1:-}"
 shift || true
 expected_input=""

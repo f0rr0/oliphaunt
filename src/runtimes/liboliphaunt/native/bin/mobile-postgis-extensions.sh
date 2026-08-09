@@ -43,23 +43,26 @@ oliphaunt_postgis_output_fingerprint() {
   local alias_file="$4"
   local archive="$5"
   local control_file="$install_dir/share/postgresql/extension/postgis.control"
+  local raster_control_file="$install_dir/share/postgresql/extension/postgis_raster.control"
   local proj_database="$install_dir/share/postgresql/proj/proj.db"
-  local sql_source_root="$postgis_build/extensions/postgis/sql"
+  local sql_source_root
   local object sql_source installed_sql dependency
   local sql_count=0
   local -a outputs
 
-  outputs=("$archive" "$objects_file" "$alias_file" "$control_file" "$proj_database")
+  outputs=("$archive" "$objects_file" "$alias_file" "$control_file" "$raster_control_file" "$proj_database")
   while IFS= read -r object; do
     [ -n "$object" ] || continue
     outputs+=("$object")
   done < "$objects_file"
-  while IFS= read -r sql_source; do
-    [ -n "$sql_source" ] || continue
-    installed_sql="$install_dir/share/postgresql/extension/$(basename "$sql_source")"
-    outputs+=("$installed_sql")
-    sql_count=$((sql_count + 1))
-  done < <(find "$sql_source_root" -maxdepth 1 -type f -name '*.sql' -print 2>/dev/null | LC_ALL=C sort)
+  for sql_source_root in "$postgis_build/extensions/postgis/sql" "$postgis_build/extensions/postgis_raster/sql"; do
+    while IFS= read -r sql_source; do
+      [ -n "$sql_source" ] || continue
+      installed_sql="$install_dir/share/postgresql/extension/$(basename "$sql_source")"
+      outputs+=("$installed_sql")
+      sql_count=$((sql_count + 1))
+    done < <(find "$sql_source_root" -maxdepth 1 -type f -name '*.sql' -print 2>/dev/null | LC_ALL=C sort)
+  done
   while IFS= read -r dependency; do
     [ -n "$dependency" ] || continue
     outputs+=("$dependency")
@@ -294,6 +297,79 @@ build_postgis_proj_dependency() {
   oliphaunt_postgis_dependency_archive proj "$archive"
 }
 
+build_postgis_gdal_dependency() {
+  oliphaunt_postgis_selected || return 0
+  local source_dir="$repo_root/target/oliphaunt-sources/checkouts/gdal"
+  local dependency_dir="$mobile_static_dependency_root/gdal"
+  local geos_dir="$mobile_static_dependency_root/geos"
+  local jsonc_dir="$mobile_static_dependency_root/json-c"
+  local libxml2_dir="$mobile_static_dependency_root/libxml2"
+  local proj_dir="$mobile_static_dependency_root/proj"
+  local sqlite_dir="$mobile_static_dependency_root/sqlite"
+  local -a iconv_args=()
+  local build_root="$work_root/gdal-$oliphaunt_mobile_target-build"
+  local archive="$dependency_dir/lib/libgdal.a"
+  if [ -f "$archive" ] && [ -f "$dependency_dir/include/gdal.h" ] && [ -x "$dependency_dir/bin/gdal-config" ]; then
+    oliphaunt_postgis_dependency_archive gdal "$archive"
+    return 0
+  fi
+  [ -f "$source_dir/CMakeLists.txt" ] || oliphaunt_postgis_fail "missing GDAL checkout: $source_dir"
+  [ -f "$proj_dir/lib/libproj.a" ] || oliphaunt_postgis_fail "GDAL dependency requires PROJ first"
+  case "$oliphaunt_mobile_target" in
+    android-arm64 | android-x86_64)
+      [ -f "$mobile_static_dependency_root/libiconv/lib/libiconv.a" ] ||
+        oliphaunt_postgis_fail "GDAL dependency requires libiconv first on Android"
+      iconv_args=(
+        -DGDAL_USE_ICONV=ON
+        "-DIconv_INCLUDE_DIR=$mobile_static_dependency_root/libiconv/include"
+        "-DIconv_LIBRARY=$mobile_static_dependency_root/libiconv/lib/libiconv.a"
+      )
+      ;;
+  esac
+  rm -rf "$build_root" "$dependency_dir"
+  oliphaunt_postgis_cmake_install "$source_dir" "$build_root" "$dependency_dir" \
+    -DBASH_COMPLETIONS_DIR= \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_APPS=OFF \
+    -DBUILD_CSHARP_BINDINGS=OFF \
+    -DBUILD_JAVA_BINDINGS=OFF \
+    -DBUILD_PYTHON_BINDINGS=OFF \
+    -DBUILD_TESTING=OFF \
+    -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
+    -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON \
+    -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
+    -DGDAL_ENABLE_DRIVER_GTIFF=ON \
+    -DGDAL_ENABLE_DRIVER_VRT=ON \
+    -DOGR_ENABLE_DRIVER_GEOJSON=ON \
+    -DOGR_ENABLE_DRIVER_SHAPE=ON \
+    -DGDAL_USE_EXTERNAL_LIBS=OFF \
+    -DGDAL_USE_INTERNAL_LIBS=ON \
+    -DGDAL_USE_OPENMP=OFF \
+    -DGDAL_USE_CURL=OFF \
+    -DGDAL_USE_OPENSSL=OFF \
+    -DGDAL_USE_GEOS=ON \
+    "-DGEOS_INCLUDE_DIR=$geos_dir/include" \
+    "-DGEOS_LIBRARY=$geos_dir/lib/libgeos_c.a" \
+    -DGDAL_USE_JSONC=ON \
+    -DGDAL_USE_JSONC_INTERNAL=OFF \
+    "-DJSONC_INCLUDE_DIR=$jsonc_dir/include/json-c" \
+    "-DJSONC_LIBRARY=$jsonc_dir/lib/libjson-c.a" \
+    -DGDAL_USE_LIBXML2=ON \
+    "-DLIBXML2_INCLUDE_DIR=$libxml2_dir/include/libxml2" \
+    "-DLIBXML2_LIBRARY=$libxml2_dir/lib/libxml2.a" \
+    -DGDAL_USE_PROJ=ON \
+    "-DPROJ_INCLUDE_DIR=$proj_dir/include" \
+    "-DPROJ_LIBRARY=$proj_dir/lib/libproj.a" \
+    -DGDAL_USE_SQLITE3=ON \
+    "-DSQLite3_INCLUDE_DIR=$sqlite_dir/include" \
+    "-DSQLite3_LIBRARY=$sqlite_dir/lib/libsqlite3.a" \
+    -DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON \
+    "${iconv_args[@]}"
+  [ -f "$archive" ] || oliphaunt_postgis_fail "GDAL build did not produce $archive"
+  [ -x "$dependency_dir/bin/gdal-config" ] || oliphaunt_postgis_fail "GDAL build did not produce gdal-config"
+  oliphaunt_postgis_dependency_archive gdal "$archive"
+}
+
 build_postgis_libiconv_dependency() {
   oliphaunt_postgis_selected || return 0
   case "$oliphaunt_mobile_target" in
@@ -345,6 +421,7 @@ build_postgis_mobile_static_dependencies() {
   build_postgis_libxml2_dependency
   build_postgis_proj_dependency
   build_postgis_libiconv_dependency
+  build_postgis_gdal_dependency
 }
 
 oliphaunt_postgis_host_alias() {
@@ -358,10 +435,10 @@ oliphaunt_postgis_host_alias() {
 oliphaunt_postgis_extra_ldflags() {
   case "$oliphaunt_mobile_target" in
     ios-simulator | ios-device | macos-arm64)
-      printf '%s\n' "-isysroot $sdk_path -L$mobile_static_dependency_root/geos/lib -L$mobile_static_dependency_root/proj/lib -L$mobile_static_dependency_root/sqlite/lib -L$mobile_static_dependency_root/json-c/lib -L$mobile_static_dependency_root/libxml2/lib -lc++"
+      printf '%s\n' "-isysroot $sdk_path -L$mobile_static_dependency_root/gdal/lib -L$mobile_static_dependency_root/geos/lib -L$mobile_static_dependency_root/proj/lib -L$mobile_static_dependency_root/sqlite/lib -L$mobile_static_dependency_root/json-c/lib -L$mobile_static_dependency_root/libxml2/lib -lc++"
       ;;
     android-arm64 | android-x86_64)
-      printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -L$mobile_static_dependency_root/proj/lib -L$mobile_static_dependency_root/sqlite/lib -L$mobile_static_dependency_root/json-c/lib -L$mobile_static_dependency_root/libxml2/lib -L$mobile_static_dependency_root/libiconv/lib -L$toolchain_dir/sysroot/usr/lib/$android_host -lc++_static -lc++abi"
+      printf '%s\n' "-L$mobile_static_dependency_root/gdal/lib -L$mobile_static_dependency_root/geos/lib -L$mobile_static_dependency_root/proj/lib -L$mobile_static_dependency_root/sqlite/lib -L$mobile_static_dependency_root/json-c/lib -L$mobile_static_dependency_root/libxml2/lib -L$mobile_static_dependency_root/libiconv/lib -L$toolchain_dir/sysroot/usr/lib/$android_host -lc++_static -lc++abi"
       ;;
   esac
 }
@@ -370,6 +447,18 @@ oliphaunt_postgis_geos_config_libs() {
   case "$oliphaunt_mobile_target" in
     ios-simulator | ios-device | macos-arm64) printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -lc++" ;;
     android-arm64 | android-x86_64) printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -lc++_static -lc++abi" ;;
+  esac
+}
+
+oliphaunt_postgis_gdal_config_libs() {
+  local base="-L$mobile_static_dependency_root/gdal/lib -lgdal -L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -L$mobile_static_dependency_root/proj/lib -lproj -L$mobile_static_dependency_root/sqlite/lib -lsqlite3 -L$mobile_static_dependency_root/json-c/lib -ljson-c -L$mobile_static_dependency_root/libxml2/lib -lxml2"
+  case "$oliphaunt_mobile_target" in
+    ios-simulator | ios-device | macos-arm64)
+      printf '%s\n' "$base -lc++"
+      ;;
+    android-arm64 | android-x86_64)
+      printf '%s\n' "$base -L$mobile_static_dependency_root/libiconv/lib -liconv -lcharset -lc++_static -lc++abi"
+      ;;
   esac
 }
 
@@ -481,6 +570,24 @@ EOF
   chmod +x "$path"
 }
 
+oliphaunt_postgis_gdal_config_script() {
+  local path="$1"
+  local gdal_libs
+  gdal_libs="$(oliphaunt_postgis_gdal_config_libs)"
+  cat > "$path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  --version) echo "3.13.2" ;;
+  --ogr-enabled) echo "yes" ;;
+  --cflags) echo "-I$mobile_static_dependency_root/gdal/include" ;;
+  --libs|--dep-libs) echo "$gdal_libs" ;;
+  *) echo "unsupported gdal-config argument: \${1:-}" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$path"
+}
+
 oliphaunt_postgis_copy_archive_objects() {
   local archive="$1"
   local name="$2"
@@ -518,13 +625,26 @@ oliphaunt_postgis_stage_object() {
 
 oliphaunt_postgis_stage_runtime_sql() {
   local postgis_build="$1"
-  mkdir -p "$install_dir/share/postgresql/extension" "$install_dir/share/postgresql/proj"
+  local gdal_data="$mobile_static_dependency_root/gdal/share/gdal"
+  [ -f "$gdal_data/gdalvrt.xsd" ] || oliphaunt_postgis_fail "PostGIS requires the pinned GDAL runtime data"
+  mkdir -p \
+    "$install_dir/share/postgresql/extension" \
+    "$install_dir/share/postgresql/proj" \
+    "$install_dir/share/postgresql/gdal"
   cp -p "$postgis_build/extensions/postgis/postgis.control" \
     "$install_dir/share/postgresql/extension/postgis.control"
   cp -p "$postgis_build/extensions/postgis/sql/"*.sql \
     "$install_dir/share/postgresql/extension/"
+  cp -p "$postgis_build/extensions/postgis_raster/postgis_raster.control" \
+    "$install_dir/share/postgresql/extension/postgis_raster.control"
+  cp -p "$postgis_build/extensions/postgis_raster/sql/"*.sql \
+    "$install_dir/share/postgresql/extension/"
+  perl -0pi -e 's|\$libdir/postgis_raster-3(?:\.6)?|\$libdir/postgis-3|g' \
+    "$install_dir/share/postgresql/extension/postgis_raster.control" \
+    "$install_dir/share/postgresql/extension/postgis_raster--"*.sql
   cp -p "$mobile_static_dependency_root/proj/share/proj/proj.db" \
     "$install_dir/share/postgresql/proj/proj.db"
+  cp -a "$gdal_data/." "$install_dir/share/postgresql/gdal/"
 }
 
 oliphaunt_postgis_patch_extension_makefile() {
@@ -533,18 +653,56 @@ oliphaunt_postgis_patch_extension_makefile() {
   local makefile="$postgis_build/postgis/Makefile"
   [ -f "$makefile" ] || oliphaunt_postgis_fail "PostGIS extension Makefile is missing: $makefile"
   OLIPHAUNT_POSTGIS_PG_MAGIC_SYMBOL="${prefix}_Pg_magic_func" \
-  OLIPHAUNT_POSTGIS_PG_INIT_SYMBOL="${prefix}__PG_init" \
+  OLIPHAUNT_POSTGIS_PG_INIT_SYMBOL="${prefix}_core_PG_init" \
+  OLIPHAUNT_POSTGIS_PG_FINI_SYMBOL="${prefix}_core_PG_fini" \
   OLIPHAUNT_POSTGIS_DIFFERENCE_SYMBOL="${prefix}_difference" \
   OLIPHAUNT_POSTGIS_PG_FINFO_DIFFERENCE_SYMBOL="${prefix}_pg_finfo_difference" \
     perl -0pi -e '
       my $defs =
         " -DPg_magic_func=$ENV{OLIPHAUNT_POSTGIS_PG_MAGIC_SYMBOL}" .
         " -D_PG_init=$ENV{OLIPHAUNT_POSTGIS_PG_INIT_SYMBOL}" .
+        " -D_PG_fini=$ENV{OLIPHAUNT_POSTGIS_PG_FINI_SYMBOL}" .
         " -Ddifference=$ENV{OLIPHAUNT_POSTGIS_DIFFERENCE_SYMBOL}" .
         " -Dpg_finfo_difference=$ENV{OLIPHAUNT_POSTGIS_PG_FINFO_DIFFERENCE_SYMBOL}";
       my $updated = s|^(PG_CPPFLAGS \+= .*)$|$1$defs|m;
       die "could not patch PostGIS PG_CPPFLAGS\n" unless $updated;
     ' "$makefile"
+}
+
+oliphaunt_postgis_patch_raster_makefile() {
+  local postgis_build="$1"
+  local prefix="$2"
+  local makefile="$postgis_build/raster/rt_pg/Makefile"
+  [ -f "$makefile" ] || oliphaunt_postgis_fail "PostGIS raster Makefile is missing: $makefile"
+  OLIPHAUNT_POSTGIS_RASTER_MAGIC_SYMBOL="${prefix}_raster_Pg_magic_func" \
+  OLIPHAUNT_POSTGIS_RASTER_INIT_SYMBOL="${prefix}_raster_PG_init" \
+  OLIPHAUNT_POSTGIS_RASTER_FINI_SYMBOL="${prefix}_raster_PG_fini" \
+    perl -0pi -e '
+      my $defs =
+        " -DPg_magic_func=$ENV{OLIPHAUNT_POSTGIS_RASTER_MAGIC_SYMBOL}" .
+        " -D_PG_init=$ENV{OLIPHAUNT_POSTGIS_RASTER_INIT_SYMBOL}" .
+        " -D_PG_fini=$ENV{OLIPHAUNT_POSTGIS_RASTER_FINI_SYMBOL}";
+      my $updated = s|^(PG_CPPFLAGS \+= .*)$|$1$defs|m;
+      die "could not patch PostGIS raster PG_CPPFLAGS\n" unless $updated;
+    ' "$makefile"
+}
+
+oliphaunt_postgis_build_combined_init() {
+  local postgis_build="$1"
+  local prefix="$2"
+  local object_dir="$3"
+  local source="$object_dir/oliphaunt_postgis_combined_init.c"
+  local object="$object_dir/oliphaunt_postgis_combined_init.o"
+  cat > "$source" <<EOF
+extern void ${prefix}_core_PG_init(void);
+extern void ${prefix}_raster_PG_init(void);
+void ${prefix}__PG_init(void) {
+  ${prefix}_core_PG_init();
+  ${prefix}_raster_PG_init();
+}
+EOF
+  "${cc[@]}" $native_cflags -fPIC -c "$source" -o "$object" >> "$make_log" 2>&1
+  printf '%s\n' "$object"
 }
 
 oliphaunt_postgis_write_static_symbol_aliases() {
@@ -596,6 +754,7 @@ build_postgis_mobile_static_extension_objects() {
 
   if [ -f "$archive" ] && [ -s "$objects_file" ] && [ -s "$alias_file" ] &&
     [ -f "$install_dir/share/postgresql/extension/postgis.control" ] &&
+    [ -f "$install_dir/share/postgresql/extension/postgis_raster.control" ] &&
     [ -s "$build_stamp" ] && [ "$(cat "$build_stamp")" = "$build_fingerprint" ] &&
     [ -s "$output_stamp" ] &&
     output_fingerprint="$(oliphaunt_postgis_output_fingerprint "$postgis_build" "$object_dir" "$objects_file" "$alias_file" "$archive")" &&
@@ -616,19 +775,21 @@ build_postgis_mobile_static_extension_objects() {
   chmod +x "$work_root/postgis-fake-postgres-bin/postgres"
   rsync -a --delete --exclude .git "$source_dir/" "$postgis_build/"
 
-  local pg_config geos_config pkg_config host_alias ldflags
+  local pg_config geos_config gdal_config pkg_config host_alias ldflags
   pg_config="$scripts_dir/pg_config"
   geos_config="$scripts_dir/geos-config"
+  gdal_config="$scripts_dir/gdal-config"
   pkg_config="$scripts_dir/pkg-config"
   host_alias="$(oliphaunt_postgis_host_alias)"
   ldflags="$(oliphaunt_postgis_extra_ldflags)"
   oliphaunt_postgis_pg_config_script "$pg_config"
   oliphaunt_postgis_geos_config_script "$geos_config"
+  oliphaunt_postgis_gdal_config_script "$gdal_config"
   oliphaunt_postgis_pkg_config_script "$pkg_config"
 
   local postgis_cflags postgis_cppflags
   postgis_cflags="$native_cflags"
-  postgis_cppflags="-I$build_dir/src/include -I$build_dir/src/include/port -I$build_dir/src/interfaces/libpq -I$mobile_static_dependency_root/libxml2/include/libxml2 -I$mobile_static_dependency_root/proj/include -I$mobile_static_dependency_root/json-c/include -I$mobile_static_dependency_root/json-c/include/json-c"
+  postgis_cppflags="-I$build_dir/src/include -I$build_dir/src/include/port -I$build_dir/src/interfaces/libpq -I$mobile_static_dependency_root/gdal/include -I$mobile_static_dependency_root/libxml2/include/libxml2 -I$mobile_static_dependency_root/proj/include -I$mobile_static_dependency_root/json-c/include -I$mobile_static_dependency_root/json-c/include/json-c"
   case "$oliphaunt_mobile_target" in
     android-arm64 | android-x86_64)
     postgis_cflags="$postgis_cflags -D_GNU_SOURCE"
@@ -641,9 +802,9 @@ build_postgis_mobile_static_extension_objects() {
     --host="$host_alias"
     --with-pgconfig="$pg_config"
     --with-geosconfig="$geos_config"
+    --with-gdalconfig="$gdal_config"
     --with-xml2config="$mobile_static_dependency_root/libxml2/bin/xml2-config"
     --without-protobuf
-    --without-raster
     --without-topology
     --without-sfcgal
     --without-address-standardizer
@@ -683,14 +844,16 @@ build_postgis_mobile_static_extension_objects() {
     build_alias="$(build-aux/config.guess)"
     ./configure --build="$build_alias" "${configure_args[@]}" >> "$make_log" 2>&1
     oliphaunt_postgis_patch_extension_makefile "$postgis_build" "$prefix"
+    oliphaunt_postgis_patch_raster_makefile "$postgis_build" "$prefix"
     make -j"$jobs" -C liblwgeom liblwgeom.la >> "$make_log" 2>&1
     make -j"$jobs" -C libpgcommon libpgcommon.a >> "$make_log" 2>&1
     make -j"$jobs" -C deps/flatgeobuf all >> "$make_log" 2>&1
     make -j"$jobs" -C postgis all >> "$make_log" 2>&1 || true
-    make -j1 raster-sql >> "$make_log" 2>&1 || true
-    make -j1 -C raster/rt_pg sql_objs >> "$make_log" 2>&1
+    make -j"$jobs" -C raster/rt_core all >> "$make_log" 2>&1
+    make -j"$jobs" -C raster/rt_pg all >> "$make_log" 2>&1 || true
+    [ -f raster/rt_pg/rtpostgis.o ] || oliphaunt_postgis_fail "PostGIS raster objects were not produced"
     make -j1 -C extensions postgis_extension_helper.sql >> "$make_log" 2>&1
-    make -j1 -C extensions/postgis postgis.control all >> "$make_log" 2>&1
+    make -j1 -C extensions all >> "$make_log" 2>&1
   )
 
   : > "$objects_file"
@@ -700,6 +863,10 @@ build_postgis_mobile_static_extension_objects() {
     [ -n "$object" ] || continue
     oliphaunt_postgis_stage_object "$object" postgis "$object_dir" "$objects_file"
   done < <(find "$postgis_build/postgis" -maxdepth 1 -type f -name '*.o' -print | LC_ALL=C sort)
+  while IFS= read -r object; do
+    [ -n "$object" ] || continue
+    oliphaunt_postgis_stage_object "$object" raster "$object_dir" "$objects_file"
+  done < <(find "$postgis_build/raster/rt_pg" -maxdepth 1 -type f -name '*.o' -print | LC_ALL=C sort)
   for object in \
     "$postgis_build/deps/flatgeobuf/flatgeobuf_c.o" \
     "$postgis_build/deps/flatgeobuf/geometrywriter.o" \
@@ -711,6 +878,10 @@ build_postgis_mobile_static_extension_objects() {
   done
   oliphaunt_postgis_copy_archive_objects "$postgis_build/liblwgeom/.libs/liblwgeom.a" liblwgeom "$object_dir" "$objects_file"
   oliphaunt_postgis_copy_archive_objects "$postgis_build/libpgcommon/libpgcommon.a" libpgcommon "$object_dir" "$objects_file"
+  oliphaunt_postgis_copy_archive_objects "$postgis_build/raster/rt_core/librtcore.a" rtcore "$object_dir" "$objects_file"
+  object="$(oliphaunt_postgis_build_combined_init "$postgis_build" "$prefix" "$object_dir")"
+  printf '%s\n' "$object" >> "$objects_file"
+  mobile_static_objects+=("$object")
   [ -s "$objects_file" ] || oliphaunt_postgis_fail "PostGIS did not produce object inputs"
   oliphaunt_postgis_verify_prefixed_module_symbol "$stem" "$prefix"
   oliphaunt_postgis_verify_prefixed_legacy_symbols "$stem" "$prefix"

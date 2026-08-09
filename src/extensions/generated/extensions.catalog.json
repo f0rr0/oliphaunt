@@ -1724,16 +1724,17 @@
         "postgres extension",
         "experimental"
       ],
-      "bundle-size": 8551161,
+      "bundle-size": 11490267,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
       "control": {
-        "default-version": "3.6.3",
+        "default-version": "3.6.4",
         "module-pathname": "@MODULEPATH@",
         "requires": [],
         "relocatable": "false"
       },
       "dependencies": [],
       "native-dependencies": [
+        "gdal:3.13.2-static",
         "geos:3.14.1-static",
         "proj:9.8.1-static",
         "sqlite:3.53.1-static",
@@ -1770,7 +1771,7 @@
         "promoted": true,
         "stable": true,
         "archive": "extensions/postgis.tar.zst",
-        "module-sha256": "2a0d7432348cfae67e7736687e4638d60f2df05ddcbc870ef44921940feb35d4"
+        "module-sha256": "791e5863374a7ac63a07dd2689b734d030ecf1bea2df8fa1a77d3eaca81436bd"
       },
       "notes": []
     },

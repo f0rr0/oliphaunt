@@ -423,6 +423,11 @@ mod candidate_tests {
         run_direct_and_restart_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
     }
 
+    #[test]
+    fn postgis_passes_direct_and_restart_smoke() -> Result<()> {
+        run_direct_and_restart_smoke_set(&[generated::POSTGIS])
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
     async fn packaged_candidate_extensions_pass_server_smoke() -> Result<()> {

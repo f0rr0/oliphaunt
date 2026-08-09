@@ -3,12 +3,39 @@ artifact_family = "wasix-side-module"
 status = "supported"
 build_kind = "autotools"
 build_script = "src/extensions/external/postgis/tools/build_wasix.sh"
-dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
+dependencies = ["gdal", "geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
 module_files = [
   "lib/postgresql/postgis-3.so",
+  "lib/postgresql/postgis_raster-3.so",
   "lib/postgresql/liboliphaunt_postgis_deps.so",
 ]
 data_files = [
+  "share/postgresql/gdal/GDALLogoBW.svg",
+  "share/postgresql/gdal/GDALLogoColor.svg",
+  "share/postgresql/gdal/GDALLogoGS.svg",
+  "share/postgresql/gdal/LICENSE.TXT",
+  "share/postgresql/gdal/cubewerx_extra.wkt",
+  "share/postgresql/gdal/ecw_cs.wkt",
+  "share/postgresql/gdal/epsg.wkt",
+  "share/postgresql/gdal/esri_StatePlane_extra.wkt",
+  "share/postgresql/gdal/gdal_algorithm.schema.json",
+  "share/postgresql/gdal/gdalicon.png",
+  "share/postgresql/gdal/gdalinfo_output.schema.json",
+  "share/postgresql/gdal/gdalmdiminfo_output.schema.json",
+  "share/postgresql/gdal/gdalvrt.xsd",
+  "share/postgresql/gdal/leaflet_template.html",
+  "share/postgresql/gdal/ogr_fields_override.schema.json",
+  "share/postgresql/gdal/ogrinfo_output.schema.json",
+  "share/postgresql/gdal/ozi_datum.csv",
+  "share/postgresql/gdal/ozi_ellips.csv",
+  "share/postgresql/gdal/pci_datum.txt",
+  "share/postgresql/gdal/pci_ellips.txt",
+  "share/postgresql/gdal/stateplane.csv",
+  "share/postgresql/gdal/template_tiles.mapml",
+  "share/postgresql/gdal/tms_LINZAntarticaMapTileGrid.json",
+  "share/postgresql/gdal/tms_MapML_APSTILE.json",
+  "share/postgresql/gdal/tms_MapML_CBMTILE.json",
+  "share/postgresql/gdal/tms_NZTM2000.json",
   "share/postgresql/contrib/postgis-3.6/legacy.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
   "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
@@ -20,7 +47,6 @@ data_files = [
   "share/postgresql/proj/proj.db",
 ]
 configure_flags = [
-  "--without-raster",
   "--without-topology",
   "--without-sfcgal",
   "--without-address-standardizer",
@@ -31,14 +57,17 @@ configure_flags = [
 required_build_files = [
   "postgis/postgis-3.so",
   "postgis/liboliphaunt_postgis_deps.so",
+  "raster/rt_pg/postgis_raster-3.so",
   "extensions/postgis/postgis.control",
+  "extensions/postgis_raster/postgis_raster.control",
+  "share/gdal/gdalvrt.xsd",
   "share/proj/proj.db",
 ]
 required_build_globs = [
   "extensions/postgis/sql/postgis--*.sql",
+  "extensions/postgis_raster/sql/postgis_raster--*.sql",
 ]
 excluded_sql_extensions = [
-  "postgis_raster",
   "postgis_topology",
   "postgis_sfcgal",
   "postgis_tiger_geocoder",
@@ -52,6 +81,12 @@ runtime_path = "lib/postgresql/liboliphaunt_postgis_deps.so"
 build_path = "postgis/postgis/liboliphaunt_postgis_deps.so"
 aot_file = "postgis_deps-llvm-opta.bin.zst"
 
+[[native_support_modules]]
+name = "postgis_raster"
+runtime_path = "lib/postgresql/postgis_raster-3.so"
+build_path = "postgis/raster/rt_pg/postgis_raster-3.so"
+aot_file = "postgis_raster-llvm-opta.bin.zst"
+
 [staging]
 module_source_dir = "postgis/postgis"
 control_source = "postgis/extensions/postgis/postgis.control"
@@ -60,3 +95,11 @@ sql_source_dir = "postgis/extensions/postgis/sql"
 [[staging.data_dirs]]
 source = "postgis/share/proj"
 destination = "share/proj"
+
+[[staging.data_dirs]]
+source = "postgis/share/gdal"
+destination = "share/postgresql/gdal"
+
+[[staging.data_dirs]]
+source = "postgis/share/extension-raster"
+destination = "share/postgresql/extension"

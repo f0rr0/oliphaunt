@@ -2008,13 +2008,19 @@ mod tests {
             vec![
                 "postgis/postgis-3.so",
                 "postgis/liboliphaunt_postgis_deps.so",
+                "raster/rt_pg/postgis_raster-3.so",
                 "extensions/postgis/postgis.control",
+                "extensions/postgis_raster/postgis_raster.control",
+                "share/gdal/gdalvrt.xsd",
                 "share/proj/proj.db",
             ]
         );
         assert_eq!(
             postgis.required_build_globs,
-            vec!["extensions/postgis/sql/postgis--*.sql"]
+            vec![
+                "extensions/postgis/sql/postgis--*.sql",
+                "extensions/postgis_raster/sql/postgis_raster--*.sql",
+            ]
         );
         assert_eq!(
             postgis
@@ -2022,10 +2028,10 @@ mod tests {
                 .iter()
                 .map(|module| module.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["postgis_deps"]
+            vec!["postgis_deps", "postgis_raster"]
         );
         assert!(
-            postgis
+            !postgis
                 .excluded_sql_extensions
                 .contains(&"postgis_raster".to_owned())
         );
@@ -2046,9 +2052,19 @@ mod tests {
             staging.sql_source_dir.as_deref(),
             Some("postgis/extensions/postgis/sql")
         );
-        assert_eq!(staging.data_dirs.len(), 1);
+        assert_eq!(staging.data_dirs.len(), 3);
         assert_eq!(staging.data_dirs[0].source, "postgis/share/proj");
         assert_eq!(staging.data_dirs[0].destination, "share/proj");
+        assert_eq!(staging.data_dirs[1].source, "postgis/share/gdal");
+        assert_eq!(staging.data_dirs[1].destination, "share/postgresql/gdal");
+        assert_eq!(
+            staging.data_dirs[2].source,
+            "postgis/share/extension-raster"
+        );
+        assert_eq!(
+            staging.data_dirs[2].destination,
+            "share/postgresql/extension"
+        );
         Ok(())
     }
 }

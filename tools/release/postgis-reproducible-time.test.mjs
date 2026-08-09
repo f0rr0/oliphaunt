@@ -6,7 +6,7 @@ import test from "node:test";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
-const EPOCH = 1_776_193_981;
+const EPOCH = 1_780_943_336;
 
 function read(relative) {
   return readFileSync(path.join(ROOT, relative), "utf8");
@@ -31,7 +31,7 @@ function assertOrdered(text, first, second, label) {
 test("PostGIS source pin carries one portable epoch tied to its exact commit", () => {
   const manifest = Bun.TOML.parse(read("src/extensions/external/postgis/source.toml"));
   assert.equal(manifest.name, "postgis");
-  assert.equal(manifest.commit, "3d12666588a84b23a3147618eaa9b40b0fe5e796");
+  assert.equal(manifest.commit, "94d984bd083635c1d253db0f87cf80b32548e406");
   assert.equal(manifest.source_date_epoch, EPOCH);
   assert.ok(manifest.source_date_epoch > 0 && manifest.source_date_epoch <= 253_402_300_799);
 

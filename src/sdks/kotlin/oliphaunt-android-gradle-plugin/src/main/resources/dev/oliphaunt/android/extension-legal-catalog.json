@@ -1,6 +1,6 @@
 {
   "schema": "oliphaunt-android-extension-legal-catalog-v1",
-  "sourceCatalogSha256": "cd1ce8a2c4746a2f0697595c9203977f2eaf5308e5b6a118212116547a9e8ac7",
+  "sourceCatalogSha256": "2627b4a5a20c8e79fdd9d3c949f4ed8b5c4f71ece7e76084187f0bf0156fbbe4",
   "contracts": [
     {
       "scope": "aggregate",
@@ -391,6 +391,7 @@
       "target": "android-arm64-v8a",
       "profile": "external-native",
       "licenseFiles": [
+        "share/licenses/gdal/LICENSE.TXT",
         "share/licenses/geos/COPYING",
         "share/licenses/geos/src/deps/ryu/LICENSE",
         "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
@@ -419,6 +420,12 @@
           "path": "THIRD_PARTY_NOTICES.md",
           "bytes": 864,
           "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/gdal/LICENSE.TXT",
+          "bytes": 21841,
+          "sha256": "1dae3468e81d00da56e2936f74d33b8b3ad09d726437f19ce209a5dabea41f77",
           "mode": "0644"
         },
         {
@@ -526,6 +533,7 @@
       "target": "android-x86_64",
       "profile": "external-native",
       "licenseFiles": [
+        "share/licenses/gdal/LICENSE.TXT",
         "share/licenses/geos/COPYING",
         "share/licenses/geos/src/deps/ryu/LICENSE",
         "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
@@ -554,6 +562,12 @@
           "path": "THIRD_PARTY_NOTICES.md",
           "bytes": 864,
           "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "share/licenses/gdal/LICENSE.TXT",
+          "bytes": 21841,
+          "sha256": "1dae3468e81d00da56e2936f74d33b8b3ad09d726437f19ce209a5dabea41f77",
           "mode": "0644"
         },
         {
@@ -2447,6 +2461,7 @@
       "target": "android-arm64-v8a",
       "profile": "external-native",
       "licenseFiles": [
+        "share/licenses/gdal/LICENSE.TXT",
         "share/licenses/geos/COPYING",
         "share/licenses/geos/src/deps/ryu/LICENSE",
         "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
@@ -2475,6 +2490,12 @@
           "path": "THIRD_PARTY_NOTICES.md",
           "bytes": 864,
           "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/gdal/LICENSE.TXT",
+          "bytes": 21841,
+          "sha256": "1dae3468e81d00da56e2936f74d33b8b3ad09d726437f19ce209a5dabea41f77",
           "mode": "0644"
         },
         {
@@ -2582,6 +2603,7 @@
       "target": "android-x86_64",
       "profile": "external-native",
       "licenseFiles": [
+        "share/licenses/gdal/LICENSE.TXT",
         "share/licenses/geos/COPYING",
         "share/licenses/geos/src/deps/ryu/LICENSE",
         "share/licenses/geos/src/deps/ryu/LICENSE-Apache2",
@@ -2610,6 +2632,12 @@
           "path": "THIRD_PARTY_NOTICES.md",
           "bytes": 864,
           "sha256": "81765aa852ba082089aceef23be857f36cdf98543c480bf67b764ff011b50619",
+          "mode": "0644"
+        },
+        {
+          "path": "files/share/licenses/gdal/LICENSE.TXT",
+          "bytes": 21841,
+          "sha256": "1dae3468e81d00da56e2936f74d33b8b3ad09d726437f19ce209a5dabea41f77",
           "mode": "0644"
         },
         {

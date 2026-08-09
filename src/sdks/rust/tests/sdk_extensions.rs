@@ -291,13 +291,13 @@ fn native_extension_manifest_matches_build_required_artifacts() {
         }
     }
 
-    let expected_controls = NATIVE_EXTENSION_MANIFEST
+    let mut expected_controls = NATIVE_EXTENSION_MANIFEST
         .iter()
         .filter(|entry| entry.first_party_artifact())
         .filter(|entry| entry.creates_extension)
         .map(|entry| entry.sql_name.to_owned())
         .collect::<BTreeSet<_>>();
-    let expected_modules = NATIVE_EXTENSION_MANIFEST
+    let mut expected_modules = NATIVE_EXTENSION_MANIFEST
         .iter()
         .filter(|entry| entry.first_party_artifact())
         .filter_map(|entry| match entry.module {
@@ -305,6 +305,12 @@ fn native_extension_manifest_matches_build_required_artifacts() {
             ExtensionModuleAsset::SqlOnly => None,
         })
         .collect::<BTreeSet<_>>();
+
+    // The PostGIS product owns the separately createable raster companion and
+    // its dynamic module even though the public SDK selection remains the
+    // single dependency-closed `Extension::Postgis` product.
+    expected_controls.insert("postgis_raster".to_owned());
+    expected_modules.insert("postgis_raster-3".to_owned());
 
     assert_eq!(
         actual_controls, expected_controls,

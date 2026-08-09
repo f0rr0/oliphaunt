@@ -1116,6 +1116,7 @@ function checkExtensions() {
     'src/extensions/external/README.md',
     'src/extensions/external/vector/source.toml',
     'src/extensions/external/postgis/source.toml',
+    'src/extensions/external/postgis/dependencies/gdal/source.toml',
     'src/extensions/external/postgis/dependencies/geos/source.toml',
     'src/extensions/external/postgis/dependencies/proj/source.toml',
     'src/extensions/external/postgis/dependencies/sqlite/source.toml',
@@ -1164,7 +1165,7 @@ function checkExtensions() {
     requireFile(path);
   }
 
-  requireText('src/extensions/external/postgis/source.toml', 'source_date_epoch = 1776193981');
+  requireText('src/extensions/external/postgis/source.toml', 'source_date_epoch = 1780943336');
 
   const postgisReproducibleTimeInputs = [
     '/src/extensions/external/postgis/source.toml',

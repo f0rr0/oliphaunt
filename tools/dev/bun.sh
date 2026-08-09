@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "must run inside the Oliphaunt git checkout" >&2
-  exit 1
-}
+if ! root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  root="$(cd "$script_dir/../.." && pwd)"
+  if [ ! -f "$root/package.json" ] || [ ! -d "$root/src/runtimes/liboliphaunt" ]; then
+    echo "must run inside the Oliphaunt git checkout" >&2
+    exit 1
+  fi
+fi
 cd "$root"
 
 fail() {
