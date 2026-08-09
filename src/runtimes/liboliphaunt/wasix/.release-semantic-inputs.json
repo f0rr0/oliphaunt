@@ -178,7 +178,7 @@
         },
         {
           "path": "tools/xtask/src/postgres_guard.rs",
-          "sha256": "0ccadf939d2e52a8a3f1a3445e6e1d401085ead7f788085c443e6563b0e19064"
+          "sha256": "da19f4d401306cbdec5f0638cadfb27065a0c935c173e030433c2c4a2afb1f55"
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
@@ -212,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "731c91a403fb1ff74bfb7007de3c1b278045c457110d66ee5165f4471818eee4"
+          "sha256": "805de8c49c80c5d380f7420a3aba1540e540f1fb87fe88838f27f47330c68e83"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "44941727d6613f335c925759340de73f7afca0e354163c34866bb45f1c138c5f"
+  "sha256": "da6923976b2ee188ec14f56dbbf09138c9cedff8bd9ece7198a03bc3963b7fd1"
 }

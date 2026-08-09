@@ -230,6 +230,26 @@ test("target-scoped catalog rows preserve the public default and expose only req
     publicRows,
   );
 
+  const androidPgmqRows = await catalogRows({
+    qualificationSqlNames: ["pgmq"],
+    qualificationTarget: "android-arm64-v8a",
+  });
+  const androidPgmq = androidPgmqRows.find(({ sqlName }) => sqlName === "pgmq");
+  assert.deepEqual(
+    {
+      desktopPrebuilt: androidPgmq?.desktopPrebuilt,
+      mobilePrebuilt: androidPgmq?.mobilePrebuilt,
+      mobileStaticRequired: androidPgmq?.mobileStaticRequired,
+      stem: androidPgmq?.stem,
+    },
+    {
+      desktopPrebuilt: false,
+      mobilePrebuilt: true,
+      mobileStaticRequired: false,
+      stem: "",
+    },
+  );
+
   const androidRows = await catalogRows({
     qualificationSqlNames: ["age"],
     qualificationTarget: "android-arm64-v8a",

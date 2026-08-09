@@ -100,7 +100,7 @@
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "3bba3ae4486549321911a68c2e6e6ecd2d1c22640edc8253ec5079aaeb3fe657"
+          "sha256": "76af43ddcd6ad869b96df3bf6597c65ae175b476b38b596ae4130bf3bd4c78d1"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "cd9da3b78ef5e8df01dacab7774205aef15270bf3d20dee1718b81bad78c13b1"
+  "sha256": "9c2edf8560c535e93fad4c9a02e34f754eb542025367a28d2c39e0750dbadaef"
 }
