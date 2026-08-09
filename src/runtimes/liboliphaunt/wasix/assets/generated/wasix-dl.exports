@@ -1,3 +1,4 @@
+AbortCurrentTransaction
 AcquireRewriteLocks
 AggCheckCallContext
 AllocSetContextCreateInternal
@@ -33,11 +34,13 @@ CallerFInfoFunctionCall2
 CatalogTupleDelete
 CatalogTupleInsert
 CatalogTupleUpdate
+ChangeVarNodes
 CheckFunctionValidatorAccess
 CheckIndexCompatible
 CheckTableNotInUse
 CheckXidAlive
 CommandCounterIncrement
+CommitTransactionCommand
 ConditionVariableBroadcast
 ConditionVariableCancelSleep
 ConditionVariableInit
@@ -97,6 +100,8 @@ EvictUnpinnedBuffer
 ExecDropSingleTupleTableSlot
 ExecInitExpr
 ExecInitExprWithParams
+ExecPrepareQual
+ExecStoreBufferHeapTuple
 ExecStoreVirtualTuple
 ExecuteTruncateGuts
 ExecutorEnd
@@ -121,8 +126,8 @@ ExprEvalPushStep
 ExtendBufferedRel
 Float8GetDatum
 FlushErrorState
-FlushOneBuffer
 FlushRelationBuffers
+FormIndexDatum
 FreeAccessStrategy
 FreeCachedExpression
 FreeExecutorState
@@ -166,6 +171,7 @@ GetTopFullTransactionId
 GetTransactionSnapshot
 GetUserId
 GetUserIdAndSecContext
+GetXLogInsertRecPtr
 GetXLogReplayRecPtr
 GinDataLeafPageGetItems
 HeapTupleGetUpdateXid
@@ -182,12 +188,14 @@ InstrEndLoop
 Int64GetDatum
 InterruptPending
 InvalidObjectAddress
+IsAbortedTransactionBlockState
 IsTransactionState
 IsValidJsonNumber
 ItemPointerCompare
 ItemPointerEquals
 JsonbValueToJsonb
 LWLockAcquire
+LWLockConditionalAcquire
 LWLockHeldByMe
 LWLockInitialize
 LWLockNewTrancheId
@@ -264,6 +272,7 @@ ReThrowError
 ReadBuffer
 ReadBufferExtended
 ReadMultiXactIdRange
+ReadNextFullTransactionId
 ReadNextMultiXactId
 RecentXmin
 RecordFreeIndexPage
@@ -356,8 +365,11 @@ SharedFileSetInit
 ShmemInitStruct
 SnapshotAnyData
 SplitIdentifierString
+StartTransactionCommand
+SysCacheGetAttr
 SysCacheGetAttrNotNull
 SystemFuncName
+TTSOpsBufferHeapTuple
 TTSOpsMinimalTuple
 TTSOpsVirtual
 TopMemoryContext
@@ -451,6 +463,7 @@ atexit
 atof
 atoi
 be_lo_unlink
+before_shmem_exit
 bit_in
 bitcmp
 biteq
@@ -532,6 +545,7 @@ construct_md_array
 contain_aggs_of_level
 contain_mutable_functions
 contain_nonstrict_functions
+contain_var_clause
 convert_network_to_scalar
 convert_tuples_by_position
 copyObjectImpl
@@ -583,8 +597,6 @@ dshash_detach
 dshash_find
 dshash_find_or_insert
 dshash_get_hash_table_handle
-dshash_memcmp
-dshash_memhash
 dshash_release_lock
 dshash_seq_init
 dshash_seq_next
@@ -945,7 +957,6 @@ pg_detoast_datum_packed
 pg_detoast_datum_slice
 pg_do_encoding_conversion
 pg_encoding_max_length
-pg_fprintf
 pg_get_indexdef_columns_extended
 pg_get_querydef
 pg_get_shmem_pagesize
@@ -953,6 +964,7 @@ pg_global_prng_state
 pg_is_ascii
 pg_ltoa
 pg_mb2wchar_with_len
+pg_mblen
 pg_mblen_cstr
 pg_mblen_range
 pg_mblen_unbounded
@@ -1022,6 +1034,7 @@ pre_format_elog_string
 process_shared_preload_libraries_in_progress
 psprintf
 pstrdup
+pull_var_clause
 pull_varattnos
 pull_varnos
 pull_vars_of_level
@@ -1044,7 +1057,6 @@ realloc
 recordDependencyOn
 recordDependencyOnExpr
 regclassin
-regconfigout
 register_ENR
 register_reloptions_validator
 relation_close
@@ -1170,7 +1182,6 @@ timestamp_mi
 timetz_cmp
 tm2timestamp
 to_hex32
-to_tsvector
 to_tsvector_byid
 toast_close_indexes
 toast_open_indexes
@@ -1181,6 +1192,7 @@ transformDistinctClause
 transformExpr
 transformRelOptions
 transformStmt
+try_index_open
 tsearch_readline
 tsearch_readline_begin
 tsearch_readline_end
