@@ -1708,10 +1708,10 @@
         "promoted": false,
         "stable": false,
         "archive": "extensions/pgmq.tar.zst",
-        "blocker": "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+        "blocker": "PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
       },
       "notes": [
-        "promotion blocker: PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+        "promotion blocker: PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
       ]
     },
     {

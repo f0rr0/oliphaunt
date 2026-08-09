@@ -212,11 +212,11 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "06d258c1d288f73637f6f2874c087060f344c3c9fd58c201a540c9569009956a"
+          "sha256": "731c91a403fb1ff74bfb7007de3c1b278045c457110d66ee5165f4471818eee4"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "7a5483e122cf6726518b9e3c3ee5739d8990392564803424796332eaa8da2d22"
+          "sha256": "bdab70f9bcbdf4189356fd11e650de3051867356a555448f6dc8b70e847776f8"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
@@ -224,7 +224,7 @@
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "44b9675dc56796564dd82e6c61d9870e89ab4429a4e7ee84259c13da086da0da"
+          "sha256": "c9685962d0dc9b54a0454dbba559303367c7df08918e0842d01bbf580d1f0cf1"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "7299ee177aeae9a95374981715177c695221caad83b3246b33281b126764a4f6"
+  "sha256": "44941727d6613f335c925759340de73f7afca0e354163c34866bb45f1c138c5f"
 }

@@ -468,7 +468,7 @@ fn target_specific_release_readiness_can_diverge_from_wasix_support() {
 }
 
 #[test]
-fn pg18_blocked_extensions_remain_out_of_release_ready_catalog() {
+fn deferred_extensions_remain_out_of_release_ready_catalog() {
     let catalog = generated_wasm_extension_catalog();
     let extensions = catalog["extensions"]
         .as_array()
@@ -490,40 +490,49 @@ fn pg18_blocked_extensions_remain_out_of_release_ready_catalog() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         blocked_ids,
-        BTreeSet::from(["age".to_owned()]),
-        "every PG18.4 non-stable extension needs an explicit blocker before release-ready parity can move"
+        BTreeSet::from(["age".to_owned(), "pgmq".to_owned()]),
+        "every non-stable extension needs an explicit blocker before release-ready parity can move"
     );
 
-    let (id, sql_name, requested, packaged, blocker) =
-        ("age", "age", false, false, "ExecInitExtraTupleSlot");
-    let extension = extensions
-        .iter()
-        .find(|extension| extension["id"].as_str() == Some(id))
-        .unwrap_or_else(|| panic!("generated wasm extension catalog must contain {id}"));
-    assert_eq!(extension["sql-name"].as_str(), Some(sql_name));
-    assert_eq!(
-        extension["promotion"]["requested"].as_bool(),
-        Some(requested),
-        "{id} build request state must match its current PG18.4 blocker status"
-    );
-    assert_eq!(
-        extension["promotion"]["stable"].as_bool(),
-        Some(false),
-        "{id} must not be treated as PG18.4 release-ready until its blocker is resolved"
-    );
-    assert_eq!(
-        extension["promotion"]["packaged"].as_bool(),
-        Some(packaged),
-        "{id} packaged state must match the generated WASIX artifact evidence"
-    );
-    assert!(
-        extension["promotion"]["blocker"]
-            .as_str()
-            .unwrap_or_default()
-            .contains(blocker),
-        "{id} must record the concrete PG18.4 blocker"
-    );
-    assert_eq!(Extension::by_release_ready_sql_name(sql_name), None);
+    for (id, sql_name, requested, packaged, blocker) in [
+        ("age", "age", false, false, "ExecInitExtraTupleSlot"),
+        (
+            "pgmq",
+            "pgmq",
+            true,
+            false,
+            "exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed",
+        ),
+    ] {
+        let extension = extensions
+            .iter()
+            .find(|extension| extension["id"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("generated wasm extension catalog must contain {id}"));
+        assert_eq!(extension["sql-name"].as_str(), Some(sql_name));
+        assert_eq!(
+            extension["promotion"]["requested"].as_bool(),
+            Some(requested),
+            "{id} build request state must match its current qualification status"
+        );
+        assert_eq!(
+            extension["promotion"]["stable"].as_bool(),
+            Some(false),
+            "{id} must not be treated as release-ready until its blocker is resolved"
+        );
+        assert_eq!(
+            extension["promotion"]["packaged"].as_bool(),
+            Some(packaged),
+            "{id} packaged state must match the generated WASIX artifact evidence"
+        );
+        assert!(
+            extension["promotion"]["blocker"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(blocker),
+            "{id} must record its concrete qualification blocker"
+        );
+        assert_eq!(Extension::by_release_ready_sql_name(sql_name), None);
+    }
 }
 
 #[test]

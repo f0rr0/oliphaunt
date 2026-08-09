@@ -981,7 +981,7 @@
     {
       "activation": "CREATE EXTENSION",
       "archive": "extensions/pgmq.tar.zst",
-      "blocker": "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.",
+      "blocker": "PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.",
       "dependencies": [],
       "desktop-release-ready": false,
       "display-name": "PGMQ",
@@ -1004,8 +1004,8 @@
       "stable": false,
       "support": {
         "mobile": {
-          "android": "unsupported",
-          "ios": "unsupported"
+          "android": "candidate",
+          "ios": "candidate"
         },
         "native": {
           "broker": "candidate",
@@ -1018,7 +1018,7 @@
         }
       },
       "target-status": {
-        "mobile": "unsupported",
+        "mobile": "candidate",
         "native": "candidate",
         "wasix": "candidate"
       },

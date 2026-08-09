@@ -22,7 +22,7 @@ import {
 import { loadPublicationCatalog } from "./publication-catalog.mjs";
 
 const POSTGIS_PRODUCT = "oliphaunt-extension-postgis";
-const PGMQ_BLOCKER = "PGMQ 1.12.0 is pinned for native desktop and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.";
+const PGMQ_BLOCKER = "PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists.";
 const NATIVE_TARGETS = [
   "android-arm64-v8a",
   "android-x86_64",
@@ -117,7 +117,7 @@ test("the live tree exposes only the exact deferred PGMQ qualification candidate
       requested: true,
       stable: false,
       blocker: PGMQ_BLOCKER,
-      targetProfiles: ["native-desktop-v1", "wasix-portable-v1"],
+      targetProfiles: ["native-desktop-v1", "native-mobile-v1", "wasix-portable-v1"],
     },
   ]);
   const qualificationRows = readFileSync(
@@ -295,18 +295,11 @@ test("deferred catalog dependencies retain the exact qualified closure without e
   );
 });
 
-test("keeps PGMQ target-scoped in live build matrices and PostGIS public", () => {
+test("qualifies PGMQ on every native target and WASIX while keeping PostGIS public", () => {
   const native = extensionArtifactsNativeMatrix().include;
   assert.deepEqual(native.map(({ target }) => target), NATIVE_TARGETS);
   for (const row of native) {
-    assert.deepEqual(
-      csv(row.qualification_sql_names_csv),
-      row.target === "android-arm64-v8a"
-        || row.target === "android-x86_64"
-        || row.target === "ios-xcframework"
-        ? []
-        : ["pgmq"],
-    );
+    assert.deepEqual(csv(row.qualification_sql_names_csv), ["pgmq"]);
     assert.equal(csv(row.sql_names_csv).length, 39);
     assert.equal(csv(row.sql_names_csv).includes("postgis"), true);
     assert.equal(csv(row.extensions_csv).includes(POSTGIS_PRODUCT), true);

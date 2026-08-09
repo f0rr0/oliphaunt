@@ -39,5 +39,5 @@ direct = "candidate"
 server = "candidate"
 
 [support.mobile]
-ios = "unsupported"
-android = "unsupported"
+ios = "candidate"
+android = "candidate"
