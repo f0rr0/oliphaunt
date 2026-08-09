@@ -20,7 +20,7 @@ import {
 const TOOL = "verify-release-recovery-publication.mjs";
 const INVENTORY_SCHEMA = "oliphaunt-release-registry-inventory-v1";
 export const RECOVERY_PUBLICATION_STATE_SCHEMA =
-  "oliphaunt-release-recovery-publication-state-v1";
+  "oliphaunt-release-recovery-publication-state-v2";
 const SHA = /^[0-9a-f]{40}$/u;
 const KIND_ECOSYSTEM = new Map([
   ["crates", "cargo"],
@@ -101,11 +101,23 @@ function inventoryPackageMap(packages, context) {
 }
 
 export function classifyReleaseRecoveryPublication({
+  immutableGithubTagCount = 0,
   lock,
   inventory,
   products,
+  recoveryBoundaryKind = "registry-partial",
 } = {}) {
   const selectedProducts = uniqueStrings(products, "products");
+  if (!new Set(["github-staged", "registry-partial"]).has(recoveryBoundaryKind)) {
+    throw error("recovery boundary kind must be github-staged or registry-partial");
+  }
+  if (
+    !Number.isSafeInteger(immutableGithubTagCount)
+    || immutableGithubTagCount < 0
+    || immutableGithubTagCount > selectedProducts.length
+  ) {
+    throw error("immutable GitHub tag count must cover zero through all selected products");
+  }
   exactKeys(inventory, ["products", "results", "schema", "source"], "registry inventory");
   if (inventory.schema !== INVENTORY_SCHEMA) {
     throw error(`registry inventory schema must be ${INVENTORY_SCHEMA}`);
@@ -188,12 +200,19 @@ export function classifyReleaseRecoveryPublication({
   }
   publicCarrierIds.sort(compareText);
   missingCarrierIds.sort(compareText);
-  if (publicCarrierIds.length === 0) {
+  if (recoveryBoundaryKind === "registry-partial" && publicCarrierIds.length === 0) {
     throw error(
-      "same-version recovery requires at least one already-public immutable registry carrier",
+      "registry-partial recovery requires at least one already-public immutable registry carrier",
     );
   }
+  if (
+    recoveryBoundaryKind === "github-staged"
+    && immutableGithubTagCount !== selectedProducts.length
+  ) {
+    throw error("github-staged recovery requires every selected product tag to be exact and staged");
+  }
   return {
+    immutableGithubTagCount,
     source: lock.source,
     lockDigest: lock.lockDigest,
     products: [...selectedProducts].sort(compareText),
@@ -202,6 +221,7 @@ export function classifyReleaseRecoveryPublication({
     missingCarrierIds,
     needsCargoToken: missingCarrierIds.some((id) => id.startsWith("cargo:")),
     needsNpmToken: missingCarrierIds.some((id) => id.startsWith("npm:")),
+    recoveryBoundaryKind,
   };
 }
 
@@ -219,6 +239,8 @@ export function releaseRecoveryPublicationReceipt(classification, receipts) {
     source: classification.source,
     lockDigest: classification.lockDigest,
     products: classification.products,
+    immutableGithubTagCount: classification.immutableGithubTagCount,
+    recoveryBoundaryKind: classification.recoveryBoundaryKind,
     selectedCarrierCount: classification.selectedCarrierCount,
     publicCarrierCount: classification.publicCarrierIds.length,
     missingCarrierCount: classification.missingCarrierIds.length,
@@ -242,6 +264,7 @@ export function validateReleaseRecoveryPublicationReceipt({
 } = {}) {
   const fields = [
     "evidenceDigest",
+    "immutableGithubTagCount",
     "lockDigest",
     "missingCarrierCount",
     "missingCarrierIds",
@@ -250,6 +273,7 @@ export function validateReleaseRecoveryPublicationReceipt({
     "products",
     "publicCarrierCount",
     "publicCarrierIds",
+    "recoveryBoundaryKind",
     "receipts",
     "schema",
     "selectedCarrierCount",
@@ -263,17 +287,25 @@ export function validateReleaseRecoveryPublicationReceipt({
     || stableJson(receipt.source) !== stableJson(lock.source)
     || receipt.lockDigest !== lock.lockDigest
     || !sameStrings(receipt.products, selectedProducts)
+    || !new Set(["github-staged", "registry-partial"]).has(receipt.recoveryBoundaryKind)
   ) {
     throw error("recovery publication receipt is not bound to the selected publication lock");
   }
-  uniqueStrings(receipt.publicCarrierIds, "receipt publicCarrierIds");
+  uniqueStrings(receipt.publicCarrierIds, "receipt publicCarrierIds", { nonempty: false });
   uniqueStrings(receipt.missingCarrierIds, "receipt missingCarrierIds", { nonempty: false });
   const selectedCarriers = lock.carriers.filter((carrier) =>
     selectedProducts.includes(carrier.product) && REGISTRY_ECOSYSTEMS.has(carrier.ecosystem));
   const selectedIds = selectedCarriers.map(({ id }) => id);
   if (
     receipt.publicCarrierCount !== receipt.publicCarrierIds.length
-    || receipt.publicCarrierCount < 1
+    || !Number.isSafeInteger(receipt.immutableGithubTagCount)
+    || receipt.immutableGithubTagCount < 0
+    || receipt.immutableGithubTagCount > selectedProducts.length
+    || (receipt.recoveryBoundaryKind === "registry-partial" && receipt.publicCarrierCount === 0)
+    || (
+      receipt.recoveryBoundaryKind === "github-staged"
+      && receipt.immutableGithubTagCount !== selectedProducts.length
+    )
     || receipt.missingCarrierCount !== receipt.missingCarrierIds.length
     || receipt.selectedCarrierCount !== selectedCarriers.length
     || !sameStrings(
@@ -307,8 +339,10 @@ function appendGitHubOutputs(file, receipt) {
     [
       `needs_cargo_token=${receipt.needsCargoToken}`,
       `needs_npm_token=${receipt.needsNpmToken}`,
+      `immutable_github_tag_count=${receipt.immutableGithubTagCount}`,
       `public_carrier_count=${receipt.publicCarrierCount}`,
       `missing_carrier_count=${receipt.missingCarrierCount}`,
+      `recovery_boundary_kind=${receipt.recoveryBoundaryKind}`,
       "",
     ].join("\n"),
   );
@@ -317,18 +351,22 @@ function appendGitHubOutputs(file, receipt) {
 function parseArgs(argv) {
   const options = {
     githubOutput: "",
+    immutableGithubTagCount: "0",
     inventory: "",
     lock: "",
     output: "",
     productsJson: "",
+    recoveryBoundaryKind: "registry-partial",
     verifyReceipt: "",
   };
   const flags = new Map([
     ["--github-output", "githubOutput"],
+    ["--immutable-github-tag-count", "immutableGithubTagCount"],
     ["--inventory", "inventory"],
     ["--lock", "lock"],
     ["--output", "output"],
     ["--products-json", "productsJson"],
+    ["--recovery-boundary-kind", "recoveryBoundaryKind"],
     ["--verify-receipt", "verifyReceipt"],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
@@ -355,6 +393,10 @@ function parseArgs(argv) {
   } catch (cause) {
     throw error(`--products-json is invalid JSON: ${cause.message}`);
   }
+  options.immutableGithubTagCount = Number(options.immutableGithubTagCount);
+  if (!Number.isSafeInteger(options.immutableGithubTagCount)) {
+    throw error("--immutable-github-tag-count must be a non-negative integer");
+  }
   return options;
 }
 
@@ -376,9 +418,11 @@ if (import.meta.main) {
     }
     const inventory = JSON.parse(readFileSync(path.resolve(options.inventory), "utf8"));
     const classification = classifyReleaseRecoveryPublication({
+      immutableGithubTagCount: options.immutableGithubTagCount,
       lock,
       inventory,
       products: options.products,
+      recoveryBoundaryKind: options.recoveryBoundaryKind,
     });
     const receipts = await verifyLockedRegistryIntegrity(lock, {
       carrierIds: classification.publicCarrierIds,

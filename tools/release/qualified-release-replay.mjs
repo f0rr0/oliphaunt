@@ -1,6 +1,42 @@
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const EXACT_SHA = /^[0-9a-f]{40}$/u;
+const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
+
+export function qualifiedReplayCandidateBinding({
+  candidateMode,
+  controllerSha,
+  releaseSourceSha,
+  runId,
+}) {
+  const controller = String(controllerSha ?? "").toLowerCase();
+  const source = String(releaseSourceSha ?? "").toLowerCase();
+  const normalizedRunId = String(runId ?? "");
+  if (!EXACT_SHA.test(controller) || !EXACT_SHA.test(source)) {
+    throw new Error("qualified release replay candidate binding requires exact controller and source SHAs");
+  }
+  if (!POSITIVE_INTEGER.test(normalizedRunId)) {
+    throw new Error("qualified release replay candidate binding requires a positive CI run ID");
+  }
+  if (!new Set(["release-bump", "release-recovery"]).has(candidateMode)) {
+    throw new Error(`qualified release replay candidate mode is invalid: ${candidateMode}`);
+  }
+  const recovery = candidateMode === "release-recovery";
+  if (recovery && controller === source) {
+    throw new Error("qualified recovery replay requires distinct controller and release source SHAs");
+  }
+  if (!recovery && controller !== source) {
+    throw new Error("ordinary qualified replay requires identical controller and release source SHAs");
+  }
+  return Object.freeze({
+    candidateRoot: recovery
+      ? "target/recovery-payload-candidate"
+      : "target/release-candidate",
+    candidateSha: recovery ? source : controller,
+    qualificationMode: "full-payload",
+    runId: normalizedRunId,
+  });
+}
 
 function git(repo, args, { allowEmptyOutput = false, stdoutTerminator = undefined } = {}) {
   const result = captureCommandOutput("git", args, {

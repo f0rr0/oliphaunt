@@ -85,7 +85,10 @@ import {
   verifyLockedRegistryIntegrity,
   writeRegistryReceiptEvidence,
 } from "./registry-integrity.mjs";
-import { assertQualifiedReplaySourceState } from "./qualified-release-replay.mjs";
+import {
+  assertQualifiedReplaySourceState,
+  qualifiedReplayCandidateBinding,
+} from "./qualified-release-replay.mjs";
 import { concurrentGithubReleaseAssetUploadPlan } from "./github-release-asset-upload-plan.mjs";
 import {
   executeConcurrentGithubReleaseAssetUploadPlan,
@@ -1688,6 +1691,7 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
     fail("--qualified-ci is valid only inside the protected GitHub Actions release workflow");
   }
   for (const name of [
+    "CANDIDATE_MODE",
     "CI_RUN_ID",
     "GITHUB_REPOSITORY",
     "RELEASE_HEAD_SHA",
@@ -1716,17 +1720,36 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
+  let replay;
+  try {
+    replay = qualifiedReplayCandidateBinding({
+      candidateMode: process.env.CANDIDATE_MODE,
+      controllerSha: process.env.RELEASE_HEAD_SHA,
+      releaseSourceSha: process.env.RELEASE_SOURCE_SHA,
+      runId: process.env.CI_RUN_ID,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   run(TOOL, [
     "node",
     ".github/scripts/verify-release-candidate.mjs",
-    "target/release-candidate/oliphaunt-release-candidate.json",
+    `${replay.candidateRoot}/oliphaunt-release-candidate.json`,
     "--plan",
-    "target/release-candidate/affected-plan/ci-plan.json",
+    `${replay.candidateRoot}/affected-plan/ci-plan.json`,
+    "--qualification-mode",
+    replay.qualificationMode,
     "--wasix-evidence-required",
     process.env.WASIX_EVIDENCE_REQUIRED,
     "--wasix-evidence-root",
-    "target/release-candidate/wasix-evidence",
-  ]);
+    `${replay.candidateRoot}/wasix-evidence`,
+  ], {
+    environment: {
+      ...process.env,
+      CI_RUN_ID: replay.runId,
+      RELEASE_HEAD_SHA: replay.candidateSha,
+    },
+  });
 }
 
 async function runProductDryRunPlan(productDryRunPlan) {

@@ -1818,7 +1818,7 @@ test("product dry-run registry identities remain bound to the release source", (
     ).run.replace("$RELEASE_SOURCE_SHA", "$RELEASE_HEAD_SHA");
     assert.throws(
       () => assertReleaseOperationWorkflow(controllerBound),
-      /product dry-run registry identity checks must use the verified release source/u,
+      /product dry-run registry identity checks and qualified replay must use the verified payload source/u,
     );
 
     const duplicateHead = candidate();
@@ -1829,7 +1829,7 @@ test("product dry-run registry identities remain bound to the release source", (
     ).run += ' --head-ref "$UNVERIFIED_REF"';
     assert.throws(
       () => assertReleaseOperationWorkflow(duplicateHead),
-      /product dry-run registry identity checks must use the verified release source/u,
+      /product dry-run registry identity checks and qualified replay must use the verified payload source/u,
     );
 
     const unqualifiedRun = candidate();
@@ -1840,7 +1840,7 @@ test("product dry-run registry identities remain bound to the release source", (
     ).env.CI_RUN_ID = "${{ github.run_id }}";
     assert.throws(
       () => assertReleaseOperationWorkflow(unqualifiedRun),
-      /product dry-run registry identity checks must use the verified release source/u,
+      /product dry-run registry identity checks and qualified replay must use the verified payload source/u,
     );
   }
 });

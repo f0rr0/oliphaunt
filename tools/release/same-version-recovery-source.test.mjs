@@ -16,10 +16,12 @@ import test from "node:test";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
   DEFAULT_SAME_VERSION_RECOVERY_SOURCES,
+  LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   appendSameVersionRecoverySourceGitHubOutput,
   canonicalRecoverySourceJson,
   loadSameVersionRecoverySources,
+  sameVersionRecoverySourceProvenanceSchema,
   selectSameVersionRecoverySource,
   validateSameVersionRecoveryEvidence,
   validateSameVersionRecoverySource,
@@ -28,6 +30,7 @@ import {
 
 const RELEASE_SHA = "9c398f4e5c05f494f9b752a8634e74e0bc11dd19";
 const RELEASE_TREE = "396cf3b10adb1a5b625e66c5ebacf8c3d364b543";
+const GITHUB_STAGED_RELEASE_SHA = "ae3d29ba16245e9345a8d337cd17c53f9bf2e853";
 const TOOL = path.join(import.meta.dir, "same-version-recovery-source.mjs");
 
 function sha256(bytes) {
@@ -309,6 +312,10 @@ function evidenceFixture({
 test("committed record selects the exact original release and complete frozen inventories", () => {
   const sources = loadSameVersionRecoverySources();
   const selected = selectSameVersionRecoverySource(sources, RELEASE_SHA);
+  const githubStaged = selectSameVersionRecoverySource(
+    sources,
+    GITHUB_STAGED_RELEASE_SHA,
+  );
   assert.equal(sources.schema, SAME_VERSION_RECOVERY_SOURCES_SCHEMA);
   assert.deepEqual(selected.releaseSource, {
     commit: RELEASE_SHA,
@@ -331,6 +338,15 @@ test("committed record selects the exact original release and complete frozen in
     ],
   );
   assert.equal(selected.bootstrapLedger.run.id, 30548314727);
+  assert.equal(Object.hasOwn(selected, "recoveryBoundary"), false);
+  assert.equal(
+    sameVersionRecoverySourceProvenanceSchema(selected),
+    LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+  );
+  assert.equal(
+    digestValue(selected),
+    "65a998a7af8be6fb043223e95fc2cf50e92ce9659fe6b1e55533e6b0525f34b9",
+  );
   assert.equal(
     selected.bootstrapLedger.artifactInventory.artifacts[0].id,
     8761717044,
@@ -339,6 +355,12 @@ test("committed record selects the exact original release and complete frozen in
     selected.releaseEnvelope.lockDigest,
     "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
   );
+  assert.equal(
+    sameVersionRecoverySourceProvenanceSchema(githubStaged),
+    SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+  );
+  assert.equal(githubStaged.recoveryBoundary.kind, "github-staged");
+  assert.equal(githubStaged.bootstrapLedger, null);
 });
 
 test("CLI and GITHUB_OUTPUT emit the same canonical selected record and exact metadata", () => {
@@ -352,6 +374,8 @@ test("CLI and GITHUB_OUTPUT emit the same canonical selected record and exact me
     assert.equal(lines.release_sha, RELEASE_SHA);
     assert.equal(lines.release_tree, RELEASE_TREE);
     assert.equal(lines.payload_ci_run_id, "30358387218");
+    assert.equal(lines.bootstrap_ledger_required, "true");
+    assert.equal(lines.recovery_boundary_kind, "registry-partial");
     assert.equal(
       JSON.parse(lines.payload_ci_artifact_metadata_json).length,
       73,
@@ -372,6 +396,64 @@ test("CLI and GITHUB_OUTPUT emit the same canonical selected record and exact me
       { encoding: "utf8" },
     );
     assert.equal(stdout, `${canonicalRecoverySourceJson(selected)}\n`);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("GitHub-staged recovery boundaries bind one exact failed staging run", () => {
+  const selected = record();
+  selected.recoveryBoundary = {
+    evidenceArtifact: {
+      digest: `sha256:${"a".repeat(64)}`,
+      id: 123,
+      name: `github-staging-recovery-${RELEASE_SHA}-456-1`,
+      size: 789,
+    },
+    job: {
+      conclusion: "failure",
+      id: 321,
+      name: "Prepare and stage release",
+    },
+    kind: "github-staged",
+    run: {
+      attempt: 1,
+      conclusion: "failure",
+      event: "workflow_dispatch",
+      headSha: RELEASE_SHA,
+      id: 456,
+      status: "completed",
+    },
+  };
+  assert.equal(
+    validateSameVersionRecoverySource(selected, { verifyGit: false }),
+    selected,
+  );
+  selected.recoveryBoundary.run.headSha = "f".repeat(40);
+  assert.throws(
+    () => validateSameVersionRecoverySource(selected, { verifyGit: false }),
+    /source-bound workflow_dispatch/u,
+  );
+});
+
+test("a post-bootstrap release may explicitly bind no bootstrap ledger", () => {
+  const selected = record();
+  selected.recoveryBoundary = { kind: "registry-partial" };
+  selected.bootstrapLedger = null;
+  assert.equal(
+    validateSameVersionRecoverySource(selected, { verifyGit: false }),
+    selected,
+  );
+
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-recovery-no-ledger-"));
+  try {
+    const lines = appendSameVersionRecoverySourceGitHubOutput(
+      path.join(root, "github-output"),
+      selected,
+    );
+    assert.equal(lines.bootstrap_ledger_required, "false");
+    assert.equal(lines.bootstrap_ledger_run_id, "");
+    assert.deepEqual(JSON.parse(lines.bootstrap_ledger_artifact_metadata_json), []);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -421,7 +503,7 @@ test("strict document and inventory mutations fail closed", () => {
     },
     {
       mutate: (value) => {
-        value.records.push(structuredClone(value.records[0]));
+        value.records.splice(1, 0, structuredClone(value.records[0]));
       },
       pattern: /duplicate recovery source commit/u,
     },
@@ -491,6 +573,33 @@ test("downloaded lock, capsule manifest, and terminal ledger verify as one envel
         terminalLedgerSha256:
           fixture.record.bootstrapLedger.terminalCheckpoint.file.sha256,
       },
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("no-bootstrap recovery verifies the lock and capsule without invented ledger evidence", () => {
+  const fixture = evidenceFixture();
+  try {
+    fixture.record.recoveryBoundary = { kind: "registry-partial" };
+    fixture.record.bootstrapLedger = null;
+    assert.deepEqual(
+      validateSameVersionRecoveryEvidence(fixture.record, {
+        capsuleManifest: fixture.capsuleManifest,
+        publicationLock: fixture.publicationLock,
+      }),
+      {
+        capsuleManifestSha256:
+          fixture.record.approvedDryRun.capsuleManifest.file.sha256,
+        publicationLockSha256:
+          fixture.record.releaseEnvelope.publicationLock.sha256,
+        terminalLedgerSha256: null,
+      },
+    );
+    assert.throws(
+      () => validateSameVersionRecoveryEvidence(fixture.record, fixture),
+      /must not supply terminal ledger evidence/u,
     );
   } finally {
     fixture.cleanup();

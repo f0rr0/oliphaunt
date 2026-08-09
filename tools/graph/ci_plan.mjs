@@ -29,12 +29,15 @@ import {
   exactExtensionProducts,
   extensionSqlNames,
 } from "../release/release-artifact-targets.mjs";
+import { verifyPublicationRecoveryCandidate } from "../release/verify-publication-candidate.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "ci_plan.mjs";
 
 export const BASE_JOBS = new Set(["affected"]);
 export const ALWAYS_JOBS = new Set(BASE_JOBS);
+export const FULL_PAYLOAD_QUALIFICATION_MODE = "full-payload";
+export const RECOVERY_CONTROL_QUALIFICATION_MODE = "recovery-control";
 export const BUILDER_JOBS = new Set([
   "broker-release-assets",
   "broker-runtime",
@@ -621,6 +624,47 @@ export function planForPullRequest() {
   return { jobs, projects, tasks: directTasks, reason, selectedTargets: selectedNativeTargets };
 }
 
+export function recoveryControlPlanForAffected(
+  { directProjects, projects, directTasks },
+  { releaseSha, controllerSha },
+) {
+  return {
+    jobs: new Set(BASE_JOBS),
+    projects: new Set(projects),
+    tasks: new Set(directTasks),
+    reason:
+      `same-version recovery control changes from ${releaseSha} to ${controllerSha}; `
+      + `direct affected projects: ${sorted(directProjects).join(", ") || "(none)"}; `
+      + `downstream affected projects: ${sorted(projects).join(", ") || "(none)"}; `
+      + `direct affected tasks: ${sorted(directTasks).join(", ") || "(none)"}`,
+    selectedTargets: null,
+    qualificationMode: RECOVERY_CONTROL_QUALIFICATION_MODE,
+    qualificationBaseSha: releaseSha,
+    qualificationHeadSha: controllerSha,
+  };
+}
+
+export function planForRecoveryControl() {
+  const base = process.env.MOON_BASE?.trim().toLowerCase();
+  const head = process.env.MOON_HEAD?.trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(base ?? "") || !/^[0-9a-f]{40}$/u.test(head ?? "")) {
+    throw new Error("recovery-control planning requires exact MOON_BASE and MOON_HEAD commit SHAs");
+  }
+  const recovery = verifyPublicationRecoveryCandidate({ headRef: head });
+  if (recovery === null) {
+    throw new Error("recovery-control planning requires a fully verified same-version recovery lineage");
+  }
+  if (recovery.releaseSha !== base || recovery.publicationSha !== head) {
+    throw new Error(
+      "recovery-control affected range does not match the verified release source and controller",
+    );
+  }
+  return recoveryControlPlanForAffected(affectedProjectsAndTasks(), {
+    releaseSha: recovery.releaseSha,
+    controllerSha: recovery.publicationSha,
+  });
+}
+
 export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
   const extensionJobs = new Set([
     "extension-artifacts-native",
@@ -822,7 +866,16 @@ function targetsForJobs(jobs) {
 }
 
 function renderPlan(
-  { jobs, projects, tasks, reason, selectedTargets },
+  {
+    jobs,
+    projects,
+    tasks,
+    reason,
+    selectedTargets,
+    qualificationMode = FULL_PAYLOAD_QUALIFICATION_MODE,
+    qualificationBaseSha = null,
+    qualificationHeadSha = null,
+  },
   {
     nativeTarget = process.env.NATIVE_TARGET || "all",
     wasmTarget = process.env.WASM_TARGET || "all",
@@ -838,6 +891,9 @@ function renderPlan(
     selectedExtensionProducts,
     nativeTarget,
     wasmTarget,
+    qualificationMode,
+    qualificationBaseSha,
+    qualificationHeadSha,
   });
 }
 
@@ -953,7 +1009,27 @@ export function renderPlanWithSelection({
   selectedExtensionProducts,
   nativeTarget = process.env.NATIVE_TARGET || "all",
   wasmTarget = process.env.WASM_TARGET || "all",
+  qualificationMode = FULL_PAYLOAD_QUALIFICATION_MODE,
+  qualificationBaseSha = null,
+  qualificationHeadSha = null,
 }) {
+  if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
+    throw new Error(`unknown CI qualification mode ${qualificationMode}`);
+  }
+  if (qualificationMode === RECOVERY_CONTROL_QUALIFICATION_MODE) {
+    if (
+      !/^[0-9a-f]{40}$/u.test(qualificationBaseSha ?? "")
+      || !/^[0-9a-f]{40}$/u.test(qualificationHeadSha ?? "")
+      || qualificationBaseSha === qualificationHeadSha
+    ) {
+      throw new Error("recovery-control plan requires distinct exact source and controller SHAs");
+    }
+    if (JSON.stringify(sorted(jobs)) !== JSON.stringify(sorted(BASE_JOBS))) {
+      throw new Error("recovery-control plan must not select builder or E2E payload jobs");
+    }
+  } else if (qualificationBaseSha !== null || qualificationHeadSha !== null) {
+    throw new Error("full-payload plan must not carry a recovery affected range");
+  }
   const extensionProducts = sorted(selectedExtensionProducts ?? new Set());
   const extensionSqlNames = extensionSqlNamesForProducts(extensionProducts);
   const nativeLifecycleProducts = jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
@@ -964,6 +1040,9 @@ export function renderPlanWithSelection({
   const nativeLifecycleSqlNames = extensionSqlNamesForProducts(nativeLifecycleProducts);
   const nativeLifecycleShards = nativeExtensionLifecycleShardPlan(nativeLifecycleProducts);
   const plan = {
+    qualification_mode: qualificationMode,
+    qualification_base_sha: qualificationBaseSha,
+    qualification_head_sha: qualificationHeadSha,
     jobs: sorted(jobs),
     builder_jobs: sorted(new Set([...jobs].filter((job) => BUILDER_JOBS.has(job)))),
     e2e_jobs: mobileE2eJobsForPlan(jobs),
@@ -1113,7 +1192,13 @@ function writePlanArtifact(plan) {
 export function emitGithubOutputs() {
   let planned;
   try {
-    if (process.env.GITHUB_EVENT_NAME === "pull_request") {
+    const qualificationMode = process.env.CI_QUALIFICATION_MODE || FULL_PAYLOAD_QUALIFICATION_MODE;
+    if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
+      throw new Error(`unknown CI qualification mode ${qualificationMode}`);
+    }
+    if (qualificationMode === RECOVERY_CONTROL_QUALIFICATION_MODE) {
+      planned = renderPlan(planForRecoveryControl());
+    } else if (process.env.GITHUB_EVENT_NAME === "pull_request") {
       const pullRequestPlan = planForPullRequest();
       let directProjects = new Set();
       try {

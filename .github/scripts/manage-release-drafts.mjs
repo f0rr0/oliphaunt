@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -63,7 +63,7 @@ function error(message, options = {}) {
 
 function usageError() {
   return error(
-    "usage: manage-release-drafts.mjs <preflight|recovery-preflight|stage|verify|promote> "
+    "usage: manage-release-drafts.mjs <preflight|recovery-preflight|recovery-staged-preflight|stage|verify|promote> "
       + "--products-json JSON --head-ref SHA [--state draft|public|staged]",
   );
 }
@@ -89,7 +89,11 @@ function selectedPublicationLock(command, products, headRef, environment) {
       ?? DEFAULT_PUBLICATION_LOCK,
   );
   if (!existsSync(file)) {
-    if (command === "preflight" || command === "recovery-preflight") return null;
+    if (
+      command === "preflight"
+      || command === "recovery-preflight"
+      || command === "recovery-staged-preflight"
+    ) return null;
     throw error(`${command} requires the frozen publication lock: ${file}`);
   }
   const lock = loadPublicationLock(file);
@@ -731,7 +735,7 @@ export function reconcileSelectedReleasesSync(
     });
 
   let releasesByTag;
-  if (command === "verify") {
+  if (command === "verify" || command === "recovery-staged-preflight") {
     releasesByTag = requiredReleaseMap(expectedState);
   } else if (command === "promote") {
     // No mutation has happened yet. A missing/stale precondition can fail and
@@ -750,10 +754,27 @@ export function reconcileSelectedReleasesSync(
     return;
   }
   if (command === "recovery-preflight") {
+    const exactTagCount = selected.filter(({ tag }) => tagsByName.get(tag) !== null).length;
+    const exactReleaseCount = selected.filter(({ tag }) => releasesByTag.has(tag)).length;
     console.log(
       `${selected.length} selected product tag/release names are absent or exact-SHA resumable for same-version recovery`,
     );
-    return;
+    return {
+      exactReleaseCount,
+      exactTagCount,
+      selectedCount: selected.length,
+    };
+  }
+  if (command === "recovery-staged-preflight") {
+    requireExactTagSnapshot(selected, tagsByName, headRef);
+    console.log(
+      `${selected.length} selected product tags and releases are exact-SHA staged for same-version recovery`,
+    );
+    return {
+      exactReleaseCount: selected.filter(({ tag }) => releasesByTag.has(tag)).length,
+      exactTagCount: selected.filter(({ tag }) => tagsByName.get(tag) !== null).length,
+      selectedCount: selected.length,
+    };
   }
 
   if (command === "stage") {
@@ -880,8 +901,17 @@ export function createReleaseDraftOperationBudget(
 
 export function main(argv, { environment = process.env, now = Date.now } = {}) {
   const { command, values } = parseArgs([...argv]);
-  if (!["preflight", "recovery-preflight", "stage", "verify", "promote"].includes(command)) {
-    throw error("command must be preflight, recovery-preflight, stage, verify, or promote");
+  if (![
+    "preflight",
+    "recovery-preflight",
+    "recovery-staged-preflight",
+    "stage",
+    "verify",
+    "promote",
+  ].includes(command)) {
+    throw error(
+      "command must be preflight, recovery-preflight, recovery-staged-preflight, stage, verify, or promote",
+    );
   }
   const repo = environment.GITHUB_REPOSITORY?.trim();
   if (!repo || !environment.GH_TOKEN) {
@@ -907,14 +937,15 @@ export function main(argv, { environment = process.env, now = Date.now } = {}) {
   if (!headRef || !FULL_SHA.test(headRef)) {
     throw error("--head-ref must be a full lowercase commit SHA");
   }
-  const expectedState = values.get("state") ?? "draft";
+  const expectedState = values.get("state")
+    ?? (command === "recovery-staged-preflight" ? "staged" : "draft");
   if (!new Set(["draft", "public", "staged"]).has(expectedState)) {
     throw error("--state must be draft, public, or staged");
   }
 
   const selected = selectedReleases(command, products, headRef, environment);
   const budget = createReleaseDraftOperationBudget(command, { environment, now });
-  reconcileSelectedReleasesSync({
+  const result = reconcileSelectedReleasesSync({
     budget,
     command,
     environment: budget.environment,
@@ -923,6 +954,21 @@ export function main(argv, { environment = process.env, now = Date.now } = {}) {
     repo,
     selected,
   });
+  if (
+    (command === "recovery-preflight" || command === "recovery-staged-preflight")
+    && environment.GITHUB_OUTPUT
+  ) {
+    appendFileSync(
+      environment.GITHUB_OUTPUT,
+      [
+        `exact_release_count=${result.exactReleaseCount}`,
+        `exact_tag_count=${result.exactTagCount}`,
+        `selected_count=${result.selectedCount}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+  }
 }
 
 if (import.meta.main) {

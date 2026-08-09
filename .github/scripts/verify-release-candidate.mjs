@@ -8,6 +8,9 @@ import {
   affectedPlanBinding,
   assertBindingMatches,
   assertCandidateBindingShape,
+  candidateQualificationMode,
+  FULL_PAYLOAD_QUALIFICATION_MODE,
+  RECOVERY_CONTROL_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from "./release-candidate-lib.mjs";
 
@@ -39,7 +42,12 @@ function parseArgs(argv) {
   const values = new Map();
   for (let index = 1; index < argv.length; index += 1) {
     const name = argv[index];
-    if (!["--plan", "--wasix-evidence-required", "--wasix-evidence-root"].includes(name)) {
+    if (![
+      "--plan",
+      "--qualification-mode",
+      "--wasix-evidence-required",
+      "--wasix-evidence-root",
+    ].includes(name)) {
       fail(`unknown argument: ${name}`);
     }
     if (index + 1 >= argv.length) {
@@ -51,7 +59,8 @@ function parseArgs(argv) {
   if (!candidatePath || !values.has("plan") || !values.has("wasix-evidence-required")) {
     fail(
       "usage: verify-release-candidate.mjs <candidate-json> --plan <ci-plan.json> "
-      + "--wasix-evidence-required true|false [--wasix-evidence-root <directory>]",
+      + "--wasix-evidence-required true|false [--qualification-mode full-payload|recovery-control] "
+      + "[--wasix-evidence-root <directory>]",
     );
   }
   const required = values.get("wasix-evidence-required");
@@ -61,11 +70,16 @@ function parseArgs(argv) {
   if (required === "true" && !values.has("wasix-evidence-root")) {
     fail("--wasix-evidence-root is required when WASIX evidence is required");
   }
+  const qualificationMode = values.get("qualification-mode") ?? FULL_PAYLOAD_QUALIFICATION_MODE;
+  if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
+    fail("--qualification-mode must be full-payload or recovery-control");
+  }
   return {
     candidatePath,
     planPath: values.get("plan"),
     wasixEvidenceRequired: required === "true",
     wasixEvidenceRoot: values.get("wasix-evidence-root"),
+    qualificationMode,
   };
 }
 
@@ -82,6 +96,12 @@ try {
   assertCandidateBindingShape(candidate);
 } catch (error) {
   fail(error.message);
+}
+if (candidateQualificationMode(candidate) !== args.qualificationMode) {
+  fail(
+    `release candidate qualification mode mismatch: expected ${args.qualificationMode}, `
+    + `got ${candidateQualificationMode(candidate)}`,
+  );
 }
 
 const expected = {

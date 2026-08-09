@@ -102,6 +102,19 @@ test("dry-run separately qualifies control HEAD and reuses the frozen release pa
   );
   const artifactSource = namedStep(job, "Resolve exact release artifact source");
   assert.match(controlCi.run, /"\$RELEASE_CONTROL_SHA"/u);
+  assert.match(
+    controlCi.env.CANDIDATE_MODE,
+    /verify_publication_candidate[.]outputs[.]mode/u,
+  );
+  assert.match(controlCi.run, /CANDIDATE_MODE.*!= release-recovery/su);
+  assert.match(
+    controlCi.run,
+    /qualification_args\+=\(--artifact wasix-release-regression-evidence\)/u,
+  );
+  assert.match(
+    controlCi.run,
+    /qualification_args\+=\(--artifact oliphaunt-extension-package-artifacts\)/u,
+  );
   assert.match(payloadCi.run, /"\$RECOVERY_RELEASE_SHA"/u);
   assert.match(
     payloadCi.env.RECOVERY_RELEASE_SHA,
@@ -161,6 +174,30 @@ test("dry-run separately qualifies control HEAD and reuses the frozen release pa
     payloadCandidate.run,
     /target\/recovery-payload-candidate\/oliphaunt-release-candidate[.]json/u,
   );
+  assert.match(payloadCandidate.run, /--qualification-mode full-payload/u);
+
+  const controlCandidate = namedStep(job, "Verify exact-SHA qualification record");
+  assert.match(controlCandidate.run, /qualification_mode=recovery-control/u);
+  assert.match(
+    controlCandidate.run,
+    /--qualification-mode "\$qualification_mode"/u,
+  );
+  assert.match(controlCandidate.run, /wasix_evidence_required=false/u);
+  assert.match(
+    namedStep(job, "Download required exact-SHA WASIX evidence").if,
+    /verify_publication_candidate[.]outputs[.]mode != 'release-recovery'/u,
+  );
+
+  const qualifiedReplay = namedStep(job, "Validate selected release product dry-runs");
+  assert.match(
+    qualifiedReplay.env.CANDIDATE_MODE,
+    /verify_publication_candidate[.]outputs[.]mode/u,
+  );
+  assert.match(
+    qualifiedReplay.env.CI_RUN_ID,
+    /release_artifact_source[.]outputs[.]ci_run_id/u,
+  );
+  assert.match(qualifiedReplay.run, /release-publish[.]mjs publish-dry-run --qualified-ci/u);
 
   for (const name of [
     "Download WASIX release assets",
@@ -208,7 +245,7 @@ test("dry-run separately qualifies control HEAD and reuses the frozen release pa
   );
   assert.match(
     productDryRun.env.CI_RUN_ID,
-    /steps[.]ci_qualification[.]outputs[.]run_id/u,
+    /steps[.]release_artifact_source[.]outputs[.]ci_run_id/u,
   );
   assert.match(productDryRun.run, /--head-ref "\$RELEASE_SOURCE_SHA"/u);
   assert.doesNotMatch(productDryRun.run, /--head-ref "\$RELEASE_HEAD_SHA"/u);
@@ -225,6 +262,30 @@ test("dry-run separately qualifies control HEAD and reuses the frozen release pa
 
   assert(
     stepIndex(job, "Select original approved lock for same-version recovery")
+      < stepIndex(job, "Freeze exhaustive publication lock"),
+  );
+  const stagedBoundary = namedStep(
+    job,
+    "Verify pinned GitHub-staged recovery boundary",
+  );
+  assert.match(
+    stagedBoundary.if,
+    /recovery_boundary_kind == 'github-staged'/u,
+  );
+  assert.match(
+    stagedBoundary.run,
+    /verify-github-staged-recovery-boundary[.]mjs/u,
+  );
+  assert.match(
+    stagedBoundary.run,
+    /recovery-original-publication-lock[/]publication-lock[.]json/u,
+  );
+  assert(
+    stepIndex(job, "Download original approved lock for same-version recovery")
+      < stepIndex(job, "Verify pinned GitHub-staged recovery boundary"),
+  );
+  assert(
+    stepIndex(job, "Verify pinned GitHub-staged recovery boundary")
       < stepIndex(job, "Freeze exhaustive publication lock"),
   );
   const prelockRegistryValidation = namedStep(

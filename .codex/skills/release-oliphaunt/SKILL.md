@@ -82,13 +82,13 @@ another repository mutation.
 - Recover: inventory external state first. For ordinary single-identity
   recovery, resume idempotently from the publication ledger. For an authorized
   same-version control recovery, keep the original commit/tree, pinned complete
-  payload CI inventory, approved lock/capsule, and terminal ledger as the
-  publication source; require fresh full CI and approved control equivalence on
-  the later controller; require lock replay to be byte-identical including
-  `source` and `lockDigest`; keep tags/releases/assets source-bound; disable
-  bootstrap and continuations; and rerun root `publish` to reconcile missing
-  state. Never delete, overwrite, or republish a matching immutable public
-  version.
+  payload CI inventory, approved lock/capsule, recorded immutable boundary, and
+  any required terminal ledger as the publication source; require fresh
+  recovery-control CI and approved control equivalence on the later controller;
+  require lock replay to be byte-identical including `source` and `lockDigest`;
+  keep tags/releases/assets source-bound; disable bootstrap and continuations;
+  and rerun root `publish` to reconcile missing state. Never delete, overwrite,
+  or republish a matching immutable public version.
 - History repair: use only before any affected product tag/package is public. Follow `references/recovery.md` and require explicit maintainer authorization for protection changes or force-push.
 
 ## Local gates

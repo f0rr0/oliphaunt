@@ -15,10 +15,17 @@
   qualified workflow controller. Never rewrite the lock source or relabel
   product evidence as controller output.
 - Same-version recovery selects the complete original payload CI inventory,
-  approved lock/capsule, and terminal bootstrap ledger by exact committed
-  run/artifact ID, digest, and size. Its replayed publication lock must be
-  byte-identical to the approved original, including `source` and `lockDigest`.
-  The current first-release recovery requires all 73 recorded CI artifacts.
+  approved lock/capsule, immutable recovery boundary, and any required terminal
+  bootstrap ledger by exact committed run/job/artifact ID, digest, and size.
+  The boundary is either a nonempty exact public-registry prefix or the complete
+  exact-source GitHub staged set backed by the failed run's recovery artifact.
+  Its replayed publication lock must be byte-identical to the approved original,
+  including `source` and `lockDigest`. The current first-release recovery
+  requires all 73 recorded CI artifacts.
+- A recovery controller receives a fresh, exact-main recovery-control CI record
+  for its zero-owner control delta; it does not rebuild unchanged platform or
+  package payloads. The separately reverified, committed complete source CI
+  inventory remains the sole payload authority.
 - Product tags/releases/assets, Swift source publication, registry receipts,
   and consumer-facing provenance remain publication-source-bound. Workflow
   code, the transport tag, OIDC claims, request journals, and pacing are
@@ -47,7 +54,8 @@
   one byte of drift fails closed and requires a new version.
 - Same-version recovery cannot run bootstrap or any continuation. Resume only
   through an idempotent root `publish` rerun that verifies the original
-  terminal ledger and reconciles every exact immutable identity before writes.
+  terminal ledger when one was required, proves the recorded immutable recovery
+  boundary, and reconciles every exact immutable identity before writes.
 - With a clean release state, a pure zero-owner control-plane, workflow,
   validator, registry-transport, test, or documentation change creates no
   release PR and performs no publication. Semantic ownership, not a `ci:`

@@ -195,11 +195,14 @@ Root publication admission accepts only a current-main candidate with one non-ca
 Normal publication has one identity: that qualified commit is both the
 workflow controller and the immutable publication source. The narrowly scoped
 same-version control recovery described below has two identities instead. Its
-current-main controller must receive fresh complete CI, while the publication
-source remains the original release-bump commit and tree. Controller
-qualification proves the repaired workflow, policy, transport, OIDC, and
-pacing implementation; it does not replace or relabel the qualified product
-payload.
+current-main controller must receive fresh recovery-control CI, while the
+publication source remains the original release-bump commit and tree. That
+controller CI qualifies the affected checks/tests/policy and exact-main
+Required/Qualified gates without rebuilding unchanged payload matrices. The
+separately pinned complete original CI inventory remains the payload authority.
+Controller qualification proves the repaired workflow, policy, transport,
+OIDC, and pacing implementation; it does not replace or relabel the qualified
+product payload.
 
 The `macos-26` publication runner is ARM64, but its current runner-image
 contract exposes the installed Java 17 path as `JAVA_HOME_17_arm64` (including
@@ -223,12 +226,15 @@ Missing and extra identities both fail. Publish commands reverify the lock immed
 A same-version control recovery does not perform that assembly from newly
 built controller artifacts. It resolves the committed immutable recovery
 record and selects the original payload CI run, approved dry-run lock and
-capsule, and terminal bootstrap ledger by their exact run and artifact
-IDs/digests/sizes. For the current first-release recovery, the record enumerates
-all 73 original CI artifacts; any missing, extra, expired, or metadata-mismatched
-artifact fails closed. The controller replays publication-lock construction
-from those frozen inputs, and the result must be byte-identical to the approved
-original lock, including its original `source` object and `lockDigest`.
+capsule, immutable recovery boundary, and any required terminal bootstrap
+ledger by their exact run/job and artifact IDs/digests/sizes. The boundary is
+either a nonempty exact public-registry prefix or the complete exact-source
+GitHub staged set plus its failed-run recovery artifact. For the current
+first-release recovery, the record enumerates all 73 original CI artifacts;
+any missing, extra, expired, or metadata-mismatched artifact fails closed. The
+controller replays publication-lock construction from those frozen inputs, and
+the result must be byte-identical to the approved original lock, including its
+original `source` object and `lockDigest`.
 
 ## Operations
 
@@ -267,10 +273,13 @@ The `Release` workflow has four operations:
 
 Same-version control recovery disables `publish-bootstrap` and every bootstrap
 or normal-publish continuation. It consumes the exact terminal original
-bootstrap ledger and must be driven by a root `publish` dispatch on the current
-controller. If a recovery run is interrupted, rerun that same root operation;
-the frozen source lock and byte-verifying registry inventory make the rerun
-idempotent.
+bootstrap ledger only when the original source actually crossed the bootstrap
+boundary. A source that reached complete immutable GitHub staging without
+needing bootstrap instead binds the exact failed Release run, staging job, and
+recovery artifact. Recovery must be driven by a root `publish` dispatch on the
+current controller. If a recovery run is interrupted, rerun that same root
+operation; the frozen source lock and byte-verifying registry inventory make
+the rerun idempotent.
 
 On the normal path, only a successful `publish-dry-run` uploads the canonical
 `oliphaunt-publication-lock` and `oliphaunt-bootstrap-capsule` approval
@@ -287,7 +296,12 @@ A same-version recovery dry-run is an approval of the current controller, not
 a new product-payload approval. It selects the original approved lock and
 capsule by exact recorded metadata, verifies the byte-identical replay, and
 uploads only the recovery-control equivalence evidence. It never emits a
-replacement lock or capsule with the controller SHA.
+replacement lock or capsule with the controller SHA. CI likewise qualifies
+only the controller delta and release-policy surface; the committed recovery
+record and its complete exact artifact inventory keep the successful original
+payload CI as the sole payload authority. This avoids rebuilding an unchanged
+multi-platform payload while still requiring `Required` and `Qualified` on the
+exact controller commit.
 
 `.github/workflows/release.yml` is the one directly dispatched release
 workflow. Its operation jobs declare their own least-privilege permissions and
@@ -805,9 +819,11 @@ possible values but never creates extension support by default.
 
 On a failed publish, preserve the candidate SHA, run id, lock, complete checkpoint chain, draft releases, and registry responses. Inventory every selected identity as absent, matching, or conflicting; restore and validate the exact-SHA chain, then resume only missing phases. Product-semantic repository changes require a new version and candidate.
 
-If immutable packages are already public but the failure requires only a
-zero-owner release-control/test fix, use the explicit same-version control
-recovery instead of manufacturing a duplicate release. Keep the original
+If the original release crossed an immutable publication boundary and the
+failure requires only a zero-owner release-control/test fix, use the explicit
+same-version control recovery instead of manufacturing a duplicate release.
+The boundary may be a matching public registry carrier or the complete staged
+GitHub tag/release/asset set at the original source. Keep the original
 release-bump commit immutable. The later linear `fix(release):` commit carries
 exactly one `Oliphaunt-Release-Recovery-Of: <original-release-sha>` trailer.
 The publication-candidate verifier requires the authoritative base/head release
@@ -817,28 +833,34 @@ owner, and proves versions and release metadata are unchanged.
 Treat the two identities as distinct and immutable:
 
 - the **publication source** is the original release-bump commit/tree. It owns
-  the product bytes, versions, approved publication lock/capsule, terminal
-  bootstrap ledger, product tags/releases/assets, Swift source tag, registry
-  receipts, and consumer-facing provenance;
+  the product bytes, versions, approved publication lock/capsule, immutable
+  recovery boundary, any required terminal bootstrap ledger, product
+  tags/releases/assets, Swift source tag, registry receipts, and
+  consumer-facing provenance;
 - the **controller** is the later current-main recovery commit. It owns only
-  the executing workflow, fresh complete control CI, immutable release
+  the executing workflow, fresh recovery-control CI, immutable release
   transport, OIDC claims, request journals, pacing, and the recovery run
   identity.
 
-The controller must pass a fresh full `Qualified` CI run and a separate
-successful recovery dry-run whose control-equivalence evidence is approved
-before mutation. The recovery record selects the original source commit/tree,
-the complete original 73-artifact CI payload, original approved lock/capsule,
-and terminal bootstrap ledger by exact workflow run and artifact
-ID/digest/size. Selection by “latest,” name alone, or merely matching SHA is
-forbidden. Replaying the lock from those frozen inputs must produce a file
-byte-identical to the approved lock, including `source` and `lockDigest`; a
-rebound controller-source lock is not equivalent.
+The controller must pass a fresh recovery-control `Qualified` CI run and a
+separate successful recovery dry-run whose control-equivalence evidence is
+approved before mutation. Recovery-control CI runs affected controller
+checks/tests/policy but no payload builders or E2E; the recovery record pins and
+reverifies the original complete payload CI separately. The record selects the
+original source commit/tree, complete original 73-artifact CI payload, original
+approved lock/capsule, immutable recovery boundary, and any required terminal
+bootstrap ledger by exact workflow run/job and artifact ID/digest/size.
+Selection by “latest,” name alone, or merely matching SHA is forbidden.
+Replaying the lock from those frozen inputs must produce a file byte-identical
+to the approved lock, including `source` and `lockDigest`; a rebound
+controller-source lock is not equivalent.
 
 Recovery never invokes `publish-bootstrap`, never creates a controller-bound
 replacement ledger, and never uses an automatic continuation. It verifies the
-terminal source-bound ledger, inventories the exhaustive original lock
-(including generated payload parts), and runs only the root `publish`
+terminal source-bound ledger when the record requires one; otherwise it proves
+the complete exact-source staged GitHub boundary and refuses any live state
+that would require an unrecorded ledger. It inventories the exhaustive original
+lock (including generated payload parts) and runs only the root `publish`
 operation. Existing exact registry identities are skipped only after their
 bytes match the lock. An absent identity may be published once from the frozen
 source payload; any conflict fails closed and requires a new product version.

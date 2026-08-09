@@ -7,6 +7,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 
 import {
   assertAttestationSubjectCoverage,
+  assertGhVerifiedBundleMatchesSupplied,
   assertGithubReleaseSnapshotMatchesReceipt,
   buildGithubAttestationReceipt,
   frozenGithubReleaseAssets,
@@ -912,6 +913,37 @@ describe("GitHub release attestation receipt", () => {
         recoveryArgs.indexOf("--source-digest") + 2,
       ),
     ).toEqual(["--source-digest", controller]);
+  });
+
+  test("accepts only gh's known empty RFC3161 protobuf canonicalization", () => {
+    const supplied = bundleFor(receiptSubjects()[0].subjects);
+    supplied.verificationMaterial = {
+      certificate: { rawBytes: "certificate" },
+      timestampVerificationData: { rfc3161Timestamps: [] },
+      tlogEntries: [{ logIndex: "1" }],
+    };
+    const verified = structuredClone(supplied);
+    verified.verificationMaterial.timestampVerificationData = {};
+
+    expect(() => assertGhVerifiedBundleMatchesSupplied(verified, supplied)).not.toThrow();
+
+    const changedEnvelope = structuredClone(verified);
+    changedEnvelope.dsseEnvelope.signatures[0].sig = "different";
+    expect(() => assertGhVerifiedBundleMatchesSupplied(changedEnvelope, supplied)).toThrow(
+      "does not contain the supplied bundle",
+    );
+
+    const changedCertificate = structuredClone(verified);
+    changedCertificate.verificationMaterial.certificate.rawBytes = "different";
+    expect(() => assertGhVerifiedBundleMatchesSupplied(changedCertificate, supplied)).toThrow(
+      "does not contain the supplied bundle",
+    );
+
+    const unexpectedCanonicalization = structuredClone(verified);
+    unexpectedCanonicalization.verificationMaterial.tlogEntries = [];
+    expect(() => assertGhVerifiedBundleMatchesSupplied(unexpectedCanonicalization, supplied)).toThrow(
+      "does not contain the supplied bundle",
+    );
   });
 
   test("publishes receipt files atomically, cleans interrupted temps, and permits only identical reruns", async () => {

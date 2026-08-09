@@ -230,8 +230,15 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   assert.match(publisher, /assertQualifiedReplaySourceState/u);
   assert.match(publisher, /headRef: process[.]env[.]RELEASE_HEAD_SHA/u);
   assert.match(publisher, /expectedReleaseSourceSha: process[.]env[.]RELEASE_SOURCE_SHA/u);
+  assert.match(publisher, /qualifiedReplayCandidateBinding/u);
   assert.match(publisher, /verify-release-candidate[.]mjs/u);
-  assert.match(publisher, /target\/release-candidate\/oliphaunt-release-candidate[.]json/u);
+  assert.match(publisher, /replay[.]candidateRoot.*oliphaunt-release-candidate[.]json/u);
+  assert.match(publisher, /--qualification-mode/u);
+  assert.match(publisher, /RELEASE_HEAD_SHA: replay[.]candidateSha/u);
+  const qualifiedReplay = read("tools/release/qualified-release-replay.mjs");
+  assert.match(qualifiedReplay, /target\/release-candidate/u);
+  assert.match(qualifiedReplay, /target\/recovery-payload-candidate/u);
+  assert.match(qualifiedReplay, /qualificationMode: "full-payload"/u);
   assert.match(publisher, /release-metadata-check[.]mjs/u);
 });
 

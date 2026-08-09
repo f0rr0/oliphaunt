@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { assertQualifiedReplaySourceState } from "./qualified-release-replay.mjs";
+import {
+  assertQualifiedReplaySourceState,
+  qualifiedReplayCandidateBinding,
+} from "./qualified-release-replay.mjs";
 
 function git(repo, ...args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -99,6 +102,67 @@ test("qualified replay separately binds a recovery controller and release source
     );
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("qualified replay selects controller evidence normally and frozen source evidence for recovery", () => {
+  const source = "1".repeat(40);
+  const controller = "2".repeat(40);
+  assert.deepEqual(
+    qualifiedReplayCandidateBinding({
+      candidateMode: "release-bump",
+      controllerSha: source,
+      releaseSourceSha: source,
+      runId: "123",
+    }),
+    {
+      candidateRoot: "target/release-candidate",
+      candidateSha: source,
+      qualificationMode: "full-payload",
+      runId: "123",
+    },
+  );
+  assert.deepEqual(
+    qualifiedReplayCandidateBinding({
+      candidateMode: "release-recovery",
+      controllerSha: controller,
+      releaseSourceSha: source,
+      runId: "456",
+    }),
+    {
+      candidateRoot: "target/recovery-payload-candidate",
+      candidateSha: source,
+      qualificationMode: "full-payload",
+      runId: "456",
+    },
+  );
+  for (const fixture of [
+    {
+      candidateMode: "release-recovery",
+      controllerSha: source,
+      releaseSourceSha: source,
+      runId: "456",
+    },
+    {
+      candidateMode: "release-bump",
+      controllerSha: controller,
+      releaseSourceSha: source,
+      runId: "456",
+    },
+    {
+      candidateMode: "unknown",
+      controllerSha: controller,
+      releaseSourceSha: source,
+      runId: "456",
+    },
+    {
+      candidateMode: "release-recovery",
+      controllerSha: controller,
+      releaseSourceSha: source,
+      runId: "0",
+    },
+  ]) {
+    assert.throws(() => qualifiedReplayCandidateBinding(fixture), /replay/u);
   }
 });
 

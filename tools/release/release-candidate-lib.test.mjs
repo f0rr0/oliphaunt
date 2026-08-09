@@ -13,6 +13,7 @@ import {
   affectedPlanBinding,
   assertBindingMatches,
   assertCandidateBindingShape,
+  candidateQualificationMode,
   wasixEvidenceBinding,
 } from "../../.github/scripts/release-candidate-lib.mjs";
 
@@ -226,6 +227,96 @@ test("rejects a changed selected-product set even when WASIX remains required", 
     const expected = affectedPlanBinding(firstPath, true);
     const actual = affectedPlanBinding(secondPath, true);
     expect(() => assertBindingMatches(expected, actual, "affected plan")).toThrow("does not match");
+  } finally {
+    cleanup();
+  }
+});
+
+test("keeps legacy F4 qualification plans backward-compatible as full-payload", () => {
+  const { root, cleanup } = fixture();
+  try {
+    const planPath = path.join(root, "legacy-plan.json");
+    writeFileSync(planPath, JSON.stringify({
+      projects: [],
+      jobs: ["affected"],
+      extension_package_products: [],
+    }));
+    const affectedPlan = affectedPlanBinding(planPath, false);
+    const candidate = {
+      schemaVersion: 2,
+      affectedPlan,
+      evidenceRequirements: {
+        wasixReleaseRegression: false,
+        artifacts: [],
+      },
+      evidence: { wasixReleaseRegression: null },
+    };
+    expect(affectedPlan.qualification).toBeUndefined();
+    expect(candidateQualificationMode(candidate)).toBe("full-payload");
+    expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
+  } finally {
+    cleanup();
+  }
+});
+
+test("binds recovery-control to an exact source/controller range without payload jobs", () => {
+  const { root, cleanup } = fixture();
+  try {
+    const releaseSha = "1".repeat(40);
+    const controllerSha = "2".repeat(40);
+    const planPath = path.join(root, "recovery-plan.json");
+    writeFileSync(planPath, JSON.stringify({
+      qualification_mode: "recovery-control",
+      qualification_base_sha: releaseSha,
+      qualification_head_sha: controllerSha,
+      projects: ["release-tools"],
+      jobs: ["affected"],
+      extension_package_products: [],
+    }));
+    const affectedPlan = affectedPlanBinding(planPath, false);
+    const candidate = {
+      schemaVersion: 2,
+      sha: controllerSha,
+      affectedPlan,
+      evidenceRequirements: {
+        wasixReleaseRegression: false,
+        artifacts: [],
+      },
+      evidence: { wasixReleaseRegression: null },
+    };
+    expect(candidateQualificationMode(candidate)).toBe("recovery-control");
+    expect(affectedPlan.qualification).toEqual({
+      mode: "recovery-control",
+      baseSha: releaseSha,
+      headSha: controllerSha,
+    });
+    expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
+
+    const substituted = structuredClone(candidate);
+    substituted.affectedPlan.qualification.headSha = "3".repeat(40);
+    expect(() => assertCandidateBindingShape(substituted)).toThrow(
+      "controller does not match candidate SHA",
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("rejects recovery-control plans that select any payload job", () => {
+  const { root, cleanup } = fixture();
+  try {
+    const planPath = path.join(root, "invalid-recovery-plan.json");
+    writeFileSync(planPath, JSON.stringify({
+      qualification_mode: "recovery-control",
+      qualification_base_sha: "1".repeat(40),
+      qualification_head_sha: "2".repeat(40),
+      projects: [],
+      jobs: ["affected", "js-sdk-package"],
+      extension_package_products: [],
+    }));
+    expect(() => affectedPlanBinding(planPath, false)).toThrow(
+      "must not select builder or E2E payload jobs",
+    );
   } finally {
     cleanup();
   }

@@ -15,9 +15,11 @@
 
 ### Same-version control recovery after partial publication
 
-Use this path only when at least one immutable carrier is already public, no
-product tag/release has been promoted, and the required repository fix has no
-release-semantic product owner.
+Use this path only after the original source crossed a recorded immutable
+publication boundary: either at least one exact registry carrier is public, or
+the complete selected GitHub tag/release/asset set was staged at the original
+source. No product tag/release may have been moved or replaced, and the
+required repository fix must have no release-semantic product owner.
 
 1. Keep the original release-bump commit and public history immutable. Every
    recovery commit must be a linear descendant with subject
@@ -34,31 +36,41 @@ release-semantic product owner.
    change.
 3. Name the identities explicitly. The trailer target is the immutable
    **publication source**: it owns the original commit/tree, product bytes,
-   versions, approved publication lock/capsule, terminal bootstrap ledger,
+   versions, approved publication lock/capsule, any required terminal bootstrap ledger,
    product tags/releases/assets, Swift source tag, registry receipts, and
    consumer-facing provenance. The later current-main recovery head is only the
    **controller**: it owns workflow code, its fresh CI/run identity, the release
    transport tag, OIDC claims, request journals, and pacing.
-4. Run fresh complete CI on the controller. Then run `publish-dry-run` on that
+4. Run fresh recovery-control CI on the controller. It must execute the
+   controller delta's checks/tests/policy plus exact-main `Required` and
+   `Qualified`, but must not rebuild payload or platform matrices. The complete
+   successful original payload CI inventory remains independently pinned and
+   reverified as the sole payload authority. Then run `publish-dry-run` on the
    controller to produce and approve recovery-control equivalence evidence.
    This dry-run must not upload a replacement publication lock or bootstrap
    capsule.
 5. Resolve the committed immutable recovery record. Select the original source
-   SHA/tree, complete payload CI run, approved dry-run lock/capsule, and terminal
-   bootstrap ledger only by the exact recorded workflow run and artifact
-   ID/digest/size. For the current first-release recovery, compare the complete
-   observed CI inventory with all 73 recorded artifacts. Do not select “latest,”
-   fall back to artifact name alone, or accept a merely same-SHA run.
+   SHA/tree, complete payload CI run, approved dry-run lock/capsule, immutable
+   recovery boundary, and any required terminal bootstrap ledger only by the
+   exact recorded workflow run/job and artifact ID/digest/size. For the current
+   first-release recovery, compare the complete observed CI inventory with all
+   73 recorded artifacts and prove the failed staging run's recovery artifact
+   against the approved lock. Do not select “latest,” fall back to artifact
+   name alone, or accept a merely same-SHA run.
 6. Reassemble only from those pinned original payload artifacts. Replay
    publication-lock construction at the original source and require the
    resulting file to be byte-identical to the approved original lock, including
    the `source` object and `lockDigest`. Preserve the controller/source
    equivalence receipt. A lock rebound to the controller is a provenance
    mismatch even when every package-envelope byte is equal.
-7. Verify the pinned terminal source-bound bootstrap ledger against the
-   original lock. Recovery bootstrap is disabled: do not create a new
-   controller-bound ledger, request bootstrap credentials, or invoke
-   `publish-bootstrap`.
+7. If the pinned record contains a terminal source-bound bootstrap ledger,
+   verify it against the original lock. If the record explicitly contains no
+   ledger, require the live Cargo/npm bootstrap-state classification to prove
+   that no bootstrap ledger is needed, and independently require the exact
+   source product tags for a GitHub-staged boundary; never invent or select an
+   unrelated ledger. Recovery
+   bootstrap is disabled: do not create a new controller-bound ledger, request
+   bootstrap credentials, or invoke `publish-bootstrap`.
 8. Derive the exhaustive Cargo/npm/Maven/JSR inventory from the original frozen
    lock so generated payload-part carriers cannot disappear behind the static
    catalog. A matching public identity is a read-only recovery skip and must

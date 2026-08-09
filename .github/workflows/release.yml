@@ -455,15 +455,23 @@ jobs:
 
       - name: Prove same-version recovery GitHub state is absent or exact-SHA resumable
         id: verify_release_recovery_github_state
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (inputs.operation == 'publish-dry-run' || inputs.operation == 'publish') && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
-          bun .github/scripts/manage-release-drafts.mjs recovery-preflight \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_SOURCE_SHA"
+          if [[ "${{ steps.recovery_source.outputs.recovery_boundary_kind }}" == github-staged ]]; then
+            bun .github/scripts/manage-release-drafts.mjs recovery-staged-preflight \
+              --products-json "$PRODUCTS_JSON" \
+              --head-ref "$RELEASE_SOURCE_SHA" \
+              --state staged
+          else
+            bun .github/scripts/manage-release-drafts.mjs recovery-preflight \
+              --products-json "$PRODUCTS_JSON" \
+              --head-ref "$RELEASE_SOURCE_SHA" \
+              --state staged
+          fi
 
       - name: Prove Release Please PR can complete after publication
         id: assert_release_please_markable
@@ -529,6 +537,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          CANDIDATE_MODE: ${{ steps.verify_publication_candidate.outputs.mode }}
           RELEASE_OPERATION: ${{ inputs.operation }}
           REQUIRES_WASIX_EVIDENCE: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
         run: |
@@ -548,11 +557,13 @@ jobs:
             --artifact artifact-build-plan
             --artifact oliphaunt-release-candidate
           )
-          if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact wasix-release-regression-evidence)
-          fi
-          if [[ "${{ steps.release_plan.outputs.has_extension_products }}" == true ]]; then
-            qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
+          if [[ "$CANDIDATE_MODE" != release-recovery ]]; then
+            if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
+              qualification_args+=(--artifact wasix-release-regression-evidence)
+            fi
+            if [[ "${{ steps.release_plan.outputs.has_extension_products }}" == true ]]; then
+              qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
+            fi
           fi
           bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
 
@@ -671,7 +682,7 @@ jobs:
             --artifact artifact-build-plan
 
       - name: Download required exact-SHA WASIX evidence
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.verify_publication_candidate.outputs.mode != 'release-recovery' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -689,13 +700,21 @@ jobs:
         id: verify_qualification
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
+          CANDIDATE_MODE: ${{ steps.verify_publication_candidate.outputs.mode }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           WASIX_EVIDENCE_REQUIRED: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
         run: |
+          qualification_mode=full-payload
+          wasix_evidence_required="$WASIX_EVIDENCE_REQUIRED"
+          if [[ "$CANDIDATE_MODE" == release-recovery ]]; then
+            qualification_mode=recovery-control
+            wasix_evidence_required=false
+          fi
           node .github/scripts/verify-release-candidate.mjs \
             target/release-candidate/oliphaunt-release-candidate.json \
             --plan target/release-candidate/affected-plan/ci-plan.json \
-            --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
+            --qualification-mode "$qualification_mode" \
+            --wasix-evidence-required "$wasix_evidence_required" \
             --wasix-evidence-root target/release-candidate/wasix-evidence
 
       - name: Download frozen-payload qualification record
@@ -756,6 +775,7 @@ jobs:
           node .github/scripts/verify-release-candidate.mjs \
             target/recovery-payload-candidate/oliphaunt-release-candidate.json \
             --plan target/recovery-payload-candidate/affected-plan/ci-plan.json \
+            --qualification-mode full-payload \
             --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
             --wasix-evidence-root target/recovery-payload-candidate/wasix-evidence
 
@@ -820,6 +840,20 @@ jobs:
             --run-id "$RECOVERY_LOCK_RUN_ID" \
             --artifact-metadata-json "$RECOVERY_LOCK_ARTIFACT_METADATA_JSON" \
             --artifact oliphaunt-publication-lock
+
+      - name: Verify pinned GitHub-staged recovery boundary
+        id: verify_github_staged_recovery_boundary
+        if: ${{ steps.download_recovery_original_publication_lock.outcome == 'success' && steps.recovery_source.outputs.recovery_boundary_kind == 'github-staged' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RECOVERY_PROVENANCE_RECORD_JSON: ${{ steps.recovery_source.outputs.record_json }}
+        run: |
+          printf '%s\n' "$RECOVERY_PROVENANCE_RECORD_JSON" > "$RUNNER_TEMP/recovery-boundary.json"
+          tools/dev/bun.sh tools/release/verify-github-staged-recovery-boundary.mjs \
+            --boundary "$RUNNER_TEMP/recovery-boundary.json" \
+            --approved-lock "$RUNNER_TEMP/recovery-original-publication-lock/publication-lock.json" \
+            --repo "$GITHUB_REPOSITORY"
 
       - name: Require one approved dry-run lock and capsule
         id: approved_publication_lock
@@ -1210,7 +1244,8 @@ jobs:
         id: validate_product_dry_runs
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
+          CANDIDATE_MODE: ${{ steps.verify_publication_candidate.outputs.mode }}
+          CI_RUN_ID: ${{ steps.release_artifact_source.outputs.ci_run_id }}
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
           OLIPHAUNT_VERIFIED_NODE_EXECUTABLE: ${{ steps.setup_github_stage_npm.outputs.node-executable }}
@@ -1386,7 +1421,9 @@ jobs:
           tools/dev/bun.sh tools/release/verify-release-recovery-publication.mjs \
             --lock "$PUBLICATION_LOCK_PATH" \
             --inventory target/release/recovery-registry-inventory.json \
+            --immutable-github-tag-count "${{ steps.verify_release_recovery_github_state.outputs.exact_tag_count }}" \
             --products-json "$PRODUCTS_JSON" \
+            --recovery-boundary-kind "${{ steps.recovery_source.outputs.recovery_boundary_kind }}" \
             --output target/release/recovery-evidence/publication-state.json \
             --github-output "$GITHUB_OUTPUT"
 
@@ -1491,6 +1528,17 @@ jobs:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           RELEASE_HEAD_SHA: ${{ steps.release_identity.outputs.source_sha }}
         run: bun .github/scripts/registry-bootstrap-ledger-state.mjs
+
+      - name: Require pinned bootstrap evidence when recovery still needs it
+        id: require_recovery_bootstrap_ledger
+        if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' && steps.verify_publication_candidate.outputs.mode == 'release-recovery' }}
+        env:
+          PINNED_BOOTSTRAP_LEDGER_REQUIRED: ${{ steps.recovery_source.outputs.bootstrap_ledger_required }}
+        run: |
+          if [[ "$PINNED_BOOTSTRAP_LEDGER_REQUIRED" != true ]]; then
+            echo 'Recovery requires bootstrap evidence, but its immutable source record explicitly has no bootstrap ledger.' >&2
+            exit 1
+          fi
 
       - name: Download immutable registry bootstrap ledger
         if: ${{ steps.bootstrap_ledger_state.outputs.needs_ledger == 'true' }}

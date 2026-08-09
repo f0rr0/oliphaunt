@@ -126,6 +126,9 @@ jobs:
       test_jobs: ${{ steps.target-matrices.outputs.test_jobs }}
       test_matrix: ${{ steps.target-matrices.outputs.test_matrix }}
       reason: ${{ steps.plan.outputs.reason }}
+      qualification_mode: ${{ steps.plan.outputs.qualification_mode }}
+      qualification_base_sha: ${{ steps.plan.outputs.qualification_base_sha }}
+      qualification_head_sha: ${{ steps.plan.outputs.qualification_head_sha }}
       wasix_release_regression_required: ${{ contains(fromJson(steps.plan.outputs.jobs), 'liboliphaunt-wasix-runtime') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all' || inputs.wasm_target == 'linux-x64-gnu') }}
     steps:
       - name: Checkout repository
@@ -143,8 +146,9 @@ jobs:
       - name: Plan artifact builder jobs
         id: plan
         env:
+          CI_QUALIFICATION_MODE: ${{ needs.release-intent.outputs.qualification_mode }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          MOON_BASE: ${{ github.event.pull_request.base.sha }}
+          MOON_BASE: ${{ needs.release-intent.outputs.qualification_mode == 'recovery-control' && needs.release-intent.outputs.recovery_release_sha || github.event.pull_request.base.sha }}
           MOON_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           WASM_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.wasm_target || 'all' }}
           NATIVE_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.native_target || 'all' }}
@@ -153,6 +157,9 @@ jobs:
 
       - name: Plan check and test jobs
         id: target-matrices
+        env:
+          MOON_BASE: ${{ needs.release-intent.outputs.qualification_mode == 'recovery-control' && needs.release-intent.outputs.recovery_release_sha || github.event.pull_request.base.sha }}
+          MOON_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/write-affected-moon-target-matrices.mjs check test
 
       - name: Upload build plan
@@ -170,6 +177,10 @@ jobs:
       contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      qualification_mode: ${{ steps.release_intent.outputs.qualification_mode }}
+      recovery_release_sha: ${{ steps.release_intent.outputs.recovery_release_sha }}
+      recovery_controller_sha: ${{ steps.release_intent.outputs.recovery_controller_sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -3229,13 +3240,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require full CI success
+      - name: Require qualified CI success
         id: require_full_ci
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_MOBILE_TARGET: ${{ inputs.mobile_target }}
           CI_NATIVE_TARGET: ${{ inputs.native_target }}
+          CI_QUALIFICATION_MODE: ${{ needs.affected.outputs.qualification_mode }}
           CI_WASM_TARGET: ${{ inputs.wasm_target }}
+          SELECTED_BUILDER_JOBS: ${{ needs.affected.outputs.builder_jobs }}
+          SELECTED_E2E_JOBS: ${{ needs.affected.outputs.e2e_jobs }}
         run: |
           if [[ '${{ needs.affected.result }}' != success || '${{ needs.required.result }}' != success ]]; then
             echo 'release qualification requires successful Plan and Required jobs' >&2
@@ -3244,6 +3258,11 @@ jobs:
           if [[ "$CI_EVENT_NAME" == workflow_dispatch ]] && \
             [[ "$CI_WASM_TARGET" != all || "$CI_NATIVE_TARGET" != all || "$CI_MOBILE_TARGET" != all ]]; then
             echo 'focused workflow_dispatch runs are diagnostic only and cannot qualify a release candidate' >&2
+            exit 1
+          fi
+          if [[ "$CI_QUALIFICATION_MODE" == recovery-control ]] && \
+            [[ "$SELECTED_BUILDER_JOBS" != '[]' || "$SELECTED_E2E_JOBS" != '[]' ]]; then
+            echo 'recovery-control qualification must not select builder or E2E payload jobs' >&2
             exit 1
           fi
 
@@ -3276,6 +3295,7 @@ jobs:
         id: qualification_record
         env:
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_QUALIFICATION_MODE: ${{ needs.affected.outputs.qualification_mode }}
           CI_PLAN_PATH: target/qualification/affected-plan/ci-plan.json
           WASIX_RELEASE_REGRESSION_REQUIRED: ${{ needs.affected.outputs.wasix_release_regression_required }}
           WASIX_EVIDENCE_ROOT: target/qualification/wasix-release-regression-evidence

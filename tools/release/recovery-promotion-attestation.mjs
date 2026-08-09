@@ -14,8 +14,11 @@ import path from "node:path";
 import process from "node:process";
 
 import {
+  LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   canonicalRecoverySourceJson,
+  isSameVersionRecoverySourcesDocument,
+  sameVersionRecoverySourceProvenanceSchema,
   selectSameVersionRecoverySource,
   validateSameVersionRecoverySource,
 } from "./same-version-recovery-source.mjs";
@@ -534,7 +537,7 @@ function validateSourceProvenanceRecord(record, lockBinding) {
   }
   return canonical({
     recordDigest: sha256(canonicalRecoverySourceJson(record)),
-    schema: SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+    schema: sameVersionRecoverySourceProvenanceSchema(record),
   });
 }
 
@@ -798,7 +801,10 @@ function validatePredicateShape(predicate) {
     "recovery promotion predicate.sourceProvenance",
     { canonicalOrder: true },
   );
-  if (predicate.sourceProvenance.schema !== SAME_VERSION_RECOVERY_SOURCES_SCHEMA) {
+  if (!new Set([
+    LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+    SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+  ]).has(predicate.sourceProvenance.schema)) {
     throw error("recovery promotion predicate source provenance schema is invalid");
   }
   requireHash(
@@ -930,11 +936,7 @@ function readBoundedJson(file, context) {
 }
 
 function selectedProvenanceRecord(value, releaseSha) {
-  if (
-    isPlainObject(value)
-    && value.schema === SAME_VERSION_RECOVERY_SOURCES_SCHEMA
-    && Array.isArray(value.records)
-  ) {
+  if (isSameVersionRecoverySourcesDocument(value)) {
     return selectSameVersionRecoverySource(
       value,
       releaseSha,

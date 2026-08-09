@@ -418,11 +418,46 @@ fi
 # A same-version partial-publication recovery is not a product release, but it
 # must fail before expensive planning unless its exact original release,
 # linear trailer chain, zero-product impact, and unchanged metadata all verify.
+qualification_mode="full-payload"
+recovery_release_sha=""
+recovery_controller_sha=""
 if git show -s --format=%B "${head_ref}^{commit}" |
   grep -qi "^Oliphaunt-Release-Recovery-Of:"; then
-  tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+  recovery_candidate_output="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-recovery-candidate.XXXXXX")"
+  if ! tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
     --derive-products \
-    --head-ref "${head_ref}"
+    --head-ref "${head_ref}" \
+    --github-output "${recovery_candidate_output}"; then
+    rm -f "${recovery_candidate_output}"
+    exit 1
+  fi
+  verified_recovery_mode="$(sed -n 's/^mode=//p' "${recovery_candidate_output}")"
+  recovery_release_sha="$(sed -n 's/^release_sha=//p' "${recovery_candidate_output}")"
+  recovery_controller_sha="$(sed -n 's/^publication_sha=//p' "${recovery_candidate_output}")"
+  recovery_mode_count="$(grep -c '^mode=' "${recovery_candidate_output}" || true)"
+  recovery_release_count="$(grep -c '^release_sha=' "${recovery_candidate_output}" || true)"
+  recovery_controller_count="$(grep -c '^publication_sha=' "${recovery_candidate_output}" || true)"
+  rm -f "${recovery_candidate_output}"
+  if [[ "${recovery_mode_count}" != "1" ]] ||
+    [[ "${recovery_release_count}" != "1" ]] ||
+    [[ "${recovery_controller_count}" != "1" ]] ||
+    [[ "${verified_recovery_mode}" != "release-recovery" ]] ||
+    [[ ! "${recovery_release_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+    [[ ! "${recovery_controller_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+    [[ "${recovery_controller_sha}" != "$(git rev-parse "${head_ref}^{commit}")" ]] ||
+    [[ "${recovery_release_sha}" == "${recovery_controller_sha}" ]]; then
+    echo "verified recovery lineage did not emit one exact release/controller binding" >&2
+    exit 1
+  fi
+  qualification_mode="recovery-control"
+fi
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    echo "qualification_mode=${qualification_mode}"
+    echo "recovery_release_sha=${recovery_release_sha}"
+    echo "recovery_controller_sha=${recovery_controller_sha}"
+  } >> "${GITHUB_OUTPUT}"
 fi
 
 release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"

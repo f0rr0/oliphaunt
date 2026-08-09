@@ -8,6 +8,9 @@ import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs
 import {
   affectedPlanBinding,
   assertCandidateBindingShape,
+  candidateQualificationMode,
+  FULL_PAYLOAD_QUALIFICATION_MODE,
+  RECOVERY_CONTROL_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from "./release-candidate-lib.mjs";
 
@@ -56,6 +59,15 @@ try {
   affectedPlan = affectedPlanBinding(requiredEnv("CI_PLAN_PATH"), wasixRequired);
 } catch (error) {
   fail(error.message);
+}
+const expectedQualificationMode = requiredEnv("CI_QUALIFICATION_MODE");
+if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(expectedQualificationMode)) {
+  fail(`CI_QUALIFICATION_MODE is invalid: ${expectedQualificationMode}`);
+}
+if (candidateQualificationMode({ affectedPlan }) !== expectedQualificationMode) {
+  fail(
+    `affected CI plan qualification mode does not match workflow mode ${expectedQualificationMode}`,
+  );
 }
 
 const runAttempt = Number.parseInt(requiredEnv("GITHUB_RUN_ATTEMPT"), 10);

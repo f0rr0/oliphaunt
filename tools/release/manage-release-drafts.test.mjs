@@ -1052,27 +1052,27 @@ test("same-version recovery preflight accepts only absent or exact-SHA resumable
     repo: "o/r",
     selected,
   };
-  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+  assert.deepEqual(reconcileSelectedReleasesSync(context, {
     readReleaseMap: () => new Map(),
     readTagMap: () => new Map(absentTags),
-  }));
+  }), { exactReleaseCount: 0, exactTagCount: 0, selectedCount: 2 });
 
   const exactTags = tagState(selected, headRef);
   const exactReleases = new Map(selected.map(({ metadata, tag }, index) => [
     tag,
     { ...metadata, draft: index === 0, id: index + 1 },
   ]));
-  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+  assert.deepEqual(reconcileSelectedReleasesSync(context, {
     readReleaseMap: () => exactReleases,
     readTagMap: () => exactTags,
-  }));
+  }), { exactReleaseCount: 2, exactTagCount: 2, selectedCount: 2 });
 
   const partialTags = new Map(absentTags);
   partialTags.set(selected[0].tag, exactTags.get(selected[0].tag));
-  assert.doesNotThrow(() => reconcileSelectedReleasesSync(context, {
+  assert.deepEqual(reconcileSelectedReleasesSync(context, {
     readReleaseMap: () => new Map([[selected[0].tag, exactReleases.get(selected[0].tag)]]),
     readTagMap: () => partialTags,
-  }));
+  }), { exactReleaseCount: 1, exactTagCount: 1, selectedCount: 2 });
 
   const conflictingTag = new Map(exactTags);
   conflictingTag.set(selected[0].tag, {
@@ -1095,6 +1095,47 @@ test("same-version recovery preflight accepts only absent or exact-SHA resumable
     }),
     /conflicts with frozen release metadata/u,
   );
+});
+
+test("GitHub-staged recovery preflight requires the complete exact source-bound set", () => {
+  const selected = selection(2);
+  const headRef = "d".repeat(40);
+  const exactTags = tagState(selected, headRef);
+  const exactReleases = new Map(selected.map(({ metadata, tag }, index) => [
+    tag,
+    { ...metadata, draft: true, id: index + 1 },
+  ]));
+  const context = {
+    budget: budget(),
+    command: "recovery-staged-preflight",
+    environment: {},
+    expectedState: "staged",
+    headRef,
+    repo: "o/r",
+    selected,
+  };
+  const noSleep = { releaseSnapshotSleep: () => {} };
+  assert.deepEqual(reconcileSelectedReleasesSync(context, {
+    ...noSleep,
+    readReleaseMap: () => exactReleases,
+    readTagMap: () => exactTags,
+  }), { exactReleaseCount: 2, exactTagCount: 2, selectedCount: 2 });
+
+  const partialTags = new Map(exactTags);
+  partialTags.set(selected[0].tag, null);
+  assert.throws(() => reconcileSelectedReleasesSync(context, {
+    ...noSleep,
+    readReleaseMap: () => exactReleases,
+    readTagMap: () => partialTags,
+  }), /tag .* does not exist/u);
+
+  const partialReleases = new Map(exactReleases);
+  partialReleases.delete(selected[0].tag);
+  assert.throws(() => reconcileSelectedReleasesSync(context, {
+    ...noSleep,
+    readReleaseMap: () => partialReleases,
+    readTagMap: () => exactTags,
+  }), /did not converge to staged state/u);
 });
 
 test("batch staging reconciles ambiguous responses once and exact reruns issue no mutations", () => {

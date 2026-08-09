@@ -15,6 +15,7 @@ import test from "node:test";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
   DEFAULT_SAME_VERSION_RECOVERY_SOURCES,
+  LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   loadSameVersionRecoverySources,
 } from "./same-version-recovery-source.mjs";
 import {
@@ -252,6 +253,10 @@ test("creates one deterministic canonical predicate binding both runs and every 
   assert.equal(
     predicate.sourceProvenance.recordDigest,
     sha256(canonicalRecoveryPromotionJson(values.provenanceRecord)),
+  );
+  assert.equal(
+    predicate.sourceProvenance.schema,
+    LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
   );
   const body = structuredClone(predicate);
   delete body.evidenceDigest;

@@ -32,7 +32,7 @@ import {
   validateRecoveryPromotionStatement,
 } from "./recovery-promotion-attestation.mjs";
 import {
-  SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+  isSameVersionRecoverySourcesDocument,
   selectSameVersionRecoverySource,
   validateSameVersionRecoverySource,
 } from "./same-version-recovery-source.mjs";
@@ -1177,6 +1177,40 @@ function stableStringify(value) {
   return JSON.stringify(value);
 }
 
+function canonicalSigstoreBundleForGhComparison(bundle) {
+  const canonical = structuredClone(bundle);
+  const timestampVerificationData =
+    canonical?.verificationMaterial?.timestampVerificationData;
+  if (
+    timestampVerificationData !== null
+    && !Array.isArray(timestampVerificationData)
+    && typeof timestampVerificationData === "object"
+    && Array.isArray(timestampVerificationData.rfc3161Timestamps)
+    && timestampVerificationData.rfc3161Timestamps.length === 0
+  ) {
+    // actions/attest v3 serializes this protobuf default as an empty repeated
+    // field, while gh's Go protobuf serializer omits it after successfully
+    // verifying the exact supplied bundle. Canonicalize only that known
+    // representation difference; every signed and verification-material byte
+    // represented by the bundle must still compare exactly.
+    delete timestampVerificationData.rfc3161Timestamps;
+  }
+  return canonical;
+}
+
+export function assertGhVerifiedBundleMatchesSupplied(
+  verifiedBundle,
+  suppliedBundle,
+  context = "gh verification output",
+) {
+  if (
+    stableStringify(canonicalSigstoreBundleForGhComparison(verifiedBundle))
+    !== stableStringify(canonicalSigstoreBundleForGhComparison(suppliedBundle))
+  ) {
+    throw new Error(`${context} does not contain the supplied bundle`);
+  }
+}
+
 export function assertExactReleaseAssetNames({ product, tag, expectedNames, actualNames }) {
   const expected = new Set(expectedNames);
   const actual = new Set(actualNames);
@@ -2271,9 +2305,11 @@ function runGhBundleVerification({
   }
   const verified = requireObject(output[0], `gh verification output for ${bundlePath}`);
   const verifiedBundle = verified.attestation?.bundle;
-  if (stableStringify(verifiedBundle) !== stableStringify(bundle)) {
-    throw new Error(`gh verification output for ${bundlePath} does not contain the supplied bundle`);
-  }
+  assertGhVerifiedBundleMatchesSupplied(
+    verifiedBundle,
+    bundle,
+    `gh verification output for ${bundlePath}`,
+  );
   const statement = verified.verificationResult?.statement;
   requireObject(statement, `gh verification statement for ${bundlePath}`);
   return statementSubjects(
@@ -2546,10 +2582,7 @@ async function loadRecoveryAttestationExpectations(args, lock) {
     "same-version recovery provenance",
   );
   let provenanceRecord;
-  if (
-    provenance?.schema === SAME_VERSION_RECOVERY_SOURCES_SCHEMA
-    && Array.isArray(provenance.records)
-  ) {
+  if (isSameVersionRecoverySourcesDocument(provenance)) {
     provenanceRecord = selectSameVersionRecoverySource(
       provenance,
       lock.source.commit,

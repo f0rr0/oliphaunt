@@ -13,8 +13,10 @@ import { fileURLToPath } from "node:url";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const TOOL = "same-version-recovery-source.mjs";
-export const SAME_VERSION_RECOVERY_SOURCES_SCHEMA =
+export const LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA =
   "oliphaunt-same-version-recovery-sources-v1";
+export const SAME_VERSION_RECOVERY_SOURCES_SCHEMA =
+  "oliphaunt-same-version-recovery-sources-v2";
 const PUBLICATION_LOCK_SCHEMA = "oliphaunt-publication-lock-v1";
 const CAPSULE_SCHEMA = "oliphaunt-bootstrap-publication-capsule-v1";
 const LEDGER_SCHEMA = "oliphaunt-bootstrap-ledger-checkpoint-v1";
@@ -237,6 +239,46 @@ function successfulRun(value, context, source) {
   return value;
 }
 
+function recoveryBoundary(value, context, source) {
+  if (value?.kind === "registry-partial") {
+    strictObject(value, ["kind"], context);
+    return value;
+  }
+  strictObject(
+    value,
+    ["evidenceArtifact", "job", "kind", "run"],
+    context,
+  );
+  if (value.kind !== "github-staged") {
+    throw error(`${context}.kind must be registry-partial or github-staged`);
+  }
+  strictObject(
+    value.run,
+    ["attempt", "conclusion", "event", "headSha", "id", "status"],
+    `${context}.run`,
+  );
+  positiveInteger(value.run.id, `${context}.run.id`);
+  positiveInteger(value.run.attempt, `${context}.run.attempt`);
+  if (
+    value.run.event !== "workflow_dispatch"
+    || value.run.status !== "completed"
+    || value.run.conclusion !== "failure"
+    || value.run.headSha !== source.commit
+  ) {
+    throw error(`${context}.run must identify a failed completed source-bound workflow_dispatch`);
+  }
+  strictObject(value.job, ["conclusion", "id", "name"], `${context}.job`);
+  positiveInteger(value.job.id, `${context}.job.id`);
+  if (
+    value.job.name !== "Prepare and stage release"
+    || value.job.conclusion !== "failure"
+  ) {
+    throw error(`${context}.job must identify the failed GitHub staging job`);
+  }
+  artifactIdentity(value.evidenceArtifact, `${context}.evidenceArtifact`);
+  return value;
+}
+
 function releaseEnvelope(value, context) {
   strictObject(
     value,
@@ -402,12 +444,14 @@ function requiredArtifactNames(value, inventory, context) {
 
 function validateRecord(value, index) {
   const context = `records[${index}]`;
+  const hasRecoveryBoundary = Object.hasOwn(value ?? {}, "recoveryBoundary");
   strictObject(
     value,
     [
       "approvedDryRun",
       "bootstrapLedger",
       "payloadQualification",
+      ...(hasRecoveryBoundary ? ["recoveryBoundary"] : []),
       "releaseEnvelope",
       "releaseSource",
     ],
@@ -415,6 +459,11 @@ function validateRecord(value, index) {
   );
   const source = sourceIdentity(value.releaseSource, `${context}.releaseSource`);
   const envelope = releaseEnvelope(value.releaseEnvelope, `${context}.releaseEnvelope`);
+  if (hasRecoveryBoundary) {
+    recoveryBoundary(value.recoveryBoundary, `${context}.recoveryBoundary`, source);
+  } else if (value.bootstrapLedger === null) {
+    throw error(`${context} legacy recovery source requires a terminal bootstrap ledger`);
+  }
 
   strictObject(
     value.payloadQualification,
@@ -468,49 +517,70 @@ function validateRecord(value, index) {
     envelope,
   );
 
-  strictObject(
-    value.bootstrapLedger,
-    ["artifactInventory", "run", "terminalCheckpoint", "workflow"],
-    `${context}.bootstrapLedger`,
-  );
-  workflow(
-    value.bootstrapLedger.workflow,
-    `${context}.bootstrapLedger.workflow`,
-    { name: "Release", path: ".github/workflows/release.yml" },
-  );
-  successfulRun(value.bootstrapLedger.run, `${context}.bootstrapLedger.run`, source);
-  const ledgerInventory = artifactInventory(
-    value.bootstrapLedger.artifactInventory,
-    `${context}.bootstrapLedger.artifactInventory`,
-  );
-  exactArtifactNames(
-    ledgerInventory,
-    ["oliphaunt-bootstrap-ledger"],
-    `${context}.bootstrapLedger.artifactInventory`,
-  );
-  terminalCheckpoint(
-    value.bootstrapLedger.terminalCheckpoint,
-    `${context}.bootstrapLedger.terminalCheckpoint`,
-    source,
-    envelope,
-    capsule,
-  );
-
   const runIds = [
     value.payloadQualification.run.id,
     value.approvedDryRun.run.id,
-    value.bootstrapLedger.run.id,
   ];
-  if (new Set(runIds).size !== runIds.length) {
-    throw error(`${context} must bind three distinct workflow runs`);
+  if (value.bootstrapLedger !== null) {
+    strictObject(
+      value.bootstrapLedger,
+      ["artifactInventory", "run", "terminalCheckpoint", "workflow"],
+      `${context}.bootstrapLedger`,
+    );
+    workflow(
+      value.bootstrapLedger.workflow,
+      `${context}.bootstrapLedger.workflow`,
+      { name: "Release", path: ".github/workflows/release.yml" },
+    );
+    successfulRun(value.bootstrapLedger.run, `${context}.bootstrapLedger.run`, source);
+    const ledgerInventory = artifactInventory(
+      value.bootstrapLedger.artifactInventory,
+      `${context}.bootstrapLedger.artifactInventory`,
+    );
+    exactArtifactNames(
+      ledgerInventory,
+      ["oliphaunt-bootstrap-ledger"],
+      `${context}.bootstrapLedger.artifactInventory`,
+    );
+    terminalCheckpoint(
+      value.bootstrapLedger.terminalCheckpoint,
+      `${context}.bootstrapLedger.terminalCheckpoint`,
+      source,
+      envelope,
+      capsule,
+    );
+    runIds.push(value.bootstrapLedger.run.id);
+    if (value.approvedDryRun.workflow.id !== value.bootstrapLedger.workflow.id) {
+      throw error(`${context} workflow identities are inconsistent`);
+    }
   }
-  if (
-    value.approvedDryRun.workflow.id !== value.bootstrapLedger.workflow.id
-    || value.payloadQualification.workflow.id === value.approvedDryRun.workflow.id
-  ) {
+  if (new Set(runIds).size !== runIds.length) {
+    throw error(`${context} must bind distinct workflow runs`);
+  }
+  if (value.payloadQualification.workflow.id === value.approvedDryRun.workflow.id) {
     throw error(`${context} workflow identities are inconsistent`);
   }
   return value;
+}
+
+export function sameVersionRecoverySourceProvenanceSchema(record) {
+  validateRecord(record, 0);
+  return Object.hasOwn(record, "recoveryBoundary")
+    ? SAME_VERSION_RECOVERY_SOURCES_SCHEMA
+    : LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA;
+}
+
+export function isSameVersionRecoverySourcesDocument(value) {
+  return (
+    value !== null
+    && !Array.isArray(value)
+    && typeof value === "object"
+    && new Set([
+      LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+      SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+    ]).has(value.schema)
+    && Array.isArray(value.records)
+  );
 }
 
 function gitCommitAndTree(repo, commit) {
@@ -550,9 +620,12 @@ export function validateSameVersionRecoverySources(
   { repo = ROOT, verifyGit = true } = {},
 ) {
   strictObject(document, ["records", "schema"], "recovery source document");
-  if (document.schema !== SAME_VERSION_RECOVERY_SOURCES_SCHEMA) {
+  if (!new Set([
+    LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+    SAME_VERSION_RECOVERY_SOURCES_SCHEMA,
+  ]).has(document.schema)) {
     throw error(
-      `recovery source document schema must be ${SAME_VERSION_RECOVERY_SOURCES_SCHEMA}`,
+      "recovery source document schema must be a supported v1 or v2 schema",
     );
   }
   if (!Array.isArray(document.records) || document.records.length === 0) {
@@ -560,6 +633,12 @@ export function validateSameVersionRecoverySources(
   }
   document.records.forEach((record) =>
     validateSameVersionRecoverySource(record, { repo, verifyGit: false }));
+  if (
+    document.schema === LEGACY_SAME_VERSION_RECOVERY_SOURCES_SCHEMA
+    && document.records.some((record) => Object.hasOwn(record, "recoveryBoundary"))
+  ) {
+    throw error("v1 recovery source documents cannot contain v2 recovery boundaries");
+  }
   const sorted = [...document.records].sort((left, right) =>
     compareText(left.releaseSource.commit, right.releaseSource.commit));
   if (canonicalRecoverySourceJson(sorted) !== canonicalRecoverySourceJson(document.records)) {
@@ -886,9 +965,17 @@ export function validateSameVersionRecoveryEvidence(
   { publicationLock, capsuleManifest, terminalLedger },
 ) {
   validateRecord(record, 0);
+  if (record.bootstrapLedger !== null && terminalLedger === undefined) {
+    throw error("recovery record with bootstrap publication requires terminal ledger evidence");
+  }
   const lock = readEvidenceFile(publicationLock, "publication lock evidence");
   const capsule = readEvidenceFile(capsuleManifest, "capsule manifest evidence");
-  const ledger = readEvidenceFile(terminalLedger, "terminal bootstrap ledger evidence");
+  const ledger = record.bootstrapLedger === null
+    ? null
+    : readEvidenceFile(terminalLedger, "terminal bootstrap ledger evidence");
+  if (record.bootstrapLedger === null && terminalLedger !== undefined) {
+    throw error("recovery record without bootstrap publication must not supply terminal ledger evidence");
+  }
   verifyFileBytes(
     lock.bytes,
     record.releaseEnvelope.publicationLock,
@@ -899,18 +986,20 @@ export function validateSameVersionRecoveryEvidence(
     record.approvedDryRun.capsuleManifest.file,
     "capsule manifest evidence",
   );
-  verifyFileBytes(
-    ledger.bytes,
-    record.bootstrapLedger.terminalCheckpoint.file,
-    "terminal bootstrap ledger evidence",
-  );
   validatePublicationLockEvidence(lock.value, record);
   validateCapsuleManifestEvidence(capsule.value, record);
-  validateTerminalLedgerEvidence(ledger.value, record);
+  if (ledger !== null) {
+    verifyFileBytes(
+      ledger.bytes,
+      record.bootstrapLedger.terminalCheckpoint.file,
+      "terminal bootstrap ledger evidence",
+    );
+    validateTerminalLedgerEvidence(ledger.value, record);
+  }
   return {
     capsuleManifestSha256: sha256(capsule.bytes),
     publicationLockSha256: sha256(lock.bytes),
-    terminalLedgerSha256: sha256(ledger.bytes),
+    terminalLedgerSha256: ledger === null ? null : sha256(ledger.bytes),
   };
 }
 
@@ -920,6 +1009,8 @@ function outputLines(record) {
     .filter((artifact) => artifact.name === "oliphaunt-publication-lock");
   const capsule = record.approvedDryRun.artifactInventory.artifacts
     .filter((artifact) => artifact.name === "oliphaunt-bootstrap-capsule");
+  const bootstrapArtifacts = record.bootstrapLedger?.artifactInventory.artifacts ?? [];
+  const boundary = record.recoveryBoundary ?? { kind: "registry-partial" };
   return {
     approved_capsule_artifact_metadata_json: artifactJson(capsule),
     approved_dry_run_artifact_metadata_json: artifactJson(
@@ -928,9 +1019,12 @@ function outputLines(record) {
     approved_dry_run_id: String(record.approvedDryRun.run.id),
     approved_lock_artifact_metadata_json: artifactJson(lock),
     bootstrap_ledger_artifact_metadata_json: artifactJson(
-      record.bootstrapLedger.artifactInventory.artifacts,
+      bootstrapArtifacts,
     ),
-    bootstrap_ledger_run_id: String(record.bootstrapLedger.run.id),
+    bootstrap_ledger_required: String(record.bootstrapLedger !== null),
+    bootstrap_ledger_run_id: record.bootstrapLedger === null
+      ? ""
+      : String(record.bootstrapLedger.run.id),
     catalog_digest: record.releaseEnvelope.catalogDigest,
     lock_digest: record.releaseEnvelope.lockDigest,
     package_envelope_digest: record.releaseEnvelope.packageEnvelopeDigest,
@@ -938,6 +1032,8 @@ function outputLines(record) {
       record.payloadQualification.artifactInventory.artifacts,
     ),
     payload_ci_run_id: String(record.payloadQualification.run.id),
+    recovery_boundary_json: canonicalRecoverySourceJson(boundary),
+    recovery_boundary_kind: boundary.kind,
     record_digest: digestValue(record),
     record_json: canonicalRecoverySourceJson(record),
     release_sha: record.releaseSource.commit,
@@ -992,12 +1088,15 @@ function parseArgs(argv) {
   if (!SHA.test(releaseSha)) {
     throw error("usage: same-version-recovery-source.mjs --release-sha SHA [--record-file FILE] "
       + "[--github-output FILE] [--publication-lock FILE --capsule-manifest FILE "
-      + "--terminal-ledger FILE]");
+      + "[--terminal-ledger FILE]]");
   }
-  const evidenceNames = ["publication-lock", "capsule-manifest", "terminal-ledger"];
-  const evidenceCount = evidenceNames.filter((name) => values.has(name)).length;
-  if (![0, evidenceNames.length].includes(evidenceCount)) {
-    throw error("publication-lock, capsule-manifest, and terminal-ledger must be supplied together");
+  const coreEvidenceNames = ["publication-lock", "capsule-manifest"];
+  const coreEvidenceCount = coreEvidenceNames.filter((name) => values.has(name)).length;
+  if (![0, coreEvidenceNames.length].includes(coreEvidenceCount)) {
+    throw error("publication-lock and capsule-manifest must be supplied together");
+  }
+  if (values.has("terminal-ledger") && coreEvidenceCount === 0) {
+    throw error("terminal-ledger requires publication-lock and capsule-manifest");
   }
   return {
     capsuleManifest: values.get("capsule-manifest"),

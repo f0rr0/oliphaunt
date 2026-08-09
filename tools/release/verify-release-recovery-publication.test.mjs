@@ -86,6 +86,8 @@ test("classifies an exact partial publication and derives only actually needed b
     [{ id: "cargo:alpha", proof: "exact" }],
   );
   assert.equal(receipt.schema, RECOVERY_PUBLICATION_STATE_SCHEMA);
+  assert.equal(receipt.immutableGithubTagCount, 0);
+  assert.equal(receipt.recoveryBoundaryKind, "registry-partial");
   assert.equal(receipt.publicCarrierCount, 1);
   assert.equal(receipt.missingCarrierCount, 3);
   assert.match(receipt.evidenceDigest, /^[0-9a-f]{64}$/u);
@@ -115,7 +117,36 @@ test("classifies an exact partial publication and derives only actually needed b
   );
 });
 
-test("rejects recovery before any immutable carrier is public", () => {
+test("accepts exact immutable GitHub staging before any registry carrier is public", () => {
+  const value = inventory();
+  for (const result of value.results) {
+    result.missing = result.packages;
+    result.published = [];
+  }
+  const classification = classifyReleaseRecoveryPublication({
+    immutableGithubTagCount: 2,
+    lock: lock(),
+    inventory: value,
+    products: ["alpha", "beta"],
+    recoveryBoundaryKind: "github-staged",
+  });
+  assert.equal(classification.immutableGithubTagCount, 2);
+  assert.deepEqual(classification.publicCarrierIds, []);
+  assert.equal(classification.missingCarrierIds.length, 4);
+
+  const receipt = releaseRecoveryPublicationReceipt(classification, []);
+  assert.equal(validateReleaseRecoveryPublicationReceipt({
+    lock: lock(),
+    products: ["alpha", "beta"],
+    receipt,
+    validateReceipts: (_lock, { carrierIds, receipts }) => {
+      assert.deepEqual(carrierIds, []);
+      assert.deepEqual(receipts, []);
+    },
+  }), receipt);
+});
+
+test("rejects recovery before any immutable GitHub or registry state exists", () => {
   const value = inventory();
   for (const result of value.results) {
     result.missing = result.packages;
@@ -127,7 +158,7 @@ test("rejects recovery before any immutable carrier is public", () => {
       inventory: value,
       products: ["alpha", "beta"],
     }),
-    /at least one already-public immutable registry carrier/u,
+    /registry-partial recovery requires at least one already-public immutable registry carrier/u,
   );
 });
 
