@@ -20,12 +20,17 @@ const BUILD = path.join(
   ROOT,
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
 );
+const WINDOWS_BUILD = path.join(
+  ROOT,
+  "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
+);
 const CACHE = path.join(
   ROOT,
   "src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh",
 );
 const setupSource = readFileSync(SETUP, "utf8");
 const buildSource = readFileSync(BUILD, "utf8");
+const windowsBuildSource = readFileSync(WINDOWS_BUILD, "utf8");
 const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
 const temporaryDirectories = [];
 
@@ -148,6 +153,14 @@ describe("Windows native toolchain bootstrap contract", () => {
     expect(setupSource).toContain(
       "Chocolatey did not install $expected_executable after 3 attempts",
     );
+  });
+
+  test("imports static PROJ usage requirements when building GDAL", () => {
+    expect(windowsBuildSource).toContain(
+      '$projConfig = First-File $projPrefix @("proj-config.cmake")',
+    );
+    expect(windowsBuildSource).toContain('"-DGDAL_FIND_PACKAGE_PROJ_MODE=CONFIG"');
+    expect(windowsBuildSource).toContain('"-DPROJ_DIR=$projConfigDir"');
   });
 });
 

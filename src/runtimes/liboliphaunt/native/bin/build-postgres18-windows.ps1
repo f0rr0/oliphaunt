@@ -945,6 +945,8 @@ function Build-WindowsPostgisGdalDependency {
     $jsonLib = First-File $jsonPrefix @("json-c.lib", "json-c-static.lib")
     $libxml2Lib = First-File $libxml2Prefix @("libxml2s.lib", "libxml2.lib", "xml2.lib")
     $projLib = First-File $projPrefix @("proj.lib", "libproj.lib")
+    $projConfig = First-File $projPrefix @("proj-config.cmake")
+    $projConfigDir = (Split-Path -Parent $projConfig).Replace("\", "/")
     # CMake writes this value into a generated try_compile project. Use forward
     # slashes so Windows path escapes such as \a are not parsed by CMake.
     $sqliteLib = (First-File $sqlitePrefix @("sqlite3.lib", "libsqlite3.lib")).Replace("\", "/")
@@ -979,6 +981,8 @@ function Build-WindowsPostgisGdalDependency {
         "-DLIBXML2_INCLUDE_DIR=$(Join-Path $libxml2Prefix 'include/libxml2')",
         "-DLIBXML2_LIBRARY=$libxml2Lib",
         "-DGDAL_USE_PROJ=ON",
+        "-DGDAL_FIND_PACKAGE_PROJ_MODE=CONFIG",
+        "-DPROJ_DIR=$projConfigDir",
         "-DPROJ_INCLUDE_DIR=$(Join-Path $projPrefix 'include')",
         "-DPROJ_LIBRARY=$projLib",
         "-DGDAL_USE_SQLITE3=ON",
