@@ -76,7 +76,7 @@ export SOURCE_DATE_EPOCH=333
 oliphaunt_postgis_enable_reproducible_time "$root"
 [ "$SOURCE_DATE_EPOCH" = "$expected_epoch" ] ||
   fail "enable helper retained ambient SOURCE_DATE_EPOCH"
-[ "$(command -v date)" = "$shim" ] ||
+oliphaunt_postgis_same_executable "$(command -v date)" "$shim" ||
   fail "portable date shim was not placed first on PATH"
 [ "$(date -d "@$SOURCE_DATE_EPOCH" -u '+%Y-%m-%d %H:%M:%S')" = "$expected_utc" ] ||
   fail "GNU-order PostGIS date invocation was not deterministic"

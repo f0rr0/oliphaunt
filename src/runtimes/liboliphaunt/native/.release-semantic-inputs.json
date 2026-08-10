@@ -112,7 +112,7 @@
         },
         {
           "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
-          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+          "sha256": "afa6de6175776c546130ae4a72fea7aecf9e3ea492c7c53649960252315ada39"
         }
       ]
     },
@@ -457,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "f6482c0e8ce42218eebd81c2324168004855b260a6ba4ae59f3616dab7bd4489"
+  "sha256": "47e8d4a034b1640db3016017fe7c9e7cdf395f1a3b65889ac575aa70746c88ed"
 }

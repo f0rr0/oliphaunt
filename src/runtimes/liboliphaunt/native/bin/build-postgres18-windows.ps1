@@ -1687,6 +1687,20 @@ function Patch-WindowsPostgisSource([string]$PostgisDir) {
 #endif
 "@
 
+    $rasterCoreHeader = Join-Path $PostgisDir "raster/rt_core/librtcore.h"
+    $rasterCoreText = Get-Content -Raw -Path $rasterCoreHeader
+    $legacyAttributeFallback = "# define __attribute__ (x)"
+    $guardedAttributeFallback = @"
+# ifndef __attribute__
+#  define __attribute__(x)
+# endif
+"@
+    if (-not $rasterCoreText.Contains($legacyAttributeFallback)) {
+        Fail "PostGIS raster compatibility header is missing the expected __attribute__ fallback"
+    }
+    $rasterCoreText = $rasterCoreText.Replace($legacyAttributeFallback, $guardedAttributeFallback)
+    Set-Content -Path $rasterCoreHeader -Encoding UTF8 -Value $rasterCoreText
+
     $declarationPattern = "(?m)^\s*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(PG_FUNCTION_ARGS\);\r?$"
     $patchedDeclarationCount = 0
     foreach ($subdir in @("postgis", "libpgcommon", "liblwgeom", "raster/rt_core", "raster/rt_pg")) {

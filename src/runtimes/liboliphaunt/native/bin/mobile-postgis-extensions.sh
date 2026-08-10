@@ -737,6 +737,15 @@ oliphaunt_postgis_verify_prefixed_legacy_symbols() {
   fi
 }
 
+oliphaunt_postgis_build_raster_objects() {
+  local postgis_build="$1"
+  make -j"$jobs" -C "$postgis_build/raster/rt_pg" all >> "$make_log" 2>&1 || true
+  if [ ! -f "$postgis_build/raster/rt_pg/rtpostgis.o" ]; then
+    tail -n 200 "$make_log" >&2 || true
+    oliphaunt_postgis_fail "PostGIS raster objects were not produced"
+  fi
+}
+
 build_postgis_mobile_static_extension_objects() {
   local extension="$1"
   [ "$extension" = "postgis" ] || return 1
@@ -854,11 +863,7 @@ build_postgis_mobile_static_extension_objects() {
     make -j"$jobs" -C deps/flatgeobuf all >> "$make_log" 2>&1
     make -j"$jobs" -C postgis all >> "$make_log" 2>&1 || true
     make -j"$jobs" -C raster/rt_core all >> "$make_log" 2>&1
-    make -j"$jobs" -C raster/rt_pg postgis_raster-3.so >> "$make_log" 2>&1 || true
-    if [ ! -f raster/rt_pg/rtpostgis.o ]; then
-      tail -n 200 "$make_log" >&2 || true
-      oliphaunt_postgis_fail "PostGIS raster objects were not produced"
-    fi
+    oliphaunt_postgis_build_raster_objects "$postgis_build"
     make -j1 -C extensions postgis_extension_helper.sql >> "$make_log" 2>&1
     make -j1 -C extensions all >> "$make_log" 2>&1
   )

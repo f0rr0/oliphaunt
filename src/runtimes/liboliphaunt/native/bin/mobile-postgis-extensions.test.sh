@@ -3,6 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=/dev/null
+. "$script_dir/mobile-static-extensions.sh"
+# shellcheck source=/dev/null
 . "$script_dir/mobile-postgis-extensions.sh"
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-mobile-postgis-test.XXXXXX")"
@@ -32,13 +34,18 @@ oliphaunt_postgis_cmake_install() {
   mkdir -p "$dependency_dir/lib" "$dependency_dir/include" "$dependency_dir/bin"
   : > "$dependency_dir/lib/libgdal.a"
   : > "$dependency_dir/include/gdal.h"
-  : > "$dependency_dir/bin/gdal-config"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dependency_dir/bin/gdal-config"
   chmod +x "$dependency_dir/bin/gdal-config"
 }
 
 build_postgis_gdal_dependency
 grep -Fx -- '-DBUILD_PYTHON_BINDINGS=OFF' "$cmake_args_file" >/dev/null
 grep -Fx -- '-DBUILD_PYTHON_BINDINGS_OLD_VAL=OFF' "$cmake_args_file" >/dev/null
+resolved_gdal_archive="$(oliphaunt_mobile_static_dependency_archive_for_root "$mobile_static_dependency_root" gdal)"
+[ "$resolved_gdal_archive" = "$mobile_static_dependency_root/gdal/lib/libgdal.a" ] || {
+  echo "mobile packager did not resolve the staged GDAL archive" >&2
+  exit 1
+}
 
 postgis_build="$test_root/postgis-build"
 mkdir -p "$postgis_build/raster/rt_pg"
@@ -48,7 +55,11 @@ PG_CPPFLAGS += \
 	-Ifixture-two
 SHLIB_LINK_F = -lfixture
 
-.PHONY: print-flags
+.PHONY: all print-flags
+all:
+	@: > rtpostgis.o
+	@: > all-target-ran
+
 print-flags:
 	@printf '%s\n' '$(PG_CPPFLAGS)'
 MAKEFILE
@@ -68,5 +79,13 @@ for expected in \
       ;;
   esac
 done
+
+jobs=1
+make_log="$test_root/raster-make.log"
+oliphaunt_postgis_build_raster_objects "$postgis_build"
+[ -f "$postgis_build/raster/rt_pg/all-target-ran" ] || {
+  echo "mobile raster build did not use the platform-neutral all target" >&2
+  exit 1
+}
 
 echo "mobile PostGIS build contracts passed"

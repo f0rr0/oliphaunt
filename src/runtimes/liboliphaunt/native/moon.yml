@@ -135,6 +135,7 @@ tasks:
     inputs:
       - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
       - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.test.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/mobile-static-extensions.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true
