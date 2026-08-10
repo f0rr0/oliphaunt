@@ -25,7 +25,7 @@ const HEADER = [
 ].join('\t');
 
 function specRow(sqlName, stem = sqlName) {
-  return [sqlName, stem, 'external', `checkouts/${sqlName}`, ...Array(12).fill('')].join('\t');
+  return [sqlName, stem, 'external', `checkouts/${sqlName}`].join('\t');
 }
 
 function specTable(rows) {

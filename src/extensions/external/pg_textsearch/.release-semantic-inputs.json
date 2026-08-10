@@ -96,7 +96,7 @@
       "inputs": [
         {
           "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
-          "sha256": "0d366981a9eefd1d2e614fbe80b460e0fe7de40b5b0c013ace3d3f66f59c88d6"
+          "sha256": "46dd355991a820ce8cd4cb9e0649a56f1d8d0d0ec7158b66686e4ca9706a09af"
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "0afbf06c8472bce9f519d13d86a3c184da81d3fe2cf2b41a221a018ef7767813"
+  "sha256": "d1ed88749139aee8b8494655fc6eb4e3aef1aae0b36e109c623f1fe7b1b02921"
 }

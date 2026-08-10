@@ -355,7 +355,11 @@ function mobileStaticSpecTable(text, label) {
   for (const [offset, line] of lines.slice(2).entries()) {
     if (line.length === 0) continue;
     const fields = line.split('\t');
-    if (fields.length !== columns.length || fields[0].length === 0) {
+    if (
+      fields.length < 4
+      || fields.length > columns.length
+      || fields.slice(0, 4).some((field) => field.length === 0)
+    ) {
       fail(`${label} mobile static registry row ${offset + 3} is invalid`);
     }
     if (rows.has(fields[0])) {
