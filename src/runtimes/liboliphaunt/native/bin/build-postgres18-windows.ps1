@@ -69,6 +69,7 @@ $SnowballStopwordFiles = @(
 $VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-closure.mjs"
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
+$ExternalExtensionRoot = Join-Path $RepoRoot "src/extensions/external"
 $OpenSslSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/openssl.toml"
 $PgxsBuildPlan = Join-Path $RepoRoot "src/extensions/generated/pgxs-build.tsv"
 $PortableUuidDir = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/portable-uuid"
@@ -520,6 +521,17 @@ function Get-DesiredHash {
     )) {
         if (Test-Path $source) {
             $parts.Add("source-input:$source=$(Get-FileSha256 $source)")
+        }
+    }
+    foreach ($recipeRoot in @(
+        Get-ChildItem -LiteralPath $ExternalExtensionRoot -Directory |
+            ForEach-Object { Join-Path $_.FullName "patches/windows-msvc" } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+            Sort-Object
+    )) {
+        foreach ($input in Get-ChildItem -LiteralPath $recipeRoot -Recurse -File | Sort-Object FullName) {
+            $relativeInput = $input.FullName.Substring($RepoRoot.Length + 1).Replace("\", "/")
+            $parts.Add("external-windows-input:$relativeInput=$(Get-FileSha256 $input.FullName)")
         }
     }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes(($parts -join "`n") + "`n")
@@ -2005,211 +2017,383 @@ function Add-UuidOsspMesonProducer {
         @("/I$portableUuidInclude", "/DHAVE_UUID_E2FS=1", "/DHAVE_UUID_UUID_H=1")
 }
 
-function Get-PgTextsearchMakefileList([string]$ExtensionDir, [string]$Variable) {
-    $makefile = Join-Path $ExtensionDir "Makefile"
-    if (-not (Test-Path -LiteralPath $makefile -PathType Leaf)) {
-        Fail "pg_textsearch checkout is missing its authoritative Makefile: $makefile"
+function Get-ExternalWindowsRecipeStringList(
+    [object]$Recipe,
+    [string]$PropertyName,
+    [string]$RecipePath,
+    [switch]$AllowEmpty
+) {
+    $property = $Recipe.PSObject.Properties[$PropertyName]
+    if ($null -eq $property -or -not ($property.Value -is [System.Array])) {
+        Fail "$RecipePath must declare $PropertyName as an array"
     }
-
-    $values = New-Object System.Collections.Generic.List[string]
-    $found = $false
-    $collecting = $false
-    $variablePattern = "^$([regex]::Escape($Variable))\s*=\s*(.*)$"
-    foreach ($line in Get-Content -Path $makefile) {
-        $fragment = $null
-        if (-not $collecting) {
-            if ($line -notmatch $variablePattern) {
-                continue
-            }
-            $found = $true
-            $collecting = $true
-            $fragment = $Matches[1].Trim()
-        } else {
-            $fragment = $line.Trim()
+    $values = @($property.Value)
+    if (-not $AllowEmpty -and $values.Count -eq 0) {
+        Fail "$RecipePath $PropertyName must not be empty"
+    }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($value in $values) {
+        if (-not ($value -is [string]) -or [string]::IsNullOrWhiteSpace($value)) {
+            Fail "$RecipePath $PropertyName must contain only non-empty strings"
         }
-
-        $continues = $fragment.EndsWith("\")
-        if ($continues) {
-            $fragment = $fragment.Substring(0, $fragment.Length - 1).TrimEnd()
-        }
-        if ($fragment) {
-            foreach ($value in ($fragment -split "\s+")) {
-                if ($value) {
-                    $values.Add($value) | Out-Null
-                }
-            }
-        }
-        if (-not $continues) {
-            break
+        if (-not $seen.Add($value)) {
+            Fail "$RecipePath $PropertyName contains duplicate value '$value'"
         }
     }
-
-    if (-not $found) {
-        Fail "pg_textsearch Makefile is missing its $Variable assignment"
-    }
-    @($values)
+    return $values
 }
 
-function Assert-PgTextsearchWindowsPgxsManifest(
+function Assert-ExternalWindowsRecipeProperties(
+    [object]$Value,
+    [string[]]$Allowed,
+    [string[]]$Required,
+    [string]$Label
+) {
+    if ($null -eq $Value -or $null -eq $Value.PSObject) {
+        Fail "$Label must be an object"
+    }
+    $allowedNames = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($name in $Allowed) {
+        [void]$allowedNames.Add($name)
+    }
+    foreach ($property in $Value.PSObject.Properties) {
+        if (-not $allowedNames.Contains($property.Name)) {
+            Fail "$Label contains unsupported property '$($property.Name)'"
+        }
+    }
+    foreach ($name in $Required) {
+        if ($null -eq $Value.PSObject.Properties[$name]) {
+            Fail "$Label is missing required property '$name'"
+        }
+    }
+}
+
+function Convert-ExternalWindowsRecipePositiveInt([object]$Value, [string]$Label) {
+    $integerTypes = @(
+        [byte], [sbyte], [int16], [uint16], [int], [uint32], [long], [ulong]
+    )
+    if ($null -eq $Value -or $integerTypes -notcontains $Value.GetType()) {
+        Fail "$Label must be an integer"
+    }
+    try {
+        $parsed = [System.Convert]::ToInt32($Value, [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        Fail "$Label must fit in a 32-bit integer"
+    }
+    if ($parsed -le 0) {
+        Fail "$Label must be positive"
+    }
+    return $parsed
+}
+
+function Resolve-ExternalWindowsRecipePath(
+    [string]$Root,
+    [string]$RelativePath,
+    [string]$Label,
+    [switch]$RequireLeaf,
+    [switch]$RequireDirectory
+) {
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or
+        [System.IO.Path]::IsPathRooted($RelativePath) -or
+        $RelativePath.Contains("\") -or
+        $RelativePath -notmatch '^[A-Za-z0-9_./-]+$') {
+        Fail "$Label must be a safe forward-slash relative path, got '$RelativePath'"
+    }
+    $segments = @($RelativePath -split "/")
+    if ($segments.Count -eq 0 -or $segments -contains "" -or $segments -contains "." -or $segments -contains "..") {
+        Fail "$Label must not contain empty, current-directory, or parent-directory segments: '$RelativePath'"
+    }
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+    $resolved = [System.IO.Path]::GetFullPath((Join-Path $rootPath $RelativePath))
+    $prefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $resolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "$Label escapes its declared root: '$RelativePath'"
+    }
+
+    $current = $rootPath
+    foreach ($segment in $segments) {
+        $current = Join-Path $current $segment
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -Force -LiteralPath $current
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Fail "$Label traverses a reparse point: '$RelativePath'"
+            }
+        }
+    }
+    if ($RequireLeaf -and -not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        Fail "$Label is missing its declared file: '$RelativePath'"
+    }
+    if ($RequireDirectory -and -not (Test-Path -LiteralPath $resolved -PathType Container)) {
+        Fail "$Label is missing its declared directory: '$RelativePath'"
+    }
+    return $resolved
+}
+
+function Get-ExternalPgxsWindowsRecipe([string]$SqlName, [string]$CheckoutName) {
+    $productRoot = Join-Path $ExternalExtensionRoot $SqlName
+    $recipePath = Join-Path $productRoot "patches/windows-msvc/recipe.json"
+    if (-not (Test-Path -LiteralPath $recipePath -PathType Leaf)) {
+        return $null
+    }
+    try {
+        $recipe = Get-Content -Raw -LiteralPath $recipePath | ConvertFrom-Json
+    } catch {
+        Fail "cannot parse external Windows recipe ${recipePath}: $($_.Exception.Message)"
+    }
+    $recipeProperties = @(
+        "schema",
+        "sql_name",
+        "source_commit",
+        "default_version",
+        "sources",
+        "data_files",
+        "compiler_arguments",
+        "local_include_directories",
+        "force_include_files",
+        "version_defines",
+        "patches",
+        "layout_contracts",
+        "export_contracts"
+    )
+    Assert-ExternalWindowsRecipeProperties $recipe $recipeProperties $recipeProperties $recipePath
+    foreach ($propertyName in @("schema", "sql_name", "source_commit", "default_version")) {
+        $property = $recipe.PSObject.Properties[$propertyName]
+        if ($null -eq $property -or -not ($property.Value -is [string]) -or [string]::IsNullOrWhiteSpace($property.Value)) {
+            Fail "$recipePath must declare non-empty string $propertyName"
+        }
+    }
+    if ($recipe.schema -cne "oliphaunt-external-pgxs-windows-recipe-v1") {
+        Fail "$recipePath has unsupported schema '$($recipe.schema)'"
+    }
+    if ($recipe.sql_name -cne $SqlName) {
+        Fail "$recipePath sql_name '$($recipe.sql_name)' does not match '$SqlName'"
+    }
+    if ($recipe.source_commit -notmatch '^[0-9a-f]{40}$') {
+        Fail "$recipePath source_commit must be a lowercase 40-character Git SHA"
+    }
+    if ($recipe.default_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        Fail "$recipePath default_version '$($recipe.default_version)' is unsupported"
+    }
+
+    $sourceManifest = Join-Path $productRoot "source.toml"
+    if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) {
+        Fail "$recipePath product source manifest is missing: $sourceManifest"
+    }
+    $sourceManifestText = Get-Content -Raw -LiteralPath $sourceManifest
+    $sourceCommitMatches = [regex]::Matches(
+        $sourceManifestText,
+        '(?m)^commit\s*=\s*"([0-9a-f]{40})"\s*$'
+    )
+    if ($sourceCommitMatches.Count -ne 1 -or
+        $sourceCommitMatches[0].Groups[1].Value -cne $recipe.source_commit) {
+        Fail "$recipePath source_commit must exactly match the canonical source.toml"
+    }
+
+    $checkout = External-Checkout $CheckoutName
+    if (-not (Test-Path -LiteralPath $checkout -PathType Container)) {
+        Fail "$recipePath source checkout is missing: $checkout"
+    }
+    $global:LASTEXITCODE = 0
+    $checkoutCommit = (& git -C $checkout rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $checkoutCommit -cne $recipe.source_commit) {
+        Fail "$recipePath requires source commit $($recipe.source_commit), got '$checkoutCommit'"
+    }
+    $global:LASTEXITCODE = 0
+    $checkoutStatus = @(& git -C $checkout status --porcelain=v1 --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or $checkoutStatus.Count -ne 0) {
+        Fail "$recipePath requires a clean exact source checkout before staging"
+    }
+
+    $controlPath = Resolve-ExternalWindowsRecipePath `
+        $checkout "$SqlName.control" "$recipePath control file" -RequireLeaf
+    $controlText = Get-Content -Raw -LiteralPath $controlPath
+    $versionMatches = [regex]::Matches($controlText, "(?m)^\s*default_version\s*=\s*'([^']+)'\s*$")
+    if ($versionMatches.Count -ne 1 -or $versionMatches[0].Groups[1].Value -cne $recipe.default_version) {
+        Fail "$recipePath default_version must exactly match the pinned $SqlName.control"
+    }
+
+    foreach ($relativePath in @(Get-ExternalWindowsRecipeStringList $recipe "sources" $recipePath)) {
+        [void](Resolve-ExternalWindowsRecipePath $checkout $relativePath "$recipePath source" -RequireLeaf)
+    }
+    foreach ($relativePath in @(Get-ExternalWindowsRecipeStringList $recipe "data_files" $recipePath)) {
+        [void](Resolve-ExternalWindowsRecipePath $checkout $relativePath "$recipePath data file" -RequireLeaf)
+    }
+    foreach ($relativePath in @(Get-ExternalWindowsRecipeStringList $recipe "local_include_directories" $recipePath)) {
+        [void](Resolve-ExternalWindowsRecipePath $checkout $relativePath "$recipePath include directory" -RequireDirectory)
+    }
+    [void](Get-ExternalWindowsRecipeStringList $recipe "compiler_arguments" $recipePath -AllowEmpty)
+    [void](Get-ExternalWindowsRecipeStringList $recipe "force_include_files" $recipePath -AllowEmpty)
+    foreach ($define in @(Get-ExternalWindowsRecipeStringList $recipe "version_defines" $recipePath -AllowEmpty)) {
+        if ($define -notmatch '^[A-Z][A-Z0-9_]*$') {
+            Fail "$recipePath version_defines contains invalid C macro '$define'"
+        }
+    }
+
+    if (-not ($recipe.patches -is [System.Array])) {
+        Fail "$recipePath patches must be an array"
+    }
+    $patches = @($recipe.patches)
+    if ($patches.Count -eq 0) {
+        Fail "$recipePath patches must not be empty"
+    }
+    $seenPatches = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($patch in $patches) {
+        Assert-ExternalWindowsRecipeProperties `
+            $patch @("path", "sha256") @("path", "sha256") "$recipePath patch entry"
+        if (-not ($patch.path -is [string]) -or -not ($patch.sha256 -is [string])) {
+            Fail "$recipePath patches must declare string path and sha256 values"
+        }
+        if (-not $seenPatches.Add($patch.path)) {
+            Fail "$recipePath contains duplicate patch '$($patch.path)'"
+        }
+        if ($patch.sha256 -notmatch '^[0-9a-f]{64}$') {
+            Fail "$recipePath patch $($patch.path) has an invalid SHA-256"
+        }
+        $patchPath = Resolve-ExternalWindowsRecipePath `
+            $productRoot $patch.path "$recipePath patch" -RequireLeaf
+        $actualPatchSha = Get-FileSha256 $patchPath
+        if ($actualPatchSha -cne $patch.sha256) {
+            Fail "$recipePath patch $($patch.path) expected SHA-256 $($patch.sha256), got $actualPatchSha"
+        }
+    }
+
+    if (-not ($recipe.layout_contracts -is [System.Array])) {
+        Fail "$recipePath layout_contracts must be an array"
+    }
+    $layouts = @($recipe.layout_contracts)
+    if ($layouts.Count -eq 0) {
+        Fail "$recipePath layout_contracts must not be empty"
+    }
+    $seenLayouts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($layout in $layouts) {
+        Assert-ExternalWindowsRecipeProperties `
+            $layout @("path", "type", "size", "alignment") @("path", "type", "size", "alignment") `
+            "$recipePath layout contract"
+        if (-not ($layout.path -is [string]) -or
+            -not ($layout.type -is [string]) -or $layout.type -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Fail "$recipePath layout_contracts entries must declare a path and C type"
+        }
+        $layout.size = Convert-ExternalWindowsRecipePositiveInt `
+            $layout.size "$recipePath $($layout.type) size"
+        $layout.alignment = Convert-ExternalWindowsRecipePositiveInt `
+            $layout.alignment "$recipePath $($layout.type) alignment"
+        [void](Resolve-ExternalWindowsRecipePath $checkout $layout.path "$recipePath layout source" -RequireLeaf)
+        $layoutKey = "$($layout.path):$($layout.type)"
+        if (-not $seenLayouts.Add($layoutKey)) {
+            Fail "$recipePath contains duplicate layout contract '$layoutKey'"
+        }
+    }
+
+    if (-not ($recipe.export_contracts -is [System.Array])) {
+        Fail "$recipePath export_contracts must be an array"
+    }
+    $seenExportPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($contract in @($recipe.export_contracts)) {
+        Assert-ExternalWindowsRecipeProperties `
+            $contract @("path", "symbols") @("path", "symbols") "$recipePath export contract"
+        if (-not ($contract.path -is [string])) {
+            Fail "$recipePath export_contracts entries must declare path"
+        }
+        [void](Resolve-ExternalWindowsRecipePath $checkout $contract.path "$recipePath export source" -RequireLeaf)
+        if (-not $seenExportPaths.Add($contract.path)) {
+            Fail "$recipePath contains duplicate export contract path '$($contract.path)'"
+        }
+        foreach ($symbol in @(Get-ExternalWindowsRecipeStringList $contract "symbols" "$recipePath export contract $($contract.path)")) {
+            if ($symbol -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                Fail "$recipePath export contract contains invalid C symbol '$symbol'"
+            }
+        }
+    }
+    return $recipe
+}
+
+function Apply-ExternalPgxsWindowsRecipe(
+    [string]$SqlName,
     [string]$ExtensionDir,
-    [string[]]$Sources,
-    [string[]]$DataFiles
+    [object]$Recipe
 ) {
-    $expectedSources = @(
-        Get-PgTextsearchMakefileList $ExtensionDir "OBJS" |
-            ForEach-Object {
-                if (-not $_.EndsWith(".o", [System.StringComparison]::Ordinal)) {
-                    Fail "pg_textsearch Makefile OBJS contains a non-object entry: $_"
-                }
-                $_.Substring(0, $_.Length - 2) + ".c"
+    $productRoot = Join-Path $ExternalExtensionRoot $SqlName
+    $recipePath = Join-Path $productRoot "patches/windows-msvc/recipe.json"
+    $patchCeiling = Split-Path -Parent ([System.IO.Path]::GetFullPath($ExtensionDir))
+    $previousGitCeiling = [Environment]::GetEnvironmentVariable(
+        "GIT_CEILING_DIRECTORIES",
+        [EnvironmentVariableTarget]::Process
+    )
+    try {
+        # The staging tree may live below an enclosing repository (the default work root
+        # is under target). Bound discovery so git apply operates as a patch utility rooted
+        # at ExtensionDir; otherwise Git filters every path against the worktree prefix.
+        [Environment]::SetEnvironmentVariable(
+            "GIT_CEILING_DIRECTORIES",
+            $patchCeiling,
+            [EnvironmentVariableTarget]::Process
+        )
+        foreach ($patch in @($Recipe.patches)) {
+            $patchPath = Resolve-ExternalWindowsRecipePath `
+                $productRoot $patch.path "$recipePath patch" -RequireLeaf
+            $global:LASTEXITCODE = 0
+            & git -C $ExtensionDir apply --check --whitespace=error-all $patchPath
+            if ($LASTEXITCODE -ne 0) {
+                Fail "$recipePath patch $($patch.path) does not apply exactly to source commit $($Recipe.source_commit)"
             }
-    )
-    $expectedDataFiles = @(
-        @(Get-PgTextsearchMakefileList $ExtensionDir "DATA") +
-            @("pg_textsearch.control")
-    )
-    if (($Sources -join "`n") -ne ($expectedSources -join "`n")) {
-        Fail "pg_textsearch Windows sources differ from the pinned upstream Makefile: expected $($expectedSources -join ', '); got $($Sources -join ', ')"
+            $global:LASTEXITCODE = 0
+            & git -C $ExtensionDir apply --whitespace=error-all $patchPath
+            if ($LASTEXITCODE -ne 0) {
+                Fail "$recipePath patch $($patch.path) failed to apply"
+            }
+        }
+    } finally {
+        [Environment]::SetEnvironmentVariable(
+            "GIT_CEILING_DIRECTORIES",
+            $previousGitCeiling,
+            [EnvironmentVariableTarget]::Process
+        )
     }
-    if (($DataFiles -join "`n") -ne ($expectedDataFiles -join "`n")) {
-        Fail "pg_textsearch Windows SQL payload differs from the pinned upstream Makefile: expected $($expectedDataFiles -join ', '); got $($DataFiles -join ', ')"
+
+    foreach ($relativePath in @($Recipe.sources) + @($Recipe.data_files) + @($Recipe.force_include_files)) {
+        [void](Resolve-ExternalWindowsRecipePath $ExtensionDir $relativePath "$recipePath staged input" -RequireLeaf)
     }
-    foreach ($relativePath in @($Sources) + @($DataFiles)) {
-        $path = Join-Path $ExtensionDir $relativePath
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            Fail "pg_textsearch Windows input declared by the pinned Makefile is missing: $relativePath"
+    foreach ($layout in @($Recipe.layout_contracts)) {
+        $layoutPath = Resolve-ExternalWindowsRecipePath `
+            $ExtensionDir $layout.path "$recipePath staged layout" -RequireLeaf
+        $text = Get-Content -Raw -LiteralPath $layoutPath
+        $sizeMarker = "StaticAssertDecl(sizeof($($layout.type)) == $($layout.size),"
+        $alignmentMarker = "StaticAssertDecl(__alignof($($layout.type)) == $($layout.alignment),"
+        if ([regex]::Matches($text, [regex]::Escape($sizeMarker)).Count -ne 1 -or
+            [regex]::Matches($text, [regex]::Escape($alignmentMarker)).Count -ne 1) {
+            Fail "$recipePath staged layout $($layout.type) does not contain its unique size/alignment assertions"
+        }
+    }
+    foreach ($contract in @($Recipe.export_contracts)) {
+        $exportPath = Resolve-ExternalWindowsRecipePath `
+            $ExtensionDir $contract.path "$recipePath staged export" -RequireLeaf
+        $text = Get-Content -Raw -LiteralPath $exportPath
+        foreach ($symbol in @($contract.symbols)) {
+            $marker = "extern PGDLLEXPORT Datum $symbol(PG_FUNCTION_ARGS);"
+            if ([regex]::Matches($text, [regex]::Escape($marker)).Count -ne 1) {
+                Fail "$recipePath staged export $symbol is missing or duplicated in $($contract.path)"
+            }
         }
     }
 }
 
-function Get-PgTextsearchWindowsVersionDefine([string]$ExtensionDir) {
-    $control = Join-Path $ExtensionDir "pg_textsearch.control"
-    if (-not (Test-Path -LiteralPath $control -PathType Leaf)) {
-        Fail "pg_textsearch checkout is missing its control file: $control"
+function Get-ExternalPgxsWindowsRecipeCArgs([string]$ExtensionDir, [object]$Recipe) {
+    $arguments = New-Object System.Collections.Generic.List[string]
+    foreach ($argument in @($Recipe.compiler_arguments)) {
+        $arguments.Add($argument) | Out-Null
     }
-
-    $controlText = Get-Content -Raw -Path $control
-    $versionMatches = [regex]::Matches(
-        $controlText,
-        "(?m)^\s*default_version\s*=\s*'([^']+)'\s*$"
-    )
-    if ($versionMatches.Count -ne 1) {
-        Fail "pg_textsearch control must declare exactly one single-quoted default_version; found $($versionMatches.Count)"
+    foreach ($define in @($Recipe.version_defines)) {
+        $arguments.Add("/D$define=`"$($Recipe.default_version)`"") | Out-Null
     }
-    $version = $versionMatches[0].Groups[1].Value
-    if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-        Fail "pg_textsearch control has unsupported default_version '$version'"
+    foreach ($relativePath in @($Recipe.force_include_files)) {
+        $includePath = Resolve-ExternalWindowsRecipePath `
+            $ExtensionDir $relativePath "external Windows force-include" -RequireLeaf
+        $arguments.Add("/FI$(Meson-Path $includePath)") | Out-Null
     }
-
-    $makefile = Join-Path $ExtensionDir "Makefile"
-    $makefileText = Get-Content -Raw -Path $makefile
-    if (-not $makefileText.Contains('-DPG_TEXTSEARCH_VERSION=\"$(EXTVERSION)\"')) {
-        Fail "pg_textsearch Makefile no longer defines PG_TEXTSEARCH_VERSION from EXTVERSION"
-    }
-
-    # Keep the embedded quotes in one Meson argument. Meson/Ninja preserves
-    # them for cl.exe, so the macro expands to a C string literal.
-    "/DPG_TEXTSEARCH_VERSION=`"$version`""
-}
-
-function Patch-PgTextsearchWindowsTypeLayout(
-    [string]$Text,
-    [string]$TypeName,
-    [string]$Attribute,
-    [int]$Pack,
-    [int]$ExpectedSize,
-    [int]$ExpectedAlignment
-) {
-    $escapedTypeName = [regex]::Escape($TypeName)
-    $escapedAttribute = [regex]::Escape($Attribute)
-    $declarationPattern = "(?m)^typedef struct $escapedTypeName\r?$"
-    $closingPattern = "(?m)^} __attribute__\(\($escapedAttribute\)\) $escapedTypeName;\r?$"
-    $declarationMatches = [regex]::Matches($Text, $declarationPattern)
-    $closingMatches = [regex]::Matches($Text, $closingPattern)
-    if ($declarationMatches.Count -ne 1 -or $closingMatches.Count -ne 1) {
-        Fail "pg_textsearch $TypeName layout changed upstream; expected one declaration and one __attribute__(($Attribute)) closing, found $($declarationMatches.Count) and $($closingMatches.Count)"
-    }
-
-    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $declaration = "#ifdef _MSC_VER${newline}#pragma pack(push, $Pack)${newline}#endif${newline}typedef struct $TypeName"
-    $closing = "} $TypeName;${newline}#ifdef _MSC_VER${newline}#pragma pack(pop)${newline}StaticAssertDecl(sizeof($TypeName) == $ExpectedSize, `"$TypeName must remain $ExpectedSize bytes on Windows`");${newline}StaticAssertDecl(__alignof($TypeName) == $ExpectedAlignment, `"$TypeName must remain $ExpectedAlignment-byte aligned on Windows`");${newline}#endif"
-    $Text = [regex]::Replace($Text, $declarationPattern, $declaration)
-    $Text = [regex]::Replace($Text, $closingPattern, $closing)
-    $Text
-}
-
-function Patch-PgTextsearchWindowsSource([string]$ExtensionDir) {
-    $compat = Join-Path $ExtensionDir "src/oliphaunt_windows_compat.h"
-    Set-Content -Path $compat -Encoding UTF8 -Value @"
-#ifdef _MSC_VER
-#ifndef __attribute__
-#define __attribute__(x)
-#endif
-#endif
-"@
-    Set-Content -Path (Join-Path $ExtensionDir "src/unistd.h") -Encoding UTF8 -Value @"
-#ifndef OLIPHAUNT_PG_TEXTSEARCH_WINDOWS_UNISTD_H
-#define OLIPHAUNT_PG_TEXTSEARCH_WINDOWS_UNISTD_H
-#endif
-"@
-    $segmentHeader = Join-Path $ExtensionDir "src/segment/segment.h"
-    $text = Get-Content -Raw -Path $segmentHeader
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntryV3" "aligned(4)" 4 12 4
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpDictEntry" "aligned(8)" 8 16 8
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSegmentPosting" "packed" 1 14 1
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntryV3" "packed" 1 16 1
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpSkipEntry" "packed" 1 20 1
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpCtidMapEntry" "packed" 1 6 1
-    Set-Content -Path $segmentHeader -Encoding UTF8 -Value $text
-
-    $expullHeader = Join-Path $ExtensionDir "src/memtable/expull.h"
-    $text = Get-Content -Raw -Path $expullHeader
-    $text = Patch-PgTextsearchWindowsTypeLayout $text "TpExpullEntry" "packed" 1 7 1
-    Set-Content -Path $expullHeader -Encoding UTF8 -Value $text
-
-    $amHeader = Join-Path $ExtensionDir "src/am/am.h"
-    $text = Get-Content -Raw -Path $amHeader
-    $original = "Datum tp_handler(PG_FUNCTION_ARGS);"
-    $replacement = "extern PGDLLEXPORT Datum tp_handler(PG_FUNCTION_ARGS);"
-    if (-not $text.Contains($original)) {
-        Fail "pg_textsearch am.h is missing expected tp_handler declaration"
-    }
-    $text = $text.Replace($original, $replacement)
-    Set-Content -Path $amHeader -Encoding UTF8 -Value $text
-
-    $vectorHeader = Join-Path $ExtensionDir "src/types/vector.h"
-    $text = Get-Content -Raw -Path $vectorHeader
-    foreach ($functionName in @("tpvector_in", "tpvector_out", "tpvector_recv", "tpvector_send", "to_tpvector", "tpvector_eq")) {
-        $original = "Datum $($functionName)(PG_FUNCTION_ARGS);"
-        $replacement = "extern PGDLLEXPORT Datum $($functionName)(PG_FUNCTION_ARGS);"
-        if (-not $text.Contains($original)) {
-            Fail "pg_textsearch vector.h is missing expected $functionName declaration"
-        }
-        $text = $text.Replace($original, $replacement)
-    }
-    Set-Content -Path $vectorHeader -Encoding UTF8 -Value $text
-
-    $queryHeader = Join-Path $ExtensionDir "src/types/query.h"
-    $text = Get-Content -Raw -Path $queryHeader
-    foreach ($functionName in @(
-        "tpquery_in",
-        "tpquery_out",
-        "tpquery_recv",
-        "tpquery_send",
-        "to_tpquery_text",
-        "to_tpquery_text_index",
-        "bm25_text_bm25query_score",
-        "bm25_text_text_score",
-        "tpquery_eq"
-    )) {
-        $original = "Datum $($functionName)(PG_FUNCTION_ARGS);"
-        $replacement = "extern PGDLLEXPORT Datum $($functionName)(PG_FUNCTION_ARGS);"
-        if (-not $text.Contains($original)) {
-            Fail "pg_textsearch query.h is missing expected $functionName declaration"
-        }
-        $text = $text.Replace($original, $replacement)
-    }
-    Set-Content -Path $queryHeader -Encoding UTF8 -Value $text
+    return @($arguments)
 }
 
 function Patch-PgUuidv7WindowsSource([string]$ExtensionDir) {
@@ -2254,27 +2438,44 @@ function Add-ExternalPgxsMesonProducer(
     [string[]]$Sources,
     [string[]]$DataFiles,
     [string[]]$CArgs = @(),
-    [string[]]$LocalIncludeDirs = @()
+    [string[]]$LocalIncludeDirs = @(),
+    [object]$WindowsRecipe = $null
 ) {
     if (-not (NativeExtension-Selected $SqlName)) {
         return
     }
     $destination = Join-Path $OliphauntContribDir $Subdir
     Copy-SourceTree (External-Checkout $CheckoutName) $destination
+    if ($null -ne $WindowsRecipe) {
+        Apply-ExternalPgxsWindowsRecipe $SqlName $destination $WindowsRecipe
+        $CArgs = @($CArgs) + @(Get-ExternalPgxsWindowsRecipeCArgs $destination $WindowsRecipe)
+        $LocalIncludeDirs = @($LocalIncludeDirs) + @($WindowsRecipe.local_include_directories)
+    }
     if ($SqlName -eq "pg_uuidv7") {
         Patch-PgUuidv7WindowsSource $destination
-    }
-    if ($SqlName -eq "pg_textsearch") {
-        Assert-PgTextsearchWindowsPgxsManifest $destination $Sources $DataFiles
-        Patch-PgTextsearchWindowsSource $destination
-        $compatHeader = Meson-Path (Join-Path $destination "src/oliphaunt_windows_compat.h")
-        $versionDefine = Get-PgTextsearchWindowsVersionDefine $destination
-        $CArgs = @($CArgs) + @($versionDefine, "/FI$compatHeader")
     }
     if ($SqlName -eq "vector") {
         Copy-Item -Force (Join-Path $destination "sql/vector.sql") (Join-Path $destination "sql/vector--0.8.2.sql")
     }
     Write-OliphauntMesonModule $Subdir $ModuleName $Sources $DataFiles $CArgs @() $LocalIncludeDirs
+}
+
+function Add-ExternalPgxsMesonProducerFromWindowsRecipe(
+    [string]$SqlName,
+    [string]$CheckoutName,
+    [string]$Subdir,
+    [string]$ModuleName
+) {
+    if (-not (NativeExtension-Selected $SqlName)) {
+        return
+    }
+    $recipe = Get-ExternalPgxsWindowsRecipe $SqlName $CheckoutName
+    if ($null -eq $recipe) {
+        Fail "$SqlName must own patches/windows-msvc/recipe.json for its recipe-backed Windows producer"
+    }
+    Add-ExternalPgxsMesonProducer `
+        $SqlName $CheckoutName $Subdir $ModuleName `
+        @($recipe.sources) @($recipe.data_files) @() @() $recipe
 }
 
 function Add-ExternalPgxsMesonProducers {
@@ -2317,62 +2518,8 @@ function Add-ExternalPgxsMesonProducers {
             "sql/pg_uuidv7--1.7.sql",
             "pg_uuidv7.control"
         )
-    Add-ExternalPgxsMesonProducer `
-        "pg_textsearch" "pg_textsearch" "pg_textsearch" "pg_textsearch" `
-        @(
-            "src/mod.c",
-            "src/source.c",
-            "src/am/handler.c",
-            "src/am/build.c",
-            "src/am/build_context.c",
-            "src/am/build_parallel.c",
-            "src/am/scan.c",
-            "src/am/vacuum.c",
-            "src/memtable/arena.c",
-            "src/memtable/expull.c",
-            "src/memtable/memtable.c",
-            "src/memtable/posting.c",
-            "src/memtable/stringtable.c",
-            "src/memtable/scan.c",
-            "src/memtable/source.c",
-            "src/segment/segment.c",
-            "src/segment/dictionary.c",
-            "src/segment/scan.c",
-            "src/segment/merge.c",
-            "src/segment/docmap.c",
-            "src/segment/compression.c",
-            "src/query/bmw.c",
-            "src/query/score.c",
-            "src/types/vector.c",
-            "src/types/query.c",
-            "src/state/state.c",
-            "src/state/registry.c",
-            "src/state/metapage.c",
-            "src/state/limit.c",
-            "src/planner/hooks.c",
-            "src/planner/cost.c",
-            "src/debug/dump.c"
-        ) `
-        @(
-            "sql/pg_textsearch--0.6.1.sql",
-            "sql/pg_textsearch--0.0.1--0.0.2.sql",
-            "sql/pg_textsearch--0.0.2--0.0.3.sql",
-            "sql/pg_textsearch--0.0.3--0.0.4.sql",
-            "sql/pg_textsearch--0.0.4--0.0.5.sql",
-            "sql/pg_textsearch--0.0.5--0.1.0.sql",
-            "sql/pg_textsearch--0.1.0--0.2.0.sql",
-            "sql/pg_textsearch--0.2.0--0.3.0.sql",
-            "sql/pg_textsearch--0.3.0--0.4.0.sql",
-            "sql/pg_textsearch--0.4.0--0.4.1.sql",
-            "sql/pg_textsearch--0.4.1--0.4.2.sql",
-            "sql/pg_textsearch--0.4.2--0.5.0.sql",
-            "sql/pg_textsearch--0.5.0--0.6.1.sql",
-            "sql/pg_textsearch--0.5.1--0.6.1.sql",
-            "sql/pg_textsearch--0.6.0--0.6.1.sql",
-            "pg_textsearch.control"
-        ) `
-        @("/D_CRT_SECURE_NO_WARNINGS") `
-        @("src")
+    Add-ExternalPgxsMesonProducerFromWindowsRecipe `
+        "pg_textsearch" "pg_textsearch" "pg_textsearch" "pg_textsearch"
     Add-ExternalPgxsMesonProducer `
         "vector" "pgvector" "vector" "vector" `
         @(

@@ -108,7 +108,7 @@ paths = [
 products = ["liboliphaunt-native", "liboliphaunt-wasix"]
 
 [[rules]]
-id = "native-postgis-carrier-producers"
+id = "native-extension-carrier-producers"
 paths = [
   "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
@@ -117,8 +117,12 @@ paths = [
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
   "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-  "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
 ]
+product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
+
+[[rules]]
+id = "native-postgis-carrier-producer"
+paths = ["src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"]
 products = ["oliphaunt-extension-postgis"]
 
 [[rules]]
@@ -219,7 +223,6 @@ products = ["liboliphaunt-wasix"]
 id = "extension-kotlin-runtime-catalog"
 paths = ["src/extensions/generated/sdk/kotlin.json"]
 products = ["liboliphaunt-wasix"]
-product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 
 [[rules]]
 id = "swift-extension-owner-catalog"

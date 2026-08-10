@@ -1,0 +1,105 @@
+{
+  "consumer": "release-product",
+  "extensions": [
+    {
+      "archive": "extensions/postgis.tar.zst",
+      "cargo-package": "oliphaunt-extension-postgis",
+      "creates-extension": true,
+      "data-files": [
+        "share/postgresql/contrib/postgis-3.6/legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+        "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+        "share/postgresql/proj/proj.db"
+      ],
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "PostGIS",
+      "extension-sql-file-names": [
+        "uninstall_postgis.sql"
+      ],
+      "extension-sql-file-prefixes": [
+        "postgis_comments",
+        "postgis_proc_set_search_path",
+        "rtpostgis"
+      ],
+      "id": "postgis",
+      "maven-artifact": "oliphaunt-extension-postgis",
+      "maven-group": "dev.oliphaunt.extensions",
+      "mobile-release-ready": true,
+      "native-dependencies": [
+        "geos:3.14.1-static",
+        "proj:9.8.1-static",
+        "sqlite:3.53.1-static",
+        "libxml2:2.14.6-static",
+        "json-c:0.18-static",
+        "libiconv:1.19-static"
+      ],
+      "native-module-stem": "postgis-3",
+      "npm-package": "@oliphaunt/extension-postgis",
+      "postgres-major": 18,
+      "public": true,
+      "release-product": "oliphaunt-extension-postgis",
+      "runtime-bound": false,
+      "runtime-environment": [
+        {
+          "name": "PROJ_DATA",
+          "path": "share/postgresql/proj",
+          "required_file": "proj.db"
+        }
+      ],
+      "runtime-share-data-files": [
+        "contrib/postgis-3.6/legacy.sql",
+        "contrib/postgis-3.6/legacy_gist.sql",
+        "contrib/postgis-3.6/legacy_minimal.sql",
+        "contrib/postgis-3.6/postgis.sql",
+        "contrib/postgis-3.6/postgis_upgrade.sql",
+        "contrib/postgis-3.6/spatial_ref_sys.sql",
+        "contrib/postgis-3.6/uninstall_legacy.sql",
+        "contrib/postgis-3.6/uninstall_postgis.sql",
+        "proj/proj.db"
+      ],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgis",
+      "sql-name": "postgis",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": "supported",
+        "wasix": "supported"
+      }
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-evidence",
+      "path": "src/extensions/generated/docs/extension-evidence.json"
+    }
+  ],
+  "release-product": "oliphaunt-extension-postgis"
+}

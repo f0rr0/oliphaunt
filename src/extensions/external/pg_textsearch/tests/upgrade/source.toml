@@ -1,0 +1,14 @@
+name = "pg_textsearch_upgrade_from"
+url = "https://github.com/timescale/pg_textsearch.git"
+branch = "pinned"
+commit = "07936f7cd67f7a183659d3acd459c0a5efc93756"
+
+[extension-control]
+sql-name = "pg_textsearch"
+source-path = "pg_textsearch.control"
+default-version = "0.6.1"
+
+[qualification]
+schema = "oliphaunt-extension-upgrade-qualification-v1"
+targets = ["linux-x64-gnu"]
+runner = "tests/upgrade.sh"

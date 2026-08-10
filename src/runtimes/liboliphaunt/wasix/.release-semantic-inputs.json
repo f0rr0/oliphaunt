@@ -154,7 +154,7 @@
         },
         {
           "path": "tools/xtask/src/asset_fingerprint.rs",
-          "sha256": "e7eb15342326c2480fdf991b2de271114ac2d336aff7ac81291c9fe4aa15dad6"
+          "sha256": "c7ddffef00f3d31e39952d943880895aa14ec4d76bfb352020abe717675cbcb4"
         },
         {
           "path": "tools/xtask/src/asset_manifest.rs",
@@ -212,11 +212,11 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "1b9ae33dc2ca239985c4cd5c1571e2669f2ea905acf45b6d81e4e31261e7f7bb"
+          "sha256": "14cbf48d651ccdc86f489abdd93176a49344abb924ccb55346494fef29d0d99f"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "e0741112aeb1d1a187ba3fda06a06302026048eceef08b389f2e55a94343cd69"
+          "sha256": "ab083ce76e08fea7a631d672783f888bc305a839f300a023c7a5c48b3402e7c3"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
@@ -224,11 +224,11 @@
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "79ba39ba702d247fd975089cc812fbb4c3624ebd325f0fe1f6255dd575efddb7"
+          "sha256": "36171c63bfb7f346c220c6a8da8cf162628c2de59b8b9134b1d3821feb05d21c"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
-          "sha256": "4bff991f8fce3c66f1da9428fd84861c4700a0e7c744cce51c1c5837f0cafd5d"
+          "sha256": "62af4ffadb40d76168614093cb961613678c87eb9ce88268845364862e05043c"
         },
         {
           "path": "src/extensions/generated/mobile/static-registry.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "763a5c1635efc9c5275c839eb4870379d19077cb6426f89cc690e9ae1890bbad"
+  "sha256": "57025f4fbeb23412b831c21f92414332fd8028faa5f58936b03edf77517277e8"
 }

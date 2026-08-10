@@ -61,7 +61,7 @@
       ]
     },
     {
-      "id": "native-postgis-carrier-producers",
+      "id": "native-extension-carrier-producers",
       "paths": [
         "src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh",
         "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
@@ -69,8 +69,7 @@
         "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
         "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
         "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-        "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-        "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
+        "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1"
       ],
       "inputs": [
         {
@@ -99,8 +98,16 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "3ecdda83cf6ed8df45852ead088dc5baa415b07e302824b0531a4ff839cbb8c6"
-        },
+          "sha256": "821b468642d48a23e85d4617c8e134d9d1061c3008bcaa0f45d97f90bd59bd33"
+        }
+      ]
+    },
+    {
+      "id": "native-postgis-carrier-producer",
+      "paths": [
+        "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
+      ],
+      "inputs": [
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
           "sha256": "3542a4b4c4efe80fe664eb8f2421b992675f88e01e2f19a30856ff98cb711fb1"
@@ -147,7 +154,7 @@
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "3bba3ae4486549321911a68c2e6e6ecd2d1c22640edc8253ec5079aaeb3fe657"
+          "sha256": "0db0679fb0a746df979bdf493c5e9a60af36d8b0982654a3a9190da04fa23e8e"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -179,7 +186,7 @@
         },
         {
           "path": "tools/release/build-extension-ci-artifacts.mjs",
-          "sha256": "4aa4332d70814a0fdada16207df7ade2a18405da0bde92a364307dc76ab241e5"
+          "sha256": "e9b7d7594de6c66c2bf46ca0438a183de0110067d5d1b9ed6d0a2b1428ac7bcd"
         },
         {
           "path": "tools/release/extension-artifact-archive-policy.mjs",
@@ -220,18 +227,6 @@
         {
           "path": "tools/release/ios-carrier-manifest.mjs",
           "sha256": "880e4394073f414cfcc911ea903d0e255325de473f40ccf1273093ca976ed150"
-        }
-      ]
-    },
-    {
-      "id": "extension-kotlin-runtime-catalog",
-      "paths": [
-        "src/extensions/generated/sdk/kotlin.json"
-      ],
-      "inputs": [
-        {
-          "path": "src/extensions/generated/sdk/kotlin.json",
-          "sha256": "e6a713ed46ca57edfc92855317865114a54c8b415736759668294cc9c592713b"
         }
       ]
     },
@@ -390,5 +385,5 @@
       ]
     }
   ],
-  "sha256": "a8d8102915899d7308025b7c9fd5401f64e18c347d2d53aed9c083c7b001c2a4"
+  "sha256": "0c134a10edb9294fb93f34c9ea6102d8482ef0ad9b3e749cef11a2d4b723e92f"
 }

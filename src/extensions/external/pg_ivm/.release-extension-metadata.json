@@ -1,0 +1,52 @@
+{
+  "consumer": "release-product",
+  "extensions": [
+    {
+      "archive": "extensions/pg_ivm.tar.zst",
+      "cargo-package": "oliphaunt-extension-pg-ivm",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_ivm",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_ivm",
+      "maven-artifact": "oliphaunt-extension-pg-ivm",
+      "maven-group": "dev.oliphaunt.extensions",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "native-module-stem": "pg_ivm",
+      "npm-package": "@oliphaunt/extension-pg-ivm",
+      "postgres-major": 18,
+      "public": true,
+      "release-product": "oliphaunt-extension-pg-ivm",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_ivm",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      }
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-evidence",
+      "path": "src/extensions/generated/docs/extension-evidence.json"
+    }
+  ],
+  "release-product": "oliphaunt-extension-pg-ivm"
+}

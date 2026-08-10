@@ -814,7 +814,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "0.6.1"
+      "version": "1.3.1"
     },
     {
       "activation": "CREATE EXTENSION",

@@ -1,0 +1,169 @@
+{
+  "schema": "oliphaunt-external-pgxs-windows-recipe-v1",
+  "sql_name": "pg_textsearch",
+  "source_commit": "578ff529894992fb9e67cae4c69424e65c84868e",
+  "default_version": "1.3.1",
+  "sources": [
+    "src/mod.c",
+    "src/access/handler.c",
+    "src/access/build.c",
+    "src/access/build_context.c",
+    "src/access/build_parallel.c",
+    "src/access/scan.c",
+    "src/access/vacuum.c",
+    "src/memtable/arena.c",
+    "src/memtable/cache.c",
+    "src/memtable/cache_source.c",
+    "src/memtable/chain_source.c",
+    "src/memtable/chain_walker.c",
+    "src/memtable/expull.c",
+    "src/memtable/log.c",
+    "src/memtable/page.c",
+    "src/memtable/posting.c",
+    "src/memtable/scan.c",
+    "src/memtable/stringtable.c",
+    "src/segment/segment.c",
+    "src/segment/dictionary.c",
+    "src/segment/scan.c",
+    "src/segment/merge.c",
+    "src/segment/tombstone.c",
+    "src/segment/docmap.c",
+    "src/segment/alive_bitset.c",
+    "src/segment/compression.c",
+    "src/segment/fieldnorm.c",
+    "src/scoring/bmw.c",
+    "src/scoring/bm25.c",
+    "src/types/array.c",
+    "src/types/vector.c",
+    "src/types/query.c",
+    "src/index/state.c",
+    "src/index/registry.c",
+    "src/index/metapage.c",
+    "src/index/limit.c",
+    "src/index/resolve.c",
+    "src/index/source.c",
+    "src/planner/hooks.c",
+    "src/planner/cost.c",
+    "src/debug/dump.c"
+  ],
+  "data_files": [
+    "sql/pg_textsearch--1.3.1.sql",
+    "sql/pg_textsearch--0.0.1--0.0.2.sql",
+    "sql/pg_textsearch--0.0.2--0.0.3.sql",
+    "sql/pg_textsearch--0.0.3--0.0.4.sql",
+    "sql/pg_textsearch--0.0.4--0.0.5.sql",
+    "sql/pg_textsearch--0.0.5--0.1.0.sql",
+    "sql/pg_textsearch--0.1.0--0.2.0.sql",
+    "sql/pg_textsearch--0.2.0--0.3.0.sql",
+    "sql/pg_textsearch--0.3.0--0.4.0.sql",
+    "sql/pg_textsearch--0.4.0--0.4.1.sql",
+    "sql/pg_textsearch--0.4.1--0.4.2.sql",
+    "sql/pg_textsearch--0.4.2--0.5.0.sql",
+    "sql/pg_textsearch--0.5.0--0.5.1.sql",
+    "sql/pg_textsearch--0.5.1--0.6.0.sql",
+    "sql/pg_textsearch--0.6.0--0.6.1.sql",
+    "sql/pg_textsearch--0.6.1--1.0.0.sql",
+    "sql/pg_textsearch--1.0.0--1.1.0.sql",
+    "sql/pg_textsearch--1.1.0--1.2.0.sql",
+    "sql/pg_textsearch--1.2.0--1.3.0.sql",
+    "sql/pg_textsearch--1.3.0--1.3.1.sql",
+    "pg_textsearch.control"
+  ],
+  "compiler_arguments": [
+    "/D_CRT_SECURE_NO_WARNINGS"
+  ],
+  "local_include_directories": [
+    "src"
+  ],
+  "force_include_files": [
+    "src/oliphaunt_windows_compat.h"
+  ],
+  "version_defines": [
+    "PG_TEXTSEARCH_VERSION"
+  ],
+  "patches": [
+    {
+      "path": "patches/windows-msvc/pg_textsearch-1.3.1.patch",
+      "sha256": "61f478bde24e4afc3f911abe5e044c7088f41c2abb1646ec79c44a4cbe00252e"
+    }
+  ],
+  "layout_contracts": [
+    {
+      "path": "src/segment/format.h",
+      "type": "TpDictEntryV3",
+      "size": 12,
+      "alignment": 4
+    },
+    {
+      "path": "src/segment/format.h",
+      "type": "TpDictEntry",
+      "size": 16,
+      "alignment": 8
+    },
+    {
+      "path": "src/segment/format.h",
+      "type": "TpSkipEntryV3",
+      "size": 16,
+      "alignment": 1
+    },
+    {
+      "path": "src/segment/format.h",
+      "type": "TpSkipEntry",
+      "size": 20,
+      "alignment": 1
+    },
+    {
+      "path": "src/segment/format.h",
+      "type": "TpCtidMapEntry",
+      "size": 6,
+      "alignment": 1
+    },
+    {
+      "path": "src/segment/segment.h",
+      "type": "TpSegmentPosting",
+      "size": 14,
+      "alignment": 1
+    },
+    {
+      "path": "src/memtable/expull.h",
+      "type": "TpExpullEntry",
+      "size": 7,
+      "alignment": 1
+    }
+  ],
+  "export_contracts": [
+    {
+      "path": "src/access/am.h",
+      "symbols": [
+        "tp_handler"
+      ]
+    },
+    {
+      "path": "src/types/vector.h",
+      "symbols": [
+        "tpvector_in",
+        "tpvector_out",
+        "tpvector_recv",
+        "tpvector_send",
+        "to_tpvector",
+        "tpvector_eq"
+      ]
+    },
+    {
+      "path": "src/types/query.h",
+      "symbols": [
+        "tpquery_in",
+        "tpquery_out",
+        "tpquery_recv",
+        "tpquery_send",
+        "to_tpquery_text",
+        "to_tpquery_text_index",
+        "bm25_text_bm25query_score",
+        "bm25_text_text_score",
+        "bm25_textarray_bm25query_score",
+        "bm25_textarray_text_score",
+        "tpquery_eq"
+      ]
+    }
+  ]
+}

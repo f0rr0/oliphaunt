@@ -1,0 +1,68 @@
+{
+  "consumer": "release-product",
+  "extensions": [
+    {
+      "archive": "extensions/pg_textsearch.tar.zst",
+      "cargo-package": "oliphaunt-extension-pg-textsearch",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_textsearch",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_textsearch",
+      "maven-artifact": "oliphaunt-extension-pg-textsearch",
+      "maven-group": "dev.oliphaunt.extensions",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "native-module-stem": "pg_textsearch",
+      "npm-package": "@oliphaunt/extension-pg-textsearch",
+      "postgres-major": 18,
+      "public": true,
+      "release-product": "oliphaunt-extension-pg-textsearch",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [
+        "pg_textsearch"
+      ],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_textsearch",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      }
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-evidence",
+      "path": "src/extensions/generated/docs/extension-evidence.json"
+    }
+  ],
+  "release-product": "oliphaunt-extension-pg-textsearch"
+}

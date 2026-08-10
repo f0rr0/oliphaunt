@@ -37,6 +37,7 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   extensionSqlNames,
+  releaseMetadata,
 } from "./release-artifact-targets.mjs";
 import {
   swiftExtensionCarrierAssetName,
@@ -46,6 +47,11 @@ import { AOT_TARGET_TRIPLES } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
 
 const PREFIX = "build-extension-ci-artifacts.mjs";
+const RELEASE_EXTENSION_METADATA_BASENAME = ".release-extension-metadata.json";
+const RELEASE_EXTENSION_METADATA_SOURCES = [
+  { name: "extension-catalog", path: "src/extensions/generated/extensions.catalog.json" },
+  { name: "extension-evidence", path: "src/extensions/generated/docs/extension-evidence.json" },
+];
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -64,14 +70,60 @@ function extensionProducts() {
   return exactExtensionProducts(PREFIX);
 }
 
-function generatedExtensionRow(sqlName) {
-  const metadata = path.join(ROOT, "src/extensions/generated/sdk/kotlin.json");
-  const data = JSON.parse(readFileSync(metadata, "utf8"));
-  const row = (data.extensions ?? []).find((item) => item && item["sql-name"] === sqlName);
-  if (!row) {
-    fail(`generated extension metadata has no row for ${sqlName}`);
+export function readProductReleaseExtensionMetadata(file, { product, sqlNames }) {
+  const context = rel(file);
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`${context} is not readable JSON: ${error.message}`);
   }
-  return row;
+  if (
+    data?.["format-version"] !== 1
+    || data.consumer !== "release-product"
+    || data["release-product"] !== product
+    || !Array.isArray(data.extensions)
+  ) {
+    throw new Error(`${context} must be the format-version 1 release-product contract for ${product}`);
+  }
+  if (JSON.stringify(data["generated-from"]) !== JSON.stringify(RELEASE_EXTENSION_METADATA_SOURCES)) {
+    throw new Error(`${context} must be generated directly from the canonical extension catalog and evidence`);
+  }
+
+  const rows = new Map();
+  for (const [index, row] of data.extensions.entries()) {
+    const sqlName = row?.["sql-name"];
+    if (typeof sqlName !== "string" || sqlName.length === 0) {
+      throw new Error(`${context} extension row ${index} must define a SQL name`);
+    }
+    if (row["release-product"] !== product) {
+      throw new Error(`${context} ${sqlName}.release-product must be ${product}`);
+    }
+    if (rows.has(sqlName)) {
+      throw new Error(`${context} repeats SQL extension ${sqlName}`);
+    }
+    rows.set(sqlName, row);
+  }
+
+  const actualSqlNames = [...rows.keys()];
+  if (JSON.stringify(actualSqlNames) !== JSON.stringify(sqlNames)) {
+    throw new Error(
+      `${context} must contain exactly the ordered release members for ${product}: expected ${sqlNames.join(", ")}, got ${actualSqlNames.join(", ")}`,
+    );
+  }
+  return rows;
+}
+
+export function productReleaseExtensionMetadata(product, sqlNames = extensionSqlNames(product, PREFIX)) {
+  const packageRoot = resolveRepoPath(releaseMetadata(product, PREFIX).packagePath, {
+    label: `${product} package path`,
+  });
+  const metadata = path.join(packageRoot, RELEASE_EXTENSION_METADATA_BASENAME);
+  try {
+    return readProductReleaseExtensionMetadata(metadata, { product, sqlNames });
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 function stringList(value, label) {
@@ -472,11 +524,11 @@ function publicMemberAsset(asset) {
 function stageMember(product, sqlName, version, productRoot, {
   destinationDir,
   bundle,
+  extensionRow,
   requireNative,
   requireWasix,
   requireNativeTargets,
 }) {
-  const extensionRow = generatedExtensionRow(sqlName);
   const assets = [];
   let iosRegistration = null;
   for (const row of nativeAssetsFor(sqlName, { product, required: requireNative })) {
@@ -779,6 +831,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     fail(`unknown exact-extension product ${product}; expected one of: ${[...known].sort(compareText).join(", ")}`);
   }
   const sqlNames = extensionSqlNames(product, PREFIX);
+  const releaseExtensionMetadata = productReleaseExtensionMetadata(product, sqlNames);
   const version = await currentProductVersion(product, PREFIX);
   const productRoot = path.join(outputRoot, product);
   const assetDir = path.join(productRoot, "release-assets");
@@ -788,6 +841,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
   const members = sqlNames.map((sqlName) => stageMember(product, sqlName, version, productRoot, {
     destinationDir: bundle ? path.join(productRoot, "member-assets", sqlName) : assetDir,
     bundle,
+    extensionRow: releaseExtensionMetadata.get(sqlName),
     requireNative,
     requireWasix,
     requireNativeTargets,

@@ -1,0 +1,73 @@
+{
+  "consumer": "release-product",
+  "extensions": [
+    {
+      "archive": "extensions/pgtap.tar.zst",
+      "cargo-package": "oliphaunt-extension-pgtap",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [
+        "plpgsql"
+      ],
+      "desktop-release-ready": true,
+      "display-name": "pgtap",
+      "extension-sql-file-names": [
+        "uninstall_pgtap.sql"
+      ],
+      "extension-sql-file-prefixes": [
+        "pgtap-core",
+        "pgtap-schema"
+      ],
+      "id": "pgtap",
+      "maven-artifact": "oliphaunt-extension-pgtap",
+      "maven-group": "dev.oliphaunt.extensions",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "native-module-stem": null,
+      "npm-package": "@oliphaunt/extension-pgtap",
+      "postgres-major": 18,
+      "public": true,
+      "release-product": "oliphaunt-extension-pgtap",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pgtap",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": "supported",
+        "wasix": "supported"
+      }
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-evidence",
+      "path": "src/extensions/generated/docs/extension-evidence.json"
+    }
+  ],
+  "release-product": "oliphaunt-extension-pgtap"
+}

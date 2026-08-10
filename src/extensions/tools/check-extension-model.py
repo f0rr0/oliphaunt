@@ -32,6 +32,7 @@ EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
 EXTERNAL_ROOT = ROOT / "src/extensions/external"
 EXTENSION_ENVELOPE_FILENAMES = {
+    ".release-extension-metadata.json",
     ".release-semantic-inputs.json",
     "CHANGELOG.md",
     "VERSION",
@@ -39,6 +40,7 @@ EXTENSION_ENVELOPE_FILENAMES = {
     "publication-blocker.toml",
     "release.toml",
 }
+RELEASE_EXTENSION_METADATA_BASENAME = ".release-extension-metadata.json"
 GENERATED_SDKS = {
     "rust": ROOT / "src/extensions/generated/sdk/rust.json",
     "swift": ROOT / "src/extensions/generated/sdk/swift.json",
@@ -125,7 +127,10 @@ BASE_SOURCE_DIGEST_INPUTS = [
     "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
+    "src/extensions/artifacts/native/tools/package-release-assets.sh",
+    "src/extensions/artifacts/native/tools/run-pgxs-installcheck.sh",
     "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
+    "tools/release/native-extension-qualification.mjs",
 ]
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -322,6 +327,30 @@ def extension_metadata_rows() -> tuple[dict, ...]:
 @lru_cache(maxsize=1)
 def extension_metadata_by_sql_name() -> dict[str, dict]:
     return {str(row["sqlName"]): row for row in extension_metadata_rows()}
+
+
+@lru_cache(maxsize=1)
+def exact_extension_product_paths() -> dict[str, Path]:
+    products: dict[str, Path] = {}
+    for row in release_graph_rows("product-configs"):
+        kind = row.get("kind")
+        if kind not in {"exact-extension-artifact", "exact-extension-bundle"}:
+            continue
+        product = row.get("id")
+        product_path = row.get("path")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-configs exact extension row must define id")
+        if not isinstance(product_path, str) or not product_path:
+            fail(f"release graph product-configs {product} must define path")
+        path = ROOT / product_path
+        if not path.is_dir():
+            fail(f"release graph product-configs {product} path is not a directory: {product_path}")
+        if product in products:
+            fail(f"release graph product-configs returned duplicate product {product}")
+        products[product] = path
+    if not products:
+        fail("release graph product-configs returned no exact extension products")
+    return products
 
 
 def rel(path: Path) -> str:
@@ -1166,7 +1195,7 @@ def target_native_support_modules(sql_name: str, target: str) -> list[dict]:
     return modules
 
 
-def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
+def generated_extension_metadata(catalog: dict, consumer: str) -> dict:
     rows = []
     release_metadata = extension_metadata_by_sql_name()
     public_sql_names = {
@@ -1221,7 +1250,7 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
             "source-kind": extension.get("source-kind"),
             "archive": promotion.get("archive") or "",
         }
-        if sdk == "react-native":
+        if consumer == "react-native":
             row["ios-static-dependencies"] = mobile_static_dependencies(
                 sql_name, "ios_dependencies"
             )
@@ -1232,7 +1261,7 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
     ).hexdigest()
     return {
         "format-version": 1,
-        "consumer": sdk,
+        "consumer": consumer,
         "extension-catalog-sha256": catalog_sha256,
         "generated-from": [
             {"name": "extension-catalog", "path": rel(CATALOG)},
@@ -1240,6 +1269,36 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
         ],
         "extensions": rows,
     }
+
+
+def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
+    return generated_extension_metadata(catalog, sdk)
+
+
+def generated_release_extension_metadata(catalog: dict) -> dict[Path, dict]:
+    product_paths = exact_extension_product_paths()
+    rows_by_product: dict[str, list[dict]] = {product: [] for product in product_paths}
+    release_metadata = generated_extension_metadata(catalog, "release-product")
+    for row in release_metadata.get("extensions", []):
+        product = row.get("release-product")
+        if product not in rows_by_product:
+            fail(f"release extension metadata row has unknown release product {product}")
+        rows_by_product[str(product)].append(row)
+
+    generated: dict[Path, dict] = {}
+    for product, product_path in sorted(product_paths.items()):
+        rows = rows_by_product[product]
+        if not rows:
+            fail(f"exact extension release product {product} has no public extension metadata rows")
+        rows.sort(key=lambda row: (str(row["sql-name"]), str(row["id"])))
+        generated[product_path / RELEASE_EXTENSION_METADATA_BASENAME] = {
+            "format-version": 1,
+            "consumer": "release-product",
+            "release-product": product,
+            "generated-from": release_metadata["generated-from"],
+            "extensions": rows,
+        }
+    return generated
 
 
 def generated_typescript_extension_module(metadata: dict) -> str:
@@ -2055,6 +2114,18 @@ def validate_generated_sdk_metadata(catalog: dict, build_plan: dict, write: bool
         write,
     )
     validate_generated_file(GENERATED_KOTLIN_SDK_METADATA, kotlin_metadata, write)
+    expected_release_metadata = generated_release_extension_metadata(catalog)
+    existing_release_metadata = set(ROOT.glob(f"src/extensions/**/{RELEASE_EXTENSION_METADATA_BASENAME}"))
+    unexpected_release_metadata = existing_release_metadata - set(expected_release_metadata)
+    if unexpected_release_metadata:
+        if write:
+            for path in sorted(unexpected_release_metadata, key=rel):
+                path.unlink()
+        else:
+            paths = ", ".join(rel(path) for path in sorted(unexpected_release_metadata, key=rel))
+            fail(f"unexpected generated release extension metadata: {paths}; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
+    for path, metadata in expected_release_metadata.items():
+        validate_generated_file(path, metadata, write)
     validate_generated_text_file(
         GENERATED_KOTLIN_GRADLE_PLUGIN_CATALOG,
         generated_kotlin_gradle_plugin_catalog(kotlin_metadata),
@@ -2557,6 +2628,7 @@ def run_xtask_check() -> None:
 def self_test() -> None:
     digest_inputs = set(source_digest_inputs())
     for path in [
+        "src/extensions/external/vector/.release-extension-metadata.json",
         "src/extensions/external/vector/.release-semantic-inputs.json",
         "src/extensions/external/vector/VERSION",
         "src/extensions/external/vector/CHANGELOG.md",

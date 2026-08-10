@@ -83,6 +83,12 @@ pub(crate) fn is_asset_binary_semantic_input(file: &str) -> bool {
     if file.starts_with("src/sources/toolchains/") && file != "src/sources/toolchains/wasix.toml" {
         return false;
     }
+    if file.starts_with("src/extensions/") && file.split('/').any(|segment| segment == "tests") {
+        return false;
+    }
+    if file.starts_with("src/extensions/") && file.contains("/patches/windows-msvc/") {
+        return false;
+    }
     if file.contains("/testdata/") || file.ends_with(".test.sh") || file.ends_with(".test.mjs") {
         return false;
     }
@@ -94,7 +100,8 @@ pub(crate) fn is_asset_binary_semantic_input(file: &str) -> bool {
 
     !matches!(
         name,
-        ".release-semantic-inputs.json"
+        ".release-extension-metadata.json"
+            | ".release-semantic-inputs.json"
             | "CHANGELOG.md"
             | "VERSION"
             | "artifacts.toml"
