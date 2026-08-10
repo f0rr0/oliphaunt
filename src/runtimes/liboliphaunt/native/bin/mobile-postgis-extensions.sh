@@ -322,6 +322,7 @@ build_postgis_gdal_dependency() {
     -DBUILD_CSHARP_BINDINGS=OFF
     -DBUILD_JAVA_BINDINGS=OFF
     -DBUILD_PYTHON_BINDINGS=OFF
+    -DBUILD_PYTHON_BINDINGS_OLD_VAL=OFF
     -DBUILD_TESTING=OFF
     -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF
     -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON
@@ -684,7 +685,8 @@ oliphaunt_postgis_patch_raster_makefile() {
         " -DPg_magic_func=$ENV{OLIPHAUNT_POSTGIS_RASTER_MAGIC_SYMBOL}" .
         " -D_PG_init=$ENV{OLIPHAUNT_POSTGIS_RASTER_INIT_SYMBOL}" .
         " -D_PG_fini=$ENV{OLIPHAUNT_POSTGIS_RASTER_FINI_SYMBOL}";
-      my $updated = s|^(PG_CPPFLAGS \+= .*)$|$1$defs|m;
+      die "PostGIS raster PG_CPPFLAGS is missing\n" unless /^PG_CPPFLAGS \+=/m;
+      my $updated = s|^(SHLIB_LINK_F =)|PG_CPPFLAGS +=$defs\n$1|m;
       die "could not patch PostGIS raster PG_CPPFLAGS\n" unless $updated;
     ' "$makefile"
 }

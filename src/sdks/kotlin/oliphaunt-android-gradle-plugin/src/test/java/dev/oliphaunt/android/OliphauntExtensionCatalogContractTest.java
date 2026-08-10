@@ -799,7 +799,7 @@ public final class OliphauntExtensionCatalogContractTest {
       try (var files = Files.walk(postgisRoot.resolve("files/share/licenses"))) {
         upstreamFiles = files.filter(Files::isRegularFile).count();
       }
-      equal(16L, upstreamFiles, "PostGIS exact upstream legal file count");
+      equal(17L, upstreamFiles, "PostGIS exact upstream legal file count");
     } finally {
       deleteRecursively(root);
     }

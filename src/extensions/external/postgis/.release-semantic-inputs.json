@@ -99,11 +99,11 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "21c8c44a8aa03aac5f8dda9674c630829d03ec8cd0c7a66eecf8e1b57ffa2186"
+          "sha256": "71db4872b9a8cb106e9ed4604e8fd2d32e982fefe3938cc951f879a16f2eca82"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
-          "sha256": "ac32b1994d06e9e7904414119ee0fe6de48892a5b604931836403e088683c7cc"
+          "sha256": "ee68d707327d4d0c897ea98a913f8face1226a72b7d9a47f0a14cfb3c5594930"
         }
       ]
     },
@@ -390,5 +390,5 @@
       ]
     }
   ],
-  "sha256": "409c477aa045c5b8a318767c9d4df382f3e0d5c2ecab1e4810fea3406ec74c55"
+  "sha256": "c303cf76326f8b38e1c6a2a2bb6b2f13baa9408c8a8bffa112167a99f11e7159"
 }
