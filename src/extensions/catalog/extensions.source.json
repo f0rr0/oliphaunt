@@ -1148,6 +1148,44 @@
       "notes": []
     },
     {
+      "id": "pgmq",
+      "sql-name": "pgmq",
+      "rust-constant": "PGMQ",
+      "display-name": "PGMQ",
+      "source-kind": "oliphaunt-other-extension",
+      "upstream-import-name": "pgmq",
+      "upstream-import-path": "pgmq-extension",
+      "package-export": "./pgmq",
+      "tags": [
+        "postgres extension",
+        "qualification candidate"
+      ],
+      "control-file": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension/pgmq.control",
+      "control": {
+        "module-pathname": "$libdir/pgmq",
+        "requires": [],
+        "relocatable": "false",
+        "schema": "pgmq"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "tests": [
+        "src/extensions/external/pgmq/tests/smoke.sql"
+      ],
+      "notes": []
+    },
+    {
       "id": "pgtap",
       "sql-name": "pgtap",
       "rust-constant": "PGTAP",

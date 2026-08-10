@@ -1,0 +1,7 @@
+schema = "oliphaunt-extension-publication-blocker-v2"
+extension_id = "pgmq"
+product = "oliphaunt-extension-pgmq"
+reason = "PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+resolutions = ["defer-product-from-publication-catalog"]
+sql_name = "pgmq"
+status = "deferred"

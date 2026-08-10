@@ -211,6 +211,13 @@ restart = "passed"
 dump-restore = "passed"
 
 [[extensions]]
+id = "pgmq"
+direct = "not-run"
+server = "not-run"
+restart = "not-run"
+dump-restore = "not-run"
+
+[[extensions]]
 id = "pgtap"
 direct = "passed"
 server = "passed"

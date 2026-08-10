@@ -96,11 +96,11 @@
       "inputs": [
         {
           "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
-          "sha256": "14abaf5b3828900fdc3c561aa7298c3e026623f14f71292b708c3cf3edaca3ae"
+          "sha256": "46dd355991a820ce8cd4cb9e0649a56f1d8d0d0ec7158b66686e4ca9706a09af"
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "3bba3ae4486549321911a68c2e6e6ecd2d1c22640edc8253ec5079aaeb3fe657"
+          "sha256": "cff8891218fbfcf6d71665b28840d8da6b78cec7b114db312a2aa3d636e5d919"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "93af1bc0cc1039d7285d1bfdefeca1b1a959c89bb0c523490711b59601b3c427"
+  "sha256": "d1ed88749139aee8b8494655fc6eb4e3aef1aae0b36e109c623f1fe7b1b02921"
 }

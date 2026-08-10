@@ -1035,6 +1035,39 @@
       ]
     },
     {
+      "id": "pgmq",
+      "sql-name": "pgmq",
+      "display-name": "PGMQ",
+      "source-kind": "oliphaunt-other-extension",
+      "build-kind": "pgxs-sql-only",
+      "source-dir": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension",
+      "archive": "extensions/pgmq.tar.zst",
+      "control-file": "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension/pgmq.control",
+      "stable": false,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pgmq",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "not-run",
+        "server": "not-run",
+        "restart": "not-run",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "src/extensions/external/pgmq/tests/smoke.sql"
+      ]
+    },
+    {
       "id": "pgtap",
       "sql-name": "pgtap",
       "display-name": "pgtap",

@@ -1,0 +1,43 @@
+schema = "oliphaunt-extension-recipe-v1"
+sql_name = "pgmq"
+display_name = "PGMQ"
+kind = "external-simple-pgxs"
+license = "PostgreSQL"
+source = "pgmq"
+postgres_majors = [18]
+
+[lifecycle]
+creates_extension = true
+requires = []
+implicit_sql_dependencies = []
+load_sql = []
+post_create_sql = []
+shared_preload_libraries = []
+restart_required = false
+background_workers = false
+shared_memory = false
+session_load_required = false
+needs_superuser = false
+trusted = false
+
+[artifacts]
+control_files = ["share/postgresql/extension/pgmq.control"]
+sql_globs = ["share/postgresql/extension/pgmq--*.sql"]
+native_modules = []
+native_dependency_modules = []
+data_files = []
+headers = []
+licenses = ["share/licenses/pgmq/LICENSE"]
+
+[support.native]
+direct = "candidate"
+broker = "candidate"
+server = "candidate"
+
+[support.wasix]
+direct = "candidate"
+server = "candidate"
+
+[support.mobile]
+ios = "candidate"
+android = "candidate"

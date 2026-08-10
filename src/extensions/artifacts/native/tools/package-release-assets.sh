@@ -87,10 +87,6 @@ build_sql_names="$({
   printf '%s\n' "$selected_sql_names" | tr ',' '\n'
   printf '%s\n' "$qualification_sql_names" | tr ',' '\n'
 } | sed '/^$/d' | LC_ALL=C sort -u | paste -sd ',' -)"
-if [ -n "$qualification_sql_names" ]; then
-  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
-fi
-
 version="${OLIPHAUNT_EXTENSION_RELEASE_VERSION:-$(bun "$packager" product-version liboliphaunt-native)}"
 native_runtime_version="$(tr -d '[:space:]' < "$root/src/runtimes/liboliphaunt/native/VERSION")"
 if [ "$qualification_only" = "1" ]; then
@@ -136,44 +132,37 @@ fi
 rm -rf "$stage_root"
 mkdir -p "$out_dir" "$stage_root"
 
-csv_join() {
-  paste -sd ',' -
-}
-
 catalog_rows() {
   awk -F '\t' 'NR > 1 { print }' "$catalog_file"
 }
 
 mobile_module_extensions_csv() {
-  if [ "$qualification_only" = "1" ]; then
-    local extension
-    IFS=',' read -r -a qualification_extensions <<<"$selected_sql_names"
-    for extension in "${qualification_extensions[@]}"; do
-      [ -n "$extension" ] || continue
-      oliphaunt_mobile_static_extension_spec "$extension" >/dev/null ||
-        fail "deferred candidate $extension has no generated mobile qualification spec"
-    done
-    printf '%s\n' "$selected_sql_names"
-    return 0
-  fi
-  {
-    catalog_rows | awk -F '\t' -v selected="$selected_sql_names" '
-    function selected_match(sql_name, selected, parts, count, i) {
-      if (selected == "") {
-        return 1
-      }
-      count = split(selected, parts, ",")
-      for (i = 1; i <= count; i++) {
-        if (parts[i] == sql_name) {
-          return 1
-        }
-      }
-      return 0
-    }
-    $8 == "yes" && $9 == "yes" && $4 != "-" && selected_match($1, selected) { print $1 }
-    '
-    printf '%s\n' "$qualification_sql_names" | tr ',' '\n' | sed '/^$/d'
-  } | LC_ALL=C sort -u | csv_join
+  local extension module_extensions
+  local -a selected_extensions
+  module_extensions="$(bun "$packager" mobile-static-module-sql-names \
+    --target "$target_id" \
+    --sql-names "$build_sql_names")"
+  IFS=',' read -r -a selected_extensions <<<"$module_extensions"
+  for extension in "${selected_extensions[@]}"; do
+    [ -n "$extension" ] || continue
+    oliphaunt_mobile_static_extension_spec "$extension" >/dev/null ||
+      fail "selected mobile extension $extension has no generated static build spec"
+  done
+  printf '%s\n' "$module_extensions"
+}
+
+prepare_mobile_static_specs() {
+  [ "$qualification_only" = "0" ] || return 0
+  [ -n "$qualification_sql_names" ] || return 0
+  local public_specs qualification_specs merged_specs
+  public_specs="$root/src/extensions/generated/mobile/static-extensions.tsv"
+  qualification_specs="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
+  merged_specs="$stage_root/mobile-static-extensions.tsv"
+  bun "$packager" merge-mobile-static-specs \
+    "$public_specs" \
+    "$qualification_specs" \
+    "$merged_specs"
+  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$merged_specs"
 }
 
 selected_sql_name_matches() {
@@ -664,6 +653,10 @@ package_ios_target() {
   require_dir "$source_runtime" "mobile host extension runtime"
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target macos-arm64 --root "$runtime"
+  if [ "$qualification_only" = "1" ] && [ -z "$mobile_extensions" ]; then
+    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
+    return 0
+  fi
   ios_sim_root="$mobile_extension_work_root/$target_id/ios-simulator"
   ios_device_root="$mobile_extension_work_root/$target_id/ios-device"
   macos_archive_root="$mobile_extension_work_root/$target_id/macos-extension-archives"
@@ -679,7 +672,6 @@ package_ios_target() {
   if [ "$qualification_only" = "1" ]; then
     return 0
   fi
-
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact ios_artifact static_prefix registration_artifact dependency dependency_xcframework dependency_artifact
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -775,6 +767,10 @@ package_android_target() {
   require_dir "$source_runtime" "mobile host extension runtime"
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target linux-x64-gnu --root "$runtime"
+  if [ "$qualification_only" = "1" ] && [ -z "$mobile_extensions" ]; then
+    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
+    return 0
+  fi
   case "$target_id" in
     android-arm64-v8a)
       android_root="$mobile_extension_work_root/$target_id/android-arm64"
@@ -793,7 +789,6 @@ package_android_target() {
   if [ "$qualification_only" = "1" ]; then
     return 0
   fi
-
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -829,6 +824,7 @@ package_android_target() {
 fetch_extension_source_assets
 echo "==> Reading exact extension catalog"
 bun "$packager" list-catalog --qualification-target "$target_id" >"$catalog_file"
+prepare_mobile_static_specs
 if [ "$qualification_only" = "0" ]; then
   write_indexes
 fi

@@ -51,6 +51,7 @@ test("every active external release has an exact upstream license contract", () 
     "pg_ivm",
     "pg_textsearch",
     "pg_uuidv7",
+    "pgmq",
     "pgtap",
     "postgis",
     "vector",
@@ -68,6 +69,7 @@ test("every active external release has an exact upstream license contract", () 
     "pg_ivm",
     "pg_textsearch",
     "pg_uuidv7",
+    "pgmq",
     "pgtap",
     "pgvector",
     "postgis",
@@ -133,7 +135,7 @@ test("each external product owns an exact self-contained legal-data closure", ()
     .map((entry) => path.join(externalRoot, entry.name, "upstream-license-data.json"))
     .filter(existsSync)
     .sort();
-  assert.equal(files.length, 7);
+  assert.equal(files.length, 8);
   for (const file of files) {
     const data = JSON.parse(readFileSync(file, "utf8"));
     const owner = path.basename(path.dirname(file));

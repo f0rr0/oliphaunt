@@ -893,29 +893,20 @@ pub(crate) fn ensure_supported_aot_target(target: &str) -> Result<()> {
     )
 }
 
-pub(crate) fn verify_generated_extension_surface() -> Result<()> {
-    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
-    let manifest_text = fs::read_to_string(&manifest_path)
-        .with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest: AssetManifestOut =
-        serde_json::from_str(&manifest_text).context("parse committed asset manifest")?;
-    if skip_extensions_for_perf_probe() && manifest.extensions.is_empty() {
-        println!("core-only asset manifest detected; skipping generated extension surface guard");
-        return Ok(());
-    }
-    let catalog_text = fs::read_to_string("src/extensions/generated/extensions.catalog.json")
-        .context("read src/extensions/generated/extensions.catalog.json")?;
-    let catalog: serde_json::Value =
-        serde_json::from_str(&catalog_text).context("parse generated extension catalog")?;
-    let generated = fs::read_to_string(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
-    )
-    .context(
-        "read src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
-    )?;
+struct GeneratedExtensionCatalogSurface {
+    runtime_constants: BTreeMap<String, String>,
+    packaged_constants: BTreeMap<String, String>,
+    promoted_constants: BTreeMap<String, String>,
+    qualification_sql_names: BTreeSet<String>,
+}
 
+fn generated_extension_catalog_surface(
+    catalog: &serde_json::Value,
+) -> Result<GeneratedExtensionCatalogSurface> {
+    let mut runtime_constants = BTreeMap::new();
     let mut packaged_constants = BTreeMap::new();
     let mut promoted_constants = BTreeMap::new();
+    let mut qualification_sql_names = BTreeSet::new();
     for entry in catalog
         .get("extensions")
         .and_then(|value| value.as_array())
@@ -937,35 +928,86 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
             .pointer("/promotion/packaged")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        let has_archive = entry
-            .pointer("/promotion/archive")
-            .and_then(|value| value.as_str())
-            .is_some();
-        if requested && packaged && has_archive {
-            packaged_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
-        }
         let promoted = entry
             .pointer("/promotion/promoted")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        let stable = entry
+            .pointer("/promotion/stable")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let has_archive = entry
+            .pointer("/promotion/archive")
+            .and_then(|value| value.as_str())
+            .is_some();
+        if requested && has_archive {
+            runtime_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
+            if packaged {
+                packaged_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
+            } else {
+                let blocker = entry
+                    .pointer("/promotion/blocker")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                ensure!(
+                    !promoted && !stable && !blocker.is_empty(),
+                    "unpackaged extension {sql_name} may enter the WASIX qualification runtime only while non-stable, non-promoted, and publication-blocked"
+                );
+                qualification_sql_names.insert(sql_name.to_owned());
+            }
+        }
         if promoted {
             promoted_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
         }
     }
+    Ok(GeneratedExtensionCatalogSurface {
+        runtime_constants,
+        packaged_constants,
+        promoted_constants,
+        qualification_sql_names,
+    })
+}
+
+pub(crate) fn verify_generated_extension_surface() -> Result<()> {
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest: AssetManifestOut =
+        serde_json::from_str(&manifest_text).context("parse committed asset manifest")?;
+    if skip_extensions_for_perf_probe() && manifest.extensions.is_empty() {
+        println!("core-only asset manifest detected; skipping generated extension surface guard");
+        return Ok(());
+    }
+    let catalog_text = fs::read_to_string("src/extensions/generated/extensions.catalog.json")
+        .context("read src/extensions/generated/extensions.catalog.json")?;
+    let catalog: serde_json::Value =
+        serde_json::from_str(&catalog_text).context("parse generated extension catalog")?;
+    let generated = fs::read_to_string(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
+    )
+    .context(
+        "read src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
+    )?;
+
+    let surface = generated_extension_catalog_surface(&catalog)?;
 
     let manifest_packaged_sql_names = manifest
         .extensions
         .iter()
         .map(|extension| extension.sql_name.clone())
         .collect::<BTreeSet<_>>();
-    let catalog_packaged_sql_names = packaged_constants.keys().cloned().collect::<BTreeSet<_>>();
-    if manifest_packaged_sql_names != catalog_packaged_sql_names {
+    let catalog_runtime_sql_names = surface
+        .runtime_constants
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if manifest_packaged_sql_names != catalog_runtime_sql_names {
         bail!(
-            "packaged extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
+            "WASIX runtime extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
             manifest_packaged_sql_names
-                .difference(&catalog_packaged_sql_names)
+                .difference(&catalog_runtime_sql_names)
                 .collect::<Vec<_>>(),
-            catalog_packaged_sql_names
+            catalog_runtime_sql_names
                 .difference(&manifest_packaged_sql_names)
                 .collect::<Vec<_>>()
         );
@@ -977,7 +1019,11 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
         .filter(|extension| extension.smoke_status.promoted)
         .map(|extension| extension.sql_name.clone())
         .collect::<BTreeSet<_>>();
-    let catalog_sql_names = promoted_constants.keys().cloned().collect::<BTreeSet<_>>();
+    let catalog_sql_names = surface
+        .promoted_constants
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     if manifest_promoted_sql_names != catalog_sql_names {
         bail!(
             "promoted extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
@@ -991,12 +1037,37 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
     }
 
     for extension in &manifest.extensions {
-        let rust_constant = packaged_constants.get(&extension.sql_name).ok_or_else(|| {
-            anyhow!(
-                "extension {} missing from packaged catalog",
+        let rust_constant = surface
+            .runtime_constants
+            .get(&extension.sql_name)
+            .ok_or_else(|| {
+                anyhow!(
+                    "extension {} missing from WASIX runtime catalog",
+                    extension.sql_name
+                )
+            })?;
+        if surface
+            .qualification_sql_names
+            .contains(&extension.sql_name)
+        {
+            ensure!(
+                !extension.stable && !extension.smoke_status.promoted,
+                "qualification extension {} leaked stable or promoted state into the WASIX runtime manifest",
                 extension.sql_name
-            )
-        })?;
+            );
+            let public_constant = format!("pub const {rust_constant}: Extension =");
+            ensure!(
+                !generated.contains(&public_constant),
+                "qualification extension {} leaked into the public generated extension API",
+                extension.sql_name
+            );
+            continue;
+        }
+        ensure!(
+            surface.packaged_constants.contains_key(&extension.sql_name),
+            "extension {} is neither public packaged nor a publication-blocked qualification candidate",
+            extension.sql_name
+        );
         let candidate_const = format!("CANDIDATE_{rust_constant}");
         for (needle, description) in [
             (
@@ -1044,6 +1115,82 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
     }
     println!("generated extension API matches asset manifest and catalog");
     Ok(())
+}
+
+#[cfg(test)]
+mod generated_extension_surface_tests {
+    use super::generated_extension_catalog_surface;
+
+    #[test]
+    fn accepts_publication_blocked_runtime_qualification_candidates() {
+        let catalog = serde_json::json!({
+            "extensions": [
+                {
+                    "sql-name": "public_ext",
+                    "rust-constant": "PUBLIC_EXT",
+                    "promotion": {
+                        "requested": true,
+                        "packaged": true,
+                        "promoted": true,
+                        "stable": true,
+                        "archive": "extensions/public_ext.tar.zst"
+                    }
+                },
+                {
+                    "sql-name": "candidate_ext",
+                    "rust-constant": "CANDIDATE_EXT",
+                    "promotion": {
+                        "requested": true,
+                        "packaged": false,
+                        "promoted": false,
+                        "stable": false,
+                        "archive": "extensions/candidate_ext.tar.zst",
+                        "blocker": "awaiting exact-target qualification"
+                    }
+                }
+            ]
+        });
+        let surface = generated_extension_catalog_surface(&catalog).expect("catalog surface");
+        assert_eq!(
+            surface
+                .runtime_constants
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["candidate_ext", "public_ext"]
+        );
+        assert_eq!(
+            surface
+                .packaged_constants
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["public_ext"]
+        );
+        assert!(surface.qualification_sql_names.contains("candidate_ext"));
+    }
+
+    #[test]
+    fn rejects_unblocked_unpublished_runtime_candidates() {
+        let catalog = serde_json::json!({
+            "extensions": [{
+                "sql-name": "candidate_ext",
+                "rust-constant": "CANDIDATE_EXT",
+                "promotion": {
+                    "requested": true,
+                    "packaged": false,
+                    "promoted": false,
+                    "stable": false,
+                    "archive": "extensions/candidate_ext.tar.zst"
+                }
+            }]
+        });
+        let error = generated_extension_catalog_surface(&catalog)
+            .err()
+            .expect("missing blocker must fail")
+            .to_string();
+        assert!(error.contains("publication-blocked"), "{error}");
+    }
 }
 
 fn verify_generated_extension_surface_if_available() -> Result<()> {

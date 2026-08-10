@@ -1,0 +1,9 @@
+name = "pgmq"
+url = "https://github.com/pgmq/pgmq.git"
+branch = "pinned"
+commit = "08ace4087dbf00e51704c5a3d9df2e15fd566127"
+
+[extension-control]
+sql-name = "pgmq"
+source-path = "pgmq-extension/pgmq.control"
+default-version = "1.12.0"

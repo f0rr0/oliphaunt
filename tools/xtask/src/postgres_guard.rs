@@ -1491,17 +1491,19 @@ fn source_pin_for_checkout_dir<'a>(
     manifest: &'a SourcesManifest,
     source_dir: &str,
 ) -> Option<&'a SourcePin> {
-    let expected = normalize_manifest_path(Path::new(source_dir));
     manifest.sources.iter().find(|source| {
         source_checkout_path(source.name.as_str())
-            .map(|path| normalize_manifest_path(&path))
-            .as_deref()
-            == Some(expected.as_str())
+            .is_some_and(|checkout| source_dir_is_within_checkout(source_dir, &checkout))
     })
 }
 
-fn normalize_manifest_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+fn source_dir_is_within_checkout(source_dir: &str, checkout: &Path) -> bool {
+    let Ok(relative) = Path::new(source_dir).strip_prefix(checkout) else {
+        return false;
+    };
+    relative
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 fn ensure_pg18_experiment_patch_disposition() -> Result<()> {
@@ -1720,4 +1722,38 @@ fn check_rust_host_runtime_abi_surface(postgres_mod: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_dir_is_within_checkout;
+    use std::path::Path;
+
+    #[test]
+    fn pgxs_source_dirs_may_use_safe_subdirectories_of_pinned_checkouts() {
+        let checkout = Path::new("target/oliphaunt-sources/checkouts/pgmq");
+
+        assert!(source_dir_is_within_checkout(
+            "target/oliphaunt-sources/checkouts/pgmq",
+            checkout,
+        ));
+        assert!(source_dir_is_within_checkout(
+            "target/oliphaunt-sources/checkouts/pgmq/pgmq-extension",
+            checkout,
+        ));
+    }
+
+    #[test]
+    fn pgxs_source_dirs_cannot_escape_or_prefix_match_pinned_checkouts() {
+        let checkout = Path::new("target/oliphaunt-sources/checkouts/pgmq");
+
+        assert!(!source_dir_is_within_checkout(
+            "target/oliphaunt-sources/checkouts/pgmq-other",
+            checkout,
+        ));
+        assert!(!source_dir_is_within_checkout(
+            "target/oliphaunt-sources/checkouts/pgmq/../other",
+            checkout,
+        ));
+    }
 }

@@ -123,6 +123,12 @@ id = "pgcrypto"
 stable = true
 
 [[extensions]]
+id = "pgmq"
+build = true
+stable = false
+blocker = "PGMQ 1.12.0 is pinned for native desktop, mobile, and WASIX qualification, but exact-commit package, lifecycle, restart, and dump/restore evidence has not yet passed; keep it out of public catalogs until that CI evidence exists."
+
+[[extensions]]
 id = "pgtap"
 stable = true
 

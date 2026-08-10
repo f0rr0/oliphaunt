@@ -166,7 +166,7 @@
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
-          "sha256": "c67f61826704e8ff71265af85f8552b1a134fba1252b46921d10dea6d51e854a"
+          "sha256": "1c0b472c2103246843becd05400907ead9081fc8740ae34c15fef9a502503e62"
         },
         {
           "path": "tools/xtask/src/fs_utils.rs",
@@ -178,7 +178,7 @@
         },
         {
           "path": "tools/xtask/src/postgres_guard.rs",
-          "sha256": "0ccadf939d2e52a8a3f1a3445e6e1d401085ead7f788085c443e6563b0e19064"
+          "sha256": "da19f4d401306cbdec5f0638cadfb27065a0c935c173e030433c2c4a2afb1f55"
         },
         {
           "path": "tools/xtask/src/release_workspace.rs",
@@ -212,19 +212,19 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "1b9ae33dc2ca239985c4cd5c1571e2669f2ea905acf45b6d81e4e31261e7f7bb"
+          "sha256": "805de8c49c80c5d380f7420a3aba1540e540f1fb87fe88838f27f47330c68e83"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "e0741112aeb1d1a187ba3fda06a06302026048eceef08b389f2e55a94343cd69"
+          "sha256": "bdab70f9bcbdf4189356fd11e650de3051867356a555448f6dc8b70e847776f8"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
-          "sha256": "24dceceb89d3f91da6c66bc309c4767408b71908bafd32027d784b2a5f975ca5"
+          "sha256": "0e03beee22c5ea838e65875bfceb9854c01e188b7680c310c4eab3cedb4bd058"
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "79ba39ba702d247fd975089cc812fbb4c3624ebd325f0fe1f6255dd575efddb7"
+          "sha256": "c9685962d0dc9b54a0454dbba559303367c7df08918e0842d01bbf580d1f0cf1"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
@@ -236,7 +236,7 @@
         },
         {
           "path": "src/extensions/generated/pgxs-build.tsv",
-          "sha256": "89e3dedea42a4921cea9a180138cc0092808718ed6cc55e66858b074e005c29b"
+          "sha256": "486c94c8eb0c71ff59941eaa39f3806dd4d5ba7375044685402c23d046ac94aa"
         },
         {
           "path": "src/extensions/generated/sdk/js.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "763a5c1635efc9c5275c839eb4870379d19077cb6426f89cc690e9ae1890bbad"
+  "sha256": "da6923976b2ee188ec14f56dbbf09138c9cedff8bd9ece7198a03bc3963b7fd1"
 }
