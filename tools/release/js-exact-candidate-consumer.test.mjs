@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -47,6 +48,7 @@ import {
   removeExactCandidateRunRoot,
   runExactCandidateCommandToFileWithTimeout,
   runExactCandidateCommandWithTimeout,
+  stageExactCandidateRuntimeFixtures,
   validateExactCandidateDenoPreparationReceipt,
   validateIosExtensionCandidateInputs,
   stopVerdaccio,
@@ -75,32 +77,109 @@ import {
   renderPlanWithSelection,
   selectedExtensionProductsForPlan,
 } from "../graph/ci_plan.mjs";
+import {
+  verifyCoreEnglishTextSearch,
+  verifyPgTextsearchEnglishBm25,
+} from "./fixtures/js-exact-candidate-extension-scenarios.mjs";
 
 const scratch = [];
 const RELEASE_GRAPH_TIMEOUT = { timeout: 300_000 };
 const posixTest = process.platform === "win32" ? test.skip : test;
 
-test("exact JavaScript candidate proves pg_textsearch English Snowball indexing", () => {
-  const runtimeFixture = readFileSync(
-    path.join(ROOT, "tools/release/fixtures/js-exact-candidate-runtime.mjs"),
-    "utf8",
+function queryResult(value, column) {
+  return {
+    rows: [{}],
+    getText(row, requestedColumn) {
+      expect(row).toBe(0);
+      expect(requestedColumn).toBe(column);
+      return value;
+    },
+  };
+}
+
+function pgTextsearchScenarioDatabase() {
+  const queries = [];
+  return {
+    queries,
+    async query(sql) {
+      queries.push(sql);
+      if (sql.includes("running database")) return queryResult("1", "id");
+      if (sql.includes("updated migration target")) return queryResult("2", "id");
+      if (sql.includes("merge sentinel proof")) return queryResult("1000", "id");
+      if (sql.includes("post activation write marker")) return queryResult("1001", "id");
+      if (sql.includes("post restore write marker")) return queryResult("1001", "id");
+      if (sql.includes("deleted wildlife marker")) return queryResult("4", "id");
+      return { rows: [] };
+    },
+  };
+}
+
+test("exact JavaScript candidate preserves pg_textsearch mutations through restore", async () => {
+  const source = pgTextsearchScenarioDatabase();
+  const sourceProof = await verifyPgTextsearchEnglishBm25(source, "produce");
+  expect(sourceProof).toEqual({
+    sqlName: "pg_textsearch",
+    scenario: "bm25-mutation-merge-persistence",
+    existingTopId: "1",
+    updatedTopId: "2",
+    sentinelTopId: "1000",
+    postOpenWriteTopId: "1001",
+    deletionSurvivorTopId: "4",
+  });
+  expect(source.queries.some((sql) => sql.startsWith("UPDATE "))).toBe(true);
+  expect(source.queries.some((sql) => sql.startsWith("DELETE FROM "))).toBe(true);
+  expect(source.queries).toContain(
+    "SELECT bm25_force_merge('exact_candidate_pg_textsearch_english_bm25')",
   );
-  expect(runtimeFixture).toContain("verifyPgTextsearchEnglishBm25");
-  expect(runtimeFixture).toContain("PostgreSQL databases support reliable runners");
-  expect(runtimeFixture).toContain("WITH (text_config = 'pg_catalog.english')");
-  expect(runtimeFixture).toContain("nonempty-english-bm25-create-and-query");
+
+  const restored = pgTextsearchScenarioDatabase();
+  const restoredProof = await verifyPgTextsearchEnglishBm25(restored, "verify-restored");
+  expect(restoredProof).toEqual(sourceProof);
+  expect(restored.queries.some((sql) => sql.startsWith("CREATE TABLE"))).toBe(false);
+  expect(restored.queries.some((sql) => sql.includes("SET body = 'post restore write marker'"))).toBe(true);
+  expect(restored.queries).toContain(
+    "SELECT bm25_force_merge('exact_candidate_pg_textsearch_english_bm25')",
+  );
 });
 
-test("every exact JavaScript runtime mode proves core English Snowball text search", () => {
-  const runtimeFixture = readFileSync(
-    path.join(ROOT, "tools/release/fixtures/js-exact-candidate-runtime.mjs"),
-    "utf8",
+test("every exact JavaScript runtime mode proves core English Snowball text search", async () => {
+  const queries = [];
+  await verifyCoreEnglishTextSearch({
+    async query(sql) {
+      queries.push(sql);
+      return queryResult("english-snowball-ok", "value");
+    },
+  });
+  expect(queries).toEqual([
+    "SELECT CASE WHEN to_tsvector('pg_catalog.english', 'the quick foxes running') "
+      + "@@ to_tsquery('pg_catalog.english', 'run & fox') "
+      + "THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
+  ]);
+});
+
+test("stages the complete isolated exact-candidate runtime fixture closure", () => {
+  const root = mkdtempSync(path.join(ROOT, "target/js-exact-runtime-fixtures-"));
+  scratch.push(root);
+  const runtimeFixture = stageExactCandidateRuntimeFixtures(root);
+  expect(runtimeFixture).toBe(path.join(root, "exact-candidate-runtime.mjs"));
+  expect(readdirSync(root).sort()).toEqual([
+    "exact-candidate-runtime.mjs",
+    "js-exact-candidate-extension-scenarios.mjs",
+    "js-exact-candidate-procsignal.mjs",
+  ]);
+
+  const runtimeSource = readFileSync(runtimeFixture, "utf8");
+  const relativeImports = Array.from(
+    runtimeSource.matchAll(/from "[.]\/([^"\n]+)";/gu),
+    (match) => match[1],
   );
-  expect(runtimeFixture).toContain("verifyCoreEnglishTextSearch");
-  expect(runtimeFixture).toContain("to_tsvector('pg_catalog.english', 'the quick foxes running')");
-  expect(runtimeFixture).toContain("to_tsquery('pg_catalog.english', 'run & fox')");
-  expect(runtimeFixture).toContain("english-snowball-ok");
-  expect(runtimeFixture.match(/await verifyCoreEnglishTextSearch\(/gu)).toHaveLength(2);
+  expect(relativeImports.sort()).toEqual([
+    "js-exact-candidate-extension-scenarios.mjs",
+    "js-exact-candidate-procsignal.mjs",
+  ]);
+  for (const imported of relativeImports) {
+    expect(existsSync(path.join(root, imported))).toBe(true);
+  }
 });
 
 afterEach(() => {

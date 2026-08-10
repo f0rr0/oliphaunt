@@ -1,0 +1,226 @@
+diff --git a/src/access/am.h b/src/access/am.h
+--- a/src/access/am.h
++++ b/src/access/am.h
+@@ -82,7 +82,7 @@ float8 tp_get_cached_score(void);
+ /*
+  * Access method handler
+  */
+-Datum tp_handler(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tp_handler(PG_FUNCTION_ARGS);
+ 
+ /*
+  * Build utilities (am/build.c)
+diff --git a/src/memtable/expull.h b/src/memtable/expull.h
+--- a/src/memtable/expull.h
++++ b/src/memtable/expull.h
+@@ -24,12 +24,16 @@ typedef struct TpExpullBlock
+  * Single posting entry stored in EXPULL blocks.
+  * 7 bytes of data; packed to avoid waste in blocks.
+  */
++#pragma pack(push, 1)
+ typedef struct TpExpullEntry
+ {
+ 	uint32 doc_id;	  /* Segment-local document ID */
+ 	uint16 frequency; /* Term frequency in document */
+ 	uint8  fieldnorm; /* Quantized document length */
+-} __attribute__((packed)) TpExpullEntry;
++} TpExpullEntry;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpExpullEntry) == 7, "TpExpullEntry must remain 7 bytes on Windows");
++StaticAssertDecl(__alignof(TpExpullEntry) == 1, "TpExpullEntry must remain 1-byte aligned on Windows");
+ 
+ #define TP_EXPULL_ENTRY_SIZE sizeof(TpExpullEntry) /* 7 bytes */
+ 
+diff --git a/src/oliphaunt_windows_compat.h b/src/oliphaunt_windows_compat.h
+new file mode 100644
+--- /dev/null
++++ b/src/oliphaunt_windows_compat.h
+@@ -0,0 +1,7 @@
++#pragma once
++
++#ifdef _MSC_VER
++#ifndef __attribute__
++#define __attribute__(x)
++#endif
++#endif
+diff --git a/src/segment/format.h b/src/segment/format.h
+--- a/src/segment/format.h
++++ b/src/segment/format.h
+@@ -174,13 +174,17 @@ typedef struct TpStringEntry
+ /*
+  * V3 legacy dictionary entry - 12 bytes
+  */
++#pragma pack(push, 4)
+ typedef struct TpDictEntryV3
+ {
+ 	uint32 skip_index_offset;
+ 	uint16 block_count;
+ 	uint16 reserved;
+ 	uint32 doc_freq;
+-} __attribute__((aligned(4))) TpDictEntryV3;
++} TpDictEntryV3;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpDictEntryV3) == 12, "TpDictEntryV3 must remain 12 bytes on Windows");
++StaticAssertDecl(__alignof(TpDictEntryV3) == 4, "TpDictEntryV3 must remain 4-byte aligned on Windows");
+ 
+ /*
+  * Dictionary entry - 16 bytes, block-based storage (V4: uint64 offset)
+@@ -195,12 +199,16 @@ typedef struct TpDictEntryV3
+  * (x86-64, ARM64) these four bytes read identically as a uint32,
+  * so existing V4 segments are binary-compatible.
+  */
++#pragma pack(push, 8)
+ typedef struct TpDictEntry
+ {
+ 	uint64 skip_index_offset; /* Offset to TpSkipEntry array for this term */
+ 	uint32 block_count;		  /* Number of blocks (and skip entries) */
+ 	uint32 doc_freq;		  /* Document frequency for IDF */
+-} __attribute__((aligned(8))) TpDictEntry;
++} TpDictEntry;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpDictEntry) == 16, "TpDictEntry must remain 16 bytes on Windows");
++StaticAssertDecl(__alignof(TpDictEntry) == 8, "TpDictEntry must remain 8-byte aligned on Windows");
+ 
+ /*
+  * Block storage constants
+@@ -210,6 +218,7 @@ typedef struct TpDictEntry
+ /*
+  * V3 legacy skip index entry - 16 bytes per block
+  */
++#pragma pack(push, 1)
+ typedef struct TpSkipEntryV3
+ {
+ 	uint32 last_doc_id;
+@@ -219,5 +228,8 @@ typedef struct TpSkipEntryV3
+ 	uint32 posting_offset;
+ 	uint8  flags;
+ 	uint8  reserved[3];
+-} __attribute__((packed)) TpSkipEntryV3;
++} TpSkipEntryV3;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpSkipEntryV3) == 16, "TpSkipEntryV3 must remain 16 bytes on Windows");
++StaticAssertDecl(__alignof(TpSkipEntryV3) == 1, "TpSkipEntryV3 must remain 1-byte aligned on Windows");
+ 
+@@ -224,8 +236,9 @@ typedef struct TpSkipEntryV3
+  * Skip index entry - 20 bytes per block (V4: uint64 posting_offset)
+  *
+  * Stored separately from posting data for cache efficiency during BMW.
+  * The skip index is a dense array of these entries, one per block.
+  */
++#pragma pack(push, 1)
+ typedef struct TpSkipEntry
+ {
+ 	uint32 last_doc_id;	   /* Last segment-local doc ID in block */
+@@ -236,7 +249,10 @@ typedef struct TpSkipEntry
+ 	uint64 posting_offset; /* Byte offset from segment start to block data */
+ 	uint8  flags;		   /* Compression type, etc. */
+ 	uint8  reserved[3];	   /* Future use */
+-} __attribute__((packed)) TpSkipEntry;
++} TpSkipEntry;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpSkipEntry) == 20, "TpSkipEntry must remain 20 bytes on Windows");
++StaticAssertDecl(__alignof(TpSkipEntry) == 1, "TpSkipEntry must remain 1-byte aligned on Windows");
+ 
+ /* Skip entry flags */
+ #define TP_BLOCK_FLAG_UNCOMPRESSED 0x00 /* Raw doc IDs and frequencies */
+@@ -270,7 +286,11 @@ typedef struct TpBlockPosting
+  * compact 4-byte doc IDs in posting lists while still being able
+  * to look up the actual heap tuple.
+  */
++#pragma pack(push, 1)
+ typedef struct TpCtidMapEntry
+ {
+ 	ItemPointerData ctid; /* 6 bytes - heap tuple location */
+-} __attribute__((packed)) TpCtidMapEntry;
++} TpCtidMapEntry;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpCtidMapEntry) == 6, "TpCtidMapEntry must remain 6 bytes on Windows");
++StaticAssertDecl(__alignof(TpCtidMapEntry) == 1, "TpCtidMapEntry must remain 1-byte aligned on Windows");
+diff --git a/src/segment/segment.h b/src/segment/segment.h
+--- a/src/segment/segment.h
++++ b/src/segment/segment.h
+@@ -46,12 +46,16 @@ typedef struct TpPostingList
+  * ctid is invalid and doc_id is used to look up CTID at result extraction.
+  */
++#pragma pack(push, 1)
+ typedef struct TpSegmentPosting
+ {
+ 	ItemPointerData ctid;	   /* 6 bytes - heap tuple ID (may be invalid) */
+ 	uint32			doc_id;	   /* 4 bytes - segment-local doc ID */
+ 	uint16			frequency; /* 2 bytes - term frequency */
+ 	uint16 doc_length;		   /* 2 bytes - document length (from fieldnorm) */
+-} __attribute__((packed)) TpSegmentPosting;
++} TpSegmentPosting;
++#pragma pack(pop)
++StaticAssertDecl(sizeof(TpSegmentPosting) == 14, "TpSegmentPosting must remain 14 bytes on Windows");
++StaticAssertDecl(__alignof(TpSegmentPosting) == 1, "TpSegmentPosting must remain 1-byte aligned on Windows");
+ 
+ /* Version-aware struct size helpers */
+ static inline size_t
+diff --git a/src/types/query.h b/src/types/query.h
+--- a/src/types/query.h
++++ b/src/types/query.h
+@@ -47,21 +47,21 @@ typedef struct TpQuery
+ #define TPQUERY_TEXT_PTR(x) (((TpQuery *)(x))->data)
+ 
+ /* Function declarations */
+-Datum tpquery_in(PG_FUNCTION_ARGS);
+-Datum tpquery_out(PG_FUNCTION_ARGS);
+-Datum tpquery_recv(PG_FUNCTION_ARGS);
+-Datum tpquery_send(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpquery_in(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpquery_out(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpquery_recv(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpquery_send(PG_FUNCTION_ARGS);
+ 
+ /* Constructor functions */
+-Datum to_tpquery_text(PG_FUNCTION_ARGS);
+-Datum to_tpquery_text_index(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum to_tpquery_text(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum to_tpquery_text_index(PG_FUNCTION_ARGS);
+ 
+ /* Operator functions */
+-Datum bm25_text_bm25query_score(PG_FUNCTION_ARGS);
+-Datum bm25_text_text_score(PG_FUNCTION_ARGS);
+-Datum bm25_textarray_bm25query_score(PG_FUNCTION_ARGS);
+-Datum bm25_textarray_text_score(PG_FUNCTION_ARGS);
+-Datum tpquery_eq(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum bm25_text_bm25query_score(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum bm25_text_text_score(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum bm25_textarray_bm25query_score(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum bm25_textarray_text_score(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpquery_eq(PG_FUNCTION_ARGS);
+ 
+ /* Utility functions */
+ TpQuery *create_tpquery(const char *query_text, Oid index_oid);
+diff --git a/src/types/vector.h b/src/types/vector.h
+--- a/src/types/vector.h
++++ b/src/types/vector.h
+@@ -90,12 +90,12 @@ typedef struct TpVector
+ 					   MAXALIGN(((TpVector *)(x))->index_name_len + 1)))
+ 
+ /* Function declarations */
+-Datum tpvector_in(PG_FUNCTION_ARGS);
+-Datum tpvector_out(PG_FUNCTION_ARGS);
+-Datum tpvector_recv(PG_FUNCTION_ARGS);
+-Datum tpvector_send(PG_FUNCTION_ARGS);
+-Datum to_tpvector(PG_FUNCTION_ARGS);
+-Datum tpvector_eq(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpvector_in(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpvector_out(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpvector_recv(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpvector_send(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum to_tpvector(PG_FUNCTION_ARGS);
++extern PGDLLEXPORT Datum tpvector_eq(PG_FUNCTION_ARGS);
+ 
+ /* Constructor */
+ TpVector *create_tpvector_from_strings(
+diff --git a/src/unistd.h b/src/unistd.h
+new file mode 100644
+--- /dev/null
++++ b/src/unistd.h
+@@ -0,0 +1,4 @@
++#ifndef OLIPHAUNT_PG_TEXTSEARCH_WINDOWS_UNISTD_H
++#define OLIPHAUNT_PG_TEXTSEARCH_WINDOWS_UNISTD_H
++
++#endif

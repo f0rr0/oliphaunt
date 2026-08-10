@@ -192,6 +192,18 @@ required_jobs = [
     "node-direct",
 ]
 
+[cases.js_exact_candidate_extension_scenarios_fixture]
+path = "tools/release/fixtures/js-exact-candidate-extension-scenarios.mjs"
+required_jobs = [
+    "broker-runtime",
+    "extension-artifacts-native",
+    "js-sdk-exact-candidate-consumer",
+    "js-sdk-package",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "node-direct",
+]
+
 [cases.js_exact_candidate_procsignal_fixture]
 path = "tools/release/fixtures/js-exact-candidate-procsignal.mjs"
 required_jobs = [

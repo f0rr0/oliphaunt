@@ -66,6 +66,7 @@ tasks:
       - "/src/sdks/js/src/native/extension-contract.ts"
       - "/tools/release/run-windows-standard-user-exact-candidate.ps1"
       - "/tools/release/fixtures/js-exact-candidate-runtime.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-extension-scenarios.mjs"
       - "/tools/release/fixtures/js-exact-candidate-procsignal.mjs"
       - "/tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs"
       - "/tools/release/fixtures/js-exact-candidate-jsr.mjs"

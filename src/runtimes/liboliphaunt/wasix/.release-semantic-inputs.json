@@ -154,7 +154,7 @@
         },
         {
           "path": "tools/xtask/src/asset_fingerprint.rs",
-          "sha256": "e7eb15342326c2480fdf991b2de271114ac2d336aff7ac81291c9fe4aa15dad6"
+          "sha256": "c7ddffef00f3d31e39952d943880895aa14ec4d76bfb352020abe717675cbcb4"
         },
         {
           "path": "tools/xtask/src/asset_manifest.rs",
@@ -212,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "6f6936e35263e3d4da2a15c07e5864fb9ab722ebdd69e07d6af73493162b2ea4"
+          "sha256": "21e54b21ab68c00d7b1a9bb46811d40c66ad06f5fa81a40d2d19e175ba992f35"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "bc03f17b38c5075fa11cf27f63e132534ec07d4217885d6ea746e248716762e3"
+  "sha256": "5078ac570c045691889d917e39fd5f06cc43f57fe7cbdb655e5ad194b409306f"
 }

@@ -1,47 +1,174 @@
 #!/usr/bin/env bun
+
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const root = path.resolve(import.meta.dir, "../..");
-const upgrade = readFileSync(
-  path.join(root, "src/extensions/external/pg_textsearch/tests/upgrade.sh"),
-  "utf8",
-);
-const upgradeSource = readFileSync(
-  path.join(root, "src/extensions/external/pg_textsearch/tests/upgrade/source.toml"),
-  "utf8",
-);
-const nativePackager = readFileSync(
-  path.join(root, "src/extensions/artifacts/native/tools/package-release-assets.sh"),
-  "utf8",
-);
+import { nativeExtensionQualificationPlan } from "./native-extension-qualification.mjs";
 
-test("pg_textsearch qualification proves the pinned upgrade lifecycle", () => {
-  assert.match(upgrade, /old_version="0[.]6[.]1"/u);
-  assert.match(upgrade, /old_commit="07936f7cd67f7a183659d3acd459c0a5efc93756"/u);
-  assert.match(upgradeSource, /name = "pg_textsearch_upgrade_0_6_1"/u);
-  assert.match(upgradeSource, /branch = "v0[.]6[.]1"/u);
-  assert.match(upgradeSource, /commit = "07936f7cd67f7a183659d3acd459c0a5efc93756"/u);
-  assert.match(upgrade, /source-fetch-native-runtime dependency/u);
-  assert.doesNotMatch(upgrade, /fetch-pinned-git-checkout/u);
-  assert.match(upgrade, /CREATE EXTENSION pg_textsearch VERSION '0[.]6[.]1'/u);
-  assert.match(upgrade, /pre-upgrade query with the current library/u);
-  assert.match(upgrade, /ALTER EXTENSION pg_textsearch UPDATE/u);
-  assert.match(upgrade, /INSERT INTO upgrade_docs VALUES/u);
-  assert.match(upgrade, /bm25_force_merge/u);
-  assert.match(upgrade, /pg_dump/u);
-  assert.match(upgrade, /pg_textsearch_upgrade_restore/u);
+function writeFixture(root, relative, contents) {
+  const file = path.join(root, relative);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, contents.trimStart());
+}
+
+function qualificationFixture(t, { runner = "tests/upgrade.sh", sqlName = "fixture_search" } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-native-extension-qualification-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFixture(root, "src/extensions/external/fixture_search/source.toml", `
+name = "fixture_search"
+commit = "1111111111111111111111111111111111111111"
+
+[extension-control]
+sql-name = "fixture_search"
+default-version = "2.0.0"
+`);
+  writeFixture(root, "src/extensions/external/fixture_search/tests/upgrade.sh", "#!/usr/bin/env bash\nexit 0\n");
+  writeFixture(root, "src/extensions/external/fixture_search/tests/upgrade/source.toml", `
+name = "fixture_search_upgrade_1_0_0"
+url = "https://example.invalid/fixture-search.git"
+branch = "v1.0.0"
+commit = "2222222222222222222222222222222222222222"
+
+[extension-control]
+sql-name = "${sqlName}"
+source-path = "fixture_search.control"
+default-version = "1.0.0"
+
+[qualification]
+schema = "oliphaunt-extension-upgrade-qualification-v1"
+targets = ["linux-x64-gnu"]
+runner = "${runner}"
+`);
+  writeFixture(root, "src/extensions/external/fixture_search/tests/upstream.toml", `
+schema = "oliphaunt-extension-upstream-tests-v1"
+runner = "pgxs-installcheck"
+status = "required"
+reason = "The complete PGXS regression suite is required for this fixture."
+targets = ["linux-x64-gnu"]
+locale = "C.UTF-8"
+included_suites = ["regress"]
+suite_target_prefix = "test-"
+aggregate_suites = ["test-all", "test-shell"]
+excluded_suites = ["test-replication"]
+shared_preload_libraries = ["fixture_search"]
+`);
+  return root;
+}
+
+test("the live plan derives the complete pg_textsearch Linux qualification", () => {
+  const rows = nativeExtensionQualificationPlan({
+    target: "linux-x64-gnu",
+    selectedSqlNames: "pg_textsearch",
+  });
+  assert.deepEqual(rows, [
+    {
+      kind: "upgrade",
+      sqlName: "pg_textsearch",
+      target: "linux-x64-gnu",
+      runner: "src/extensions/external/pg_textsearch/tests/upgrade.sh",
+      sourceName: "pg_textsearch_upgrade_from",
+      sourceCommit: "07936f7cd67f7a183659d3acd459c0a5efc93756",
+      sourceControlPath: "pg_textsearch.control",
+      fromVersion: "0.6.1",
+      manifest: "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
+    },
+    {
+      kind: "upstream",
+      sqlName: "pg_textsearch",
+      target: "linux-x64-gnu",
+      runner: "pgxs-installcheck",
+      sourceName: "pg_textsearch",
+      sourceCommit: "578ff529894992fb9e67cae4c69424e65c84868e",
+      locale: "C.UTF-8",
+      includedSuites: ["regress"],
+      suiteTargetPrefix: "test-",
+      aggregateSuites: ["test-all", "test-local", "test-shell"],
+      excludedSuites: [
+        "test-cic",
+        "test-concurrency",
+        "test-logical-replication",
+        "test-multi-index",
+        "test-recovery",
+        "test-reindex",
+        "test-replication",
+        "test-replication-extended",
+        "test-segment",
+        "test-stress",
+      ],
+      preloadLibraries: ["pg_textsearch"],
+      manifest: "src/extensions/external/pg_textsearch/tests/upstream.toml",
+    },
+  ]);
 });
 
-test("the Linux x64 exact pg_textsearch candidate runs upgrade qualification", () => {
-  assert.match(
-    nativePackager,
-    /\[ "\$target_id" = "linux-x64-gnu" \] && selected_sql_name_matches "pg_textsearch"/u,
+test("the live plan is selected by extension and declared target", () => {
+  assert.deepEqual(nativeExtensionQualificationPlan({
+    target: "windows-x64-msvc",
+    selectedSqlNames: "pg_textsearch",
+  }), []);
+  assert.deepEqual(nativeExtensionQualificationPlan({
+    target: "linux-x64-gnu",
+    selectedSqlNames: "vector",
+  }), []);
+});
+
+test("the planner parses generic upgrade and upstream manifests", (t) => {
+  const root = qualificationFixture(t);
+  assert.deepEqual(nativeExtensionQualificationPlan({
+    root,
+    target: "linux-x64-gnu",
+    selectedSqlNames: ["fixture_search"],
+  }), [
+    {
+      kind: "upgrade",
+      sqlName: "fixture_search",
+      target: "linux-x64-gnu",
+      runner: "src/extensions/external/fixture_search/tests/upgrade.sh",
+      sourceName: "fixture_search_upgrade_1_0_0",
+      sourceCommit: "2222222222222222222222222222222222222222",
+      sourceControlPath: "fixture_search.control",
+      fromVersion: "1.0.0",
+      manifest: "src/extensions/external/fixture_search/tests/upgrade/source.toml",
+    },
+    {
+      kind: "upstream",
+      sqlName: "fixture_search",
+      target: "linux-x64-gnu",
+      runner: "pgxs-installcheck",
+      sourceName: "fixture_search",
+      sourceCommit: "1111111111111111111111111111111111111111",
+      locale: "C.UTF-8",
+      includedSuites: ["regress"],
+      suiteTargetPrefix: "test-",
+      aggregateSuites: ["test-all", "test-shell"],
+      excludedSuites: ["test-replication"],
+      preloadLibraries: ["fixture_search"],
+      manifest: "src/extensions/external/fixture_search/tests/upstream.toml",
+    },
+  ]);
+});
+
+test("the planner rejects transition identity drift and escaping runners", (t) => {
+  const identityRoot = qualificationFixture(t, { sqlName: "another_extension" });
+  assert.throws(
+    () => nativeExtensionQualificationPlan({
+      root: identityRoot,
+      target: "linux-x64-gnu",
+      selectedSqlNames: "fixture_search",
+    }),
+    /extension-control[.]sql-name must equal fixture_search/u,
   );
-  assert.match(
-    nativePackager,
-    /OLIPHAUNT_PG_TEXTSEARCH_CURRENT_RUNTIME="\$source_runtime"[\s\S]*src\/extensions\/external\/pg_textsearch\/tests\/upgrade[.]sh/u,
+
+  const runnerRoot = qualificationFixture(t, { runner: "../../outside.sh" });
+  assert.throws(
+    () => nativeExtensionQualificationPlan({
+      root: runnerRoot,
+      target: "linux-x64-gnu",
+      selectedSqlNames: "fixture_search",
+    }),
+    /qualification[.]runner must remain beneath/u,
   );
 });

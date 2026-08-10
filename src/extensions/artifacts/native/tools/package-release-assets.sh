@@ -37,6 +37,7 @@ esac
 require awk
 require bun
 native_extension_runtime_kind="$(bun "$native_asset_index_contract" runtime-kind)"
+native_extension_qualification="tools/release/native-extension-qualification.mjs"
 qualification_only="${OLIPHAUNT_EXTENSION_QUALIFICATION_ONLY:-0}"
 case "$qualification_only" in
   0|1) ;;
@@ -595,19 +596,28 @@ make_extension_artifact() {
 }
 
 package_desktop_target() {
-  local source_runtime embedded_modules runtime binary_contract_runtime
+  local source_runtime embedded_modules runtime binary_contract_runtime qualification_count
   build_desktop_extension_runtime
   source_runtime="$(host_extension_runtime_root)"
   embedded_modules="$(host_extension_embedded_modules_root)"
   require_dir "$source_runtime" "$target_id extension runtime"
   require_dir "$embedded_modules" "$target_id embedded extension modules"
-  if [ "$target_id" = "linux-x64-gnu" ] && selected_sql_name_matches "pg_textsearch"; then
+  qualification_count="$(bun "$native_extension_qualification" plan \
+    --target "$target_id" \
+    --selected-sql-names "$build_sql_names" \
+    --format count)"
+  case "$qualification_count" in
+    ""|*[!0-9]*) fail "native extension qualification planner returned an invalid count: $qualification_count" ;;
+  esac
+  if [ "$qualification_count" -gt 0 ]; then
     "$observed_phase" \
-      --label "qualify pg_textsearch pinned-version upgrade" \
-      --log /tmp/liboliphaunt-release-pg-textsearch-upgrade.log \
-      -- env \
-      OLIPHAUNT_PG_TEXTSEARCH_CURRENT_RUNTIME="$source_runtime" \
-      bash src/extensions/external/pg_textsearch/tests/upgrade.sh
+      --label "qualify declared native extension tests ($qualification_count plan rows)" \
+      --log "/tmp/liboliphaunt-release-native-extension-qualification-$target_id.log" \
+      -- bun "$native_extension_qualification" run \
+      --target "$target_id" \
+      --selected-sql-names "$build_sql_names" \
+      --runtime "$source_runtime" \
+      --format count
   fi
   runtime="$(prepare_extension_release_runtime "$source_runtime")"
   if [ "$target_id" = "windows-x64-msvc" ]; then

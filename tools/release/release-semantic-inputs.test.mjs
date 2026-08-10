@@ -546,6 +546,7 @@ test("extension artifact tool inventory explicitly separates byte producers from
     "src/extensions/artifacts/native/tools/check-release-artifacts.sh",
     "src/extensions/artifacts/native/tools/run-observed-phase.sh",
     "src/extensions/artifacts/native/tools/run-observed-phase.test.sh",
+    "src/extensions/artifacts/native/tools/run-pgxs-installcheck.sh",
   ];
   const inventory = [
     ...repositoryFiles("src/extensions/artifacts/native/tools"),

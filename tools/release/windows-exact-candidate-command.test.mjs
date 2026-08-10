@@ -43,6 +43,7 @@ const EXPECTED_WINDOWS_STANDARD_USER_CONTROL_READ_FILES = [
   "tools/release/rust-build-script-sha256.mjs",
   "src/sdks/js/src/native/extension-contract.ts",
   "tools/release/fixtures/js-exact-candidate-runtime.mjs",
+  "tools/release/fixtures/js-exact-candidate-extension-scenarios.mjs",
   "tools/release/fixtures/js-exact-candidate-procsignal.mjs",
   "tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs",
   "tools/release/fixtures/js-exact-candidate-jsr.mjs",

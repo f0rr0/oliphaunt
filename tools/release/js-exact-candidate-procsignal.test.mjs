@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   installNativeDirectProcSignalSentinel,
   verifyNativeDirectProcSignalSurvival,
   withNativeDirectExtensionSignalIsolation,
 } from "./fixtures/js-exact-candidate-procsignal.mjs";
-
-const RELEASE_ROOT = path.dirname(fileURLToPath(import.meta.url));
+import { stageExactCandidateRuntimeFixtures } from "./js-exact-candidate-consumer.mjs";
 
 function result(value) {
   return {
@@ -267,34 +266,28 @@ test("removes the host listener when installation evidence cannot be recorded", 
 });
 
 test("stages the ProcSignal helper beside the copied exact-candidate runtime", () => {
-  const runtimeSource = readFileSync(
-    path.join(RELEASE_ROOT, "fixtures/js-exact-candidate-runtime.mjs"),
-    "utf8",
-  );
-  const consumerSource = readFileSync(
-    path.join(RELEASE_ROOT, "js-exact-candidate-consumer.mjs"),
-    "utf8",
-  );
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-exact-candidate-procsignal-"));
+  const runtimeFixture = stageExactCandidateRuntimeFixtures(root);
+  const runtimeSource = readFileSync(runtimeFixture, "utf8");
 
-  expect(runtimeSource).toContain(
-    'from "./js-exact-candidate-procsignal.mjs";',
-  );
-  const installs = Array.from(
-    runtimeSource.matchAll(/installNativeDirectProcSignalSentinel\(/gu),
-    (match) => match.index,
-  );
-  const opens = Array.from(
-    runtimeSource.matchAll(/await Oliphaunt\.open\(/gu),
-    (match) => match.index,
-  );
-  expect(installs).toHaveLength(2);
-  expect(opens).toHaveLength(2);
-  expect(installs[0]).toBeLessThan(opens[0]);
-  expect(installs[1]).toBeLessThan(opens[1]);
-  expect(consumerSource).toContain(
-    '"tools/release/fixtures/js-exact-candidate-procsignal.mjs"',
-  );
-  expect(consumerSource).toContain(
-    'path.join(consumerRoot, "js-exact-candidate-procsignal.mjs")',
-  );
+  try {
+    expect(runtimeSource).toContain(
+      'from "./js-exact-candidate-procsignal.mjs";',
+    );
+    expect(existsSync(path.join(root, "js-exact-candidate-procsignal.mjs"))).toBe(true);
+    const installs = Array.from(
+      runtimeSource.matchAll(/installNativeDirectProcSignalSentinel\(/gu),
+      (match) => match.index,
+    );
+    const opens = Array.from(
+      runtimeSource.matchAll(/await Oliphaunt\.open\(/gu),
+      (match) => match.index,
+    );
+    expect(installs).toHaveLength(2);
+    expect(opens).toHaveLength(2);
+    expect(installs[0]).toBeLessThan(opens[0]);
+    expect(installs[1]).toBeLessThan(opens[1]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

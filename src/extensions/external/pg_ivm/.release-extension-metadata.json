@@ -40,8 +40,12 @@
   "format-version": 1,
   "generated-from": [
     {
-      "name": "kotlin-extension-catalog",
-      "path": "src/extensions/generated/sdk/kotlin.json"
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-evidence",
+      "path": "src/extensions/generated/docs/extension-evidence.json"
     }
   ],
   "release-product": "oliphaunt-extension-pg-ivm"

@@ -98,7 +98,7 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "b129ab1fe48b21044bddd46462345539de32c380c73480a3aa49444c473019ed"
+          "sha256": "c613de248fc7a593f06b4429a81224b80629681fc004c4600a532de1db8e418d"
         }
       ]
     },
@@ -154,7 +154,7 @@
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "d83a002f570fbd38e2553c7e3a42ef8ca73dfd5d3fd7b1c7cd7833775812c60d"
+          "sha256": "0db0679fb0a746df979bdf493c5e9a60af36d8b0982654a3a9190da04fa23e8e"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -186,7 +186,7 @@
         },
         {
           "path": "tools/release/build-extension-ci-artifacts.mjs",
-          "sha256": "4aa4332d70814a0fdada16207df7ade2a18405da0bde92a364307dc76ab241e5"
+          "sha256": "e9b7d7594de6c66c2bf46ca0438a183de0110067d5d1b9ed6d0a2b1428ac7bcd"
         },
         {
           "path": "tools/release/extension-artifact-archive-policy.mjs",
@@ -385,5 +385,5 @@
       ]
     }
   ],
-  "sha256": "6ecce2009cec3b122c6de204148b4b1d60df3755f31addaa7a33613095e8bef5"
+  "sha256": "9763b98fdc4bcc979f08da7a94e0976050bd372fa5bd5fd9a11b6d676b1599cb"
 }

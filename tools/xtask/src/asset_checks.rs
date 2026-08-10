@@ -303,6 +303,7 @@ mod asset_fingerprint_tests {
     #[test]
     fn release_envelope_files_do_not_invalidate_binary_assets() {
         for file in [
+            "src/extensions/external/vector/.release-extension-metadata.json",
             "src/extensions/external/vector/.release-semantic-inputs.json",
             "src/extensions/external/vector/CHANGELOG.md",
             "src/extensions/external/vector/VERSION",
@@ -340,6 +341,26 @@ mod asset_fingerprint_tests {
             "src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh",
             "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
             "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/build.rs",
+        ] {
+            assert!(is_asset_binary_semantic_input(file), "{file}");
+        }
+    }
+
+    #[test]
+    fn extension_target_specific_and_qualification_inputs_do_not_invalidate_binary_assets() {
+        for file in [
+            "src/extensions/external/pg_textsearch/tests/upgrade.sh",
+            "src/extensions/external/pg_textsearch/tests/upgrade/source.toml",
+            "src/extensions/external/pg_textsearch/tests/upstream.toml",
+            "src/extensions/external/pg_textsearch/patches/windows-msvc/recipe.json",
+            "src/extensions/external/pg_textsearch/patches/windows-msvc/pg_textsearch-1.3.1.patch",
+        ] {
+            assert!(!is_asset_binary_semantic_input(file), "{file}");
+        }
+        for file in [
+            "src/extensions/external/pg_textsearch/source.toml",
+            "src/extensions/external/pg_textsearch/recipe.toml",
+            "src/extensions/external/pg_textsearch/patches/0001-wasix.patch",
         ] {
             assert!(is_asset_binary_semantic_input(file), "{file}");
         }

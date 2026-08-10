@@ -72,6 +72,7 @@ export const WINDOWS_STANDARD_USER_CONTROL_READ_FILES = Object.freeze([
   "tools/release/rust-build-script-sha256.mjs",
   "src/sdks/js/src/native/extension-contract.ts",
   "tools/release/fixtures/js-exact-candidate-runtime.mjs",
+  "tools/release/fixtures/js-exact-candidate-extension-scenarios.mjs",
   "tools/release/fixtures/js-exact-candidate-procsignal.mjs",
   "tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs",
   "tools/release/fixtures/js-exact-candidate-jsr.mjs",
@@ -81,6 +82,10 @@ export const WINDOWS_STANDARD_USER_CONTROL_READ_FILES = Object.freeze([
 ]);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RUNTIME_FIXTURE = path.join(ROOT, "tools/release/fixtures/js-exact-candidate-runtime.mjs");
+const EXTENSION_SCENARIOS_FIXTURE = path.join(
+  ROOT,
+  "tools/release/fixtures/js-exact-candidate-extension-scenarios.mjs",
+);
 const PROCSIGNAL_FIXTURE = path.join(
   ROOT,
   "tools/release/fixtures/js-exact-candidate-procsignal.mjs",
@@ -2884,6 +2889,18 @@ export function exactCandidateJsrPortableCommand(fixture) {
   };
 }
 
+export function stageExactCandidateRuntimeFixtures(consumerRoot) {
+  const runtimeFixture = path.join(consumerRoot, "exact-candidate-runtime.mjs");
+  for (const [source, name] of [
+    [RUNTIME_FIXTURE, "exact-candidate-runtime.mjs"],
+    [EXTENSION_SCENARIOS_FIXTURE, "js-exact-candidate-extension-scenarios.mjs"],
+    [PROCSIGNAL_FIXTURE, "js-exact-candidate-procsignal.mjs"],
+  ]) {
+    copyFileSync(source, path.join(consumerRoot, name));
+  }
+  return runtimeFixture;
+}
+
 export function validateExactCandidateDenoPreparationReceipt(receipt, extensionCount, candidate) {
   if (
     receipt?.schemaVersion !== 1
@@ -3273,12 +3290,7 @@ function main(argv) {
       expectedPackages: contract.packages,
     });
 
-    const runtimeFixture = path.join(consumerRoot, "exact-candidate-runtime.mjs");
-    copyFileSync(RUNTIME_FIXTURE, runtimeFixture);
-    copyFileSync(
-      PROCSIGNAL_FIXTURE,
-      path.join(consumerRoot, "js-exact-candidate-procsignal.mjs"),
-    );
+    const runtimeFixture = stageExactCandidateRuntimeFixtures(consumerRoot);
     const extensionContractPath = path.join(consumerRoot, "exact-extension-contract.json");
     const extensionContract = {
       schemaVersion: 1,

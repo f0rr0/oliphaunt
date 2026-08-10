@@ -1,6 +1,26 @@
 schema = "oliphaunt-extension-upstream-tests-v1"
 runner = "pgxs-installcheck"
-status = "candidate"
-reason = "pg_textsearch is currently covered by Oliphaunt direct/server/restart/dump smoke evidence. Upstream PGXS installcheck should be wired before using the full upstream suite as release evidence."
-included_suites = ["pg_textsearch"]
-excluded_suites = []
+status = "required"
+reason = "Exact-candidate Linux qualification runs the complete upstream REGRESS list with PGXS installcheck. Non-PGXS shell, concurrency, stress, recovery, and replication targets require separate long-running or multi-node harnesses and are explicitly excluded here."
+targets = ["linux-x64-gnu"]
+locale = "C.UTF-8"
+included_suites = ["regress"]
+suite_target_prefix = "test-"
+aggregate_suites = [
+  "test-all",
+  "test-local",
+  "test-shell",
+]
+excluded_suites = [
+  "test-cic",
+  "test-concurrency",
+  "test-logical-replication",
+  "test-multi-index",
+  "test-recovery",
+  "test-reindex",
+  "test-replication",
+  "test-replication-extended",
+  "test-segment",
+  "test-stress",
+]
+shared_preload_libraries = ["pg_textsearch"]

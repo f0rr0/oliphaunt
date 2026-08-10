@@ -127,7 +127,10 @@ BASE_SOURCE_DIGEST_INPUTS = [
     "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
+    "src/extensions/artifacts/native/tools/package-release-assets.sh",
+    "src/extensions/artifacts/native/tools/run-pgxs-installcheck.sh",
     "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
+    "tools/release/native-extension-qualification.mjs",
 ]
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -1192,7 +1195,7 @@ def target_native_support_modules(sql_name: str, target: str) -> list[dict]:
     return modules
 
 
-def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
+def generated_extension_metadata(catalog: dict, consumer: str) -> dict:
     rows = []
     release_metadata = extension_metadata_by_sql_name()
     public_sql_names = {
@@ -1247,7 +1250,7 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
             "source-kind": extension.get("source-kind"),
             "archive": promotion.get("archive") or "",
         }
-        if sdk == "react-native":
+        if consumer == "react-native":
             row["ios-static-dependencies"] = mobile_static_dependencies(
                 sql_name, "ios_dependencies"
             )
@@ -1258,7 +1261,7 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
     ).hexdigest()
     return {
         "format-version": 1,
-        "consumer": sdk,
+        "consumer": consumer,
         "extension-catalog-sha256": catalog_sha256,
         "generated-from": [
             {"name": "extension-catalog", "path": rel(CATALOG)},
@@ -1268,13 +1271,18 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
     }
 
 
-def generated_release_extension_metadata(kotlin_metadata: dict) -> dict[Path, dict]:
+def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
+    return generated_extension_metadata(catalog, sdk)
+
+
+def generated_release_extension_metadata(catalog: dict) -> dict[Path, dict]:
     product_paths = exact_extension_product_paths()
     rows_by_product: dict[str, list[dict]] = {product: [] for product in product_paths}
-    for row in kotlin_metadata.get("extensions", []):
+    release_metadata = generated_extension_metadata(catalog, "release-product")
+    for row in release_metadata.get("extensions", []):
         product = row.get("release-product")
         if product not in rows_by_product:
-            fail(f"Kotlin extension metadata row has unknown release product {product}")
+            fail(f"release extension metadata row has unknown release product {product}")
         rows_by_product[str(product)].append(row)
 
     generated: dict[Path, dict] = {}
@@ -1287,9 +1295,7 @@ def generated_release_extension_metadata(kotlin_metadata: dict) -> dict[Path, di
             "format-version": 1,
             "consumer": "release-product",
             "release-product": product,
-            "generated-from": [
-                {"name": "kotlin-extension-catalog", "path": rel(GENERATED_SDKS["kotlin"])},
-            ],
+            "generated-from": release_metadata["generated-from"],
             "extensions": rows,
         }
     return generated
@@ -2108,7 +2114,7 @@ def validate_generated_sdk_metadata(catalog: dict, build_plan: dict, write: bool
         write,
     )
     validate_generated_file(GENERATED_KOTLIN_SDK_METADATA, kotlin_metadata, write)
-    expected_release_metadata = generated_release_extension_metadata(kotlin_metadata)
+    expected_release_metadata = generated_release_extension_metadata(catalog)
     existing_release_metadata = set(ROOT.glob(f"src/extensions/**/{RELEASE_EXTENSION_METADATA_BASENAME}"))
     unexpected_release_metadata = existing_release_metadata - set(expected_release_metadata)
     if unexpected_release_metadata:
