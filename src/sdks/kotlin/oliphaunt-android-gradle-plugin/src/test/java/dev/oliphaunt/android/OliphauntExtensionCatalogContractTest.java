@@ -94,20 +94,22 @@ public final class OliphauntExtensionCatalogContractTest {
     try {
       PublicTarGzArchivePreflight.Limits extensionLimits =
           PublicTarGzArchivePreflight.extensionArtifactLimits();
-      equal(134_217_728L, extensionLimits.maxCompressedBytes(), "extension compressed limit");
-      equal(536_870_912L, extensionLimits.maxExpandedBytes(), "extension expanded limit");
-      equal(268_435_456L, extensionLimits.maxEntryBytes(), "extension member limit");
+      equal(1_073_741_824L, extensionLimits.maxCompressedBytes(), "extension compressed limit");
+      equal(2_147_483_648L, extensionLimits.maxExpandedBytes(), "extension expanded limit");
+      equal(1_073_741_824L, extensionLimits.maxEntryBytes(), "extension member limit");
       equal(4_096, extensionLimits.maxEntries(), "extension member-count limit");
       equal(
           extensionLimits.maxExpandedBytes(),
           PublicTarGzArchivePreflight.expansionLimitForContractTest(1, extensionLimits),
           "extension policy must not add a Java-only compression-ratio limit");
+      // The qualified GDAL leaf exceeded 512 MiB. Combine its minimum proven
+      // size with the prior exact PostGIS high-water marks conservatively.
       if (!(64_676_748L <= extensionLimits.maxCompressedBytes()
-          && 345_621_694L <= extensionLimits.maxExpandedBytes()
-          && 154_827_564L <= extensionLimits.maxEntryBytes()
+          && 882_492_607L <= extensionLimits.maxExpandedBytes()
+          && 536_870_913L <= extensionLimits.maxEntryBytes()
           && 27 <= extensionLimits.maxEntries())) {
         throw new AssertionError(
-            "shared extension archive policy must admit the observed Android ARM64 PostGIS leaf shape");
+            "shared extension archive policy must admit the qualified Android ARM64 PostGIS leaf envelope");
       }
       List<TarFixtureEntry> validEntries =
           List.of(
@@ -511,8 +513,8 @@ public final class OliphauntExtensionCatalogContractTest {
       OliphauntExtensionLegalCatalog.Contract postgis =
           OliphauntExtensionLegalCatalog.requireLeaf("postgis", target);
       equal("external-native", postgis.profile(), target + " PostGIS legal profile");
-      equal(16, postgis.licenseFiles().size(), target + " PostGIS upstream license count");
-      equal(18, postgis.members().size(), target + " PostGIS exact legal member count");
+      equal(17, postgis.licenseFiles().size(), target + " PostGIS upstream license count");
+      equal(19, postgis.members().size(), target + " PostGIS exact legal member count");
       for (OliphauntExtensionLegalCatalog.LegalMember member : postgis.members()) {
         equal(0644, member.mode(), target + " PostGIS legal mode " + member.path());
       }
@@ -799,7 +801,7 @@ public final class OliphauntExtensionCatalogContractTest {
       try (var files = Files.walk(postgisRoot.resolve("files/share/licenses"))) {
         upstreamFiles = files.filter(Files::isRegularFile).count();
       }
-      equal(16L, upstreamFiles, "PostGIS exact upstream legal file count");
+      equal(17L, upstreamFiles, "PostGIS exact upstream legal file count");
     } finally {
       deleteRecursively(root);
     }

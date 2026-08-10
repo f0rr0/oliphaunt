@@ -282,6 +282,27 @@ pub(crate) fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn copy_dir_all_overlay(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in WalkDir::new(source) {
+        let entry = entry.with_context(|| format!("walk {}", source.display()))?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(source)
+            .with_context(|| format!("strip {} from {}", source.display(), path.display()))?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let output = destination.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&output).with_context(|| format!("create {}", output.display()))?;
+        } else if entry.file_type().is_file() {
+            copy_file(path, &output)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn ensure_file(path: &Path) -> Result<()> {
     if !path.is_file() {
         bail!("expected file missing: {}", path.display());

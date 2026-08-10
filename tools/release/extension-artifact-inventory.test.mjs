@@ -206,17 +206,25 @@ async function expectArchiveFailure(root, name, entries, metadata, pattern) {
 
 async function main() {
   assert.deepEqual(EXTENSION_ARTIFACT_ARCHIVE_POLICY, {
-    maxCompressedBytes: 128 * 1024 * 1024,
-    maxExpandedBytes: 512 * 1024 * 1024,
-    maxMemberBytes: 256 * 1024 * 1024,
+    maxCompressedBytes: 1024 * 1024 * 1024,
+    maxExpandedBytes: 2 * 1024 * 1024 * 1024,
+    maxMemberBytes: 1024 * 1024 * 1024,
     maxMembers: 4096,
   });
-  const observedAndroidPostgisMembers = [154_827_564, 110_259_522, 80_534_608];
-  observedAndroidPostgisMembers.length = 27;
-  observedAndroidPostgisMembers.fill(0, 3);
+  // The qualified GDAL leaf exceeded the former 512 MiB ceiling. Combine the
+  // smallest size that proves that failure with the prior exact PostGIS high
+  // water marks instead of inventing an unobserved exact GDAL byte count.
+  const qualifiedAndroidPostgisMembers = [
+    (512 * 1024 * 1024) + 1,
+    154_827_564,
+    110_259_522,
+    80_534_608,
+  ];
+  qualifiedAndroidPostgisMembers.length = 27;
+  qualifiedAndroidPostgisMembers.fill(0, 4);
   const observedAndroidPostgisExpanded = validateExtensionArtifactArchivePlan(
-    observedAndroidPostgisMembers.map((bytes, index) => ({ name: `member-${index}`, bytes })),
-    "observed Android ARM64 PostGIS artifact",
+    qualifiedAndroidPostgisMembers.map((bytes, index) => ({ name: `member-${index}`, bytes })),
+    "qualified Android ARM64 PostGIS artifact envelope",
   );
   assert.ok(64_676_748 <= EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxCompressedBytes);
   assert.ok(observedAndroidPostgisExpanded <= EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxExpandedBytes);
@@ -1132,7 +1140,7 @@ async function main() {
         nativeRuntimeVersion: "1.2.3",
         label: "oversized member",
       }),
-      /member .* exceeds 268435456 bytes/u,
+      /member .* exceeds 1073741824 bytes/u,
     );
 
     assert.throws(
@@ -1140,7 +1148,7 @@ async function main() {
         { name: "one", bytes: EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxMemberBytes },
         { name: "two", bytes: EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxMemberBytes },
       ]),
-      /expands beyond 536870912 bytes/u,
+      /expands beyond 2147483648 bytes/u,
     );
 
     const excessiveMembers = new Map([["manifest.properties", manifest()]]);

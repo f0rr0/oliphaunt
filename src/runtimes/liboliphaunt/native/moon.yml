@@ -50,6 +50,7 @@ tasks:
       - "liboliphaunt-native:generation-lifecycle-test"
       - "liboliphaunt-native:ios-extension-packager-test"
       - "liboliphaunt-native:module-dir-resolver-test"
+      - "liboliphaunt-native:postgis-build-contract-test"
       - "liboliphaunt-native:postgis-reproducible-time-test"
       - "liboliphaunt-native:static-extension-registry-test"
       - "liboliphaunt-native:symbol-scope-test"
@@ -125,6 +126,16 @@ tasks:
       - "/tools/xtask/src/asset_manifest.rs"
       - "/tools/xtask/src/asset_pipeline.rs"
       - "/tools/xtask/src/source_spine.rs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  postgis-build-contract-test:
+    tags: ["quality", "unit"]
+    command: "bash src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.test.sh"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.test.sh"
+      - "/src/runtimes/liboliphaunt/native/bin/mobile-static-extensions.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true

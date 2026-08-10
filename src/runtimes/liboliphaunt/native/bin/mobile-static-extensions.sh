@@ -100,6 +100,7 @@ oliphaunt_mobile_static_dependency_archive_candidates() {
   local dependency_root="${1:?missing mobile static dependency root}"
   local dependency="${2:?missing mobile static dependency name}"
   case "$dependency" in
+    gdal) printf '%s\n' "$dependency_root/gdal/lib/libgdal.a" ;;
     geos-c) printf '%s\n' "$dependency_root/geos/lib/libgeos_c.a" ;;
     geos) printf '%s\n' "$dependency_root/geos/lib/libgeos.a" ;;
     json-c) printf '%s\n' "$dependency_root/json-c/lib/libjson-c.a" ;;

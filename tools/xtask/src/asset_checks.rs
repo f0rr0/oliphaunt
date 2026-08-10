@@ -1014,6 +1014,22 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
                 bail!("generated extension API is stale: missing {description} {needle}");
             }
         }
+        for native_module in &extension.native_modules {
+            if extension
+                .native_module
+                .as_deref()
+                .is_some_and(|primary| native_module.path == format!("lib/postgresql/{primary}"))
+            {
+                continue;
+            }
+            let needle = format!("{:?}", native_module.path);
+            if !generated.contains(&needle) {
+                bail!(
+                    "generated extension API is stale: missing native support module path {needle} for {}",
+                    extension.sql_name
+                );
+            }
+        }
         if extension.smoke_status.promoted {
             for (needle, description) in [
                 (
@@ -1611,6 +1627,7 @@ fn check_extension_archive_layout(path: &Path) -> Result<()> {
                 | "share/proj"
                 | "share/postgresql"
                 | "share/postgresql/extension"
+                | "share/postgresql/gdal"
                 | "share/postgresql/tsearch_data"
         ) {
             continue;
@@ -1618,6 +1635,7 @@ fn check_extension_archive_layout(path: &Path) -> Result<()> {
         if entry.starts_with("lib/postgresql/")
             || entry.starts_with("share/proj/")
             || entry.starts_with("share/postgresql/extension/")
+            || entry.starts_with("share/postgresql/gdal/")
             || entry.starts_with("share/postgresql/tsearch_data/")
         {
             continue;

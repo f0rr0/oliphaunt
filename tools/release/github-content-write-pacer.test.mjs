@@ -332,7 +332,7 @@ test("pacing that crosses the absolute deadline issues no transport attempt", (t
   assert.equal(spawnCalls, 0);
 });
 
-test("the live-derived 18-product/141-asset first release fits both GitHub hourly ceilings", () => {
+test("the live-derived 18-product/142-asset first release fits both GitHub hourly ceilings", () => {
   const graph = loadGraph("github-content-write-pacer.test");
   const productCount = Object.keys(graph.products).length;
   assert.equal(productCount, 18);
@@ -348,7 +348,7 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
     { product, publishedOnly: true, surface: "github-release" },
     "github-content-write-pacer.test",
   ).length, 0);
-  assert.equal(extensionAssetCount, 108);
+  assert.equal(extensionAssetCount, 109);
   assert.equal(binaryAssetCount, 33);
   const assetCount = extensionAssetCount + binaryAssetCount;
   const extensionProducts = new Set(exactExtensionProducts("github-content-write-pacer.test"));
@@ -379,17 +379,17 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   });
   assert.equal(sourceTagWriteCount(graph, ["oliphaunt-swift"]), 1);
   assert.equal(sourceTagWriteCount(graph, ["oliphaunt-rust"]), 0);
-  assert.equal(budget.preRegistryContentWrites, 185);
-  assert.equal(budget.totalContentWrites, 209);
+  assert.equal(budget.preRegistryContentWrites, 186);
+  assert.equal(budget.totalContentWrites, 210);
   assert.equal(FIRST_RELEASE_TRANSFER_REQUEST_TOTAL, 88);
   assert.equal(FIRST_RELEASE_NOMINAL_CORE_REQUESTS, 579);
-  assert.equal(budget.conservativeCoreRequests, 579);
+  assert.equal(budget.conservativeCoreRequests, 580);
   assert.equal(conservativeCoreRequestCount({
-    assetCount: 141,
+    assetCount: 142,
     assetCounts,
     attestationWrites: 6,
     productCount,
-  }), 579);
+  }), 580);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR, 361);
   assert.equal(GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE, 7);
   assert.equal(
@@ -407,7 +407,7 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   assert.equal(budget.projectedRollingCoreRequests, 832);
   assert.ok(budget.projectedRollingCoreRequests < 900);
   assert.ok(500 - GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR >= 130);
-  assert.equal(budget.totalPacingMs, GITHUB_CONTENT_WRITE_COLD_START_MS + (209 * 10_000));
+  assert.equal(budget.totalPacingMs, GITHUB_CONTENT_WRITE_COLD_START_MS + (210 * 10_000));
   assert.ok((2 * productCount * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (30 * 60_000), "draft staging fits its operation budget");
   assert.ok((Math.max(...assetCounts.values()) * GITHUB_CONTENT_WRITE_INTERVAL_MS) < (20 * 60_000), "largest product pacing fits its count-derived upload budget");
   assert.ok(
@@ -441,7 +441,7 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
   assert.ok(
     budget.assetUploadPlan.productCount === 12
       && budget.assetUploadPlan.waves.length === 3
-      && budget.assetUploadPlan.totalWindowMs === 82.5 * 60_000,
+      && budget.assetUploadPlan.totalWindowMs === 5_020_000,
     "the exact asset topology uses three bounded five-lane shared-pacer waves",
   );
   const admitted = assertReleaseRequestWindow(budget, {
@@ -462,11 +462,11 @@ test("the live-derived 18-product/141-asset first release fits both GitHub hourl
     carrierCounts.jsr.length * NORMAL_REGISTRY_JSR_SECONDS_PER_CARRIER,
   ) + NORMAL_REGISTRY_EXECUTOR_RESERVE_SECONDS;
   assert.equal(independentLaneUpperBoundSeconds, 18_300);
-  assert.equal(admitted.preRegistryOperationSeconds, 14_430);
+  assert.equal(admitted.preRegistryOperationSeconds, 14_500);
   assert.equal(admitted.finalizationStepTimeoutSeconds, RELEASE_FINALIZATION_STEP_TIMEOUT_SECONDS);
   assert.equal(admitted.cleanupMarginSeconds, RELEASE_FINALIZATION_CLEANUP_MARGIN_SECONDS);
   assert.equal(admitted.minimumFinalizationSeconds, RELEASE_MINIMUM_FINALIZATION_SECONDS);
-  assert.equal(admitted.simulatedRegistryDeadlineEpochSeconds, 3_510);
+  assert.equal(admitted.simulatedRegistryDeadlineEpochSeconds, 3_440);
   assert.ok(
     admitted.simulatedRegistryDeadlineEpochSeconds < independentLaneUpperBoundSeconds,
     "the staging simulation honestly exercises dependency-closed subset admission instead of pretending every npm carrier fits",

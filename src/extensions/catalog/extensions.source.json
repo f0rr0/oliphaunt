@@ -1197,7 +1197,7 @@
         "postgres extension",
         "experimental"
       ],
-      "bundle-size": 8551161,
+      "bundle-size": 11490267,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
       "control": {
         "module-pathname": "@MODULEPATH@",
@@ -1206,6 +1206,7 @@
       },
       "dependencies": [],
       "native-dependencies": [
+        "gdal:3.13.2-static",
         "geos:3.14.1-static",
         "proj:9.8.1-static",
         "sqlite:3.53.1-static",

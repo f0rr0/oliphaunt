@@ -1887,7 +1887,7 @@ fn stage_recipe_staged_extension(
             extension.id,
             source.display()
         );
-        copy_dir_all(&source, &stage.join(&data_dir.destination))?;
+        copy_dir_all_overlay(&source, &stage.join(&data_dir.destination))?;
     }
     Ok(())
 }

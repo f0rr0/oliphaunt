@@ -596,10 +596,10 @@ test("binds the exact indexed iOS extension producer and rejects orphaned or dri
   const fixture = writeIosExtensionInputFixture(contract);
   const inspected = validateIosExtensionCandidateInputs(fixture.root, contract);
   expect(inspected.targetDirectory).toBe(fixture.targetDirectory);
-  expect(inspected.artifacts).toHaveLength(85);
+  expect(inspected.artifacts).toHaveLength(86);
   expect(inspected.artifacts.filter(({ kind }) => kind === "runtime")).toHaveLength(39);
   expect(inspected.artifacts.filter(({ kind }) => kind === "ios-xcframework")).toHaveLength(38);
-  expect(inspected.artifacts.filter(({ kind }) => kind === "ios-dependency-xcframework")).toHaveLength(8);
+  expect(inspected.artifacts.filter(({ kind }) => kind === "ios-dependency-xcframework")).toHaveLength(9);
 
   const orphan = path.join(fixture.targetDirectory, "unindexed.zip");
   writeFileSync(orphan, "unindexed bytes\n");

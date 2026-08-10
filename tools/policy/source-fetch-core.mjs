@@ -71,6 +71,10 @@ export function curlPlatformTlsArgs(platform = process.platform) {
   return platform === 'win32' ? ['--ssl-revoke-best-effort'] : [];
 }
 
+export function gitPlatformConfigArgs(platform = process.platform) {
+  return platform === 'win32' ? ['-c', 'core.longpaths=true'] : [];
+}
+
 export function curlDownloadArgs(url, output, {platform = process.platform} = {}) {
   assertHttpsUrl(url);
   return [
@@ -700,6 +704,7 @@ export function createSourceFetcher({
     // checks. Force one worktree representation even when an upstream marks a
     // file `text=auto` and the host's native checkout convention is CRLF.
     return run('git', [
+      ...gitPlatformConfigArgs(),
       '-c',
       'core.fsmonitor=false',
       '-c',

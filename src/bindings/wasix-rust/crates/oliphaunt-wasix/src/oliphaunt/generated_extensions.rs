@@ -714,11 +714,16 @@ const CANDIDATE_POSTGIS_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;
 const CANDIDATE_POSTGIS_LOAD_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_POSTGIS_POST_CREATE_SQL: &[&str] = EMPTY_SQL;
 const CANDIDATE_POSTGIS_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
-const CANDIDATE_POSTGIS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
-    &[ExtensionNativeModule::new(
+const CANDIDATE_POSTGIS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = &[
+    ExtensionNativeModule::new(
         "lib/postgresql/liboliphaunt_postgis_deps.so",
         Some("extension:postgis:postgis_deps"),
-    )];
+    ),
+    ExtensionNativeModule::new(
+        "lib/postgresql/postgis_raster-3.so",
+        Some("extension:postgis:postgis_raster"),
+    ),
+];
 
 pub(crate) const CANDIDATE_POSTGIS: Extension = Extension::new(
     "PostGIS",

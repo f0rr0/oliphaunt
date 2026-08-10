@@ -104,7 +104,7 @@
       "inputs": [
         {
           "path": "src/extensions/external/postgis/source.toml",
-          "sha256": "cd720f3bae015515639273795df9fb6be6ba2ad7c9d6714d1b1e330643c33040"
+          "sha256": "f9f6168aa0733aa64b59c61e1592c7bc2c337defb981569bce87a70f7f185934"
         },
         {
           "path": "src/extensions/external/postgis/tools/reproducible-bin/date",
@@ -112,7 +112,7 @@
         },
         {
           "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
-          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+          "sha256": "afa6de6175776c546130ae4a72fea7aecf9e3ea492c7c53649960252315ada39"
         }
       ]
     },
@@ -319,7 +319,7 @@
         },
         {
           "path": "src/sdks/rust/src/generated/extensions.rs",
-          "sha256": "d68a58370ffd30d3c9082f7a90c25de29386fc22f4fa9e58540b76fefd5e5c2d"
+          "sha256": "508db44d433b395dab368a411be7219631f3f8e50664f98a5aae7941b52ceab1"
         },
         {
           "path": "src/sdks/rust/src/lib.rs",
@@ -339,7 +339,7 @@
         },
         {
           "path": "src/sdks/rust/src/liboliphaunt/root/extensions.rs",
-          "sha256": "7c00ef165b6261e051fdb3396a13d9338862d7f09ab093dff8b777013dda909b"
+          "sha256": "55363b84571d596e5dae07d1fa911896428403409145e2906e3951e787df6b5b"
         },
         {
           "path": "src/sdks/rust/src/liboliphaunt/root/files.rs",
@@ -371,7 +371,7 @@
         },
         {
           "path": "src/sdks/rust/src/runtime_resources.rs",
-          "sha256": "35a488818a700b0304758261348ef64590510f3a65ba6119d43dbecbab92b94e"
+          "sha256": "6321238615a678c7b16039c7c5a4a574993409b67c77d7f2d0c5d13e27491f98"
         },
         {
           "path": "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
@@ -457,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "abdff456e32ce1bb7af0733277f8f4578b6fa2e334046c7f63358aaa64d91d6c"
+  "sha256": "200f6f83fedd13a84f3ab4f866eb356c4088199da2b1c68877decfa80f22e997"
 }

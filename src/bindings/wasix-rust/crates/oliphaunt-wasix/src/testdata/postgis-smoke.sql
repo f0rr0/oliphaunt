@@ -1,3 +1,7 @@
+CREATE EXTENSION IF NOT EXISTS postgis_raster;
+-- oliphaunt-statement
+SET postgis.gdal_enabled_drivers = 'ENABLE_ALL';
+-- oliphaunt-statement
 DROP TABLE IF EXISTS liboliphaunt_postgis_points;
 -- oliphaunt-statement
 CREATE TEMP TABLE liboliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
@@ -15,6 +19,9 @@ DECLARE
   area float8;
   polygons int;
   nearby int;
+  gdal_drivers int;
+  raster_roundtrip raster;
+  raster_value float8;
 BEGIN
   SELECT ST_Distance(ST_GeomFromText('POINT(0 0)'), ST_GeomFromText('POINT(3 4)')) INTO distance;
   IF distance <> 5 THEN
@@ -55,6 +62,29 @@ BEGIN
   );
   IF nearby <> 2 THEN
     RAISE EXCEPTION 'postgis dwithin failed: %', nearby;
+  END IF;
+  SELECT count(*) INTO gdal_drivers
+  FROM ST_GDALDrivers()
+  WHERE short_name = 'GTiff' AND can_read AND can_write;
+  IF gdal_drivers <> 1 THEN
+    RAISE EXCEPTION 'postgis raster GeoTIFF driver is unavailable';
+  END IF;
+  SELECT ST_FromGDALRaster(
+    ST_AsGDALRaster(
+      ST_AddBand(
+        ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0, 4326),
+        '8BUI'::text,
+        7::double precision,
+        0::double precision
+      ),
+      'GTiff'
+    )
+  ) INTO raster_roundtrip;
+  SELECT ST_Value(raster_roundtrip, 1, 1, 1) INTO raster_value;
+  IF raster_value <> 7 OR ST_SRID(raster_roundtrip) <> 4326 THEN
+    RAISE EXCEPTION 'postgis raster GDAL round-trip failed: value %, srid %',
+      raster_value,
+      ST_SRID(raster_roundtrip);
   END IF;
 END $$;
 -- oliphaunt-statement

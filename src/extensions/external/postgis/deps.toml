@@ -1,6 +1,14 @@
 schema = "oliphaunt-extension-deps-v1"
 
 [[dependencies]]
+name = "gdal"
+source = "gdal"
+version = "3.13.2"
+linkage = "static"
+license = "MIT"
+mobile-static-dependencies = ["gdal"]
+
+[[dependencies]]
 name = "geos"
 source = "geos"
 version = "3.14.1"

@@ -316,8 +316,8 @@ oliphaunt_wasix_static_cmake_build() {
     -DCMAKE_C_VISIBILITY_PRESET=hidden \
     -DCMAKE_CXX_VISIBILITY_PRESET=hidden \
     -DCMAKE_VISIBILITY_INLINES_HIDDEN=ON \
-    -DCMAKE_C_FLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument" \
-    -DCMAKE_CXX_FLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument" \
+    -DCMAKE_C_FLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument ${OLIPHAUNT_WASIX_CMAKE_C_FLAGS_EXTRA:-}" \
+    -DCMAKE_CXX_FLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument ${OLIPHAUNT_WASIX_CMAKE_CXX_FLAGS_EXTRA:-}" \
     "$@"
   cmake --build "$build_dir" --parallel "$JOBS"
   cmake --install "$build_dir"

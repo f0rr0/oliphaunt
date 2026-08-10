@@ -104,7 +104,7 @@
       "inputs": [
         {
           "path": "src/extensions/external/postgis/source.toml",
-          "sha256": "cd720f3bae015515639273795df9fb6be6ba2ad7c9d6714d1b1e330643c33040"
+          "sha256": "f9f6168aa0733aa64b59c61e1592c7bc2c337defb981569bce87a70f7f185934"
         },
         {
           "path": "src/extensions/external/postgis/tools/reproducible-bin/date",
@@ -112,7 +112,7 @@
         },
         {
           "path": "src/extensions/external/postgis/tools/reproducible-time.sh",
-          "sha256": "08fc52aceb5e5e6d649b89adabe0b5b4ec8af68e49bb576376c147ec686d81bb"
+          "sha256": "afa6de6175776c546130ae4a72fea7aecf9e3ea492c7c53649960252315ada39"
         }
       ]
     },
@@ -124,7 +124,7 @@
       "inputs": [
         {
           "path": "src/extensions/external/postgis/tools/build_wasix.sh",
-          "sha256": "d248aa8a29e89fd17a7a3e44b0bf92cc9084e15ea244ee9bb1e064965825fc66"
+          "sha256": "e9039cdd4c41a6a1d23b8439256588aa2c1ebab1825da73e54960336facdaa71"
         }
       ]
     },
@@ -162,15 +162,15 @@
         },
         {
           "path": "tools/xtask/src/asset_pipeline.rs",
-          "sha256": "be930c198af0b31432a9fa0dbd98fe5cad31d46474f8948660f4be3c2725ad47"
+          "sha256": "46121fe811da052c37b7afac640c81815b0fd0f5fb5008d772e6bb505b97ecfe"
         },
         {
           "path": "tools/xtask/src/extension_catalog.rs",
-          "sha256": "c67f61826704e8ff71265af85f8552b1a134fba1252b46921d10dea6d51e854a"
+          "sha256": "b10fbf9af420ec1a4a9757c605a0a1214eede8c278365c15e5c8af0575e5d07d"
         },
         {
           "path": "tools/xtask/src/fs_utils.rs",
-          "sha256": "d79e0cf095f3e0a6fd0b533afc17745c2929a21f58ed62f75fc99a1061db9e52"
+          "sha256": "fd82a4b6407811ed983b02a0e5b308b777d18e1829f5845a818ec2b0cbfe1c24"
         },
         {
           "path": "tools/xtask/src/main.rs",
@@ -212,27 +212,27 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "1b9ae33dc2ca239985c4cd5c1571e2669f2ea905acf45b6d81e4e31261e7f7bb"
+          "sha256": "2e5910f4c231cbacef83eeb4363d60f8cded28fdc93bed5bdd629a9dda3b6360"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
-          "sha256": "e0741112aeb1d1a187ba3fda06a06302026048eceef08b389f2e55a94343cd69"
+          "sha256": "b199a0af1f19934bf48fedde86c92f936c1599b9ab69ab44a4ca0c55af0fae1b"
         },
         {
           "path": "src/extensions/generated/extensions.build-plan.json",
-          "sha256": "24dceceb89d3f91da6c66bc309c4767408b71908bafd32027d784b2a5f975ca5"
+          "sha256": "ed8222fbcb0ce844cc57d0a3a891dc6163f4ab46bdce1c62d1bb3b53ea0206cc"
         },
         {
           "path": "src/extensions/generated/extensions.catalog.json",
-          "sha256": "79ba39ba702d247fd975089cc812fbb4c3624ebd325f0fe1f6255dd575efddb7"
+          "sha256": "f23f6f94ce93eb529acac27647a6b293392f6b4a82a88aa8e5f9a41f88ee4653"
         },
         {
           "path": "src/extensions/generated/mobile/static-extensions.tsv",
-          "sha256": "4bff991f8fce3c66f1da9428fd84861c4700a0e7c744cce51c1c5837f0cafd5d"
+          "sha256": "961262b7a21d53e1753aafdd706808eda3b719f9b82e4d2c2acd27556209bb98"
         },
         {
           "path": "src/extensions/generated/mobile/static-registry.json",
-          "sha256": "6a66c127b3a95ce7697e16e8e416caa64a0cec325f3f00c6ff27f439e7b5ad20"
+          "sha256": "33f56a3a71439845abd043125c2dc9c0c67ad7cd134326116ce93ec021620452"
         },
         {
           "path": "src/extensions/generated/pgxs-build.tsv",
@@ -240,19 +240,19 @@
         },
         {
           "path": "src/extensions/generated/sdk/js.json",
-          "sha256": "d312d3d2b1b4f175eedb8c94c2fdffdf2d7959bcd5c58066137ed3e7f7522568"
+          "sha256": "32b2f7edae5b9c1be099b527543cc5142297e7002eee1437eb97edd18e589fcb"
         },
         {
           "path": "src/extensions/generated/sdk/react-native.json",
-          "sha256": "a6a2a40751ab03ec43e6f4c4122951fdfd447535b380f5c10a6fef5e262ac446"
+          "sha256": "b8e83476a21082aef84e39af3e42786e55cfa01c84e34db2efe1d3da45f24468"
         },
         {
           "path": "src/extensions/generated/sdk/rust.json",
-          "sha256": "fb62026022e218d3aa0cb0a920cd3da47a76e05d03b8066a42e1524894e500c3"
+          "sha256": "9a7323cb65836f6cc5397e94048c8c5bcfca0d178e9925261f4f1a68b79c1c4e"
         },
         {
           "path": "src/extensions/generated/wasix/extensions.json",
-          "sha256": "68c213ed758bede5ff2231cad64e41ac93500633e811b8d352cfafb5cde9a641"
+          "sha256": "2df56d10e5de24b978773e878bfd16666675ed97b238a9c53133b151fbc32680"
         }
       ]
     },
@@ -264,7 +264,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/kotlin.json",
-          "sha256": "e6a713ed46ca57edfc92855317865114a54c8b415736759668294cc9c592713b"
+          "sha256": "39a8f931f2ebb049a51f7a01e5f583895b3bd745ec61c75cc4a057dd71a4cef1"
         }
       ]
     },
@@ -276,7 +276,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/swift.json",
-          "sha256": "48a6d606f83ab8b28afc7770068671d9e462d7ae5f47360df29a4f798ba374c3"
+          "sha256": "a1f854cf183d45187e64e16de568208c58ddc9cdbd6c51eb86c4b46d84e022eb"
         }
       ]
     },
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "763a5c1635efc9c5275c839eb4870379d19077cb6426f89cc690e9ae1890bbad"
+  "sha256": "e1349e9e6076a60413541ea34b43f9684d10e58196afbab3d8e717869abf72f6"
 }

@@ -46,7 +46,7 @@
       "inputs": [
         {
           "path": "src/extensions/generated/sdk/swift.json",
-          "sha256": "48a6d606f83ab8b28afc7770068671d9e462d7ae5f47360df29a4f798ba374c3"
+          "sha256": "a1f854cf183d45187e64e16de568208c58ddc9cdbd6c51eb86c4b46d84e022eb"
         }
       ]
     },
@@ -99,5 +99,5 @@
       ]
     }
   ],
-  "sha256": "036f517f9b6cb431205dce53ba03f7e7bb4c4d12b30a6156524cd3b5878c07cc"
+  "sha256": "36b794bd6e4532ae33d24f0a10bb25b7611b253c06cd6a4ada5c3b4a37860f53"
 }

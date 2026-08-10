@@ -54,7 +54,12 @@ struct OliphauntSession {
     char last_error[1024];
 };
 
-static char global_last_error[1024];
+/*
+ * Failed opens do not have a session to own their error buffer. Swift Testing
+ * runs tests concurrently, so a process-global buffer lets an unrelated open
+ * overwrite the diagnostic before the caller reads it.
+ */
+static _Thread_local char global_last_error[1024];
 
 static void set_global_error(const char *message) {
     snprintf(global_last_error, sizeof(global_last_error), "%s", message ? message : "unknown liboliphaunt Swift bridge error");

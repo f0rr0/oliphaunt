@@ -510,6 +510,7 @@ function Get-DesiredHash {
         (Join-Path $RepoRoot "src/extensions/external/pg_uuidv7/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/deps.toml"),
+        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/gdal/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/geos/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/json-c/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/libxml2/source.toml"),
@@ -921,6 +922,80 @@ function Build-WindowsPostgisProjDependency {
     }
 }
 
+function Build-WindowsPostgisGdalDependency {
+    if (-not (NativeExtension-Selected "postgis")) {
+        return
+    }
+    Build-WindowsPostgisProjDependency
+    $prefix = Join-Path $PostgisDependencyPrefix "gdal"
+    if ((Test-Path (Join-Path $prefix "include/gdal.h")) -and
+        (Find-FirstFileOrNull $prefix @("gdal.lib"))) {
+        return
+    }
+    $sourceDir = External-Checkout "gdal"
+    if (-not (Test-Path (Join-Path $sourceDir "CMakeLists.txt"))) {
+        Fail "missing GDAL checkout for PostGIS: $sourceDir"
+    }
+    $geosPrefix = Join-Path $PostgisDependencyPrefix "geos"
+    $jsonPrefix = Join-Path $PostgisDependencyPrefix "json-c"
+    $libxml2Prefix = Join-Path $PostgisDependencyPrefix "libxml2"
+    $projPrefix = Join-Path $PostgisDependencyPrefix "proj"
+    $sqlitePrefix = Join-Path $PostgisDependencyPrefix "sqlite"
+    $geosCLib = First-File $geosPrefix @("geos_c.lib")
+    $jsonLib = First-File $jsonPrefix @("json-c.lib", "json-c-static.lib")
+    $libxml2Lib = First-File $libxml2Prefix @("libxml2s.lib", "libxml2.lib", "xml2.lib")
+    $projLib = First-File $projPrefix @("proj.lib", "libproj.lib")
+    $projConfig = First-File $projPrefix @("proj-config.cmake")
+    $projConfigDir = (Split-Path -Parent $projConfig).Replace("\", "/")
+    # CMake writes this value into a generated try_compile project. Use forward
+    # slashes so Windows path escapes such as \a are not parsed by CMake.
+    $sqliteLib = (First-File $sqlitePrefix @("sqlite3.lib", "libsqlite3.lib")).Replace("\", "/")
+    Invoke-CmakeInstall "gdal" $sourceDir (Join-Path $WorkRoot "gdal-windows-build") $prefix @(
+        "-DBASH_COMPLETIONS_DIR=",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_CSHARP_BINDINGS=OFF",
+        "-DBUILD_JAVA_BINDINGS=OFF",
+        "-DBUILD_PYTHON_BINDINGS=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DGDAL_BUILD_OPTIONAL_DRIVERS=OFF",
+        "-DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON",
+        "-DOGR_BUILD_OPTIONAL_DRIVERS=OFF",
+        "-DGDAL_ENABLE_DRIVER_GTIFF=ON",
+        "-DGDAL_ENABLE_DRIVER_VRT=ON",
+        "-DOGR_ENABLE_DRIVER_GEOJSON=ON",
+        "-DOGR_ENABLE_DRIVER_SHAPE=ON",
+        "-DGDAL_USE_EXTERNAL_LIBS=OFF",
+        "-DGDAL_USE_INTERNAL_LIBS=ON",
+        "-DGDAL_USE_OPENMP=OFF",
+        "-DGDAL_USE_CURL=OFF",
+        "-DGDAL_USE_OPENSSL=OFF",
+        "-DGDAL_USE_GEOS=ON",
+        "-DGEOS_INCLUDE_DIR=$(Join-Path $geosPrefix 'include')",
+        "-DGEOS_LIBRARY=$geosCLib",
+        "-DGDAL_USE_JSONC=ON",
+        "-DGDAL_USE_JSONC_INTERNAL=OFF",
+        "-DJSONC_INCLUDE_DIR=$(Join-Path $jsonPrefix 'include/json-c')",
+        "-DJSONC_LIBRARY=$jsonLib",
+        "-DGDAL_USE_LIBXML2=ON",
+        "-DLIBXML2_INCLUDE_DIR=$(Join-Path $libxml2Prefix 'include/libxml2')",
+        "-DLIBXML2_LIBRARY=$libxml2Lib",
+        "-DGDAL_USE_PROJ=ON",
+        "-DGDAL_FIND_PACKAGE_PROJ_MODE=CONFIG",
+        "-DPROJ_DIR=$projConfigDir",
+        "-DPROJ_INCLUDE_DIR=$(Join-Path $projPrefix 'include')",
+        "-DPROJ_LIBRARY=$projLib",
+        "-DGDAL_USE_SQLITE3=ON",
+        "-DSQLite3_INCLUDE_DIR=$(Join-Path $sqlitePrefix 'include')",
+        "-DSQLite3_LIBRARY=$sqliteLib",
+        "-DACCEPT_MISSING_SQLITE3_MUTEX_ALLOC=ON"
+    )
+    [void](First-File $prefix @("gdal.lib"))
+    if (-not (Test-Path (Join-Path $prefix "include/gdal.h"))) {
+        Fail "GDAL Windows build did not produce headers under $prefix"
+    }
+}
+
 function Build-WindowsPostgisDependencies {
     if (-not (NativeExtension-Selected "postgis")) {
         return
@@ -930,6 +1005,7 @@ function Build-WindowsPostgisDependencies {
     Build-WindowsPostgisGeosDependency
     Build-WindowsPostgisLibxml2Dependency
     Build-WindowsPostgisProjDependency
+    Build-WindowsPostgisGdalDependency
 }
 
 function Read-PostgisVersionConfig([string]$PostgisSourceDir) {
@@ -1020,6 +1096,7 @@ function Initialize-WindowsPostgisGeneratedSource([string]$PostgisDir, [string]$
     $buildDate = Format-PostgisSourceDate $sourceDateEpoch
     $geosVersionNumber = "31401"
     $projVersionNumber = "90801"
+    $gdalVersionNumber = "31302"
     $libXmlVersion = "2.14.6"
     $postgisVersion = "$($version.Major).$($version.Minor) USE_GEOS=1 USE_PROJ=1 USE_STATS=1"
     $localeDir = (Meson-Path (Join-Path $InstallDir "share/locale"))
@@ -1057,7 +1134,7 @@ function Initialize-WindowsPostgisGeneratedSource([string]$PostgisDir, [string]$
 #define PGSQL_LOCALEDIR "$localeDir"
 #define POSTGIS_BUILD_DATE "$buildDate"
 /* #undef POSTGIS_SFCGAL_VERSION */
-/* #undef POSTGIS_GDAL_VERSION */
+#define POSTGIS_GDAL_VERSION $gdalVersionNumber
 #define POSTGIS_GEOS_VERSION $geosVersionNumber
 #define POSTGIS_LIBXML2_VERSION "$libXmlVersion"
 #define POSTGIS_LIB_VERSION "$($version.Version)"
@@ -1093,10 +1170,22 @@ function Initialize-WindowsPostgisGeneratedSource([string]$PostgisDir, [string]$
     }
     Expand-PostgisTemplate (Join-Path $PostgisDir "postgis/sqldefines.h.in") (Join-Path $PostgisDir "postgis/sqldefines.h") $templateValues
     Expand-PostgisTemplate (Join-Path $PostgisDir "liblwgeom/liblwgeom.h.in") (Join-Path $PostgisDir "liblwgeom/liblwgeom.h") $templateValues
+    Set-Content -Path (Join-Path $PostgisDir "raster/raster_config.h") -Encoding UTF8 -Value @"
+/* raster_config.h. Generated by Oliphaunt's Windows native producer. */
+#ifndef POSTGIS_RASTER_CONFIG_H
+#define POSTGIS_RASTER_CONFIG_H 1
+#define POSTGIS_GDAL_VERSION $gdalVersionNumber
+#endif
+"@
     Expand-PostgisTemplate (Join-Path $PostgisDir "extensions/postgis/postgis.control.in") (Join-Path $PostgisDir "extensions/postgis/postgis.control") @{
         EXTVERSION = $version.Version
         EXTENSION = "postgis"
         MODULEPATH = '$libdir/postgis-3'
+    }
+    Expand-PostgisTemplate (Join-Path $PostgisDir "extensions/postgis_raster/postgis_raster.control.in") (Join-Path $PostgisDir "extensions/postgis_raster/postgis_raster.control") @{
+        EXTVERSION = $version.Version
+        EXTENSION = "postgis_raster"
+        MODULEPATH = '$libdir/postgis_raster-3'
     }
     $version
 }
@@ -1344,13 +1433,17 @@ function New-PostgisRasterUnpackageSql([string]$PostgisDir, [string]$SqlDir, [st
     Set-Content -Path (Join-Path $SqlDir "raster_unpackage.sql") -Encoding UTF8 -Value ($prefix.ToString() + $body + $suffix.ToString())
 }
 
-function Convert-PostgisExtensionDropGuards([string]$InputPath, [string]$OutputPath) {
+function Convert-PostgisExtensionDropGuards(
+    [string]$InputPath,
+    [string]$OutputPath,
+    [string]$ExtensionName = "postgis"
+) {
     $text = (Get-Content -Raw -Path $InputPath).Replace("BEGIN;", "").Replace("COMMIT;", "")
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($line in ($text -split "`r?`n")) {
         if ($line -match "^(DROP .*)\;") {
             $drop = $Matches[1]
-            $lines.Add("SELECT @extschema@.postgis_extension_drop_if_exists('postgis', '$drop');")
+            $lines.Add("SELECT @extschema@.postgis_extension_drop_if_exists('$ExtensionName', '$drop');")
         }
         $lines.Add($line)
     }
@@ -1447,6 +1540,42 @@ function Build-WindowsPostgisSql([string]$PostgisDir, [pscustomobject]$Version) 
     $unpackagedVersionSql = Join-Path $extensionSqlDir "postgis--unpackaged--$($Version.Version).sql"
     Invoke-PerlFromInputFile $installSql @((Join-Path $PostgisDir "utils/create_unpackaged.pl"), "postgis") $unpackagedVersionSql
     Add-Content -Path $unpackagedVersionSql -Encoding UTF8 -Value (Get-Content -Raw -Path $anyUpgradeSql)
+
+    $rasterExtensionDir = Join-Path $PostgisDir "extensions/postgis_raster"
+    $rasterExtensionSqlDir = Join-Path $rasterExtensionDir "sql"
+    New-Item -ItemType Directory -Force -Path $rasterExtensionSqlDir | Out-Null
+    $rasterModulePath = '$libdir/postgis_raster-3'
+    $rasterForExtension = Join-Path $rasterExtensionSqlDir "rtpostgis_for_extension.sql"
+    New-PostgisSqlFromTemplate (Join-Path $rasterDir "rtpostgis.sql.in") $rasterForExtension $rasterIncludeDirs $rasterModulePath $false $false
+    $rasterExtensionSql = Join-Path $rasterExtensionSqlDir "rtpostgis.sql"
+    $rasterExtensionText = (Get-Content -Raw -Path $rasterForExtension).Replace("BEGIN;", "").Replace("COMMIT;", "")
+    Set-Content -Path $rasterExtensionSql -Encoding UTF8 -Value $rasterExtensionText
+
+    $rasterUpgradeInput = Join-Path $rasterExtensionSqlDir "rtpostgis_upgrade_for_extension.sql.in"
+    Invoke-PerlToFile @((Join-Path $PostgisDir "utils/create_upgrade.pl"), $rasterForExtension) $rasterUpgradeInput
+    $rasterUpgradeForExtension = Join-Path $rasterExtensionSqlDir "rtpostgis_upgrade_for_extension.sql"
+    Join-TextFiles $rasterUpgradeForExtension @(
+        (Join-Path $postgisSqlDir "common_before_upgrade.sql"),
+        (Join-Path $rasterDir "rtpostgis_upgrade_cleanup.sql"),
+        $rasterUpgradeInput,
+        (Join-Path $rasterDir "rtpostgis_drop.sql"),
+        (Join-Path $postgisSqlDir "common_after_upgrade.sql")
+    ) "BEGIN;" "COMMIT;"
+    $rasterUpgradeSql = Join-Path $rasterExtensionSqlDir "rtpostgis_upgrade.sql"
+    Convert-PostgisExtensionDropGuards $rasterUpgradeForExtension $rasterUpgradeSql "postgis_raster"
+
+    $rasterInstallSql = Join-Path $rasterExtensionSqlDir "postgis_raster--$($Version.Version).sql"
+    Join-TextFiles $rasterInstallSql @($rasterExtensionSql) '\echo Use "CREATE EXTENSION postgis_raster" to load this file. \quit'
+    $rasterAnyUpgradeSql = Join-Path $rasterExtensionSqlDir "postgis_raster--ANY--$($Version.Version).sql"
+    Join-TextFiles $rasterAnyUpgradeSql @(
+        (Join-Path $PostgisDir "extensions/postgis_extension_helper.sql"),
+        $rasterUpgradeSql,
+        (Join-Path $PostgisDir "extensions/postgis_extension_helper_uninstall.sql")
+    ) '\echo Use "CREATE EXTENSION postgis_raster" to load this file. \quit'
+    Set-Content -Path (Join-Path $rasterExtensionSqlDir "postgis_raster--unpackaged.sql") -Encoding UTF8 -Value "-- Nothing to do here"
+    $rasterUnpackagedSql = Join-Path $rasterExtensionSqlDir "postgis_raster--unpackaged--$($Version.Version).sql"
+    Invoke-PerlFromInputFile $rasterInstallSql @((Join-Path $PostgisDir "utils/create_unpackaged.pl"), "postgis_raster") $rasterUnpackagedSql
+    Add-Content -Path $rasterUnpackagedSql -Encoding UTF8 -Value (Get-Content -Raw -Path $rasterAnyUpgradeSql)
 }
 
 function Patch-WindowsPostgisFlatgeobufSource([string]$SourceDir) {
@@ -1562,9 +1691,29 @@ function Patch-WindowsPostgisSource([string]$PostgisDir) {
 #endif
 "@
 
+    $legacyAttributeFallback = "# define __attribute__ (x)"
+    $guardedAttributeFallback = @"
+# ifndef __attribute__
+#  define __attribute__(x)
+# endif
+"@
+    foreach ($relativePath in @("raster/rt_core/librtcore.h", "raster/rt_pg/rtpostgis.c")) {
+        $sourcePath = Join-Path $PostgisDir $relativePath
+        $sourceText = Get-Content -Raw -Path $sourcePath
+        $fallbackCount = [regex]::Matches(
+            $sourceText,
+            [regex]::Escape($legacyAttributeFallback)
+        ).Count
+        if ($fallbackCount -ne 1) {
+            Fail "PostGIS raster source $relativePath must contain exactly one legacy __attribute__ fallback; found $fallbackCount"
+        }
+        $sourceText = $sourceText.Replace($legacyAttributeFallback, $guardedAttributeFallback)
+        Set-Content -Path $sourcePath -Encoding UTF8 -Value $sourceText
+    }
+
     $declarationPattern = "(?m)^\s*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(PG_FUNCTION_ARGS\);\r?$"
     $patchedDeclarationCount = 0
-    foreach ($subdir in @("postgis", "libpgcommon", "liblwgeom")) {
+    foreach ($subdir in @("postgis", "libpgcommon", "liblwgeom", "raster/rt_core", "raster/rt_pg")) {
         $root = Join-Path $PostgisDir $subdir
         foreach ($file in Get-ChildItem -Path $root -Recurse -File | Where-Object { $_.Extension -in @(".c", ".h") }) {
             $text = Get-Content -Raw -Path $file.FullName
@@ -1650,6 +1799,15 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
     $geosLib = First-File (Join-Path $PostgisDependencyPrefix "geos") @("geos.lib")
     $libxml2Lib = First-File (Join-Path $PostgisDependencyPrefix "libxml2") @("libxml2s.lib", "libxml2.lib", "xml2.lib")
     $projLib = First-File (Join-Path $PostgisDependencyPrefix "proj") @("proj.lib", "libproj.lib")
+    $gdalLib = First-File (Join-Path $PostgisDependencyPrefix "gdal") @("gdal.lib")
+    $gdalDataSource = Join-Path $PostgisDependencyPrefix "gdal/share/gdal"
+    if (-not (Test-Path (Join-Path $gdalDataSource "gdalvrt.xsd"))) {
+        Fail "PostGIS requires the pinned GDAL runtime data under $gdalDataSource"
+    }
+    $gdalDataDir = Join-Path $PostgisDir "share/gdal"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $gdalDataDir
+    New-Item -ItemType Directory -Force -Path $gdalDataDir | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $gdalDataSource "*") -Destination $gdalDataDir
 
     $sources = @(
         "postgis/postgis_module.c",
@@ -1804,6 +1962,38 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
         "liblwgeom/lwspheroid.c",
         "deps/ryu/d2s.c"
     )
+    $rasterSources = @(
+        "raster/rt_pg/rtpostgis.c",
+        "raster/rt_pg/rtpg_internal.c",
+        "raster/rt_pg/rtpg_legacy.c",
+        "raster/rt_pg/rtpg_spatial_relationship.c",
+        "raster/rt_pg/rtpg_mapalgebra.c",
+        "raster/rt_pg/rtpg_utility.c",
+        "raster/rt_pg/rtpg_inout.c",
+        "raster/rt_pg/rtpg_wkb.c",
+        "raster/rt_pg/rtpg_geometry.c",
+        "raster/rt_pg/rtpg_raster_properties.c",
+        "raster/rt_pg/rtpg_band_properties.c",
+        "raster/rt_pg/rtpg_pixel.c",
+        "raster/rt_pg/rtpg_create.c",
+        "raster/rt_pg/rtpg_gdal.c",
+        "raster/rt_pg/rtpg_statistics.c",
+        "raster/rt_core/rt_util.c",
+        "raster/rt_core/rt_spatial_relationship.c",
+        "raster/rt_core/rt_mapalgebra.c",
+        "raster/rt_core/rt_geometry.c",
+        "raster/rt_core/rt_statistics.c",
+        "raster/rt_core/rt_pixel.c",
+        "raster/rt_core/rt_warp.c",
+        "raster/rt_core/rt_gdal.c",
+        "raster/rt_core/rt_band.c",
+        "raster/rt_core/rt_raster.c",
+        "raster/rt_core/rt_serialize.c",
+        "raster/rt_core/rt_wkb.c",
+        "raster/rt_core/rt_context.c"
+    ) + @($sources | Where-Object {
+        $_.StartsWith("libpgcommon/") -or $_.StartsWith("liblwgeom/") -or $_.StartsWith("deps/ryu/")
+    } | Select-Object -Unique)
     $extensionSqlFiles = @(
         "extensions/postgis/postgis.control",
         "extensions/postgis/sql/postgis--$($Version.Version).sql",
@@ -1811,7 +2001,12 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
         "extensions/postgis/sql/postgis--$($Version.Version)--ANY.sql",
         "extensions/postgis/sql/postgis--TEMPLATED--TO--ANY.sql",
         "extensions/postgis/sql/postgis--unpackaged.sql",
-        "extensions/postgis/sql/postgis--unpackaged--$($Version.Version).sql"
+        "extensions/postgis/sql/postgis--unpackaged--$($Version.Version).sql",
+        "extensions/postgis_raster/postgis_raster.control",
+        "extensions/postgis_raster/sql/postgis_raster--$($Version.Version).sql",
+        "extensions/postgis_raster/sql/postgis_raster--ANY--$($Version.Version).sql",
+        "extensions/postgis_raster/sql/postgis_raster--unpackaged.sql",
+        "extensions/postgis_raster/sql/postgis_raster--unpackaged--$($Version.Version).sql"
     )
     $contribDataFiles = @(
         "postgis/legacy.sql",
@@ -1836,6 +2031,10 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
         "/I$(Meson-Path (Join-Path $PostgisDir "deps/flatgeobuf"))",
         "/I$(Meson-Path (Join-Path $PostgisDir "deps/flatgeobuf/include"))",
         "/I$(Meson-Path (Join-Path $PostgisDir "deps/ryu"))",
+        "/I$(Meson-Path (Join-Path $PostgisDir "raster"))",
+        "/I$(Meson-Path (Join-Path $PostgisDir "raster/rt_core"))",
+        "/I$(Meson-Path (Join-Path $PostgisDir "raster/rt_pg"))",
+        "/I$(Meson-Path (Join-Path $PostgisDependencyPrefix "gdal/include"))",
         "/I$(Meson-Path (Join-Path $PostgisDependencyPrefix "geos/include"))",
         "/I$(Meson-Path (Join-Path $PostgisDependencyPrefix "proj/include"))",
         "/I$(Meson-Path (Join-Path $PostgisDependencyPrefix "json-c/include"))",
@@ -1851,6 +2050,7 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
     ) + $includeArgs
     $linkArgs = @(
         (Meson-Path $FlatgeobufLib),
+        (Meson-Path $gdalLib),
         (Meson-Path $geosCLib),
         (Meson-Path $geosLib),
         (Meson-Path $projLib),
@@ -1861,10 +2061,15 @@ function Write-PostgisMesonModule([string]$PostgisDir, [pscustomobject]$Version,
         "bcrypt.lib",
         "advapi32.lib",
         "shell32.lib",
-        "user32.lib"
+        "user32.lib",
+        "ole32.lib",
+        "oleaut32.lib",
+        "uuid.lib",
+        "msvcprt.lib"
     )
 
     $sourceList = Meson-List $sources
+    $rasterSourceList = Meson-List $rasterSources
     $cArgList = Meson-List $cArgs "    "
     $linkArgList = Meson-List $linkArgs "    "
     $extensionDataList = Meson-List $extensionSqlFiles
@@ -1887,6 +2092,23 @@ $linkArgList
 )
 contrib_targets += postgis
 
+postgis_raster = shared_module(
+  'postgis_raster-3',
+  files(
+$rasterSourceList,
+  ),
+  c_pch: pch_postgres_h,
+  kwargs: contrib_mod_args + {
+    'c_args': [
+$cArgList
+    ],
+    'link_args': [
+$linkArgList
+    ],
+  },
+)
+contrib_targets += postgis_raster
+
 install_data(
 $extensionDataList,
   kwargs: contrib_data_args,
@@ -1895,6 +2117,12 @@ $extensionDataList,
 install_data(
 $contribDataList,
   install_dir: dir_data / 'contrib' / 'postgis-$($Version.MajorMinor)',
+)
+
+install_subdir(
+  'share/gdal',
+  install_dir: dir_data / 'gdal',
+  strip_directory: true,
 )
 
 install_data(
