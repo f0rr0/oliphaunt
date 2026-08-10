@@ -1687,19 +1687,25 @@ function Patch-WindowsPostgisSource([string]$PostgisDir) {
 #endif
 "@
 
-    $rasterCoreHeader = Join-Path $PostgisDir "raster/rt_core/librtcore.h"
-    $rasterCoreText = Get-Content -Raw -Path $rasterCoreHeader
     $legacyAttributeFallback = "# define __attribute__ (x)"
     $guardedAttributeFallback = @"
 # ifndef __attribute__
 #  define __attribute__(x)
 # endif
 "@
-    if (-not $rasterCoreText.Contains($legacyAttributeFallback)) {
-        Fail "PostGIS raster compatibility header is missing the expected __attribute__ fallback"
+    foreach ($relativePath in @("raster/rt_core/librtcore.h", "raster/rt_pg/rtpostgis.c")) {
+        $sourcePath = Join-Path $PostgisDir $relativePath
+        $sourceText = Get-Content -Raw -Path $sourcePath
+        $fallbackCount = [regex]::Matches(
+            $sourceText,
+            [regex]::Escape($legacyAttributeFallback)
+        ).Count
+        if ($fallbackCount -ne 1) {
+            Fail "PostGIS raster source $relativePath must contain exactly one legacy __attribute__ fallback; found $fallbackCount"
+        }
+        $sourceText = $sourceText.Replace($legacyAttributeFallback, $guardedAttributeFallback)
+        Set-Content -Path $sourcePath -Encoding UTF8 -Value $sourceText
     }
-    $rasterCoreText = $rasterCoreText.Replace($legacyAttributeFallback, $guardedAttributeFallback)
-    Set-Content -Path $rasterCoreHeader -Encoding UTF8 -Value $rasterCoreText
 
     $declarationPattern = "(?m)^\s*(?!(?:extern\s+)?PGDLLEXPORT\s+)(?:extern\s+)?Datum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(PG_FUNCTION_ARGS\);\r?$"
     $patchedDeclarationCount = 0
