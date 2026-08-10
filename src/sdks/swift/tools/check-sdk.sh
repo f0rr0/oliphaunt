@@ -91,6 +91,19 @@ verification.
 MSG
 }
 
+check_bridge_error_isolation() {
+  bridge_test_dir="$(prepare_scratch_dir bridge-error-isolation)"
+  set -- -std=c11 -Wall -Wextra -Werror -pthread \
+    -I "$package_dir/Sources/COliphaunt/include" \
+    "$package_dir/Sources/COliphaunt/bridge.c" \
+    "$package_dir/tools/bridge-error-isolation.test.c"
+  if [ "$(uname -s)" = "Linux" ]; then
+    set -- "$@" -ldl
+  fi
+  run cc "$@" -o "$bridge_test_dir/bridge-error-isolation"
+  run "$bridge_test_dir/bridge-error-isolation"
+}
+
 check_swiftpm_release_asset_manifest() {
   liboliphaunt_version="$(cat src/sdks/swift/LIBOLIPHAUNT_VERSION)"
   release_manifest="$scratch_root/Package.swift.release"
@@ -625,6 +638,7 @@ for product in COliphaunt Oliphaunt OliphauntExtensionSupport; do
   fi
 done
 check_swiftpm_extension_product_generator
+check_bridge_error_isolation
 
 if [ "$mode" = "coverage" ]; then
   exec tools/coverage/run-product oliphaunt-swift
