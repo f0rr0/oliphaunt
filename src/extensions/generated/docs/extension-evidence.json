@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:af842fae359ab63f1e8237d9e4b6f0504a6f9dde178462d7861f76417091923c",
+  "source-digest": "sha256:dc2b7c716729069022a04bc9e2f92d596ba135918f3120c3e659bc86c90f736b",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",

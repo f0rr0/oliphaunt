@@ -7,7 +7,7 @@ diff --git a/src/access/am.h b/src/access/am.h
   */
 -Datum tp_handler(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum tp_handler(PG_FUNCTION_ARGS);
- 
+
  /*
   * Build utilities (am/build.c)
 diff --git a/src/memtable/expull.h b/src/memtable/expull.h
@@ -28,9 +28,9 @@ diff --git a/src/memtable/expull.h b/src/memtable/expull.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpExpullEntry) == 7, "TpExpullEntry must remain 7 bytes on Windows");
 +StaticAssertDecl(__alignof(TpExpullEntry) == 1, "TpExpullEntry must remain 1-byte aligned on Windows");
- 
+
  #define TP_EXPULL_ENTRY_SIZE sizeof(TpExpullEntry) /* 7 bytes */
- 
+
 diff --git a/src/oliphaunt_windows_compat.h b/src/oliphaunt_windows_compat.h
 new file mode 100644
 --- /dev/null
@@ -62,7 +62,7 @@ diff --git a/src/segment/format.h b/src/segment/format.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpDictEntryV3) == 12, "TpDictEntryV3 must remain 12 bytes on Windows");
 +StaticAssertDecl(__alignof(TpDictEntryV3) == 4, "TpDictEntryV3 must remain 4-byte aligned on Windows");
- 
+
  /*
   * Dictionary entry - 16 bytes, block-based storage (V4: uint64 offset)
 @@ -195,12 +199,16 @@ typedef struct TpDictEntryV3
@@ -80,7 +80,7 @@ diff --git a/src/segment/format.h b/src/segment/format.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpDictEntry) == 16, "TpDictEntry must remain 16 bytes on Windows");
 +StaticAssertDecl(__alignof(TpDictEntry) == 8, "TpDictEntry must remain 8-byte aligned on Windows");
- 
+
  /*
   * Block storage constants
 @@ -210,6 +218,7 @@ typedef struct TpDictEntry
@@ -100,7 +100,7 @@ diff --git a/src/segment/format.h b/src/segment/format.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpSkipEntryV3) == 16, "TpSkipEntryV3 must remain 16 bytes on Windows");
 +StaticAssertDecl(__alignof(TpSkipEntryV3) == 1, "TpSkipEntryV3 must remain 1-byte aligned on Windows");
- 
+
 @@ -224,8 +236,9 @@ typedef struct TpSkipEntryV3
   * Skip index entry - 20 bytes per block (V4: uint64 posting_offset)
   *
@@ -120,7 +120,7 @@ diff --git a/src/segment/format.h b/src/segment/format.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpSkipEntry) == 20, "TpSkipEntry must remain 20 bytes on Windows");
 +StaticAssertDecl(__alignof(TpSkipEntry) == 1, "TpSkipEntry must remain 1-byte aligned on Windows");
- 
+
  /* Skip entry flags */
  #define TP_BLOCK_FLAG_UNCOMPRESSED 0x00 /* Raw doc IDs and frequencies */
 @@ -270,7 +286,11 @@ typedef struct TpBlockPosting
@@ -154,7 +154,7 @@ diff --git a/src/segment/segment.h b/src/segment/segment.h
 +#pragma pack(pop)
 +StaticAssertDecl(sizeof(TpSegmentPosting) == 14, "TpSegmentPosting must remain 14 bytes on Windows");
 +StaticAssertDecl(__alignof(TpSegmentPosting) == 1, "TpSegmentPosting must remain 1-byte aligned on Windows");
- 
+
  /* Version-aware struct size helpers */
  static inline size_t
 diff --git a/src/types/query.h b/src/types/query.h
@@ -162,7 +162,7 @@ diff --git a/src/types/query.h b/src/types/query.h
 +++ b/src/types/query.h
 @@ -47,21 +47,21 @@ typedef struct TpQuery
  #define TPQUERY_TEXT_PTR(x) (((TpQuery *)(x))->data)
- 
+
  /* Function declarations */
 -Datum tpquery_in(PG_FUNCTION_ARGS);
 -Datum tpquery_out(PG_FUNCTION_ARGS);
@@ -172,13 +172,13 @@ diff --git a/src/types/query.h b/src/types/query.h
 +extern PGDLLEXPORT Datum tpquery_out(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum tpquery_recv(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum tpquery_send(PG_FUNCTION_ARGS);
- 
+
  /* Constructor functions */
 -Datum to_tpquery_text(PG_FUNCTION_ARGS);
 -Datum to_tpquery_text_index(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum to_tpquery_text(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum to_tpquery_text_index(PG_FUNCTION_ARGS);
- 
+
  /* Operator functions */
 -Datum bm25_text_bm25query_score(PG_FUNCTION_ARGS);
 -Datum bm25_text_text_score(PG_FUNCTION_ARGS);
@@ -190,7 +190,7 @@ diff --git a/src/types/query.h b/src/types/query.h
 +extern PGDLLEXPORT Datum bm25_textarray_bm25query_score(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum bm25_textarray_text_score(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum tpquery_eq(PG_FUNCTION_ARGS);
- 
+
  /* Utility functions */
  TpQuery *create_tpquery(const char *query_text, Oid index_oid);
 diff --git a/src/types/vector.h b/src/types/vector.h
@@ -198,7 +198,7 @@ diff --git a/src/types/vector.h b/src/types/vector.h
 +++ b/src/types/vector.h
 @@ -90,12 +90,12 @@ typedef struct TpVector
  					   MAXALIGN(((TpVector *)(x))->index_name_len + 1)))
- 
+
  /* Function declarations */
 -Datum tpvector_in(PG_FUNCTION_ARGS);
 -Datum tpvector_out(PG_FUNCTION_ARGS);
@@ -212,7 +212,7 @@ diff --git a/src/types/vector.h b/src/types/vector.h
 +extern PGDLLEXPORT Datum tpvector_send(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum to_tpvector(PG_FUNCTION_ARGS);
 +extern PGDLLEXPORT Datum tpvector_eq(PG_FUNCTION_ARGS);
- 
+
  /* Constructor */
  TpVector *create_tpvector_from_strings(
 diff --git a/src/unistd.h b/src/unistd.h

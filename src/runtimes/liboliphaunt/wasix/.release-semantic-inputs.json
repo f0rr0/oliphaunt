@@ -212,7 +212,7 @@
         },
         {
           "path": "src/extensions/generated/docs/extension-evidence.json",
-          "sha256": "21e54b21ab68c00d7b1a9bb46811d40c66ad06f5fa81a40d2d19e175ba992f35"
+          "sha256": "14cbf48d651ccdc86f489abdd93176a49344abb924ccb55346494fef29d0d99f"
         },
         {
           "path": "src/extensions/generated/docs/extensions.json",
@@ -377,5 +377,5 @@
       ]
     }
   ],
-  "sha256": "5078ac570c045691889d917e39fd5f06cc43f57fe7cbdb655e5ad194b409306f"
+  "sha256": "57025f4fbeb23412b831c21f92414332fd8028faa5f58936b03edf77517277e8"
 }

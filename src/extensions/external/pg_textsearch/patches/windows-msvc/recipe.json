@@ -84,7 +84,7 @@
   "patches": [
     {
       "path": "patches/windows-msvc/pg_textsearch-1.3.1.patch",
-      "sha256": "43578dbf479e2cccb4794d17049a26ac55bf55f4fcf87807f39236bccf5203ec"
+      "sha256": "61f478bde24e4afc3f911abe5e044c7088f41c2abb1646ec79c44a4cbe00252e"
     }
   ],
   "layout_contracts": [
