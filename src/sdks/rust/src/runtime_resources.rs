@@ -3329,16 +3329,16 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     #[test]
     fn extension_artifact_archive_policy_covers_qualified_android_postgis_envelope() {
         let policy = extension_artifact_archive_policy().unwrap();
-        assert_eq!(policy.max_compressed_bytes, 256 * 1024 * 1024);
-        assert_eq!(policy.max_expanded_bytes, 1024 * 1024 * 1024);
-        assert_eq!(policy.max_member_bytes, 512 * 1024 * 1024);
+        assert_eq!(policy.max_compressed_bytes, 1024 * 1024 * 1024);
+        assert_eq!(policy.max_expanded_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(policy.max_member_bytes, 1024 * 1024 * 1024);
         assert_eq!(policy.max_members, 4096);
 
         // Exact prior high-water marks plus the smallest GDAL size that proves
-        // the qualified leaf exceeded the former 256 MiB member ceiling. Do
+        // the qualified leaf exceeded the former 512 MiB member ceiling. Do
         // not invent an unobserved exact GDAL byte count.
         assert!(64_676_748 <= policy.max_compressed_bytes);
-        assert!((256 * 1024 * 1024) + 1 <= policy.max_member_bytes);
+        assert!((512 * 1024 * 1024) + 1 <= policy.max_member_bytes);
         assert!(27 <= policy.max_members);
 
         let root = Path::new("android-arm64-v8a/postgis");
@@ -3347,7 +3347,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             expanded_bytes: 1024,
         };
         let mut observed_member_sizes = vec![
-            (256 * 1024 * 1024) + 1,
+            (512 * 1024 * 1024) + 1,
             154_827_564,
             110_259_522,
             80_534_608,
@@ -3377,7 +3377,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("exceeds 536870912 bytes"));
+        assert!(error.to_string().contains("exceeds 1073741824 bytes"));
     }
 
     #[test]
@@ -3404,7 +3404,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(
             error
                 .to_string()
-                .contains("member larger than 536870912 bytes"),
+                .contains("member larger than 1073741824 bytes"),
             "unexpected oversized-member error: {error}"
         );
 
@@ -3428,7 +3428,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(
             error
                 .to_string()
-                .contains("must contain between 1 and 268435456 bytes"),
+                .contains("must contain between 1 and 1073741824 bytes"),
             "unexpected oversized-carrier error: {error}"
         );
 

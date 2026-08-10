@@ -206,16 +206,16 @@ async function expectArchiveFailure(root, name, entries, metadata, pattern) {
 
 async function main() {
   assert.deepEqual(EXTENSION_ARTIFACT_ARCHIVE_POLICY, {
-    maxCompressedBytes: 256 * 1024 * 1024,
-    maxExpandedBytes: 1024 * 1024 * 1024,
-    maxMemberBytes: 512 * 1024 * 1024,
+    maxCompressedBytes: 1024 * 1024 * 1024,
+    maxExpandedBytes: 2 * 1024 * 1024 * 1024,
+    maxMemberBytes: 1024 * 1024 * 1024,
     maxMembers: 4096,
   });
-  // The qualified GDAL leaf exceeded the former 256 MiB ceiling. Combine the
+  // The qualified GDAL leaf exceeded the former 512 MiB ceiling. Combine the
   // smallest size that proves that failure with the prior exact PostGIS high
   // water marks instead of inventing an unobserved exact GDAL byte count.
   const qualifiedAndroidPostgisMembers = [
-    (256 * 1024 * 1024) + 1,
+    (512 * 1024 * 1024) + 1,
     154_827_564,
     110_259_522,
     80_534_608,
@@ -1140,7 +1140,7 @@ async function main() {
         nativeRuntimeVersion: "1.2.3",
         label: "oversized member",
       }),
-      /member .* exceeds 536870912 bytes/u,
+      /member .* exceeds 1073741824 bytes/u,
     );
 
     assert.throws(
@@ -1148,7 +1148,7 @@ async function main() {
         { name: "one", bytes: EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxMemberBytes },
         { name: "two", bytes: EXTENSION_ARTIFACT_ARCHIVE_POLICY.maxMemberBytes },
       ]),
-      /expands beyond 1073741824 bytes/u,
+      /expands beyond 2147483648 bytes/u,
     );
 
     const excessiveMembers = new Map([["manifest.properties", manifest()]]);
