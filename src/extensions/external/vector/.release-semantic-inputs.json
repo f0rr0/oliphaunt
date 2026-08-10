@@ -98,7 +98,7 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "c613de248fc7a593f06b4429a81224b80629681fc004c4600a532de1db8e418d"
+          "sha256": "821b468642d48a23e85d4617c8e134d9d1061c3008bcaa0f45d97f90bd59bd33"
         }
       ]
     },
@@ -373,5 +373,5 @@
       ]
     }
   ],
-  "sha256": "15d54219fbd4074b212fbf05eb332e927ff3c3e900ef5a6169778258e50922c9"
+  "sha256": "2970ac315c21db3e00e971372b4a550159f8a6425d0e0fb3817ee26bea0913f6"
 }

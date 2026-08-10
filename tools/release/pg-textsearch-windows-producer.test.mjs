@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -141,6 +142,15 @@ test("shared producer consumes the generic recipe without pg_textsearch source r
   const producer = readFileSync(producerPath, "utf8");
   assert.match(producer, /function Apply-ExternalPgxsWindowsRecipe\(/u);
   assert.match(producer, /git -C \$ExtensionDir apply --check --whitespace=error-all/u);
+  assert.match(
+    producer,
+    /\$previousGitCeiling = \[Environment\]::GetEnvironmentVariable\(\s*"GIT_CEILING_DIRECTORIES",\s*\[EnvironmentVariableTarget\]::Process\s*\)/u,
+  );
+  assert.match(producer, /"GIT_CEILING_DIRECTORIES",\s*\$patchCeiling,\s*\[EnvironmentVariableTarget\]::Process/u);
+  assert.match(
+    producer,
+    /finally\s*\{\s*\[Environment\]::SetEnvironmentVariable\(\s*"GIT_CEILING_DIRECTORIES",\s*\$previousGitCeiling,\s*\[EnvironmentVariableTarget\]::Process\s*\)\s*\}/u,
+  );
   assert.match(producer, /external-windows-input:/u);
   assert.match(producer, /Resolve-ExternalWindowsRecipePath/u);
   assert.match(producer, /Add-ExternalPgxsMesonProducerFromWindowsRecipe/u);
@@ -167,17 +177,32 @@ test(
     const staged = path.join(scratch, "source");
     mkdirSync(staged);
     try {
+      run("git", ["-C", scratch, "init", "-q"]);
       run("git", ["-C", checkout, "archive", "--format=tar", `--output=${archive}`, recipe.source_commit]);
       run("tar", ["-xf", archive, "-C", staged]);
+      assert.equal(
+        realpathSync(run("git", ["-C", staged, "rev-parse", "--show-toplevel"])),
+        realpathSync(scratch),
+        "fixture must reproduce an enclosing worktree around the staged source",
+      );
 
       const control = readFileSync(path.join(staged, "pg_textsearch.control"), "utf8");
       const version = /^\s*default_version\s*=\s*'([^']+)'\s*$/mu.exec(control)?.[1];
       assert.equal(version, recipe.default_version);
 
+      const patchEnvironment = { ...process.env, GIT_CEILING_DIRECTORIES: scratch };
       for (const patch of recipe.patches) {
         const patchPath = contained(productRoot, patch.path, "patch path");
-        run("git", ["-C", staged, "apply", "--check", "--whitespace=error-all", patchPath]);
-        run("git", ["-C", staged, "apply", "--whitespace=error-all", patchPath]);
+        run(
+          "git",
+          ["-C", staged, "apply", "--check", "--whitespace=error-all", patchPath],
+          { env: patchEnvironment },
+        );
+        run(
+          "git",
+          ["-C", staged, "apply", "--whitespace=error-all", patchPath],
+          { env: patchEnvironment },
+        );
       }
 
       for (const relativePath of [

@@ -2317,18 +2317,40 @@ function Apply-ExternalPgxsWindowsRecipe(
 ) {
     $productRoot = Join-Path $ExternalExtensionRoot $SqlName
     $recipePath = Join-Path $productRoot "patches/windows-msvc/recipe.json"
-    foreach ($patch in @($Recipe.patches)) {
-        $patchPath = Resolve-ExternalWindowsRecipePath `
-            $productRoot $patch.path "$recipePath patch" -RequireLeaf
-        $global:LASTEXITCODE = 0
-        & git -C $ExtensionDir apply --check --whitespace=error-all $patchPath
-        if ($LASTEXITCODE -ne 0) {
-            Fail "$recipePath patch $($patch.path) does not apply exactly to source commit $($Recipe.source_commit)"
+    $patchCeiling = Split-Path -Parent ([System.IO.Path]::GetFullPath($ExtensionDir))
+    $previousGitCeiling = [Environment]::GetEnvironmentVariable(
+        "GIT_CEILING_DIRECTORIES",
+        [EnvironmentVariableTarget]::Process
+    )
+    try {
+        # The staging tree may live below an enclosing repository (the default work root
+        # is under target). Bound discovery so git apply operates as a patch utility rooted
+        # at ExtensionDir; otherwise Git filters every path against the worktree prefix.
+        [Environment]::SetEnvironmentVariable(
+            "GIT_CEILING_DIRECTORIES",
+            $patchCeiling,
+            [EnvironmentVariableTarget]::Process
+        )
+        foreach ($patch in @($Recipe.patches)) {
+            $patchPath = Resolve-ExternalWindowsRecipePath `
+                $productRoot $patch.path "$recipePath patch" -RequireLeaf
+            $global:LASTEXITCODE = 0
+            & git -C $ExtensionDir apply --check --whitespace=error-all $patchPath
+            if ($LASTEXITCODE -ne 0) {
+                Fail "$recipePath patch $($patch.path) does not apply exactly to source commit $($Recipe.source_commit)"
+            }
+            $global:LASTEXITCODE = 0
+            & git -C $ExtensionDir apply --whitespace=error-all $patchPath
+            if ($LASTEXITCODE -ne 0) {
+                Fail "$recipePath patch $($patch.path) failed to apply"
+            }
         }
-        & git -C $ExtensionDir apply --whitespace=error-all $patchPath
-        if ($LASTEXITCODE -ne 0) {
-            Fail "$recipePath patch $($patch.path) failed to apply"
-        }
+    } finally {
+        [Environment]::SetEnvironmentVariable(
+            "GIT_CEILING_DIRECTORIES",
+            $previousGitCeiling,
+            [EnvironmentVariableTarget]::Process
+        )
     }
 
     foreach ($relativePath in @($Recipe.sources) + @($Recipe.data_files) + @($Recipe.force_include_files)) {
