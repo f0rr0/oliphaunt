@@ -371,7 +371,7 @@
         },
         {
           "path": "src/sdks/rust/src/runtime_resources.rs",
-          "sha256": "692238b38e26ea3e0e7f31201137fb598de7b3f128ca4e5f9bcfea0c045127b2"
+          "sha256": "07330bd8ab7d9d7a88281a5bb8a7a7a637d78bc93d323b4b650c549e686b7179"
         },
         {
           "path": "src/sdks/rust/src/runtime_resources/extension_artifact.rs",
@@ -457,5 +457,5 @@
       ]
     }
   ],
-  "sha256": "47e8d4a034b1640db3016017fe7c9e7cdf395f1a3b65889ac575aa70746c88ed"
+  "sha256": "31a7587df6d97aa3291c8fd497a50d468fc7efcd8f832586aef2cd8a795041a8"
 }

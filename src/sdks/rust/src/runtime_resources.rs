@@ -3327,18 +3327,18 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
-    fn extension_artifact_archive_policy_covers_observed_android_postgis_shape() {
+    fn extension_artifact_archive_policy_covers_qualified_android_postgis_envelope() {
         let policy = extension_artifact_archive_policy().unwrap();
-        assert_eq!(policy.max_compressed_bytes, 128 * 1024 * 1024);
-        assert_eq!(policy.max_expanded_bytes, 512 * 1024 * 1024);
-        assert_eq!(policy.max_member_bytes, 256 * 1024 * 1024);
+        assert_eq!(policy.max_compressed_bytes, 256 * 1024 * 1024);
+        assert_eq!(policy.max_expanded_bytes, 1024 * 1024 * 1024);
+        assert_eq!(policy.max_member_bytes, 512 * 1024 * 1024);
         assert_eq!(policy.max_members, 4096);
 
-        // Exact high-water marks from the qualified Android ARM64 PostGIS leaf
-        // artifact that exposed the former 48/256 MiB consumer-only limits.
+        // Exact prior high-water marks plus the smallest GDAL size that proves
+        // the qualified leaf exceeded the former 256 MiB member ceiling. Do
+        // not invent an unobserved exact GDAL byte count.
         assert!(64_676_748 <= policy.max_compressed_bytes);
-        assert!(345_621_694 <= policy.max_expanded_bytes);
-        assert!(154_827_564 <= policy.max_member_bytes);
+        assert!((256 * 1024 * 1024) + 1 <= policy.max_member_bytes);
         assert!(27 <= policy.max_members);
 
         let root = Path::new("android-arm64-v8a/postgis");
@@ -3346,7 +3346,12 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             member_count: 0,
             expanded_bytes: 1024,
         };
-        let mut observed_member_sizes = vec![154_827_564, 110_259_522, 80_534_608];
+        let mut observed_member_sizes = vec![
+            (256 * 1024 * 1024) + 1,
+            154_827_564,
+            110_259_522,
+            80_534_608,
+        ];
         observed_member_sizes.resize(27, 0);
         for (index, bytes) in observed_member_sizes.into_iter().enumerate() {
             record_extension_artifact_archive_member(
@@ -3372,7 +3377,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("exceeds 268435456 bytes"));
+        assert!(error.to_string().contains("exceeds 536870912 bytes"));
     }
 
     #[test]
@@ -3399,7 +3404,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(
             error
                 .to_string()
-                .contains("member larger than 268435456 bytes"),
+                .contains("member larger than 536870912 bytes"),
             "unexpected oversized-member error: {error}"
         );
 
@@ -3423,7 +3428,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(
             error
                 .to_string()
-                .contains("must contain between 1 and 134217728 bytes"),
+                .contains("must contain between 1 and 268435456 bytes"),
             "unexpected oversized-carrier error: {error}"
         );
 

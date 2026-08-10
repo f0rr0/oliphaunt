@@ -124,7 +124,7 @@
         },
         {
           "path": "src/sdks/rust/extension-artifact-archive-policy.properties",
-          "sha256": "e708d2a5749cdcbca9de2abe44abdf36b5faaa5f9eb010edc412496876d955fa"
+          "sha256": "f8be28f0d612bf19ee2d415b71863f8a7da0f959bb1f316199496388fb94e4a7"
         },
         {
           "path": "tools/release/bounded-gunzip-to-file.mjs",
@@ -343,5 +343,5 @@
       ]
     }
   ],
-  "sha256": "bbbc8601954d8ad75eefa03a0749eae7e6ba1aee98828b90153504bfe4d49276"
+  "sha256": "65edced47daad72abe1e39884cdfce877407b512d68d57e81077b904dcc824c6"
 }
