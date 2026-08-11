@@ -40,3 +40,5 @@ rootProject.name = "oliphaunt-kotlin"
 include(":oliphaunt")
 include(":oliphaunt-android-gradle-plugin")
 include(":oliphaunt-maven-artifacts")
+include(":android-native-broker-spike")
+project(":android-native-broker-spike").projectDir = file("../../../spikes/android-native-broker/app")
