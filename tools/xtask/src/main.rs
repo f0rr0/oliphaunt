@@ -182,7 +182,7 @@ fn assets(args: Vec<String>) -> Result<()> {
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
             let prepare_postgres_source = !args.iter().any(|arg| arg == "--skip-postgres-prepare");
             let source_scope =
-                SourceFetchScope::parse(value_after(&args, "--scope").unwrap_or("all"))?;
+                SourceFetchScope::parse(value_after(&args, "--scope").unwrap_or("production-all"))?;
             fetch_pinned_sources_for_source_lane(
                 &manifest,
                 source_lane,
@@ -489,7 +489,7 @@ fn print_usage() {
         "  cargo run -p xtask -- assets source-spine [--strict-local] [--check-patch-applies]"
     );
     eprintln!(
-        "  cargo run -p xtask -- assets fetch [--skip-postgres-prepare] [--scope all|native-runtime|wasix-runtime|extensions]"
+        "  cargo run -p xtask -- assets fetch [--skip-postgres-prepare] [--scope production-all|all|native-runtime|wasix-runtime|extensions]"
     );
     eprintln!("  cargo run -p xtask --features aot-serializer -- assets build-host");
     eprintln!(

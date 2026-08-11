@@ -1,0 +1,5 @@
+# Empty for this product profile.
+#
+# PostgreSQL resolves server-extension entry points against the handle returned
+# by dlopen, not RTLD_DEFAULT.  A future main-module dlsym consumer must add its
+# exact symbol here; an absent declaration is intentionally not retained.

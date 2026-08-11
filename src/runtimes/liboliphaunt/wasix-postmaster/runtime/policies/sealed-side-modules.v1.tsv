@@ -1,0 +1,29 @@
+# schema=oliphaunt.wasix-postmaster.sealed-side-modules.v1
+# canonical-relative-path<TAB>byte-identical-aliases-or--<TAB>abi-policy
+lib/libpq.so.5.18	lib/libpq.so,lib/libpq.so.5	public-libpq-abi
+lib/postgresql/cyrillic_and_mic.so	-	postgresql-encoding-conversion
+lib/postgresql/dict_snowball.so	-	postgresql-server-extension
+lib/postgresql/euc2004_sjis2004.so	-	postgresql-encoding-conversion
+lib/postgresql/euc_cn_and_mic.so	-	postgresql-encoding-conversion
+lib/postgresql/euc_jp_and_sjis.so	-	postgresql-encoding-conversion
+lib/postgresql/euc_kr_and_mic.so	-	postgresql-encoding-conversion
+lib/postgresql/euc_tw_and_big5.so	-	postgresql-encoding-conversion
+lib/postgresql/latin2_and_win1250.so	-	postgresql-encoding-conversion
+lib/postgresql/latin_and_mic.so	-	postgresql-encoding-conversion
+lib/postgresql/plpgsql.so	-	postgresql-server-extension
+lib/postgresql/utf8_and_big5.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_cyrillic.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_euc2004.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_euc_cn.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_euc_jp.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_euc_kr.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_euc_tw.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_gb18030.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_gbk.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_iso8859.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_iso8859_1.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_johab.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_sjis.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_sjis2004.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_uhc.so	-	postgresql-encoding-conversion
+lib/postgresql/utf8_and_win.so	-	postgresql-encoding-conversion

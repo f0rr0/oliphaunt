@@ -1,0 +1,2 @@
+# Unified-diff artifacts preserve the source whitespace they replay.
+postgres/patches/*.patch whitespace=-trailing-space,-space-before-tab,-blank-at-eof

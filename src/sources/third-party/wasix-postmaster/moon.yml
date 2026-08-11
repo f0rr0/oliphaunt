@@ -1,0 +1,17 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "third-party-wasix-postmaster"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["third-party", "sources", "wasix", "postmaster"]
+
+project:
+  title: "WASIX Postmaster Third-Party Sources"
+  description: "Pinned Wasmer and wasix-libc source metadata for the concurrent postmaster runtime."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/wasix"
+  paths:
+    "**/*": ["@oliphaunt/wasix"]
