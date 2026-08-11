@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import {
   extensionArtifactsNativeMatrix,
@@ -20,6 +21,8 @@ import {
   selectCatalogExtensions,
 } from "../../src/extensions/artifacts/native/tools/extension-artifact-packager.mjs";
 const POSTGIS_PRODUCT = "oliphaunt-extension-postgis";
+const CONTRIB_PRODUCT = "oliphaunt-extension-contrib-pg18";
+const ROOT = path.resolve(import.meta.dirname, "../..");
 const NATIVE_TARGETS = [
   "android-arm64-v8a",
   "android-x86_64",
@@ -296,4 +299,24 @@ test("keeps live build matrices candidate-free and PostGIS public", () => {
   assert.equal(csv(wasix[0].sql_names_csv).length, 39);
   assert.equal(csv(wasix[0].sql_names_csv).includes("postgis"), true);
   assert.equal(csv(wasix[0].extensions_csv).includes(POSTGIS_PRODUCT), true);
+});
+
+test("focused native contrib planning executes the packager selection contract", () => {
+  const [row] = extensionArtifactsNativeMatrix(
+    "linux-x64-gnu",
+    undefined,
+    new Set([CONTRIB_PRODUCT]),
+  ).include;
+  assert.equal(row.extensions_csv, CONTRIB_PRODUCT);
+  const selected = spawnSync(
+    path.join(ROOT, "tools/dev/bun.sh"),
+    [
+      "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
+      "selected-sql-names",
+      row.extensions_csv,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(selected.status, 0, selected.stderr || selected.stdout);
+  assert.equal(selected.stdout.trim(), row.sql_names_csv);
 });

@@ -22,6 +22,7 @@ import {
 import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
 import { qualificationCandidateSqlNamesForTarget } from '../../../../../tools/release/extension-qualification-candidates.mjs';
 import { canonicalGzipSync } from '../../../../../tools/release/portable-archive.mjs';
+import { extensionSqlNames } from '../../../../../tools/release/release-artifact-targets.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -443,16 +444,6 @@ async function releasePackageByProduct(product) {
   fail(`unknown release product '${product}'`);
 }
 
-async function productReleaseMetadata(product) {
-  const { packagePath } = await releasePackageByProduct(product);
-  const releaseTomlPath = path.join(root, packagePath, 'release.toml');
-  const metadata = await readToml(releaseTomlPath);
-  if (metadata.id !== product) {
-    fail(`${path.relative(root, releaseTomlPath)} must declare id = '${product}'`);
-  }
-  return metadata;
-}
-
 async function selectedSqlNames(productsCsv) {
   const products = sortedDeduped(splitCsv(productsCsv));
   if (products.length === 0) {
@@ -460,16 +451,7 @@ async function selectedSqlNames(productsCsv) {
   }
   const sqlNames = [];
   for (const product of products) {
-    const metadata = await productReleaseMetadata(product);
-    const members = metadata.kind === 'exact-extension-artifact'
-      ? [metadata.extension_sql_name]
-      : metadata.kind === 'exact-extension-bundle'
-        ? metadata.extension_sql_names
-        : undefined;
-    if (!Array.isArray(members) || members.length === 0 || members.some((sqlName) => typeof sqlName !== 'string' || sqlName.length === 0)) {
-      fail(`${product} must declare exact extension_sql_name or extension_sql_names members`);
-    }
-    sqlNames.push(...members);
+    sqlNames.push(...extensionSqlNames(product, 'extension-artifact-packager.mjs'));
   }
   console.log(sortedDeduped(sqlNames).join(','));
 }
