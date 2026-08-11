@@ -119,7 +119,8 @@ function portable(value, label) {
 
 function normalizeCanonicalRow(row, label) {
   const sqlName = portable(row?.["sql-name"], `${label}.sql-name`);
-  const product = portable(row?.["release-product"], `${label}.release-product`);
+  const product = portable(row?.["artifact-product"], `${label}.artifact-product`);
+  const releaseProduct = portable(row?.["release-product"], `${label}.release-product`);
   const createsExtension = row?.["creates-extension"];
   if (typeof createsExtension !== "boolean") fail(label, "creates-extension must be boolean");
   const nativeModuleStem = row?.["native-module-stem"] ?? null;
@@ -142,6 +143,7 @@ function normalizeCanonicalRow(row, label) {
   return {
     sqlName,
     product,
+    releaseProduct,
     createsExtension,
     nativeModuleStem,
     dependencies: canonicalList(
@@ -167,6 +169,7 @@ function normalizeCanonicalRow(row, label) {
 function normalizeFrozenRuntimeContract(row, label) {
   const sqlName = portable(row?.sqlName, `${label}.sqlName`);
   const product = portable(row?.product, `${label}.product`);
+  const releaseProduct = portable(row?.releaseProduct, `${label}.releaseProduct`);
   if (typeof row?.createsExtension !== "boolean") fail(label, "createsExtension must be boolean");
   const nativeModuleStem = row?.nativeModuleStem ?? null;
   if (nativeModuleStem !== null) portable(nativeModuleStem, `${label}.nativeModuleStem`);
@@ -203,6 +206,7 @@ function normalizeFrozenRuntimeContract(row, label) {
     extensionSqlFilePrefixes,
     nativeModuleStem,
     product,
+    releaseProduct,
     sharedPreloadLibraries: canonicalList(
       row?.sharedPreloadLibraries,
       `${label}.sharedPreloadLibraries`,
@@ -643,6 +647,9 @@ export function assertSwiftExtensionMatchesCanonical(extension, canonical, label
   if (canonical === undefined) fail(label, `has no generated canonical metadata for ${extension.sqlName}`);
   if (extension.product !== canonical.product) {
     fail(label, "product does not match generated canonical ownership metadata");
+  }
+  if (extension.releaseProduct !== canonical.releaseProduct) {
+    fail(label, "releaseProduct does not match generated canonical ownership metadata");
   }
 }
 

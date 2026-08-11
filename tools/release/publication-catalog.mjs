@@ -6,10 +6,10 @@ import {
   loadGraph,
   releaseOrder,
 } from "./release-graph.mjs";
+import { registryPackageRows } from "./release-artifact-targets.mjs";
 import {
   EXTENSION_AOT_PACKAGE_SUFFIXES,
   EXTENSION_PORTABLE_TARGET,
-  wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 
 export const PUBLICATION_CATALOG_SCHEMA = "oliphaunt-publication-catalog-v1";
@@ -83,8 +83,8 @@ function parseRegistryIdentity(raw, product, prefix) {
 function carrierTarget(product, ecosystem, name) {
   if (
     ecosystem === "cargo"
-    && product.startsWith("oliphaunt-extension-")
-    && name === wasixExtensionPackageName(product)
+    && name.startsWith("oliphaunt-extension-")
+    && name.endsWith("-wasix")
   ) {
     return EXTENSION_PORTABLE_TARGET;
   }
@@ -187,7 +187,7 @@ export function loadPublicationCatalog(prefix = "publication-catalog", { product
   for (const product of ordered) {
     const config = graph.products[product];
     const publishTargets = sortedUniqueStrings(config.publish_targets ?? [], `${product}.publish_targets`, prefix);
-    const registryPackages = sortedUniqueStrings(config.registry_packages ?? [], `${product}.registry_packages`, prefix);
+    const registryPackages = registryPackageRows({ product }, prefix).map((row) => row.raw);
     productRows.push({
       id: product,
       kind: config.kind,

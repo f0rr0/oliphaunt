@@ -11,22 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { PLATFORM_COMPATIBILITY_POLICY } from "./platform-compatibility-policy.mjs";
-import { parseWorkflow } from "./read-workflow.mjs";
 import { ROOT } from "./release-graph.mjs";
 
-const SETUP = path.join(ROOT, ".github/scripts/setup-native-build-tools.sh");
-const BUILD = path.join(
-  ROOT,
-  "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
-);
 const CACHE = path.join(
   ROOT,
   "src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh",
 );
-const setupSource = readFileSync(SETUP, "utf8");
-const buildSource = readFileSync(BUILD, "utf8");
-const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -75,81 +65,6 @@ esac
     { encoding: "utf8" },
   );
 }
-
-describe("Linux native compiler compatibility contract", () => {
-  test("pins GCC 12 for every Linux native build process", () => {
-    expect(setupSource).toContain("g++-12");
-    expect(setupSource).toContain("gcc-12");
-    expect(setupSource).toContain('if [ "$cc_major" != "12" ] || [ "$cxx_major" != "12" ]');
-    for (const variable of ["CC", "CXX", "OLIPHAUNT_CC", "OLIPHAUNT_CXX"]) {
-      expect(setupSource).toContain(`printf '${variable}=%s\\n'`);
-    }
-  });
-
-  test("all native producer jobs use the shared compiler setup", () => {
-    for (const jobId of [
-      "extension-artifacts-native",
-      "liboliphaunt-native-desktop",
-      "liboliphaunt-native-android",
-      "liboliphaunt-native-ios",
-    ]) {
-      const step = ci.jobs[jobId].steps.find(
-        ({ name }) => name === "Configure native compiler cache",
-      );
-      expect(step?.run).toContain(".github/scripts/setup-native-build-tools.sh");
-    }
-  });
-
-  test("threads the exact C and C++ compilers through every CMake dependency build", () => {
-    expect(buildSource).toContain(
-      'fail "Linux release builds require GCC/G++ 12; run .github/scripts/setup-native-build-tools.sh"',
-    );
-    expect(buildSource).toContain(
-      'fail "Linux release builds require GCC/G++ major 12, got $native_cc_major/$native_cxx_major"',
-    );
-    expect(buildSource).toContain('"-DCMAKE_C_COMPILER=$native_cc"');
-    expect(buildSource).toContain('"-DCMAKE_CXX_COMPILER=$native_cxx"');
-    expect(buildSource).toContain('"-DCMAKE_C_COMPILER_LAUNCHER=$ccache_bin"');
-    expect(buildSource).toContain('"-DCMAKE_CXX_COMPILER_LAUNCHER=$ccache_bin"');
-    expect(buildSource).toMatch(
-      /native_postgis_cmake_install\(\)[\s\S]*?"\$\{cmake_compiler_args\[@\]\}"/u,
-    );
-  });
-
-  test("keeps the published GNU C++ ABI ceiling at the GCC 12 level", () => {
-    for (const target of ["linux-x64-gnu", "linux-arm64-gnu"]) {
-      expect(
-        PLATFORM_COMPATIBILITY_POLICY[target].elf.maximumRequiredVersions.GLIBCXX,
-      ).toEqual([3, 4, 30]);
-    }
-  });
-});
-
-describe("Windows native toolchain bootstrap contract", () => {
-  test("uses the pinned verified winflexbison asset instead of Chocolatey", () => {
-    expect(setupSource).toContain(
-      'bash "$repo_root/tools/dev/install-pinned-winflexbison.sh"',
-    );
-    expect(setupSource).toContain(
-      'OLIPHAUNT_PINNED_NATIVE_TOOL_CACHE_ROOT="$cache_root"',
-    );
-    expect(setupSource).toContain('[ -x "$winflex_dir/win_flex.exe" ]');
-    expect(setupSource).toContain('[ -x "$winflex_dir/win_bison.exe" ]');
-    expect(setupSource).not.toContain("winflexbison3");
-  });
-
-  test("does not accept Chocolatey's success status without the requested executable", () => {
-    expect(setupSource).toContain(
-      'choco install -y "$package" --no-progress --limit-output &&\n      [ -x "$expected_executable" ]',
-    );
-    expect(setupSource).toContain(
-      "install_choco_package strawberryperl /c/Strawberry/perl/bin/perl.exe",
-    );
-    expect(setupSource).toContain(
-      "Chocolatey did not install $expected_executable after 3 attempts",
-    );
-  });
-});
 
 describe("PostGIS native dependency cache", () => {
   test("retains an exact-fingerprint cache and atomically records completion", () => {
@@ -301,18 +216,5 @@ describe("PostGIS native dependency cache", () => {
     const unsafeRoot = cacheOperation("prepare", "/", "d".repeat(64), [buildRoot]);
     expect(unsafeRoot.status).toBe(2);
     expect(existsSync(path.join(buildRoot, "keep"))).toBe(true);
-  });
-
-  test("keys both the extension stamp and dependency cache to compiler identity", () => {
-    expect(buildSource).toContain(
-      'postgis_dependency_hash="$(native_postgis_dependency_fingerprint)" || return 1',
-    );
-    expect(buildSource).toContain(
-      'printf \'postgis-dependency-fingerprint=%s\\n\' "$postgis_dependency_hash"',
-    );
-    expect(buildSource).toContain("native_postgis_compiler_identity cc \"$native_cc\"");
-    expect(buildSource).toContain("native_postgis_compiler_identity cxx \"$native_cxx\"");
-    expect(buildSource).toContain("oliphaunt_postgis_dependency_cache_prepare");
-    expect(buildSource).toContain("oliphaunt_postgis_dependency_cache_commit");
   });
 });

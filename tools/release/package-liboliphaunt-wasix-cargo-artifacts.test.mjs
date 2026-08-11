@@ -15,7 +15,11 @@ import path from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { gzipSync, zstdCompressSync } from "node:zlib";
 
-import { extensionSqlNames } from "./release-artifact-targets.mjs";
+import {
+  extensionReleaseProduct,
+  extensionReleaseVersion,
+  extensionSqlNames,
+} from "./release-artifact-targets.mjs";
 import {
   extractArchiveMemberToFile,
   extractTarZstd,
@@ -108,10 +112,11 @@ function adversarialTarGz(rows) {
   return gzipSync(adversarialTar(rows), { mtime: 0 });
 }
 
-function aggregateFixture(root) {
+function aggregateFixture(root, { nestedOwner = false } = {}) {
   const product = "oliphaunt-extension-contrib-pg18";
-  const version = "0.0.0";
-  const productRoot = path.join(root, product);
+  const version = extensionReleaseVersion(product, "wasix", "package-liboliphaunt-wasix-cargo-artifacts.test");
+  const releaseProduct = extensionReleaseProduct(product, "wasix", "package-liboliphaunt-wasix-cargo-artifacts.test");
+  const productRoot = path.join(root, ...(nestedOwner ? [releaseProduct, product] : [product]));
   const releaseAssets = path.join(productRoot, "release-assets");
   const archiveRoot = `${product}-${version}-wasix-wasix-portable-bundle`;
   const carrierName = `${archiveRoot}.tar.gz`;
@@ -154,6 +159,8 @@ function aggregateFixture(root) {
   writeFileSync(path.join(productRoot, "extension-artifacts.json"), `${JSON.stringify({
     schema: "oliphaunt-extension-ci-artifacts-v2",
     product,
+    releaseProduct,
+    family: "wasix",
     version,
     extensions,
     carrierAssets: [{
@@ -202,6 +209,45 @@ function aggregateFixture(root) {
 }
 
 describe("aggregate WASIX Cargo artifact packaging", () => {
+  test("runtime source build resolves runtime-owned contrib archives and AOT under the WASIX owner", {
+    timeout: 180_000,
+  }, () => {
+    const root = mkdtempSync(path.join(ROOT, "target/wasix-nested-owner-build-test-"));
+    directories.push(root);
+    const productRoot = aggregateFixture(root, { nestedOwner: true });
+    const manifest = JSON.parse(readFileSync(path.join(productRoot, "extension-artifacts.json"), "utf8"));
+    const cube = manifest.extensions.find((row) => row.sqlName === "cube");
+    const archive = path.join(productRoot, "member-assets", "cube", cube.assets[0].name);
+    mkdirSync(path.dirname(archive), { recursive: true });
+    cpSync(cube.assets[0].path, archive);
+
+    const hostTriple = supportedRustcHostTriple();
+    const app = path.join(root, "app");
+    mkdirSync(path.join(app, "src"), { recursive: true });
+    writeFileSync(path.join(app, "Cargo.toml"), `[package]
+name = "wasix-nested-owner-proof"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, "src/runtimes/liboliphaunt/wasix/crates/assets"))}, features = ["extension-cube"] }
+
+[workspace]
+`);
+    writeFileSync(path.join(app, "src/main.rs"), `fn main() {
+    assert!(liboliphaunt_wasix_portable::extension_archive("cube").is_some());
+    assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "cube").is_some());
+}
+`);
+    run("cargo", ["run", "--offline", "--manifest-path", path.join(app, "Cargo.toml")], {
+      env: {
+        ...process.env,
+        CARGO_TARGET_DIR: path.join(root, "cargo-target"),
+        OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: root,
+      },
+    });
+  });
+
   test("streams nested portable archives larger than spawnSync's default buffer", () => {
     const root = mkdtempSync(path.join(ROOT, "target/wasix-aggregate-stream-test-"));
     directories.push(root);
@@ -387,6 +433,11 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     expect(statSync(path.join(work, "cargo-package-extracted")).isDirectory()).toBe(true);
     expect(statSync(path.join(work, "cargo-package-target")).isDirectory()).toBe(true);
     const carrierName = "oliphaunt-extension-contrib-pg18-wasix";
+    const extensionVersion = extensionReleaseVersion(
+      "oliphaunt-extension-contrib-pg18",
+      "wasix",
+      "package-liboliphaunt-wasix-cargo-artifacts.test",
+    );
     const carrierManifest = Bun.TOML.parse(readFileSync(path.join(sources, carrierName, "Cargo.toml"), "utf8"));
     expect(carrierManifest["build-dependencies"].sha2).toBeUndefined();
     const carrierBuildScript = readFileSync(path.join(sources, carrierName, "build.rs"), "utf8");
@@ -413,14 +464,14 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
       name: wasixExtensionAotPackageName("oliphaunt-extension-contrib-pg18", target),
       product: "oliphaunt-extension-contrib-pg18",
       target,
-      dependencyRequirement: "=0.0.0",
+      dependencyRequirement: `=${extensionVersion}`,
     } }));
     writeFileSync(runtimeCargoToml, injectRuntimeExtensionDependencies(
       readFileSync(runtimeCargoToml, "utf8"),
       [{ spec: {
         name: carrierName,
         product: "oliphaunt-extension-contrib-pg18",
-        dependencyRequirement: "=0.0.0",
+        dependencyRequirement: `=${extensionVersion}`,
         members,
       } }],
       aotSources,

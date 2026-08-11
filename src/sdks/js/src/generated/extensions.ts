@@ -6,6 +6,7 @@ export type GeneratedExtensionMetadata = {
   readonly sqlName: string;
   readonly displayName: string;
   readonly postgresMajor: number;
+  readonly artifactProduct: string;
   readonly releaseProduct: string;
   readonly cargoPackage: string;
   readonly npmPackage: string;
@@ -37,11 +38,12 @@ export type GeneratedExtensionMetadata = {
 };
 
 export const GENERATED_EXTENSION_METADATA_SHA256 =
-  'cd1ce8a2c4746a2f0697595c9203977f2eaf5308e5b6a118212116547a9e8ac7' as const;
+  '778b539d27ee995eae7b2c78c89acee5a61911109bf40bca9b463288d8850a5f' as const;
 
 export const GENERATED_EXTENSION_METADATA = [
   {
     archive: 'extensions/amcheck.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -59,7 +61,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -76,6 +78,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/auto_explain.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: false,
     dataFiles: [],
@@ -93,7 +96,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -110,6 +113,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/bloom.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -127,7 +131,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -144,6 +148,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/btree_gin.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -161,7 +166,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -178,6 +183,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/btree_gist.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -195,7 +201,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -212,6 +218,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/citext.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -229,7 +236,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -246,6 +253,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/cube.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -263,7 +271,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -280,6 +288,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/dict_int.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -297,7 +306,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -314,6 +323,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/dict_xsyn.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: ['share/postgresql/tsearch_data/xsyn_sample.rules'],
@@ -331,7 +341,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: ['tsearch_data/xsyn_sample.rules'],
     selectedExtensionDependencies: [],
@@ -348,6 +358,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/earthdistance.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -365,7 +376,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: ['cube'],
@@ -382,6 +393,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/file_fdw.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -399,7 +411,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -416,6 +428,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/fuzzystrmatch.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -433,7 +446,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -450,6 +463,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/hstore.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -467,7 +481,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -484,6 +498,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/intarray.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -501,7 +516,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -518,6 +533,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/isn.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -535,7 +551,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -552,6 +568,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/lo.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -569,7 +586,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -586,6 +603,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/ltree.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -603,7 +621,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -620,6 +638,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pageinspect.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -637,7 +656,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -654,6 +673,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_buffercache.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -671,7 +691,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -688,6 +708,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_freespacemap.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -705,7 +726,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -722,6 +743,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_hashids.tar.zst',
+    artifactProduct: 'oliphaunt-extension-pg-hashids',
     cargoPackage: 'oliphaunt-extension-pg-hashids',
     createsExtension: true,
     dataFiles: [],
@@ -756,6 +778,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_ivm.tar.zst',
+    artifactProduct: 'oliphaunt-extension-pg-ivm',
     cargoPackage: 'oliphaunt-extension-pg-ivm',
     createsExtension: true,
     dataFiles: [],
@@ -790,6 +813,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_surgery.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -807,7 +831,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -824,6 +848,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_textsearch.tar.zst',
+    artifactProduct: 'oliphaunt-extension-pg-textsearch',
     cargoPackage: 'oliphaunt-extension-pg-textsearch',
     createsExtension: true,
     dataFiles: [],
@@ -872,6 +897,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_trgm.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -889,7 +915,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -906,6 +932,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_uuidv7.tar.zst',
+    artifactProduct: 'oliphaunt-extension-pg-uuidv7',
     cargoPackage: 'oliphaunt-extension-pg-uuidv7',
     createsExtension: true,
     dataFiles: [],
@@ -940,6 +967,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_visibility.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -957,7 +985,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -974,6 +1002,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pg_walinspect.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -991,7 +1020,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1008,6 +1037,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pgcrypto.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1025,7 +1055,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1042,6 +1072,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/pgtap.tar.zst',
+    artifactProduct: 'oliphaunt-extension-pgtap',
     cargoPackage: 'oliphaunt-extension-pgtap',
     createsExtension: true,
     dataFiles: [],
@@ -1090,6 +1121,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/postgis.tar.zst',
+    artifactProduct: 'oliphaunt-extension-postgis',
     cargoPackage: 'oliphaunt-extension-postgis',
     createsExtension: true,
     dataFiles: [
@@ -1165,6 +1197,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/seg.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1182,7 +1215,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1199,6 +1232,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/tablefunc.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1216,7 +1250,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1233,6 +1267,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/tcn.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1250,7 +1285,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1267,6 +1302,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/tsm_system_rows.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1284,7 +1320,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1301,6 +1337,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/tsm_system_time.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1318,7 +1355,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1335,6 +1372,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/unaccent.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: ['share/postgresql/tsearch_data/unaccent.rules'],
@@ -1352,7 +1390,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: ['tsearch_data/unaccent.rules'],
     selectedExtensionDependencies: [],
@@ -1369,6 +1407,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/uuid-ossp.tar.zst',
+    artifactProduct: 'oliphaunt-extension-contrib-pg18',
     cargoPackage: 'oliphaunt-extension-contrib-pg18',
     createsExtension: true,
     dataFiles: [],
@@ -1386,7 +1425,7 @@ export const GENERATED_EXTENSION_METADATA = [
     npmPackage: '@oliphaunt/extension-contrib-pg18',
     postgresMajor: 18,
     public: true,
-    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    releaseProduct: 'liboliphaunt-native',
     runtimeBound: true,
     runtimeShareDataFiles: [],
     selectedExtensionDependencies: [],
@@ -1403,6 +1442,7 @@ export const GENERATED_EXTENSION_METADATA = [
   },
   {
     archive: 'extensions/vector.tar.zst',
+    artifactProduct: 'oliphaunt-extension-vector',
     cargoPackage: 'oliphaunt-extension-vector',
     createsExtension: true,
     dataFiles: [],

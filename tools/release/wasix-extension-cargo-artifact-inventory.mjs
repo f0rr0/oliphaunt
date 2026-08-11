@@ -1,9 +1,17 @@
-import { exactExtensionProducts } from "./release-artifact-targets.mjs";
+import {
+  exactExtensionProducts,
+  extensionReleaseProduct,
+} from "./release-artifact-targets.mjs";
 import {
   declaredCarrierMap,
   loadPublicationCatalog,
   resolveActualCarrier,
 } from "./publication-catalog.mjs";
+import {
+  expectedExtensionAotTargets,
+  wasixExtensionAotPackageName,
+  wasixExtensionPackageName,
+} from "./wasix-cargo-artifact-contract.mjs";
 
 const PORTABLE_KIND = "wasix-extension";
 const AOT_KIND = "wasix-extension-aot";
@@ -22,20 +30,30 @@ export function expectedWasixExtensionPackageInventory(
   products = exactExtensionProducts(tool),
 ) {
   const selectedProducts = [...new Set(products)].sort(compareText);
-  const catalog = loadPublicationCatalog(tool, { products: selectedProducts });
+  const releaseProducts = [...new Set(
+    selectedProducts.map((product) => extensionReleaseProduct(product, "wasix", tool)),
+  )].sort(compareText);
+  const catalog = loadPublicationCatalog(tool, { products: releaseProducts });
   const expectedPackageKinds = new Map();
   const portableProducts = new Set();
+  const carrierProducts = new Map();
+  for (const product of selectedProducts) {
+    carrierProducts.set(wasixExtensionPackageName(product), { kind: PORTABLE_KIND, product });
+    for (const target of expectedExtensionAotTargets()) {
+      carrierProducts.set(wasixExtensionAotPackageName(product, target), { kind: AOT_KIND, product });
+    }
+  }
   for (const carrier of catalog.carriers) {
     if (carrier.ecosystem !== "cargo") {
       continue;
     }
-    const kind = ROLE_KINDS.get(carrier.role);
-    if (kind === undefined) {
+    const expected = carrierProducts.get(carrier.name);
+    if (expected === undefined || ROLE_KINDS.get(carrier.role) !== expected.kind) {
       continue;
     }
-    expectedPackageKinds.set(carrier.name, kind);
+    expectedPackageKinds.set(carrier.name, expected.kind);
     if (carrier.role === "portable-leaf") {
-      portableProducts.add(carrier.product);
+      portableProducts.add(expected.product);
     }
   }
   const missingPortable = selectedProducts.filter((product) => !portableProducts.has(product));
@@ -64,7 +82,7 @@ function expectedCarrier(inventory, name, prefix) {
   const base = carrier.role === "payload-part"
     ? inventory.declaredCarriers.get(carrier.parentCarrier)
     : carrier;
-  const kind = ROLE_KINDS.get(base?.role);
+  const kind = base === undefined ? undefined : inventory.expectedPackageKinds.get(base.name);
   if (kind === undefined) {
     return null;
   }

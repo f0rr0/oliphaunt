@@ -4,7 +4,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { BUILDER_JOBS, planForFullRun } from "../graph/ci_plan.mjs";
-import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
+import {
+  extensionNativeRegistryPackageStrings,
+  extensionRegistryPackageStrings,
+  extensionWasixRegistryPackageStrings,
+} from "./extension-registry-packages.mjs";
 import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
@@ -25,9 +29,11 @@ import {
   extensionArtifactTargets,
   extensionMetadata,
   extensionMemberPath,
+  extensionReleaseProduct,
   extensionRegistryPackageTargetSets,
   extensionSqlNames,
   rawArtifactTargetRows,
+  registryPackageRows,
   releaseMetadata,
   sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
@@ -507,7 +513,8 @@ export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, r
   const carriers = declaredCarrierMap(catalog);
   const runtimeProducts = new Set(["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]);
   for (const product of runtimeProducts) {
-    const expected = targets.filter((row) => row.product === product && row.published && row.npmPackage).map((row) => row.npmPackage);
+    const expected = registryPackageRows({ product, packageKind: "npm" }, TOOL)
+      .map((row) => row.packageName);
     const actual = catalog.carriers.filter((row) => row.product === product && row.ecosystem === "npm").map((row) => row.name);
     assertSameStrings(actual, expected, `${product} npm carrier identities`);
   }
@@ -536,19 +543,26 @@ export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, r
 }
 
 export function validateExtensionCarrierCoverage(graph, catalog, products) {
-  const byProduct = new Map();
-  for (const carrier of catalog.carriers) {
-    const rows = byProduct.get(carrier.product) ?? [];
-    rows.push(carrier.id);
-    byProduct.set(carrier.product, rows);
-  }
   for (const product of products) {
-    const expected = extensionRegistryPackageStrings({
+    const targetSets = extensionRegistryPackageTargetSets(product, TOOL);
+    const expected = extensionRegistryPackageStrings({ product, ...targetSets })
+      .map((identity) => identity.replace(/^crates:/u, "cargo:"));
+    const expectedNative = extensionNativeRegistryPackageStrings({ product, ...targetSets })
+      .map((identity) => identity.replace(/^crates:/u, "cargo:"));
+    const expectedWasix = extensionWasixRegistryPackageStrings({
       product,
-      ...extensionRegistryPackageTargetSets(product, TOOL),
+      includeAot: targetSets.includeWasixAot,
     }).map((identity) => identity.replace(/^crates:/u, "cargo:"));
-    assertSameStrings(byProduct.get(product) ?? [], expected, `${product} registry carriers`);
-    invariant(catalog.carriers.filter((row) => row.product === product).every((row) => row.version === graph.products[product].version), `${product} carrier versions must match its exact-extension product version`);
+    const actual = catalog.carriers.filter((row) => expected.includes(row.id));
+    assertSameStrings(actual.map((row) => row.id), expected, `${product} registry carriers`);
+    for (const [family, identities] of [["native", expectedNative], ["wasix", expectedWasix]]) {
+      const owner = extensionReleaseProduct(product, family, TOOL);
+      invariant(
+        actual.filter((row) => identities.includes(row.id))
+          .every((row) => row.product === owner && row.version === graph.products[owner].version),
+        `${product} ${family} carrier versions must match ${owner}`,
+      );
+    }
   }
 }
 

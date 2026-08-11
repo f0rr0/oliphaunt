@@ -405,6 +405,7 @@ function validateSelection(
         "nativeDependencies",
         "product",
         "registration",
+        "releaseProduct",
         "resourceRoot",
         "sharedPreloadLibraries",
         "sqlName",
@@ -415,8 +416,12 @@ function validateSelection(
     const sqlName = portable(row.sqlName, `extensions[${index}].sqlName`);
     const product = portable(row.product, `extensions[${index}].product`);
     if (!product.startsWith("oliphaunt-extension-")) {
-      fail(`extensions[${index}].product must be an exact-extension release owner; got ${product}`);
+      fail(`extensions[${index}].product must be an exact-extension artifact product; got ${product}`);
     }
+    const releaseProduct = portable(
+      row.releaseProduct,
+      `extensions[${index}].releaseProduct`,
+    );
     const nativeModuleStem = nullablePortable(
       row.nativeModuleStem,
       `extensions[${index}].nativeModuleStem`,
@@ -486,6 +491,7 @@ function validateSelection(
       nativeDependencies,
       nativeModuleStem,
       product,
+      releaseProduct,
       registration,
       resourceRoot: path.resolve(
         inputDirectory,
@@ -744,6 +750,7 @@ function renderSwift(extension, bySqlName) {
     `${dependencyImports ? `\n${dependencyImports}` : ""}\n\n` +
     `public enum ${extension.swiftTarget} {\n` +
     `    public static let product = ${swiftString(extension.product)}\n` +
+    `    public static let releaseProduct = ${swiftString(extension.releaseProduct)}\n` +
     `    public static let sqlName = ${swiftString(extension.sqlName)}\n` +
     `    public static let version = ${swiftString(extension.version)}\n` +
     `    public static let dependencies: [String] = [${extension.dependencies.map(swiftString).join(", ")}]\n\n` +
@@ -956,6 +963,7 @@ async function writeGeneratedTree(selection, outputDir, basePackagePath, localBi
       nativeDependencies: extension.nativeDependencies,
       nativeModuleStem: extension.nativeModuleStem,
       product: extension.product,
+      releaseProduct: extension.releaseProduct,
       registration: extension.registration,
       resourceBytes: extension.resources.bytes,
       resourceFiles: extension.resources.files.length,

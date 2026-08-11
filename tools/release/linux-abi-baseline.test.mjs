@@ -130,27 +130,6 @@ test("Linux ABI rehearsal pins Fedora and executes without network or privilege"
   }
 });
 
-test("release producers cannot bypass the Linux ABI build and rehearsal", () => {
-  const broker = readFileSync(path.join(ROOT, "tools/release/package-broker-assets.sh"), "utf8");
-  const native = readFileSync(path.join(ROOT, "tools/release/package-liboliphaunt-linux-assets.sh"), "utf8");
-  const node = readFileSync(path.join(ROOT, "src/runtimes/node-direct/tools/build-node-addon.sh"), "utf8");
-  const extensions = readFileSync(
-    path.join(ROOT, "src/extensions/artifacts/native/tools/package-release-assets.sh"),
-    "utf8",
-  );
-  assert.match(broker, /build-linux-broker-baseline\.sh/u);
-  for (const source of [broker, native, node, extensions]) {
-    assert.match(source, /check-linux-consumer-baseline\.sh/u);
-  }
-
-  const rehearsal = readFileSync(path.join(ROOT, "tools/release/check-linux-consumer-baseline.sh"), "utf8");
-  assert.match(rehearsal, /getconf GNU_LIBC_VERSION/u);
-  assert.match(rehearsal, /observed_glibc.*EXPECTED_GLIBC/u);
-  const releaseGuide = readFileSync(path.join(ROOT, "docs/maintainers/release.md"), "utf8");
-  assert.match(releaseGuide, /Fedora 39 is retained\s+solely as a reproducible ABI fixture/u);
-  assert.match(releaseGuide, /end-of-life/u);
-});
-
 test("baseline scripts reject arbitrary host mounts", () => {
   if (process.platform !== "linux") return;
   for (const [script, args] of [

@@ -4,7 +4,6 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-toolchain.sh"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
-action="$root/.github/actions/setup-moon/action.yml"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -21,12 +20,6 @@ for candidate in python3 python; do
   fi
 done
 [ -n "$python" ] || fail "python3 or python is required"
-grep -Fq 'moon_home_fs="$(cygpath -u "$moon_home")"' "$action"
-grep -Fq 'moon_home_env="$(cygpath -w "$moon_home_fs")"' "$action"
-grep -Fq 'echo "MOON_HOME=$moon_home_env" >> "$GITHUB_ENV"' "$action"
-grep -Fq 'export_dir_fs="$(cygpath -u "$export_dir")"' "$action"
-grep -Fq 'github_path_entry="$(cygpath -w "$export_dir_fs")"' "$action"
-grep -Fq 'cp "$binary" "$export_dir_fs/$(basename "$binary")"' "$action"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then

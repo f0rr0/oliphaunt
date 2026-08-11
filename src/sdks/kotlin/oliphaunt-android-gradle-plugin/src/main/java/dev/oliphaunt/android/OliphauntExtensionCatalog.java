@@ -10,14 +10,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import org.gradle.api.GradleException;
 
 final class OliphauntExtensionCatalog {
   private static final String RESOURCE = "/dev/oliphaunt/android/extensions.properties";
-  private static final String SCHEMA = "oliphaunt-android-extension-catalog-v1";
+  private static final String SCHEMA = "oliphaunt-android-extension-catalog-v2";
   private static final String SQL_NAME_PATTERN = "[A-Za-z0-9._-]{1,128}";
   private static final String VERSION_PATTERN =
       "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)";
@@ -37,18 +36,33 @@ final class OliphauntExtensionCatalog {
     return List.copyOf(ENTRIES.keySet());
   }
 
-  static List<String> releaseProductMembers(String releaseProduct) {
+  static List<String> artifactProductMembers(String artifactProduct) {
     List<String> members =
         ENTRIES.values().stream()
-            .filter(entry -> entry.releaseProduct().equals(releaseProduct))
+            .filter(entry -> entry.artifactProduct().equals(artifactProduct))
             .map(Entry::sqlName)
             .sorted()
             .toList();
     if (members.isEmpty()) {
       throw new GradleException(
-          "unknown Oliphaunt Android extension release product: " + releaseProduct);
+          "unknown Oliphaunt Android extension artifact product: " + artifactProduct);
     }
     return members;
+  }
+
+  static String releaseProductForArtifactProduct(String artifactProduct) {
+    TreeSet<String> owners = new TreeSet<>();
+    for (String sqlName : artifactProductMembers(artifactProduct)) {
+      owners.add(require(sqlName).releaseProduct());
+    }
+    if (owners.size() != 1) {
+      throw new GradleException(
+          "generated Oliphaunt extension catalog assigns artifact product "
+              + artifactProduct
+              + " to multiple release products: "
+              + owners);
+    }
+    return owners.first();
   }
 
   static List<Owner> resolveOwners(
@@ -68,44 +82,35 @@ final class OliphauntExtensionCatalog {
       builder.add(entry);
     }
 
-    Map<String, OwnerBuilder> aliases = new LinkedHashMap<>();
+    Map<String, OwnerBuilder> ownersByReleaseProduct = new LinkedHashMap<>();
     for (OwnerBuilder builder : builders.values()) {
-      for (String alias : builder.aliases()) {
-        OwnerBuilder previous = aliases.put(alias, builder);
-        if (previous != null && previous != builder) {
-          throw new GradleException(
-              "generated Oliphaunt extension catalog has ambiguous release-owner alias " + alias);
-        }
+      String releaseProduct = builder.entry.releaseProduct();
+      OwnerBuilder previous = ownersByReleaseProduct.put(releaseProduct, builder);
+      if (previous != null && previous != builder) {
+        throw new GradleException(
+            "selected extension artifacts share release owner " + releaseProduct);
       }
     }
 
-    Map<OwnerBuilder, Set<String>> overrideValues = new LinkedHashMap<>();
+    Map<OwnerBuilder, String> overrideValues = new LinkedHashMap<>();
     for (Map.Entry<String, String> override : overrides.entrySet()) {
-      String alias = override.getKey().trim();
+      String releaseProduct = override.getKey().trim();
       String version = override.getValue().trim();
-      OwnerBuilder owner = aliases.get(alias);
+      OwnerBuilder owner = ownersByReleaseProduct.get(releaseProduct);
       if (owner == null) {
         throw new GradleException(
             "oliphauntExtensionVersions key "
-                + alias
+                + releaseProduct
                 + " does not identify a selected extension release owner");
       }
       validateVersion(version, "Oliphaunt extension release owner " + owner.entry.releaseProduct());
-      overrideValues.computeIfAbsent(owner, ignored -> new TreeSet<>()).add(version);
+      overrideValues.put(owner, version);
     }
 
     List<Owner> result = new ArrayList<>();
     for (OwnerBuilder builder : builders.values()) {
-      Set<String> values = overrideValues.getOrDefault(builder, Set.of());
-      if (values.size() > 1) {
-        throw new GradleException(
-            "conflicting versions "
-                + values
-                + " were supplied for Oliphaunt extension release owner "
-                + builder.entry.releaseProduct());
-      }
-      String version;
-      if (values.isEmpty()) {
+      String version = overrideValues.get(builder);
+      if (version == null) {
         if (!builder.entry.runtimeBound()) {
           throw new GradleException(
               "external Oliphaunt extension release owner "
@@ -113,8 +118,6 @@ final class OliphauntExtensionCatalog {
                   + " requires an explicit oliphauntExtensionVersions entry");
         }
         version = runtimeVersion;
-      } else {
-        version = values.iterator().next();
       }
       if (builder.entry.runtimeBound() && !version.equals(runtimeVersion)) {
         throw new GradleException(
@@ -159,8 +162,8 @@ final class OliphauntExtensionCatalog {
 
     TreeSet<String> sqlNames = new TreeSet<>();
     for (String key : properties.stringPropertyNames()) {
-      if (key.startsWith("extension.") && key.endsWith(".releaseProduct")) {
-        sqlNames.add(key.substring("extension.".length(), key.length() - ".releaseProduct".length()));
+      if (key.startsWith("extension.") && key.endsWith(".artifactProduct")) {
+        sqlNames.add(key.substring("extension.".length(), key.length() - ".artifactProduct".length()));
       }
     }
     if (sqlNames.isEmpty()) {
@@ -173,6 +176,7 @@ final class OliphauntExtensionCatalog {
         throw new GradleException("bundled Oliphaunt extension catalog has invalid SQL name " + sqlName);
       }
       String prefix = "extension." + sqlName + ".";
+      String artifactProduct = required(properties, prefix + "artifactProduct");
       String releaseProduct = required(properties, prefix + "releaseProduct");
       String mavenGroup = required(properties, prefix + "mavenGroup");
       String mavenArtifact = required(properties, prefix + "mavenArtifact");
@@ -184,7 +188,11 @@ final class OliphauntExtensionCatalog {
             throw new GradleException(
                 "bundled Oliphaunt extension catalog has invalid runtimeBound for " + sqlName);
       };
-      if (!releaseProduct.matches("oliphaunt-extension-[A-Za-z0-9._-]+")) {
+      if (!artifactProduct.matches("oliphaunt-extension-[A-Za-z0-9._-]+")) {
+        throw new GradleException(
+            "bundled Oliphaunt extension catalog has invalid artifact product for " + sqlName);
+      }
+      if (!releaseProduct.matches("(?:liboliphaunt-(?:native|wasix)|oliphaunt-extension-[A-Za-z0-9._-]+)")) {
         throw new GradleException(
             "bundled Oliphaunt extension catalog has invalid release product for " + sqlName);
       }
@@ -198,6 +206,7 @@ final class OliphauntExtensionCatalog {
           sqlName,
           new Entry(
               sqlName,
+              artifactProduct,
               releaseProduct,
               mavenGroup,
               mavenArtifact,
@@ -278,6 +287,7 @@ final class OliphauntExtensionCatalog {
 
   record Entry(
       String sqlName,
+      String artifactProduct,
       String releaseProduct,
       String mavenGroup,
       String mavenArtifact,
@@ -289,6 +299,7 @@ final class OliphauntExtensionCatalog {
   }
 
   record Owner(
+      String artifactProduct,
       String releaseProduct,
       String mavenGroup,
       String mavenArtifact,
@@ -305,7 +316,8 @@ final class OliphauntExtensionCatalog {
     }
 
     private void add(Entry candidate) {
-      if (!entry.releaseProduct().equals(candidate.releaseProduct())
+      if (!entry.artifactProduct().equals(candidate.artifactProduct())
+          || !entry.releaseProduct().equals(candidate.releaseProduct())
           || !entry.mavenCoordinate().equals(candidate.mavenCoordinate())
           || entry.runtimeBound() != candidate.runtimeBound()) {
         throw new GradleException(
@@ -315,17 +327,9 @@ final class OliphauntExtensionCatalog {
       members.add(candidate.sqlName());
     }
 
-    private Set<String> aliases() {
-      LinkedHashSet<String> aliases = new LinkedHashSet<>();
-      aliases.add(entry.releaseProduct());
-      aliases.add(entry.mavenArtifact());
-      aliases.add(entry.mavenCoordinate());
-      aliases.addAll(members);
-      return aliases;
-    }
-
     private Owner build(String version) {
       return new Owner(
+          entry.artifactProduct(),
           entry.releaseProduct(),
           entry.mavenGroup(),
           entry.mavenArtifact(),

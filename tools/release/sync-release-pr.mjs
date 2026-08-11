@@ -12,7 +12,7 @@ import {
   ROOT,
   compareText,
   currentProductVersion,
-  exactExtensionProducts,
+  exactExtensionReleaseProducts,
   extensionRegistryPackageTargetSets,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
@@ -20,13 +20,17 @@ import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import {
   compatibilityEntriesForBumpedProducts,
   releasePleaseWorktreeTransitions,
+  sharedContribReleaseCandidates,
 } from "./release-please-transition.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
 import {
   EXAMPLE_CARGO_POLICIES,
   exampleCargoReleaseVersionBindings,
 } from "./example-cargo-policy.mjs";
-import { synchronizeDependentReleaseCandidates } from "./release-dependent-candidates.mjs";
+import {
+  synchronizeDependentReleaseCandidates,
+  synchronizeReleaseCandidates,
+} from "./release-dependent-candidates.mjs";
 import { releasePleaseConfigAfterBootstrapConsumption } from "./release-please-bootstrap.mjs";
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
@@ -246,7 +250,7 @@ function replaceTopLevelArrayAssignment(text, key, values, context) {
 
 function syncExtensionRegistryMetadata(changes, { write }) {
   const expectedPublishTargets = ["github-release-assets", "npm", "maven-central", "crates-io"];
-  for (const product of exactExtensionProducts(PREFIX)) {
+  for (const product of exactExtensionReleaseProducts(PREFIX)) {
     const releaseToml = path.join(ROOT, packagePath(product), "release.toml");
     const expectedRegistryPackages = extensionRegistryPackageStrings({
       product,
@@ -339,17 +343,25 @@ function typescriptOptionalRuntimeVersionsFromPackage() {
   return Object.fromEntries(expectedPackages.map((packageName) => [packageName, optional[packageName]]));
 }
 
-async function syncTypescriptOptionalRuntimeDependencies(changes, { write, transitions }) {
+export async function syncTypescriptOptionalRuntimeDependencies(
+  changes,
+  {
+    write,
+    transitions,
+    packageFile = path.join(ROOT, "src/sdks/js/package.json"),
+    runtimeVersions,
+  },
+) {
   if (!transitions.some(({ product }) => product === "oliphaunt-js")) {
     return;
   }
-  const file = path.join(ROOT, "src/sdks/js/package.json");
+  const file = packageFile;
   const data = readJsonObject(file);
   const optional = data.optionalDependencies;
-  const expectedVersions = await expectedTypescriptOptionalRuntimeVersions();
+  const expectedVersions = runtimeVersions ?? await expectedTypescriptOptionalRuntimeVersions();
   let changed = false;
   const details = [];
-  for (const packageName of expectedPackages) {
+  for (const packageName of Object.keys(expectedVersions).sort(compareText)) {
     const expectedVersion = expectedVersions[packageName];
     const actual = optional[packageName];
     if (actual !== expectedVersion) {
@@ -908,26 +920,48 @@ function syncExtensionEvidenceSummary(changes, { write }) {
 }
 
 function parseArgs(argv) {
-  const args = { check: false, generatedReleaseCheck: false };
+  const args = {
+    bootstrapSharedContrib: false,
+    check: false,
+    generatedReleaseCheck: false,
+    normalCheck: false,
+    sharedContribStatus: false,
+  };
   for (const arg of argv) {
     if (arg === "--check") {
       if (args.generatedReleaseCheck) {
         fail("--check and --check-generated-release are mutually exclusive");
       }
       args.check = true;
+      args.normalCheck = true;
     } else if (arg === "--check-generated-release") {
       if (args.check) {
         fail("--check and --check-generated-release are mutually exclusive");
       }
       args.check = true;
       args.generatedReleaseCheck = true;
+    } else if (arg === "--bootstrap-shared-contrib") {
+      args.bootstrapSharedContrib = true;
+    } else if (arg === "--shared-contrib-status") {
+      args.check = true;
+      args.sharedContribStatus = true;
     } else if (arg === "--help" || arg === "-h") {
-      console.log("usage: tools/release/sync-release-pr.mjs [--check|--check-generated-release]");
+      console.log(
+        "usage: tools/release/sync-release-pr.mjs " +
+        "[--check|--check-generated-release|--bootstrap-shared-contrib|--shared-contrib-status]",
+      );
       process.exit(0);
     } else {
       fail(`unknown argument ${arg}`);
     }
   }
+  const modes = [
+    args.generatedReleaseCheck,
+    args.bootstrapSharedContrib,
+    args.sharedContribStatus,
+    args.normalCheck,
+  ].filter(Boolean);
+  if (modes.length > 1) fail("release sync modes are mutually exclusive");
   return args;
 }
 
@@ -936,10 +970,45 @@ async function main(argv) {
   const changes = [];
   const write = !args.check;
   let transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
+  let graph = loadGraph(PREFIX);
+  if (args.bootstrapSharedContrib && transitions.length > 0) {
+    fail("--bootstrap-shared-contrib requires main release state with no existing manifest transition");
+  }
+  const bridgeSharedContrib = transitions.length > 0
+    || args.bootstrapSharedContrib
+    || args.sharedContribStatus;
+  const sharedContribCandidates = bridgeSharedContrib
+    ? sharedContribReleaseCandidates(ROOT, graph, transitions, {
+      headRef: transitions.length > 0 ? "HEAD^" : "HEAD",
+      prefix: PREFIX,
+    })
+    : [];
+  if (args.sharedContribStatus) {
+    console.log(`required=${String(sharedContribCandidates.length > 0)}`);
+    return;
+  }
+  if (args.bootstrapSharedContrib && sharedContribCandidates.length === 0) {
+    fail("--bootstrap-shared-contrib found no unreleased shared contrib source change");
+  }
+  if (sharedContribCandidates.length > 0) {
+    changes.push(...synchronizeReleaseCandidates({
+      root: ROOT,
+      graph,
+      candidates: sharedContribCandidates,
+      releasePleaseConfig: readJsonObject(RELEASE_PLEASE_CONFIG),
+      manifest: readJsonObject(RELEASE_PLEASE_MANIFEST),
+      write,
+      prefix: PREFIX,
+    }));
+    if (write) {
+      transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
+      graph = loadGraph(PREFIX);
+    }
+  }
   if (transitions.length > 0) {
     const dependentCandidates = synchronizeDependentReleaseCandidates({
       root: ROOT,
-      graph: loadGraph(PREFIX),
+      graph,
       transitions,
       releasePleaseConfig: readJsonObject(RELEASE_PLEASE_CONFIG),
       manifest: readJsonObject(RELEASE_PLEASE_MANIFEST),
@@ -1005,7 +1074,7 @@ export function releaseDerivedPathInventory() {
     ELECTRON_EXAMPLE_PACKAGE,
     EXTENSION_EVIDENCE_SUMMARY_PATH,
     ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
-    ...exactExtensionProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),
+    ...exactExtensionReleaseProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),
     path.join(ROOT, "src/sdks/js/package.json"),
     ...cargoManifestPaths(),
   ].map(rel))].sort(compareText);

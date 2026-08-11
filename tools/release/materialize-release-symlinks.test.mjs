@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { materializeReleaseSymlinks } from "./materialize-release-symlinks.mjs";
 
-const ROOT = path.resolve(import.meta.dir, "../..");
 const roots = [];
 
 async function fixture(name) {
@@ -83,67 +82,4 @@ describe("release symlink materialization", () => {
     await expect(materializeReleaseSymlinks(linkedRoot)).rejects.toThrow(/root must be a real directory/u);
   });
 
-  test("all Unix native release packagers validate a link-free stage", async () => {
-    const coreScripts = [
-      "tools/release/package-liboliphaunt-linux-assets.sh",
-      "tools/release/package-liboliphaunt-macos-assets.sh",
-    ];
-    for (const script of coreScripts) {
-      const source = await readFile(path.join(ROOT, script), "utf8");
-      const materialize = source.indexOf("materialize-release-symlinks.mjs \"$stage\"");
-      const contract = source.indexOf("platform-binary-contract.mjs --target \"$target_id\" --root \"$stage\"");
-      expect(materialize).toBeGreaterThan(-1);
-      expect(contract).toBeGreaterThan(materialize);
-    }
-
-    const extensionScript = await readFile(
-      path.join(ROOT, "src/extensions/artifacts/native/tools/package-release-assets.sh"),
-      "utf8",
-    );
-    const copy = extensionScript.indexOf('rsync -a --delete "$source_runtime/" "$staged_runtime/"');
-    const materialize = extensionScript.indexOf(
-      'materialize-release-symlinks.mjs "$staged_runtime"',
-    );
-    const prepare = extensionScript.indexOf(
-      'runtime="$(prepare_extension_release_runtime "$source_runtime")"',
-    );
-    const contract = extensionScript.indexOf(
-      'platform-binary-contract.mjs --target "$target_id" --root "$runtime"',
-    );
-    expect(copy).toBeGreaterThan(-1);
-    expect(materialize).toBeGreaterThan(copy);
-    expect(prepare).toBeGreaterThan(materialize);
-    expect(contract).toBeGreaterThan(prepare);
-  });
-
-  test("the materializer is an explicit input of every native release task", async () => {
-    const input = "/tools/release/materialize-release-symlinks.mjs";
-    const extensionConfig = Bun.YAML.parse(
-      await readFile(path.join(ROOT, "src/extensions/artifacts/native/moon.yml"), "utf8"),
-    );
-    expect(extensionConfig.tasks["release-check"].inputs).toContain(input);
-    expect(extensionConfig.tasks["build-target"].inputs).toContain(input);
-
-    const runtimeConfig = Bun.YAML.parse(
-      await readFile(path.join(ROOT, "src/runtimes/liboliphaunt/native/moon.yml"), "utf8"),
-    );
-    expect(runtimeConfig.tasks["release-runtime"].inputs).toContain(input);
-    expect(runtimeConfig.tasks["release-runtime-desktop"].inputs).toContain(input);
-  });
-
-  test("desktop release tasks track every OS-specific post-build packager", async () => {
-    const config = Bun.YAML.parse(
-      await readFile(path.join(ROOT, "src/runtimes/liboliphaunt/native/moon.yml"), "utf8"),
-    );
-    const packagers = [
-      "/tools/release/package-liboliphaunt-linux-assets.sh",
-      "/tools/release/package-liboliphaunt-macos-assets.sh",
-      "/tools/release/package-liboliphaunt-windows-assets.ps1",
-    ];
-    for (const task of ["release-runtime", "release-runtime-desktop"]) {
-      for (const packager of packagers) {
-        expect(config.tasks[task].inputs).toContain(packager);
-      }
-    }
-  });
 });

@@ -179,10 +179,11 @@ PostgreSQL requires it.
 
 The published carrier envelope (`manifest.properties` plus `files/`) is not the
 runtime resource layout. `oliphaunt-build` strips that envelope and stages each
-PostgreSQL-relative payload under `extension/<release-product>/`, for example
+PostgreSQL-relative payload under `extension/<artifact-product>/`, for example
 `extension/oliphaunt-extension-vector/share/postgresql/extension/vector.control`.
-Contrib members share one product root; independently released external
-extensions use their own product roots.
+The directory is the artifact product, not necessarily the tag owner: contrib
+members share `extension/oliphaunt-extension-contrib-pg18/`, while independently
+released external extensions use their own artifact roots.
 
 Contrib and external extensions use the same consumer shape. Contrib extension
 packages are versioned and released with the Oliphaunt runtimes they are built

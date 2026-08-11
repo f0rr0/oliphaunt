@@ -30,10 +30,11 @@ a resource-only product containing `share/icu`; `Oliphaunt` discovers that
 bundle resource at runtime. Do not add `OliphauntICU` for applications that do
 not use ICU collations.
 
-Optional PostgreSQL extensions are release-owned exact-extension artifacts. The
-PostgreSQL 18 contrib members share the `oliphaunt-extension-contrib-pg18`
-release product, while external projects such as `vector` keep independent
-`oliphaunt-extension-vector` versions. The base
+Optional PostgreSQL extensions are exact-extension artifacts. PostgreSQL 18
+contrib members share the logical `oliphaunt-extension-contrib-pg18` artifact;
+its native carrier uses the `liboliphaunt-native` release and version. External
+projects such as `vector` keep independent `oliphaunt-extension-vector`
+releases. The base
 Swift package does not publish hidden extension products or bundle unselected
 extension files. Swift and React Native iOS integrations resolve selected SQL
 names and their dependency closure from the checksum-bound JSON carrier
@@ -49,7 +50,7 @@ byte sizes and SHA-256 checksums, safely extracts only runtime resources, and
 emits a standalone consumer-owned local package with checksum-pinned binary
 targets, C descriptors that strongly reference built symbols,
 dependency-ordered Swift wrappers, and sanitized resource targets. Download one
-carrier from every release product that owns a selected or mandatory dependency
+carrier from every release owner that supplies a selected or mandatory dependency
 extension, then pass each carrier explicitly:
 
 ```bash
@@ -96,10 +97,10 @@ changes the version of an optional extension. A local `--carrier
 /path/to/...json` base override is available for release validation and advanced
 tooling, but it is not how consumers select extensions.
 
-Each exact-extension release publishes its own checksum-covered
-`<release-product>-<version>-swift-extension-carrier.json` GitHub release asset.
-This applies whether the extension release predates or follows the Swift source
-tag. Compose the asset with the embedded base using the repeatable
+Each exact-extension artifact publishes a checksum-covered
+`<artifact-product>-<version>-swift-extension-carrier.json` asset on its release
+owner's `<release-product>-v<version>` GitHub tag. This applies whether the
+carrier predates or follows the Swift source tag. Compose the asset with the embedded base using the repeatable
 `--extension-carrier` option:
 
 ```bash

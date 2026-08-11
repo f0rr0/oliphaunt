@@ -245,12 +245,12 @@ async function base() {
   await fs.mkdir(runtimeSource, { recursive: true });
   await fs.writeFile(path.join(runtimeSource, "fixture.txt"), "runtime\n");
   const runtime = path.join(archives, "liboliphaunt-0.1.0-runtime-resources.tar.gz");
-  run("tar", ["-czf", runtime, "-C", path.dirname(runtimeSource), path.basename(runtimeSource)]);
+  run("tar", ["--no-xattrs", "-czf", runtime, "-C", path.dirname(runtimeSource), path.basename(runtimeSource)]);
   const icuSource = path.join(root, "base", "icu", "share", "icu");
   await fs.mkdir(icuSource, { recursive: true });
   await fs.writeFile(path.join(icuSource, "icudt.dat"), "icu\n");
   const icu = path.join(archives, "liboliphaunt-0.1.0-icu-data.tar.gz");
-  run("tar", ["-czf", icu, "-C", path.join(root, "base", "icu"), "share/icu"]);
+  run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "share/icu"]);
   return {
     assets: [
       await asset("base-xcframework", framework, "zip", "liboliphaunt.xcframework"),
@@ -311,7 +311,7 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   const resource = await productionExtensionResource(sqlName, stem, nativeDependencies);
   const runtime = path.join(root, "archives", `${sqlName}-runtime.tar.gz`);
   await fs.mkdir(path.dirname(runtime), { recursive: true });
-  run("tar", ["-czf", runtime, "-C", resource, "."]);
+  run("tar", ["--no-xattrs", "-czf", runtime, "-C", resource, "."]);
   if (sqlName === "cube") {
     // Reproduce the valid POSIX typeflag-5/no-trailing-slash carrier emitted by
     // the previous archive producer and rejected by the failed CI run.
@@ -334,6 +334,9 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   const product = new Set(["cube", "earthdistance", "pg_trgm"]).has(sqlName)
     ? "oliphaunt-extension-contrib-pg18"
     : `oliphaunt-extension-${sqlName.replaceAll("_", "-")}`;
+  const releaseProduct = product === "oliphaunt-extension-contrib-pg18"
+    ? "liboliphaunt-native"
+    : product;
   const version = sqlName === "postgis" ? "3.6.1" : "1.0.0";
   const content = frozenContent.get(sqlName) ?? {
     dataFiles: [],
@@ -342,8 +345,9 @@ async function extension(sqlName, stem, dependencies = [], nativeDependencies = 
   };
   return {
     product,
+    releaseProduct,
     version,
-    tag: `${product}-v${version}`,
+    tag: `${releaseProduct}-v${version}`,
     sqlName,
     createsExtension: true,
     dataFiles: content.dataFiles,
@@ -380,7 +384,7 @@ async function rewrittenResourceArchive(sqlName, archiveName, replacements) {
   }
   await fs.writeFile(manifestFile, manifest);
   const archive = path.join(root, "archives", archiveName);
-  run("tar", ["-czf", archive, "-C", stage, "."]);
+  run("tar", ["--no-xattrs", "-czf", archive, "-C", stage, "."]);
   return archive;
 }
 
@@ -393,13 +397,14 @@ async function contaminatedResourceArchive(sqlName, archiveName, relativePath) {
   await fs.mkdir(path.dirname(injected), { recursive: true });
   await fs.writeFile(injected, "undeclared carrier contamination\n");
   const archive = path.join(root, "archives", archiveName);
-  run("tar", ["-czf", archive, "-C", stage, "."]);
+  run("tar", ["--no-xattrs", "-czf", archive, "-C", stage, "."]);
   return archive;
 }
 
 function dependencyReference(row) {
   return {
     product: row.product,
+    releaseProduct: row.releaseProduct,
     sqlName: row.sqlName,
     tag: row.tag,
     version: row.version,
@@ -411,7 +416,7 @@ function extensionReleaseCarrier(baseRow, release, extensionRows, availableExten
   return {
     schema: extensionCarrierSchema,
     release: {
-      product: release.product,
+      product: release.releaseProduct,
       tag: release.tag,
       version: release.version,
     },
@@ -518,6 +523,7 @@ async function main() {
     consumer: "swift",
     extensions: [{
       "sql-name": "pgtap",
+      "artifact-product": "oliphaunt-extension-pgtap",
       "release-product": "oliphaunt-extension-pgtap",
       "creates-extension": false,
       "native-module-stem": "future_pgtap",
@@ -542,7 +548,7 @@ async function main() {
   ]);
   const pgtapOverride = structuredClone(manifest.extensions.find(({ sqlName }) => sqlName === "pgtap"));
   pgtapOverride.version = "1.1.0";
-  pgtapOverride.tag = `${pgtapOverride.product}-v${pgtapOverride.version}`;
+  pgtapOverride.tag = `${pgtapOverride.releaseProduct}-v${pgtapOverride.version}`;
   const pgtapCarrierDocument = extensionCarrier(
     manifest.base,
     pgtapOverride,
@@ -716,7 +722,8 @@ async function main() {
 
   const contribOverrideRelease = {
     product: "oliphaunt-extension-contrib-pg18",
-    tag: "oliphaunt-extension-contrib-pg18-v1.1.0",
+    releaseProduct: "liboliphaunt-native",
+    tag: "liboliphaunt-native-v1.1.0",
     version: "1.1.0",
   };
   const contribOverrideRows = ["cube", "earthdistance"].map((sqlName) => {
@@ -749,7 +756,8 @@ async function main() {
 
   const bundleRelease = {
     product: "oliphaunt-extension-contrib-pg18",
-    tag: "oliphaunt-extension-contrib-pg18-v1.2.0",
+    releaseProduct: "liboliphaunt-native",
+    tag: "liboliphaunt-native-v1.2.0",
     version: "1.2.0",
   };
   const bundleRows = ["cube", "earthdistance"].map((sqlName) => {
@@ -850,7 +858,7 @@ async function main() {
     "same-owner-release-skew",
     [contribV1, contribV2],
     "cube,pg_trgm",
-    /resolved selected extensions assigns inconsistent version\/tag identities to release owner oliphaunt-extension-contrib-pg18/u,
+    /resolved selected extensions assigns inconsistent version\/tag identities to release owner liboliphaunt-native/u,
   );
 
   const incompatibleBase = structuredClone(pgtapCarrierDocument);
@@ -859,15 +867,12 @@ async function main() {
   await expectExtensionCarrierFailure("incompatible-base", [incompatibleBase], "pgtap", /requires liboliphaunt-native-v2\.0\.0.*provides liboliphaunt-native-v0\.1\.0/u);
 
   const fakeOwner = structuredClone(pgtapCarrierDocument);
-  fakeOwner.release.product = "oliphaunt-extension-contrib-pg18";
-  fakeOwner.release.tag = `oliphaunt-extension-contrib-pg18-v${fakeOwner.release.version}`;
-  fakeOwner.entries[0].extension.product = fakeOwner.release.product;
-  fakeOwner.entries[0].extension.tag = fakeOwner.release.tag;
+  fakeOwner.entries[0].extension.product = "oliphaunt-extension-contrib-pg18";
   await expectExtensionCarrierFailure(
     "fake-independent-owner",
     [fakeOwner],
     "pgtap",
-    /product must be canonical owner oliphaunt-extension-pgtap for pgtap/u,
+    /product must be canonical artifact product oliphaunt-extension-pgtap for pgtap/u,
   );
 
   const leadingZeroVersion = structuredClone(pgtapCarrierDocument);
@@ -927,8 +932,9 @@ async function main() {
   substitutedEarthdistance.dependencyCarriers = [
     {
       product: "oliphaunt-extension-contrib-pg18",
+      releaseProduct: "liboliphaunt-native",
       sqlName: "pg_trgm",
-      tag: "oliphaunt-extension-contrib-pg18-v1.1.0",
+      tag: "liboliphaunt-native-v1.1.0",
       version: "1.1.0",
     },
   ];
@@ -941,7 +947,8 @@ async function main() {
 
   const dependencySkewRelease = {
     product: "oliphaunt-extension-contrib-pg18",
-    tag: "oliphaunt-extension-contrib-pg18-v2.0.0",
+    releaseProduct: "liboliphaunt-native",
+    tag: "liboliphaunt-native-v2.0.0",
     version: "2.0.0",
   };
   const dependencySkewRows = ["cube", "earthdistance"].map((sqlName) => {
@@ -960,7 +967,7 @@ async function main() {
   );
   dependencySkewEarthdistance.entries[0].dependencyCarriers[0].version = "1.0.0";
   dependencySkewEarthdistance.entries[0].dependencyCarriers[0].tag =
-    "oliphaunt-extension-contrib-pg18-v1.0.0";
+    "liboliphaunt-native-v1.0.0";
   const dependencySkewCube = extensionReleaseCarrier(
     manifest.base,
     dependencySkewRelease,
@@ -972,7 +979,7 @@ async function main() {
     "dependency-version-skew",
     [dependencySkewEarthdistance, dependencySkewCube],
     "earthdistance",
-    /earthdistance requires dependency carrier oliphaunt-extension-contrib-pg18-v1\.0\.0.*resolved oliphaunt-extension-contrib-pg18-v2\.0\.0/u,
+    /earthdistance requires dependency carrier liboliphaunt-native-v1\.0\.0.*resolved liboliphaunt-native-v2\.0\.0/u,
   );
 
   const traversalArchive = path.join(root, "archives", "malicious-traversal.zip");

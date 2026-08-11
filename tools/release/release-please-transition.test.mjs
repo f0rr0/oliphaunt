@@ -9,6 +9,7 @@ import {
   compatibilityEntriesForBumpedProducts,
   releasePleaseManifestTransitions,
   releasePleaseWorktreeTransitions,
+  sharedContribReleaseCandidates,
 } from "./release-please-transition.mjs";
 
 const PRODUCT_PATHS = {
@@ -65,6 +66,49 @@ function fixture(t, versions = null) {
 
 const ZERO = Object.fromEntries(Object.keys(PRODUCT_PATHS).map((product) => [product, "0.0.0"]));
 const V1 = Object.fromEntries(Object.keys(PRODUCT_PATHS).map((product) => [product, "1.0.0"]));
+
+function contribManifest(version) {
+  return `postgres-version = ${JSON.stringify(version)}\n\n[[extensions]]\nid = "amcheck"\n`;
+}
+
+function writeCarrierDescriptor(root) {
+  mkdirSync(path.join(root, "src/extensions/contrib"), { recursive: true });
+  mkdirSync(path.join(root, "src/extensions/contrib/amcheck/targets"), { recursive: true });
+  mkdirSync(path.join(root, "src/postgres/versions/18"), { recursive: true });
+  mkdirSync(path.join(root, "src/shared/extension-runtime-contract"), { recursive: true });
+  writeFileSync(
+    path.join(root, "src/extensions/contrib/carriers.toml"),
+    [
+      'logical_product = "oliphaunt-extension-contrib-pg18"',
+      'member_manifest = "src/extensions/contrib/postgres18.toml"',
+      'source = "src/postgres/versions/18/source.toml"',
+      'contract = "src/shared/extension-runtime-contract/contract.toml"',
+      'native_owner = "liboliphaunt-native"',
+      'wasix_owner = "liboliphaunt-wasix"',
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    path.join(root, "src/extensions/contrib/postgres18.toml"),
+    contribManifest("18.4"),
+  );
+  writeFileSync(
+    path.join(root, "src/extensions/contrib/amcheck/targets/artifacts.toml"),
+    'schema = "oliphaunt-extension-artifact-targets-v1"\n',
+  );
+  writeFileSync(path.join(root, "src/postgres/versions/18/source.toml"), 'version = "18.4"\n');
+  writeFileSync(path.join(root, "src/shared/extension-runtime-contract/contract.toml"), 'schema = "v1"\n');
+}
+
+function runtimeGraph(versions) {
+  return {
+    products: Object.fromEntries(["liboliphaunt-native", "liboliphaunt-wasix"].map((product) => [product, {
+      path: PRODUCT_PATHS[product],
+      tag_prefix: `${product}-v`,
+      version: versions[product],
+    }])),
+  };
+}
 
 test("the unreleased introduction may have no parent release manifest", (t) => {
   const root = fixture(t);
@@ -170,5 +214,107 @@ test("a manifest regression fails closed", (t) => {
   assert.throws(
     () => releasePleaseWorktreeTransitions(root, { prefix: "transition-test" }),
     /oliphaunt-extension-vector manifest version regressed from 1[.]0[.]0 to 0[.]9[.]0/u,
+  );
+});
+
+test("only the retired contrib release path may disappear without fabricating a transition", () => {
+  const config = { packages: { "packages/native": { component: "liboliphaunt-native" } } };
+  assert.deepEqual(
+    releasePleaseManifestTransitions(
+      config,
+      { "packages/native": "1.0.0", "src/extensions/contrib": "1.0.0" },
+      { "packages/native": "1.0.0" },
+      { prefix: "transition-test" },
+    ),
+    [],
+  );
+  assert.throws(
+    () => releasePleaseManifestTransitions(
+      config,
+      { "packages/native": "1.0.0", "packages/accidentally-removed": "1.0.0" },
+      { "packages/native": "1.0.0" },
+      { prefix: "transition-test" },
+    ),
+    /packages cannot disappear.*packages\/accidentally-removed/u,
+  );
+});
+
+test("shared-only fixes with no Release Please transitions seed both runtime candidates", (t) => {
+  const root = fixture(t, V1);
+  writeCarrierDescriptor(root);
+  commit(root, "refactor(release): define runtime-owned contrib carriers");
+  git(root, "tag", "liboliphaunt-native-v1.0.0");
+  git(root, "tag", "liboliphaunt-wasix-v1.0.0");
+  writeFileSync(path.join(root, "src/postgres/versions/18/source.toml"), 'version = "18.5"\n');
+  commit(root, "fix(contrib): update PostgreSQL source baseline");
+
+  assert.deepEqual(
+    sharedContribReleaseCandidates(root, runtimeGraph(V1), [], { prefix: "transition-test" })
+      .map(({ product, before, after, changelogSection }) => ({ product, before, after, changelogSection })),
+    [
+      { product: "liboliphaunt-native", before: "1.0.0", after: "1.0.1", changelogSection: "Bug Fixes" },
+      { product: "liboliphaunt-wasix", before: "1.0.0", after: "1.0.1", changelogSection: "Bug Fixes" },
+    ],
+  );
+});
+
+test("a pre-1.0 breaking contrib commit requires a minor runtime bump", (t) => {
+  const versions = { ...V1, "liboliphaunt-native": "0.2.3", "liboliphaunt-wasix": "0.2.3" };
+  const root = fixture(t, versions);
+  writeCarrierDescriptor(root);
+  commit(root, "refactor(release): define runtime-owned contrib carriers");
+  git(root, "tag", "liboliphaunt-native-v0.2.3");
+  git(root, "tag", "liboliphaunt-wasix-v0.2.3");
+  writeFileSync(path.join(root, "src/extensions/contrib/postgres18.toml"), contribManifest("18.5"));
+  commit(root, "feat(contrib)!: change bundled SQL surface");
+
+  assert.deepEqual(
+    sharedContribReleaseCandidates(root, runtimeGraph(versions), [], { prefix: "transition-test" })
+      .map(({ product, after }) => [product, after]),
+    [
+      ["liboliphaunt-native", "0.3.0"],
+      ["liboliphaunt-wasix", "0.3.0"],
+    ],
+  );
+});
+
+test("an existing sufficient native bump is preserved while WASIX is bridged", (t) => {
+  const root = fixture(t, V1);
+  writeCarrierDescriptor(root);
+  commit(root, "refactor(release): define runtime-owned contrib carriers");
+  git(root, "tag", "liboliphaunt-native-v1.0.0");
+  git(root, "tag", "liboliphaunt-wasix-v1.0.0");
+  writeFileSync(path.join(root, "src/extensions/contrib/postgres18.toml"), contribManifest("18.5"));
+  commit(root, "feat(contrib): add a bundled SQL capability");
+  const versions = { ...V1, "liboliphaunt-native": "1.1.0" };
+
+  assert.deepEqual(
+    sharedContribReleaseCandidates(
+      root,
+      runtimeGraph(versions),
+      [{
+        product: "liboliphaunt-native",
+        packagePath: PRODUCT_PATHS["liboliphaunt-native"],
+        before: "1.0.0",
+        after: "1.1.0",
+      }],
+      { prefix: "transition-test" },
+    ).map(({ product, before, after }) => ({ product, before, after })),
+    [{ product: "liboliphaunt-wasix", before: "1.0.0", after: "1.1.0" }],
+  );
+});
+
+test("unsupported shared-source commit intent fails closed", (t) => {
+  const root = fixture(t, V1);
+  writeCarrierDescriptor(root);
+  commit(root, "refactor(release): define runtime-owned contrib carriers");
+  git(root, "tag", "liboliphaunt-native-v1.0.0");
+  git(root, "tag", "liboliphaunt-wasix-v1.0.0");
+  writeFileSync(path.join(root, "src/extensions/contrib/postgres18.toml"), contribManifest("18.5"));
+  commit(root, "chore: ambiguous shared source update");
+
+  assert.throws(
+    () => sharedContribReleaseCandidates(root, runtimeGraph(V1), [], { prefix: "transition-test" }),
+    /shared contrib source commit .* unsupported release intent/u,
   );
 });

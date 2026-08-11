@@ -2,9 +2,16 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { compareText } from "./release-graph.mjs";
+import {
+  compareText,
+  EMPTY_TREE,
+  latestProductTag,
+} from "./release-graph.mjs";
+import { CONTRIB_CARRIERS_PATH, loadContribCarriers } from "./contrib-carriers.mjs";
 
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
+const INTENT_RANK = { patch: 1, minor: 2, major: 3 };
+const RETIRED_CONTRIB_RELEASE_PATH = path.posix.dirname(CONTRIB_CARRIERS_PATH);
 
 function transitionError(prefix, message) {
   return new Error(`${prefix}: ${message}`);
@@ -29,6 +36,128 @@ function compareVersions(left, right) {
     if (left[index] !== right[index]) return left[index] - right[index];
   }
   return 0;
+}
+
+function bumpVersion(version, intent, context, prefix) {
+  const [major, minor, patch] = stableVersion(version, context, prefix);
+  if (version === "0.0.0") {
+    throw transitionError(prefix, `${context} has no released baseline; let Release Please create its first release`);
+  }
+  if (intent === "major") return `${major + 1}.0.0`;
+  if (intent === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+function transitionIntent(before, after, context, prefix) {
+  const left = stableVersion(before, `${context} before`, prefix);
+  const right = stableVersion(after, `${context} after`, prefix);
+  if (right[0] > left[0]) return "major";
+  if (right[0] === left[0] && right[1] > left[1]) return "minor";
+  if (right[0] === left[0] && right[1] === left[1] && right[2] > left[2]) return "patch";
+  throw transitionError(prefix, `${context} does not advance from ${before} to ${after}`);
+}
+
+function conventionalIntent(subject, body, version, commit, prefix) {
+  const match = /^(feat|fix|perf|refactor|revert)(?:\([^)]+\))?(!)?:[ \t]+(.+)$/u.exec(subject);
+  if (match === null) {
+    throw transitionError(
+      prefix,
+      `shared contrib source commit ${commit.slice(0, 8)} has unsupported release intent: ${JSON.stringify(subject)}`,
+    );
+  }
+  const breaking = match[2] === "!" || /^BREAKING[ -]CHANGE:/mu.test(body);
+  const [major] = stableVersion(version, "shared contrib owner version", prefix);
+  const intent = breaking ? (major === 0 ? "minor" : "major") : match[1] === "feat" && major > 0 ? "minor" : "patch";
+  return { intent, summary: match[3], type: match[1] };
+}
+
+function carrierDescriptor(root, prefix) {
+  const carriers = loadContribCarriers(root, prefix);
+  const owners = [carriers.nativeOwner, carriers.wasixOwner];
+  if (owners.some((owner) => typeof owner !== "string" || owner.length === 0) || new Set(owners).size !== 2) {
+    throw transitionError(prefix, `${CONTRIB_CARRIERS_PATH} must name distinct native_owner and wasix_owner products`);
+  }
+  return {
+    inputs: carriers.inputFiles,
+    owners,
+  };
+}
+
+function commitsAffecting(root, baseRef, headRef, inputs, prefix) {
+  const result = git(root, ["rev-list", "--reverse", `${baseRef}..${headRef}`, "--", ...inputs], {}, prefix);
+  return result.stdout.trim().split(/\s+/u).filter(Boolean).map((commit) => {
+    const subject = git(root, ["show", "-s", "--format=%s", commit], {}, prefix).stdout.trim();
+    const body = git(root, ["show", "-s", "--format=%b", commit], {}, prefix).stdout.trim();
+    return { commit, subject, body };
+  });
+}
+
+/**
+ * Bridge the one shared source tree that Release Please cannot assign to two
+ * package paths. Existing runtime candidates keep their Release Please bump;
+ * missing owners receive the conventional-commit bump inferred from the
+ * shared byte inputs.
+ */
+export function sharedContribReleaseCandidates(
+  root,
+  graph,
+  transitions,
+  { headRef = "HEAD", prefix = "release-please-transition" } = {},
+) {
+  const { inputs, owners } = carrierDescriptor(root, prefix);
+  const transitionsByProduct = new Map(transitions.map((transition) => [transition.product, transition]));
+  const candidates = [];
+  for (const owner of owners) {
+    const product = graph.products?.[owner];
+    if (product === undefined) {
+      throw transitionError(prefix, `${CONTRIB_CARRIERS_PATH} owner ${owner} is not a release product`);
+    }
+    const baseRef = latestProductTag(product, headRef, prefix, root);
+    if (baseRef === EMPTY_TREE) {
+      throw transitionError(prefix, `${owner} has no release tag from which to derive shared contrib intent`);
+    }
+    const commits = commitsAffecting(root, baseRef, headRef, inputs, prefix);
+    if (commits.length === 0) continue;
+
+    const transition = transitionsByProduct.get(owner);
+    const before = transition?.before ?? product.version;
+    if (before === null) {
+      throw transitionError(prefix, `${owner} shared contrib bridge cannot replace a first-release candidate`);
+    }
+    const reasons = commits.map(({ commit, subject, body }) => ({
+      commit,
+      kind: "shared-source",
+      ...conventionalIntent(subject, body, before, commit, prefix),
+    }));
+    const requiredIntent = reasons
+      .map(({ intent }) => intent)
+      .sort((left, right) => INTENT_RANK[right] - INTENT_RANK[left])[0];
+
+    if (transition !== undefined) {
+      const actualIntent = transitionIntent(transition.before, transition.after, owner, prefix);
+      if (INTENT_RANK[actualIntent] < INTENT_RANK[requiredIntent]) {
+        throw transitionError(
+          prefix,
+          `${owner} Release Please candidate ${transition.before} -> ${transition.after} is smaller than the ` +
+            `${requiredIntent} bump required by shared contrib source commits`,
+        );
+      }
+      continue;
+    }
+
+    const after = bumpVersion(before, requiredIntent, `${owner} current version`, prefix);
+    candidates.push({
+      product: owner,
+      packagePath: product.path,
+      before,
+      after,
+      changelogSection: reasons.some(({ type, intent }) => type === "feat" || intent !== "patch")
+        ? "Features"
+        : "Bug Fixes",
+      reasons,
+    });
+  }
+  return candidates.sort((left, right) => compareText(left.product, right.product));
 }
 
 function packageProducts(config, prefix) {
@@ -94,6 +223,18 @@ export function releasePleaseManifestTransitions(
   const products = packageProducts(config, prefix);
 
   const currentPaths = new Set(products.keys());
+  const retiredParentPaths = before === null
+    ? []
+    : Object.keys(before).filter((packagePath) => !currentPaths.has(packagePath)).sort();
+  const unexpectedRetirements = retiredParentPaths.filter(
+    (packagePath) => packagePath !== RETIRED_CONTRIB_RELEASE_PATH,
+  );
+  if (unexpectedRetirements.length > 0) {
+    throw transitionError(
+      prefix,
+      `release-please packages cannot disappear from both config and manifest: ${JSON.stringify(unexpectedRetirements)}`,
+    );
+  }
   const missing = [...currentPaths].filter((packagePath) => !Object.hasOwn(after, packagePath)).sort();
   const extra = Object.keys(after).filter((packagePath) => !currentPaths.has(packagePath)).sort();
   if (missing.length > 0 || extra.length > 0) {
@@ -101,13 +242,6 @@ export function releasePleaseManifestTransitions(
       prefix,
       `release-please manifest paths must exactly match configured packages; missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`,
     );
-  }
-
-  if (before !== null) {
-    const removed = Object.keys(before).filter((packagePath) => !currentPaths.has(packagePath)).sort();
-    if (removed.length > 0) {
-      throw transitionError(prefix, `release-please package paths cannot disappear across normalization: ${removed.join(", ")}`);
-    }
   }
 
   const transitions = [];

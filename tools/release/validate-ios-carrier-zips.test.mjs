@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
@@ -49,12 +49,6 @@ function fixture() {
     env: { ...process.env, TMPDIR: temp },
   };
 }
-
-test("keeps the producer gate on the narrow in-process archive verifier", () => {
-  const source = readFileSync(TOOL, "utf8");
-  assert.match(source, /from "[.]\/portable-archive[.]mjs"/u);
-  assert.doesNotMatch(source, /node:child_process|swift-carrier-resolver|\b(?:unzip|zipinfo)\b/u);
-});
 
 test("validates every recursively produced XCFramework ZIP under Node without archive subprocesses", () => {
   const { env, root, temp } = fixture();

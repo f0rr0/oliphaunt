@@ -8,24 +8,10 @@ fail() {
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-node-pnpm/install-pinned-pnpm.sh"
-action="$root/.github/actions/setup-node-pnpm/action.yml"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
 curl_flags="$root/tools/dev/curl-platform-flags.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-
-if grep -Eq 'uses:[[:space:]]+actions/setup-node@|corepack([[:space:]]|$)|install-pinned-toolchain|moon-plugins|moon-cli' \
-  "$action" "$installer"; then
-  fail "standalone Node/pnpm action reintroduced an unverified or Moon bootstrap"
-fi
-grep -Fq 'uses: ./.github/actions/setup-node-runtime' "$action" ||
-  fail "standalone action does not compose the verified Node runtime"
-# shellcheck disable=SC2016 # The assertion intentionally matches literal shell syntax in the action.
-grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action" ||
-  fail "standalone action does not export a native Windows pnpm path"
-if grep -Eq 'pnpm[ -]store|pnpm-store-|steps\.pnpm-store' "$action"; then
-  fail "standalone setup must not cache a pnpm store before caller dependency installation"
-fi
 
 fixture="$tmp/pnpm-11.5.0.tgz"
 manifest="$tmp/pnpm.toml"

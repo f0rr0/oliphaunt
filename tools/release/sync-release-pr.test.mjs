@@ -12,6 +12,7 @@ import {
   releaseDerivedPathInventory,
   syncExampleCargoManifestText,
   syncLockfile,
+  syncTypescriptOptionalRuntimeDependencies,
 } from "./sync-release-pr.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -194,6 +195,38 @@ oliphaunt-target = { version = "=0.1.0", features = [
     () => syncExampleCargoManifestText(unsupported, { policy, bindings, label: "fixture/Cargo.toml" }),
     /must use a string or inline-table dependency specification/u,
   );
+});
+
+test("a JavaScript release transition synchronizes its optional runtime versions", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-js-runtime-sync-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const packageFile = path.join(directory, "package.json");
+  writeFileSync(
+    packageFile,
+    `${JSON.stringify({
+      name: "fixture",
+      optionalDependencies: {
+        "@oliphaunt/liboliphaunt-native": "workspace:0.1.0",
+        "@oliphaunt/liboliphaunt-wasix": "workspace:0.1.0",
+      },
+    }, null, 2)}\n`,
+  );
+  const changes = [];
+  await syncTypescriptOptionalRuntimeDependencies(changes, {
+    write: true,
+    transitions: [{ product: "oliphaunt-js" }],
+    packageFile,
+    runtimeVersions: {
+      "@oliphaunt/liboliphaunt-native": "workspace:0.1.1",
+      "@oliphaunt/liboliphaunt-wasix": "workspace:0.2.0",
+    },
+  });
+
+  assert.deepEqual(JSON.parse(readFileSync(packageFile, "utf8")).optionalDependencies, {
+    "@oliphaunt/liboliphaunt-native": "workspace:0.1.1",
+    "@oliphaunt/liboliphaunt-wasix": "workspace:0.2.0",
+  });
+  assert.equal(changes.length, 1);
 });
 
 test("generated release readiness closes the cheap pre-fanout fixed point", () => {

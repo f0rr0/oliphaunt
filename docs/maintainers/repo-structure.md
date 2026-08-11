@@ -48,8 +48,7 @@ source lives under `src/<product>/`.
 - Cross-product architecture, performance, release, and maintainer source docs
   live under `docs/`.
 - Shared fixture corpora consumed by at least two product-native test suites
-  live under `src/shared/fixtures/` and are governed by
-  `src/shared/contracts/test-matrix.toml`.
+  live under `src/shared/fixtures/`.
 - Pinned PostgreSQL source metadata, runtime-level third-party source pins,
   toolchain pins, extension-owned source pins, and generated extension catalogs
   live under `src/postgres/versions/18`, `src/sources/third-party`,

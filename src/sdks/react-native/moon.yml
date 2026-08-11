@@ -9,8 +9,6 @@ dependsOn:
   - "oliphaunt-swift"
   - "oliphaunt-kotlin"
   - "shared-js-core"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt React Native SDK"
@@ -33,7 +31,6 @@ tasks:
     tags: ["quality", "static"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh check-static"
     deps:
-      - "shared-contracts:check"
       - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
@@ -90,7 +87,6 @@ tasks:
     command: "bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge"
     deps:
       - "oliphaunt-kotlin:check"
-      - "shared-contracts:check"
       - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
@@ -120,7 +116,6 @@ tasks:
     tags: ["quality", "unit"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh test-unit"
     deps:
-      - "shared-fixtures:check"
       - "shared-js-core:check"
     inputs:
       - "/LICENSE"

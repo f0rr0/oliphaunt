@@ -63,6 +63,18 @@ function extensionCarrier(product, rows, { baseVersion = VERSION } = {}) {
   };
 }
 
+function runtimeOwnedContribCarrier(rows) {
+  const product = "oliphaunt-extension-contrib-pg18";
+  const carrier = extensionCarrier(product, rows);
+  carrier.release = { product: "liboliphaunt-native", tag: BASE_TAG, version: VERSION };
+  for (const { extension } of carrier.entries) {
+    extension.releaseProduct = "liboliphaunt-native";
+    extension.tag = BASE_TAG;
+    extension.version = VERSION;
+  }
+  return carrier;
+}
+
 function fixture(documents) {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-swift-consumer-carriers-"));
   return documents.map((document, index) => {
@@ -170,5 +182,26 @@ test("plans an explicit base-runtime final-link proof for an SQL-only selection"
       },
       schema: "oliphaunt-swift-extension-release-consumer-inputs-v1",
     },
+  );
+});
+
+test("plans native-owned contrib under its logical extension identity", () => {
+  const [source, contrib] = fixture([
+    sourceCarrier(),
+    runtimeOwnedContribCarrier([{ nativeModuleStem: null, sqlName: "amcheck" }]),
+  ]);
+  const plan = extensionReleaseConsumerInputs({
+    sourceCarrierFile: source,
+    extensionCarrierFiles: [contrib],
+  });
+  assert.deepEqual(plan.extensionProducts, ["oliphaunt-extension-contrib-pg18"]);
+  assert.deepEqual(plan.extensions, ["amcheck"]);
+
+  const forged = runtimeOwnedContribCarrier([{ nativeModuleStem: null, sqlName: "amcheck" }]);
+  forged.entries[0].extension.releaseProduct = "oliphaunt-extension-contrib-pg18";
+  const [forgedFile] = fixture([forged]);
+  assert.throws(
+    () => extensionReleaseConsumerInputs({ sourceCarrierFile: source, extensionCarrierFiles: [forgedFile] }),
+    /must be owned by liboliphaunt-native-v1[.]2[.]3/u,
   );
 });

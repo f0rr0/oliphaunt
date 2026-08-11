@@ -7,8 +7,6 @@ stack: "systems"
 tags: ["sdk", "rust", "tauri", "native", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt Rust SDK"
@@ -32,7 +30,6 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-contracts:check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -50,7 +47,6 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-fixtures:check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"

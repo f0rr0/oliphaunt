@@ -763,7 +763,9 @@ the repository into one version.
 
 Release Please selects changed product paths. Derived selection then follows
 Moon production/peer edges and exact compatibility fields from dependency to
-consumer. Native and WASIX are independent products; neither selects the other.
+consumer. Shared PostgreSQL contrib carrier inputs select both runtime owners;
+their native and WASIX carriers use the corresponding runtime version.
+Native and WASIX are independent products; neither selects the other.
 
 | Product | Current source version | First public version | Version relationship | Publish targets | Tag prefix |
 | --- | --- | --- | --- | --- | --- |

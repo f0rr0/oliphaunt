@@ -32,7 +32,13 @@ import {
   readPortableTarZstdBufferEntries,
 } from "./portable-archive.mjs";
 import { compareText } from "./release-graph.mjs";
-import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
+import {
+  currentProductVersionSync,
+  extensionMetadata,
+  extensionReleaseProduct,
+  extensionReleaseVersion,
+  extensionSqlNames,
+} from "./release-artifact-targets.mjs";
 import {
   AOT_PACKAGES,
   AOT_TARGET_CFGS,
@@ -1357,9 +1363,23 @@ function extensionCargoSpecs(extensionRoots, materializeRoot) {
   const specs = [];
   for (const manifestPath of discoverExtensionManifests(extensionRoots)) {
     const manifest = readJson(manifestPath);
-    const { product, version } = manifest;
+    if (manifest.family === "native") {
+      continue;
+    }
+    const product = manifest.artifactProduct ?? manifest.product;
+    const { version } = manifest;
     if (![product, version].every((value) => typeof value === "string" && value)) {
-      fail(`${rel(manifestPath)} is missing product or version`);
+      fail(`${rel(manifestPath)} is missing artifactProduct/product or version`);
+    }
+    const releaseProduct = extensionReleaseProduct(product, "wasix", PREFIX);
+    const expectedVersion = extensionReleaseVersion(product, "wasix", PREFIX);
+    if ((manifest.releaseProduct ?? product) !== releaseProduct || version !== expectedVersion) {
+      fail(
+        `${rel(manifestPath)} must bind ${product} WASIX carriers to ${releaseProduct}@${expectedVersion}`,
+      );
+    }
+    if (releaseProduct !== product && manifest.family !== "wasix") {
+      fail(`${rel(manifestPath)} runtime-owned WASIX carrier manifest must declare family=wasix`);
     }
     const metadata = extensionMetadata(product, PREFIX);
     const expectedMembers = extensionSqlNames(product, PREFIX);

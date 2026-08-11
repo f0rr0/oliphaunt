@@ -494,6 +494,9 @@ function changelogHeadingVersion(line) {
 }
 
 function reasonText(reason) {
+  if (reason.kind === "shared-source") {
+    return `shared contrib carrier source: ${reason.summary} (${reason.commit.slice(0, 8)})`;
+  }
   if (reason.kind === "moon") {
     return (
       `align with \`${reason.sourceProduct}\` ${reason.sourceVersion} ` +
@@ -521,10 +524,13 @@ function updateChangelog(text, candidate, context, prefix) {
     );
   }
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const sharedSource = candidate.reasons.every((reason) => reason.kind === "shared-source");
+  const section = sharedSource ? (candidate.changelogSection ?? "Bug Fixes") : "Dependencies";
+  const label = sharedSource ? "contrib" : "dependencies";
   const bullets = candidate.reasons
-    .map((reason) => `* **dependencies:** ${reasonText(reason)}`)
+    .map((reason) => `* **${label}:** ${reasonText(reason)}`)
     .join(newline);
-  const entry = [`## ${candidate.after}`, "", "### Dependencies", "", bullets].join(newline);
+  const entry = [`## ${candidate.after}`, "", `### ${section}`, "", bullets].join(newline);
   const heading = /^# [^\r\n]+(?:\r?\n|$)/u.exec(text);
   if (heading === null) {
     return `${entry}${newline}${newline}${text}`;
@@ -564,25 +570,25 @@ function packagesByProduct(releasePleaseConfig, prefix) {
  * Apply (or report in check mode) candidate manifest, version-file, extra-file,
  * and changelog updates using only the declarations Release Please already owns.
  */
-export function synchronizeDependentReleaseCandidates({
+export function synchronizeReleaseCandidates({
   root,
   graph,
-  transitions,
+  candidates,
   releasePleaseConfig,
   manifest,
   write = false,
   prefix = "release-dependent-candidates",
 }) {
   if (typeof root !== "string" || root.length === 0) throw error(prefix, "root must be a path");
+  if (!Array.isArray(candidates)) throw error(prefix, "release candidates must be a list");
   const manifestObject = object(manifest, ".release-please-manifest.json", prefix);
   const packages = packagesByProduct(releasePleaseConfig, prefix);
-  const plan = planDependentReleaseCandidates(graph, transitions, { prefix });
   const changes = [];
-  if (plan.candidates.length === 0) return { ...plan, changes };
+  if (candidates.length === 0) return changes;
 
   const nextManifest = { ...manifestObject };
   const manifestDetails = [];
-  for (const candidate of plan.candidates) {
+  for (const candidate of candidates) {
     const packageInfo = packages.get(candidate.product);
     if (packageInfo === undefined) {
       throw error(prefix, `${candidate.product} is missing from release-please-config.json`);
@@ -674,8 +680,27 @@ export function synchronizeDependentReleaseCandidates({
   if (write) {
     for (const change of changes) writeFileSync(change.path, change.text, "utf8");
   }
-  return {
-    ...plan,
-    changes: changes.map(({ path: file, detail }) => ({ path: file, detail })),
-  };
+  return changes.map(({ path: file, detail }) => ({ path: file, detail }));
+}
+
+export function synchronizeDependentReleaseCandidates({
+  root,
+  graph,
+  transitions,
+  releasePleaseConfig,
+  manifest,
+  write = false,
+  prefix = "release-dependent-candidates",
+}) {
+  const plan = planDependentReleaseCandidates(graph, transitions, { prefix });
+  const changes = synchronizeReleaseCandidates({
+    root,
+    graph,
+    candidates: plan.candidates,
+    releasePleaseConfig,
+    manifest,
+    write,
+    prefix,
+  });
+  return { ...plan, changes };
 }

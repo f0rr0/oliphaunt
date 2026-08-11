@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 
 import { moonCommand } from "../dev/moon-command.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { CONTRIB_CARRIERS_PATH, loadContribCarriers } from "./contrib-carriers.mjs";
 
 export const ROOT = path.resolve(import.meta.dir, "../..");
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -504,16 +505,33 @@ function graphProducts(projects, prefix) {
   return products;
 }
 
+function contribCarrierImpact(products, prefix) {
+  const carriers = loadContribCarriers(ROOT, prefix);
+  const owners = [carriers.nativeOwner, carriers.wasixOwner];
+  if (owners.some((owner) => typeof owner !== "string" || !(owner in products))) {
+    fail(prefix, `${CONTRIB_CARRIERS_PATH} must name native and WASIX release-product owners`);
+  }
+  if (new Set(owners).size !== owners.length) {
+    fail(prefix, `${CONTRIB_CARRIERS_PATH} must name distinct runtime owners`);
+  }
+  return {
+    files: carriers.inputFiles,
+    products: owners,
+  };
+}
+
 export function loadGraph(prefix = "release-graph") {
   const moonProjects = moonProjectsById(prefix);
+  const products = graphProducts(moonProjects, prefix);
   const graph = {
     policy: {
       repository: "f0rr0/oliphaunt",
       default_branch: "main",
       versioning: "independent",
     },
-    products: graphProducts(moonProjects, prefix),
+    products,
     moon_projects: Object.fromEntries(moonProjects),
+    shared_release_sources: [contribCarrierImpact(products, prefix)],
   };
   return graph;
 }
@@ -1432,6 +1450,12 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     // every enclosing release component (for example a contrib bundle).
     for (const releaseOwner of releaseOwnerProjectsForPath(products, projects, file, prefix)) {
       directProjects.add(releaseOwner);
+    }
+    for (const impact of graph.shared_release_sources ?? []) {
+      if (!(impact.files ?? []).includes(file)) continue;
+      for (const product of impact.products) {
+        directProjects.add(releaseProductProjectId(product, products, projects, prefix));
+      }
     }
   }
   const affectedProjects = downstreamProjects(projects, directProjects);

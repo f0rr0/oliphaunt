@@ -12,8 +12,6 @@ dependsOn:
   - "third-party-wasix"
   - "extension-model"
   - "extension-runtime-contract"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "liboliphaunt WASIX"
@@ -44,7 +42,6 @@ tasks:
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
     deps:
       - "extension-runtime-contract:check"
-      - "shared-fixtures:check"
     inputs:
       - "/src/postgres/versions/18/**/*"
       - "/src/sources/toolchains/**/*"

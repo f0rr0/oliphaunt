@@ -21,6 +21,7 @@ import {
 import {
   currentProductVersionSync,
   extensionProductForSqlName,
+  extensionReleaseProductForSqlName,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
 import {
@@ -606,7 +607,7 @@ function validateRegistration(
 function extensionCarrier(
   manifest,
   manifestPath,
-  { aggregateCarriers, repository, localUrls, release, verifyMembers, archiveCache, includeLegal },
+  { aggregateCarriers, artifactProduct, repository, localUrls, release, verifyMembers, archiveCache, includeLegal },
 ) {
   if (
     typeof manifest.product !== "string"
@@ -616,8 +617,8 @@ function extensionCarrier(
   ) {
     throw error(`${manifestPath} is not an exact-extension CI artifact manifest`);
   }
-  if (manifest.product !== release.product || manifest.version !== release.version) {
-    throw error(`${manifestPath} extension member identity does not match its release owner/version`);
+  if (manifest.product !== artifactProduct || manifest.version !== release.version) {
+    throw error(`${manifestPath} extension member identity does not match its artifact product/release version`);
   }
   const sqlName = portableIdentifier(manifest.sqlName, `${manifestPath}.sqlName`);
   if (typeof manifest.createsExtension !== "boolean") {
@@ -778,14 +779,15 @@ function extensionCarrier(
         archiveCache,
         file: path.resolve(ROOT, runtimeRow.row.path),
         format: runtimeRow.logicalFormat,
-        product: release.product,
+        product: artifactProduct,
         sqlName,
       })
     : undefined;
   return {
     carriers: [...carriers.values()].sort((left, right) => compareText(left.name, right.name)),
     extension: {
-      product: release.product,
+      product: artifactProduct,
+      releaseProduct: release.product,
       version: release.version,
       tag,
       sqlName,
@@ -903,6 +905,18 @@ function aggregateCarrierMap(document, manifestPath, { repository, localUrls, re
 function extensionCarriers(manifestPath, options) {
   const document = extensionArtifactDocument(manifestPath);
   stableVersion(document.version, `${document.product} version`);
+  const releaseProducts = new Set(document.rows.map((row) =>
+    extensionReleaseProductForSqlName(row.sqlName, "native", "ios-carrier-manifest")));
+  if (releaseProducts.size !== 1) {
+    throw error(`${manifestPath} members do not share one native release owner`);
+  }
+  const releaseProduct = [...releaseProducts][0];
+  const expectedReleaseVersion = currentProductVersionSync(releaseProduct, "ios-carrier-manifest");
+  if (document.version !== expectedReleaseVersion) {
+    throw error(
+      `${manifestPath} version ${document.version} does not match ${releaseProduct} ${expectedReleaseVersion}`,
+    );
+  }
   if (options.nativeRuntimeVersion !== undefined) {
     const requested = stableVersion(
       options.nativeRuntimeVersion,
@@ -916,14 +930,15 @@ function extensionCarriers(manifestPath, options) {
     }
   }
   const release = {
-    product: document.product,
-    tag: `${tagPrefix(document.product, "ios-carrier-manifest")}${document.version}`,
+    product: releaseProduct,
+    tag: `${tagPrefix(releaseProduct, "ios-carrier-manifest")}${document.version}`,
     version: document.version,
   };
   const aggregateCarriers = aggregateCarrierMap(document, manifestPath, { ...options, release });
   const built = document.rows.map((row) => extensionCarrier(row, manifestPath, {
     ...options,
     aggregateCarriers,
+    artifactProduct: document.product,
     release,
   }));
   const rows = built.map(({ extension }) => extension);
@@ -967,21 +982,25 @@ export function swiftExtensionCarrierAssetName(product, version) {
 
 function dependencyCarrierReference(sqlName) {
   const product = extensionProductForSqlName(sqlName, "ios-carrier-manifest");
-  const version = currentProductVersionSync(product, "ios-carrier-manifest");
+  const releaseProduct = extensionReleaseProductForSqlName(
+    sqlName,
+    "native",
+    "ios-carrier-manifest",
+  );
+  const version = currentProductVersionSync(releaseProduct, "ios-carrier-manifest");
   stableVersion(version, `${product} version`);
   return {
     product,
+    releaseProduct,
     sqlName,
-    tag: `${tagPrefix(product, "ios-carrier-manifest")}${version}`,
+    tag: `${tagPrefix(releaseProduct, "ios-carrier-manifest")}${version}`,
     version,
   };
 }
 
 /**
- * Build the immutable, single-extension carrier published on the exact
- * extension's own GitHub release. It deliberately references, rather than
- * duplicates, the compatible native base so independently versioned extension
- * releases do not require a Swift SDK release.
+ * Build the immutable extension carrier published on its native release owner.
+ * It references, rather than duplicates, the compatible native base.
  */
 export function buildSwiftExtensionCarrierManifest({
   extensionManifest,
@@ -1028,13 +1047,22 @@ export function writeSwiftExtensionCarrierManifest(output, options = {}) {
   return manifest;
 }
 
-function discoveredExtensionManifests(root) {
+export function discoveredExtensionManifests(root) {
   if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(root, entry.name, "extension-artifacts.json"))
-    .filter((file) => existsSync(file))
-    .sort(compareText);
+  const manifests = [];
+  const visit = (directory) => {
+    const manifest = path.join(directory, "extension-artifacts.json");
+    if (existsSync(manifest)) {
+      manifests.push(manifest);
+      return;
+    }
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      compareText(left.name, right.name))) {
+      if (entry.isDirectory()) visit(path.join(directory, entry.name));
+    }
+  };
+  visit(root);
+  return manifests.sort(compareText);
 }
 
 export function buildIosCarrierManifest({

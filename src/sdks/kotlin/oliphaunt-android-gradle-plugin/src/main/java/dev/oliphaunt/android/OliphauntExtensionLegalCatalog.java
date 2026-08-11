@@ -188,7 +188,7 @@ final class OliphauntExtensionLegalCatalog {
     List<String> sqlNames;
     if (scope.equals("leaf")) {
       OliphauntExtensionCatalog.Entry entry = OliphauntExtensionCatalog.require(identity);
-      if (!entry.releaseProduct().equals(product)) {
+      if (!entry.artifactProduct().equals(product)) {
         throw failure(label + " leaf product does not own " + identity);
       }
       sqlNames = List.of(identity);
@@ -196,7 +196,7 @@ final class OliphauntExtensionLegalCatalog {
       if (!identity.equals(product)) {
         throw failure(label + " aggregate identity must equal product");
       }
-      sqlNames = OliphauntExtensionCatalog.releaseProductMembers(product);
+      sqlNames = OliphauntExtensionCatalog.artifactProductMembers(product);
     }
     String expectedProfile = expectedProfile(scope, product, sqlNames);
     if (!profile.equals(expectedProfile)) {
@@ -316,7 +316,7 @@ final class OliphauntExtensionLegalCatalog {
     TreeSet<ContractKey> expected = new TreeSet<>((left, right) -> left.sortKey().compareTo(right.sortKey()));
     LinkedHashSet<String> products = new LinkedHashSet<>();
     for (String sqlName : OliphauntExtensionCatalog.sqlNames()) {
-      String product = OliphauntExtensionCatalog.require(sqlName).releaseProduct();
+      String product = OliphauntExtensionCatalog.require(sqlName).artifactProduct();
       products.add(product);
       for (String target : TARGETS) {
         expected.add(new ContractKey("leaf", sqlName, target));

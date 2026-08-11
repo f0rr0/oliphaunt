@@ -32,7 +32,7 @@ tasks:
       - "!/src/sdks/react-native/examples/**/node_modules"
       - "!/src/sdks/react-native/examples/**/node_modules/**"
       - "/src/bindings/wasix-rust/examples/**/*"
-      - "/src/extensions/contrib/VERSION"
+      - "/src/runtimes/liboliphaunt/native/VERSION"
       - "/src/sdks/js/package.json"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/moon.yml"

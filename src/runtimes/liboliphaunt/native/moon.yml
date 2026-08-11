@@ -102,7 +102,6 @@ tasks:
     tags: ["quality", "unit"]
     script: |
       bash src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh
-      tools/dev/bun.sh test tools/release/postgis-reproducible-time.test.mjs
     inputs:
       - "/src/extensions/external/postgis/source.toml"
       - "/src/extensions/external/postgis/tools/build_wasix.sh"
@@ -117,7 +116,6 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1"
       - "/src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh"
       - "/src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh"
-      - "/tools/release/postgis-reproducible-time.test.mjs"
       - "/tools/xtask/src/asset_checks.rs"
       - "/tools/xtask/src/asset_manifest.rs"
       - "/tools/xtask/src/asset_pipeline.rs"

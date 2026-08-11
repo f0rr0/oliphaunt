@@ -75,8 +75,6 @@ Examples:
 - `extensions -> SDKs` is a build edge. SDK tests and generated metadata react
   to extension catalog changes, but exact extension source releases do not
   automatically release SDK packages.
-- `shared-fixtures -> SDKs` is a build edge. Fixtures affect tests and coverage,
-  not package releases.
 
 Use Moon queries for graph inspection:
 
@@ -203,16 +201,15 @@ E2E phases completed successfully.
 ## Extensions
 
 Extensions remain exact SQL-selectable artifacts. Release-product ownership is
-separate from SQL selection: PostgreSQL 18 contrib members share one
-runtime-bound distribution product, while each external extension remains an
-independently versioned product.
+separate from SQL selection: PostgreSQL 18 contrib carriers are owned by their
+native or WASIX runtime, while each external extension remains an independently
+versioned product.
 
 - Public selection is by SQL extension name, for example `vector` or `postgis`.
-- PostgreSQL 18 contrib release ownership lives at `src/extensions/contrib/` in
-  one `oliphaunt-extension-contrib-pg18` product with one `VERSION`, changelog,
-  and `release.toml`. The canonical member inventory stays in
-  `src/extensions/contrib/postgres18.toml`; member folders retain exact target,
-  source, and evidence metadata but do not own SemVer or registry identities.
+- PostgreSQL 18 contrib ownership is declared in
+  `src/extensions/contrib/carriers.toml`. Native carriers use the native runtime
+  version and tag; WASIX carriers use the WASIX runtime version and tag. The
+  canonical member inventory stays in `src/extensions/contrib/postgres18.toml`.
 - External extensions own folders under `src/extensions/external/<name>/` with
   source pin, recipe, target metadata, tests, changelog, version, and
   `release.toml`.

@@ -4,7 +4,7 @@ id: "oliphaunt-extension-contrib-pg18"
 language: "unknown"
 layer: "library"
 stack: "systems"
-tags: ["extensions", "contrib", "pg18", "release-product"]
+tags: ["extensions", "contrib", "pg18"]
 dependsOn:
   - "postgres18"
   - "extension-runtime-contract"
@@ -15,10 +15,6 @@ project:
   title: "PostgreSQL 18 Contrib Extensions"
   description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.4 source baseline."
   owner: "oliphaunt"
-  release:
-    component: "oliphaunt-extension-contrib-pg18"
-    packagePath: "src/extensions/contrib"
-
 tasks:
   check:
     tags: ["quality", "static"]
@@ -51,7 +47,8 @@ tasks:
       - "/target/extensions/native/release-assets/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
     outputs:
-      - "/target/extension-artifacts/oliphaunt-extension-contrib-pg18/**/*"
+      - "/target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/**/*"
+      - "/target/extension-artifacts/liboliphaunt-wasix/oliphaunt-extension-contrib-pg18/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true

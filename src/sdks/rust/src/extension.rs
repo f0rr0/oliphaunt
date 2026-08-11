@@ -37,6 +37,11 @@ impl Extension {
         generated_extensions::sql_name(self)
     }
 
+    /// Public artifact bundle that contains this extension, when published.
+    pub const fn artifact_product(self) -> Option<&'static str> {
+        generated_extensions::artifact_product(self)
+    }
+
     /// Release product that owns this extension's carrier version, when the
     /// extension is public.
     pub const fn release_product(self) -> Option<&'static str> {

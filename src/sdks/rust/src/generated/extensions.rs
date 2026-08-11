@@ -315,7 +315,7 @@ pub(super) const fn sql_name(extension: Extension) -> &'static str {
 }
 
 /// Generated extension metadata accessor.
-pub(super) const fn release_product(extension: Extension) -> Option<&'static str> {
+pub(super) const fn artifact_product(extension: Extension) -> Option<&'static str> {
     match extension {
         Extension::Amcheck => Some("oliphaunt-extension-contrib-pg18"),
         Extension::AutoExplain => Some("oliphaunt-extension-contrib-pg18"),
@@ -357,6 +357,53 @@ pub(super) const fn release_product(extension: Extension) -> Option<&'static str
         Extension::TsmSystemTime => Some("oliphaunt-extension-contrib-pg18"),
         Extension::Unaccent => Some("oliphaunt-extension-contrib-pg18"),
         Extension::UuidOssp => Some("oliphaunt-extension-contrib-pg18"),
+        Extension::Vector => Some("oliphaunt-extension-vector"),
+    }
+}
+
+/// Generated extension metadata accessor.
+pub(super) const fn release_product(extension: Extension) -> Option<&'static str> {
+    match extension {
+        Extension::Amcheck => Some("liboliphaunt-native"),
+        Extension::AutoExplain => Some("liboliphaunt-native"),
+        Extension::Bloom => Some("liboliphaunt-native"),
+        Extension::BtreeGin => Some("liboliphaunt-native"),
+        Extension::BtreeGist => Some("liboliphaunt-native"),
+        Extension::Citext => Some("liboliphaunt-native"),
+        Extension::Cube => Some("liboliphaunt-native"),
+        Extension::DictInt => Some("liboliphaunt-native"),
+        Extension::DictXsyn => Some("liboliphaunt-native"),
+        Extension::Earthdistance => Some("liboliphaunt-native"),
+        Extension::FileFdw => Some("liboliphaunt-native"),
+        Extension::Fuzzystrmatch => Some("liboliphaunt-native"),
+        Extension::Graph => None,
+        Extension::Hstore => Some("liboliphaunt-native"),
+        Extension::Intarray => Some("liboliphaunt-native"),
+        Extension::Isn => Some("liboliphaunt-native"),
+        Extension::Lo => Some("liboliphaunt-native"),
+        Extension::Ltree => Some("liboliphaunt-native"),
+        Extension::Pageinspect => Some("liboliphaunt-native"),
+        Extension::PgBuffercache => Some("liboliphaunt-native"),
+        Extension::PgFreespacemap => Some("liboliphaunt-native"),
+        Extension::PgHashids => Some("oliphaunt-extension-pg-hashids"),
+        Extension::PgIvm => Some("oliphaunt-extension-pg-ivm"),
+        Extension::PgSearch => None,
+        Extension::PgSurgery => Some("liboliphaunt-native"),
+        Extension::PgTextsearch => Some("oliphaunt-extension-pg-textsearch"),
+        Extension::PgTrgm => Some("liboliphaunt-native"),
+        Extension::PgUuidv7 => Some("oliphaunt-extension-pg-uuidv7"),
+        Extension::PgVisibility => Some("liboliphaunt-native"),
+        Extension::PgWalinspect => Some("liboliphaunt-native"),
+        Extension::Pgcrypto => Some("liboliphaunt-native"),
+        Extension::Pgtap => Some("oliphaunt-extension-pgtap"),
+        Extension::Postgis => Some("oliphaunt-extension-postgis"),
+        Extension::Seg => Some("liboliphaunt-native"),
+        Extension::Tablefunc => Some("liboliphaunt-native"),
+        Extension::Tcn => Some("liboliphaunt-native"),
+        Extension::TsmSystemRows => Some("liboliphaunt-native"),
+        Extension::TsmSystemTime => Some("liboliphaunt-native"),
+        Extension::Unaccent => Some("liboliphaunt-native"),
+        Extension::UuidOssp => Some("liboliphaunt-native"),
         Extension::Vector => Some("oliphaunt-extension-vector"),
     }
 }

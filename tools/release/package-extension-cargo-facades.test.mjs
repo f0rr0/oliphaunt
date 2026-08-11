@@ -10,6 +10,7 @@ import {
   writeFacadeSource,
 } from "./package-extension-cargo-facades.mjs";
 import {
+  extensionReleaseVersion,
   extensionRegistryPackageTargetSets,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
@@ -102,7 +103,6 @@ describe("exact extension Cargo facade", () => {
     const source = path.join(output, "sources/oliphaunt-extension-pgtap/src/lib.rs");
     const text = readFileSync(source, "utf8");
     expect(text).toContain("compile_error!");
-    expect(text).toContain("default-features = false");
     expect(text).toContain('feature = "native"');
     expect(text).toContain('target_env = "gnu"');
     expect(text).toContain('target_env = "msvc"');
@@ -139,7 +139,7 @@ pub const FIXTURE: bool = true;
     expect(pkg.cratePath.endsWith(".crate")).toBe(true);
   });
 
-  test("one contrib facade owns every exact SQL member and compact AOT dependencies", () => {
+  test("the native-owned contrib facade exposes every SQL member without WASIX carriers", () => {
     const output = mkdtempSync(path.join(import.meta.dir, "../../target/extension-facade-bundle-test-"));
     directories.push(output);
     const [pkg] = packageExtensionCargoFacades(["oliphaunt-extension-contrib-pg18"], output);
@@ -148,11 +148,14 @@ pub const FIXTURE: bool = true;
     expect(source).toContain('"amcheck"');
     expect(source).toContain('"uuid-ossp"');
     expect(source).not.toContain("EXTENSION_SQL_NAME: &str");
-    expect(manifest.features["wasix-aot-x86_64-pc-windows-msvc"]).toEqual([
-      "dep:oliphaunt-extension-contrib-pg18-wasix",
-      "dep:oliphaunt-extension-contrib-pg18-aot-windows-x64",
-    ]);
-    expect(Object.keys(manifest.dependencies)).toContain("oliphaunt-extension-contrib-pg18-aot-windows-x64");
+    expect(manifest.package.version).toBe(extensionReleaseVersion(
+      "oliphaunt-extension-contrib-pg18",
+      "native",
+      "package-extension-cargo-facades.test",
+    ));
+    expect(manifest.features.default).toEqual(["native"]);
+    expect(manifest.features.wasix).toBeUndefined();
+    expect(Object.keys(manifest.dependencies ?? {})).toHaveLength(0);
   });
 
   test("real Cargo metadata relays exact bundle and external manifests into an app build", {
@@ -181,16 +184,22 @@ pub const FIXTURE: bool = true;
     const products = ["oliphaunt-extension-contrib-pg18", "oliphaunt-extension-vector"];
     const dependencyPaths = {};
     for (const product of products) {
-      const productVersion = graph.products[product].version;
+      const productVersion = extensionReleaseVersion(
+        product,
+        "native",
+        "package-extension-cargo-facades.test",
+      );
       const targets = extensionRegistryPackageTargetSets(product, "extension-facade-integration");
       const nativeNames = targets.nativeCargoTargets.map((target) => [
         nativeExtensionCargoPackageName(product, target),
         targetTriples[target],
       ]);
-      const wasixNames = [
-        [wasixExtensionPackageName(product), "portable"],
-        ...expectedExtensionAotTargets().map((target) => [wasixExtensionAotPackageName(product, target), target]),
-      ];
+      const wasixNames = product === "oliphaunt-extension-contrib-pg18"
+        ? []
+        : [
+            [wasixExtensionPackageName(product), "portable"],
+            ...expectedExtensionAotTargets().map((target) => [wasixExtensionAotPackageName(product, target), target]),
+          ];
       for (const [name, target] of [...nativeNames, ...wasixNames]) {
         const bundled = product === "oliphaunt-extension-contrib-pg18";
         const members = bundled

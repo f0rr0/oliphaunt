@@ -47,7 +47,7 @@ function canonicalMetadata(metadata) {
   }
   const rows = metadata.extensions.map((row, index) => {
     const sqlName = row?.["sql-name"];
-    const product = row?.["release-product"];
+    const product = row?.["artifact-product"];
     if (
       typeof sqlName !== "string"
       || !/^[A-Za-z0-9._-]{1,128}$/u.test(sqlName)

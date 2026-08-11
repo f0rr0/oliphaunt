@@ -15,7 +15,7 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { createGunzip } from "node:zlib";
@@ -100,6 +100,13 @@ const BUNDLE_CARRIER_ASSET_KEYS = new Set([
   "kind",
   "memberCount",
 ]);
+
+function manifestEnvelopeKeys(baseKeys, manifest, repositoryContract) {
+  const owner = repositoryContract.products.get(manifest.product);
+  return owner?.releaseProduct === owner?.artifactProduct
+    ? baseKeys
+    : new Set([...baseKeys, "releaseProduct", "family"]);
+}
 
 class CliFailure extends Error {
   constructor(message, code = 1) {
@@ -315,7 +322,11 @@ async function loadRepositoryContract(root) {
       fail(`${metadataPath} extension ${index} must be an object`);
     }
     const sqlName = safeComponent(row["sql-name"], `${metadataPath} extension ${index} sql-name`);
-    const product = safeComponent(row["release-product"], `${metadataPath} extension ${sqlName} release-product`);
+    const product = safeComponent(row["artifact-product"], `${metadataPath} extension ${sqlName} artifact-product`);
+    const releaseProduct = safeComponent(
+      row["release-product"],
+      `${metadataPath} extension ${sqlName} release-product`,
+    );
     if (sqlOwners.has(sqlName)) {
       fail(`${metadataPath} repeats SQL extension owner ${sqlName}`);
     }
@@ -386,9 +397,18 @@ async function loadRepositoryContract(root) {
       mobileReleaseReady: row["mobile-release-ready"],
       desktopReleaseReady: row["desktop-release-ready"],
     };
-    const owner = products.get(product) ?? { members: new Map(), postgresMajor, sqlNames: [] };
+    const owner = products.get(product) ?? {
+      artifactProduct: product,
+      releaseProduct,
+      members: new Map(),
+      postgresMajor,
+      sqlNames: [],
+    };
     if (owner.postgresMajor !== postgresMajor) {
       fail(`${metadataPath} product ${product} spans multiple PostgreSQL majors`);
+    }
+    if (owner.releaseProduct !== releaseProduct) {
+      fail(`${metadataPath} artifact product ${product} spans multiple native release owners`);
     }
     owner.sqlNames.push(sqlName);
     owner.members.set(sqlName, canonical);
@@ -558,11 +578,15 @@ function validateMemberContract(member, expected, context) {
   }
 }
 
-async function manifestPaths(artifactRoot) {
-  const entries = await readdir(artifactRoot, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(artifactRoot, entry.name, "extension-artifacts.json"))
+async function manifestPaths(artifactRoot, repositoryContract) {
+  return [...repositoryContract.products.values()]
+    .map((owner) => join(
+      artifactRoot,
+      ...(owner.releaseProduct === owner.artifactProduct
+        ? [owner.artifactProduct]
+        : [owner.releaseProduct, owner.artifactProduct]),
+      "extension-artifacts.json",
+    ))
     .filter((file) => isFile(file))
     .sort(compareText);
 }
@@ -583,6 +607,14 @@ function validateManifestEnvelope(manifest, manifestPath, repositoryContract, me
     fail(`${manifestPath} version must be stable SemVer`);
   }
   const owner = validateCompatibility(manifest, manifestPath, repositoryContract);
+  if (owner.releaseProduct !== owner.artifactProduct) {
+    if (manifest.releaseProduct !== owner.releaseProduct || manifest.family !== "native") {
+      fail(`${manifestPath} must be owned by ${owner.releaseProduct}/native`);
+    }
+    if (manifest.version !== repositoryContract.nativeRuntimeVersion) {
+      fail(`${manifestPath} version must match its native release owner`);
+    }
+  }
   const actualSqlNames = members.map((member) => member?.sqlName);
   if (new Set(actualSqlNames).size !== actualSqlNames.length) {
     fail(`${manifestPath} repeats an extension SQL identity`);
@@ -608,7 +640,11 @@ function manifestMembers(manifest, manifestPath, repositoryContract) {
   }
   let members;
   if (manifest.schema === "oliphaunt-extension-ci-artifacts-v1") {
-    requireExactKeys(manifest, DIRECT_MANIFEST_KEYS, manifestPath);
+    requireExactKeys(
+      manifest,
+      manifestEnvelopeKeys(DIRECT_MANIFEST_KEYS, manifest, repositoryContract),
+      manifestPath,
+    );
     if (!Array.isArray(manifest.assets)) {
       fail(`${manifestPath} must declare an assets array`);
     }
@@ -617,7 +653,11 @@ function manifestMembers(manifest, manifestPath, repositoryContract) {
     }
     members = [manifest];
   } else if (manifest.schema === "oliphaunt-extension-ci-artifacts-v2") {
-    requireExactKeys(manifest, BUNDLE_MANIFEST_KEYS, manifestPath);
+    requireExactKeys(
+      manifest,
+      manifestEnvelopeKeys(BUNDLE_MANIFEST_KEYS, manifest, repositoryContract),
+      manifestPath,
+    );
     if (!Array.isArray(manifest.extensions) || manifest.extensions.length === 0) {
       fail(`${manifestPath} must declare a non-empty extensions array`);
     }
@@ -1286,7 +1326,7 @@ async function main() {
   const repositoryContract = await loadRepositoryContract(root);
 
   const bySqlName = new Map();
-  for (const manifestPath of await manifestPaths(artifactRoot)) {
+  for (const manifestPath of await manifestPaths(artifactRoot, repositoryContract)) {
     let manifest;
     try {
       manifest = JSON.parse(await readFile(manifestPath, "utf8"));

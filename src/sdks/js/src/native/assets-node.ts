@@ -387,7 +387,7 @@ async function resolveExtensionPackage(
   const packageJson = JSON.parse(
     await readFile(packageJsonPath, 'utf8'),
   ) as ExtensionPackageMetadata;
-  const expectedProduct = extension.releaseProduct;
+  const expectedProduct = extension.artifactProduct;
   const expectedMembers = extensionOwnerMembers(extension);
   const isBundle = expectedMembers.length > 1;
   if (packageJson.name !== targetPackageName) {
@@ -512,7 +512,7 @@ async function resolveExtensionPackage(
 function extensionOwnerMembers(extension: GeneratedExtensionMetadata): string[] {
   const rows = GENERATED_EXTENSION_METADATA.filter(
     (candidate) =>
-      candidate.releaseProduct === extension.releaseProduct &&
+      candidate.artifactProduct === extension.artifactProduct &&
       candidate.npmPackage === extension.npmPackage,
   );
   if (
@@ -741,7 +741,7 @@ async function loadExtensionPackageContract(config: {
     throw new Error(`${config.packageName} extension contract has unsupported schema`);
   }
   if (
-    manifest.product !== config.extension.releaseProduct ||
+    manifest.product !== config.extension.artifactProduct ||
     manifest.version !== config.packageJson.version ||
     manifest.family !== 'native' ||
     manifest.target !== config.target
@@ -770,7 +770,7 @@ async function loadExtensionPackageContract(config: {
     const current = generatedExtensionBySqlName(member.sqlName);
     if (
       current === undefined ||
-      current.releaseProduct !== config.extension.releaseProduct ||
+      current.artifactProduct !== config.extension.artifactProduct ||
       JSON.stringify(current.selectedExtensionDependencies) !== JSON.stringify(member.dependencies)
     ) {
       throw new Error(
@@ -831,9 +831,9 @@ async function resolveExtensionBundleMember(config: {
       `${config.packageName} npm bundle manifest fields must be exactly ${expectedManifestFields.join(', ')}`,
     );
   }
-  if (manifest.product !== config.extension.releaseProduct) {
+  if (manifest.product !== config.extension.artifactProduct) {
     throw new Error(
-      `${config.packageName} bundle manifest does not declare ${config.extension.releaseProduct}`,
+      `${config.packageName} bundle manifest does not declare ${config.extension.artifactProduct}`,
     );
   }
   if (manifest.version !== config.packageJson.version) {
@@ -1550,8 +1550,8 @@ async function resolveExtensionTargetPackageJson(
   if (packageJson.oliphaunt?.kind !== expectedKind) {
     throw new Error(`${packageName} package metadata does not declare ${expectedKind}`);
   }
-  if (packageJson.oliphaunt?.product !== extension.releaseProduct) {
-    throw new Error(`${packageName} package metadata does not declare ${extension.releaseProduct}`);
+  if (packageJson.oliphaunt?.product !== extension.artifactProduct) {
+    throw new Error(`${packageName} package metadata does not declare ${extension.artifactProduct}`);
   }
   requireExtensionPackageMembers(packageJson, expectedMembers, packageName);
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {

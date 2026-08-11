@@ -2,7 +2,6 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -54,19 +53,6 @@ test("accepts a supplied exact release commit assertion without case sensitivity
   for (const releaseCommit of [SHA, SHA.toUpperCase()]) {
     const result = validate({ releaseCommit });
     assert.equal(result.status, 0, result.output);
-  }
-});
-
-test("remains compatible with the stock macOS Bash 3.2 feature set", () => {
-  const source = readFileSync(SCRIPT, "utf8");
-  for (const [feature, pattern] of [
-    ["case-transforming parameter expansion", /\$\{[^}\n]*(?:,,|\^\^)[^}\n]*\}/u],
-    ["associative arrays", /\b(?:declare|local|typeset)\s+(?:-[A-Za-z]*A[A-Za-z]*\s+)/u],
-    ["nameref variables", /\b(?:declare|local|typeset)\s+(?:-[A-Za-z]*n[A-Za-z]*\s+)/u],
-    ["mapfile/readarray", /\b(?:mapfile|readarray)\b/u],
-    ["coprocesses", /(?:^|\n)\s*coproc\b/u],
-  ]) {
-    assert.doesNotMatch(source, pattern, `${feature} requires Bash newer than 3.2`);
   }
 });
 

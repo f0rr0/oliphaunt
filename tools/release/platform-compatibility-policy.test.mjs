@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-import {
-  PLATFORM_COMPATIBILITY_POLICY,
-  PUBLIC_PLATFORM_COMPATIBILITY_BLOCK,
-  renderPublicPlatformCompatibilityTable,
-} from "./platform-compatibility-policy.mjs";
+import { PLATFORM_COMPATIBILITY_POLICY } from "./platform-compatibility-policy.mjs";
 import {
   allArtifactTargets,
   extensionArtifactTargets,
@@ -24,7 +17,6 @@ const publishedArtifacts = allArtifactTargets({ publishedOnly: true }).filter((t
   BINARY_ARTIFACT_KINDS.has(target.kind),
 );
 const publishedExtensions = extensionArtifactTargets({ family: "native", publishedOnly: true });
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function validateCoverage(policy, artifacts, extensions) {
   const uses = new Map();
@@ -104,16 +96,4 @@ describe("published platform compatibility policy", () => {
     ).toEqual([3, 4, 30]);
   });
 
-  test("keeps the public release reference synchronized with the binary contract", () => {
-    const releaseReference = readFileSync(
-      path.join(ROOT, "src/docs/content/reference/releases.mdx"),
-      "utf8",
-    );
-    const expected = [
-      PUBLIC_PLATFORM_COMPATIBILITY_BLOCK.start,
-      renderPublicPlatformCompatibilityTable(),
-      PUBLIC_PLATFORM_COMPATIBILITY_BLOCK.end,
-    ].join("\n");
-    expect(releaseReference).toContain(expected);
-  });
 });

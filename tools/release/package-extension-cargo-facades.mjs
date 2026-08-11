@@ -3,10 +3,13 @@ import path from "node:path";
 
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import {
+  exactExtensionProducts,
+  extensionReleaseProduct,
+  extensionReleaseVersion,
   extensionRegistryPackageTargetSets,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
-import { compareText, loadGraph, ROOT } from "./release-graph.mjs";
+import { compareText, ROOT } from "./release-graph.mjs";
 import {
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
@@ -85,30 +88,31 @@ export function renderUnsupportedNativeGuard(product, nativeTargets, nativeCfgs)
     nativeCfgs,
     feature: "native",
     featureLabel: "default native feature",
-    guidance: 'use default-features = false with feature "wasix" or a declared "wasix-aot-*" feature on other targets.',
+    guidance: "use a declared native target leaf, or depend on the WASIX carrier directly for WASIX builds.",
   });
 }
 
 export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } = {}) {
-  const graph = loadGraph("package-extension-cargo-facades");
-  const config = graph.products[product];
-  if (!["exact-extension-artifact", "exact-extension-bundle"].includes(config?.kind)) {
+  if (!exactExtensionProducts("package-extension-cargo-facades").includes(product)) {
     fail(`${product} is not an exact extension product`);
   }
-  const version = config.version;
+  const nativeOwner = extensionReleaseProduct(product, "native", "package-extension-cargo-facades");
+  const wasixOwner = extensionReleaseProduct(product, "wasix", "package-extension-cargo-facades");
+  const nativeOnly = nativeOwner !== wasixOwner;
+  const version = extensionReleaseVersion(product, "native", "package-extension-cargo-facades");
   const sqlNames = extensionSqlNames(product, "package-extension-cargo-facades");
   const targets = extensionRegistryPackageTargetSets(product, "package-extension-cargo-facades");
-  const wasixAotTargets = targets.includeWasixAot ? expectedExtensionAotTargets() : [];
+  const wasixAotTargets = !nativeOnly && targets.includeWasixAot ? expectedExtensionAotTargets() : [];
   const sourceDir = path.join(outputRoot, "sources", product);
   mkdirSync(path.join(sourceDir, "src"), { recursive: true });
 
   const nativeNames = targets.nativeCargoTargets.map((target) => nativeExtensionCargoPackageName(product, target));
-  const wasixName = wasixExtensionPackageName(product);
+  const wasixName = nativeOnly ? null : wasixExtensionPackageName(product);
   const aotNames = wasixAotTargets.map((target) => wasixExtensionAotPackageName(product, target));
   const features = [
     `default = ["native"]`,
     `native = [${nativeNames.map((name) => JSON.stringify(dependencyFeature(name))).join(", ")}]`,
-    `wasix = [${JSON.stringify(dependencyFeature(wasixName))}]`,
+    ...(wasixName === null ? [] : [`wasix = [${JSON.stringify(dependencyFeature(wasixName))}]`]),
     ...aotNames.map((name, index) => `${JSON.stringify(`wasix-aot-${wasixAotTargets[index]}`)} = [${JSON.stringify(dependencyFeature(wasixName))}, ${JSON.stringify(dependencyFeature(name))}]`),
   ];
   const targetDependencies = [];
@@ -121,7 +125,7 @@ export function writeFacadeSource(product, outputRoot, { dependencyPaths = {} } 
       `[target.'cfg(${cfg})'.dependencies]\n${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ""} }`,
     );
   }
-  const optionalDependencies = [wasixName, ...aotNames]
+  const optionalDependencies = [...(wasixName === null ? [] : [wasixName]), ...aotNames]
     .map((name) => `${name} = { version = "=${version}", optional = true${dependencyPaths[name] ? `, path = ${JSON.stringify(dependencyPaths[name])}` : ""} }`)
     .join("\n");
   const unsupportedNativeGuard = renderUnsupportedNativeGuard(
@@ -162,9 +166,9 @@ ${targetDependencies.join("\n\n")}
 
 Target-selecting Cargo facade for ${sqlNames.length === 1 ? `the \`${sqlNames[0]}\` PostgreSQL extension` : `the PostgreSQL 18 contrib bundle (${sqlNames.length} exact SQL members)`}.
 
-The default \`native\` feature selects the matching native artifact leaf. Use
+The default \`native\` feature selects the matching native artifact leaf.${nativeOnly ? "" : ` Use
 \`default-features = false, features = ["wasix"]\` (or a host-specific
-\`wasix-aot-*\` feature) for WASIX artifacts.
+\`wasix-aot-*\` feature) for WASIX artifacts.`}
 `);
   writeFileSync(path.join(sourceDir, "src/lib.rs"), `#![forbid(unsafe_code)]
 
@@ -177,7 +181,7 @@ ${sqlNames.length === 1 ? `pub const EXTENSION_SQL_NAME: &str = ${JSON.stringify
 `);
   stageReleaseNotices(sourceDir, FACADE_NOTICE_OPTIONS);
   assertReleaseNoticesInDirectory(sourceDir, FACADE_NOTICE_OPTIONS);
-  return { product, version, sourceDir };
+  return { product, releaseProduct: nativeOwner, version, sourceDir };
 }
 
 export function packageExtensionCargoFacades(products, outputRoot) {

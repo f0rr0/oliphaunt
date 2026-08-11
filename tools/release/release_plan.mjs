@@ -9,6 +9,7 @@ import {
   wasixEvidenceProductsForRelease,
 } from "./release-graph.mjs";
 import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
+import { extensionArtifactProductsForReleaseProducts } from "./release-artifact-targets.mjs";
 
 const TOOL = "release_plan.mjs";
 
@@ -52,8 +53,10 @@ function printGithubOutput(plan) {
     TOOL,
   );
   const extensionProducts = products.filter((product) => product.startsWith("oliphaunt-extension-")).sort(compareText);
+  const extensionArtifactProducts = extensionArtifactProductsForReleaseProducts(products, { prefix: TOOL });
   console.log(`has_release_changes=${String(plan.hasReleaseChanges).toLowerCase()}`);
   console.log(`has_extension_products=${String(extensionProducts.length > 0).toLowerCase()}`);
+  console.log(`has_extension_artifacts=${String(extensionArtifactProducts.length > 0).toLowerCase()}`);
   console.log(`docs_only=${String(plan.docsOnly).toLowerCase()}`);
   console.log(`products_csv=${products.join(",")}`);
   console.log(`products_json=${JSON.stringify(products)}`);

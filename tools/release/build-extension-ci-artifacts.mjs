@@ -30,11 +30,13 @@ import { canonicalGzipSync } from "./portable-archive.mjs";
 import {
   ROOT,
   compareText,
-  currentProductVersion,
   currentProductVersionSync,
   exactExtensionProducts,
+  extensionArtifactProductRoot,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionReleaseProduct,
+  extensionReleaseVersion,
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
@@ -472,6 +474,7 @@ function publicMemberAsset(asset) {
 function stageMember(product, sqlName, version, productRoot, {
   destinationDir,
   bundle,
+  families,
   requireNative,
   requireWasix,
   requireNativeTargets,
@@ -479,7 +482,9 @@ function stageMember(product, sqlName, version, productRoot, {
   const extensionRow = generatedExtensionRow(sqlName);
   const assets = [];
   let iosRegistration = null;
-  for (const row of nativeAssetsFor(sqlName, { product, required: requireNative })) {
+  for (const row of families.has("native")
+    ? nativeAssetsFor(sqlName, { product, required: requireNative })
+    : []) {
     const target = row.target;
     if (requireNativeTargets.size > 0 && !requireNativeTargets.has(target)) {
       continue;
@@ -504,7 +509,9 @@ function stageMember(product, sqlName, version, productRoot, {
     }
   }
 
-  const wasixArchive = wasixArchiveFor(sqlName, { product, required: requireWasix });
+  const wasixArchive = families.has("wasix")
+    ? wasixArchiveFor(sqlName, { product, required: requireWasix })
+    : undefined;
   if (wasixArchive !== undefined) {
     const metadata = copyAsset(wasixArchive, destinationDir, {
       name: `${product}-${version}-wasix-portable.tar.zst`,
@@ -516,7 +523,7 @@ function stageMember(product, sqlName, version, productRoot, {
     assets.push(metadata);
   }
 
-  for (const [targetId, source] of wasixAotDirsFor(sqlName)) {
+  for (const [targetId, source] of families.has("wasix") ? wasixAotDirsFor(sqlName) : []) {
     validateWasixAotDir(targetId, source);
     const destination = bundle
       ? path.join(productRoot, "wasix-aot", targetId, sqlName)
@@ -666,11 +673,23 @@ function bundleCarrierAssets(product, version, productRoot, members, compatibili
   return carrierAssets;
 }
 
-export function extensionReleasePropertiesText({ product, version, manifest, releaseData, directAssets }) {
+export function extensionReleasePropertiesText({
+  product,
+  releaseProduct = product,
+  family = null,
+  version,
+  manifest,
+  releaseData,
+  directAssets,
+}) {
   const sourceIdentity = releaseData.sourceIdentity;
   const propertiesLines = [
     `schema=${releaseData.schema}\n`,
     `product=${product}\n`,
+    ...(releaseProduct === product ? [] : [
+      `releaseProduct=${releaseProduct}\n`,
+      `carrierFamily=${family ?? "combined"}\n`,
+    ]),
     `version=${version}\n`,
     `extensionClass=${releaseData.extensionClass}\n`,
     `versioning=${releaseData.versioning}\n`,
@@ -727,7 +746,7 @@ export function extensionReleasePropertiesText({ product, version, manifest, rel
   return propertiesLines.join("");
 }
 
-function writeReleaseControls({ product, version, productRoot, manifest, releaseData, releaseMetadata, directAssets }) {
+function writeReleaseControls({ product, releaseProduct, family, version, productRoot, manifest, releaseData, releaseMetadata, directAssets }) {
   const assetDir = path.join(productRoot, "release-assets");
   const extensionManifest = path.join(productRoot, "extension-artifacts.json");
   writeFileSync(extensionManifest, `${JSON.stringify(sortValue(manifest), null, 2)}\n`, "utf8");
@@ -746,7 +765,7 @@ function writeReleaseControls({ product, version, productRoot, manifest, release
   const propertiesManifest = path.join(assetDir, `${product}-${version}-manifest.properties`);
   writeFileSync(
     propertiesManifest,
-    extensionReleasePropertiesText({ product, version, manifest, releaseData, directAssets }),
+    extensionReleasePropertiesText({ product, releaseProduct, family, version, manifest, releaseData, directAssets }),
     "utf8",
   );
 
@@ -773,14 +792,25 @@ function writeReleaseControls({ product, version, productRoot, manifest, release
   return { swiftCarrier, releaseManifest, propertiesManifest, checksumManifest };
 }
 
-async function stageProduct(product, { outputRoot, requireNative, requireWasix, requireNativeTargets }) {
+function stageProductVariant(product, {
+  outputRoot,
+  family,
+  requireNative,
+  requireWasix,
+  requireNativeTargets,
+}) {
   const known = new Set(extensionProducts());
   if (!known.has(product)) {
     fail(`unknown exact-extension product ${product}; expected one of: ${[...known].sort(compareText).join(", ")}`);
   }
+  const families = new Set(family === null ? ["native", "wasix"] : [family]);
+  const releaseProduct = extensionReleaseProduct(product, family ?? "native", PREFIX);
+  const ownership = releaseProduct === product
+    ? {}
+    : { releaseProduct, family: family ?? "combined" };
   const sqlNames = extensionSqlNames(product, PREFIX);
-  const version = await currentProductVersion(product, PREFIX);
-  const productRoot = path.join(outputRoot, product);
+  const version = extensionReleaseVersion(product, family ?? "native", PREFIX);
+  const productRoot = extensionArtifactProductRoot(product, family ?? "native", outputRoot, PREFIX);
   const assetDir = path.join(productRoot, "release-assets");
   rmSync(productRoot, { recursive: true, force: true });
   mkdirSync(assetDir, { recursive: true });
@@ -788,9 +818,10 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
   const members = sqlNames.map((sqlName) => stageMember(product, sqlName, version, productRoot, {
     destinationDir: bundle ? path.join(productRoot, "member-assets", sqlName) : assetDir,
     bundle,
-    requireNative,
-    requireWasix,
-    requireNativeTargets,
+    families,
+    requireNative: families.has("native") && requireNative,
+    requireWasix: families.has("wasix") && requireWasix,
+    requireNativeTargets: families.has("native") ? requireNativeTargets : new Set(),
   }));
   const releaseMetadata = extensionMetadata(product, PREFIX);
   let manifest;
@@ -807,6 +838,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     manifest = {
       schema: "oliphaunt-extension-ci-artifacts-v2",
       product,
+      ...ownership,
       version,
       compatibility: releaseMetadata.compatibility,
       extensions: members,
@@ -815,6 +847,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     releaseData = {
       schema: "oliphaunt-extension-release-manifest-v2",
       product,
+      ...ownership,
       version,
       extensionClass: releaseMetadata.class,
       versioning: releaseMetadata.versioning,
@@ -829,6 +862,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     manifest = {
       schema: "oliphaunt-extension-ci-artifacts-v1",
       product,
+      ...ownership,
       version,
       compatibility: releaseMetadata.compatibility,
       ...member,
@@ -836,6 +870,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     releaseData = {
       schema: "oliphaunt-extension-release-manifest-v1",
       product,
+      ...ownership,
       version,
       sqlName: member.sqlName,
       extensionClass: releaseMetadata.class,
@@ -857,8 +892,31 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
       assets: member.assets.map(publicExtensionReleaseAsset),
     };
   }
-  writeReleaseControls({ product, version, productRoot, manifest, releaseData, releaseMetadata, directAssets });
-  console.log(`${product}: staged ${members.length} exact member(s) in ${directAssets.length} direct carrier asset(s) under ${rel(productRoot)}`);
+  writeReleaseControls({
+    product,
+    releaseProduct,
+    family,
+    version,
+    productRoot,
+    manifest,
+    releaseData,
+    releaseMetadata,
+    directAssets,
+  });
+  console.log(`${product} (${family ?? "combined"}, owned by ${releaseProduct}): staged ${members.length} exact member(s) in ${directAssets.length} direct carrier asset(s) under ${rel(productRoot)}`);
+}
+
+function stageProduct(product, options) {
+  const nativeOwner = extensionReleaseProduct(product, "native", PREFIX);
+  const wasixOwner = extensionReleaseProduct(product, "wasix", PREFIX);
+  const families = options.family === null
+    ? nativeOwner === wasixOwner
+      ? [null]
+      : ["native", "wasix"]
+    : [options.family];
+  for (const family of families) {
+    stageProductVariant(product, { ...options, family });
+  }
 }
 
 function selectedProductsFromEnv() {
@@ -880,6 +938,7 @@ function parseArgs(argv) {
     products: [],
     all: false,
     outputRoot: "target/extension-artifacts",
+    family: null,
     requireNative: false,
     requireWasix: false,
     requireNativeTargets: new Set(),
@@ -897,6 +956,13 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--require-native") {
       args.requireNative = true;
+    } else if (arg === "--family") {
+      const value = argv[index + 1];
+      if (!value || !["native", "wasix"].includes(value)) {
+        fail("--family requires native or wasix");
+      }
+      args.family = value;
+      index += 1;
     } else if (arg === "--require-native-target") {
       const value = argv[index + 1];
       if (!value) {
@@ -907,7 +973,7 @@ function parseArgs(argv) {
     } else if (arg === "--require-wasix") {
       args.requireWasix = true;
     } else if (arg === "--help" || arg === "-h") {
-      console.log("usage: tools/release/build-extension-ci-artifacts.mjs [--all] [--output-root DIR] [--require-native] [--require-native-target TARGET] [--require-wasix] [products...]");
+      console.log("usage: tools/release/build-extension-ci-artifacts.mjs [--all] [--output-root DIR] [--family native|wasix] [--require-native] [--require-native-target TARGET] [--require-wasix] [products...]");
       process.exit(0);
     } else if (arg.startsWith("--")) {
       fail(`unknown argument ${arg}`);
@@ -943,6 +1009,7 @@ async function main(argv) {
   for (const product of products) {
     await stageProduct(product, {
       outputRoot,
+      family: args.family,
       requireNative: args.requireNative,
       requireWasix: args.requireWasix,
       requireNativeTargets: args.requireNativeTargets,

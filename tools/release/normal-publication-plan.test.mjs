@@ -162,9 +162,13 @@ describe("normal publication plan", () => {
     expect(runtime.release.directProducts).toEqual(["liboliphaunt-native"]);
     expect(runtime.release.releaseProducts).toContain("liboliphaunt-native");
     expect(runtime.release.releaseProducts).not.toContain("liboliphaunt-wasix");
-    expect(runtime.release.releaseProducts).toContain("oliphaunt-extension-contrib-pg18");
+    expect(runtime.release.releaseProducts).not.toContain("oliphaunt-extension-contrib-pg18");
     expect(extensionSqlNames("oliphaunt-extension-contrib-pg18", "normal-publication-plan.test"))
       .toContain("amcheck");
+    const contribCarriers = runtime.catalog.carriers
+      .filter(({ name }) => name.includes("extension-contrib-pg18"));
+    expect(contribCarriers).toHaveLength(12);
+    expect(contribCarriers.every(({ product }) => product === "liboliphaunt-native")).toBe(true);
     expect(runtime.release.releaseProducts).not.toContain("oliphaunt-extension-vector");
     expect(runtime.release.requiredReleaseProducts).toContain("oliphaunt-extension-vector");
     expect(runtime.release.dependentReleaseProducts).toContain("oliphaunt-extension-vector");

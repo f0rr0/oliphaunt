@@ -63,7 +63,7 @@ public final class OliphauntExtensionCatalogContractTest {
     validatesPublicTarGzArchivePreflight();
     rejectsNoncanonicalLegalUstarMode();
     requiresIndependentExternalVersion();
-    rejectsConflictingOrUnlinkedVersions();
+    rejectsArtifactAliasesAndUnlinkedVersions();
     rejectsMalformedTaskRuntimeVersions();
     rejectsIncompatibleExternalAndroidCarrier();
     rejectsMalformedGeneratedCatalog();
@@ -831,7 +831,7 @@ public final class OliphauntExtensionCatalogContractTest {
     equal(39, sqlNames.size(), "exact replay selected extension count");
     TreeSet<String> releaseProducts = new TreeSet<>();
     for (String sqlName : sqlNames) {
-      releaseProducts.add(OliphauntExtensionCatalog.require(sqlName).releaseProduct());
+      releaseProducts.add(OliphauntExtensionCatalog.require(sqlName).artifactProduct());
     }
     equal(8, releaseProducts.size(), "exact replay release owner count");
 
@@ -869,7 +869,9 @@ public final class OliphauntExtensionCatalogContractTest {
           new ArrayList<>(targets),
           "exact replay Android targets for " + releaseProduct);
       equal(1, versions.size(), "exact replay version count for " + releaseProduct);
-      ownerVersions.put(releaseProduct, versions.first());
+      ownerVersions.put(
+          OliphauntExtensionCatalog.releaseProductForArtifactProduct(releaseProduct),
+          versions.first());
     }
 
     TreeSet<String> runtimeVersions = new TreeSet<>();
@@ -2790,7 +2792,7 @@ public final class OliphauntExtensionCatalogContractTest {
 
   private static byte[] canonicalUpstreamLegalBytes(
       Path repository, String product, String logicalPath) throws Exception {
-    for (String sqlName : OliphauntExtensionCatalog.releaseProductMembers(product)) {
+    for (String sqlName : OliphauntExtensionCatalog.artifactProductMembers(product)) {
       Path dataFile =
           repository.resolve(
               "src/extensions/external/" + sqlName + "/upstream-license-data.json");
@@ -2866,9 +2868,9 @@ public final class OliphauntExtensionCatalogContractTest {
   private static void acceptsProductionShapedRuntimeBundlesForBothAndroidAbis()
       throws Exception {
     Map<String, String> extensionOwnerVersions =
-        Map.of("oliphaunt-extension-contrib-pg18", "1.2.3");
+        Map.of("liboliphaunt-native", "1.2.3");
     List<String> contribMembers =
-        OliphauntExtensionCatalog.releaseProductMembers("oliphaunt-extension-contrib-pg18");
+        OliphauntExtensionCatalog.artifactProductMembers("oliphaunt-extension-contrib-pg18");
 
     for (String target : List.of("android-arm64-v8a", "android-x86_64")) {
       Path root = Files.createTempDirectory("oliphaunt-android-bundle-");
@@ -3148,8 +3150,9 @@ public final class OliphauntExtensionCatalogContractTest {
     OliphauntExtensionCatalog.Owner owner = owners.get(0);
     equal(
         "oliphaunt-extension-contrib-pg18",
-        owner.releaseProduct(),
-        "contrib release owner");
+        owner.artifactProduct(),
+        "contrib artifact product");
+    equal("liboliphaunt-native", owner.releaseProduct(), "contrib release owner");
     equal("dev.oliphaunt.extensions", owner.mavenGroup(), "contrib Maven group");
     equal(
         "oliphaunt-extension-contrib-pg18", owner.mavenArtifact(), "contrib Maven artifact");
@@ -3168,16 +3171,16 @@ public final class OliphauntExtensionCatalogContractTest {
     equal("0.8.1", owners.get(0).version(), "independent vector version");
   }
 
-  private static void rejectsConflictingOrUnlinkedVersions() {
-    expectFailure(
-        () ->
-            OliphauntExtensionCatalog.resolveOwners(
-                List.of("hstore"), Map.of("hstore", "1.2.3", "oliphaunt-extension-contrib-pg18", "1.2.4"), "1.2.3"),
-        "conflicting versions");
+  private static void rejectsArtifactAliasesAndUnlinkedVersions() {
     expectFailure(
         () ->
             OliphauntExtensionCatalog.resolveOwners(
                 List.of("hstore"), Map.of("oliphaunt-extension-contrib-pg18", "1.2.4"), "1.2.3"),
+        "does not identify a selected extension release owner");
+    expectFailure(
+        () ->
+            OliphauntExtensionCatalog.resolveOwners(
+                List.of("hstore"), Map.of("liboliphaunt-native", "1.2.4"), "1.2.3"),
         "must use liboliphaunt version 1.2.3");
     expectFailure(
         () ->
@@ -3190,7 +3193,7 @@ public final class OliphauntExtensionCatalogContractTest {
     expectFailure(
         () ->
             OliphauntExtensionCatalog.resolveOwners(
-                List.of("vector"), Map.of("vector", "1.2"), "1.2.3"),
+                List.of("vector"), Map.of("oliphaunt-extension-vector", "1.2"), "1.2.3"),
         "must be canonical stable SemVer X.Y.Z");
   }
 
@@ -3198,8 +3201,9 @@ public final class OliphauntExtensionCatalogContractTest {
     String invalid =
         String.join(
                 "\n",
-                "schema=oliphaunt-android-extension-catalog-v1",
+                "schema=oliphaunt-android-extension-catalog-v2",
                 "catalogSha256=" + "0".repeat(64),
+                "extension.alpha.artifactProduct=oliphaunt-extension-alpha",
                 "extension.alpha.releaseProduct=oliphaunt-extension-alpha",
                 "extension.alpha.mavenGroup=dev.oliphaunt.extensions",
                 "extension.alpha.mavenArtifact=oliphaunt-extension-alpha",

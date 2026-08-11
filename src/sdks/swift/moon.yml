@@ -7,8 +7,6 @@ stack: "systems"
 tags: ["sdk", "swift", "ios", "macos", "native", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt Swift SDK"
@@ -30,7 +28,6 @@ tasks:
     command: "bash src/sdks/swift/tools/check-sdk.sh check-static"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-contracts:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
@@ -47,7 +44,6 @@ tasks:
     command: "bash src/sdks/swift/tools/check-sdk.sh test-unit"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-fixtures:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"

@@ -295,7 +295,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     if (!visiting.add(sqlName)) {
       throw new GradleException("cyclic Oliphaunt Android extension dependency involving " + sqlName);
     }
-    String product = OliphauntExtensionCatalog.require(sqlName).releaseProduct();
+    String product = OliphauntExtensionCatalog.require(sqlName).artifactProduct();
     LinkedHashSet<String> dependencies = new LinkedHashSet<>();
     LinkedHashSet<String> archiveTargets = new LinkedHashSet<>();
     LinkedHashSet<String> dependencyArchives = new LinkedHashSet<>();
@@ -470,7 +470,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
                   + artifact.getName()
                   + " is missing sqlName or nativeTarget");
         }
-        String product = OliphauntExtensionCatalog.require(sqlName).releaseProduct();
+        String product = OliphauntExtensionCatalog.require(sqlName).artifactProduct();
         addExtensionArchiveSource(
             archives,
             new ExtensionArchiveSource(
@@ -585,13 +585,14 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + " must target a supported Android ABI (android-arm64-v8a or android-x86_64), got "
               + target);
     }
-    String expectedVersion = extensionOwnerVersions.get(product);
+    String releaseProduct = OliphauntExtensionCatalog.releaseProductForArtifactProduct(product);
+    String expectedVersion = extensionOwnerVersions.get(releaseProduct);
     if (expectedVersion == null) {
       throw new GradleException(
           "Maven-resolved Oliphaunt extension bundle "
               + carrier.getName()
               + " has unselected release owner "
-              + product);
+              + releaseProduct);
     }
     if (!expectedVersion.equals(version)) {
       throw new GradleException(
@@ -654,14 +655,14 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             "Oliphaunt extension bundle manifest " + manifestFile + " has invalid SQL name " + sqlName);
       }
       OliphauntExtensionCatalog.Entry catalogEntry = OliphauntExtensionCatalog.require(sqlName);
-      if (!product.equals(catalogEntry.releaseProduct())) {
+      if (!product.equals(catalogEntry.artifactProduct())) {
         throw new GradleException(
             "Oliphaunt extension bundle "
                 + product
                 + " contains member "
                 + sqlName
                 + " owned by "
-                + catalogEntry.releaseProduct());
+                + catalogEntry.artifactProduct());
       }
       if (!expectedSha256.matches("[0-9a-f]{64}")) {
         throw new GradleException(
@@ -708,7 +709,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     }
     List<String> actualMembers =
         result.stream().map(ExtensionArchiveSource::sqlName).toList();
-    List<String> expectedMembers = OliphauntExtensionCatalog.releaseProductMembers(product);
+    List<String> expectedMembers = OliphauntExtensionCatalog.artifactProductMembers(product);
     if (!actualMembers.equals(expectedMembers)) {
       throw new GradleException(
           "Oliphaunt extension bundle manifest "
@@ -1269,13 +1270,13 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               + manifest.getProperty("sqlName"));
     }
     OliphauntExtensionCatalog.Entry catalogEntry = OliphauntExtensionCatalog.require(sqlName);
-    if (!product.equals(catalogEntry.releaseProduct())) {
+    if (!product.equals(catalogEntry.artifactProduct())) {
       throw new GradleException(
           product
               + " Android artifact "
               + assetName
               + " belongs to release product "
-              + catalogEntry.releaseProduct());
+              + catalogEntry.artifactProduct());
     }
     String expectedDependencies = String.join(",", catalogEntry.dependencies());
     if (!expectedDependencies.equals(manifest.getProperty("dependencies"))) {
@@ -1606,7 +1607,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
         strictManifestCsv(manifest, "extensionSqlFilePrefixes", assetName);
 
     String nativeTarget = manifest.getProperty("nativeTarget", "");
-    String product = OliphauntExtensionCatalog.require(sqlName).releaseProduct();
+    String product = OliphauntExtensionCatalog.require(sqlName).artifactProduct();
     OliphauntExtensionLegalCatalog.Contract legalContract =
         validateExtensionLegalManifest(
             product, sqlName, nativeTarget, manifest, assetName);

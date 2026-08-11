@@ -101,18 +101,21 @@ function assertCanonicalOwner(extension, owners, label) {
   const owner = owners.get(extension.sqlName);
   if (owner === undefined) fail(`${label} has no generated canonical release owner for ${extension.sqlName}`);
   if (extension.product !== owner.product) {
-    fail(`${label}.product must be canonical owner ${owner.product} for ${extension.sqlName}`);
+    fail(`${label}.product must be canonical artifact product ${owner.product} for ${extension.sqlName}`);
+  }
+  if (extension.releaseProduct !== owner.releaseProduct) {
+    fail(`${label}.releaseProduct must be canonical owner ${owner.releaseProduct} for ${extension.sqlName}`);
   }
 }
 function assertOwnerReleaseConsistency(extensions, label) {
   const releases = new Map();
   for (const extension of extensions) {
     const identity = `${extension.version}\0${extension.tag}`;
-    const existing = releases.get(extension.product);
+    const existing = releases.get(extension.releaseProduct);
     if (existing !== undefined && existing !== identity) {
-      fail(`${label} assigns inconsistent version/tag identities to release owner ${extension.product}`);
+      fail(`${label} assigns inconsistent version/tag identities to release owner ${extension.releaseProduct}`);
     }
-    releases.set(extension.product, identity);
+    releases.set(extension.releaseProduct, identity);
   }
 }
 async function digest(file) {
@@ -554,19 +557,19 @@ function validateBaseReference(value, label) {
 }
 function validateDependencyCarrierReference(value, label) {
   const row = object(value, label);
-  exactKeys(row, ["product", "sqlName", "tag", "version"], label);
+  exactKeys(row, ["product", "releaseProduct", "sqlName", "tag", "version"], label);
   const sqlName = identifier(row.sqlName, `${label}.sqlName`);
   const product = identifier(row.product, `${label}.product`);
-  if (!product.startsWith("oliphaunt-extension-")) fail(`${label}.product must be an extension release product`);
+  if (!product.startsWith("oliphaunt-extension-")) fail(`${label}.product must be an extension artifact product`);
+  const releaseProduct = identifier(row.releaseProduct, `${label}.releaseProduct`);
   const version = stableVersion(row.version, `${label}.version`);
-  if (row.tag !== `${product}-v${version}`) fail(`${label}.tag must be ${product}-v${version}`);
-  return { product, sqlName, tag: row.tag, version };
+  if (row.tag !== `${releaseProduct}-v${version}`) fail(`${label}.tag must be ${releaseProduct}-v${version}`);
+  return { product, releaseProduct, sqlName, tag: row.tag, version };
 }
 function validateExtensionReleaseReference(value, label) {
   const row = object(value, label);
   exactKeys(row, ["product", "tag", "version"], label);
   const product = identifier(row.product, `${label}.product`);
-  if (!product.startsWith("oliphaunt-extension-")) fail(`${label}.product must be an extension release product`);
   const version = stableVersion(row.version, `${label}.version`);
   if (row.tag !== `${product}-v${version}`) fail(`${label}.tag must be ${product}-v${version}`);
   return { product, tag: row.tag, version };
@@ -576,13 +579,14 @@ function validateExtension(value, label, carriers) {
   exactKeys(row, [
     "assets", "createsExtension", "dataFiles", "dependencies", "extensionSqlFileNames",
     "extensionSqlFilePrefixes", "nativeDependencies", "nativeModuleStem", "product",
-    "registration", "sharedPreloadLibraries", "sqlName", "tag", "version",
+    "registration", "releaseProduct", "sharedPreloadLibraries", "sqlName", "tag", "version",
   ], label);
   const sqlName = identifier(row.sqlName, `${label}.sqlName`);
   const product = identifier(row.product, `${label}.product`);
-  if (!product.startsWith("oliphaunt-extension-")) fail(`${label}.product must be an extension release product`);
+  if (!product.startsWith("oliphaunt-extension-")) fail(`${label}.product must be an extension artifact product`);
+  const releaseProduct = identifier(row.releaseProduct, `${label}.releaseProduct`);
   const version = stableVersion(row.version, `${label}.version`);
-  if (row.tag !== `${product}-v${version}`) fail(`${label}.tag must be ${product}-v${version}`);
+  if (row.tag !== `${releaseProduct}-v${version}`) fail(`${label}.tag must be ${releaseProduct}-v${version}`);
   if (typeof row.createsExtension !== "boolean") fail(`${label}.createsExtension must be boolean`);
   const nativeModuleStem = row.nativeModuleStem === null ? null : identifier(row.nativeModuleStem, `${label}.nativeModuleStem`);
   const dependencies = canonicalIds(row.dependencies, `${label}.dependencies`);
@@ -603,6 +607,7 @@ function validateExtension(value, label, carriers) {
     nativeDependencies: canonicalIds(row.nativeDependencies, `${label}.nativeDependencies`),
     nativeModuleStem,
     product,
+    releaseProduct,
     registration: row.registration === null ? null : registration(row.registration, `${label}.registration`),
     sharedPreloadLibraries: canonicalIds(
       row.sharedPreloadLibraries,
@@ -1099,7 +1104,7 @@ export async function resolveSwiftCarrierSelection({
       const extension = validateExtension(entry.extension, `${carrier}.entries[${index}].extension`, overlayCarriers);
       assertCanonicalOwner(extension, canonicalOwners, `${carrier}.entries[${index}].extension`);
       if (
-        extension.product !== release.product
+        extension.releaseProduct !== release.product
         || extension.version !== release.version
         || extension.tag !== release.tag
       ) {
@@ -1118,10 +1123,14 @@ export async function resolveSwiftCarrierSelection({
         ));
       for (const [dependencyIndex, requirement] of requirements.entries()) {
         const canonicalOwner = canonicalOwners.get(requirement.sqlName);
-        if (canonicalOwner === undefined || requirement.product !== canonicalOwner.product) {
+        if (
+          canonicalOwner === undefined
+          || requirement.product !== canonicalOwner.product
+          || requirement.releaseProduct !== canonicalOwner.releaseProduct
+        ) {
           fail(
-            `${carrier}.entries[${index}].dependencyCarriers[${dependencyIndex}].product must be canonical owner `
-              + `${canonicalOwner?.product ?? "<missing>"} for ${requirement.sqlName}`,
+            `${carrier}.entries[${index}].dependencyCarriers[${dependencyIndex}] must use canonical artifact/release products `
+              + `${canonicalOwner?.product ?? "<missing>"}/${canonicalOwner?.releaseProduct ?? "<missing>"} for ${requirement.sqlName}`,
           );
         }
       }
@@ -1167,6 +1176,7 @@ export async function resolveSwiftCarrierSelection({
       if (
         selected === undefined
         || selected.product !== requirement.product
+        || selected.releaseProduct !== requirement.releaseProduct
         || selected.version !== requirement.version
         || selected.tag !== requirement.tag
       ) {
@@ -1242,6 +1252,7 @@ export async function resolveSwiftCarrierSelection({
     const primaryAsset = stem === null ? null : await binaryAsset(extensionAssets[0]);
     const resolvedExtension = {
       product: row.product,
+      releaseProduct: row.releaseProduct,
       version: row.version,
       sqlName: row.sqlName,
       createsExtension: row.createsExtension,

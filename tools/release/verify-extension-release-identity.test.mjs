@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   extensionMetadata,
+  extensionReleaseProduct,
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
@@ -57,10 +58,18 @@ function member(product, sqlName) {
 
 function manifest(product, version = "1.2.3") {
   const metadata = extensionMetadata(product, "verify-extension-release-identity.test");
+  const family = metadata.versioning === "runtime-bound" ? "native" : "combined";
+  const releaseProduct = family === "combined"
+    ? product
+    : extensionReleaseProduct(product, family, "verify-extension-release-identity.test");
   const members = extensionSqlNames(product, "verify-extension-release-identity.test")
     .map((sqlName) => member(product, sqlName));
   const root = {
     product,
+    ...(metadata.versioning === "runtime-bound" ? {
+      releaseProduct,
+      family,
+    } : {}),
     version,
     extensionClass: metadata.class,
     versioning: metadata.versioning,

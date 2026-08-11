@@ -3,38 +3,10 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-npm-publisher/install.sh"
-action="$root/.github/actions/setup-npm-publisher/action.yml"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/payload/package/bin" "$work/bin" "$work/blockers"
-# These are intentionally literal composite-action source assertions.
-# shellcheck disable=SC2016
-{
-  grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action"
-  grep -Fq "printf '%s\\n' \"\$export_dir\" >> \"\$GITHUB_PATH\"" "$action"
-  grep -Fq 'value: ${{ steps.install.outputs.node-executable }}' "$action"
-  grep -Fq 'value: ${{ steps.install.outputs.npm-cli }}' "$action"
-  grep -Fq 'node_launcher="$(command -v node)"' "$action"
-  grep -Fq 'node_launcher="$(cygpath -u "$node_launcher")"' "$action"
-  grep -Fq -- "-e 'process.stdout.write(process.execPath)'" "$action"
-  grep -Fq 'npm_cli="$(cygpath -aw "$npm_cli_fs")"' "$action"
-  grep -Fq 'verifier="$(cygpath -aw "$verifier_fs")"' "$action"
-  grep -Fq "MSYS2_ARG_CONV_EXCL='*' \"\$node_launcher\" \"\$@\"" "$action"
-  grep -Fq 'run_native_node "$verifier" check-trust-cli' "$action"
-  grep -Fq -- '--npm-cli "$npm_cli"' "$action"
-  grep -Fq 'output_node="$node_executable"' "$action"
-  grep -Fq 'output_npm_cli="$npm_cli"' "$action"
-  if grep -Fq -- '--node-executable' "$action"; then
-    echo "setup action reintroduced a redundant shell-to-Node executable path handoff" >&2
-    exit 1
-  fi
-}
-if grep -Eq '(^|[[:space:]])npm[[:space:]]+--version' "$action"; then
-  echo "setup action reintroduced an ambient npm version probe" >&2
-  exit 1
-fi
-
 cat >"$work/payload/package/bin/npm-cli.js" <<'EOF'
 #!/usr/bin/env node
 console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"

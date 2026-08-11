@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { contribCarrierDescriptor } from "./release-artifact-targets.mjs";
 import { validateSelectionNeutralSwiftSourceCarrier } from "./swift-source-carrier-contract.mjs";
 
 const PREFIX = "swift-extension-release-consumer-inputs.mjs";
@@ -43,8 +44,12 @@ function stableVersion(value, label) {
 
 function releaseReference(value, label) {
   const row = exactKeys(value, ["product", "tag", "version"], label);
-  if (typeof row.product !== "string" || !PRODUCT.test(row.product)) {
-    fail(`${label}.product must be an exact-extension product id`);
+  const contrib = contribCarrierDescriptor(PREFIX);
+  if (
+    typeof row.product !== "string"
+    || (!PRODUCT.test(row.product) && row.product !== contrib.nativeOwner)
+  ) {
+    fail(`${label}.product must be an exact-extension product or the native contrib owner`);
   }
   stableVersion(row.version, `${label}.version`);
   const expectedTag = `${row.product}-v${row.version}`;
@@ -129,6 +134,9 @@ export function extensionReleaseConsumerInputs({ sourceCarrierFile, extensionCar
         fail(`${file}.entries[${index}].dependencyCarriers must be an array`);
       }
       const extension = object(entry.extension, `${file}.entries[${index}].extension`);
+      if (typeof extension.product !== "string" || !PRODUCT.test(extension.product)) {
+        fail(`${file}.entries[${index}].extension.product must be an exact-extension product id`);
+      }
       if (typeof extension.sqlName !== "string" || !PORTABLE_IDENTIFIER.test(extension.sqlName)) {
         fail(`${file}.entries[${index}].extension.sqlName must be a portable identifier`);
       }
@@ -138,11 +146,12 @@ export function extensionReleaseConsumerInputs({ sourceCarrierFile, extensionCar
       ) {
         fail(`${file}.entries[${index}].extension.nativeModuleStem must be null or a portable identifier`);
       }
-      if (
-        extension.product !== release.product
-        || extension.version !== release.version
-        || extension.tag !== release.tag
-      ) {
+      const releaseProduct = extension.releaseProduct ?? extension.product;
+      const contrib = contribCarrierDescriptor(PREFIX);
+      const validOwnership = release.product === contrib.nativeOwner
+        ? extension.product === contrib.artifactProduct && releaseProduct === contrib.nativeOwner
+        : extension.product === release.product && releaseProduct === release.product;
+      if (!validOwnership || extension.version !== release.version || extension.tag !== release.tag) {
         fail(`${file}.entries[${index}].extension must be owned by ${release.tag}`);
       }
       extensions.push({
@@ -163,7 +172,7 @@ export function extensionReleaseConsumerInputs({ sourceCarrierFile, extensionCar
     ?? native[0];
   return {
     extensionCarrierCount: extensionCarrierFiles.length,
-    extensionProducts: [...releaseProducts].sort(compareText),
+    extensionProducts: [...new Set(extensions.map(({ product }) => product))].sort(compareText),
     extensions: extensions.map(({ sqlName }) => sqlName),
     extensionsCsv: extensions.map(({ sqlName }) => sqlName).join(","),
     finalLink: {

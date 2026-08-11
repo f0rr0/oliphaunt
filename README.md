@@ -34,9 +34,9 @@ Oliphaunt is a multi-product monorepo, not one repository-wide version:
   separately versioned SDK products.
 - Broker and Node-direct helpers are separately versioned runtime products.
 - Every promoted SQL extension remains exactly selectable. PostgreSQL 18
-  contrib members share one runtime-bound distribution product and its stable
-  carriers; each external extension is a separately tagged, independently
-  versioned product.
+  contrib members share one logical artifact bundle whose native and WASIX
+  carriers belong to their respective runtime releases; each external extension
+  is a separately tagged, independently versioned product.
 
 A product owns its SemVer, changelog, source identity, product tag, and GitHub
 release. Platform packages, ABI payloads, and size-split crates are carriers of

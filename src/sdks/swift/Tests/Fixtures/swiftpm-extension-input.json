@@ -12,6 +12,7 @@
   "extensions": [
     {
       "product": "oliphaunt-extension-contrib-pg18",
+      "releaseProduct": "liboliphaunt-native",
       "version": "0.1.0",
       "sqlName": "earthdistance",
       "createsExtension": true,
@@ -40,6 +41,7 @@
     },
     {
       "product": "oliphaunt-extension-contrib-pg18",
+      "releaseProduct": "liboliphaunt-native",
       "version": "0.1.0",
       "sqlName": "cube",
       "createsExtension": true,
@@ -72,6 +74,7 @@
     },
     {
       "product": "oliphaunt-extension-postgis",
+      "releaseProduct": "oliphaunt-extension-postgis",
       "version": "3.6.1",
       "sqlName": "postgis",
       "createsExtension": true,
@@ -127,6 +130,7 @@
     },
     {
       "product": "oliphaunt-extension-pgtap",
+      "releaseProduct": "oliphaunt-extension-pgtap",
       "version": "1.3.5",
       "sqlName": "pgtap",
       "createsExtension": true,

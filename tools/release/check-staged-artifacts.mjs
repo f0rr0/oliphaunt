@@ -14,8 +14,11 @@ import {
   compareText,
   currentProductVersion,
   exactExtensionProducts,
+  extensionArtifactProductRoot,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionReleaseProduct,
+  extensionReleaseVersion,
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
@@ -599,14 +602,6 @@ function dirReadText(root, name) {
 
 function graphProducts() {
   return loadGraph(PREFIX).products;
-}
-
-function productConfig(product) {
-  const config = graphProducts()[product];
-  if (!config) {
-    fail(`unknown release product ${product}`);
-  }
-  return config;
 }
 
 function sdkProducts() {
@@ -1513,10 +1508,16 @@ function checkExtensionArtifactInventory(root, expectedPaths) {
   }
 }
 
-async function checkExtensionBundleProduct(product, root, manifest, data, { requireFullTargets }) {
-  requireExactKeys(data, INTERNAL_EXTENSION_BUNDLE_ROOT_KEYS, rel(manifest));
-  const version = await currentProductVersion(product, PREFIX);
-  if (data.product !== product || data.version !== version) {
+async function checkExtensionBundleProduct(product, root, manifest, data, { family, requireFullTargets }) {
+  const releaseProduct = extensionReleaseProduct(product, family ?? "native", PREFIX);
+  const ownership = releaseProduct === product ? {} : { releaseProduct, family };
+  requireExactKeys(data, new Set([...INTERNAL_EXTENSION_BUNDLE_ROOT_KEYS, ...Object.keys(ownership)]), rel(manifest));
+  const version = extensionReleaseVersion(product, family ?? "native", PREFIX);
+  if (
+    data.product !== product
+    || data.version !== version
+    || Object.entries(ownership).some(([key, value]) => data[key] !== value)
+  ) {
     fail(`${rel(manifest)} must describe ${product}@${version}`);
   }
   const releaseMetadata = extensionMetadata(product, PREFIX);
@@ -1532,7 +1533,8 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
     fail(`${rel(manifest)} bundle members must exactly match release metadata: expected=${JSON.stringify(expectedSqlNames)}, actual=${JSON.stringify(actualSqlNames)}`);
   }
 
-  const targetRows = extensionArtifactTargets({ product, publishedOnly: true }, PREFIX);
+  const targetRows = extensionArtifactTargets({ product, publishedOnly: true }, PREFIX)
+    .filter((row) => family === null || row.family === family);
   const allowedTargetFamilies = new Map();
   for (const row of targetRows) {
     const current = allowedTargetFamilies.get(row.target);
@@ -1740,10 +1742,15 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
 
   const releaseManifest = path.join(root, "release-assets", `${product}-${version}-manifest.json`);
   const releaseData = readJson(releaseManifest);
-  requireExactKeys(releaseData, PUBLIC_EXTENSION_BUNDLE_RELEASE_MANIFEST_KEYS, rel(releaseManifest));
+  requireExactKeys(
+    releaseData,
+    new Set([...PUBLIC_EXTENSION_BUNDLE_RELEASE_MANIFEST_KEYS, ...Object.keys(ownership)]),
+    rel(releaseManifest),
+  );
   const expectedReleaseData = {
     schema: "oliphaunt-extension-release-manifest-v2",
     product,
+    ...ownership,
     version,
     extensionClass: releaseMetadata.class,
     versioning: releaseMetadata.versioning,
@@ -1794,6 +1801,7 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
   const expectedProperties = {
     schema: "oliphaunt-extension-release-manifest-v2",
     product,
+    ...(releaseProduct === product ? {} : { releaseProduct, carrierFamily: family }),
     version: String(version),
     extensionClass: String(releaseData.extensionClass),
     versioning: String(releaseData.versioning),
@@ -1843,23 +1851,17 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { requ
   return true;
 }
 
-async function checkExtensionProduct(product, { require, requireFullTargets }) {
-  const root = path.join(EXTENSION_ROOT, product);
-  const manifest = path.join(root, "extension-artifacts.json");
-  if (!existsSync(manifest)) {
-    if (require) {
-      fail(`missing staged exact-extension package manifest for ${product} under ${rel(root)}`);
-    }
-    return false;
-  }
-  const data = readJson(manifest);
+async function checkExtensionProductVariant(product, root, manifest, data, { family, requireFullTargets }) {
   if (data.schema === "oliphaunt-extension-ci-artifacts-v2") {
-    return checkExtensionBundleProduct(product, root, manifest, data, { requireFullTargets });
+    return checkExtensionBundleProduct(product, root, manifest, data, { family, requireFullTargets });
   }
+  const releaseProduct = extensionReleaseProduct(product, family ?? "native", PREFIX);
+  const ownership = releaseProduct === product ? {} : { releaseProduct, family };
   const expected = {
     schema: "oliphaunt-extension-ci-artifacts-v1",
     product,
-    version: await currentProductVersion(product, PREFIX),
+    ...ownership,
+    version: extensionReleaseVersion(product, family ?? "native", PREFIX),
   };
   const metadata = extensionMetadata(product, PREFIX);
   for (const [key, value] of Object.entries(expected)) {
@@ -1870,7 +1872,11 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
   if (!deepEqual(data.compatibility, metadata.compatibility)) {
     fail(`${rel(manifest)} has stale compatibility metadata`);
   }
-  const expectedSqlName = productConfig(product).extension_sql_name;
+  const sqlNames = extensionSqlNames(product, PREFIX);
+  if (sqlNames.length !== 1) {
+    fail(`${product} singleton artifact manifest requires exactly one SQL name`);
+  }
+  const [expectedSqlName] = sqlNames;
   if (data.sqlName !== expectedSqlName) {
     fail(`${rel(manifest)} has sqlName=${JSON.stringify(data.sqlName)}, expected ${JSON.stringify(expectedSqlName)}`);
   }
@@ -2002,6 +2008,7 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
   const expectedRelease = {
     schema: "oliphaunt-extension-release-manifest-v1",
     product,
+    ...ownership,
     version: String(expected.version),
     sqlName: String(expectedSqlName),
     extensionClass: metadata.class,
@@ -2022,7 +2029,11 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
     desktopReleaseReady: data.desktopReleaseReady,
     assets: assets.map(publicExtensionAsset),
   };
-  requireExactKeys(releaseData, PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS, rel(releaseManifest));
+  requireExactKeys(
+    releaseData,
+    new Set([...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS, ...Object.keys(ownership)]),
+    rel(releaseManifest),
+  );
   if (!deepEqual(releaseData, expectedRelease)) {
     fail(`${rel(releaseManifest)} must exactly match stable metadata and staged artifacts`);
   }
@@ -2065,6 +2076,7 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
   const expectedProperties = {
     schema: "oliphaunt-extension-release-manifest-v1",
     product,
+    ...(releaseProduct === product ? {} : { releaseProduct, carrierFamily: family }),
     version: String(expected.version),
     sqlName: String(expectedSqlName),
     extensionClass: String(releaseData.extensionClass),
@@ -2109,6 +2121,39 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
   }
   console.log(`validated exact-extension package artifacts: ${product}`);
   return true;
+}
+
+async function checkExtensionProduct(product, { family, require, requireFullTargets }) {
+  const variants = family === null
+    ? (() => {
+      const nativeRoot = extensionArtifactProductRoot(product, "native", EXTENSION_ROOT, PREFIX);
+      const wasixRoot = extensionArtifactProductRoot(product, "wasix", EXTENSION_ROOT, PREFIX);
+      return nativeRoot === wasixRoot
+        ? [{ family: null, root: nativeRoot }]
+        : [{ family: "native", root: nativeRoot }, { family: "wasix", root: wasixRoot }];
+    })()
+    : [{
+      family,
+      root: extensionArtifactProductRoot(product, family, EXTENSION_ROOT, PREFIX),
+    }];
+  let checked = false;
+  for (const variant of variants) {
+    const manifest = path.join(variant.root, "extension-artifacts.json");
+    if (!existsSync(manifest)) {
+      if (require) {
+        fail(`missing staged exact-extension ${variant.family ?? "combined"} package manifest for ${product} under ${rel(variant.root)}`);
+      }
+      continue;
+    }
+    checked = await checkExtensionProductVariant(
+      product,
+      variant.root,
+      manifest,
+      readJson(manifest),
+      { family: variant.family, requireFullTargets },
+    ) || checked;
+  }
+  return checked;
 }
 
 function setEquals(left, right) {
@@ -2274,7 +2319,10 @@ function resolveReportPath(value, reportPath, field) {
 
 function checkExtensionPackageHasMobileTarget(sqlName, target) {
   for (const product of exactExtensionProducts(PREFIX)) {
-    const manifest = path.join(EXTENSION_ROOT, product, "extension-artifacts.json");
+    const manifest = path.join(
+      extensionArtifactProductRoot(product, "native", EXTENSION_ROOT, PREFIX),
+      "extension-artifacts.json",
+    );
     if (!isFile(manifest)) {
       continue;
     }
@@ -2756,6 +2804,7 @@ function usage() {
 Options:
   --require-sdk-product PRODUCT        SDK product to require, or all
   --require-extension-product PRODUCT  exact-extension product to require, or all
+  --family native|wasix                validate only that extension carrier family
   --require-full-extension-targets     require every published exact-extension target
   --require-mobile android|ios|all     mobile app artifact platform to require
   --require-mobile-prebuilt-extensions require matching exact-extension package inputs
@@ -2768,6 +2817,7 @@ function parseArgs(argv) {
   const args = {
     requireSdkProduct: [],
     requireExtensionProduct: [],
+    family: null,
     requireFullExtensionTargets: false,
     requireMobile: [],
     requireMobilePrebuiltExtensions: false,
@@ -2788,6 +2838,13 @@ function parseArgs(argv) {
         fail("--require-extension-product requires a value");
       }
       args.requireExtensionProduct.push(value);
+      index += 1;
+    } else if (arg === "--family") {
+      const value = argv[index + 1];
+      if (!value || !["native", "wasix"].includes(value)) {
+        fail("--family requires native or wasix");
+      }
+      args.family = value;
       index += 1;
     } else if (arg === "--require-full-extension-targets") {
       args.requireFullExtensionTargets = true;
@@ -2837,6 +2894,7 @@ async function main(argv) {
   });
   for (const product of requiredExtensionProducts) {
     checked += Number(await checkExtensionProduct(product, {
+      family: args.family,
       require: true,
       requireFullTargets: args.requireFullExtensionTargets,
     }));
@@ -2844,6 +2902,7 @@ async function main(argv) {
   if (args.inspectPresent) {
     for (const product of [...extensionProductSet].filter((product) => !requiredExtensionProducts.includes(product)).sort(compareText)) {
       checked += Number(await checkExtensionProduct(product, {
+        family: args.family,
         require: false,
         requireFullTargets: false,
       }));

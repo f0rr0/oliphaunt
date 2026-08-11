@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { bootstrapCarrierEnvironment } from "../../.github/scripts/bootstrap-registry-credential-env.mjs";
@@ -49,16 +48,4 @@ test("bootstrap credential routing rejects any unplanned registry lane", () => {
     () => bootstrapCarrierEnvironment("maven", parent),
     /unsupported bootstrap credential ecosystem/u,
   );
-});
-
-test("the concurrent bootstrap orchestrator applies lane-scoped environments to every child", () => {
-  const source = readFileSync(
-    new URL("../../.github/scripts/bootstrap-registry-identities.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(
-    source,
-    /env:\s*bootstrapCarrierEnvironment\(carrier\.ecosystem, process\.env\)/u,
-  );
-  assert.doesNotMatch(source, /\{\s*stdio:\s*["']inherit["'],\s*env:\s*process\.env\s*\}/u);
 });

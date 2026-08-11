@@ -7,8 +7,6 @@ stack: "systems"
 tags: ["sdk", "kotlin", "android", "native", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt Kotlin SDK"
@@ -30,7 +28,6 @@ tasks:
     command: "bash src/sdks/kotlin/tools/check-sdk.sh check-static"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-contracts:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -51,7 +48,6 @@ tasks:
     command: "bash src/sdks/kotlin/tools/check-sdk.sh test-unit"
     deps:
       - "liboliphaunt-native:check"
-      - "shared-fixtures:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"

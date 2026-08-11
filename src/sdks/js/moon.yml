@@ -11,8 +11,6 @@ dependsOn:
   - "oliphaunt-broker"
   - "oliphaunt-node-direct"
   - "shared-js-core"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt TypeScript SDK"
@@ -35,7 +33,6 @@ tasks:
     deps:
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:check"
-      - "shared-contracts:check"
       - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
@@ -56,7 +53,6 @@ tasks:
     deps:
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:check"
-      - "shared-fixtures:check"
       - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"

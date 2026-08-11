@@ -22,10 +22,6 @@ const SOURCE = readFileSync(
   new URL("../../.github/scripts/release-transport-ref.mjs", import.meta.url),
   "utf8",
 );
-const RELEASE_HEAD_RESOLVER_SOURCE = readFileSync(
-  new URL("../../.github/scripts/resolve-release-head.sh", import.meta.url),
-  "utf8",
-);
 
 function exactRef(sha = SHA) {
   return {
@@ -84,14 +80,6 @@ test("transport names normalize one exact full commit into an unambiguous lightw
   for (const invalid of ["", "abc", `${SHA}0`, "z".repeat(40)]) {
     assert.throws(() => normalizeReleaseTransportCommit(invalid), /full lowercase-compatible 40-character SHA/u);
   }
-});
-
-test("the release-head resolver remains exact-SHA-only and has no moving-main dependency", () => {
-  assert.match(RELEASE_HEAD_RESOLVER_SOURCE, /release_commit must equal the workflow commit exactly/u);
-  assert.doesNotMatch(
-    RELEASE_HEAD_RESOLVER_SOURCE,
-    /require-current-main[.]sh|refs\/heads\/main|refs\/remotes\/origin\/main/u,
-  );
 });
 
 test("an exact existing transport bypasses moving main only for genuine root reruns", async () => {

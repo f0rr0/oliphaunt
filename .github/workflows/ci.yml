@@ -2031,7 +2031,7 @@ jobs:
           rsync -a "$raw_target_dir/" "$destination/"
 
       - name: Stage exact-extension WASIX evidence inputs
-        run: tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --require-wasix
+        run: tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix
 
       - name: Collect WASIX extension evidence
         id: regression
@@ -2341,7 +2341,9 @@ jobs:
               echo "Planner returned an invalid exact-extension product id: $product" >&2
               exit 1
             fi
-            release_assets="target/extension-artifacts/$product/release-assets"
+            product_root="$(tools/dev/bun.sh tools/release/release_graph_query.mjs \
+              extension-artifact-root --product "$product" --family native)"
+            release_assets="$product_root/release-assets"
             product_carriers=()
             while IFS= read -r carrier; do
               product_carriers+=("$carrier")

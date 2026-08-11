@@ -9,13 +9,13 @@ import {
   dependentReleaseClosure,
   planDependentReleaseCandidates,
   synchronizeDependentReleaseCandidates,
+  synchronizeReleaseCandidates,
   withDependentReleaseClosure,
 } from "./release-dependent-candidates.mjs";
 import { buildPlan, loadGraph } from "./release-graph.mjs";
 
 const NATIVE = "liboliphaunt-native";
 const WASIX = "liboliphaunt-wasix";
-const CONTRIB = "oliphaunt-extension-contrib-pg18";
 const WASIX_RUST = "oliphaunt-wasix-rust";
 const RUST = "oliphaunt-rust";
 const BROKER = "oliphaunt-broker";
@@ -47,7 +47,6 @@ function topologyGraph(overrides = {}) {
   const products = {
     [NATIVE]: product(NATIVE, versions[NATIVE]),
     [WASIX]: product(WASIX, versions[WASIX]),
-    [CONTRIB]: product(CONTRIB, versions[CONTRIB], { extension: { class: "contrib" } }),
     [WASIX_RUST]: product(WASIX_RUST, versions[WASIX_RUST]),
     [RUST]: product(RUST, versions[RUST], {
       compatibility_versions: {
@@ -69,11 +68,6 @@ function topologyGraph(overrides = {}) {
   const moon_projects = {
     [NATIVE]: project(NATIVE),
     [WASIX]: project(WASIX),
-    [CONTRIB]: project(
-      CONTRIB,
-      [NATIVE, WASIX],
-      { [NATIVE]: "production", [WASIX]: "production" },
-    ),
     [WASIX_RUST]: project(WASIX_RUST, [WASIX], { [WASIX]: "production" }),
     [RUST]: project(RUST, [NATIVE], { [NATIVE]: "production" }),
     [BROKER]: project(BROKER, [NATIVE, RUST], { [NATIVE]: "production", [RUST]: "production" }),
@@ -97,7 +91,7 @@ test("native closure includes its directed consumers without forcing WASIX", () 
   const closure = dependentReleaseClosure(topologyGraph(), [NATIVE], { prefix: "closure-test" });
   assert.deepEqual(
     set(closure.requiredProducts),
-    set([NATIVE, CONTRIB, RUST, BROKER, JS, SWIFT, REACT_NATIVE, EXTERNAL]),
+    set([NATIVE, RUST, BROKER, JS, SWIFT, REACT_NATIVE, EXTERNAL]),
   );
   assert.deepEqual(
     closure.reasons[EXTERNAL].map(({ kind, sourceProduct }) => [kind, sourceProduct]),
@@ -140,12 +134,37 @@ test("the real runtime plan distinguishes Moon build impact from the final publi
   assert.equal(plan.requiredReleaseProducts.includes(WASIX_RUST), false);
 });
 
+test("shared contrib source directly selects both runtime owners and no contrib release product", () => {
+  const graph = loadGraph("release-dependent-candidates.test");
+  const plan = buildPlan(
+    graph,
+    ["src/extensions/contrib/postgres18.toml"],
+    "release-dependent-candidates.test",
+  );
+  assert.deepEqual(plan.directProducts, [NATIVE, WASIX]);
+  assert.equal(Object.hasOwn(graph.products, "oliphaunt-extension-contrib-pg18"), false);
+  assert.equal(graph.moon_projects[NATIVE].dependsOn.includes(WASIX), false);
+  assert.equal(graph.moon_projects[WASIX].dependsOn.includes(NATIVE), false);
+  for (const file of [
+    "src/postgres/versions/18/source.toml",
+    "src/extensions/contrib/amcheck/targets/artifacts.toml",
+    "src/shared/extension-runtime-contract/contract.toml",
+  ]) {
+    assert.deepEqual(
+      buildPlan(graph, [file], "release-dependent-candidates.test").directProducts,
+      [NATIVE, WASIX],
+    );
+  }
+  for (const file of ["src/extensions/contrib/amcheck/moon.yml", "src/extensions/contrib/moon.yml"]) {
+    const metadataPlan = buildPlan(graph, [file], "release-dependent-candidates.test");
+    assert.deepEqual(metadataPlan.directProducts, []);
+    assert.deepEqual(metadataPlan.releaseProducts, []);
+  }
+});
+
 test("WASIX closure includes its directed consumers without forcing native", () => {
   const closure = dependentReleaseClosure(topologyGraph(), [WASIX], { prefix: "closure-test" });
-  assert.deepEqual(
-    set(closure.requiredProducts),
-    set([WASIX, CONTRIB, WASIX_RUST, EXTERNAL]),
-  );
+  assert.deepEqual(set(closure.requiredProducts), set([WASIX, WASIX_RUST, EXTERNAL]));
   assert.equal(closure.requiredProducts.includes(NATIVE), false);
 });
 
@@ -207,7 +226,6 @@ test("planner does not synthesize the independent WASIX runtime from a native tr
   );
   assert.equal(plan.requiredProducts.includes(WASIX), false);
   assert.equal(plan.requiredProducts.includes(WASIX_RUST), false);
-  assert.equal(plan.candidates.some(({ product }) => product === CONTRIB), true);
   assert.equal(plan.candidates.some(({ product }) => product === EXTERNAL), true);
 });
 
@@ -234,6 +252,63 @@ function write(root, relative, contents) {
 function read(root, relative) {
   return readFileSync(path.join(root, relative), "utf8");
 }
+
+test("shared-source candidates reuse the release writer with an outcome-specific changelog", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-shared-contrib-candidate-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packagePath = "packages/native";
+  const graph = {
+    products: {
+      [NATIVE]: {
+        path: packagePath,
+        version: "1.0.0",
+        version_files: [`${packagePath}/VERSION`],
+        changelog_path: `${packagePath}/CHANGELOG.md`,
+      },
+    },
+  };
+  const releasePleaseConfig = {
+    packages: {
+      [packagePath]: {
+        component: NATIVE,
+        "release-type": "simple",
+        "version-file": "VERSION",
+        "changelog-path": "CHANGELOG.md",
+      },
+    },
+  };
+  const manifest = { [packagePath]: "1.0.0" };
+  write(root, `${packagePath}/VERSION`, "1.0.0\n");
+  write(root, `${packagePath}/CHANGELOG.md`, "# Changelog\n\n## 1.0.0\n");
+  write(root, ".release-please-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+
+  synchronizeReleaseCandidates({
+    root,
+    graph,
+    candidates: [{
+      product: NATIVE,
+      packagePath,
+      before: "1.0.0",
+      after: "1.0.1",
+      changelogSection: "Bug Fixes",
+      reasons: [{
+        kind: "shared-source",
+        commit: "1234567890abcdef",
+        summary: "update PostgreSQL source baseline",
+      }],
+    }],
+    releasePleaseConfig,
+    manifest,
+    write: true,
+    prefix: "shared-source-test",
+  });
+
+  assert.equal(read(root, `${packagePath}/VERSION`), "1.0.1\n");
+  assert.match(
+    read(root, `${packagePath}/CHANGELOG.md`),
+    /### Bug Fixes[\s\S]*\* \*\*contrib:\*\* shared contrib carrier source: update PostgreSQL source baseline \(12345678\)/u,
+  );
+});
 
 test("synchronizer writes only declared release files and is closed on its expanded transitions", (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-dependent-candidates-"));

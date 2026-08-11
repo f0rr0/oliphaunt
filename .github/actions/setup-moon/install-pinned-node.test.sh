@@ -3,13 +3,9 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 installer="$root/.github/actions/setup-moon/install-pinned-node.sh"
-action="$root/.github/actions/setup-node-runtime/action.yml"
 extractor="$root/.github/actions/setup-moon/toolchain-archive.py"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-
-grep -Fq 'export_dir="$(cygpath -w "$export_dir")"' "$action"
-grep -Fq 'echo "$export_dir" >> "$GITHUB_PATH"' "$action"
 
 mkdir -p "$work/payload/node-v22.22.3-linux-x64/bin" "$work/bin"
 cat >"$work/payload/node-v22.22.3-linux-x64/bin/node" <<'EOF'

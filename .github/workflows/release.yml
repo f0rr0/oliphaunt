@@ -199,8 +199,45 @@ jobs:
               echo "release-please reported PR changes, but no release PR number could be resolved." >&2
               exit 1
             fi
-            echo "No open release-please PR found; derived release file sync skipped."
-            exit 0
+            shared_contrib_status="$(
+              tools/dev/bun.sh tools/release/sync-release-pr.mjs --shared-contrib-status
+            )"
+            if [[ "${shared_contrib_status}" != "required=true" ]]; then
+              echo "No open release-please PR or unreleased shared contrib source change found."
+              exit 0
+            fi
+
+            release_pr_branch="release-please--branches--main"
+            release_pr_title="chore(release): prepare main releases"
+            gh auth setup-git
+            bash .github/scripts/require-current-main.sh "$GITHUB_SHA"
+            git switch -c "${release_pr_branch}"
+            tools/dev/bun.sh tools/release/sync-release-pr.mjs --bootstrap-shared-contrib
+            if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+              echo "Shared contrib release bootstrap created untracked files." >&2
+              git status --short >&2
+              exit 1
+            fi
+            git config user.name "oliphaunt-release-bot"
+            git config user.email "oliphaunt-release-bot@users.noreply.github.com"
+            git add -u
+            if git diff --cached --quiet --exit-code; then
+              echo "Shared contrib release bootstrap produced no release candidate." >&2
+              exit 1
+            fi
+            git commit -m "${release_pr_title}"
+            tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
+            git push --set-upstream origin "${release_pr_branch}"
+            gh pr create \
+              --base main \
+              --head "${release_pr_branch}" \
+              --title "${release_pr_title}" \
+              --label "autorelease: pending" \
+              --body "Runtime release candidates derived from shared PostgreSQL contrib carrier source changes."
+            release_pr_number="$(
+              gh pr view "${release_pr_branch}" --json number --jq '.number'
+            )"
+            echo "shared_contrib_pr_created=true" >> "$GITHUB_OUTPUT"
           fi
 
           IFS=$'\t' read -r \
@@ -271,9 +308,10 @@ jobs:
       - name: Report release-please PR result
         env:
           RELEASE_PLEASE_PRS_CREATED: ${{ steps.release_please.outputs.prs_created }}
+          SHARED_CONTRIB_PR_CREATED: ${{ steps.sync_release_pr.outputs.shared_contrib_pr_created }}
         run: |
-          if [[ "${RELEASE_PLEASE_PRS_CREATED}" == "true" ]]; then
-            echo "release-please created or updated a release PR."
+          if [[ "${RELEASE_PLEASE_PRS_CREATED}" == "true" || "${SHARED_CONTRIB_PR_CREATED}" == "true" ]]; then
+            echo "A release PR was created or updated."
           else
             echo "release-please found no releasable changes."
           fi
@@ -472,7 +510,7 @@ jobs:
           if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
             qualification_args+=(--artifact wasix-release-regression-evidence)
           fi
-          if [[ "${{ steps.release_plan.outputs.has_extension_products }}" == true ]]; then
+          if [[ "${{ steps.release_plan.outputs.has_extension_artifacts }}" == true ]]; then
             qualification_args+=(--artifact oliphaunt-extension-package-artifacts)
           fi
           bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
@@ -610,7 +648,7 @@ jobs:
             --artifact liboliphaunt-wasix-release-assets
 
       - name: Download exact-extension package artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -746,7 +784,6 @@ jobs:
       - name: Freeze canonical Apple extension carrier input
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.release_plan.outputs.product_oliphaunt_swift == 'true' || steps.release_plan.outputs.product_oliphaunt_react_native == 'true') }}
         env:
-          HAS_EXTENSION_PRODUCTS: ${{ steps.release_plan.outputs.has_extension_products }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
           includes_swift="$(bun -e 'console.log(JSON.parse(process.argv[1]).includes("oliphaunt-swift"))' "$PRODUCTS_JSON")"
@@ -755,8 +792,8 @@ jobs:
           react_native_source_carrier=target/sdk-artifacts/oliphaunt-react-native/ios-carriers/oliphaunt-react-native-ios-carriers.json
           extension_manifest_args=()
           extension_carrier_args=()
-          while IFS= read -r product; do
-            product_root="target/extension-artifacts/$product"
+          while IFS= read -r product_root; do
+            product="$(basename "$product_root")"
             manifest="$product_root/extension-artifacts.json"
             if [[ ! -f "$manifest" ]]; then
               echo "Selected extension product $product is missing $manifest" >&2
@@ -775,13 +812,10 @@ jobs:
           done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs \
             ci-products \
             --family extension-artifacts \
+            --carrier-family native \
             --products-json "$PRODUCTS_JSON" \
+            --field artifact-root \
             --format lines)
-          if [[ "$HAS_EXTENSION_PRODUCTS" == true && ${#extension_manifest_args[@]} == 0 ]]; then
-            echo 'The release plan selected extension products but resolved no selected extension artifacts.' >&2
-            exit 1
-          fi
-
           rm -rf target/release/ios-carriers target/release-work/ios-carriers
           if [[ "$includes_swift" == true && "$includes_react_native" == true ]] && ! cmp -s "$swift_source_carrier" "$react_native_source_carrier"; then
             echo 'Swift and React Native source carriers disagree for the same release plan.' >&2
@@ -799,7 +833,7 @@ jobs:
             tools/dev/bun.sh tools/release/ios-carrier-manifest.mjs "${public_args[@]}"
           fi
 
-          if [[ "$includes_swift" == true && "$HAS_EXTENSION_PRODUCTS" == true ]]; then
+          if [[ "$includes_swift" == true && ${#extension_manifest_args[@]} -gt 0 ]]; then
             mkdir -p target/release-work/ios-carriers
             local_aggregate_carrier=target/release-work/ios-carriers/oliphaunt-react-native-ios-carriers.json
             local_args=(
@@ -814,7 +848,7 @@ jobs:
               console.log(manifest.extensions.map((row) => row.sqlName).sort().join(","));
             ' "$local_aggregate_carrier")"
             if [[ -z "$extensions_csv" || ${#extension_carrier_args[@]} == 0 ]]; then
-              echo 'Swift extension validation requires selected independent extension carrier assets.' >&2
+              echo 'Swift extension validation requires selected extension carrier assets.' >&2
               exit 1
             fi
             swift_version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-swift)"
@@ -888,10 +922,9 @@ jobs:
               lock_args+=(--artifact-root "$artifact_root")
             fi
           done
-          while IFS= read -r product; do
-            artifact_root="target/extension-artifacts/$product"
+          while IFS= read -r artifact_root; do
             if [[ ! -d "$artifact_root" ]]; then
-              echo "Selected extension product $product is missing $artifact_root" >&2
+              echo "Selected extension artifacts are missing $artifact_root" >&2
               exit 1
             fi
             lock_args+=(--artifact-root "$artifact_root")
@@ -899,6 +932,7 @@ jobs:
             ci-products \
             --family extension-artifacts \
             --products-json "$PRODUCTS_JSON" \
+            --field artifact-root \
             --format lines)
           tools/dev/bun.sh tools/release/publication-lock.mjs "${lock_args[@]}"
           tools/dev/bun.sh tools/release/publication-lock.mjs \
@@ -1068,7 +1102,7 @@ jobs:
       - name: Publish all selected GitHub release asset sets concurrently
         id: publish_github_assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        timeout-minutes: 90
+        timeout-minutes: 95
         env:
           GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH: ${{ runner.temp }}/oliphaunt-github-release-asset-upload-report.json
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1132,6 +1166,7 @@ jobs:
             target/liboliphaunt/release-assets/*.zip
             target/liboliphaunt/release-assets/*.tsv
             target/liboliphaunt/release-assets/*.sha256
+            target/extension-artifacts/liboliphaunt-native/oliphaunt-extension-contrib-pg18/release-assets/*
 
       - name: Publish Swift SDK GitHub release and SwiftPM tags
         id: publish_swift_source_tag
@@ -1190,6 +1225,7 @@ jobs:
           subject-path: |
             target/oliphaunt-wasix/release-assets/*.tar.zst
             target/oliphaunt-wasix/release-assets/*.sha256
+            target/extension-artifacts/liboliphaunt-wasix/oliphaunt-extension-contrib-pg18/release-assets/*
 
       - name: Freeze exact GitHub release asset and attestation evidence
         id: freeze_github_evidence

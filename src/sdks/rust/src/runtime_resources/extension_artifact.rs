@@ -67,7 +67,7 @@ pub(super) fn validate_extension_artifact_license_profile(
     license_files: &[PathBuf],
 ) -> Result<()> {
     let external = Extension::by_sql_name(sql_name)
-        .and_then(Extension::release_product)
+        .and_then(Extension::artifact_product)
         .is_none_or(|product| product != "oliphaunt-extension-contrib-pg18");
     let embeds_openssl = !external
         && sql_name == "pgcrypto"

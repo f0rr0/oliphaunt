@@ -41,6 +41,7 @@ OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT="$root/target/oliphaunt-wasix/assets" \
 OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT="$root/target/extensions/wasix/aot-artifacts" \
   tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs \
     --output-root "$proof_root/extension-artifacts" \
+    --family wasix \
     --require-wasix \
     oliphaunt-extension-contrib-pg18
 OLIPHAUNT_WASM_AOT_VERIFY=full \

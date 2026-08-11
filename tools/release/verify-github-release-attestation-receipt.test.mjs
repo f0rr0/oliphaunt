@@ -802,6 +802,21 @@ describe("GitHub release attestation receipt", () => {
     expect(() => assertAttestationSubjectCoverage([], receiptSubjects())).toThrow(
       "contaminate a release selection with no frozen GitHub assets",
     );
+
+    const repeatedNameAssets = [
+      { product: "liboliphaunt-native", name: "contrib-control.json", sha256: "1".repeat(64) },
+      { product: "liboliphaunt-wasix", name: "contrib-control.json", sha256: "2".repeat(64) },
+    ];
+    const repeatedNameAttestation = [{
+      bundleSha256: "3".repeat(64),
+      subjects: repeatedNameAssets.map(({ name, sha256 }) => ({ name, sha256 })),
+    }];
+    expect(assertAttestationSubjectCoverage(repeatedNameAssets, repeatedNameAttestation))
+      .toEqual(repeatedNameAttestation);
+    expect(() => assertAttestationSubjectCoverage(repeatedNameAssets, [{
+      bundleSha256: "4".repeat(64),
+      subjects: [{ name: "contrib-control.json", sha256: "5".repeat(64) }],
+    }])).toThrow("digest differs from the frozen GitHub asset");
   });
 
   test("builds a deterministic lock/head/release-ID-bound receipt", async () => {

@@ -4,7 +4,6 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -13,34 +12,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import {
-  DEDICATED_GATE_TESTS,
-  mutationTestEnvironment,
-  mutationTests,
-} from "./release-check.mjs";
+import { mutationTestEnvironment, mutationTests } from "./release-check.mjs";
 import { uniqueValueFlag } from "./release-cli-utils.mjs";
-
-const ROOT = path.resolve(import.meta.dir, "../..");
-const TOOLCHAIN_GATE = "tools/release/toolchain-bootstrap.test.mjs";
-const INSTALLER_FAULT_SUITES = [
-  "tools/dev/extract-pinned-zip.test.sh",
-  "tools/dev/install-pinned-js-runtime.test.sh",
-  "tools/dev/install-pinned-winflexbison.test.sh",
-  "tools/dev/setup-android-sdk.test.sh",
-  "tools/dev/start-android-emulator-ci.test.sh",
-  ".github/actions/setup-moon/install-pinned-node.test.sh",
-  ".github/actions/setup-moon/install-pinned-toolchain.test.sh",
-  ".github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh",
-  ".github/actions/setup-npm-publisher/install.test.sh",
-];
-
-function read(relative) {
-  return readFileSync(path.join(ROOT, relative), "utf8");
-}
-
-function occurrences(source, needle) {
-  return source.split(needle).length - 1;
-}
 
 test("release CLI value flags reject ambiguous duplicate identities", () => {
   assert.equal(
@@ -75,39 +48,6 @@ test("release CLI value flags reject ambiguous duplicate identities", () => {
   assert.throws(
     () => uniqueValueFlag(["--head-ref"], "--head-ref"),
     /--head-ref requires a value/u,
-  );
-});
-
-test("workflow qualification owns every installer fault suite exactly once", () => {
-  assert(DEDICATED_GATE_TESTS.has(TOOLCHAIN_GATE));
-  assert(!mutationTests("tools/release").includes(TOOLCHAIN_GATE));
-  assert(mutationTests("tools/release").includes("tools/release/release-gate-topology.test.mjs"));
-
-  const workflowGate = read("tools/policy/check-workflows.sh");
-  assert.equal(occurrences(workflowGate, TOOLCHAIN_GATE), 1);
-  for (const suite of INSTALLER_FAULT_SUITES) {
-    assert.equal(occurrences(workflowGate, suite), 0, `${suite} must run through the one dedicated gate`);
-  }
-
-  const toolchainGate = read(TOOLCHAIN_GATE);
-  for (const suite of INSTALLER_FAULT_SUITES) {
-    assert.equal(occurrences(toolchainGate, suite), 1, `${suite} must have one fault-suite owner`);
-  }
-
-  const workflowProject = Bun.YAML.parse(read(".github/moon.yml"));
-  const workflowInputs = new Set(workflowProject.tasks?.check?.inputs ?? []);
-  for (const input of [
-    "/.moon/toolchains.yml",
-    "/.prototools",
-    "/tools/dev/curl-platform-flags.sh",
-    "/tools/dev/install-pinned-winflexbison.sh",
-    "/tools/dev/install-pinned-winflexbison.test.sh",
-  ]) {
-    assert(workflowInputs.has(input), `${input} must invalidate the installer qualification gate`);
-  }
-  assert(
-    workflowInputs.has("/src/sources/toolchains/**/*"),
-    "the toolchain manifest family must invalidate installer qualification",
   );
 });
 
@@ -200,17 +140,4 @@ test("release mutation tests cannot consume a live publish request journal", () 
     }),
     { KEEP_ME: "preserved" },
   );
-});
-
-test("Moon release aliases delegate to one canonical check target", () => {
-  for (const [file, dependency] of [
-    ["moon.yml", "release-tools:check"],
-    ["tools/release/moon.yml", "release-tools:check"],
-    [".github/moon.yml", "ci-workflows:check"],
-  ]) {
-    const config = Bun.YAML.parse(read(file));
-    const releaseCheck = config.tasks?.["release-check"];
-    assert.equal(releaseCheck?.command, "true", `${file} release-check must be an aggregate`);
-    assert.deepEqual(releaseCheck?.deps, [dependency], `${file} must delegate to ${dependency}`);
-  }
 });

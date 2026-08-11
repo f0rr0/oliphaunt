@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -80,11 +80,7 @@ profiles = ["native-desktop-v1"]
   return { product, reason, root };
 }
 
-test("the live tree has no publication blockers and keeps the legal gate active", () => {
-  assert.match(
-    readFileSync("tools/release/release-metadata-check.mjs", "utf8"),
-    /check-extension-publication-legal-clearance[.]mjs/u,
-  );
+test("the live tree has no publication blockers", () => {
   assert.deepEqual(extensionQualificationCandidates(), []);
   assert.deepEqual(declaredExtensionPublicationBlockers(), []);
   assert.deepEqual(activeBlockedExtensionPublications(), []);

@@ -125,12 +125,12 @@ function replaceExtensionRuntimeAsset(document, sqlName, replacement) {
 
 async function tarDirectory(source, archive, member = ".") {
   await fs.mkdir(path.dirname(archive), { recursive: true });
-  run("tar", ["-czf", archive, "-C", source, member]);
+  run("tar", ["--no-xattrs", "-czf", archive, "-C", source, member]);
 }
 
 async function tarMembers(source, archive, members) {
   await fs.mkdir(path.dirname(archive), { recursive: true });
-  run("tar", ["-czf", archive, "-C", source, ...members]);
+  run("tar", ["--no-xattrs", "-czf", archive, "-C", source, ...members]);
 }
 
 async function legalFile(root, member, kind, contents = undefined) {
@@ -708,7 +708,8 @@ async function extensionRow(root, config) {
   }
   const generated = GENERATED_EXTENSION_BY_SQL_NAME.get(config.sqlName);
   assert.ok(generated, `missing generated fixture metadata for ${config.sqlName}`);
-  const product = generated["release-product"];
+  const product = generated["artifact-product"];
+  const releaseProduct = generated["release-product"];
   return {
     carriers: logicalAssets.map(({ envelope }) => envelope),
     legal,
@@ -722,6 +723,7 @@ async function extensionRow(root, config) {
       nativeDependencies: config.nativeDependencies,
       nativeModuleStem: config.nativeModuleStem,
       product,
+      releaseProduct,
       registration: config.nativeModuleStem === null
         ? null
         : {
@@ -731,7 +733,7 @@ async function extensionRow(root, config) {
           },
       sharedPreloadLibraries,
       sqlName: config.sqlName,
-      tag: `${product}-v1.0.0`,
+      tag: `${releaseProduct}-v1.0.0`,
       version: "1.0.0",
     },
   };
@@ -872,7 +874,7 @@ async function bundledCarrierDocument(root, sourceDocument, sqlNames, archiveNam
   const archive = path.join(root, "archives", archiveName);
   await fs.rm(archive, { force: true });
   await fs.mkdir(path.dirname(archive), { recursive: true });
-  run("tar", ["-czf", archive, "-C", sourceRoot, "extensions"]);
+  run("tar", ["--no-xattrs", "-czf", archive, "-C", sourceRoot, "extensions"]);
   const direct = await asset("carrier", archive, "tar.gz", ".");
   document.carriers = [{
     bytes: direct.bytes,
@@ -2028,19 +2030,19 @@ async function main() {
       "fake-owner",
       fakeOwner,
       ["cube"],
-      /product must be canonical owner oliphaunt-extension-contrib-pg18/u,
+      /product must be canonical artifact product oliphaunt-extension-contrib-pg18/u,
     );
 
     const ownerVersionConflict = structuredClone(carrier);
     ownerVersionConflict.extensions.find(({ sqlName }) => sqlName === "earthdistance").version =
       "1.0.1";
     ownerVersionConflict.extensions.find(({ sqlName }) => sqlName === "earthdistance").tag =
-      "oliphaunt-extension-contrib-pg18-v1.0.1";
+      "liboliphaunt-native-v1.0.1";
     await expectCarrierFailure(
       "owner-version-conflict",
       ownerVersionConflict,
       ["earthdistance"],
-      /conflicting release versions for owner oliphaunt-extension-contrib-pg18/u,
+      /conflicting release versions for owner liboliphaunt-native/u,
     );
 
     const wrongTag = structuredClone(carrier);

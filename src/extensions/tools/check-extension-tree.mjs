@@ -193,7 +193,10 @@ async function checkContribMember(path) {
   const changelog = resolve(path, 'CHANGELOG.md');
   for (const stale of [release, version, changelog]) {
     if (existsSync(stale)) {
-      fail(`${rel(stale)} is stale per-member release metadata; contrib members are versioned by src/extensions/contrib/release.toml`);
+      fail(
+        `${rel(stale)} is stale per-member release metadata; contrib carriers use the runtime owners ` +
+        "declared by src/extensions/contrib/carriers.toml",
+      );
     }
   }
   const artifactTargets = resolve(path, 'targets', 'artifacts.toml');

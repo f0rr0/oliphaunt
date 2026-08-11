@@ -5,7 +5,10 @@ import process from "node:process";
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { exampleCargoReleaseVersionBindings } from "./example-cargo-policy.mjs";
-import { typescriptOptionalRuntimePackageProducts } from "./release-artifact-targets.mjs";
+import {
+  registryPackageRows,
+  typescriptOptionalRuntimePackageProducts,
+} from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import { releaseDerivedPathInventory } from "./sync-release-pr.mjs";
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from "./release-please-bootstrap.mjs";
@@ -228,20 +231,18 @@ function derivedVersionRules() {
     );
   }
 
-  const npmProducts = new Map();
-  for (const [product, config] of Object.entries(products)) {
-    for (const carrier of config.registry_packages ?? []) {
-      if (!carrier.startsWith("npm:")) continue;
-      const packageName = carrier.slice("npm:".length);
-      npmProducts.set(packageName, [...(npmProducts.get(packageName) ?? []), product]);
-    }
-  }
   for (const { packageName } of electronReleaseDependencies(ROOT)) {
-    const candidates = npmProducts.get(packageName) ?? [];
-    if (candidates.length !== 1) {
-      throw error(`Electron release dependency ${packageName} must map to exactly one release product; got ${candidates.join(", ") || "none"}`);
+    const owners = Object.keys(products)
+      .flatMap((product) => registryPackageRows({ product, packageKind: "npm" }, TOOL))
+      .filter((row) => row.packageName === packageName)
+      .map((row) => row.product);
+    if (owners.length !== 1) {
+      throw error(
+        `Electron release dependency ${packageName} must map to exactly one release product; `
+        + `got ${owners.join(", ") || "none"}`,
+      );
     }
-    addStructured("json", "examples/electron/package.json", ["dependencies", packageName], candidates[0]);
+    addStructured("json", "examples/electron/package.json", ["dependencies", packageName], owners[0]);
   }
 
   cachedDerivedRules = { structured, text };

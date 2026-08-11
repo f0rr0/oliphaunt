@@ -5,6 +5,11 @@ import {
   PLATFORM_COMPATIBILITY_POLICY,
   platformCompatibilityContract,
 } from "./platform-compatibility-policy.mjs";
+import {
+  extensionNativeRegistryPackageStrings,
+  extensionWasixRegistryPackageStrings,
+} from "./extension-registry-packages.mjs";
+import { loadContribCarriers } from "./contrib-carriers.mjs";
 import { loadGraph } from "./release-graph.mjs";
 
 export { PLATFORM_COMPATIBILITY_POLICY };
@@ -119,12 +124,11 @@ const EXTENSION_VERSIONING_BY_CLASS = {
   "first-party": "repo-bound",
 };
 const EXTENSION_PRODUCT_KINDS = new Set(["exact-extension-artifact", "exact-extension-bundle"]);
-const EXTENSION_RUNTIME_CONTRACT_PATH = "src/shared/extension-runtime-contract/contract.toml";
-const POSTGRES18_SOURCE_PATH = "src/postgres/versions/18/source.toml";
 const EXTENSION_BUILD_PLAN_PATH = path.join(ROOT, "src/extensions/generated/extensions.build-plan.json");
 
 const graphCache = new Map();
 let extensionBuildPlanRowsCache;
+let contribCarriersCache;
 
 export function fail(prefix, message) {
   console.error(`${prefix}: ${message}`);
@@ -153,6 +157,81 @@ function graph(prefix) {
     graphCache.set(prefix, loadGraph(prefix));
   }
   return graphCache.get(prefix);
+}
+
+export function contribCarrierDescriptor(prefix = "release-artifact-targets.mjs") {
+  if (contribCarriersCache !== undefined) return contribCarriersCache;
+  let value;
+  try {
+    value = loadContribCarriers(ROOT, prefix);
+  } catch (error) {
+    fail(prefix, error instanceof Error ? error.message.replace(`${prefix}: `, "") : String(error));
+  }
+  const descriptor = {
+    ...value,
+    sourcePath: value.source,
+    runtimeContract: value.contract,
+  };
+  if (!descriptor.artifactProduct.startsWith("oliphaunt-extension-")) {
+    fail(prefix, "contrib logical_product must be an extension artifact product");
+  }
+  for (const [family, owner] of [["native", descriptor.nativeOwner], ["wasix", descriptor.wasixOwner]]) {
+    if (graph(prefix).products[owner] === undefined) {
+      fail(prefix, `contrib ${family}_owner references unknown release product ${owner}`);
+    }
+  }
+  contribCarriersCache = Object.freeze(descriptor);
+  return contribCarriersCache;
+}
+
+export function extensionReleaseProduct(product, family, prefix = "release-artifact-targets.mjs") {
+  if (!EXTENSION_FAMILIES.has(family)) {
+    fail(prefix, `extension carrier family must be native or wasix, got ${JSON.stringify(family)}`);
+  }
+  const contrib = contribCarrierDescriptor(prefix);
+  if (product === contrib.artifactProduct) {
+    return family === "native" ? contrib.nativeOwner : contrib.wasixOwner;
+  }
+  if (!exactExtensionProducts(prefix).includes(product)) {
+    fail(prefix, `${product} is not an exact-extension artifact product`);
+  }
+  return product;
+}
+
+export function extensionReleaseVersion(product, family, prefix = "release-artifact-targets.mjs") {
+  return currentProductVersionSync(extensionReleaseProduct(product, family, prefix), prefix);
+}
+
+export function extensionArtifactProductRoot(
+  product,
+  family = "native",
+  root = "target/extension-artifacts",
+  prefix = "release-artifact-targets.mjs",
+) {
+  const releaseProduct = extensionReleaseProduct(product, family, prefix);
+  return path.join(root, ...(releaseProduct === product ? [product] : [releaseProduct, product]));
+}
+
+export function extensionArtifactProductsForReleaseProducts(
+  releaseProducts,
+  { family = null, prefix = "release-artifact-targets.mjs" } = {},
+) {
+  if (!Array.isArray(releaseProducts) || releaseProducts.some((product) => typeof product !== "string" || !product)) {
+    fail(prefix, "release products must be a string list");
+  }
+  if (family !== null && !EXTENSION_FAMILIES.has(family)) {
+    fail(prefix, `extension carrier family must be native or wasix, got ${JSON.stringify(family)}`);
+  }
+  const selected = new Set(releaseProducts);
+  const products = exactExtensionReleaseProducts(prefix).filter((product) => selected.has(product));
+  const contrib = contribCarrierDescriptor(prefix);
+  const selectedOwner = family === "native"
+    ? selected.has(contrib.nativeOwner)
+    : family === "wasix"
+      ? selected.has(contrib.wasixOwner)
+      : selected.has(contrib.nativeOwner) || selected.has(contrib.wasixOwner);
+  if (selectedOwner) products.push(contrib.artifactProduct);
+  return [...new Set(products)].sort(compareText);
 }
 
 function archiveAsset(productPrefix, target, archive) {
@@ -815,9 +894,28 @@ export function registryPackageRows(
     fail(prefix, "registry package kind must be a non-empty string");
   }
   const config = productConfig(product, prefix);
-  const entries = config.registry_packages ?? [];
-  if (!Array.isArray(entries) || entries.some((entry) => typeof entry !== "string")) {
+  const declaredEntries = config.registry_packages ?? [];
+  if (!Array.isArray(declaredEntries) || declaredEntries.some((entry) => typeof entry !== "string")) {
     fail(prefix, `${product}.registry_packages must be a string list`);
+  }
+  const entries = [...declaredEntries];
+  const contrib = contribCarrierDescriptor(prefix);
+  if (product === contrib.nativeOwner || product === contrib.wasixOwner) {
+    const targets = extensionRegistryPackageTargetSets(contrib.artifactProduct, prefix);
+    if (product === contrib.nativeOwner) {
+      entries.push(...extensionNativeRegistryPackageStrings({
+        product: contrib.artifactProduct,
+        androidTargets: targets.androidTargets,
+        npmTargets: targets.npmTargets,
+        nativeCargoTargets: targets.nativeCargoTargets,
+      }));
+    }
+    if (product === contrib.wasixOwner) {
+      entries.push(...extensionWasixRegistryPackageStrings({
+        product: contrib.artifactProduct,
+        includeAot: targets.includeWasixAot,
+      }));
+    }
   }
   const rows = [];
   const seen = new Set();
@@ -1069,6 +1167,14 @@ function productConfig(product, prefix) {
 }
 
 export function exactExtensionProducts(prefix = "release-artifact-targets.mjs") {
+  const products = Object.entries(graph(prefix).products)
+    .filter(([, config]) => EXTENSION_PRODUCT_KINDS.has(config.kind))
+    .map(([product]) => product);
+  products.push(contribCarrierDescriptor(prefix).artifactProduct);
+  return [...new Set(products)].sort(compareText);
+}
+
+export function exactExtensionReleaseProducts(prefix = "release-artifact-targets.mjs") {
   return Object.entries(graph(prefix).products)
     .filter(([, config]) => EXTENSION_PRODUCT_KINDS.has(config.kind))
     .map(([product]) => product)
@@ -1099,25 +1205,17 @@ export function extensionSqlName(product, prefix = "release-artifact-targets.mjs
   return names[0];
 }
 
-function contribMemberRows(product, config, prefix) {
-  const metadata = config.extension;
-  const manifestPath = releaseMetadataRelativePath(
-    nonEmptyString(metadata?.member_manifest, `${product}.extension.member_manifest`, prefix),
-    `${product}.extension.member_manifest`,
-    prefix,
-  );
-  const expectedPath = `${packagePath(product, prefix)}/postgres18.toml`;
-  if (manifestPath !== expectedPath) {
-    fail(prefix, `${product}.extension.member_manifest must be ${JSON.stringify(expectedPath)}`);
+function contribMemberRows(product, prefix) {
+  const descriptor = contribCarrierDescriptor(prefix);
+  if (product !== descriptor.artifactProduct) {
+    fail(prefix, `${product} is not the shared PostgreSQL contrib artifact product`);
   }
-  const manifest = Bun.TOML.parse(readFileSync(path.join(ROOT, manifestPath), "utf8"));
-  if (manifest["format-version"] !== 1 || manifest["source-kind"] !== "postgres-contrib" || !Array.isArray(manifest.extensions)) {
-    fail(prefix, `${manifestPath} must be a PostgreSQL contrib manifest with format-version = 1`);
-  }
+  const manifestPath = descriptor.memberManifest;
+  const memberRoot = path.posix.dirname(manifestPath);
   const rows = [];
   const seenSqlNames = new Set();
   const seenIds = new Set();
-  for (const [index, row] of manifest.extensions.entries()) {
+  for (const [index, row] of descriptor.members.entries()) {
     if (row === null || Array.isArray(row) || typeof row !== "object") {
       fail(prefix, `${manifestPath}.extensions[${index}] must be a table`);
     }
@@ -1128,12 +1226,16 @@ function contribMemberRows(product, config, prefix) {
     }
     seenIds.add(id);
     seenSqlNames.add(sqlName);
-    rows.push({ id, sqlName, path: `${packagePath(product, prefix)}/${id}` });
+    rows.push({ id, sqlName, path: `${memberRoot}/${id}` });
   }
   return rows;
 }
 
 export function extensionSqlNames(product, prefix = "release-artifact-targets.mjs") {
+  const contrib = contribCarrierDescriptor(prefix);
+  if (product === contrib.artifactProduct) {
+    return contribMemberRows(product, prefix).map((row) => row.sqlName).sort(compareText);
+  }
   const config = productConfig(product, prefix);
   if (config.kind === "exact-extension-artifact") {
     const value = config.extension_sql_name;
@@ -1156,7 +1258,7 @@ export function extensionSqlNames(product, prefix = "release-artifact-targets.mj
   if (new Set(sorted).size !== sorted.length || JSON.stringify(values) !== JSON.stringify(sorted)) {
     fail(prefix, `${product}.extension_sql_names must be unique and sorted`);
   }
-  const manifestNames = contribMemberRows(product, config, prefix).map((row) => row.sqlName).sort(compareText);
+  const manifestNames = contribMemberRows(product, prefix).map((row) => row.sqlName).sort(compareText);
   if (JSON.stringify(sorted) !== JSON.stringify(manifestNames)) {
     fail(prefix, `${product}.extension_sql_names must exactly match ${config.extension.member_manifest}`);
   }
@@ -1213,19 +1315,31 @@ export function extensionProductForSqlName(sqlName, prefix = "release-artifact-t
   return owners[0];
 }
 
+export function extensionReleaseProductForSqlName(
+  sqlName,
+  family = "native",
+  prefix = "release-artifact-targets.mjs",
+) {
+  return extensionReleaseProduct(extensionProductForSqlName(sqlName, prefix), family, prefix);
+}
+
 export function extensionMemberPath(product, sqlName, prefix = "release-artifact-targets.mjs") {
-  const config = productConfig(product, prefix);
   if (!extensionSqlNames(product, prefix).includes(sqlName)) {
     fail(prefix, `${product} does not own extension SQL name ${JSON.stringify(sqlName)}`);
   }
+  const contrib = contribCarrierDescriptor(prefix);
+  if (product === contrib.artifactProduct) {
+    const row = contribMemberRows(product, prefix).find((candidate) => candidate.sqlName === sqlName);
+    if (row === undefined) {
+      fail(prefix, `${product} member manifest has no row for ${JSON.stringify(sqlName)}`);
+    }
+    return releaseMetadataRelativePath(row.path, `${product} member ${sqlName}`, prefix);
+  }
+  const config = productConfig(product, prefix);
   if (config.kind === "exact-extension-artifact") {
     return packagePath(product, prefix);
   }
-  const row = contribMemberRows(product, config, prefix).find((candidate) => candidate.sqlName === sqlName);
-  if (row === undefined) {
-    fail(prefix, `${product} member manifest has no row for ${JSON.stringify(sqlName)}`);
-  }
-  return releaseMetadataRelativePath(row.path, `${product} member ${sqlName}`, prefix);
+  fail(prefix, `${product} exact-extension bundle has no shared member descriptor`);
 }
 
 function releaseMetadataRelativePath(value, context, prefix) {
@@ -1248,6 +1362,35 @@ function packagePath(product, prefix) {
 }
 
 export function extensionMetadata(product, prefix = "release-artifact-targets.mjs") {
+  const contrib = contribCarrierDescriptor(prefix);
+  if (product === contrib.artifactProduct) {
+    const source = Bun.TOML.parse(readFileSync(path.join(ROOT, contrib.sourcePath), "utf8"));
+    const postgresVersion = nonEmptyString(
+      source?.postgresql?.version,
+      `${contrib.sourcePath}.postgresql.version`,
+      prefix,
+    );
+    const postgresMajor = postgresVersion.split(".")[0];
+    if (!/^[1-9][0-9]*$/u.test(postgresMajor)) {
+      fail(prefix, `${contrib.sourcePath}.postgresql.version must begin with a stable major version`);
+    }
+    return {
+      sqlName: undefined,
+      sqlNames: extensionSqlNames(product, prefix),
+      class: "contrib",
+      versioning: "runtime-bound",
+      sourcePath: contrib.sourcePath,
+      artifactProduct: contrib.artifactProduct,
+      compatibility: {
+        postgresMajor,
+        extensionRuntimeContract: contrib.runtimeContract,
+        nativeRuntimeProduct: contrib.nativeOwner,
+        nativeRuntimeVersion: currentProductVersionSync(contrib.nativeOwner, prefix),
+        wasixRuntimeProduct: contrib.wasixOwner,
+        wasixRuntimeVersion: currentProductVersionSync(contrib.wasixOwner, prefix),
+      },
+    };
+  }
   const config = productConfig(product, prefix);
   if (!EXTENSION_PRODUCT_KINDS.has(config.kind)) {
     fail(prefix, `${product} is not an exact-extension product`);
@@ -1270,7 +1413,7 @@ export function extensionMetadata(product, prefix = "release-artifact-targets.mj
     if (metadata.sql_name !== undefined) {
       fail(prefix, `${product} extension bundle must not declare extension.sql_name`);
     }
-    contribMemberRows(product, config, prefix);
+    fail(prefix, `${product} extension bundle has no shared member descriptor`);
   }
   const extensionClass = nonEmptyString(metadata.class, `${product}.extension.class`, prefix);
   if (!(extensionClass in EXTENSION_VERSIONING_BY_CLASS)) {
@@ -1291,8 +1434,8 @@ export function extensionMetadata(product, prefix = "release-artifact-targets.mj
     prefix,
   );
   const packageRoot = packagePath(product, prefix);
-  if (extensionClass === "contrib" && sourcePath !== POSTGRES18_SOURCE_PATH) {
-    fail(prefix, `${product}.extension.source.path must be ${JSON.stringify(POSTGRES18_SOURCE_PATH)} for contrib extensions`);
+  if (extensionClass === "contrib" && sourcePath !== contrib.sourcePath) {
+    fail(prefix, `${product}.extension.source.path must match the shared contrib source ${JSON.stringify(contrib.sourcePath)}`);
   }
   if (extensionClass === "external" && sourcePath !== `${packageRoot}/source.toml`) {
     fail(prefix, `${product}.extension.source.path must be ${packageRoot}/source.toml for external extensions`);
@@ -1314,8 +1457,8 @@ export function extensionMetadata(product, prefix = "release-artifact-targets.mj
     `${product}.extension.compatibility.extension_runtime_contract`,
     prefix,
   );
-  if (contractPath !== EXTENSION_RUNTIME_CONTRACT_PATH) {
-    fail(prefix, `${product}.extension.compatibility.extension_runtime_contract must be ${JSON.stringify(EXTENSION_RUNTIME_CONTRACT_PATH)}`);
+  if (contractPath !== contrib.runtimeContract) {
+    fail(prefix, `${product}.extension.compatibility.extension_runtime_contract must match ${JSON.stringify(contrib.runtimeContract)}`);
   }
   const nativeProduct = nonEmptyString(compatibility.native_runtime_product, `${product}.extension.compatibility.native_runtime_product`, prefix);
   const wasixProduct = nonEmptyString(compatibility.wasix_runtime_product, `${product}.extension.compatibility.wasix_runtime_product`, prefix);
@@ -1338,6 +1481,7 @@ export function extensionMetadata(product, prefix = "release-artifact-targets.mj
   return {
     sqlName,
     sqlNames,
+    artifactProduct: product,
     class: extensionClass,
     versioning,
     sourcePath,
@@ -1543,7 +1687,7 @@ export function extensionArtifactTargets(
     for (const sqlName of extensionSqlNames(productId, prefix)) {
       const seen = new Set();
       for (const [index, row] of readExtensionTargetRows(productId, sqlName, prefix).entries()) {
-      const source = row._source_file ?? releaseMetadata(productId, prefix).packagePath;
+      const source = row._source_file ?? extensionMemberPath(productId, sqlName, prefix);
       const target = nonEmptyString(row.target, `${source} targets[${index}].target`, prefix);
       const targetFamily = nonEmptyString(row.family, `${source} targets[${index}].family`, prefix);
       const kind = nonEmptyString(row.kind, `${source} targets[${index}].kind`, prefix);

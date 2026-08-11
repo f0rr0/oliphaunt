@@ -155,10 +155,13 @@ test("exact lifecycle input diagnostics report basenames without masking invento
   }
 });
 
-test("native lifecycle staging flattens carrier envelopes and merges members by release product", () => {
+test("native lifecycle staging flattens carrier envelopes and merges members by artifact product", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-native-extension-staging-"));
   try {
-    const contrib = { "release-product": "oliphaunt-extension-contrib-pg18" };
+    const contrib = {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "release-product": "liboliphaunt-native",
+    };
     stageExtensionCarrier(carrierEntries([
       ["share/postgresql/extension/amcheck.control", "default_version = '1.5'\n"],
       ["share/postgresql/extension/amcheck--1.4.sql", "SELECT 1;\n"],
@@ -171,7 +174,10 @@ test("native lifecycle staging flattens carrier envelopes and merges members by 
     stageExtensionCarrier(carrierEntries([
       ["share/postgresql/extension/vector.control", "default_version = '0.8.0'\n"],
       ["lib/postgresql/vector.so", "vector-module", 0o755],
-    ]), root, { "release-product": "oliphaunt-extension-vector" }, "vector carrier");
+    ]), root, {
+      "artifact-product": "oliphaunt-extension-vector",
+      "release-product": "oliphaunt-extension-vector",
+    }, "vector carrier");
 
     const extensionRoot = path.join(root, "resources/extension");
     const contribRoot = path.join(extensionRoot, "oliphaunt-extension-contrib-pg18");
@@ -209,7 +215,10 @@ test("native lifecycle staging flattens carrier envelopes and merges members by 
 
 test("native lifecycle product merges accept identical files and reject differing bytes", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-native-extension-merge-"));
-  const product = { "release-product": "oliphaunt-extension-contrib-pg18" };
+  const product = {
+    "artifact-product": "oliphaunt-extension-contrib-pg18",
+    "release-product": "liboliphaunt-native",
+  };
   const relative = "share/postgresql/extension/shared--1.0.sql";
   try {
     stageExtensionCarrier(carrierEntries([[relative, "same\n"]]), root, product, "first carrier");

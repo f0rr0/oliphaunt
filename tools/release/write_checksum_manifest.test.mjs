@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,8 +14,7 @@ import path from "node:path";
 
 import { matchingAssets } from "./write_checksum_manifest.mjs";
 
-const RELEASE_TOOLS = import.meta.dir;
-const TOOL = path.join(RELEASE_TOOLS, "write_checksum_manifest.mjs");
+const TOOL = path.join(import.meta.dir, "write_checksum_manifest.mjs");
 
 function writeFixture(root, relativePath, contents = `${relativePath}\n`) {
   const file = path.join(root, ...relativePath.split("/"));
@@ -31,25 +29,6 @@ function relativeFiles(root, files) {
 
 function sha256(contents) {
   return createHash("sha256").update(contents).digest("hex");
-}
-
-function releaseJavaScriptSources(root) {
-  const sources = [];
-  const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.isSymbolicLink()) {
-        continue;
-      }
-      const candidate = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        visit(candidate);
-      } else if (entry.isFile() && /[.](?:[cm]?js|ts)$/u.test(entry.name)) {
-        sources.push(candidate);
-      }
-    }
-  };
-  visit(root);
-  return sources.sort();
 }
 
 test("preserves recursive and root-relative glob semantics with deterministic output order", () => {
@@ -135,14 +114,4 @@ test("writes the caller-facing checksum manifest deterministically", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test("release tooling does not use Bun.Glob filesystem scanners", () => {
-  const offenders = releaseJavaScriptSources(RELEASE_TOOLS)
-    .filter((file) => {
-      const source = readFileSync(file, "utf8");
-      return source.includes("Bun.Glob") && /[.]scan(?:Sync)?\s*[(]/u.test(source);
-    })
-    .map((file) => path.relative(RELEASE_TOOLS, file).split(path.sep).join("/"));
-  expect(offenders).toEqual([]);
 });

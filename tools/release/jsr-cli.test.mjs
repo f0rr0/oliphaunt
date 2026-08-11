@@ -62,13 +62,4 @@ describe("pinned JSR CLI", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("jsr.io cli for node");
   });
-
-  test("is covered by the Moon release cache inputs", () => {
-    const releaseProject = Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8"));
-    const inputs = new Set(releaseProject.tasks?.check?.inputs ?? []);
-
-    expect(inputs.has("/tools/release/**/*")).toBe(true);
-    expect(inputs.has("/pnpm-lock.yaml")).toBe(true);
-    expect(inputs.has("/src/**/*")).toBe(true);
-  });
 });

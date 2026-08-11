@@ -10,9 +10,13 @@ import path from "node:path";
 
 import { runMoon } from "../policy/moon.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
+import { CONTRIB_CARRIERS_PATH } from "./contrib-carriers.mjs";
 import {
+  contribCarrierDescriptor,
   expectedAssets as expectedDesktopAssets,
+  extensionArtifactProductRoot,
   extensionMetadata,
+  extensionReleaseProduct,
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
@@ -70,6 +74,8 @@ const DESKTOP_TARGETS = new Set([
 const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "schema",
   "product",
+  "releaseProduct",
+  "family",
   "version",
   "sqlName",
   "extensionClass",
@@ -90,6 +96,10 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "desktopReleaseReady",
   "assets",
 ]);
+const EXTENSION_OWNERSHIP_KEYS = ["releaseProduct", "family"];
+const PUBLIC_EXTENSION_RELEASE_LEGACY_KEYS = new Set(
+  [...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS].filter((key) => !EXTENSION_OWNERSHIP_KEYS.includes(key)),
+);
 
 const PUBLIC_EXTENSION_RELEASE_ASSET_KEYS = new Set([
   "name",
@@ -103,6 +113,8 @@ const PUBLIC_EXTENSION_RELEASE_ASSET_KEYS = new Set([
 const PUBLIC_EXTENSION_BUNDLE_MANIFEST_KEYS = new Set([
   "schema",
   "product",
+  "releaseProduct",
+  "family",
   "version",
   "extensionClass",
   "versioning",
@@ -111,6 +123,9 @@ const PUBLIC_EXTENSION_BUNDLE_MANIFEST_KEYS = new Set([
   "extensions",
   "assets",
 ]);
+const PUBLIC_EXTENSION_BUNDLE_LEGACY_KEYS = new Set(
+  [...PUBLIC_EXTENSION_BUNDLE_MANIFEST_KEYS].filter((key) => !EXTENSION_OWNERSHIP_KEYS.includes(key)),
+);
 const PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   "sqlName",
   "createsExtension",
@@ -349,18 +364,46 @@ function liboliphauntWasixAssets(version) {
   return assets.sort(compareText);
 }
 
-async function expectedExtensionAssets(product, version) {
-  const releaseAssetRoot = path.join(ROOT, "target/extension-artifacts", product, "release-assets");
+async function productTagContains(product, version, relativePath) {
+  const tag = await productTag(product, version);
+  const tree = spawnSync("git", ["cat-file", "-e", `${tag}^{tree}`], {
+    cwd: ROOT,
+    stdio: "ignore",
+  });
+  if (tree.error || tree.status !== 0) {
+    fail(`cannot inspect exact product tag tree ${tag}`);
+  }
+  const entry = spawnSync("git", ["cat-file", "-e", `${tag}:${relativePath}`], {
+    cwd: ROOT,
+    stdio: "ignore",
+  });
+  if (entry.error) fail(`cannot inspect ${relativePath} in exact product tag tree ${tag}`);
+  return entry.status === 0;
+}
+
+async function expectedExtensionAssets(product, version, family = "combined") {
+  const rootFamily = family === "combined" ? "native" : family;
+  const releaseProduct = family === "combined"
+    ? product
+    : extensionReleaseProduct(product, family, PREFIX);
+  const releaseAssetRoot = path.join(
+    ROOT,
+    extensionArtifactProductRoot(product, rootFamily, "target/extension-artifacts", PREFIX),
+    "release-assets",
+  );
   const manifestPath = path.join(releaseAssetRoot, `${product}-${version}-manifest.json`);
   const manifest = await readJson(manifestPath);
-  const extensionAssets = await validateExtensionManifest(product, version, manifest, manifestPath);
+  const extensionAssets = await validateExtensionManifest(product, version, manifest, manifestPath, {
+    family,
+    releaseProduct,
+  });
   const names = extensionAssets.map((asset) => asset.name);
   names.push(
     `${product}-${version}-manifest.json`,
     `${product}-${version}-manifest.properties`,
-    swiftExtensionCarrierAssetName(product, version),
     `${product}-${version}-release-assets.sha256`,
   );
+  if (family !== "wasix") names.push(swiftExtensionCarrierAssetName(product, version));
   return [...new Set(names)].sort(compareText);
 }
 
@@ -370,10 +413,20 @@ async function expectedAssets(product, version) {
     return expectedExtensionAssets(product, version);
   }
   if (product === "liboliphaunt-native") {
-    return liboliphauntNativeAssets(version);
+    const assets = liboliphauntNativeAssets(version);
+    if (await productTagContains(product, version, CONTRIB_CARRIERS_PATH)) {
+      const contrib = contribCarrierDescriptor(PREFIX);
+      assets.push(...await expectedExtensionAssets(contrib.artifactProduct, version, "native"));
+    }
+    return [...new Set(assets)].sort(compareText);
   }
   if (product === "liboliphaunt-wasix") {
-    return liboliphauntWasixAssets(version);
+    const assets = liboliphauntWasixAssets(version);
+    if (await productTagContains(product, version, CONTRIB_CARRIERS_PATH)) {
+      const contrib = contribCarrierDescriptor(PREFIX);
+      assets.push(...await expectedExtensionAssets(contrib.artifactProduct, version, "wasix"));
+    }
+    return [...new Set(assets)].sort(compareText);
   }
   if (product === "oliphaunt-broker") {
     return expectedDesktopAssets(product, "broker-helper", version, PREFIX);
@@ -960,7 +1013,7 @@ function canonicalMemberSemantics(product, sqlName) {
     throw new Error(`${product} does not own extension SQL name ${JSON.stringify(sqlName)}`);
   }
   const row = canonicalExtensionRows().find((candidate) => candidate?.["sql-name"] === sqlName);
-  if (row === undefined || row["release-product"] !== product) {
+  if (row === undefined || row["artifact-product"] !== product) {
     throw new Error(`${product}/${sqlName} is absent from canonical generated extension metadata`);
   }
   const nativeModuleStem = typeof row["native-module-stem"] === "string" && row["native-module-stem"].length > 0
@@ -1039,13 +1092,39 @@ function assertCanonicalMemberSemantics(product, member, context) {
   assertCanonicalIosRegistration(member, expected, context);
 }
 
-export function assertCanonicalExtensionReleaseIdentity(product, version, manifest, context = "extension release manifest") {
+export function assertCanonicalExtensionReleaseIdentity(
+  product,
+  version,
+  manifest,
+  context = "extension release manifest",
+  { family = manifest?.family ?? "combined", releaseProduct = manifest?.releaseProduct ?? product } = {},
+) {
   if (manifest === null || Array.isArray(manifest) || typeof manifest !== "object") {
     throw new Error(`${context} must be an object`);
   }
+  const ownershipFieldCount = EXTENSION_OWNERSHIP_KEYS.filter((key) => manifest[key] !== undefined).length;
   const metadata = extensionMetadata(product, PREFIX);
+  if (ownershipFieldCount !== 0 && ownershipFieldCount !== EXTENSION_OWNERSHIP_KEYS.length) {
+    throw new Error(`${context} must declare releaseProduct and family together`);
+  }
+  if (metadata.versioning === "runtime-bound" && ownershipFieldCount !== EXTENSION_OWNERSHIP_KEYS.length) {
+    throw new Error(`${context} runtime-owned carrier must declare releaseProduct and family`);
+  }
+  if (!["native", "wasix", "combined"].includes(family)) {
+    throw new Error(`${context}.family must be native, wasix, or combined`);
+  }
+  const expectedReleaseProduct = family === "combined"
+    ? product
+    : extensionReleaseProduct(product, family, PREFIX);
+  if (releaseProduct !== expectedReleaseProduct) {
+    throw new Error(`${context}.releaseProduct differs from canonical ${family} ownership`);
+  }
   const expectedRoot = {
     product,
+    ...(ownershipFieldCount === EXTENSION_OWNERSHIP_KEYS.length ? {
+      releaseProduct: expectedReleaseProduct,
+      family,
+    } : {}),
     version,
     extensionClass: metadata.class,
     versioning: metadata.versioning,
@@ -1079,29 +1158,49 @@ export function assertCanonicalExtensionReleaseIdentity(product, version, manife
   throw new Error(`${context} has unsupported extension release manifest schema ${JSON.stringify(manifest.schema)}`);
 }
 
-async function validateExtensionManifest(product, version, manifest, context) {
+async function validateExtensionManifest(
+  product,
+  version,
+  manifest,
+  context,
+  { family = manifest?.family, releaseProduct = manifest?.releaseProduct } = {},
+) {
   try {
-    assertCanonicalExtensionReleaseIdentity(product, version, manifest, context);
+    assertCanonicalExtensionReleaseIdentity(product, version, manifest, context, {
+      family,
+      releaseProduct,
+    });
   } catch (error) {
     fail(error.message);
   }
   const seen = new Set();
   if (manifest.schema === "oliphaunt-extension-release-manifest-v1") {
-    validateKeySet(manifest, PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS, context);
+    validateKeySet(
+      manifest,
+      manifest.releaseProduct === undefined
+        ? PUBLIC_EXTENSION_RELEASE_LEGACY_KEYS
+        : PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS,
+      context,
+    );
     validateExtensionAssets(manifest.assets, context, seen);
     return manifest.assets;
   }
   if (manifest.schema !== "oliphaunt-extension-release-manifest-v2") {
     fail(`${context} has unsupported extension release manifest schema ${JSON.stringify(manifest.schema)}`);
   }
-  validateKeySet(manifest, PUBLIC_EXTENSION_BUNDLE_MANIFEST_KEYS, context);
+  validateKeySet(
+    manifest,
+    manifest.releaseProduct === undefined
+      ? PUBLIC_EXTENSION_BUNDLE_LEGACY_KEYS
+      : PUBLIC_EXTENSION_BUNDLE_MANIFEST_KEYS,
+    context,
+  );
   if (!Array.isArray(manifest.extensions) || manifest.extensions.length < 2) {
     fail(`${context}.extensions must be a non-empty bundle member array`);
   }
-  const config = await productConfig(product);
-  const expectedSqlNames = config.extension_sql_names;
+  const expectedSqlNames = extensionSqlNames(product, PREFIX);
   const actualSqlNames = manifest.extensions.map((member) => member?.sqlName);
-  if (!Array.isArray(expectedSqlNames) || stableStringify(actualSqlNames) !== stableStringify(expectedSqlNames)) {
+  if (stableStringify(actualSqlNames) !== stableStringify(expectedSqlNames)) {
     fail(`${context}.extensions must exactly match the sorted release bundle member set`);
   }
   const carriers = validateBundleCarrierAssets(manifest.assets, context, expectedSqlNames.length);
@@ -1749,7 +1848,6 @@ function normalizeAttestationSubjects(subjects, context) {
   if (!Array.isArray(subjects) || subjects.length === 0) {
     throw new Error(`${context} must contain a non-empty subject array`);
   }
-  const names = new Set();
   const keys = new Set();
   const normalized = [];
   for (const [index, subject] of subjects.entries()) {
@@ -1767,10 +1865,9 @@ function normalizeAttestationSubjects(subjects, context) {
     assertKeySet(subject.digest, ["sha256"], `${subjectContext}.digest`);
     const sha256 = requireSha256(subject.digest.sha256, `${subjectContext}.digest.sha256`);
     const key = `${subject.name}\0${sha256}`;
-    if (names.has(subject.name) || keys.has(key)) {
-      throw new Error(`${context} contains duplicate or ambiguous subject ${subject.name}`);
+    if (keys.has(key)) {
+      throw new Error(`${context} contains duplicate subject ${subject.name}/${sha256}`);
     }
-    names.add(subject.name);
     keys.add(key);
     normalized.push({ name: subject.name, sha256 });
   }
@@ -1806,15 +1903,13 @@ export function assertAttestationSubjectCoverage(assets, attestations) {
   const expectedByKey = new Map();
   for (const asset of assets) {
     requireSha256(asset?.sha256, `${asset?.product ?? "<unknown>"}/${asset?.name ?? "<unknown>"} sha256`);
-    if (expectedByName.has(asset.name)) {
-      throw new Error(`frozen GitHub assets contain ambiguous repeated subject name ${asset.name}`);
-    }
     const key = githubAssetSubjectKey(asset);
-    if (expectedByKey.has(key)) {
-      throw new Error(`frozen GitHub assets contain duplicate subject ${asset.name}`);
-    }
-    expectedByName.set(asset.name, asset);
-    expectedByKey.set(key, asset);
+    const namedDigests = expectedByName.get(asset.name) ?? new Set();
+    namedDigests.add(asset.sha256);
+    expectedByName.set(asset.name, namedDigests);
+    const matchingAssets = expectedByKey.get(key) ?? [];
+    matchingAssets.push(asset);
+    expectedByKey.set(key, matchingAssets);
   }
   const covered = new Set();
   const bundleDigests = new Set();
@@ -1830,8 +1925,7 @@ export function assertAttestationSubjectCoverage(assets, attestations) {
     for (const subject of subjects) {
       const key = githubAssetSubjectKey(subject);
       if (!expectedByKey.has(key)) {
-        const expected = expectedByName.get(subject.name);
-        if (expected !== undefined) {
+        if (expectedByName.has(subject.name)) {
           throw new Error(`attestation bundle ${bundleSha256} subject ${subject.name} digest differs from the frozen GitHub asset`);
         }
         throw new Error(`attestation bundle ${bundleSha256} contains non-frozen subject ${subject.name}`);
@@ -1845,7 +1939,7 @@ export function assertAttestationSubjectCoverage(assets, attestations) {
   }
   const missing = [...expectedByKey]
     .filter(([key]) => !covered.has(key))
-    .map(([, asset]) => `${asset.product}/${asset.name}`)
+    .flatMap(([, matchingAssets]) => matchingAssets.map((asset) => `${asset.product}/${asset.name}`))
     .sort(compareText);
   if (missing.length > 0) {
     throw new Error(`frozen GitHub assets are missing signed subjects: ${missing.join(", ")}`);
@@ -1940,15 +2034,28 @@ export function assertGithubReleaseSnapshotMatchesReceipt(receipt, releases) {
   }
 }
 
-async function verifyExtensionReleaseAssets(product, version, actualAssets) {
+async function verifyExtensionReleaseAssets(
+  product,
+  releaseProduct,
+  version,
+  family,
+  actualAssets,
+) {
   const manifestName = `${product}-${version}-manifest.json`;
   const propertiesName = `${product}-${version}-manifest.properties`;
   const swiftCarrierName = swiftExtensionCarrierAssetName(product, version);
   const checksumName = `${product}-${version}-release-assets.sha256`;
-  const localManifestPath = path.join(ROOT, "target/extension-artifacts", product, "release-assets", manifestName);
-  const localSwiftCarrierPath = path.join(ROOT, "target/extension-artifacts", product, "release-assets", swiftCarrierName);
+  const rootFamily = family === "combined" ? "native" : family;
+  const localReleaseAssetRoot = path.join(
+    ROOT,
+    extensionArtifactProductRoot(product, rootFamily, "target/extension-artifacts", PREFIX),
+    "release-assets",
+  );
+  const localManifestPath = path.join(localReleaseAssetRoot, manifestName);
+  const localSwiftCarrierPath = path.join(localReleaseAssetRoot, swiftCarrierName);
   const localManifest = await readJson(localManifestPath);
-  const localSwiftCarrier = await readJson(localSwiftCarrierPath);
+  const includeSwiftCarrier = family !== "wasix";
+  const localSwiftCarrier = includeSwiftCarrier ? await readJson(localSwiftCarrierPath) : null;
   const proofs = new Map();
 
   const manifestAsset = actualAssets.get(manifestName);
@@ -1957,22 +2064,25 @@ async function verifyExtensionReleaseAssets(product, version, actualAssets) {
   proofs.set(manifestName, { bytes: manifestBytes.byteLength, sha256: sha256Bytes(manifestBytes) });
   const remoteManifest = JSON.parse(new TextDecoder().decode(manifestBytes));
   if (stableStringify(remoteManifest) !== stableStringify(localManifest)) {
-    fail(`${product} GitHub release ${await productTag(product, version)} public manifest differs from staged manifest`);
+    fail(`${product} GitHub release ${await productTag(releaseProduct, version)} public manifest differs from staged manifest`);
   }
   const extensionAssets = await validateExtensionManifest(
     product,
     version,
     remoteManifest,
     `${product} ${version} public extension manifest`,
+    { family, releaseProduct },
   );
 
-  const swiftCarrierAsset = actualAssets.get(swiftCarrierName);
-  const swiftCarrierSize = expectedAssetSize(swiftCarrierAsset.size, swiftCarrierName, MAX_CONTROL_ASSET_BYTES);
-  const swiftCarrierBytes = await requestBytes(swiftCarrierAsset.url, swiftCarrierName, swiftCarrierSize);
-  proofs.set(swiftCarrierName, { bytes: swiftCarrierBytes.byteLength, sha256: sha256Bytes(swiftCarrierBytes) });
-  const remoteSwiftCarrier = JSON.parse(new TextDecoder().decode(swiftCarrierBytes));
-  if (stableStringify(remoteSwiftCarrier) !== stableStringify(localSwiftCarrier)) {
-    fail(`${product} GitHub release ${await productTag(product, version)} Swift iOS carrier differs from staged carrier`);
+  if (includeSwiftCarrier) {
+    const swiftCarrierAsset = actualAssets.get(swiftCarrierName);
+    const swiftCarrierSize = expectedAssetSize(swiftCarrierAsset.size, swiftCarrierName, MAX_CONTROL_ASSET_BYTES);
+    const swiftCarrierBytes = await requestBytes(swiftCarrierAsset.url, swiftCarrierName, swiftCarrierSize);
+    proofs.set(swiftCarrierName, { bytes: swiftCarrierBytes.byteLength, sha256: sha256Bytes(swiftCarrierBytes) });
+    const remoteSwiftCarrier = JSON.parse(new TextDecoder().decode(swiftCarrierBytes));
+    if (stableStringify(remoteSwiftCarrier) !== stableStringify(localSwiftCarrier)) {
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} Swift iOS carrier differs from staged carrier`);
+    }
   }
 
   const checksumAsset = actualAssets.get(checksumName);
@@ -1983,25 +2093,25 @@ async function verifyExtensionReleaseAssets(product, version, actualAssets) {
   const checksumCoveredNames = new Set(extensionAssets.map((asset) => asset.name));
   checksumCoveredNames.add(manifestName);
   checksumCoveredNames.add(propertiesName);
-  checksumCoveredNames.add(swiftCarrierName);
+  if (includeSwiftCarrier) checksumCoveredNames.add(swiftCarrierName);
   if (
     stableStringify([...checksums.keys()].sort(compareText)) !==
     stableStringify([...checksumCoveredNames].sort(compareText))
   ) {
     fail(
-      `${product} GitHub release ${await productTag(product, version)} checksum manifest must cover release assets exactly`,
+      `${product} GitHub release ${await productTag(releaseProduct, version)} checksum manifest must cover release assets exactly`,
     );
   }
 
   for (const name of [...checksumCoveredNames].sort(compareText)) {
     if (!actualAssets.has(name)) {
-      fail(`${product} GitHub release ${await productTag(product, version)} is missing checksum-covered asset ${name}`);
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} is missing checksum-covered asset ${name}`);
     }
     const actualAsset = actualAssets.get(name);
     const manifestAsset = extensionAssets.find((asset) => asset.name === name);
     const remoteSize = expectedAssetSize(actualAsset.size, name);
     if (manifestAsset !== undefined && remoteSize !== manifestAsset.bytes) {
-      fail(`${product} GitHub release ${await productTag(product, version)} asset ${name} size metadata mismatch`);
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} asset ${name} size metadata mismatch`);
     }
     let proof = proofs.get(name);
     if (proof === undefined) {
@@ -2009,17 +2119,17 @@ async function verifyExtensionReleaseAssets(product, version, actualAssets) {
       proofs.set(name, proof);
     }
     if (proof.sha256 !== checksums.get(name)) {
-      fail(`${product} GitHub release ${await productTag(product, version)} asset ${name} checksum mismatch`);
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} asset ${name} checksum mismatch`);
     }
     if (remoteSize !== proof.bytes) {
-      fail(`${product} GitHub release ${await productTag(product, version)} asset ${name} size mismatch`);
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} asset ${name} size mismatch`);
     }
   }
 
   for (const asset of extensionAssets) {
     const proof = proofs.get(asset.name);
     if (proof.bytes !== asset.bytes || proof.sha256 !== asset.sha256) {
-      fail(`${product} GitHub release ${await productTag(product, version)} asset ${asset.name} public manifest mismatch`);
+      fail(`${product} GitHub release ${await productTag(releaseProduct, version)} asset ${asset.name} public manifest mismatch`);
     }
   }
 }
@@ -2041,7 +2151,18 @@ async function verifyReleaseAssets(product, version, assets) {
   }
   const config = await productConfig(product);
   if (["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
-    await verifyExtensionReleaseAssets(product, version, actualAssets);
+    await verifyExtensionReleaseAssets(product, product, version, "combined", actualAssets);
+  } else if (product === "liboliphaunt-native" || product === "liboliphaunt-wasix") {
+    const contrib = contribCarrierDescriptor(PREFIX);
+    if (assets.includes(`${contrib.artifactProduct}-${version}-manifest.json`)) {
+      await verifyExtensionReleaseAssets(
+        contrib.artifactProduct,
+        product,
+        version,
+        product === "liboliphaunt-native" ? "native" : "wasix",
+        actualAssets,
+      );
+    }
   }
   console.log(`${product} GitHub release assets verified for ${tag}: ${assets.join(", ")}`);
 }

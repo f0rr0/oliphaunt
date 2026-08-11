@@ -95,8 +95,8 @@ those overrides are not the consumer install path.
 | React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
 
 Swift and React Native resolve logical extensions by exact SQL name even when
-the physical release owner is the contrib bundle. Carrier product/tag/version
-identify the owning release; generated Swift products remain SQL-member
+the physical carrier is an aggregate contrib bundle. The native runtime
+product/tag/version identifies that release; generated Swift products remain SQL-member
 specific. Multi-carrier composition requires one identical native base,
 dependency-closed member rows, and non-conflicting checksums. This distinction
 allows an independently versioned external extension to publish usable Apple

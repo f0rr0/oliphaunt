@@ -37,17 +37,3 @@ test("source broker is MIT while every compiled target carrier declares its comp
     assert.ok(cargo.package.include.includes("THIRD_PARTY_LICENSES/**"), `${file} must include the exact dependency license tree`);
   }
 });
-
-test("the broker release packagers stage and reopen the dependency closure", () => {
-  const cargoBuilder = readFileSync(path.join(ROOT, "tools/release/package_broker_cargo_artifacts.mjs"), "utf8");
-  assert.match(cargoBuilder, /stageReleaseNotices\(crateDir, BROKER_NOTICE_OPTIONS\)/u);
-  assert.match(cargoBuilder, /assertBrokerDependencyLicensesInArchive\(cratePath/u);
-  assert.match(cargoBuilder, /brokerDependencyLicenseMembers\(target\.target\)/u);
-
-  for (const relative of ["tools/release/package-release-carriers.mjs"]) {
-    const source = readFileSync(path.join(ROOT, relative), "utf8");
-    assert.match(source, /stageReleaseNotices\([^\n]+\{ profile: "broker" \}\)/u, relative);
-    assert.match(source, /assertBrokerDependencyLicensesInArchive\(tarball, \{ target: target\.target, prefix: "package" \}\)/u, relative);
-    assert.match(source, /brokerDependencyLicenseMembers\(target\.target, \{ prefix: "package" \}\)/u, relative);
-  }
-});

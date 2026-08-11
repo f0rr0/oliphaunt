@@ -32,6 +32,7 @@ import { stageReleaseNotices } from "./release-notices.mjs";
 import {
   allArtifactTargets,
   currentProductVersionSync,
+  extensionArtifactProductRoot,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -197,18 +198,28 @@ function extensionGithubReleaseFixture(
   root,
   product,
   {
+    artifactProduct = product.id,
+    family = null,
     mutateBundleArchive = undefined,
     mutateBundleStage = undefined,
     bundleFixedFileMode = 0o644,
   } = {},
 ) {
-  const productRoot = path.join(root, "target", "extension-artifacts", product.id);
+  const productRoot = extensionArtifactProductRoot(
+    artifactProduct,
+    family ?? "native",
+    path.join(root, "target", "extension-artifacts"),
+    "publication-lock.test",
+  );
   const directory = path.join(productRoot, "release-assets");
   rmSync(productRoot, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
-  const sqlNames = extensionSqlNames(product.id, "publication-lock.test");
+  const sqlNames = extensionSqlNames(artifactProduct, "publication-lock.test");
   const bundled = sqlNames.length > 1;
-  const releaseMetadata = extensionMetadata(product.id, "publication-lock.test");
+  const releaseMetadata = extensionMetadata(artifactProduct, "publication-lock.test");
+  const ownership = artifactProduct === product.id
+    ? {}
+    : { releaseProduct: product.id, family: family ?? "combined" };
   const compatibility = releaseMetadata.compatibility;
   const generated = JSON.parse(readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/sdk/react-native.json"), "utf8"));
   const staticLines = readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/mobile/static-extensions.tsv"), "utf8")
@@ -228,8 +239,8 @@ function extensionGithubReleaseFixture(
       ? []
       : (staticRow?.["ios-static-dependencies"] ?? "").split(",").filter(Boolean).sort();
     const memberAssets = [];
-    for (const target of extensionArtifactTargets({ product: product.id, publishedOnly: true }, "publication-lock.test")
-      .filter((row) => row.sqlName === sqlName)) {
+    for (const target of extensionArtifactTargets({ product: artifactProduct, publishedOnly: true }, "publication-lock.test")
+      .filter((row) => row.sqlName === sqlName && (family === null || row.family === family))) {
       const roles = target.family === "wasix"
         ? ["wasix-runtime"]
         : target.target === "ios-xcframework"
@@ -242,7 +253,7 @@ function extensionGithubReleaseFixture(
           : kind === "ios-dependency-xcframework"
             ? dependencyIdentity
             : null;
-        const prefix = `${product.id}-${product.version}`;
+        const prefix = `${artifactProduct}-${product.version}`;
         const name = target.family === "wasix"
           ? `${prefix}-wasix-portable.tar.zst`
           : kind === "ios-xcframework"
@@ -309,7 +320,7 @@ function extensionGithubReleaseFixture(
     }
     for (const group of [...groups.values()].sort((left, right) =>
       `${left.family}\0${left.target}`.localeCompare(`${right.family}\0${right.target}`))) {
-      const archiveRoot = `${product.id}-${product.version}-${group.family}-${group.target}-bundle`;
+      const archiveRoot = `${artifactProduct}-${product.version}-${group.family}-${group.target}-bundle`;
       const stage = path.join(productRoot, "bundle-stage", archiveRoot);
       rmSync(stage, { recursive: true, force: true });
       mkdirSync(stage, { recursive: true });
@@ -335,7 +346,7 @@ function extensionGithubReleaseFixture(
         });
       }
       const memberNames = [...new Set(manifestMembers.map(({ sqlName }) => sqlName))].sort();
-      const legal = extensionCarrierLegalContract(product.id, memberNames, {
+      const legal = extensionCarrierLegalContract(artifactProduct, memberNames, {
         family: group.family,
         target: group.target,
       });
@@ -343,7 +354,7 @@ function extensionGithubReleaseFixture(
       const bundleManifest = path.join(stage, "bundle-manifest.json");
       writeFileSync(bundleManifest, canonicalJson({
         schema: "oliphaunt-extension-bundle-v1",
-        product: product.id,
+        product: artifactProduct,
         version: product.version,
         compatibility,
         family: group.family,
@@ -391,7 +402,8 @@ function extensionGithubReleaseFixture(
   const extensionManifest = bundled
     ? {
         schema: "oliphaunt-extension-ci-artifacts-v2",
-        product: product.id,
+        product: artifactProduct,
+        ...ownership,
         version: product.version,
         compatibility,
         extensions,
@@ -399,24 +411,26 @@ function extensionGithubReleaseFixture(
       }
     : {
         schema: "oliphaunt-extension-ci-artifacts-v1",
-        product: product.id,
+        product: artifactProduct,
+        ...ownership,
         version: product.version,
         compatibility,
         ...extensions[0],
       };
   writeFileSync(extensionManifestPath, `${JSON.stringify(extensionManifest, null, 2)}\n`);
-  const manifestName = `${product.id}-${product.version}-manifest.json`;
-  const propertiesName = `${product.id}-${product.version}-manifest.properties`;
-  const swiftCarrierName = swiftExtensionCarrierAssetName(product.id, product.version);
-  const checksumName = `${product.id}-${product.version}-release-assets.sha256`;
+  const manifestName = `${artifactProduct}-${product.version}-manifest.json`;
+  const propertiesName = `${artifactProduct}-${product.version}-manifest.properties`;
+  const swiftCarrierName = swiftExtensionCarrierAssetName(artifactProduct, product.version);
+  const checksumName = `${artifactProduct}-${product.version}-release-assets.sha256`;
   const directAssets = bundled ? carrierAssets : assets;
   writeFileSync(path.join(directory, manifestName), `${JSON.stringify({
     schema: bundled ? "oliphaunt-extension-release-manifest-v2" : "oliphaunt-extension-release-manifest-v1",
-    product: product.id,
+    product: artifactProduct,
+    ...ownership,
     version: product.version,
     extensionClass: releaseMetadata.class,
     versioning: releaseMetadata.versioning,
-    sourceIdentity: extensionSourceIdentity(product.id, "publication-lock.test"),
+    sourceIdentity: extensionSourceIdentity(artifactProduct, "publication-lock.test"),
     compatibility,
     ...(bundled
       ? {
@@ -481,7 +495,7 @@ function extensionGithubReleaseFixture(
           })),
         }),
   }, null, 2)}\n`);
-  writeFileSync(path.join(directory, propertiesName), `schema=oliphaunt-extension-release-manifest-v${bundled ? "2" : "1"}\nproduct=${product.id}\nversion=${product.version}\n`);
+  writeFileSync(path.join(directory, propertiesName), `schema=oliphaunt-extension-release-manifest-v${bundled ? "2" : "1"}\nproduct=${artifactProduct}\n${artifactProduct === product.id ? "" : `releaseProduct=${product.id}\ncarrierFamily=${family ?? "combined"}\n`}version=${product.version}\n`);
   writeFileSync(
     path.join(directory, swiftCarrierName),
     `${JSON.stringify(buildSwiftExtensionCarrierManifest({
@@ -525,7 +539,7 @@ describe("canonical publication catalog", () => {
 
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
-    expect(catalog.products).toHaveLength(18);
+    expect(catalog.products).toHaveLength(17);
     expect(catalog.carriers).toHaveLength(186);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
@@ -910,10 +924,13 @@ describe("publication artifact discovery and freezing", () => {
 
   test("freezes the exact contrib bundle member set under one release owner", { timeout: 20_000 }, () => {
     const root = temporaryDirectory();
-    const product = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-extension-contrib-pg18"] }).products[0];
-    const { assets, manifestPath } = extensionGithubReleaseFixture(root, product);
+    const artifactProduct = "oliphaunt-extension-contrib-pg18";
+    const product = loadPublicationCatalog("publication-lock.test", { products: ["liboliphaunt-native"] }).products[0];
+    const fixtureOptions = { artifactProduct, family: "native" };
+    const { rows: runtimeAssets } = githubReleaseFixture(root, product);
+    const { assets, manifestPath } = extensionGithubReleaseFixture(root, product, fixtureOptions);
     const artifacts = discoverProductArtifacts([root], [product]);
-    expect(artifacts).toHaveLength(assets.length + 4);
+    expect(artifacts).toHaveLength(runtimeAssets.length + assets.length + 4);
     expect(assets.every(({ name }) => /^oliphaunt-extension-contrib-pg18-[^-]+/u.test(name))).toBe(true);
     const candidate = buildPublicationCandidate({
       products: [product.id],
@@ -927,7 +944,7 @@ describe("publication artifact discovery and freezing", () => {
     wrongCarrierIdentity.productArtifacts.find(({ role }) => role === "github-release-asset").identity =
       "wrong-family";
     expect(() => validatePublicationCandidate(wrongCarrierIdentity)).toThrow(
-      /incorrect target, kind, or identity metadata/u,
+      /packageEnvelopeDigest mismatch|incorrect target, kind, or identity metadata/u,
     );
 
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -935,7 +952,7 @@ describe("publication artifact discovery and freezing", () => {
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     expect(() => discoverProductArtifacts([root], [product])).toThrow("exact sorted bundle member set");
 
-    extensionGithubReleaseFixture(root, product);
+    extensionGithubReleaseFixture(root, product, fixtureOptions);
     const forgedMemberInventory = JSON.parse(readFileSync(manifestPath, "utf8"));
     forgedMemberInventory.extensions[0].extensionSqlFilePrefixes = [
       ...forgedMemberInventory.extensions[0].extensionSqlFilePrefixes,
@@ -944,8 +961,8 @@ describe("publication artifact discovery and freezing", () => {
     writeFileSync(manifestPath, `${JSON.stringify(forgedMemberInventory, null, 2)}\n`);
     expect(() => discoverProductArtifacts([root], [product])).toThrow(/semantic extension metadata is not canonical generated metadata/u);
 
-    extensionGithubReleaseFixture(root, product);
-    const publicManifestPath = path.join(path.dirname(manifestPath), "release-assets", `${product.id}-${product.version}-manifest.json`);
+    extensionGithubReleaseFixture(root, product, fixtureOptions);
+    const publicManifestPath = path.join(path.dirname(manifestPath), "release-assets", `${artifactProduct}-${product.version}-manifest.json`);
     const forgedPublicManifest = JSON.parse(readFileSync(publicManifestPath, "utf8"));
     forgedPublicManifest.compatibility.wasixRuntimeVersion = "9.9.9";
     writeFileSync(publicManifestPath, `${JSON.stringify(forgedPublicManifest, null, 2)}\n`);
@@ -953,12 +970,14 @@ describe("publication artifact discovery and freezing", () => {
   });
 
   test("rejects stale, missing, extra, substituted, or wrongly-moded aggregate bundle legal material", { timeout: 60_000 }, () => {
+    const artifactProduct = "oliphaunt-extension-contrib-pg18";
     const product = loadPublicationCatalog("publication-lock.test", {
-      products: ["oliphaunt-extension-contrib-pg18"],
+      products: ["liboliphaunt-native"],
     }).products[0];
     const reject = (options, expected) => {
       const root = temporaryDirectory();
-      extensionGithubReleaseFixture(root, product, options);
+      githubReleaseFixture(root, product);
+      extensionGithubReleaseFixture(root, product, { ...options, artifactProduct, family: "native" });
       expect(() => discoverProductArtifacts([root], [product])).toThrow(expected);
     };
 
@@ -997,12 +1016,14 @@ describe("publication artifact discovery and freezing", () => {
   });
 
   test("rejects bundle encodings that supported mobile consumers reject", { timeout: 60_000 }, () => {
+    const artifactProduct = "oliphaunt-extension-contrib-pg18";
     const product = loadPublicationCatalog("publication-lock.test", {
-      products: ["oliphaunt-extension-contrib-pg18"],
+      products: ["liboliphaunt-native"],
     }).products[0];
     const reject = (options, expected) => {
       const root = temporaryDirectory();
-      extensionGithubReleaseFixture(root, product, options);
+      githubReleaseFixture(root, product);
+      extensionGithubReleaseFixture(root, product, { ...options, artifactProduct, family: "native" });
       expect(() => discoverProductArtifacts([root], [product])).toThrow(expected);
     };
 

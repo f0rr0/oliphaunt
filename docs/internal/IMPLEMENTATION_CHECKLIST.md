@@ -375,17 +375,13 @@ intentionally not maintained here.
 - [x] Public selection model is exact SQL extension name only. No packs,
   aliases, or grouped selectors.
 - [x] Every public extension in the generated SDK catalog is modeled as an
-  exact-extension release product. Evidence:
-  `src/extensions/generated/sdk/rust.json` drives
-  `tools/policy/check-release-policy.py`, which requires the release product
-  set to match the public catalog. The current graph has 39 exact-extension
-  products: PostgreSQL contrib products under `src/extensions/contrib/<id>/`
-  and external products under `src/extensions/external/<id>/`.
-- [x] Exact-extension products have product-local `release.toml`, `VERSION`,
-  `CHANGELOG.md`, and target metadata. PostgreSQL contrib exact-extension
-  products depend on `extension-contrib-postgres18` and
-  `extension-runtime-contract`; external exact-extension products depend on
-  `extension-runtime-contract` and their product-local source/recipe metadata.
+  exact SQL selector. The 32 PostgreSQL contrib selectors share the logical
+  descriptor at `src/extensions/contrib/carriers.toml`; external extensions
+  remain independent release products under `src/extensions/external/<id>/`.
+- [x] External extension products have product-local `release.toml`, `VERSION`,
+  `CHANGELOG.md`, and target metadata. Contrib members retain only their shared
+  member manifest and per-member target evidence; native and WASIX carriers use
+  their respective runtime versions.
 - [x] Exact-extension target metadata must declare every native runtime target
   that advertises exact-extension artifact support, with unpublished opt-outs
   required when no real producer exists. Published WASIX target coverage remains
@@ -394,7 +390,7 @@ intentionally not maintained here.
   `src/runtimes/liboliphaunt/native/targets/*.toml`, per-extension
   `targets/artifacts.toml` rows, and full builder planner output that includes
   `windows-x64-msvc` in the native exact-extension artifact matrix with all 39
-  exact-extension products selected.
+  exact SQL selectors selected.
 - [x] Native and WASIX extension artifact builders emit target-addressed
   release assets consumed by package assembly.
 - [x] Exact-extension package assembly is single-path. Release builds the

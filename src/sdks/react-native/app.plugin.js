@@ -113,7 +113,7 @@ function releaseOwnerForSqlName(sqlName) {
   const members = extensionMetadata.extensions
     .filter(
       (candidate) =>
-        candidate['release-product'] === extension['release-product'] &&
+        candidate['artifact-product'] === extension['artifact-product'] &&
         candidate['npm-package'] === extension['npm-package'],
     )
     .map((candidate) => candidate['sql-name'])
@@ -132,6 +132,7 @@ function releaseOwnerForSqlName(sqlName) {
     throw new Error(`generated extension ownership metadata is inconsistent for ${sqlName}`);
   }
   return {
+    artifactProduct: extension['artifact-product'],
     members,
     mavenArtifact: extension['maven-artifact'],
     mavenGroup: extension['maven-group'],
@@ -225,7 +226,12 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
       throw new Error(`${label} at ${file} extension ${row.sqlName} repeats a dependency`);
     }
     const owner = releaseOwnerForSqlName(row.sqlName);
-    if (row.product !== owner.releaseProduct) {
+    if (row.product !== owner.artifactProduct) {
+      throw new Error(
+        `${label} at ${file} extension ${row.sqlName} must belong to ${owner.artifactProduct}`,
+      );
+    }
+    if (row.releaseProduct !== owner.releaseProduct) {
       throw new Error(
         `${label} at ${file} extension ${row.sqlName} must be owned by ${owner.releaseProduct}`,
       );
@@ -248,13 +254,13 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
       );
     }
     const release = `${row.version}\0${row.tag}`;
-    const previousRelease = releasesByOwner.get(owner.releaseProduct);
+    const previousRelease = releasesByOwner.get(row.releaseProduct);
     if (previousRelease !== undefined && previousRelease !== release) {
       throw new Error(
         `${label} at ${file} contains conflicting releases for owner ${owner.releaseProduct}`,
       );
     }
-    releasesByOwner.set(owner.releaseProduct, release);
+    releasesByOwner.set(row.releaseProduct, release);
     if (owner.runtimeBound && row.version !== manifest.base.version) {
       throw new Error(
         `${label} at ${file} runtime-bound owner ${owner.releaseProduct} version ${row.version} ` +
@@ -263,7 +269,8 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
     }
     return {
       dependencies,
-      product: owner.releaseProduct,
+      product: owner.artifactProduct,
+      releaseProduct: owner.releaseProduct,
       sqlName: row.sqlName,
       tag: row.tag,
       version: row.version,
@@ -342,8 +349,8 @@ function validateInstalledExtensionOwner(packageJsonFile, owner) {
   ) {
     throw new Error(`${owner.npmPackage} package metadata has an invalid version`);
   }
-  if (packageJson.oliphaunt?.product !== owner.releaseProduct) {
-    throw new Error(`${owner.npmPackage} package metadata does not declare ${owner.releaseProduct}`);
+  if (packageJson.oliphaunt?.product !== owner.artifactProduct) {
+    throw new Error(`${owner.npmPackage} package metadata does not declare ${owner.artifactProduct}`);
   }
   const expectedKind = owner.members.length > 1 ? 'exact-extension-bundle' : 'exact-extension';
   if (packageJson.oliphaunt?.kind !== expectedKind) {
@@ -397,6 +404,7 @@ function resolveInstalledExtensionOwners(
     const previous = ownersByPackage.get(owner.npmPackage);
     if (previous) {
       if (
+        previous.artifactProduct !== owner.artifactProduct ||
         previous.releaseProduct !== owner.releaseProduct ||
         previous.mavenGroup !== owner.mavenGroup ||
         previous.mavenArtifact !== owner.mavenArtifact ||
@@ -565,11 +573,11 @@ function resolveIosCarrierManifests(
   function registerOwnerReleases(summary) {
     for (const row of summary.extensions) {
       const release = `${row.version}\0${row.tag}`;
-      const previous = releasesByOwner.get(row.product);
+      const previous = releasesByOwner.get(row.releaseProduct);
       if (previous !== undefined && previous !== release) {
-        throw new Error(`iOS carrier manifests require conflicting releases for owner ${row.product}`);
+        throw new Error(`iOS carrier manifests require conflicting releases for owner ${row.releaseProduct}`);
       }
-      releasesByOwner.set(row.product, release);
+      releasesByOwner.set(row.releaseProduct, release);
     }
   }
 

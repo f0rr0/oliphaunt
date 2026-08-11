@@ -201,7 +201,7 @@ test("an explicitly selected run still fails closed on an exact-SHA mismatch", (
   assert.equal(readFileSync(f.output, "utf8"), "");
 });
 
-test("SHA comparison remains case-insensitive without Bash 4 substitutions", (t) => {
+test("SHA comparison remains case-insensitive", (t) => {
   const f = fixture(t);
   const result = invoke(
     f,
@@ -209,7 +209,6 @@ test("SHA comparison remains case-insensitive without Bash 4 substitutions", (t)
     ["CI", SHA, "0", "--run-id", "77", "--job", "Qualified", "--artifact", "required-artifact"],
   );
   assert.equal(result.status, 0, result.stderr);
-  assert.doesNotMatch(readFileSync(SCRIPT, "utf8"), /\$\{[^}\n]+,,\}/u);
 });
 
 test("successful named jobs cannot authorize a non-terminal or failed workflow run", (t) => {

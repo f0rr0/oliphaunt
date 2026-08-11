@@ -125,12 +125,35 @@ export function extensionRegistryPackageEntries({
   wasixAotTargets = expectedExtensionAotTargets(),
 }) {
   return [
-    { kind: "crates", name: assertCargoPackageName(product, { context: `${product} facade` }) },
-    ...extensionNativeCargoPackageNames(product, nativeCargoTargets).map((name) => ({ kind: "crates", name })),
-    ...extensionWasixCargoPackageNames(product, {
+    ...extensionNativeRegistryPackageEntries({
+      product,
+      androidTargets,
+      npmTargets,
+      nativeCargoTargets,
+    }),
+    ...extensionWasixRegistryPackageEntries({
+      product,
       includeAot: includeWasixAot,
       aotTargets: wasixAotTargets,
-    }).map((name) => ({ kind: "crates", name })),
+    }),
+  ].sort((left, right) =>
+    (REGISTRY_KIND_ORDER.get(left.kind) ?? 99) - (REGISTRY_KIND_ORDER.get(right.kind) ?? 99)
+    || compareText(left.name, right.name)
+  );
+}
+
+export function extensionNativeRegistryPackageEntries({
+  product,
+  androidTargets,
+  npmTargets,
+  nativeCargoTargets,
+  includeFacade = true,
+}) {
+  return [
+    ...(includeFacade
+      ? [{ kind: "crates", name: assertCargoPackageName(product, { context: `${product} facade` }) }]
+      : []),
+    ...extensionNativeCargoPackageNames(product, nativeCargoTargets).map((name) => ({ kind: "crates", name })),
     ...extensionStableNpmPackageNamesForProduct(product, npmTargets).map((name) => ({ kind: "npm", name })),
     ...extensionMavenPackageNames(product, androidTargets).map((name) => ({ kind: "maven", name })),
   ].sort((left, right) =>
@@ -139,6 +162,23 @@ export function extensionRegistryPackageEntries({
   );
 }
 
+export function extensionWasixRegistryPackageEntries({
+  product,
+  includeAot = true,
+  aotTargets = expectedExtensionAotTargets(),
+}) {
+  return extensionWasixCargoPackageNames(product, { includeAot, aotTargets })
+    .map((name) => ({ kind: "crates", name }));
+}
+
 export function extensionRegistryPackageStrings(options) {
   return extensionRegistryPackageEntries(options).map((entry) => `${entry.kind}:${entry.name}`);
+}
+
+export function extensionNativeRegistryPackageStrings(options) {
+  return extensionNativeRegistryPackageEntries(options).map((entry) => `${entry.kind}:${entry.name}`);
+}
+
+export function extensionWasixRegistryPackageStrings(options) {
+  return extensionWasixRegistryPackageEntries(options).map((entry) => `${entry.kind}:${entry.name}`);
 }

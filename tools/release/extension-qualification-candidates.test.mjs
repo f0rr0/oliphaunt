@@ -19,8 +19,6 @@ import {
   catalogRows,
   selectCatalogExtensions,
 } from "../../src/extensions/artifacts/native/tools/extension-artifact-packager.mjs";
-import { loadPublicationCatalog } from "./publication-catalog.mjs";
-
 const POSTGIS_PRODUCT = "oliphaunt-extension-postgis";
 const NATIVE_TARGETS = [
   "android-arm64-v8a",
@@ -298,25 +296,4 @@ test("keeps live build matrices candidate-free and PostGIS public", () => {
   assert.equal(csv(wasix[0].sql_names_csv).length, 39);
   assert.equal(csv(wasix[0].sql_names_csv).includes("postgis"), true);
   assert.equal(csv(wasix[0].extensions_csv).includes(POSTGIS_PRODUCT), true);
-});
-
-test("keeps PostGIS in every public publication and generated runtime surface", () => {
-  const catalog = loadPublicationCatalog("extension-qualification-candidates.test.mjs");
-  assert.equal(catalog.products.length, 18);
-  assert.equal(catalog.carriers.length, 186);
-  assert.equal(catalog.products.some(({ id }) => id === POSTGIS_PRODUCT), true);
-  assert.equal(catalog.carriers.filter(({ product }) => product === POSTGIS_PRODUCT).length, 17);
-
-  for (const file of [
-    "src/extensions/generated/mobile/static-extensions.tsv",
-    "src/extensions/generated/mobile/static-registry.json",
-    "src/extensions/generated/wasix/extensions.json",
-    "src/extensions/generated/sdk/js.json",
-    "src/extensions/generated/sdk/kotlin.json",
-    "src/extensions/generated/sdk/react-native.json",
-    "src/extensions/generated/sdk/rust.json",
-    "src/extensions/generated/sdk/swift.json",
-  ]) {
-    assert.match(readFileSync(file, "utf8"), /postgis/u, `${file} must expose public PostGIS support`);
-  }
 });

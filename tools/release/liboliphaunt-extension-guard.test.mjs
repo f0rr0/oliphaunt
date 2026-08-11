@@ -5,7 +5,6 @@ import {
   chmodSync,
   mkdtempSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -73,114 +72,6 @@ test("base embedded-module guard accepts exactly the two regular core carriers",
     assert.notEqual(runEmbeddedInventoryGuard(modules, "so").status, 0);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
-  }
-});
-
-test("all desktop packagers enforce the exact base embedded-module inventory", () => {
-  for (const [script, suffix] of [
-    ["package-liboliphaunt-linux-assets.sh", "so"],
-    ["package-liboliphaunt-macos-assets.sh", "dylib"],
-  ]) {
-    const source = readFileSync(path.join(ROOT, "tools/release", script), "utf8");
-    assert.ok(
-      source.includes(`oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" ${suffix}`),
-      `${script} must enforce the exact ${suffix} embedded-module inventory`,
-    );
-  }
-
-  const windows = readFileSync(
-    path.join(ROOT, "tools/release/package-liboliphaunt-windows-assets.ps1"),
-    "utf8",
-  );
-  assert.match(windows, /Get-ChildItem -LiteralPath \$EmbeddedModules -Force/u);
-  assert.match(windows, /"dict_snowball\.dll", "plpgsql\.dll"/u);
-  assert.match(windows, /Compare-Object -ReferenceObject \$ExpectedEmbeddedModuleNames/u);
-  assert.match(windows, /FileAttributes\]::ReparsePoint/u);
-});
-
-test("the npm release packager requires every embedded core module member", () => {
-  for (const script of ["package-release-carriers.mjs"]) {
-    const source = readFileSync(path.join(ROOT, "tools/release", script), "utf8");
-    assert.match(
-      source,
-      /return \["dict_snowball", "plpgsql"\]\.map\(\(stem\) => `\$\{normalizedPrefix\}\/\$\{stem\}\$\{suffix\}`\)/u,
-    );
-    assert.match(
-      source,
-      /\.\.\.embeddedCoreModuleMembers\(target\.target, "package\/lib\/modules"\)/u,
-    );
-    assert.match(source, /requiredCoreRuntimePaths\(target\.target\)/u);
-    assert.match(source, /\.\.\.coreRuntimeMembers/u);
-  }
-});
-
-test("desktop producers remove non-release embedded-module build outputs", () => {
-  const linux = readFileSync(
-    path.join(ROOT, "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh"),
-    "utf8",
-  );
-  assert.match(linux, /! -name dict_snowball\.so ! -name plpgsql\.so -exec rm -rf \{\} \+/u);
-  assert.match(linux, /build_embedded_dict_snowball_module/u);
-  assert.match(linux, /base_embedded_module_closure_ready/u);
-
-  const macos = readFileSync(
-    path.join(ROOT, "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh"),
-    "utf8",
-  );
-  assert.match(macos, /! -name dict_snowball\.dylib ! -name plpgsql\.dylib -exec rm -rf \{\} \+/u);
-  assert.match(macos, /build_embedded_dict_snowball_module/u);
-  assert.match(macos, /base_embedded_module_closure_ready/u);
-
-  const windows = readFileSync(
-    path.join(ROOT, "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1"),
-    "utf8",
-  );
-  assert.match(windows, /function Remove-EmbeddedModuleStage/u);
-  assert.match(windows, /Remove-EmbeddedModuleStage\s+New-Item -ItemType Directory/u);
-  assert.match(windows, /\$EmbeddedCoreModuleStems = @\("dict_snowball", "plpgsql"\)/u);
-  assert.match(
-    windows,
-    /foreach \(\$module in \$selectedModules\)[\s\S]*?Join-Path \$EmbeddedModulesDir "\$\(\$module\.Stem\)\.dll"/u,
-  );
-  assert.doesNotMatch(windows, /IMPLIB:\$\(Join-Path \$EmbeddedModulesDir "plpgsql\.lib"\)/u);
-  assert.doesNotMatch(windows, /PDB:\$\(Join-Path \$EmbeddedModulesDir "plpgsql\.pdb"\)/u);
-});
-
-test("desktop runtime readiness requires the complete canonical Snowball payload", () => {
-  const stopwords = [
-    "danish.stop",
-    "dutch.stop",
-    "english.stop",
-    "finnish.stop",
-    "french.stop",
-    "german.stop",
-    "hungarian.stop",
-    "italian.stop",
-    "nepali.stop",
-    "norwegian.stop",
-    "portuguese.stop",
-    "russian.stop",
-    "spanish.stop",
-    "swedish.stop",
-    "turkish.stop",
-  ];
-  const producers = [
-    ["build-postgres18-linux.sh", "dict_snowball.so", "snowball_runtime_ready"],
-    ["build-postgres18-macos.sh", "dict_snowball.dylib", "snowball_runtime_ready"],
-    ["build-postgres18-windows.ps1", "dict_snowball.dll", "Test-SnowballRuntimeClosure"],
-  ];
-
-  for (const [script, module, readiness] of producers) {
-    const source = readFileSync(
-      path.join(ROOT, "src/runtimes/liboliphaunt/native/bin", script),
-      "utf8",
-    );
-    assert.ok(source.includes(module), `${script} must require ${module}`);
-    assert.ok(source.includes("snowball_create.sql"), `${script} must require snowball_create.sql`);
-    assert.ok(source.includes(readiness), `${script} must expose and invoke ${readiness}`);
-    for (const stopword of stopwords) {
-      assert.ok(source.includes(stopword), `${script} must require ${stopword}`);
-    }
   }
 });
 

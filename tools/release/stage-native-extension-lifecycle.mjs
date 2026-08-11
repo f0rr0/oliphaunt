@@ -19,6 +19,7 @@ import {
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  extensionReleaseProduct,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
 import {
@@ -225,15 +226,20 @@ function optionalLstat(file) {
  * envelope paths are deliberately not exposed to the runtime locator.
  */
 export function stageExtensionCarrier(entries, output, metadata, archive = "native extension carrier") {
+  const artifactProduct = metadata?.["artifact-product"];
   const releaseProduct = metadata?.["release-product"];
   if (
-    typeof releaseProduct !== "string"
-    || !/^oliphaunt-extension-[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(releaseProduct)
+    typeof artifactProduct !== "string"
+    || !/^oliphaunt-extension-[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(artifactProduct)
   ) {
+    fail(`${archive} has invalid generated artifact-product ${JSON.stringify(artifactProduct)}`);
+  }
+  const expectedReleaseProduct = extensionReleaseProduct(artifactProduct, "native", PREFIX);
+  if (releaseProduct !== expectedReleaseProduct) {
     fail(`${archive} has invalid generated release-product ${JSON.stringify(releaseProduct)}`);
   }
   requireArchiveFile(entries, "manifest.properties", archive);
-  const destination = path.join(output, "resources/extension", releaseProduct);
+  const destination = path.join(output, "resources/extension", artifactProduct);
   mkdirSync(destination, { recursive: true });
   let stagedFiles = 0;
   for (const [name, entry] of [...entries].sort(([left], [right]) => compareText(left, right))) {

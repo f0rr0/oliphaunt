@@ -42,12 +42,16 @@ const WASIX_RUNTIME_VERSION = readFileSync(
   path.join(REPOSITORY_ROOT, "src/runtimes/liboliphaunt/wasix/VERSION"),
   "utf8",
 ).trim();
+const CONTRIB_VERSION = NATIVE_RUNTIME_VERSION;
 const REACT_NATIVE_EXTENSIONS = JSON.parse(readFileSync(
   path.join(REPOSITORY_ROOT, "src/extensions/generated/sdk/react-native.json"),
   "utf8",
 )).extensions;
 const REACT_NATIVE_EXTENSION_BY_SQL_NAME = new Map(
   REACT_NATIVE_EXTENSIONS.map((row) => [row["sql-name"], row]),
+);
+const NATIVE_RELEASE_PRODUCT_BY_ARTIFACT_PRODUCT = new Map(
+  REACT_NATIVE_EXTENSIONS.map((row) => [row["artifact-product"], row["release-product"]]),
 );
 const STATIC_EXTENSION_LINES = readFileSync(
   path.join(REPOSITORY_ROOT, "src/extensions/generated/mobile/static-extensions.tsv"),
@@ -78,7 +82,7 @@ const CONTRIB = "oliphaunt-extension-contrib-pg18";
 const VECTOR = "oliphaunt-extension-vector";
 const TARGETS = ["android-arm64-v8a", "android-x86_64", "ios-xcframework"];
 const CONTRIB_SQL_NAMES = REACT_NATIVE_EXTENSIONS
-  .filter((row) => row["release-product"] === CONTRIB)
+  .filter((row) => row["artifact-product"] === CONTRIB)
   .map((row) => row["sql-name"])
   .sort();
 
@@ -229,7 +233,17 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   function productRoot(product) {
-    return path.join(artifactRoot, product);
+    const releaseProduct = NATIVE_RELEASE_PRODUCT_BY_ARTIFACT_PRODUCT.get(product);
+    assert(releaseProduct, `fixture requires a native release owner for ${product}`);
+    return path.join(artifactRoot, ...(releaseProduct === product ? [product] : [releaseProduct, product]));
+  }
+
+  function publishedProductRoot(product) {
+    const releaseProduct = NATIVE_RELEASE_PRODUCT_BY_ARTIFACT_PRODUCT.get(product);
+    assert(releaseProduct, `fixture requires a native release owner for ${product}`);
+    return ["target/extension-artifacts", ...(releaseProduct === product
+      ? [product]
+      : [releaseProduct, product])].join("/");
   }
 
   function manifestPath(product) {
@@ -273,7 +287,9 @@ function fixture(t) {
     const manifest = {
       schema: "oliphaunt-extension-ci-artifacts-v2",
       product: CONTRIB,
-      version: VERSION,
+      releaseProduct: "liboliphaunt-native",
+      family: "native",
+      version: CONTRIB_VERSION,
       compatibility: COMPATIBILITY,
       extensions: members,
       carrierAssets: [],
@@ -282,7 +298,7 @@ function fixture(t) {
     const declaredContents = new Map();
 
     for (const target of targets) {
-      const carrierRoot = `${CONTRIB}-${VERSION}-native-${target}-bundle`;
+      const carrierRoot = `${CONTRIB}-${CONTRIB_VERSION}-native-${target}-bundle`;
       const carrierName = `${carrierRoot}.tar.gz`;
       const rows = [];
       const stage = path.join(root, "bundle-stage", target);
@@ -309,11 +325,11 @@ function fixture(t) {
             && kind === "ios-xcframework";
           const name = kind === "runtime" || duplicatesRuntimePath
             ? target === "ios-xcframework"
-              ? `${CONTRIB}-${VERSION}-native-ios-runtime.tar.gz`
-              : `${CONTRIB}-${VERSION}-native-${target}-runtime.tar.gz`
+              ? `${CONTRIB}-${CONTRIB_VERSION}-native-ios-runtime.tar.gz`
+              : `${CONTRIB}-${CONTRIB_VERSION}-native-${target}-runtime.tar.gz`
             : kind === "ios-xcframework"
-              ? `${CONTRIB}-${VERSION}-native-ios-xcframework.zip`
-              : `${CONTRIB}-${VERSION}-native-ios-dependency-${identity}-xcframework.zip`;
+              ? `${CONTRIB}-${CONTRIB_VERSION}-native-ios-xcframework.zip`
+              : `${CONTRIB}-${CONTRIB_VERSION}-native-ios-dependency-${identity}-xcframework.zip`;
           const memberPath = `extensions/${member.sqlName}/${name}`;
           const declaredKind = duplicatesRuntimePath ? "runtime" : kind;
           const declared = Buffer.from(`declared:${target}:${member.sqlName}:${declaredKind}\n`);
@@ -324,7 +340,7 @@ function fixture(t) {
             : declared;
           const asset = {
             name,
-            path: `target/extension-artifacts/${CONTRIB}/member-assets/${member.sqlName}/${name}`,
+            path: `${publishedProductRoot(CONTRIB)}/member-assets/${member.sqlName}/${name}`,
             source: `target/extensions/native/release-assets/${target}/${name}`,
             sha256: sha256(declared),
             bytes: declared.length,
@@ -364,7 +380,7 @@ function fixture(t) {
       const embedded = embeddedMutator({
         schema: "oliphaunt-extension-bundle-v1",
         product: CONTRIB,
-        version: VERSION,
+        version: CONTRIB_VERSION,
         compatibility: COMPATIBILITY,
         family: "native",
         target,
@@ -406,7 +422,7 @@ function fixture(t) {
       writeCanonicalTarGzip(carrierPath, stage, uniqueArchiveNames);
       const carrier = {
         name: carrierName,
-        path: `target/extension-artifacts/${CONTRIB}/release-assets/${carrierName}`,
+        path: `${publishedProductRoot(CONTRIB)}/release-assets/${carrierName}`,
         sha256: sha256File(carrierPath),
         bytes: statSync(carrierPath).size,
         family: "native",
@@ -441,7 +457,7 @@ function fixture(t) {
         writeFileSync(file, content);
         assets.push({
           name,
-          path: `target/extension-artifacts/${VECTOR}/release-assets/${name}`,
+          path: `${publishedProductRoot(VECTOR)}/release-assets/${name}`,
           source: `target/extensions/native/release-assets/${target}/${name}`,
           sha256: sha256(content),
           bytes: content.length,
@@ -637,7 +653,7 @@ test("binds the production bundle manifest and exact legal-file closure", (t) =>
 
 test("rejects unsupported outer and embedded bundle schemas", (t) => {
   const outer = fixture(t);
-  outer.writeManifest("bad-extension", {
+  outer.writeManifest(VECTOR, {
     schema: "oliphaunt-extension-ci-artifacts-v3",
     product: "bad-extension",
     version: VERSION,
@@ -746,7 +762,9 @@ test("rejects duplicate extension, carrier, and nested member identities", (t) =
   const duplicateManifest = {
     schema: "oliphaunt-extension-ci-artifacts-v2",
     product: CONTRIB,
-    version: VERSION,
+    releaseProduct: "liboliphaunt-native",
+    family: "native",
+    version: CONTRIB_VERSION,
     compatibility: COMPATIBILITY,
     extensions: [extensionMember("amcheck", false), extensionMember("amcheck", false)],
     carrierAssets: [],
@@ -800,6 +818,20 @@ test("rejects duplicate extension, carrier, and nested member identities", (t) =
 });
 
 test("binds aggregate ownership and compatibility to generated repository metadata", (t) => {
+  for (const [field, value] of [["releaseProduct", "liboliphaunt-wasix"], ["family", "wasix"]]) {
+    const ownership = fixture(t);
+    const aggregate = ownership.installAggregate({ targets: ["android-arm64-v8a"] });
+    aggregate.manifest[field] = value;
+    ownership.writeManifest(CONTRIB, aggregate.manifest);
+    const result = ownership.run({
+      extensions: "amcheck",
+      assetKind: "runtime",
+      assetTarget: "android-arm64-v8a",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must be owned by liboliphaunt-native\/native/u);
+  }
+
   const subset = fixture(t);
   const subsetAggregate = subset.installAggregate({ targets: ["android-arm64-v8a"] });
   subsetAggregate.manifest.extensions.pop();
@@ -894,10 +926,10 @@ test("rejects cache path escapes, noncanonical ustar metadata, and invalid CLI f
   const escape = fixture(t);
   const escapeAggregate = escape.installAggregate({ targets: ["android-arm64-v8a"] });
   const escapeCarrier = escapeAggregate.manifest.carrierAssets[0];
-  const escapedName = `${CONTRIB}-${VERSION}-native-..-bundle.tar.gz`;
+  const escapedName = `${CONTRIB}-${CONTRIB_VERSION}-native-..-bundle.tar.gz`;
   escapeCarrier.target = "..";
   escapeCarrier.name = escapedName;
-  escapeCarrier.path = `target/extension-artifacts/${CONTRIB}/release-assets/${escapedName}`;
+  escapeCarrier.path = `${escapeCarrier.path.slice(0, escapeCarrier.path.lastIndexOf("/") + 1)}${escapedName}`;
   for (const member of escapeAggregate.manifest.extensions) {
     for (const asset of member.assets) {
       asset.target = "..";

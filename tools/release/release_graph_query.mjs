@@ -4,9 +4,12 @@ import {
   ciNpmPackageArtifactRows,
   ciReleaseAssetArtifactRows,
   currentProductVersionSync,
+  extensionArtifactProductRoot,
+  extensionArtifactProductsForReleaseProducts,
   extensionArtifactTargets,
   extensionMemberPath,
   extensionMetadata,
+  extensionReleaseProduct,
   extensionRegistryPackageTargetSets,
   extensionSqlNames,
   extensionSourceIdentity,
@@ -635,6 +638,8 @@ function runCiArtifactNames(argv) {
 
 function runCiProducts(argv) {
   let family;
+  let carrierFamily = null;
+  let field = "product";
   let productsJson;
   let format = "json";
   for (let index = 0; index < argv.length; index += 1) {
@@ -647,6 +652,22 @@ function runCiProducts(argv) {
       index += 1;
     } else if (value.startsWith("--family=")) {
       family = value.slice("--family=".length);
+    } else if (value === "--carrier-family") {
+      if (index + 1 >= argv.length) {
+        fail("--carrier-family requires a value");
+      }
+      carrierFamily = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--carrier-family=")) {
+      carrierFamily = value.slice("--carrier-family=".length);
+    } else if (value === "--field") {
+      if (index + 1 >= argv.length) {
+        fail("--field requires a value");
+      }
+      field = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--field=")) {
+      field = value.slice("--field=".length);
     } else if (value === "--products-json") {
       if (index + 1 >= argv.length) {
         fail("--products-json requires a value");
@@ -667,19 +688,29 @@ function runCiProducts(argv) {
       fail(`unknown argument ${value}`);
     }
   }
+  if (carrierFamily !== null && !["native", "wasix"].includes(carrierFamily)) {
+    fail("--carrier-family must be native or wasix");
+  }
+  if (!["product", "artifact-root"].includes(field)) {
+    fail("--field must be product or artifact-root");
+  }
+  if (family !== "extension-artifacts" && (carrierFamily !== null || field !== "product")) {
+    fail("--carrier-family and non-product --field values require --family extension-artifacts");
+  }
+  if (field !== "product" && format !== "lines") {
+    fail("non-product --field values require --format lines");
+  }
   let availableRows;
   if (family === "sdk-package") {
     availableRows = sdkPackageProducts(TOOL);
   } else if (family === "extension-artifacts") {
-    availableRows = exactExtensionProducts(TOOL).map((product) => ({
-      family: "extension-artifacts",
-      product,
-    }));
+    availableRows = exactExtensionProducts(TOOL).map((product) => ({ family, product }));
   } else {
     fail("--family must be sdk-package or extension-artifacts");
   }
   const rowsByProduct = new Map(availableRows.map((row) => [row.product, row]));
   let products = availableRows.map((row) => row.product);
+  let selectedReleaseProducts;
   if (productsJson !== undefined) {
     let selected;
     try {
@@ -694,15 +725,59 @@ function runCiProducts(argv) {
     if (unknown.length > 0) {
       fail(`unknown release products: ${unknown.join(", ")}`);
     }
-    products = releaseOrder(graph.products, graph.moon_projects, selected, TOOL)
-      .filter((product) => rowsByProduct.has(product));
+    selectedReleaseProducts = releaseOrder(graph.products, graph.moon_projects, selected, TOOL);
+    products = family === "extension-artifacts"
+      ? extensionArtifactProductsForReleaseProducts(selectedReleaseProducts, {
+          family: carrierFamily,
+          prefix: TOOL,
+        })
+      : selectedReleaseProducts.filter((product) => rowsByProduct.has(product));
   }
+  const selectedSet = selectedReleaseProducts === undefined ? null : new Set(selectedReleaseProducts);
   const rows = products.map((product) => rowsByProduct.get(product));
   if (format === "lines") {
-    printLines(rows.map((row) => row.product));
+    const values = field === "product"
+      ? rows.map((row) => row.product)
+      : rows.flatMap((row) => {
+          const families = carrierFamily === null ? ["native", "wasix"] : [carrierFamily];
+          return families
+            .filter((variant) => selectedSet === null
+              || selectedSet.has(extensionReleaseProduct(row.product, variant, TOOL)))
+            .map((variant) => extensionArtifactProductRoot(
+              row.product,
+              variant,
+              "target/extension-artifacts",
+              TOOL,
+            ));
+        });
+    printLines([...new Set(values)]);
   } else {
     printJson(rows);
   }
+}
+
+function runExtensionArtifactRoot(argv) {
+  let product;
+  let family = "native";
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--family") {
+      family = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--family=")) {
+      family = value.slice("--family=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (!product) fail("--product is required");
+  if (!["native", "wasix"].includes(family)) fail("--family must be native or wasix");
+  console.log(extensionArtifactProductRoot(product, family, "target/extension-artifacts", TOOL));
 }
 
 function runLocalPublishArtifacts(argv) {
@@ -908,7 +983,8 @@ Commands:
   product-versions [--product PRODUCT]
   typescript-optional-runtime-package-versions
   sdk-package-products [--product PRODUCT]
-  ci-products --family sdk-package|extension-artifacts [--products-json JSON] [--format json|lines]
+  ci-products --family sdk-package|extension-artifacts [--products-json JSON] [--carrier-family native|wasix] [--field product|artifact-root] [--format json|lines]
+  extension-artifact-root --product PRODUCT [--family native|wasix]
   ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT [--kind KIND] [--format json|lines]
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
@@ -958,6 +1034,8 @@ function main(argv) {
     runSdkPackageProducts(rest);
   } else if (command === "ci-products") {
     runCiProducts(rest);
+  } else if (command === "extension-artifact-root") {
+    runExtensionArtifactRoot(rest);
   } else if (command === "ci-artifact-names") {
     runCiArtifactNames(rest);
   } else if (command === "local-publish-artifacts") {

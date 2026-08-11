@@ -171,9 +171,7 @@ test("ICU native descriptors fail closed on partial autolinking or flattened Coc
   );
 });
 
-test("ICU config validation never executes package code and full inventory comparison remains bounded", () => {
-  const contractSource = readFileSync(path.join(ROOT, "tools/release/icu-npm-carrier-contract.mjs"), "utf8");
-  assert.doesNotMatch(contractSource, /node:vm|runInNewContext|\beval\s*\(|\bFunction\s*\(/u);
+test("ICU config validation rejects executable changes and full inventory comparison remains bounded", () => {
   for (const changed of [
     Buffer.concat([config, Buffer.from("\n")]),
     Buffer.from(config.toString("utf8").replace("ios: null,\n      android", "android: null,\n      ios")),

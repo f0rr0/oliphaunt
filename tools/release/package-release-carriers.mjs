@@ -21,8 +21,10 @@ import { ROOT, run } from "./release-cli-utils.mjs";
 import {
   artifactTargets,
   compareText,
+  contribCarrierDescriptor,
   currentProductVersionSync,
-  exactExtensionProducts,
+  exactExtensionReleaseProducts,
+  extensionArtifactProductRoot,
   extensionRegistryPackageTargetSets,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
@@ -75,6 +77,7 @@ import {
   assertPackedIcuCarrier,
 } from "./icu-npm-carrier-contract.mjs";
 import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
+import { buildMavenArtifactManifest } from "./build_maven_artifact_manifest.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 const TOOL = "package-release-carriers.mjs";
@@ -95,7 +98,7 @@ const NODE_DIRECT_KIND = "node-direct-addon";
 const NODE_DIRECT_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/node-direct/packages");
 
 export const RELEASE_CARRIER_PRODUCTS = new Set([
-  ...exactExtensionProducts(TOOL),
+  ...exactExtensionReleaseProducts(TOOL),
   LIBOLIPHAUNT_NATIVE_PRODUCT,
   BROKER_PRODUCT,
   WASIX_PRODUCT,
@@ -1250,9 +1253,11 @@ function validateNativeCargoArtifacts(outputDir) {
       .map((target) => `${LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT}-${target.target}`),
   ]);
   const expectedRegistryCrates = new Set([...expectedAggregators, LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT]);
+  const contribArtifactProduct = contribCarrierDescriptor(TOOL).artifactProduct;
   const configuredCrates = new Set(
     registryPackageRows({ product: LIBOLIPHAUNT_NATIVE_PRODUCT, packageKind: "crates" }, TOOL)
-      .map((row) => row.packageName),
+      .map((row) => row.packageName)
+      .filter((name) => name !== contribArtifactProduct && !name.startsWith(`${contribArtifactProduct}-`)),
   );
   assertSameStringSet(
     `${LIBOLIPHAUNT_NATIVE_PRODUCT} crates.io packages must match native runtime/tool artifact packages`,
@@ -1358,7 +1363,15 @@ async function packageLiboliphauntNativeCarriers() {
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   liboliphauntNativeCargoArtifactPackages(version);
   liboliphauntNpmTarballs(version);
-  const manifest = buildMavenArtifactManifest("liboliphaunt-native-runtime", { runtime: true });
+  const contribProduct = contribCarrierDescriptor(TOOL).artifactProduct;
+  const manifest = await buildMavenArtifactManifest(
+    "target/release/maven-manifests/liboliphaunt-native.tsv",
+    {
+      runtime: true,
+      extensions: true,
+      extensionProducts: [contribProduct],
+    },
+  );
   await stageMavenArtifactManifest(
     manifest,
     path.join(ROOT, "target/release/maven-staging/liboliphaunt-native"),
@@ -1380,7 +1393,13 @@ export function validateWasixCargoArtifacts(outputDir) {
     fail(`${rel(manifestPath)} has an invalid WASIX Cargo artifact schema`);
   }
 
+  const contribProduct = contribCarrierDescriptor(TOOL).artifactProduct;
   const expectedBaseCrates = new Set(wasixPublicCargoPackageNames());
+  const expectedExtensionInventory = expectedWasixExtensionPackageInventory(TOOL, [contribProduct]);
+  const expectedConfiguredCrates = new Set([
+    ...expectedBaseCrates,
+    ...expectedExtensionInventory.expectedPackageKinds.keys(),
+  ]);
   const configuredCrates = new Set(
     registryPackageRows({ product: WASIX_PRODUCT, packageKind: "crates" }, TOOL)
       .map((row) => row.packageName),
@@ -1388,11 +1407,10 @@ export function validateWasixCargoArtifacts(outputDir) {
   assertSameStringSet(
     `${WASIX_PRODUCT} crates.io packages must match WASIX runtime/AOT artifact packages`,
     configuredCrates,
-    expectedBaseCrates,
+    expectedConfiguredCrates,
   );
   const generatedCrates = new Set();
   const expectedCratePaths = new Set();
-  const expectedExtensionInventory = expectedWasixExtensionPackageInventory(TOOL);
   try {
     validateWasixExtensionArtifactInventory(
       data.packages,
@@ -1465,26 +1483,41 @@ export function validateWasixCargoArtifacts(outputDir) {
   return packages.sort((left, right) => compareText(left.name, right.name));
 }
 
-export function liboliphauntWasixCargoArtifactPackages(version = currentProductVersionSync(WASIX_PRODUCT, TOOL)) {
+export function liboliphauntWasixCargoArtifactPackages(
+  version = currentProductVersionSync(WASIX_PRODUCT, TOOL),
+  { extensionArtifactRoots = [] } = {},
+) {
   const outputDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts");
   ensureWasixReleaseAssets();
-  run(TOOL, [
+  const args = [
     process.execPath,
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
     "--version",
     version,
     "--output-dir",
     rel(outputDir),
-  ]);
+  ];
+  for (const root of extensionArtifactRoots) {
+    args.push("--extension-artifact-root", rel(root));
+  }
+  run(TOOL, args);
   return validateWasixCargoArtifacts(outputDir);
 }
 
 function packageWasixRuntimeCarriers() {
-  liboliphauntWasixCargoArtifactPackages(currentProductVersionSync(WASIX_PRODUCT, TOOL));
+  const contrib = contribCarrierDescriptor(TOOL);
+  liboliphauntWasixCargoArtifactPackages(currentProductVersionSync(WASIX_PRODUCT, TOOL), {
+    extensionArtifactRoots: [extensionPackageDir(contrib.artifactProduct, "wasix")],
+  });
 }
 
-function extensionPackageDir(product) {
-  return path.join(ROOT, "target/extension-artifacts", product);
+function extensionPackageDir(product, family = "native") {
+  return extensionArtifactProductRoot(
+    product,
+    family,
+    path.join(ROOT, "target/extension-artifacts"),
+    TOOL,
+  );
 }
 
 function releaseSurfaceResult(surface) {
@@ -1502,10 +1535,13 @@ function requireExtensionAssets(product) {
 }
 
 async function packageExtensionMavenCarriers(product) {
-  const manifest = buildMavenArtifactManifest(product, {
-    extensions: true,
-    extensionProducts: [product],
-  });
+  const manifest = await buildMavenArtifactManifest(
+    `target/release/maven-manifests/${product}.tsv`,
+    {
+      extensions: true,
+      extensionProducts: [product],
+    },
+  );
   await stageMavenArtifactManifest(
     manifest,
     path.join(ROOT, "target/release/maven-staging", product),
@@ -1517,7 +1553,7 @@ function packageExtensionNpmCarriers(product) {
   for (const target of targets) {
     const result = releaseSurfaceResult(`${product}-npm-${target}`);
     const output = stageExtensionNpmPackages(
-      [extensionPackageDir(product)],
+      [extensionPackageDir(product, "native")],
       path.join(ROOT, "target/release/extension-carriers/npm", product, target),
       target,
       result,
@@ -1533,7 +1569,7 @@ function packageExtensionNativeCargoCarriers(product) {
   for (const target of extensionRegistryPackageTargetSets(product, TOOL).nativeCargoTargets) {
     const result = releaseSurfaceResult(`${product}-cargo-${target}`);
     const crates = packageNativeExtensionCargoCrates(
-      [extensionPackageDir(product)],
+      [extensionPackageDir(product, "native")],
       path.join(ROOT, "target/release/extension-carriers/cargo", product, `native-${target}`),
       target,
       true,
@@ -1554,7 +1590,7 @@ function packageExtensionWasixCargoCarriers(product) {
     "--output-dir",
     rel(outputDir),
     "--extension-artifact-root",
-    rel(extensionPackageDir(product)),
+    rel(extensionPackageDir(product, "wasix")),
   ]);
   const manifestPath = path.join(outputDir, "packages.json");
   if (!isFile(manifestPath)) {
@@ -1593,10 +1629,22 @@ async function packageExtensionCarriers(product) {
   packageExtensionFacade(product);
 }
 
+async function packageContribNativeCarriers() {
+  const product = contribCarrierDescriptor(TOOL).artifactProduct;
+  const manifest = path.join(extensionPackageDir(product, "native"), "extension-artifacts.json");
+  if (!isFile(manifest)) {
+    fail(`${LIBOLIPHAUNT_NATIVE_PRODUCT} requires staged contrib native artifacts at ${rel(manifest)}`);
+  }
+  packageExtensionNpmCarriers(product);
+  packageExtensionNativeCargoCarriers(product);
+  packageExtensionFacade(product);
+}
+
 export async function packageReleaseCarriers(products) {
   const selected = new Set(products);
   if (selected.has(LIBOLIPHAUNT_NATIVE_PRODUCT)) {
     await packageLiboliphauntNativeCarriers();
+    await packageContribNativeCarriers();
   }
   if (selected.has(BROKER_PRODUCT)) {
     packageBrokerCarriers();
@@ -1607,7 +1655,7 @@ export async function packageReleaseCarriers(products) {
   if (selected.has(NODE_DIRECT_PRODUCT)) {
     await packageNodeDirectCarriers();
   }
-  for (const product of exactExtensionProducts(TOOL)) {
+  for (const product of exactExtensionReleaseProducts(TOOL)) {
     if (selected.has(product)) {
       await packageExtensionCarriers(product);
     }

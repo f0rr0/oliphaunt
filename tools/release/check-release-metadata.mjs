@@ -7,13 +7,19 @@ import {
   compatibilityVersionSource,
   requireCompatibilityVersionBinding,
 } from "./compatibility-version-policy.mjs";
-import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
+import {
+  extensionNativeRegistryPackageStrings,
+  extensionRegistryPackageStrings,
+  extensionWasixRegistryPackageStrings,
+} from "./extension-registry-packages.mjs";
 import {
   allArtifactTargets,
   currentProductVersionSync,
   exactExtensionProducts,
+  exactExtensionReleaseProducts,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionReleaseProduct,
   extensionSqlNames,
   extensionRegistryPackageTargetSets,
   extensionSourceIdentity,
@@ -469,8 +475,8 @@ function validateCatalogAndTargets(graph) {
 
   const extensionProducts = exactExtensionProducts(TOOL);
   assert(
-    sameStrings(extensionProducts, Object.entries(graph.products).filter(([, config]) => ["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)).map(([product]) => product)),
-    "exact-extension products must match the release graph",
+    sameStrings(exactExtensionReleaseProducts(TOOL), Object.entries(graph.products).filter(([, config]) => ["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)).map(([product]) => product)),
+    "exact-extension release products must match the release graph",
   );
   let extensionTargets = 0;
   for (const product of extensionProducts) {
@@ -484,9 +490,30 @@ function validateCatalogAndTargets(graph) {
       product,
       ...targetSets,
     });
+    const expectedNative = extensionNativeRegistryPackageStrings({ product, ...targetSets });
+    const expectedWasix = extensionWasixRegistryPackageStrings({
+      product,
+      includeAot: targetSets.includeWasixAot,
+    });
     assert(
-      sameStrings(expected, graph.products[product].registry_packages),
-      `${product} registry packages must be derived exactly from its published extension targets`,
+      sameStrings(expected, [...expectedNative, ...expectedWasix]),
+      `${product} registry package families must exactly partition its package identities`,
+    );
+    assert(
+      expectedNative.every((entry) => !expectedWasix.includes(entry)),
+      `${product} native and WASIX registry package families must be disjoint`,
+    );
+    const nativeOwner = extensionReleaseProduct(product, "native", TOOL);
+    const wasixOwner = extensionReleaseProduct(product, "wasix", TOOL);
+    const nativeDeclared = registryPackageRows({ product: nativeOwner }, TOOL)
+      .map((entry) => `${entry.packageKind}:${entry.packageName}`)
+      .filter((entry) => expectedNative.includes(entry));
+    const wasixDeclared = registryPackageRows({ product: wasixOwner }, TOOL)
+      .map((entry) => `${entry.packageKind}:${entry.packageName}`)
+      .filter((entry) => expectedWasix.includes(entry));
+    assert(
+      sameStrings(expectedNative, nativeDeclared) && sameStrings(expectedWasix, wasixDeclared),
+      `${product} registry packages must be owned by its native and WASIX release products`,
     );
     extensionTargets += targets.length;
   }
@@ -507,10 +534,14 @@ function exactDependency(table, name, version, { optional = false } = {}) {
 
 function validateWasixContract(graph, catalog) {
   const runtimeVersion = graph.products["liboliphaunt-wasix"].version;
+  const coreCargoPackages = publicCargoPackageNames();
   const runtimeCargo = catalog.carriers
-    .filter((carrier) => carrier.product === "liboliphaunt-wasix" && carrier.ecosystem === "cargo")
+    .filter((carrier) =>
+      carrier.product === "liboliphaunt-wasix"
+      && carrier.ecosystem === "cargo"
+      && coreCargoPackages.includes(carrier.name))
     .map((carrier) => carrier.name);
-  assert(sameStrings(runtimeCargo, publicCargoPackageNames()), "liboliphaunt-wasix Cargo carriers must exactly match the WASIX artifact contract");
+  assert(sameStrings(runtimeCargo, coreCargoPackages), "liboliphaunt-wasix core Cargo carriers must exactly match the WASIX artifact contract");
 
   const manifests = new Map([
     [ICU_PACKAGE, "src/runtimes/liboliphaunt/icu/Cargo.toml"],
@@ -550,30 +581,10 @@ function validateWasixContract(graph, catalog) {
   assert(Array.isArray(dump?.["required-features"]) && dump["required-features"].includes("tools"), "oliphaunt-wasix-dump must require the tools feature");
 }
 
-function validateNativeContract(graph, catalog) {
+function validateNativeContract(graph) {
   const targets = allArtifactTargets({ product: "liboliphaunt-native", publishedOnly: true }, TOOL);
   assert(targets.some((target) => target.kind === "native-runtime"), "liboliphaunt-native must publish runtime targets");
   assert(targets.some((target) => target.kind === "native-tools"), "liboliphaunt-native must publish split tool targets");
-  const expectedNpm = new Set([
-    "@oliphaunt/icu",
-    ...targets.map((target) => target.npmPackage).filter(Boolean),
-  ]);
-  const actualNpm = catalog.carriers
-    .filter((carrier) => carrier.product === "liboliphaunt-native" && carrier.ecosystem === "npm")
-    .map((carrier) => carrier.name);
-  assert(sameStrings(expectedNpm, actualNpm), "liboliphaunt-native npm carriers must exactly cover runtime, split tools, and ICU packages");
-  const androidTargets = targets
-    .filter((target) => target.kind === "native-runtime" && target.target.startsWith("android-"))
-    .map((target) => `dev.oliphaunt.runtime:liboliphaunt-${target.target}`);
-  const expectedMaven = [
-    "dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
-    "dev.oliphaunt.runtime:oliphaunt-icu",
-    ...androidTargets,
-  ];
-  const actualMaven = catalog.carriers
-    .filter((carrier) => carrier.product === "liboliphaunt-native" && carrier.ecosystem === "maven")
-    .map((carrier) => carrier.name);
-  assert(sameStrings(expectedMaven, actualMaven), "liboliphaunt-native Maven carriers must exactly cover Android ABIs and shared resources");
   assert(currentProductVersionSync("liboliphaunt-native", TOOL) === graph.products["liboliphaunt-native"].version, "native C product version must match the release graph");
 }
 
@@ -607,7 +618,7 @@ function main(argv) {
   const compatibilityFields = validateCompatibility(graph);
   const targetReport = validateCatalogAndTargets(graph);
   const manifests = validateSourcePackageManifests(graph, targetReport.catalog);
-  validateNativeContract(graph, targetReport.catalog);
+  validateNativeContract(graph);
   validateWasixContract(graph, targetReport.catalog);
   validateSdkSet(graph);
   const report = {

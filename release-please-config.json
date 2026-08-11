@@ -239,13 +239,6 @@
         }
       ]
     },
-    "src/extensions/contrib": {
-      "release-type": "simple",
-      "component": "oliphaunt-extension-contrib-pg18",
-      "package-name": "oliphaunt-extension-contrib-pg18",
-      "version-file": "VERSION",
-      "changelog-path": "CHANGELOG.md"
-    },
     "src/extensions/external/pg_hashids": {
       "release-type": "simple",
       "component": "oliphaunt-extension-pg-hashids",

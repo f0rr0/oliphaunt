@@ -65,5 +65,5 @@ case " ${args[*]} " in
     ;;
 esac
 
-tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs "${args[@]}"
-tools/dev/bun.sh tools/release/check-staged-artifacts.mjs "${validation_args[@]}"
+tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --family native "${args[@]}"
+tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --family native "${validation_args[@]}"

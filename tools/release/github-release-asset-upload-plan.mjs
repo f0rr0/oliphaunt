@@ -13,7 +13,7 @@ import { GITHUB_CONTENT_WRITE_INTERVAL_MS } from "./github-content-write-pacer.m
 export const MAX_CONCURRENT_GITHUB_RELEASE_ASSET_PRODUCTS = 5;
 export const GITHUB_RELEASE_ASSET_WAVE_OVERHEAD_MS = 60_000;
 export const GITHUB_RELEASE_ASSET_SELECTION_VERIFY_MS = 60_000;
-export const MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS = 90 * 60_000;
+export const MAX_GITHUB_RELEASE_ASSET_HANDOFF_WINDOW_MS = 95 * 60_000;
 // These are the protected workflow's hard per-step bounds between the final
 // read-only admission and the authoritative registry mutation gate. Policy
 // checks keep the YAML values equal to these constants.

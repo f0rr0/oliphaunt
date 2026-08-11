@@ -4,16 +4,27 @@ import {
   productRegistryPackages,
   productRegistryPackagesFromLock,
 } from "./check_registry_publication.mjs";
-import { exactExtensionProducts } from "./release-artifact-targets.mjs";
+import {
+  contribCarrierDescriptor,
+  exactExtensionReleaseProducts,
+} from "./release-artifact-targets.mjs";
 
 test("no-lock exact-extension registry inventory is explicit, complete, and unique", async () => {
   expect(process.env.OLIPHAUNT_PUBLICATION_LOCK).toBeUndefined();
-  for (const product of exactExtensionProducts("check-registry-publication-products.test")) {
+  for (const product of exactExtensionReleaseProducts("check-registry-publication-products.test")) {
     const packages = await productRegistryPackages(product);
     const identities = packages.map(({ kind, name }) => `${kind}:${name}`);
     expect(new Set(identities).size).toBe(identities.length);
     expect(identities.filter((identity) => identity === `crates:${product}`)).toHaveLength(1);
   }
+});
+
+test("runtime owners expose their complete contrib registry inventory", async () => {
+  const descriptor = contribCarrierDescriptor("check-registry-publication-products.test");
+  const contribPackages = async (owner) => (await productRegistryPackages(owner))
+    .filter(({ name }) => name.includes("contrib-pg18"));
+  expect(await contribPackages(descriptor.nativeOwner)).toHaveLength(12);
+  expect(await contribPackages(descriptor.wasixOwner)).toHaveLength(5);
 });
 
 test("publication-lock inventory includes dynamic Cargo payload-part carriers", () => {

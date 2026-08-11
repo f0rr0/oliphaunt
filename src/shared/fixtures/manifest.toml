@@ -1,2 +1,1 @@
 schema_version = 1
-contract = "../contracts/test-matrix.toml"

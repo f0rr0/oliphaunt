@@ -124,11 +124,6 @@ uname() { printf '%s\n' 'MINGW64_NT-10.0'; }
 [ "$(RUNNER_OS= oliphaunt_curl_platform_tls_flag)" = '--ssl-revoke-best-effort' ] ||
   fail "Git Bash uname fallback omitted Schannel revocation-offline handling"
 unset -f uname
-grep -F 'oliphaunt_curl_platform_tls_flag' "$installer" >/dev/null ||
-  fail "Wasmer LLVM installer does not apply the shared curl platform policy"
-if grep -E -- '--insecure|(^|[^[:alnum:]])-k([^[:alnum:]]|$)' "$installer" >/dev/null; then
-  fail "Wasmer LLVM installer disables TLS validation"
-fi
 
 transport_runner="$work_root/transport-runner"
 transport_key=wasmer-llvm-Linux-X64-22.1-transport

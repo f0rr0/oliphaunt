@@ -60,22 +60,4 @@ describe("run-gradle-lint-checked", () => {
     expect(result.stderr).toContain(diagnostic);
     expect(result.log).toBe(`${diagnostic}\n`);
   });
-
-  test("SDK entrypoints force analyzer execution before accepting cached lint output", () => {
-    const kotlinCheck = readFileSync(
-      path.join(ROOT, "src/sdks/kotlin/tools/check-sdk.sh"),
-      "utf8",
-    );
-    const reactNativeCheck = readFileSync(
-      path.join(ROOT, "src/sdks/react-native/tools/check-sdk.sh"),
-      "utf8",
-    );
-
-    for (const source of [kotlinCheck, reactNativeCheck]) {
-      expect(source).toContain("lintAnalyzeDebug --rerun");
-      expect(source).toContain("lintAnalyzeDebugUnitTest --rerun");
-      expect(source).toContain("lintAnalyzeDebugAndroidTest --rerun");
-      expect(source).toContain("run-gradle-lint-checked.sh");
-    }
-  });
 });

@@ -1,12 +1,11 @@
 #!/usr/bin/env bun
 import { readFile } from "node:fs/promises";
-import fs from "node:fs";
 import path from "node:path";
 import { currentVersion } from "./product-version.mjs";
 import {
-  extensionRegistryPackageTargetSets,
-} from "./release-artifact-targets.mjs";
-import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
+  loadPublicationCatalog,
+  REGISTRY_KIND_TO_ECOSYSTEM,
+} from "./publication-catalog.mjs";
 import { loadPublicationLock, lockedCarriers } from "./publication-lock.mjs";
 import {
   retryAfterSeconds,
@@ -30,13 +29,15 @@ export const CRATES_IO_RATE_LIMIT_FALLBACK_SECONDS = 60;
 const MAX_REGISTRY_JSON_BYTES = 8 * 1024 * 1024;
 const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
 const REGISTRY_KINDS = new Set(["crates", "npm", "jsr", "maven"]);
+const REGISTRY_KIND_BY_ECOSYSTEM = new Map(
+  Object.entries(REGISTRY_KIND_TO_ECOSYSTEM).map(([kind, ecosystem]) => [ecosystem, kind]),
+);
 const USER_AGENT = "oliphaunt-release-check (https://github.com/f0rr0/oliphaunt)";
 const JSR_PACKAGE_IDENTITY_RE = /^@([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/u;
 
 const caches = {
   releaseConfig: undefined,
   packageByProduct: undefined,
-  productConfig: new Map(),
   publicationLock: undefined,
 };
 
@@ -165,20 +166,6 @@ async function readJson(file) {
   return value;
 }
 
-async function readToml(file) {
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch {
-    fail(`missing ${rel(file)}`);
-  }
-  const value = Bun.TOML.parse(text);
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
-    fail(`${rel(file)} must contain a TOML table`);
-  }
-  return value;
-}
-
 async function releaseConfig() {
   if (caches.releaseConfig === undefined) {
     caches.releaseConfig = await readJson(path.join(ROOT, "release-please-config.json"));
@@ -225,124 +212,19 @@ async function packageByProduct() {
   return byProduct;
 }
 
-async function packageRecord(product) {
-  const record = (await packageByProduct()).get(product);
-  if (record === undefined) {
-    fail(`unknown release product ${JSON.stringify(product)}`);
-  }
-  return record;
-}
-
 async function productIds() {
   return [...(await packageByProduct()).keys()];
 }
 
-async function packagePath(product) {
-  return (await packageRecord(product)).packagePath;
-}
-
-function packageRelativePath(packagePathValue, relative, context) {
-  return path.join(assertRelative(packagePathValue, `${context}.packagePath`), assertRelative(relative, context)).split(path.sep).join("/");
-}
-
-async function releaseMetadata(product) {
-  if (caches.productConfig.has(product)) {
-    return caches.productConfig.get(product);
-  }
-  const packagePathValue = await packagePath(product);
-  const metadata = await readToml(path.join(ROOT, packagePathValue, "release.toml"));
-  if (metadata.id !== product) {
-    fail(`${packagePathValue}/release.toml must declare id = ${JSON.stringify(product)}`);
-  }
-  caches.productConfig.set(product, metadata);
-  return metadata;
-}
-
-async function productConfig(product) {
-  return releaseMetadata(product);
-}
-
-function stringList(config, key, product) {
-  const value = config[key] ?? [];
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    fail(`${product}.${key} must be a string list`);
-  }
-  return value;
-}
-
-async function canonicalVersionFile(product) {
-  const { packagePath: packagePathValue, packageConfig } = await packageRecord(product);
-  const versionFile = packageConfig["version-file"];
-  if (typeof versionFile === "string" && versionFile.length > 0) {
-    return packageRelativePath(packagePathValue, versionFile, `${product}.version-file`);
-  }
-  const releaseType = packageConfig["release-type"];
-  if (releaseType === "rust") {
-    return packageRelativePath(packagePathValue, "Cargo.toml", `${product}.rust`);
-  }
-  if (releaseType === "node" || releaseType === "expo") {
-    return packageRelativePath(packagePathValue, "package.json", `${product}.node`);
-  }
-  fail(`${product} release-please config must declare version-file for release type ${JSON.stringify(releaseType)}`);
-}
-
-async function extraVersionFiles(product) {
-  const { packagePath: packagePathValue, packageConfig } = await packageRecord(product);
-  const extraFiles = packageConfig["extra-files"] ?? [];
-  if (!Array.isArray(extraFiles)) {
-    fail(`${product}.extra-files must be a list`);
-  }
-  return extraFiles.map((entry, index) => {
-    const context = `${product}.extra-files[${index}]`;
-    if (typeof entry === "string") {
-      return packageRelativePath(packagePathValue, entry, context);
-    }
-    if (entry === null || Array.isArray(entry) || typeof entry !== "object") {
-      fail(`${context} must be a path string or object`);
-    }
-    const entryPath = entry.path;
-    if (typeof entryPath !== "string" || entryPath.length === 0) {
-      fail(`${context}.path must be a non-empty string`);
-    }
-    return packageRelativePath(packagePathValue, entryPath, `${context}.path`);
-  });
-}
-
-async function versionFiles(product) {
-  const files = [await canonicalVersionFile(product), ...(await extraVersionFiles(product))];
-  for (const file of files) {
-    if (!fs.existsSync(path.join(ROOT, file))) {
-      fail(`${product} version file does not exist: ${file}`);
-    }
-  }
-  return files;
-}
-
-async function cargoPackageName(manifestPath) {
-  const manifest = await readToml(path.join(ROOT, manifestPath));
-  const name = manifest.package?.name;
-  if (typeof name !== "string" || name.length === 0) {
-    fail(`${manifestPath} does not define package.name`);
-  }
-  return name;
-}
-
 async function productCrates(product) {
-  const config = await productConfig(product);
-  const publishTargets = stringList(config, "publish_targets", product);
-  if (!publishTargets.includes("crates-io")) {
+  const catalog = loadPublicationCatalog("check_registry_publication.mjs", { products: [product] });
+  const productRow = catalog.products.find((row) => row.id === product);
+  if (!productRow?.publishTargets.includes("crates-io")) {
     fail(`${product} does not publish to crates.io`);
   }
-  const crates = stringList(config, "registry_packages", product)
-    .filter((raw) => raw.startsWith("crates:"))
-    .map((raw) => raw.slice("crates:".length));
-  if (crates.length === 0) {
-    for (const file of await versionFiles(product)) {
-      if (path.basename(file) === "Cargo.toml") {
-        crates.push(await cargoPackageName(file));
-      }
-    }
-  }
+  const crates = catalog.carriers
+    .filter((carrier) => carrier.product === product && carrier.ecosystem === "cargo")
+    .map((carrier) => carrier.name);
   if (crates.length === 0) {
     fail(`${product} does not declare Cargo registry packages`);
   }
@@ -353,45 +235,12 @@ async function productCrates(product) {
   return crates.sort();
 }
 
-function parseRegistryPackage(raw, product, version) {
-  const separator = raw.indexOf(":");
-  if (separator <= 0 || separator === raw.length - 1) {
-    fail(`${product}.registry_packages entry ${JSON.stringify(raw)} must use kind:name`);
-  }
-  const kind = raw.slice(0, separator);
-  const name = raw.slice(separator + 1);
-  if (!REGISTRY_KINDS.has(kind)) {
-    fail(`${product}.registry_packages entry ${JSON.stringify(raw)} has unsupported kind ${JSON.stringify(kind)}`);
-  }
-  return { kind, name, version };
-}
-
 function packageLabel(pkg) {
   return `${pkg.kind}:${pkg.name}@${pkg.version}`;
 }
 
 function identityLabel(pkg) {
   return `${pkg.kind}:${pkg.name}`;
-}
-
-async function graphRegistryPackages(product, version) {
-  const config = await productConfig(product);
-  return stringList(config, "registry_packages", product).map((raw) => parseRegistryPackage(raw, product, version));
-}
-
-async function derivedExactExtensionRegistryPackages(product, version) {
-  const config = await productConfig(product);
-  if (!["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
-    return [];
-  }
-  return extensionRegistryPackageEntries({
-    product,
-    ...extensionRegistryPackageTargetSets(product, "check_registry_publication.mjs"),
-  }).map((entry) => ({
-    kind: entry.kind,
-    name: entry.name,
-    version,
-  }));
 }
 
 export function productRegistryPackagesFromLock(
@@ -434,52 +283,30 @@ export async function productRegistryPackages(product, { versionOverride = undef
       registryKind,
     });
   }
-  const config = await productConfig(product);
   const version = versionOverride || (await currentVersion(product));
-  const publishTargets = new Set(stringList(config, "publish_targets", product));
-  const graphPackages = await graphRegistryPackages(product, version);
-  const allowedGraphKinds = new Set();
-  if (publishTargets.has("crates-io")) {
-    allowedGraphKinds.add("crates");
-  }
+  const catalog = loadPublicationCatalog("check_registry_publication.mjs", { products: [product] });
+  const productRow = catalog.products.find((row) => row.id === product);
+  const publishTargets = new Set(productRow?.publishTargets ?? []);
   const expectedKinds = new Map([
+    ["crates-io", "crates"],
     ["npm", "npm"],
     ["jsr", "jsr"],
     ["maven-central", "maven"],
   ]);
-  for (const [target, kind] of expectedKinds.entries()) {
-    if (publishTargets.has(target)) {
-      allowedGraphKinds.add(kind);
-    }
-  }
-  const stalePackages = graphPackages
-    .filter((pkg) => !allowedGraphKinds.has(pkg.kind))
-    .map((pkg) => `${pkg.kind}:${pkg.name}`)
+  const packages = catalog.carriers
+    .filter((carrier) => carrier.product === product)
+    .map((carrier) => ({
+      kind: REGISTRY_KIND_BY_ECOSYSTEM.get(carrier.ecosystem),
+      name: carrier.name,
+      version,
+    }));
+  const targetByKind = new Map([...expectedKinds].map(([target, kind]) => [kind, target]));
+  const stalePackages = packages
+    .filter((pkg) => !publishTargets.has(targetByKind.get(pkg.kind)))
+    .map(identityLabel)
     .sort();
   if (stalePackages.length > 0) {
-    fail(`${product}.registry_packages contains entries without a matching registry publish target: ${stalePackages.join(", ")}`);
-  }
-  const packages = [...graphPackages];
-  if (publishTargets.has("crates-io")) {
-    const derivedCrates = (await productCrates(product)).map((name) => ({ kind: "crates", name, version }));
-    const graphCrates = packages.filter((pkg) => pkg.kind === "crates");
-    if (graphCrates.length > 0) {
-      const derivedNames = derivedCrates.map((pkg) => pkg.name).sort();
-      const graphNames = graphCrates.map((pkg) => pkg.name).sort();
-      if (JSON.stringify(graphNames) !== JSON.stringify(derivedNames)) {
-        fail(`${product}.registry_packages crates entries ${JSON.stringify(graphNames)} do not match Cargo manifests ${JSON.stringify(derivedNames)}`);
-      }
-    } else {
-      packages.push(...derivedCrates);
-    }
-  }
-  const derivedExtensionPackages = await derivedExactExtensionRegistryPackages(product, version);
-  if (derivedExtensionPackages.length > 0) {
-    const derivedNames = derivedExtensionPackages.map(identityLabel).sort();
-    const graphNames = packages.map(identityLabel).sort();
-    if (JSON.stringify(graphNames) !== JSON.stringify(derivedNames)) {
-      fail(`${product}.registry_packages entries ${JSON.stringify(graphNames)} do not match exact-extension registry package contract ${JSON.stringify(derivedNames)}`);
-    }
+    fail(`${product} publication catalog contains entries without a matching registry publish target: ${stalePackages.join(", ")}`);
   }
   const duplicateIdentities = packages
     .map(identityLabel)

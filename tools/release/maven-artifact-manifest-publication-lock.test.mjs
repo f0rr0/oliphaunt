@@ -8,7 +8,10 @@ import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageExtensionUpstreamLicenses } from "./extension-upstream-licenses.mjs";
 import { canonicalGzipSync } from "./portable-archive.mjs";
 import { discoverPublicationArtifacts } from "./publication-lock.mjs";
-import { currentProductVersionSync } from "./release-artifact-targets.mjs";
+import {
+  currentProductVersionSync,
+  extensionReleaseVersion,
+} from "./release-artifact-targets.mjs";
 import { ROOT } from "./release-graph.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
@@ -40,10 +43,10 @@ function run(script, args) {
 
 function contribAndroidBundle(root, target, { archiveRoot } = {}) {
   const product = "oliphaunt-extension-contrib-pg18";
-  const version = currentProductVersionSync(product);
+  const version = extensionReleaseVersion(product, "native");
   const canonicalRoot = `${product}-${version}-native-${target}-bundle`;
   const stage = path.join(root, "bundle-stage", target);
-  const output = path.join(root, product, "release-assets", `${canonicalRoot}.tar.gz`);
+  const output = path.join(root, "liboliphaunt-native", product, "release-assets", `${canonicalRoot}.tar.gz`);
   mkdirSync(stage, { recursive: true });
   mkdirSync(path.dirname(output), { recursive: true });
   stageReleaseNotices(stage, { profile: "contrib-native-openssl" });
@@ -169,7 +172,31 @@ test("the Maven manifest builder validates notices beneath an exact bundle archi
     "--extension-artifact-root",
     root,
   ]);
-  expect(readFileSync(manifest, "utf8").trimEnd().split("\n")).toHaveLength(2);
+  const contribRows = readFileSync(manifest, "utf8").trimEnd().split("\n");
+  expect(contribRows).toHaveLength(2);
+  const nativeVersion = currentProductVersionSync("liboliphaunt-native");
+  expect(contribRows.map((row) => row.split("\t").slice(0, 8))).toEqual([
+    [
+      "dev.oliphaunt.extensions",
+      "oliphaunt-extension-contrib-pg18-android-arm64-v8a",
+      nativeVersion,
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      "liboliphaunt-native",
+      nativeVersion,
+    ],
+    [
+      "dev.oliphaunt.extensions",
+      "oliphaunt-extension-contrib-pg18-android-x86_64",
+      nativeVersion,
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      "liboliphaunt-native",
+      nativeVersion,
+    ],
+  ]);
 
   contribAndroidBundle(root, "android-arm64-v8a", { archiveRoot: "substituted-root" });
   const result = spawnSync(process.execPath, [

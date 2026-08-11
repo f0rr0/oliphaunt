@@ -7,8 +7,6 @@ stack: "systems"
 tags: ["binding", "wasix", "rust", "postgres", "release-product"]
 dependsOn:
   - "liboliphaunt-wasix"
-  - id: "shared-fixtures"
-    scope: "build"
 
 project:
   title: "Oliphaunt WASIX Rust"
@@ -32,7 +30,6 @@ tasks:
     command: "cargo check -p oliphaunt-wasix --locked"
     deps:
       - "liboliphaunt-wasix:check"
-      - "shared-fixtures:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/check"
     inputs:
@@ -50,7 +47,6 @@ tasks:
     command: "bash src/bindings/wasix-rust/tools/check-unit.sh"
     deps:
       - "liboliphaunt-wasix:check"
-      - "shared-fixtures:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
     inputs:
@@ -209,7 +205,6 @@ tasks:
     command: "tools/coverage/run-product oliphaunt-wasix-rust"
     deps:
       - "liboliphaunt-wasix:check"
-      - "shared-fixtures:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/coverage"
     inputs:

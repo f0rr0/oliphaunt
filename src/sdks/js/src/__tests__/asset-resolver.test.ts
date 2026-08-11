@@ -1936,7 +1936,7 @@ function packageRoot(packageName: string): string {
 
 function contribBundleMembers(): string[] {
   return GENERATED_EXTENSION_METADATA.filter(
-    (extension) => extension.releaseProduct === 'oliphaunt-extension-contrib-pg18',
+    (extension) => extension.artifactProduct === 'oliphaunt-extension-contrib-pg18',
   )
     .map((extension) => extension.sqlName)
     .sort();

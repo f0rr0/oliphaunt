@@ -203,12 +203,16 @@ function generatedExtensionCatalog(value) {
       row["sql-name"],
       `generated React Native extension catalog.extensions[${index}].sql-name`,
     );
+    const artifactProduct = portable(
+      row["artifact-product"],
+      `generated React Native extension catalog.extensions[${index}].artifact-product`,
+    );
     const releaseProduct = portable(
       row["release-product"],
       `generated React Native extension catalog.extensions[${index}].release-product`,
     );
-    if (!releaseProduct.startsWith("oliphaunt-extension-")) {
-      fail(`generated release owner for ${sqlName} must be an extension release product`);
+    if (!artifactProduct.startsWith("oliphaunt-extension-")) {
+      fail(`generated artifact product for ${sqlName} must be an extension product`);
     }
     if (row["mobile-release-ready"] !== true) {
       fail(`generated React Native extension ${sqlName} must be mobile release ready`);
@@ -218,6 +222,7 @@ function generatedExtensionCatalog(value) {
     }
     if (rows.has(sqlName)) fail(`generated React Native extension catalog repeats ${sqlName}`);
     rows.set(sqlName, {
+      artifactProduct,
       releaseProduct,
       runtimeBound: row["runtime-bound"],
     });
@@ -645,7 +650,7 @@ function validateExtension(value, label, carriers) {
     [
       "assets", "createsExtension", "dataFiles", "dependencies", "extensionSqlFileNames",
       "extensionSqlFilePrefixes", "nativeDependencies", "nativeModuleStem", "product",
-      "registration", "sharedPreloadLibraries", "sqlName", "tag", "version",
+      "registration", "releaseProduct", "sharedPreloadLibraries", "sqlName", "tag", "version",
     ],
     label,
   );
@@ -654,10 +659,16 @@ function validateExtension(value, label, carriers) {
   if (generated === undefined) {
     fail(`${label}.sqlName is not in the generated React Native extension catalog`);
   }
-  const releaseProduct = portable(root.product, `${label}.product`);
+  const artifactProduct = portable(root.product, `${label}.product`);
+  if (artifactProduct !== generated.artifactProduct) {
+    fail(
+      `${label}.product must be canonical artifact product ${generated.artifactProduct} for SQL member ${sqlName}`,
+    );
+  }
+  const releaseProduct = portable(root.releaseProduct, `${label}.releaseProduct`);
   if (releaseProduct !== generated.releaseProduct) {
     fail(
-      `${label}.product must be canonical owner ${generated.releaseProduct} for SQL member ${sqlName}`,
+      `${label}.releaseProduct must be canonical owner ${generated.releaseProduct} for SQL member ${sqlName}`,
     );
   }
   const version = stableVersion(root.version, `${label}.version`);
@@ -746,7 +757,8 @@ function validateExtension(value, label, carriers) {
     kind: "extension",
     nativeDependencies,
     nativeModuleStem,
-    product: releaseProduct,
+    product: artifactProduct,
+    releaseProduct,
     registration,
     sharedPreloadLibraries,
     sqlName,
@@ -849,15 +861,15 @@ async function readCarrierDocument(file, allowFileUrls) {
   assertExactCarrierCoverage(carriers, extensions, file);
   const releases = new Map();
   for (const extension of extensions) {
-    const prior = releases.get(extension.product);
+    const prior = releases.get(extension.releaseProduct);
     const release = { tag: extension.tag, version: extension.version };
     if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(release)) {
-      fail(`${file} contains conflicting release versions for owner ${extension.product}`);
+      fail(`${file} contains conflicting release versions for owner ${extension.releaseProduct}`);
     }
-    releases.set(extension.product, release);
+    releases.set(extension.releaseProduct, release);
     if (extension.runtimeBound && extension.version !== base.version) {
       fail(
-        `${file} runtime-bound owner ${extension.product} version ${extension.version} ` +
+        `${file} runtime-bound owner ${extension.releaseProduct} version ${extension.version} ` +
           `must match base runtime ${base.version}`,
       );
     }
@@ -2639,6 +2651,7 @@ async function stage(args, base, selected) {
         nativeDependencies: carrier.nativeDependencies,
         nativeModuleStem: carrier.nativeModuleStem,
         product: carrier.product,
+        releaseProduct: carrier.releaseProduct,
         sqlName: carrier.sqlName,
         version: carrier.version,
       })),
@@ -2694,14 +2707,14 @@ export async function stageIosApp(options) {
     }
     for (const carrier of document.extensions) {
       const release = { tag: carrier.tag, version: carrier.version };
-      const existingRelease = releasesByOwner.get(carrier.product);
+      const existingRelease = releasesByOwner.get(carrier.releaseProduct);
       if (
         existingRelease !== undefined &&
         JSON.stringify(existingRelease) !== JSON.stringify(release)
       ) {
-        fail(`carrier manifests disagree about release version for owner ${carrier.product}`);
+        fail(`carrier manifests disagree about release version for owner ${carrier.releaseProduct}`);
       }
-      releasesByOwner.set(carrier.product, release);
+      releasesByOwner.set(carrier.releaseProduct, release);
       const existing = bySqlName.get(carrier.sqlName);
       if (existing && JSON.stringify(existing) !== JSON.stringify(carrier)) {
         fail(`carrier manifests disagree for exact extension ${carrier.sqlName}`);
@@ -2712,7 +2725,7 @@ export async function stageIosApp(options) {
   for (const carrier of bySqlName.values()) {
     if (carrier.runtimeBound && carrier.version !== base.version) {
       fail(
-        `runtime-bound owner ${carrier.product} version ${carrier.version} ` +
+        `runtime-bound owner ${carrier.releaseProduct} version ${carrier.version} ` +
           `must match base runtime ${base.version}`,
       );
     }

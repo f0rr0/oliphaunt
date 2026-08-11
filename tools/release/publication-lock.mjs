@@ -20,6 +20,7 @@ import {
 } from "./publication-catalog.mjs";
 import {
   allArtifactTargets,
+  contribCarrierDescriptor,
   currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
@@ -804,9 +805,10 @@ export function extensionRequiredAssetKeys(product) {
     `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`);
 }
 
-function extensionBundleCarrierRows(product) {
+function extensionBundleCarrierRows(product, family = null) {
   const groups = new Map();
   for (const row of extensionArtifactTargets({ product, publishedOnly: true }, "publication-lock")) {
+    if (family !== null && row.family !== family) continue;
     const key = `${row.family}\0${row.target}`;
     if (!groups.has(key)) {
       groups.set(key, { family: row.family, target: row.target, kind: "extension-bundle" });
@@ -814,6 +816,14 @@ function extensionBundleCarrierRows(product) {
   }
   return [...groups.values()].sort((left, right) =>
     compareText(`${left.family}\0${left.target}`, `${right.family}\0${right.target}`));
+}
+
+function extensionPublicationOwner(product) {
+  return product.releaseProduct ?? product.id;
+}
+
+function extensionCarrierFamily(product) {
+  return product.family ?? null;
 }
 
 export function expectedExtensionGithubReleaseAssetCount(product) {
@@ -846,7 +856,7 @@ function canonicalExtensionBundleAssetName(product, { family, target }) {
 
 function expectedExtensionGithubReleaseAssetRows(product) {
   if (extensionSqlNames(product.id, "publication-lock").length > 1) {
-    return extensionBundleCarrierRows(product.id).map((row) => ({
+    return extensionBundleCarrierRows(product.id, extensionCarrierFamily(product)).map((row) => ({
       ...row,
       identity: row.family,
       name: canonicalExtensionBundleAssetName(product, row),
@@ -861,8 +871,11 @@ function expectedExtensionGithubReleaseAssetRows(product) {
 function exactExtensionManifestRows(product, manifest, manifestPath) {
   const expectedSqlNames = extensionSqlNames(product.id, "publication-lock");
   const metadata = extensionMetadata(product.id, "publication-lock");
+  const family = extensionCarrierFamily(product);
   if (
-    manifest.product !== product.id
+    (manifest.artifactProduct ?? manifest.product) !== product.id
+    || (manifest.releaseProduct ?? manifest.product) !== extensionPublicationOwner(product)
+    || (family !== null && manifest.family !== family)
     || manifest.version !== product.version
     || stableJson(manifest.compatibility) !== stableJson(metadata.compatibility)
   ) {
@@ -949,7 +962,8 @@ function publicExtensionMember(member) {
 
 function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPath, members, product }) {
   const expectedSqlNames = extensionSqlNames(product.id, "publication-lock");
-  const expectedGroups = extensionBundleCarrierRows(product.id);
+  const family = extensionCarrierFamily(product);
+  const expectedGroups = extensionBundleCarrierRows(product.id, family);
   if (!Array.isArray(manifest.carrierAssets) || manifest.carrierAssets.length !== expectedGroups.length) {
     throw error(`${rel(manifestPath)} must declare exactly ${expectedGroups.length} aggregate carrier assets`);
   }
@@ -1067,7 +1081,9 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
       logicalRows.set(key, { row, file: logicalFile });
     }
   }
-  const expectedLogicalKeys = extensionRequiredArtifactRows(product.id).map((row) =>
+  const expectedLogicalKeys = extensionRequiredArtifactRows(product.id)
+    .filter((row) => family === null || row.family === family)
+    .map((row) =>
     `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`);
   if (stableJson([...logicalRows.keys()].sort(compareText)) !== stableJson(expectedLogicalKeys)) {
     throw error(`${product.id} logical bundle rows do not exactly cover every member target/role`);
@@ -1171,6 +1187,10 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
   const expectedPublicManifest = {
     schema: "oliphaunt-extension-release-manifest-v2",
     product: product.id,
+    ...(manifest.releaseProduct === undefined ? {} : {
+      releaseProduct: extensionPublicationOwner(product),
+      family: family ?? "combined",
+    }),
     version: product.version,
     extensionClass: metadata.class,
     versioning: metadata.versioning,
@@ -1185,26 +1205,31 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
     throw error(`${rel(publicManifestFile)} does not exactly expose the frozen aggregate member/carrier inventory`);
   }
 
-  const swiftCarrierName = swiftExtensionCarrierAssetName(product.id, product.version);
-  const swiftCarrierFile = path.join(directory, swiftCarrierName);
-  let actualSwiftCarrier;
-  try {
-    actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
-  } catch (cause) {
-    throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
-  }
-  const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
-    extensionManifest: manifestPath,
-    nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
-    verifyMembers: false,
-  });
-  if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
-    throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+  const includeSwiftCarrier = family === null || family === "native";
+  const swiftCarrierName = includeSwiftCarrier
+    ? swiftExtensionCarrierAssetName(product.id, product.version)
+    : null;
+  if (swiftCarrierName !== null) {
+    const swiftCarrierFile = path.join(directory, swiftCarrierName);
+    let actualSwiftCarrier;
+    try {
+      actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
+    } catch (cause) {
+      throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
+    }
+    const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
+      extensionManifest: manifestPath,
+      nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
+      verifyMembers: false,
+    });
+    if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
+      throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+    }
   }
   const controlFiles = [
     ["manifest-json", manifestName],
     ["manifest-properties", `${product.id}-${product.version}-manifest.properties`],
-    ["swift-extension-carrier", swiftCarrierName],
+    ...(swiftCarrierName === null ? [] : [["swift-extension-carrier", swiftCarrierName]]),
     ["checksums", `${product.id}-${product.version}-release-assets.sha256`],
   ];
   const expectedNames = [
@@ -1220,7 +1245,7 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
   );
   return [
     ...[...carriersByName.values()].map(({ row, file }) => productArtifact({
-      product: product.id,
+      product: extensionPublicationOwner(product),
       id: `github-release:${row.name}`,
       role: "github-release-asset",
       kind: row.kind,
@@ -1230,7 +1255,7 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
       file,
     })),
     ...controlFiles.map(([kind, name]) => productArtifact({
-      product: product.id,
+      product: extensionPublicationOwner(product),
       id: `github-release:${name}`,
       role: "github-release-metadata",
       kind,
@@ -1251,7 +1276,11 @@ function extensionGithubReleaseArtifacts(files, product) {
     } catch (cause) {
       throw error(`invalid extension artifact manifest ${rel(file)}: ${cause.message}`);
     }
-    if (value?.product === product.id) {
+    if (
+      (value?.artifactProduct ?? value?.product) === product.id
+      && (value?.releaseProduct ?? value?.product) === extensionPublicationOwner(product)
+      && (extensionCarrierFamily(product) === null || value?.family === extensionCarrierFamily(product))
+    ) {
       manifests.push([file, value]);
     }
   }
@@ -1314,7 +1343,12 @@ function extensionGithubReleaseArtifacts(files, product) {
       rows.set(key, { row, file, sqlName: member.sqlName });
     }
   }
-  const expectedKeys = extensionRequiredAssetKeys(product.id);
+  const family = extensionCarrierFamily(product);
+  const expectedKeys = extensionRequiredArtifactRows(product.id)
+    .filter((row) => family === null || row.family === family)
+    .map((row) =>
+      `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`)
+    .sort(compareText);
   const actualKeys = [...rows.keys()].sort(compareText);
   if (stableJson(expectedKeys) !== stableJson(actualKeys)) {
     throw error(`${product.id} extension asset roles do not exactly cover declared published targets: expected=${JSON.stringify(expectedKeys)}, actual=${JSON.stringify(actualKeys)}`);
@@ -1331,6 +1365,10 @@ function extensionGithubReleaseArtifacts(files, product) {
   const expectedPublicManifest = {
     schema: "oliphaunt-extension-release-manifest-v1",
     product: product.id,
+    ...(manifest.releaseProduct === undefined ? {} : {
+      releaseProduct: extensionPublicationOwner(product),
+      family: family ?? "combined",
+    }),
     version: product.version,
     sqlName: publicMember.sqlName,
     extensionClass: metadata.class,
@@ -1354,29 +1392,34 @@ function extensionGithubReleaseArtifacts(files, product) {
   if (stableJson(publicManifest) !== stableJson(expectedPublicManifest)) {
     throw error(`${rel(publicManifestFile)} does not exactly expose the canonical extension identity and frozen asset inventory`);
   }
-  const swiftCarrierName = swiftExtensionCarrierAssetName(product.id, product.version);
-  const swiftCarrierFile = path.join(directory, swiftCarrierName);
-  if (!isFile(swiftCarrierFile)) {
-    throw error(`${product.id} requires independently consumable Swift iOS carrier ${swiftCarrierName}`);
-  }
-  let actualSwiftCarrier;
-  try {
-    actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
-  } catch (cause) {
-    throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
-  }
-  const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
-    extensionManifest: manifestPath,
-    nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
-    verifyMembers: false,
-  });
-  if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
-    throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+  const includeSwiftCarrier = family === null || family === "native";
+  const swiftCarrierName = includeSwiftCarrier
+    ? swiftExtensionCarrierAssetName(product.id, product.version)
+    : null;
+  if (swiftCarrierName !== null) {
+    const swiftCarrierFile = path.join(directory, swiftCarrierName);
+    if (!isFile(swiftCarrierFile)) {
+      throw error(`${product.id} requires independently consumable Swift iOS carrier ${swiftCarrierName}`);
+    }
+    let actualSwiftCarrier;
+    try {
+      actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
+    } catch (cause) {
+      throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
+    }
+    const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
+      extensionManifest: manifestPath,
+      nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
+      verifyMembers: false,
+    });
+    if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
+      throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+    }
   }
   const controlFiles = [
     ["manifest-json", `${product.id}-${product.version}-manifest.json`],
     ["manifest-properties", `${product.id}-${product.version}-manifest.properties`],
-    ["swift-extension-carrier", swiftCarrierName],
+    ...(swiftCarrierName === null ? [] : [["swift-extension-carrier", swiftCarrierName]]),
     ["checksums", `${product.id}-${product.version}-release-assets.sha256`],
   ];
   const expectedNames = [
@@ -1396,7 +1439,7 @@ function extensionGithubReleaseArtifacts(files, product) {
   );
   return [
     ...[...rows.values()].map(({ row, file }) => productArtifact({
-      product: product.id,
+      product: extensionPublicationOwner(product),
       id: `github-release:${row.name}`,
       role: "github-release-asset",
       kind: row.kind,
@@ -1406,7 +1449,7 @@ function extensionGithubReleaseArtifacts(files, product) {
       file,
     })),
     ...controlFiles.map(([kind, name]) => productArtifact({
-      product: product.id,
+      product: extensionPublicationOwner(product),
       id: `github-release:${name}`,
       role: "github-release-metadata",
       kind,
@@ -1558,11 +1601,28 @@ function reactNativeReleaseInputs(files, product) {
   })];
 }
 
+function runtimeOwnedExtensionGithubReleaseArtifacts(files, product) {
+  const contrib = contribCarrierDescriptor("publication-lock");
+  const families = [
+    ...(product.id === contrib.nativeOwner ? ["native"] : []),
+    ...(product.id === contrib.wasixOwner ? ["wasix"] : []),
+  ];
+  return families.flatMap((family) => extensionGithubReleaseArtifacts(files, {
+    id: contrib.artifactProduct,
+    releaseProduct: product.id,
+    family,
+    version: product.version,
+  }));
+}
+
 function discoverProductArtifactsForSelection(roots, products, selectedProducts) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const artifacts = [];
+  const contrib = contribCarrierDescriptor("publication-lock");
   const hasSelectedExtensionProducts = selectedProducts.some((product) =>
-    EXTENSION_PRODUCT_KINDS.has(product?.kind));
+    EXTENSION_PRODUCT_KINDS.has(product?.kind)
+    || product?.id === contrib.nativeOwner
+    || product?.id === contrib.wasixOwner);
   for (const product of products) {
     if (typeof product?.id !== "string" || typeof product?.version !== "string") {
       throw error("product artifact discovery requires canonical product rows with id and version");
@@ -1571,6 +1631,7 @@ function discoverProductArtifactsForSelection(roots, products, selectedProducts)
       artifacts.push(...extensionGithubReleaseArtifacts(files, product));
     } else {
       artifacts.push(...fixedGithubReleaseArtifacts(files, product));
+      artifacts.push(...runtimeOwnedExtensionGithubReleaseArtifacts(files, product));
     }
     if (product.id === "oliphaunt-swift") {
       artifacts.push(...swiftReleaseInputs(files, product, {
@@ -1930,14 +1991,20 @@ function validateCandidateCatalog(candidate) {
   }
 }
 
-function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
-  if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
-    const expectedMetadata = [
-      `${product.id}-${product.version}-manifest.json`,
-      `${product.id}-${product.version}-manifest.properties`,
-      swiftExtensionCarrierAssetName(product.id, product.version),
-      `${product.id}-${product.version}-release-assets.sha256`,
-    ].sort(compareText);
+function expectedExtensionMetadataNames(product) {
+  const family = extensionCarrierFamily(product);
+  return [
+    `${product.id}-${product.version}-manifest.json`,
+    `${product.id}-${product.version}-manifest.properties`,
+    ...(family === null || family === "native"
+      ? [swiftExtensionCarrierAssetName(product.id, product.version)]
+      : []),
+    `${product.id}-${product.version}-release-assets.sha256`,
+  ].sort(compareText);
+}
+
+function validateExtensionProductArtifactInventory(product, artifacts) {
+    const expectedMetadata = expectedExtensionMetadataNames(product);
     const metadata = artifacts
       .filter((artifact) => artifact.role === "github-release-metadata")
       .map((artifact) => artifact.name)
@@ -1969,6 +2036,11 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
     if (artifacts.length !== metadata.length + publicAssets.length) {
       throw error(`${product.id} frozen product artifact inventory contains an unsupported role`);
     }
+}
+
+function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+  if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
+    validateExtensionProductArtifactInventory(product, artifacts);
     return;
   }
 
@@ -1996,6 +2068,25 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
   }
   if (product.id === "oliphaunt-react-native") {
     expected.push("release-input:oliphaunt-react-native-ios-carriers.json");
+  }
+  const contrib = contribCarrierDescriptor("publication-lock");
+  for (const family of ["native", "wasix"]) {
+    const owner = family === "native" ? contrib.nativeOwner : contrib.wasixOwner;
+    if (product.id !== owner) continue;
+    const extensionProduct = {
+      id: contrib.artifactProduct,
+      version: product.version,
+      releaseProduct: product.id,
+      family,
+    };
+    const names = [
+      ...expectedExtensionMetadataNames(extensionProduct),
+      ...expectedExtensionGithubReleaseAssetRows(extensionProduct).map((row) => row.name),
+    ];
+    const nameSet = new Set(names);
+    const extensionArtifacts = artifacts.filter((artifact) => nameSet.has(artifact.name));
+    validateExtensionProductArtifactInventory(extensionProduct, extensionArtifacts);
+    expected.push(...names.map((name) => `github-release:${name}`));
   }
   expected.sort(compareText);
   const actual = artifacts.map((artifact) => artifact.id).sort(compareText);

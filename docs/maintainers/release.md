@@ -69,10 +69,10 @@ and participates in the same carrier checks as other public products.
 - New products remain `0.0.0` in source until their first generated release PR. The global first version is `0.1.0`.
 - Swift also remains `0.0.0`, but its per-product initial version is `0.6.0` because legacy unscoped SwiftPM tags occupy `0.1.0` through `0.5.1`.
 - Release Please creates changelog headings. A brand-new tracked `CHANGELOG.md` is empty; pre-seeding `# Changelog` creates a duplicate heading.
-- PostgreSQL 18 contrib members are owned by the single
-  `oliphaunt-extension-contrib-pg18` product. The product owns its version
-  independently from native and WASIX; its 32 SQL members are not 32 separately
-  versioned release products.
+- PostgreSQL 18 contrib members have no independent release version. Native
+  carriers use the `liboliphaunt-native` version and WASIX carriers use the
+  `liboliphaunt-wasix` version; the 32 SQL members remain exact selectors, not
+  separately versioned release products.
 - active external extension products are `upstream-bound` and own independent
   packaging SemVer. Their upstream version/commit and compatible runtime
   versions are separate metadata. A publication-deferred external extension
@@ -634,10 +634,10 @@ solely as a reproducible ABI fixture: it is end-of-life and this check is not a
 claim that Fedora 39 is a security-supported production OS. Oliphaunt's public
 contract is the GNU architecture and symbol-version floor, not a distro name.
 
-Every release-ready exact extension belongs to exactly one active product and
-stable ecosystem façades. PostgreSQL contrib members belong to their shared
-contrib product; each active external extension owns its independent product.
-A build-only or publication-deferred extension owns neither. Each active
+Every release-ready exact extension has stable ecosystem façades. PostgreSQL
+contrib carriers belong to the matching native or WASIX runtime product; each
+active external extension owns its independent product. A build-only or
+publication-deferred extension owns neither. Each active
 exact SQL member's `targets/artifacts.toml` explicitly declares
 supported/unpublished targets and evidence. The runtime target matrix bounds
 possible values but never creates extension support by default.
