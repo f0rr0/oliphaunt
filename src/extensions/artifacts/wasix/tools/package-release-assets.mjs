@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
-import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import { extensionSqlNames } from "../../../../../tools/release/release-artifact-targets.mjs";
 
 const PREFIX = "package-wasix-extension-assets.sh";
 const WASIX_PRODUCT_PATH = "src/runtimes/liboliphaunt/wasix";
-const EXTENSION_CLASSES = ["contrib", "external", "first-party"];
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -50,19 +51,6 @@ async function readJson(file) {
   return value;
 }
 
-async function readToml(file) {
-  let value;
-  try {
-    value = Bun.TOML.parse(await readFile(file, "utf8"));
-  } catch (error) {
-    fail(`could not read TOML file ${file}: ${error.message}`);
-  }
-  if (!isObject(value)) {
-    fail(`${file} must contain a TOML table`);
-  }
-  return value;
-}
-
 function relativeToRoot(root, file) {
   return path.relative(root, file).split(path.sep).join("/");
 }
@@ -77,63 +65,15 @@ async function releaseVersion(root) {
   return version;
 }
 
-async function extensionReleaseTomls(root) {
-  const files = [];
-  for (const extensionClass of EXTENSION_CLASSES) {
-    const classRoot = path.join(root, "src/extensions", extensionClass);
-    const classReleasePath = path.join(classRoot, "release.toml");
-    if ((await fileSize(classReleasePath)) !== undefined) {
-      files.push(classReleasePath);
-    }
-    let entries;
-    try {
-      entries = await readdir(classRoot, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const releasePath = path.join(classRoot, entry.name, "release.toml");
-        if ((await fileSize(releasePath)) !== undefined) {
-          files.push(releasePath);
-        }
-      }
-    }
-  }
-  return files.sort();
-}
-
-async function selectedSqlNames(root, extensionProductsCsv) {
+function selectedSqlNames(extensionProductsCsv) {
   const products = parseCsv(extensionProductsCsv);
   if (products.length === 0) {
     return new Set();
   }
 
-  const byProduct = new Map();
-  for (const releasePath of await extensionReleaseTomls(root)) {
-    const metadata = await readToml(releasePath);
-    const product = metadata.id;
-    if (typeof product === "string" && product.length > 0) {
-      byProduct.set(product, { metadata, releasePath });
-    }
-  }
-
   const sqlNames = new Set();
   for (const product of products) {
-    const entry = byProduct.get(product);
-    if (entry === undefined) {
-      fail(`unknown exact-extension artifact product ${product}`);
-    }
-    const { metadata, releasePath } = entry;
-    const members = metadata.kind === "exact-extension-artifact"
-      ? [metadata.extension_sql_name]
-      : metadata.kind === "exact-extension-bundle"
-        ? metadata.extension_sql_names
-        : undefined;
-    if (!Array.isArray(members) || members.length === 0 || members.some((sqlName) => typeof sqlName !== "string" || sqlName.length === 0)) {
-      fail(`${relativeToRoot(root, releasePath)} must declare exact extension_sql_name or extension_sql_names members`);
-    }
-    for (const sqlName of members) sqlNames.add(sqlName);
+    for (const sqlName of extensionSqlNames(product, PREFIX)) sqlNames.add(sqlName);
   }
   return sqlNames;
 }
@@ -164,7 +104,7 @@ const extensionProductsCsv = optionValue(args, "--extension-products");
 
 const [version, selected] = await Promise.all([
   releaseVersion(root),
-  selectedSqlNames(root, extensionProductsCsv),
+  selectedSqlNames(extensionProductsCsv),
 ]);
 
 const data = await readJson(metadataPath);

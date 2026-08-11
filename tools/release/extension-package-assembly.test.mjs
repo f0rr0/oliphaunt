@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,12 +14,16 @@ import path from "node:path";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { afterEach, test } from "node:test";
 
+import { extensionSqlNames } from "./release-artifact-targets.mjs";
+
 const ROOT = path.resolve(import.meta.dir, "../..");
 const TEST_BASH = process.env.OLIPHAUNT_TEST_BASH
   ? path.resolve(ROOT, process.env.OLIPHAUNT_TEST_BASH)
   : (process.platform === "darwin" ? "/bin/bash" : "bash");
 const RELEASE_SCRIPT = "src/extensions/artifacts/packages/tools/package-release-assets.sh";
 const MOBILE_SCRIPT = "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh";
+const WASIX_ASSET_PACKAGER = "src/extensions/artifacts/wasix/tools/package-release-assets.mjs";
+const CONTRIB_PRODUCT = "oliphaunt-extension-contrib-pg18";
 const roots = [];
 
 function fixtureRun(script, { environment = {}, failTool = "" } = {}) {
@@ -137,4 +142,57 @@ test("mobile extension assembly rejects delimiter-only selections without nounse
   assert.equal(emptyTargets.execution.status, 1);
   assert.match(emptyTargets.execution.stderr, /did not contain any targets/u);
   assert.doesNotMatch(emptyTargets.execution.stderr, /unbound variable/u);
+});
+
+test("WASIX release staging resolves runtime-owned contrib through its logical artifact product", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "oliphaunt-wasix-extension-package-"));
+  roots.push(fixture);
+  const assetRoot = path.join(fixture, "assets");
+  const extensionRoot = path.join(assetRoot, "extensions");
+  const metadataPath = path.join(fixture, "extensions.json");
+  const outDir = path.join(fixture, "out");
+  mkdirSync(extensionRoot, { recursive: true });
+
+  const sqlNames = extensionSqlNames(CONTRIB_PRODUCT, "extension-package-assembly.test");
+  const extensions = sqlNames.map((sqlName) => {
+    const archive = `extensions/${sqlName}.tar.zst`;
+    writeFileSync(path.join(assetRoot, archive), `archive:${sqlName}\n`);
+    return { "sql-name": sqlName, archive };
+  });
+  writeFileSync(metadataPath, `${JSON.stringify({ extensions }, null, 2)}\n`);
+
+  const execution = spawnSync(
+    TEST_BASH,
+    [
+      path.join(ROOT, "tools/dev/bun.sh"),
+      path.join(ROOT, WASIX_ASSET_PACKAGER),
+      "--root",
+      ROOT,
+      "--asset-root",
+      assetRoot,
+      "--metadata",
+      metadataPath,
+      "--out-dir",
+      outDir,
+      "--target",
+      "wasix-portable",
+      "--extension-products",
+      CONTRIB_PRODUCT,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+
+  assert.equal(execution.status, 0, execution.stderr);
+  assert.match(execution.stdout, new RegExp(`staged ${sqlNames.length} WASIX exact-extension artifact`));
+  const staged = readdirSync(outDir).sort();
+  assert.equal(staged.length, sqlNames.length + 1);
+  const index = staged.find((entry) => entry.endsWith("-wasix-extension-assets.tsv"));
+  assert.ok(index);
+  const indexedSqlNames = readFileSync(path.join(outDir, index), "utf8")
+    .trimEnd()
+    .split("\n")
+    .slice(1)
+    .map((line) => line.split("\t", 1)[0])
+    .sort();
+  assert.deepEqual(indexedSqlNames, sqlNames);
 });
