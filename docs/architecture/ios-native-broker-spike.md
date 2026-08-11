@@ -571,6 +571,15 @@ native call. It also passed 60/60 trials. Its terminal was observed in 250-267
 ms because the fixture waits 250 ms to prove the main actor remains responsive;
 the injected work item itself is scheduled after 50 ms.
 
+iOS retained three sampled crash reports for formal initial workers. Each is an
+`EXC_CRASH` / `SIGABRT` with the faulting global-queue thread running
+`BrokerFaultInjector.beginNativeExecution` -> `abort()`, while separate threads
+are simultaneously inside `oliphaunt_exec_protocol_stream` and PostgreSQL
+`pg_sleep`. Two other retained reports belong to recovered workers and record a
+later RunningBoard `0xdead10cc` termination; they are excluded from watchdog
+causality. Crash-log coalescing means these samples corroborate the mechanism
+but are not a per-trial OS termination receipt for all 60 trials.
+
 All native-control trials had launch-attempt counters `1 -> 1 -> 2` and Ready
 counters `1 -> 1 -> 2`. Their 120 worker epochs and 180 host/initial/recovered
 PIDs were unique, the old worker was absent at report publication, per-trial
