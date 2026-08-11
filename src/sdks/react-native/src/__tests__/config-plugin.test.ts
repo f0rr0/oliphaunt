@@ -90,11 +90,12 @@ function writeCarrierPackage(
   const carrier = path.join(packageRoot, CARRIER_FILENAME);
   const packageVersion = options.version ?? '1.2.3';
   const nativeVersion = options.liboliphauntVersion ?? packageVersion;
+  const [firstExtension] = extensions;
   writeCarrier(carrier, extensions, {
     baseVersion: nativeVersion,
-    ownerVersions: extensions.length > 0
-      ? { [releaseOwnerForSqlName(extensions[0].sqlName).releaseProduct]: packageVersion }
-      : {},
+    ownerVersions: firstExtension === undefined
+      ? {}
+      : { [releaseOwnerForSqlName(firstExtension.sqlName).releaseProduct]: packageVersion },
   });
   writeJson(path.join(packageRoot, 'package.json'), {
     name: packageName,
