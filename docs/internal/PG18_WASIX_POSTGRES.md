@@ -16,21 +16,30 @@ performance constraint.
 - The released artifact pipeline packages standalone WASIX `initdb` and
   `pg_dump` tools.  `pg_dumpall.c` is patched only because it shares the
   renamed pg_dump helper; pg_dumpall and psql are not separate packaged WASIX
-  tools in this lane unless future work adds them explicitly.
+  tools in this lane.
 - Patch series kept small, ordered, and reviewable.  Each patch should explain
   which PostgreSQL invariant it changes and why the embedded WASIX runtime
   still preserves the useful part of that invariant.
-- Performance goal is to beat the released PG17.5 WASIX lane on the existing
-  benches before this becomes a replacement candidate.
+- Performance comparisons use the released PG17.5 WASIX lane on the existing
+  benches; this document makes no replacement claim.
 
 ## Research Assessment
 
-The concurrent full-PostgreSQL WASIX experiment is still valuable for finding
-Wasmer, WASIX libc, fork, socket, shared-memory, and toolchain blockers, but it
-is not the right replacement path for the released embedded product yet.  The
-experiment evidence points to persistent process/fork/shmem/socket/RSS costs
+The concurrent full-PostgreSQL WASIX experiment is useful for identifying
+Wasmer, WASIX libc, process, socket, shared-memory, and toolchain blockers, but
+replacing the released embedded product is outside its scope. The
+experiment evidence points to persistent process/shmem/socket/RSS costs
 before query execution, while the released product wins by keeping one backend,
 one host lifecycle, direct FE/BE pumping, prebuilt PGDATA, and AOT reuse.
+
+This assessment records the release-lane decision; it is not the current
+physical-memory conclusion for concurrent WASIX. The independent, non-release
+[`wasix-postmaster` research lane](../../src/runtimes/liboliphaunt/wasix-postmaster/README.md)
+now measures aliased process-tree RSS only as a diagnostic and uses Linux PSS
+plus cgroup accounting for physical-memory claims. Its
+[memory model](wasix-postmaster/rss-memory-model.md)
+and fresh-backend architecture remain research inputs and do not change the
+single-backend product or its release support boundary.
 
 The practical direction is therefore:
 
@@ -56,12 +65,15 @@ The practical direction is therefore:
   so experiment patches cannot be copied into this runtime without a WASIX
   rationale.
 
-The immediate conclusion is that a "proper" concurrent PostgreSQL under WASIX
-is unlikely to match native PostgreSQL or released Oliphaunt-style WASM performance
-soon.  A fresh PG18 WASIX runtime can plausibly beat the released PG17.5 lane
-because it keeps the low-overhead lifecycle while inheriting newer PostgreSQL,
-newer WASIX/Wasmer fixes, tighter host ABI boundaries, and targeted hot-path
-patches from the experiment.
+For the replacement decision recorded here, the immediate conclusion is that a
+"proper" concurrent PostgreSQL under WASIX was not ready to match native
+PostgreSQL or released Oliphaunt-style WASM performance. A fresh PG18 WASIX
+runtime can plausibly beat the released PG17.5 lane because it keeps the
+low-overhead lifecycle while inheriting newer PostgreSQL, newer WASIX/Wasmer
+fixes, tighter host ABI boundaries, and targeted hot-path patches from the
+experiment. Concurrent-runtime viability is evaluated separately
+in its historical carrier and PSS/cgroup evidence ledger. No carrier produced
+from that project's current source is admitted.
 
 ## PG17.5 Release-Lane Implementation Comparison
 
@@ -274,8 +286,8 @@ not by wholesale copying more upstream Oliphaunt code.
    family with int4 input on both sides and InvalidOid collation, while still
    using `index_getattr()` and falling back to upstream comparison for every
    other case. Done in patch 0016; the more aggressive direct tuple-data
-   shortcut from the full-PG experiment remains intentionally unported pending
-   runtime evidence and tighter layout proof.
+   shortcut from the full-PG experiment is excluded because it lacks the
+   required layout proof and runtime evidence.
 17. Btree delete scratch buffers: keep `MaxTIDsPerBTreePage` simple-deletion
    and bottom-up-deletion scratch arrays on the stack in the embedded WASIX
    lane. The arrays are page-size bounded and PostgreSQL already uses similar
@@ -308,14 +320,17 @@ disposition manifest is:
 src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml
 ```
 
-The manifest records each experiment patch by filename, whether it was ported,
-replaced, deferred, or rejected, and why that decision fits a single-backend
-WASIX product.  The currently carried performance/tool patches are the hash
-load fast path, top-XID visibility fast path, guarded btree int4 comparator,
-btree delete scratch-buffer stack placement, LIKE substring shortcut, first
-int4 leaf compare shortcut, and pg_dump LTO symbol hygiene.  The
-bottom-up-delete runtime toggle and full EXEC_BACKEND/fork runtime patches
-remain outside the default lane.
+The manifest records each experiment patch by filename, whether it was applied,
+adopted from current main, or rejected, and why that decision fits a
+single-backend WASIX product. The five compatible optimizations—hash-load,
+top-XID visibility, guarded btree int4 comparison, LIKE literal substring, and
+first int4 leaf comparison—are owned by the main WASIX runtime. The postmaster
+consumes those exact patches through
+`postgres/main-optimizations.series` instead of maintaining copies. The
+single-user-only btree delete stack placement, bottom-up-delete runtime toggle,
+and full concurrent-postmaster runtime patches remain outside the default
+single-backend lane. The postmaster keeps its narrow pg_dump LTO hygiene patch
+locally because it belongs to that build topology.
 
 When the full-PG experiment checkout exists locally, the source-spine guard
 also compares the disposition manifest against the actual experiment patch

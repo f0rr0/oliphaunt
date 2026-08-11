@@ -30,6 +30,7 @@ EVIDENCE_MATRIX_SCHEMA = ROOT / "src/extensions/evidence/schemas/matrix.schema.j
 EVIDENCE_RUNS = ROOT / "src/extensions/evidence/runs"
 EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
+PRODUCTION_THIRD_PARTY_DOMAINS = ("shared", "native", "wasix")
 EXTERNAL_ROOT = ROOT / "src/extensions/external"
 EXTENSION_ENVELOPE_FILENAMES = {
     "CHANGELOG.md",
@@ -369,7 +370,8 @@ def source_pin_paths() -> list[Path]:
         fail(f"{rel(EXTERNAL_ROOT)} must exist")
     paths = [
         path
-        for path in THIRD_PARTY_ROOT.glob("**/*.toml")
+        for domain in PRODUCTION_THIRD_PARTY_DOMAINS
+        for path in (THIRD_PARTY_ROOT / domain).glob("**/*.toml")
         if path.is_file()
     ]
     paths.extend(
@@ -2583,6 +2585,24 @@ def run_xtask_check() -> None:
 
 def self_test() -> None:
     digest_inputs = set(source_digest_inputs())
+    for domain in PRODUCTION_THIRD_PARTY_DOMAINS:
+        for path in (THIRD_PARTY_ROOT / domain).glob("**/*.toml"):
+            if path.is_file() and rel(path) not in digest_inputs:
+                fail(
+                    "self-test expected production third-party source pin in extension "
+                    f"digest inputs: {rel(path)}"
+                )
+    nonproduction_third_party_inputs = sorted(
+        path
+        for path in digest_inputs
+        if path.startswith("src/sources/third-party/")
+        and path.split("/", 4)[3] not in PRODUCTION_THIRD_PARTY_DOMAINS
+    )
+    if nonproduction_third_party_inputs:
+        fail(
+            "self-test expected nonproduction source pins to stay outside extension digest "
+            "inputs: " + ", ".join(nonproduction_third_party_inputs)
+        )
     for path in [
         "src/extensions/external/vector/VERSION",
         "src/extensions/external/vector/CHANGELOG.md",

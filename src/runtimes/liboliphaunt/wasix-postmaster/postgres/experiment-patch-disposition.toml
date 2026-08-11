@@ -1,0 +1,64 @@
+[metadata]
+source_commit = "aa4211f4485327cb7493863ea3380acf27c5f951"
+source_path = "assets/wasix-build/experiments/fresh-wasix-postgres/patches"
+policy = "use the correctness baseline and directly consume every compatible optimization owned by the current main WASIX runtime"
+
+[[patch]]
+experiment = "0001-wasix-use-posix-dsm-not-sysv.patch"
+status = "applied"
+rationale = "Required for a real postmaster and dynamic shared memory under WASIX."
+
+[[patch]]
+experiment = "0003-wasix-libpq-static-encoding-shim.patch"
+status = "applied"
+rationale = "Required by the experiment's static libpq/tool linkage."
+
+[[patch]]
+experiment = "0004-wasix-core-execbackend-initdb-runtime.patch"
+status = "applied"
+rationale = "Contains the cohesive EXEC_BACKEND handoff, no-shell tool spawning, WASIX identity, directory sync, and initdb runtime port."
+
+[[patch]]
+experiment = "0005-pg-dump-avoid-lto-executequery-collision.patch"
+status = "applied"
+rationale = "Narrow source hygiene required by the optimized thin-LTO tool build."
+
+[[patch]]
+experiment = "0006-like-literal-substring-fast-path.patch"
+status = "adopted-current-main"
+current_patch = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch"
+rationale = "The postmaster series directly consumes current main's tighter semantically guarded implementation."
+
+[[patch]]
+experiment = "0007-top-xid-current-transaction-fast-path.patch"
+status = "adopted-current-main"
+current_patch = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch"
+rationale = "The postmaster series directly consumes the implementation owned and qualified by current main."
+
+[[patch]]
+experiment = "0008-btree-int4-compare-fast-path.patch"
+status = "adopted-current-main"
+current_patch = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch"
+rationale = "The postmaster series directly consumes current main's tighter opclass and collation guards."
+
+[[patch]]
+experiment = "0009-btree-delete-stack-state.patch"
+status = "rejected-for-postmaster"
+rationale = "The tightened current patch is explicitly restricted to the single-user runtime."
+
+[[patch]]
+experiment = "0010-btree-bottomup-delete-runtime-toggle.patch"
+status = "rejected"
+rationale = "It changes index-maintenance policy and the repository's recorded experiment disposition rejects it."
+
+[[patch]]
+experiment = "0011-btree-first-int4-compare-fast-path.patch"
+status = "adopted-current-main"
+current_patch = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch"
+rationale = "The postmaster series directly consumes current main's tighter tuple and scan-key guards."
+
+[[patch]]
+experiment = "0012-hash-bytes-unaligned-load-fast-path.patch"
+status = "adopted-current-main"
+current_patch = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch"
+rationale = "The malformed experiment export is discarded; the postmaster series directly consumes current main's valid PG18 implementation."

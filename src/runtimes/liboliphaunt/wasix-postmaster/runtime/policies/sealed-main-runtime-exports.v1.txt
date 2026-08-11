@@ -1,0 +1,19 @@
+# Exact main-module roots retained independently of packaged side-module imports.
+#
+# The first group is consumed by the current WASIX dynamic-main, TLS, signal,
+# execution, and deterministic-start contracts.  The final three exports are
+# retained so the final packed-latch fence proof can inspect the post-DCE bytes.
+__data_end
+__tls_align
+__tls_base
+__tls_size
+__wasm_apply_data_relocs
+__wasm_call_ctors
+__wasm_init_memory
+__wasm_init_tls
+__wasm_signal
+_start
+wasi_thread_start
+ResetLatch
+SetLatch
+WaitEventSetWait

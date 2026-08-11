@@ -1220,3 +1220,115 @@ test(
     }
   },
 );
+
+test(
+  'staged Git checkout accepts a dangling relative symlink confined to the checkout',
+  {skip: process.platform === 'win32'},
+  async () => {
+    const root = makeRoot('source-git-contained-dangling-link');
+    try {
+      const upstream = path.join(root, 'upstream');
+      initializeGitRepository(upstream, 'upstream bytes', 'upstream');
+      const fixtures = path.join(upstream, 'fixtures');
+      mkdirSync(fixtures);
+      symlinkSync('../missing-fixture', path.join(fixtures, 'dangling'));
+      command('git', ['add', 'fixtures/dangling'], {cwd: upstream});
+      command('git', ['commit', '--quiet', '-m', 'contained dangling link'], {cwd: upstream});
+      const commit = command('git', ['rev-parse', 'HEAD'], {cwd: upstream});
+      const source = {
+        name: 'source',
+        kind: 'git',
+        url: 'https://example.invalid/source.git',
+        branch: 'pinned',
+        commit,
+      };
+      const runProcess = (specification) => {
+        if (specification.command === 'git' && specification.args.includes('fetch')) {
+          return defaultRunProcess({
+            ...specification,
+            args: [
+              '-c',
+              'protocol.file.allow=always',
+              'fetch',
+              '--no-tags',
+              '--depth=1',
+              upstream,
+              commit,
+            ],
+          });
+        }
+        return defaultRunProcess(specification);
+      };
+
+      await sourceFetcher(root, {runProcess}).materialize(source);
+
+      const checkout = path.join(root, 'checkouts', source.name);
+      assert.equal(existsSync(path.join(checkout, 'source.txt')), true);
+      assert.equal(
+        command('git', ['status', '--porcelain=v1', '--untracked-files=all'], {cwd: checkout}),
+        '',
+      );
+    } finally {
+      rmSync(root, {recursive: true, force: true});
+    }
+  },
+);
+
+test(
+  'staged Git checkout rejects a dangling target through an escaping symlink ancestor',
+  {skip: process.platform === 'win32'},
+  async () => {
+    const root = makeRoot('source-git-transitive-dangling-link');
+    try {
+      const upstream = path.join(root, 'upstream');
+      initializeGitRepository(upstream, 'upstream bytes', 'upstream');
+      const fixtures = path.join(upstream, 'fixtures');
+      mkdirSync(fixtures);
+      mkdirSync(path.join(root, 'outside'));
+      // In the staged checkout, ../../../../outside resolves beside the
+      // checkout root. The first link is lexically contained, but its deepest
+      // existing ancestor is the second link and resolves outside the stage.
+      symlinkSync('z-escape/missing', path.join(fixtures, 'a-dangling'));
+      symlinkSync('../../../../outside', path.join(fixtures, 'z-escape'));
+      command('git', ['add', 'fixtures/a-dangling', 'fixtures/z-escape'], {cwd: upstream});
+      command('git', ['commit', '--quiet', '-m', 'transitive dangling escape'], {cwd: upstream});
+      const commit = command('git', ['rev-parse', 'HEAD'], {cwd: upstream});
+      const checkout = path.join(root, 'checkouts', 'source');
+      const priorCommit = initializeGitRepository(checkout, 'prior durable bytes');
+      const source = {
+        name: 'source',
+        kind: 'git',
+        url: 'https://example.invalid/source.git',
+        branch: 'pinned',
+        commit,
+      };
+      const runProcess = (specification) => {
+        if (specification.command === 'git' && specification.args.includes('fetch')) {
+          return defaultRunProcess({
+            ...specification,
+            args: [
+              '-c',
+              'protocol.file.allow=always',
+              'fetch',
+              '--no-tags',
+              '--depth=1',
+              upstream,
+              commit,
+            ],
+          });
+        }
+        return defaultRunProcess(specification);
+      };
+
+      await assert.rejects(
+        sourceFetcher(root, {runProcess}).materialize(source),
+        /escaping .*symlink/u,
+      );
+      assert.equal(command('git', ['rev-parse', 'HEAD'], {cwd: checkout}), priorCommit);
+      assert.equal(readFileSync(path.join(checkout, 'source.txt'), 'utf8'), 'prior durable bytes');
+      assert.deepEqual(readdirSync(path.join(root, 'checkouts')), ['source']);
+    } finally {
+      rmSync(root, {recursive: true, force: true});
+    }
+  },
+);

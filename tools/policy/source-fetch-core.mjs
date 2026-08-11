@@ -494,7 +494,34 @@ function assertSafeCheckoutTree(root) {
         throw new Error(`Git source checkout contains escaping symlink ${path} -> ${target}`);
       }
       if (!pathExists(resolvedTarget)) {
-        throw new Error(`Git source checkout contains dangling symlink ${path} -> ${target}`);
+        // Source repositories may intentionally track dangling relative links
+        // as filesystem fixtures. They are safe only when both the lexical
+        // destination and its deepest existing ancestor remain in the staged
+        // checkout. The ancestor check catches paths that cross an existing
+        // symlink before reaching the missing leaf.
+        let existingAncestor = dirname(resolvedTarget);
+        while (existingAncestor !== root && !pathExists(existingAncestor)) {
+          existingAncestor = dirname(existingAncestor);
+        }
+        let realAncestor;
+        try {
+          realAncestor = realpathSync(existingAncestor);
+        } catch (error) {
+          throw new Error(
+            `Git source checkout contains unresolved dangling symlink ${path} -> ${target}: ${error}`,
+          );
+        }
+        const relativeRealAncestor = relative(realRoot, realAncestor);
+        if (
+          relativeRealAncestor === '..'
+          || relativeRealAncestor.startsWith(`..${sep}`)
+          || isAbsolute(relativeRealAncestor)
+        ) {
+          throw new Error(
+            `Git source checkout contains transitively escaping dangling symlink ${path} -> ${target}`,
+          );
+        }
+        continue;
       }
       let realTarget;
       try {

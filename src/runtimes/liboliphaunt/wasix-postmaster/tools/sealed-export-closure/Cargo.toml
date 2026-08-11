@@ -1,0 +1,16 @@
+[package]
+name = "oliphaunt-wasix-sealed-export-closure"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+wasm-encoder = "0.247"
+wasmparser = "0.247"
+
+[workspace]

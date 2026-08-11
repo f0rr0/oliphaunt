@@ -1,0 +1,4 @@
+name = "wasmer-postmaster"
+url = "https://github.com/wasmerio/wasmer.git"
+branch = "v7.2.0-alpha.2"
+commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"

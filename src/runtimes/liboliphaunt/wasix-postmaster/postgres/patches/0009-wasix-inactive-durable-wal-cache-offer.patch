@@ -1,0 +1,369 @@
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+index 47c04f2..526bdf7 100644
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -637,6 +637,124 @@ static int	openLogFile = -1;
+ static XLogSegNo openLogSegNo = 0;
+ static TimeLineID openLogTLI = 0;
+ 
++#ifdef __wasi__
++/*
++ * Cache offers for WAL must stay attached to the exact descriptor and WAL
++ * identity that proved them.  File-descriptor numbers can be reused, so a
++ * bare "last segment was durable" boolean is not a sufficient contract.
++ */
++typedef struct XLogFileCacheOfferState
++{
++	int			fd;
++	XLogSegNo	segno;
++	TimeLineID	tli;
++	bool		sync_open_writes;
++	bool		revoke_before_first_write;
++	bool		complete_and_durable;
++} XLogFileCacheOfferState;
++
++static XLogFileCacheOfferState openLogFileCacheOffer =
++{
++	.fd = -1,
++	.segno = 0,
++	.tli = 0,
++	.sync_open_writes = false,
++	.revoke_before_first_write = false,
++	.complete_and_durable = false,
++};
++
++static inline void
++XLogFileCacheOfferReset(void)
++{
++	openLogFileCacheOffer.fd = -1;
++	openLogFileCacheOffer.segno = 0;
++	openLogFileCacheOffer.tli = 0;
++	openLogFileCacheOffer.sync_open_writes = false;
++	openLogFileCacheOffer.revoke_before_first_write = false;
++	openLogFileCacheOffer.complete_and_durable = false;
++}
++
++static inline void
++XLogFileCacheOfferOpened(int fd, XLogSegNo segno, TimeLineID tli)
++{
++	Assert(fd >= 0);
++	Assert(tli != 0);
++
++	openLogFileCacheOffer.fd = fd;
++	openLogFileCacheOffer.segno = segno;
++	openLogFileCacheOffer.tli = tli;
++	openLogFileCacheOffer.sync_open_writes =
++		enableFsync &&
++		(wal_sync_method == WAL_SYNC_METHOD_OPEN ||
++		 wal_sync_method == WAL_SYNC_METHOD_OPEN_DSYNC);
++	openLogFileCacheOffer.revoke_before_first_write = true;
++	openLogFileCacheOffer.complete_and_durable = false;
++}
++
++static inline void
++XLogFileCacheOfferWriteStarted(int fd, XLogSegNo segno, TimeLineID tli)
++{
++	Assert(openLogFileCacheOffer.fd == fd);
++	Assert(openLogFileCacheOffer.segno == segno);
++	Assert(openLogFileCacheOffer.tli == tli);
++
++	/*
++	 * A recycled inode can retain a descriptor-pinned deferred offer from its
++	 * prior contents.  Revoke that identity synchronously once for this open
++	 * generation, before its first WAL payload write can change the file.
++	 */
++	if (openLogFileCacheOffer.revoke_before_first_write)
++	{
++		openLogFileCacheOffer.revoke_before_first_write = false;
++		(void) pg_wasix_fd_cache_revoke_v1(
++			fd, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
++			PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE);
++	}
++
++	/* Any subsequent write invalidates an earlier completion proof. */
++	openLogFileCacheOffer.complete_and_durable = false;
++}
++
++static inline void
++XLogFileCacheOfferCompleted(int fd, XLogSegNo segno, TimeLineID tli)
++{
++	bool		durability_proved;
++
++	/*
++	 * issue_xlog_fsync() is a successful durability proof only when fsync is
++	 * enabled.  For open_sync/open_datasync it returns without another syscall
++	 * because the successful final-page write itself supplied that proof.  The
++	 * descriptor must also have been opened while those semantics were enabled;
++	 * fsync can be reloaded without reopening an existing descriptor.
++	 */
++	durability_proved = enableFsync;
++	if (wal_sync_method == WAL_SYNC_METHOD_OPEN ||
++		wal_sync_method == WAL_SYNC_METHOD_OPEN_DSYNC)
++		durability_proved = durability_proved &&
++			openLogFileCacheOffer.sync_open_writes;
++
++	openLogFileCacheOffer.complete_and_durable =
++		durability_proved &&
++		openLogFileCacheOffer.fd == fd &&
++		openLogFileCacheOffer.segno == segno &&
++		openLogFileCacheOffer.tli == tli;
++}
++
++static inline bool
++XLogFileCacheOfferTake(int fd, XLogSegNo segno, TimeLineID tli)
++{
++	bool		eligible;
++
++	eligible = openLogFileCacheOffer.complete_and_durable &&
++		openLogFileCacheOffer.fd == fd &&
++		openLogFileCacheOffer.segno == segno &&
++		openLogFileCacheOffer.tli == tli;
++	XLogFileCacheOfferReset();
++
++	return eligible;
++}
++#endif
++
+ /*
+  * Local copies of equivalent fields in the control file.  When running
+  * crash recovery, LocalMinRecoveryPoint is set to InvalidXLogRecPtr as we
+@@ -2373,6 +2491,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 
+ 			/* create/use new log file */
+ 			openLogFile = XLogFileInit(openLogSegNo, tli);
++#ifdef __wasi__
++			XLogFileCacheOfferOpened(openLogFile, openLogSegNo, openLogTLI);
++#endif
+ 			ReserveExternalFD();
+ 		}
+ 
+@@ -2383,6 +2504,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 							wal_segment_size);
+ 			openLogTLI = tli;
+ 			openLogFile = XLogFileOpen(openLogSegNo, tli);
++#ifdef __wasi__
++			XLogFileCacheOfferOpened(openLogFile, openLogSegNo, openLogTLI);
++#endif
+ 			ReserveExternalFD();
+ 		}
+ 
+@@ -2421,6 +2545,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 			from = XLogCtl->pages + startidx * (Size) XLOG_BLCKSZ;
+ 			nbytes = npages * (Size) XLOG_BLCKSZ;
+ 			nleft = nbytes;
++#ifdef __wasi__
++			XLogFileCacheOfferWriteStarted(openLogFile, openLogSegNo, tli);
++#endif
+ 			do
+ 			{
+ 				errno = 0;
+@@ -2477,6 +2604,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 			if (finishing_seg)
+ 			{
+ 				issue_xlog_fsync(openLogFile, openLogSegNo, tli);
++#ifdef __wasi__
++				XLogFileCacheOfferCompleted(openLogFile, openLogSegNo, tli);
++#endif
+ 
+ 				/* signal that we need to wakeup walsenders later */
+ 				WalSndWakeupRequest();
+@@ -2544,6 +2674,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 								wal_segment_size);
+ 				openLogTLI = tli;
+ 				openLogFile = XLogFileOpen(openLogSegNo, tli);
++#ifdef __wasi__
++				XLogFileCacheOfferOpened(openLogFile, openLogSegNo, openLogTLI);
++#endif
+ 				ReserveExternalFD();
+ 			}
+ 
+@@ -3634,8 +3767,45 @@ XLogFileOpen(XLogSegNo segno, TimeLineID tli)
+ static void
+ XLogFileClose(void)
+ {
++#ifdef __wasi__
++	bool		cache_offer_eligible;
++	uint32		cache_offer_flags = PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE;
++#endif
++
+ 	Assert(openLogFile >= 0);
+ 
++#ifdef __wasi__
++	/* Consume the proof before any close can make this FD number reusable. */
++	cache_offer_eligible = XLogFileCacheOfferTake(openLogFile, openLogSegNo,
++											 openLogTLI);
++	if (cache_offer_eligible)
++	{
++		/*
++		 * The consumed generation proof says the segment is complete and
++		 * durable.  For non-direct WAL, bit 1 therefore proves that dropping
++		 * this page-cache range cannot change correctness; an archiver or
++		 * walsender can refault the still-present durable file if needed.
++		 */
++		if ((io_direct_flags & IO_DIRECT_WAL) == 0)
++		{
++			cache_offer_flags |=
++				PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE;
++
++			/*
++			 * Preserve bit 0's existing ABI meaning as the legacy low-reuse
++			 * hint.  It describes expected reuse, not cache-drop safety.
++			 */
++			if (!XLogIsNeeded())
++				cache_offer_flags |=
++					PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE;
++		}
++		(void) pg_wasix_cache_offer(openLogFile, 0,
++									 (off_t) wal_segment_size,
++									 PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
++									 cache_offer_flags);
++	}
++#endif
++
+ 	/*
+ 	 * WAL segment files will not be re-read in normal operation, so we advise
+ 	 * the OS to release any cached pages.  But do not do so if WAL archiving
+@@ -5175,6 +5345,9 @@ BootStrapXLOG(uint32 data_checksum_version)
+ 	/* Create first XLOG segment file */
+ 	openLogTLI = BootstrapTimeLineID;
+ 	openLogFile = XLogFileInit(1, BootstrapTimeLineID);
++#ifdef __wasi__
++	XLogFileCacheOfferOpened(openLogFile, 1, BootstrapTimeLineID);
++#endif
+ 
+ 	/*
+ 	 * We needn't bother with Reserve/ReleaseExternalFD here, since we'll
+@@ -5182,6 +5355,9 @@ BootStrapXLOG(uint32 data_checksum_version)
+ 	 */
+ 
+ 	/* Write the first page with the initial record */
++#ifdef __wasi__
++	XLogFileCacheOfferWriteStarted(openLogFile, 1, BootstrapTimeLineID);
++#endif
+ 	errno = 0;
+ 	pgstat_report_wait_start(WAIT_EVENT_WAL_BOOTSTRAP_WRITE);
+ 	if (write(openLogFile, page, XLOG_BLCKSZ) != XLOG_BLCKSZ)
+@@ -5202,6 +5378,10 @@ BootStrapXLOG(uint32 data_checksum_version)
+ 				 errmsg("could not fsync bootstrap write-ahead log file: %m")));
+ 	pgstat_report_wait_end();
+ 
++#ifdef __wasi__
++	/* Bootstrap WAL is a partial segment and must never become eligible. */
++	XLogFileCacheOfferReset();
++#endif
+ 	if (close(openLogFile) != 0)
+ 		ereport(PANIC,
+ 				(errcode_for_file_access(),
+diff --git a/src/backend/replication/walreceiver.c b/src/backend/replication/walreceiver.c
+index 8c4d0fd..7c2020b 100644
+--- a/src/backend/replication/walreceiver.c
++++ b/src/backend/replication/walreceiver.c
+@@ -102,6 +102,67 @@ static int	recvFile = -1;
+ static TimeLineID recvFileTLI = 0;
+ static XLogSegNo recvSegNo = 0;
+ 
++#ifdef __wasi__
++/*
++ * A walreceiver may reopen a recycled inode that still has a deferred class-6
++ * offer.  Bind a once-only revoke to the exact local open generation and
++ * linearize it before the first received WAL write.
++ */
++typedef struct WalRcvCacheRevokeState
++{
++	int			fd;
++	XLogSegNo	segno;
++	TimeLineID	tli;
++	bool		pending;
++} WalRcvCacheRevokeState;
++
++static WalRcvCacheRevokeState recvFileCacheRevoke =
++{
++	.fd = -1,
++	.segno = 0,
++	.tli = 0,
++	.pending = false,
++};
++
++static inline void
++XLogWalRcvCacheRevokeReset(void)
++{
++	recvFileCacheRevoke.fd = -1;
++	recvFileCacheRevoke.segno = 0;
++	recvFileCacheRevoke.tli = 0;
++	recvFileCacheRevoke.pending = false;
++}
++
++static inline void
++XLogWalRcvCacheRevokeOpened(int fd, XLogSegNo segno, TimeLineID tli)
++{
++	Assert(fd >= 0);
++	Assert(tli != 0);
++
++	recvFileCacheRevoke.fd = fd;
++	recvFileCacheRevoke.segno = segno;
++	recvFileCacheRevoke.tli = tli;
++	recvFileCacheRevoke.pending = true;
++}
++
++static inline void
++XLogWalRcvCacheRevokeBeforeFirstWrite(int fd, XLogSegNo segno,
++									 TimeLineID tli)
++{
++	Assert(recvFileCacheRevoke.fd == fd);
++	Assert(recvFileCacheRevoke.segno == segno);
++	Assert(recvFileCacheRevoke.tli == tli);
++
++	if (recvFileCacheRevoke.pending)
++	{
++		recvFileCacheRevoke.pending = false;
++		(void) pg_wasix_fd_cache_revoke_v1(
++			fd, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
++			PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE);
++	}
++}
++#endif
++
+ /*
+  * LogstreamResult indicates the byte positions that we have already
+  * written/fsynced.
+@@ -615,6 +676,9 @@ WalReceiverMain(const void *startup_data, size_t startup_data_len)
+ 
+ 			XLogWalRcvFlush(false, startpointTLI);
+ 			XLogFileName(xlogfname, recvFileTLI, recvSegNo, wal_segment_size);
++#ifdef __wasi__
++			XLogWalRcvCacheRevokeReset();
++#endif
+ 			if (close(recvFile) != 0)
+ 				ereport(PANIC,
+ 						(errcode_for_file_access(),
+@@ -909,6 +973,9 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
+ 			XLByteToSeg(recptr, recvSegNo, wal_segment_size);
+ 			recvFile = XLogFileInit(recvSegNo, tli);
+ 			recvFileTLI = tli;
++#ifdef __wasi__
++			XLogWalRcvCacheRevokeOpened(recvFile, recvSegNo, recvFileTLI);
++#endif
+ 		}
+ 
+ 		/* Calculate the start offset of the received logs */
+@@ -920,6 +987,10 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr, TimeLineID tli)
+ 			segbytes = nbytes;
+ 
+ 		/* OK to write the logs */
++#ifdef __wasi__
++		XLogWalRcvCacheRevokeBeforeFirstWrite(recvFile, recvSegNo,
++										 recvFileTLI);
++#endif
+ 		errno = 0;
+ 
+ 		/*
+@@ -1057,6 +1128,9 @@ XLogWalRcvClose(XLogRecPtr recptr, TimeLineID tli)
+ 	 * so we don't advise the OS to release cache pages associated with the
+ 	 * file like XLogFileClose() does.
+ 	 */
++#ifdef __wasi__
++	XLogWalRcvCacheRevokeReset();
++#endif
+ 	if (close(recvFile) != 0)
+ 		ereport(PANIC,
+ 				(errcode_for_file_access(),
