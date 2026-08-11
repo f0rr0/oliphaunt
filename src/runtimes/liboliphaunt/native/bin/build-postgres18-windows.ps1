@@ -622,6 +622,10 @@ function Assert-PatchedSource {
     Assert-FileContains (Join-Path $BuildDir "src/backend/tcop/postgres.c") "oliphaunt_embedded_main"
     Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_kill"
     Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_raise"
+    Assert-FileContains (Join-Path $BuildDir "src/backend/utils/init/postinit.c") "MyProcPort->oliphaunt_io != NULL"
+    Assert-FileContains (Join-Path $BuildDir "src/backend/utils/init/postinit.c") "!role_form->rolcanlogin"
+    Assert-FileContains (Join-Path $BuildDir "src/backend/utils/init/postinit.c") "ResetOliphauntAuthenticatedRoleLatch"
+    Assert-FileContains (Join-Path $BuildDir "src/backend/commands/variable.c") "oliphaunt_authenticated_role_is_superuser = false"
     Assert-FileContains (Join-Path $BuildDir "src/bin/initdb/initdb.c") 'getenv("ICU_DATA")'
     Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded"
     Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded_module_provider"

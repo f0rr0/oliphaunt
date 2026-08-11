@@ -1,6 +1,50 @@
 import { describe, expect, test } from "bun:test";
 
-import { fetchText, missingRequiredAppleArm64Slices } from "./render_swiftpm_release_package.mjs";
+import {
+  fetchText,
+  missingRequiredAppleArm64Slices,
+  renderManifest,
+} from "./render_swiftpm_release_package.mjs";
+
+describe("SwiftPM release broker package graph", () => {
+  test("renders every public broker product with the source-package module boundaries", () => {
+    const manifest = renderManifest(
+      "https://github.example/releases/download/liboliphaunt-native-v1.2.3",
+      "1.2.3",
+      "a".repeat(64),
+    );
+
+    for (const product of [
+      "OliphauntBrokerProtocol",
+      "OliphauntBrokerXPC",
+      "OliphauntIOSBroker",
+      "OliphauntBrokerExtension",
+    ]) {
+      expect(manifest).toContain(
+        `.library(name: "${product}", targets: ["${product}"])`,
+      );
+    }
+    expect(manifest).toContain(`        .target(
+            name: "OliphauntBrokerProtocol",
+            path: "src/sdks/swift/Sources/OliphauntBrokerProtocol"
+        )`);
+    expect(manifest).toContain(`        .target(
+            name: "OliphauntBrokerXPC",
+            dependencies: ["OliphauntBrokerProtocol"],
+            path: "src/sdks/swift/Sources/OliphauntBrokerXPC"
+        )`);
+    expect(manifest).toContain(`        .target(
+            name: "OliphauntIOSBroker",
+            dependencies: ["Oliphaunt", "OliphauntBrokerProtocol", "OliphauntBrokerXPC"],
+            path: "src/sdks/swift/Sources/OliphauntIOSBroker"
+        )`);
+    expect(manifest).toContain(`        .target(
+            name: "OliphauntBrokerExtension",
+            dependencies: ["COliphaunt", "Oliphaunt", "OliphauntBrokerProtocol"],
+            path: "src/sdks/swift/Sources/OliphauntBrokerExtension"
+        )`);
+  });
+});
 
 describe("SwiftPM Apple carrier architecture contract", () => {
   test("accepts the three published arm64 slices", () => {

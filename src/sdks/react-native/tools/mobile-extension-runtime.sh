@@ -450,7 +450,11 @@ oliphaunt_dev_installed_runtime_extension_complete() {
   [ -f "$control_file" ] || return 1
   compgen -G "$extension_dir/$extension--*.sql" >/dev/null || return 1
   default_version="$(oliphaunt_dev_extension_default_version "$control_file")"
-  [ -z "$default_version" ] || [ -f "$extension_dir/$extension--$default_version.sql" ]
+  [ -z "$default_version" ] ||
+    [ -f "$extension_dir/$extension--$default_version.sql" ] ||
+    find "$extension_dir" -maxdepth 1 -type f \
+      -name "$extension--*.sql" ! -name "$extension--*--*.sql" \
+      -print -quit | grep -q .
 }
 
 oliphaunt_dev_runtime_extension_files() {
@@ -467,7 +471,7 @@ oliphaunt_dev_runtime_extension_files() {
   source_dir="$(
     oliphaunt_mobile_static_extension_source_dir \
       "$root" \
-      "$root/target/liboliphaunt-pg18/build" \
+      "${OLIPHAUNT_MOBILE_POSTGRES_BUILD_DIR:-$root/target/liboliphaunt-pg18/build}" \
       "$extension"
   )"
   [ -d "$source_dir" ] ||
@@ -492,8 +496,14 @@ oliphaunt_dev_runtime_extension_files() {
   if [ -n "$default_version" ]; then
     default_install_sql="$source_dir/sql/$extension--$default_version.sql"
     generated_sql_template="$source_dir/sql/$extension.sql"
+    # External extensions such as pgvector declare DATA_built and keep their
+    # canonical install SQL as an unversioned build input. PostgreSQL contrib
+    # modules may use sql/<name>.sql as a regression test instead, so never
+    # infer an install script from that filename alone.
     if ! printf '%s\n' "$sql_files" | grep -Fxq "$default_install_sql" &&
-      [ -f "$generated_sql_template" ]; then
+      [ -f "$generated_sql_template" ] &&
+      [ -f "$source_dir/Makefile" ] &&
+      grep -Eq '^[[:space:]]*DATA_built[[:space:]]*=' "$source_dir/Makefile"; then
       sql_files="$(
         {
           printf '%s\n' "$sql_files"

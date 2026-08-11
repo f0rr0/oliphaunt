@@ -194,6 +194,8 @@ compile_probe_objects() {
     make -C src/backend/libpq pqcomm.o V=1
     make -C src/backend/tcop postgres.o V=1
     make -C src/backend/storage/ipc ipc.o V=1
+    make -C src/backend/commands variable.o V=1
+    make -C src/backend/utils/init postinit.o V=1
     make -C src/backend/utils/fmgr dfmgr.o V=1
   ) > "$make_log" 2>&1
 
@@ -211,6 +213,10 @@ verify_probe_symbols() {
   rg -q --fixed-strings "oliphaunt_embedded_main" "$source_root/include/tcop/tcopprot.h"
   rg -q --fixed-strings "oliphaunt_embedded_kill" "$source_root/port/pqsignal.c"
   rg -q --fixed-strings "oliphaunt_embedded_raise" "$source_root/port/pqsignal.c"
+  rg -q --fixed-strings "MyProcPort->oliphaunt_io != NULL" "$source_root/backend/utils/init/postinit.c"
+  rg -q --fixed-strings "!role_form->rolcanlogin" "$source_root/backend/utils/init/postinit.c"
+  rg -q --fixed-strings "ResetOliphauntAuthenticatedRoleLatch" "$source_root/backend/utils/init/postinit.c"
+  rg -q --fixed-strings "oliphaunt_authenticated_role_is_superuser = false" "$source_root/backend/commands/variable.c"
   rg -q --fixed-strings 'getenv("ICU_DATA")' "$source_root/bin/initdb/initdb.c"
   rg -q --fixed-strings "oliphaunt_static_extension_magic(file_scanner->static_extension)" "$source_root/backend/utils/fmgr/dfmgr.c"
 }

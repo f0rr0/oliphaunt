@@ -79,27 +79,27 @@
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh",
-          "sha256": "203fea01484138fcb07481b979b707f0aab19ed2134dea5781d0ccd094b908dc"
+          "sha256": "f3c31b4f7c59e9237f1814774ea7f68f5b555efceafd62db0631dd5c9d87c1c9"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh",
-          "sha256": "bfbd6056f74c4069d6aa0819a775410e084b60bbb22c5c923c3a6ac9da4cf307"
+          "sha256": "3923c71fd81ae42ebe5d652af0dade932c10fe2a02b8c95d5fdbb1d6e6a7f132"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh",
-          "sha256": "71acd0774c4ac9d0d32e7f0c229bd9777e57083ca270fab495f3f126a033b1d9"
+          "sha256": "b697eaae1c5ad18f69a2db3319303efa6d939fee9fd03fb49a7898e43fdb786a"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh",
-          "sha256": "d9ded61bf55c42197f84115940c0546f2801876b1562084b17cae80b41aeae68"
+          "sha256": "eadba63f4fa3ef71fb11d54cf7aa1627d21c5f841178ee73188c8e88e9f4be80"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
-          "sha256": "b53b165f9942a080ecfe84af9f2bffd41c194af79657ab09fa1018c156af20ca"
+          "sha256": "1f7745eb78ba7c7e55a9e367861cb75d0f12641c436fc5c2589d5b17367f21b3"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1",
-          "sha256": "3ecdda83cf6ed8df45852ead088dc5baa415b07e302824b0531a4ff839cbb8c6"
+          "sha256": "6f8c48a9bba63943251e613976c901724099138ea51804957fb0128ef7f3865d"
         },
         {
           "path": "src/runtimes/liboliphaunt/native/bin/mobile-postgis-extensions.sh",
@@ -390,5 +390,5 @@
       ]
     }
   ],
-  "sha256": "a8d8102915899d7308025b7c9fd5401f64e18c347d2d53aed9c083c7b001c2a4"
+  "sha256": "6df1c50270daa602c6991a67b5d30877d6e09d2bf3390b5ba1601841622c7273"
 }

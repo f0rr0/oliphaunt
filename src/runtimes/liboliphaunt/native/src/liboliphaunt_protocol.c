@@ -163,7 +163,7 @@ static bool stream_queue_has_room_locked(OliphauntHandle *handle, size_t len, si
         return true;
     }
     if (len > max_bytes) {
-        return handle->stream_bytes_queued == 0;
+        return false;
     }
     return handle->stream_bytes_queued <= max_bytes - len;
 }
@@ -172,6 +172,11 @@ static int wait_for_stream_queue_room_locked(OliphauntHandle *handle, size_t len
     size_t max_bytes = handle->stream_queue_max_bytes > 0
                            ? handle->stream_queue_max_bytes
                            : DEFAULT_STREAM_QUEUE_MAX_BYTES;
+    if (len > max_bytes) {
+        set_error(handle, "native liboliphaunt stream chunk exceeds queue limit");
+        errno = EOVERFLOW;
+        return -1;
+    }
     while (!stream_queue_has_room_locked(handle, len, max_bytes)) {
         if (!handle->streaming || handle->stream_failed || handle->backend_exited || handle->closing) {
             set_error(handle, "native liboliphaunt stream queue closed");
@@ -189,35 +194,43 @@ static int wait_for_stream_queue_room_locked(OliphauntHandle *handle, size_t len
 }
 
 static int enqueue_stream_chunk_locked(OliphauntHandle *handle, const void *buf, size_t len) {
-    if (len == 0) {
-        return 0;
+    const unsigned char *bytes = (const unsigned char *)buf;
+    size_t max_bytes = handle->stream_queue_max_bytes > 0
+                           ? handle->stream_queue_max_bytes
+                           : DEFAULT_STREAM_QUEUE_MAX_BYTES;
+    size_t remaining = len;
+    while (remaining > 0) {
+        size_t chunk_len = remaining < max_bytes ? remaining : max_bytes;
+        if (wait_for_stream_queue_room_locked(handle, chunk_len) != 0) {
+            return -1;
+        }
+        OliphauntOutputChunk *chunk = (OliphauntOutputChunk *)calloc(1, sizeof(OliphauntOutputChunk));
+        if (chunk == NULL) {
+            set_error(handle, "out of memory enqueuing protocol stream response");
+            errno = ENOMEM;
+            return -1;
+        }
+        chunk->data = (unsigned char *)malloc(chunk_len);
+        if (chunk->data == NULL) {
+            free(chunk);
+            set_error(handle, "out of memory enqueuing protocol stream response");
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy(chunk->data, bytes, chunk_len);
+        chunk->len = chunk_len;
+        if (handle->stream_tail == NULL) {
+            handle->stream_head = chunk;
+            handle->stream_tail = chunk;
+        } else {
+            handle->stream_tail->next = chunk;
+            handle->stream_tail = chunk;
+        }
+        handle->stream_bytes_queued += chunk_len;
+        pthread_cond_broadcast(&handle->output_cond);
+        bytes += chunk_len;
+        remaining -= chunk_len;
     }
-    if (wait_for_stream_queue_room_locked(handle, len) != 0) {
-        return -1;
-    }
-    OliphauntOutputChunk *chunk = (OliphauntOutputChunk *)calloc(1, sizeof(OliphauntOutputChunk));
-    if (chunk == NULL) {
-        set_error(handle, "out of memory enqueuing protocol stream response");
-        errno = ENOMEM;
-        return -1;
-    }
-    chunk->data = (unsigned char *)malloc(len);
-    if (chunk->data == NULL) {
-        free(chunk);
-        set_error(handle, "out of memory enqueuing protocol stream response");
-        errno = ENOMEM;
-        return -1;
-    }
-    memcpy(chunk->data, buf, len);
-    chunk->len = len;
-    if (handle->stream_tail == NULL) {
-        handle->stream_head = chunk;
-        handle->stream_tail = chunk;
-    } else {
-        handle->stream_tail->next = chunk;
-        handle->stream_tail = chunk;
-    }
-    handle->stream_bytes_queued += len;
     return 0;
 }
 

@@ -78,6 +78,72 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
+  smoke-ios-broker:
+    tags: ["runtime", "smoke", "ios", "simulator", "spike"]
+    command: "bash src/sdks/swift/tools/run-ios-broker-simulator.sh"
+    inputs:
+      - "/Package.swift"
+      - "/spikes/ios-native-broker/**/*"
+      - "/src/sdks/swift/Package.swift"
+      - "/src/sdks/swift/Sources/**/*"
+      - "/src/sdks/swift/tools/prepare-ios-broker-artifacts.sh"
+      - "/src/sdks/swift/tools/run-ios-broker-simulator.sh"
+      - "/src/sdks/react-native/tools/expo-runner-common.sh"
+      - "/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
+      - "/src/sdks/react-native/tools/expo-runner-workspace.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+    outputs:
+      - "/target/ios-native-broker-spike/logs/**/*"
+      - "/target/ios-native-broker-spike/reports/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  smoke-ios-broker-full-matrix:
+    tags: ["runtime", "smoke", "ios", "simulator", "spike", "faults"]
+    command: "bash src/sdks/swift/tools/run-ios-broker-full-simulator-matrix.sh"
+    inputs:
+      - "/Package.swift"
+      - "/spikes/ios-native-broker/**/*"
+      - "/src/sdks/swift/Package.swift"
+      - "/src/sdks/swift/Sources/**/*"
+      - "/src/sdks/swift/tools/prepare-ios-broker-artifacts.sh"
+      - "/src/sdks/swift/tools/run-ios-broker-simulator.sh"
+      - "/src/sdks/swift/tools/run-ios-broker-full-simulator-matrix.sh"
+      - "/src/sdks/react-native/tools/expo-runner-common.sh"
+      - "/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
+      - "/src/sdks/react-native/tools/expo-runner-workspace.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+    outputs:
+      - "/target/ios-native-broker-full-matrix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  smoke-ios-broker-device:
+    tags: ["runtime", "smoke", "ios", "device", "physical", "spike"]
+    command: "bash src/sdks/swift/tools/run-ios-broker-device.sh"
+    inputs:
+      - "/Package.swift"
+      - "/spikes/ios-native-broker/**/*"
+      - "/src/sdks/swift/Package.swift"
+      - "/src/sdks/swift/Sources/**/*"
+      - "/src/sdks/swift/tools/prepare-ios-broker-artifacts.sh"
+      - "/src/sdks/swift/tools/run-ios-broker-device.sh"
+      - "/src/sdks/react-native/tools/expo-runner-common.sh"
+      - "/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
+      - "/src/sdks/react-native/tools/expo-runner-workspace.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+    outputs:
+      - "/target/ios-native-broker-device-spike/logs/**/*"
+      - "/target/ios-native-broker-device-spike/reports/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
   package:
     tags: ["package"]
     command: "bash src/sdks/swift/tools/check-sdk.sh package-shape"

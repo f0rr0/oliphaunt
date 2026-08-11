@@ -436,7 +436,7 @@ async function resolveChecksum(assetDir, assetBaseUrl, asset, version) {
   return checksum;
 }
 
-function renderManifest(assetBaseUrl, liboliphauntVersion, checksum) {
+export function renderManifest(assetBaseUrl, liboliphauntVersion, checksum) {
   const asset = `liboliphaunt-${liboliphauntVersion}-apple-spm-xcframework.zip`;
   const url = `${assetBaseUrl.replace(/\/+$/u, "")}/${asset}`;
   return `// swift-tools-version: 6.0
@@ -456,6 +456,10 @@ let package = Package(
     ],
     products: [
         .library(name: "COliphaunt", targets: ["COliphaunt"]),
+        .library(name: "OliphauntBrokerProtocol", targets: ["OliphauntBrokerProtocol"]),
+        .library(name: "OliphauntBrokerXPC", targets: ["OliphauntBrokerXPC"]),
+        .library(name: "OliphauntIOSBroker", targets: ["OliphauntIOSBroker"]),
+        .library(name: "OliphauntBrokerExtension", targets: ["OliphauntBrokerExtension"]),
         .library(name: "Oliphaunt", targets: ["Oliphaunt"]),
         .library(name: "OliphauntExtensionSupport", targets: ["OliphauntExtensionSupport"]),
         .library(name: "OliphauntICU", targets: ["OliphauntICU"])
@@ -473,9 +477,28 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
+            name: "OliphauntBrokerProtocol",
+            path: "src/sdks/swift/Sources/OliphauntBrokerProtocol"
+        ),
+        .target(
+            name: "OliphauntBrokerXPC",
+            dependencies: ["OliphauntBrokerProtocol"],
+            path: "src/sdks/swift/Sources/OliphauntBrokerXPC"
+        ),
+        .target(
             name: "Oliphaunt",
             dependencies: ["COliphaunt"],
             path: "src/sdks/swift/Sources/Oliphaunt"
+        ),
+        .target(
+            name: "OliphauntIOSBroker",
+            dependencies: ["Oliphaunt", "OliphauntBrokerProtocol", "OliphauntBrokerXPC"],
+            path: "src/sdks/swift/Sources/OliphauntIOSBroker"
+        ),
+        .target(
+            name: "OliphauntBrokerExtension",
+            dependencies: ["COliphaunt", "Oliphaunt", "OliphauntBrokerProtocol"],
+            path: "src/sdks/swift/Sources/OliphauntBrokerExtension"
         ),
         .target(
             name: "OliphauntExtensionSupport",

@@ -1005,6 +1005,22 @@ embedded_core_module_avoids_provider_collisions() {
   rm -f "$engine_symbols"
 }
 
+embedded_core_module_ready() {
+  local stem="$1"
+  local module="$embedded_modules_dir/$stem.dylib"
+  module_depends_on_liboliphaunt "$module" &&
+    module_has_postgres_symbols_bound_to_liboliphaunt "$module" &&
+    embedded_core_module_avoids_provider_collisions "$stem"
+}
+
+embedded_dict_snowball_module_ready() {
+  embedded_core_module_ready dict_snowball
+}
+
+embedded_plpgsql_module_ready() {
+  embedded_core_module_ready plpgsql
+}
+
 embedded_dict_snowball_avoids_provider_collisions() {
   embedded_core_module_avoids_provider_collisions dict_snowball
 }
@@ -1346,7 +1362,11 @@ patches_applied() {
     grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/access/transam/xlogarchive.c &&
     grep -q 'oliphaunt_pg_hash_create' src/include/utils/hsearch.h &&
     grep -q 'oliphaunt_embedded_kill' src/port/pqsignal.c &&
-    grep -q 'oliphaunt_embedded_raise' src/port/pqsignal.c
+    grep -q 'oliphaunt_embedded_raise' src/port/pqsignal.c &&
+    grep -q 'MyProcPort->oliphaunt_io != NULL' src/backend/utils/init/postinit.c &&
+    grep -q '!role_form->rolcanlogin' src/backend/utils/init/postinit.c &&
+    grep -q 'ResetOliphauntAuthenticatedRoleLatch' src/backend/utils/init/postinit.c &&
+    grep -q 'oliphaunt_authenticated_role_is_superuser = false' src/backend/commands/variable.c
 }
 
 if ! patches_applied; then
@@ -2223,22 +2243,6 @@ build_postgis_extension() {
   normalize_installed_module_suffix postgis-3
   copy_embedded_postgis_module "$postgis_build_dir/postgis"
   stage_postgis_data_files "$postgis_build_dir"
-}
-
-embedded_core_module_ready() {
-  local stem="$1"
-  local module="$embedded_modules_dir/$stem.dylib"
-  module_depends_on_liboliphaunt "$module" &&
-    module_has_postgres_symbols_bound_to_liboliphaunt "$module" &&
-    embedded_core_module_avoids_provider_collisions "$stem"
-}
-
-embedded_dict_snowball_module_ready() {
-  embedded_core_module_ready dict_snowball
-}
-
-embedded_plpgsql_module_ready() {
-  embedded_core_module_ready plpgsql
 }
 
 build_embedded_dict_snowball_module() {
