@@ -15,11 +15,11 @@ consumers = [
   "oliphaunt-js",
   "oliphaunt-react-native",
   "oliphaunt-wasix-rust",
-  "release-tools",
 ]
 non_consumers = [
   "liboliphaunt-native",
   "policy-tools",
+  "release-tools",
 ]
 evidence = [
   { consumer = "oliphaunt-rust", kind = "fixture-file", path = "src/sdks/rust/tests/protocol_query_fixtures.rs", markers = ["query-response-cases.json"] },
