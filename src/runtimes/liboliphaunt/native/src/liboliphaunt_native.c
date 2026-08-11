@@ -713,6 +713,21 @@ int32_t oliphaunt_cancel(OliphauntHandle *handle) {
     if (MyLatch != NULL) {
         SetLatch(MyLatch);
     }
+#if defined(__ANDROID__)
+    /*
+     * Android invokes this ABI from a Binder/JNI thread, while PostgreSQL's
+     * signal and latch state belongs to the embedded backend pthread.  Target
+     * the backend with PostgreSQL's installed statement-cancel signal so the
+     * normal handler observes the request in that thread as well.
+     */
+    int signal_rc = pthread_kill(handle->backend_thread, SIGINT);
+    if (signal_rc != 0) {
+        snprintf(handle->last_error, sizeof(handle->last_error),
+                 "failed to signal native backend cancellation: %d", signal_rc);
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
+#endif
     pthread_cond_broadcast(&handle->input_cond);
     pthread_cond_broadcast(&handle->output_cond);
     pthread_mutex_unlock(&handle->mutex);

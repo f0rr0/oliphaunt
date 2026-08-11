@@ -202,6 +202,22 @@ const REQUIRED_AUDIT_CHECKS = [
     ],
     posture: 'Embedded backend and extension calls cannot replace or emit host-owned SIGUSR1; other signals delegate to the platform implementation, while frontend tools and normal PostgreSQL builds retain upstream behavior.',
   },
+  {
+    id: 'embedded-authenticated-role',
+    requirement: 'Embedded sessions authenticate as the configured database role',
+    patches: ['0021-liboliphaunt-authenticate-embedded-role.patch'],
+    evidence: [
+      'MyProcPort->oliphaunt_io != NULL',
+      'InitializeSessionUserId(username, useroid, false)',
+      '!role_form->rolcanlogin',
+      'is not permitted to log in',
+      'assign_session_authorization',
+      'ResetOliphauntAuthenticatedRoleLatch',
+      'oliphaunt_authenticated_role_is_superuser = false',
+      'InitializeSessionUserIdStandalone',
+    ],
+    posture: 'Only the Oliphaunt host-I/O backend resolves its immutable authenticated identity from the configured LOGIN role and latches an observed demotion for that session so stale RESET, rollback, and DISCARD state fail closed without catalog work in GUC cleanup; ordinary standalone PostgreSQL keeps bootstrap-superuser recovery semantics.',
+  },
 ];
 
 const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
@@ -220,10 +236,13 @@ const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['src/backend/storage/ipc/ipc.c', 'Embedded backend cleanup and proc_exit unwinding stay at PostgreSQL lifecycle boundaries.'],
   ['src/backend/storage/ipc/procsignal.c', 'The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals.'],
   ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition.'],
+  ['src/backend/commands/variable.c', 'Oliphaunt session-authorization assignments monotonically latch an observed authenticated-role demotion without catalog access during transaction cleanup.'],
   ['src/backend/utils/fmgr/dfmgr.c', 'Static extension lookup reuses PostgreSQL dynamic function manager semantics.'],
+  ['src/backend/utils/init/postinit.c', 'Oliphaunt host-I/O sessions initialize the immutable authenticated identity from the configured role while ordinary standalone startup remains unchanged.'],
   ['src/bin/initdb/initdb.c', 'Base runtimes skip ICU-backed collation setup until optional ICU data is present.'],
   ['src/include/libpq/libpq-be.h', 'Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED.'],
   ['src/include/tcop/backend_startup.h', 'Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration.'],
+  ['src/include/utils/guc_hooks.h', 'Declares the Oliphaunt-only per-session authenticated-role latch reset used by InitPostgres.'],
   ['src/include/port.h', 'Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary.'],
   ['src/include/storage/dsm_impl.h', 'Embedded mobile builds keep DSM on mmap instead of POSIX or SysV shared memory.'],
   ['src/include/storage/ipc.h', 'Embedded cleanup and proc_exit guard declarations.'],

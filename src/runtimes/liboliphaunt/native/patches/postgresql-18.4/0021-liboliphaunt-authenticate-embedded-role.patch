@@ -1,0 +1,161 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sun, 9 Aug 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: authenticate embedded role
+
+The embedded entrypoint supplies an explicit database role, but InitPostgres
+currently follows PostgreSQL's standalone branch and always initializes the
+immutable authenticated identity as BOOTSTRAP_SUPERUSERID.  Changing role in
+SQL cannot form a security boundary because RESET ROLE or RESET SESSION
+AUTHORIZATION can restore that bootstrap identity.
+
+Only for the Oliphaunt host-I/O port, require a LOGIN role and initialize
+AuthenticatedUserId and the session identity from that supplied role.  Keep
+ordinary PostgreSQL standalone startup byte-for-byte equivalent, including
+its bootstrap recovery behavior.  Once session authorization observes that
+role's catalog demotion, latch its cached privilege state off so RESET,
+rollback, or DISCARD cannot restore the startup value.
+---
+ src/backend/commands/variable.c   | 41 +++++++++++++++++++++++++++++++++++-
+ src/backend/utils/init/postinit.c | 42 ++++++++++++++++++++++++++++++-------
+ src/include/utils/guc_hooks.h     |  3 +++
+ 3 files changed, 77 insertions(+), 9 deletions(-)
+
+diff --git a/src/backend/commands/variable.c b/src/backend/commands/variable.c
+index 608f10d9..69205a22 100644
+--- a/src/backend/commands/variable.c
++++ b/src/backend/commands/variable.c
+@@ -25,6 +25,9 @@
+ #include "access/xlogprefetcher.h"
+ #include "catalog/pg_authid.h"
+ #include "common/string.h"
++#ifdef OLIPHAUNT_EMBEDDED
++#include "libpq/libpq-be.h"
++#endif
+ #include "mb/pg_wchar.h"
+ #include "miscadmin.h"
+ #include "postmaster/postmaster.h"
+@@ -811,6 +814,18 @@ typedef struct
+ 	bool		is_superuser;
+ } role_auth_extra;
+
++#ifdef OLIPHAUNT_EMBEDDED
++static bool oliphaunt_authenticated_role_latch_initialized = false;
++static bool oliphaunt_authenticated_role_is_superuser = false;
++
++void
++ResetOliphauntAuthenticatedRoleLatch(void)
++{
++	oliphaunt_authenticated_role_latch_initialized = false;
++	oliphaunt_authenticated_role_is_superuser = false;
++}
++#endif
++
+ bool
+ check_session_authorization(char **newval, void **extra, GucSource source)
+ {
+@@ -912,12 +927,36 @@ void
+ assign_session_authorization(const char *newval, void *extra)
+ {
+ 	role_auth_extra *myextra = (role_auth_extra *) extra;
++	bool		is_superuser;
+
+ 	/* Do nothing for the boot_val default of NULL */
+ 	if (!myextra)
+ 		return;
+
+-	SetSessionAuthorization(myextra->roleid, myextra->is_superuser);
++	is_superuser = myextra->is_superuser;
++#ifdef OLIPHAUNT_EMBEDDED
++	/*
++	 * An Oliphaunt session may demote its authenticated role after startup.
++	 * Once an assignment observes that demotion, stale RESET, rollback, or
++	 * DISCARD state must never raise its cached superuser state again.  Keep
++	 * this fail-closed and allocation-free because assign hooks also run late
++	 * during transaction abort cleanup.
++	 */
++	if (MyProcPort != NULL &&
++		MyProcPort->oliphaunt_io != NULL &&
++		myextra->roleid == GetAuthenticatedUserId())
++	{
++		if (!oliphaunt_authenticated_role_latch_initialized)
++		{
++			oliphaunt_authenticated_role_latch_initialized = true;
++			oliphaunt_authenticated_role_is_superuser = is_superuser;
++		}
++		else if (!is_superuser)
++			oliphaunt_authenticated_role_is_superuser = false;
++		is_superuser = oliphaunt_authenticated_role_is_superuser;
++	}
++#endif
++	SetSessionAuthorization(myextra->roleid, is_superuser);
+ }
+
+
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index c86ceefd..41762de6 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -870,14 +870,40 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	}
+ 	else if (!IsUnderPostmaster)
+ 	{
+-		InitializeSessionUserIdStandalone();
+-		am_superuser = true;
+-		if (!ThereIsAtLeastOneRole())
+-			ereport(WARNING,
+-					(errcode(ERRCODE_UNDEFINED_OBJECT),
+-					 errmsg("no roles are defined in this database system"),
+-					 errhint("You should immediately run CREATE USER \"%s\" SUPERUSER;.",
+-							 username != NULL ? username : "postgres")));
++#ifdef OLIPHAUNT_EMBEDDED
++		if (MyProcPort != NULL && MyProcPort->oliphaunt_io != NULL)
++		{
++			HeapTuple	role_tuple;
++			Form_pg_authid role_form;
++
++			ResetOliphauntAuthenticatedRoleLatch();
++			InitializeSessionUserId(username, useroid, false);
++			role_tuple = SearchSysCache1(AUTHOID,
++									 ObjectIdGetDatum(GetAuthenticatedUserId()));
++			if (!HeapTupleIsValid(role_tuple))
++				elog(FATAL, "cache lookup failed for role %u",
++					 GetAuthenticatedUserId());
++			role_form = (Form_pg_authid) GETSTRUCT(role_tuple);
++			if (!role_form->rolcanlogin)
++				ereport(FATAL,
++						(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
++						 errmsg("role \"%s\" is not permitted to log in",
++								NameStr(role_form->rolname))));
++			ReleaseSysCache(role_tuple);
++			am_superuser = superuser();
++		}
++		else
++#endif
++		{
++			InitializeSessionUserIdStandalone();
++			am_superuser = true;
++			if (!ThereIsAtLeastOneRole())
++				ereport(WARNING,
++						(errcode(ERRCODE_UNDEFINED_OBJECT),
++						 errmsg("no roles are defined in this database system"),
++						 errhint("You should immediately run CREATE USER \"%s\" SUPERUSER;.",
++								 username != NULL ? username : "postgres")));
++		}
+ 	}
+ 	else if (AmBackgroundWorkerProcess())
+ 	{
+diff --git a/src/include/utils/guc_hooks.h b/src/include/utils/guc_hooks.h
+index 82ac8646..0fd28fa4 100644
+--- a/src/include/utils/guc_hooks.h
++++ b/src/include/utils/guc_hooks.h
+@@ -97,6 +97,9 @@ extern bool check_primary_slot_name(char **newval, void **extra,
+ extern bool check_random_seed(double *newval, void **extra, GucSource source);
+ extern void assign_random_seed(double newval, void *extra);
+ extern const char *show_random_seed(void);
++#ifdef OLIPHAUNT_EMBEDDED
++extern void ResetOliphauntAuthenticatedRoleLatch(void);
++#endif
+ extern bool check_recovery_prefetch(int *new_value, void **extra,
+ 									GucSource source);
+ extern void assign_recovery_prefetch(int new_value, void *extra);

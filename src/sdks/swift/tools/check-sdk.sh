@@ -98,7 +98,7 @@ check_swiftpm_release_asset_manifest() {
 
   if [ -n "${OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR:-}" ]; then
     asset_dir="$OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR"
-    asset_base_url="${OLIPHAUNT_SWIFT_RELEASE_ASSET_BASE_URL:-file://$asset_dir}"
+    asset_base_url="${OLIPHAUNT_SWIFT_RELEASE_ASSET_BASE_URL:-https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v$liboliphaunt_version}"
     [ -d "$asset_dir" ] || {
       echo "Swift release asset directory does not exist: $asset_dir" >&2
       exit 1
@@ -133,6 +133,57 @@ check_swiftpm_release_asset_manifest() {
     echo "SwiftPM release fixture manifest must not point at a monorepo-local XCFramework path" >&2
     exit 1
   fi
+
+  release_package="$scratch_root/swiftpm-release-package"
+  release_dump="$scratch_root/swiftpm-release-package.json"
+  rm -rf "$release_package"
+  mkdir -p "$release_package/src/sdks/swift"
+  cp -R "$archive_package_dir/." "$release_package/src/sdks/swift/"
+  cp -R "$generated_tree/." "$release_package/"
+  cp "$release_manifest" "$release_package/Package.swift"
+  printf '\n==> swift package --package-path %s dump-package\n' "$release_package"
+  swift package --package-path "$release_package" dump-package >"$release_dump"
+  run node - "$release_dump" <<'NODE'
+const { readFileSync } = require("node:fs");
+
+const label = "SwiftPM rendered release broker graph";
+const fail = (message) => {
+  console.error(`${label}: ${message}`);
+  process.exit(1);
+};
+const document = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const products = new Map(document.products.map((product) => [product.name, product]));
+const targets = new Map(document.targets.map((target) => [target.name, target]));
+const expected = new Map([
+  ["OliphauntBrokerProtocol", []],
+  ["OliphauntBrokerXPC", ["OliphauntBrokerProtocol"]],
+  ["OliphauntIOSBroker", ["Oliphaunt", "OliphauntBrokerProtocol", "OliphauntBrokerXPC"]],
+  ["OliphauntBrokerExtension", ["COliphaunt", "Oliphaunt", "OliphauntBrokerProtocol"]],
+]);
+
+for (const [name, expectedDependencies] of expected) {
+  const product = products.get(name);
+  if (product === undefined || JSON.stringify(product.targets) !== JSON.stringify([name])) {
+    fail(`product ${name} must expose exactly target ${name}`);
+  }
+  const target = targets.get(name);
+  if (target === undefined || target.type !== "regular") {
+    fail(`target ${name} must be a regular source target`);
+  }
+  const dependencies = target.dependencies.map((dependency) => {
+    if (!Array.isArray(dependency.byName) || typeof dependency.byName[0] !== "string") {
+      fail(`target ${name} has an unsupported dependency declaration`);
+    }
+    return dependency.byName[0];
+  }).sort();
+  if (JSON.stringify(dependencies) !== JSON.stringify(expectedDependencies)) {
+    fail(
+      `target ${name} dependencies ${JSON.stringify(dependencies)} ` +
+        `do not match ${JSON.stringify(expectedDependencies)}`,
+    );
+  }
+}
+NODE
 }
 
 check_swiftpm_extension_product_generator() {
@@ -618,7 +669,15 @@ require swift
 require unzip
 require node
 require cc
-for product in COliphaunt Oliphaunt OliphauntExtensionSupport; do
+for product in \
+  COliphaunt \
+  OliphauntBrokerProtocol \
+  OliphauntBrokerXPC \
+  OliphauntIOSBroker \
+  OliphauntBrokerExtension \
+  Oliphaunt \
+  OliphauntExtensionSupport
+do
   if ! grep -Fq ".library(name: \"$product\"" "$package_dir/Package.swift"; then
     echo "Swift base package must expose public consumer integration product $product" >&2
     exit 1
@@ -716,6 +775,21 @@ for required in \
   Sources/Oliphaunt/OliphauntQuery.swift \
   Sources/Oliphaunt/OliphauntRuntimeResources.swift \
   Sources/Oliphaunt/OliphauntExtensionResources.swift \
+  Sources/OliphauntBrokerProtocol/BrokerFrame.swift \
+  Sources/OliphauntBrokerProtocol/BrokerProtocol.swift \
+  Sources/OliphauntBrokerProtocol/BrokerStateMachines.swift \
+  Sources/OliphauntBrokerXPC/IOSBrokerXPC.swift \
+  Sources/OliphauntIOSBroker/IOSBrokerDataChannel.swift \
+  Sources/OliphauntIOSBroker/IOSBrokerManager.swift \
+  Sources/OliphauntIOSBroker/IOSBrokerPublicAPI.swift \
+  Sources/OliphauntIOSBroker/IOSBrokerSession.swift \
+  Sources/OliphauntBrokerExtension/BackendResponseObservation.swift \
+  Sources/OliphauntBrokerExtension/BrokerBackendPrivacyFilter.swift \
+  Sources/OliphauntBrokerExtension/BrokerExtensionStorage.swift \
+  Sources/OliphauntBrokerExtension/BrokerFaultInjection.swift \
+  Sources/OliphauntBrokerExtension/BrokerSocketWorker.swift \
+  Sources/OliphauntBrokerExtension/CancellationController.swift \
+  Sources/OliphauntBrokerExtension/WorkerCore.swift \
   Sources/OliphauntExtensionSupport/OliphauntExtensionSupport.swift \
   tools/render-extension-products.mjs \
   tools/extension-resource-inventory.mjs \

@@ -26,4 +26,5 @@ series = [
   "0018-liboliphaunt-contain-embedded-proc-signals.patch",
   "0019-liboliphaunt-link-windows-embedded-modules-to-host.patch",
   "0020-liboliphaunt-enforce-embedded-signal-boundary.patch",
+  "0021-liboliphaunt-authenticate-embedded-role.patch",
 ]

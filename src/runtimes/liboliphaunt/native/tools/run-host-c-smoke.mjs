@@ -58,8 +58,13 @@ function run(command, args, options = {}) {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: 'utf8',
+    input: options.input,
     shell: false,
-    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: options.capture
+      ? [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']
+      : options.input === undefined
+        ? 'inherit'
+        : ['pipe', 'inherit', 'inherit'],
     windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
   });
   if (result.error) {
@@ -366,9 +371,7 @@ function runSmoke(paths, smokeBin, rootArg) {
   const smokeRoot = process.env.OLIPHAUNT_SMOKE_ROOT
     ? path.resolve(process.env.OLIPHAUNT_SMOKE_ROOT)
     : paths.workRoot;
-  if (!rootArg) {
-    fs.mkdirSync(smokeRoot, { recursive: true });
-  }
+  fs.mkdirSync(smokeRoot, { recursive: true });
   const root = rootArg
     ? path.resolve(rootArg)
     : fs.mkdtempSync(path.join(smokeRoot, 'smoke.'));
@@ -376,13 +379,75 @@ function runSmoke(paths, smokeBin, rootArg) {
   const pgdata = path.join(root, '.oliphaunt-pgdata');
   const args = [normalizeForC(pgdata), normalizeForC(paths.installDir)];
   const env = smokeEnv(paths);
+  const identityRoot = fs.mkdtempSync(path.join(smokeRoot, 'authenticated-role.'));
+  const identityPgdata = path.join(identityRoot, 'pgdata');
   try {
+    run(paths.initdb, [
+      '-D',
+      identityPgdata,
+      '-U',
+      'postgres',
+      '--auth=trust',
+      '--no-sync',
+      '--locale-provider=libc',
+      '--locale=C',
+      '--encoding=UTF8',
+    ], { env });
+    run(smokeBin, [
+      '--expect-configured-role-rejected',
+      normalizeForC(identityPgdata),
+      normalizeForC(paths.installDir),
+    ], { env });
+    run(paths.postgres, [
+      '--single',
+      '-D',
+      identityPgdata,
+      'postgres',
+    ], {
+      capture: true,
+      env,
+      input: [
+        'CREATE ROLE oliphaunt_no_login_authenticated_role SUPERUSER NOLOGIN;',
+        'CREATE ROLE oliphaunt_broker SUPERUSER LOGIN;',
+        'ALTER ROLE oliphaunt_broker SET search_path TO pg_catalog;',
+        "ALTER ROLE postgres SET application_name TO 'oliphaunt-role-setting-must-stay-skipped-in-standalone';",
+        '',
+      ].join('\n'),
+    });
+    const standaloneSettingsProbe = run(paths.postgres, [
+      '--single',
+      '-D',
+      identityPgdata,
+      'postgres',
+    ], {
+      capture: true,
+      env,
+      input: [
+        "SELECT CASE WHEN current_setting('application_name') <> 'oliphaunt-role-setting-must-stay-skipped-in-standalone' THEN 'oliphaunt-standalone-role-settings-skipped' ELSE 'oliphaunt-standalone-role-settings-loaded' END;",
+        '',
+      ].join('\n'),
+    });
+    if (!standaloneSettingsProbe.includes('oliphaunt-standalone-role-settings-skipped')) {
+      throw new Error('ordinary standalone PostgreSQL unexpectedly loaded pg_db_role_setting');
+    }
+    run(smokeBin, [
+      '--expect-configured-role-login-rejected',
+      normalizeForC(identityPgdata),
+      normalizeForC(paths.installDir),
+    ], { env });
+    run(smokeBin, [
+      '--probe-restricted-role-boundary',
+      normalizeForC(identityPgdata),
+      normalizeForC(paths.installDir),
+    ], { env });
+    fs.rmSync(identityRoot, { recursive: true, force: true });
     run(smokeBin, args, { env });
     run(smokeBin, args, { env });
     if (!keepRoot) {
       fs.rmSync(root, { recursive: true, force: true });
     }
   } catch (error) {
+    console.error(`authenticated-role smoke root: ${identityRoot}`);
     console.error(`native smoke root: ${root}`);
     throw error;
   }

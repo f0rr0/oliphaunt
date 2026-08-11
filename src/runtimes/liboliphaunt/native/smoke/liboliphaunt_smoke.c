@@ -24,8 +24,12 @@
 #else
 #include <dirent.h>
 #include <errno.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+extern char **environ;
 #endif
 
 #undef PG_MAGIC_FUNCTION_NAME
@@ -396,6 +400,7 @@ typedef struct StreamAccumulator {
     size_t len;
     size_t cap;
     size_t chunks;
+    size_t max_chunk;
 } StreamAccumulator;
 
 typedef struct CancelQueryThread {
@@ -696,6 +701,9 @@ static int exec_malformed_frame_checks(OliphauntHandle *db) {
 static int32_t append_stream_chunk(void *context, const uint8_t *data, size_t len) {
     StreamAccumulator *acc = (StreamAccumulator *)context;
     acc->chunks++;
+    if (len > acc->max_chunk) {
+        acc->max_chunk = len;
+    }
     if (len == 0) {
         return 0;
     }
@@ -714,6 +722,76 @@ static int32_t append_stream_chunk(void *context, const uint8_t *data, size_t le
     memcpy(acc->data + acc->len, data, len);
     acc->len += len;
     return 0;
+}
+
+static int exec_stream_queue_hard_ceiling(OliphauntHandle *db) {
+    static const size_t ceiling = 1024;
+    const char *previous_limit = getenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES");
+    char *saved_limit = previous_limit != NULL ? strdup(previous_limit) : NULL;
+    if (previous_limit != NULL && saved_limit == NULL) {
+        fprintf(stderr, "failed to save OLIPHAUNT_STREAM_QUEUE_MAX_BYTES\n");
+        return 1;
+    }
+    if (setenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES", "1024", 1) != 0) {
+        fprintf(stderr, "failed to set OLIPHAUNT_STREAM_QUEUE_MAX_BYTES\n");
+        free(saved_limit);
+        return 1;
+    }
+
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_query(
+        &query,
+        &query_len,
+        "SELECT 'stream-hard-ceiling-ok' AS marker, repeat('x', 65536) AS payload");
+
+    StreamAccumulator acc = {0};
+    fprintf(stderr, "streaming raw protocol with %zu-byte queue ceiling\n", ceiling);
+    int rc = oliphaunt_exec_protocol_stream(db, query, query_len, append_stream_chunk, &acc);
+    free(query);
+
+    int status = 0;
+    if (saved_limit != NULL) {
+        if (setenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES", saved_limit, 1) != 0) {
+            fprintf(stderr, "failed to restore OLIPHAUNT_STREAM_QUEUE_MAX_BYTES\n");
+            status = 1;
+        }
+    } else if (unsetenv("OLIPHAUNT_STREAM_QUEUE_MAX_BYTES") != 0) {
+        fprintf(stderr, "failed to unset OLIPHAUNT_STREAM_QUEUE_MAX_BYTES\n");
+        status = 1;
+    }
+    free(saved_limit);
+
+    if (rc != 0) {
+        fprintf(stderr, "bounded oliphaunt_exec_protocol_stream failed: %s\n", oliphaunt_last_error(db));
+        status = 1;
+    }
+    OliphauntResponse response = {
+        .data = acc.data,
+        .len = acc.len,
+    };
+    const unsigned char required_tags[] = {'T', 'D', 'C', 'Z'};
+    for (size_t i = 0; i < sizeof(required_tags); i++) {
+        if (!contains_tag(&response, required_tags[i])) {
+            fprintf(stderr, "bounded stream response did not contain protocol tag %c\n", required_tags[i]);
+            status = 1;
+        }
+    }
+    if (!contains_bytes(&response, "stream-hard-ceiling-ok")) {
+        fprintf(stderr, "bounded stream response lost payload bytes\n");
+        status = 1;
+    }
+    if (acc.chunks < 2 || acc.max_chunk == 0 || acc.max_chunk > ceiling) {
+        fprintf(
+            stderr,
+            "stream queue ceiling violated: chunks=%zu max_chunk=%zu ceiling=%zu\n",
+            acc.chunks,
+            acc.max_chunk,
+            ceiling);
+        status = 1;
+    }
+    free(acc.data);
+    return status;
 }
 
 static int32_t fail_stream_chunk(void *context, const uint8_t *data, size_t len) {
@@ -1019,6 +1097,76 @@ static int verify_stable_root_lock_file(const char *pgdata) {
         return 1;
     }
     return 0;
+}
+
+static int expect_root_locked_in_probe_process(const char *pgdata, const char *runtime_dir) {
+    OliphauntConfig config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = pgdata,
+        .runtime_dir = runtime_dir,
+        .username = "postgres",
+        .database = "postgres",
+        .reserved_flags = 0,
+    };
+    OliphauntHandle *probe = NULL;
+    if (oliphaunt_init(&config, &probe) == 0 || probe != NULL) {
+        fprintf(stderr, "separate process unexpectedly opened an already-owned native root\n");
+        if (probe != NULL) {
+            oliphaunt_close(probe);
+        }
+        return 1;
+    }
+    return expect_error_contains(
+        NULL,
+        "cross-process native root contention",
+        "already locked");
+}
+
+static int verify_cross_process_root_contention(
+    const char *executable,
+    const char *pgdata,
+    const char *runtime_dir) {
+#ifdef _WIN32
+    (void)executable;
+    (void)pgdata;
+    (void)runtime_dir;
+    fprintf(stderr, "cross-process native root contention probe skipped on Windows\n");
+    return 0;
+#else
+    pid_t child = 0;
+    char *const child_argv[] = {
+        (char *)executable,
+        (char *)"--expect-root-locked",
+        (char *)pgdata,
+        (char *)runtime_dir,
+        NULL,
+    };
+    int spawn_rc = posix_spawnp(
+        &child,
+        executable,
+        NULL,
+        NULL,
+        child_argv,
+        environ);
+    if (spawn_rc != 0) {
+        fprintf(stderr, "spawn cross-process native root probe failed: %s\n", strerror(spawn_rc));
+        return 1;
+    }
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        perror("wait for cross-process native root probe");
+        return 1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "cross-process native root probe failed with status %d\n", status);
+        return 1;
+    }
+    fprintf(stderr, "cross-process native root contention rejected\n");
+    return 0;
+#endif
 }
 
 static void test_tar_write_octal(unsigned char *field, size_t width, unsigned long long value) {
@@ -1697,7 +1845,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     return 0;
 }
 
-static int run_cycle(const char *pgdata, const char *runtime_dir) {
+static int run_cycle(const char *executable, const char *pgdata, const char *runtime_dir) {
     static const char *const startup_args[] = {
         "-c",
         "application_name=liboliphaunt_smoke",
@@ -1739,6 +1887,10 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
 
     const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
     if (verify_root_lock_marker(pgdata) != 0 || verify_stable_root_lock_file(pgdata) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+    if (verify_cross_process_root_contention(executable, pgdata, runtime_dir) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -1806,6 +1958,11 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
     }
 
     if (exec_stream_expect_tags(db, "SELECT repeat('x', 65536) AS streamed", select_tags, sizeof(select_tags)) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    if (exec_stream_queue_hard_ceiling(db) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -1949,9 +2106,267 @@ static int expect_terminal_shutdown_reopen_rejected(const char *pgdata, const ch
     return expect_error_contains(NULL, "terminal shutdown reopen", "process lifetime has already been used");
 }
 
+static int expect_configured_role_rejected(
+    const char *username,
+    const char *pgdata,
+    const char *runtime_dir) {
+    OliphauntConfig config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = pgdata,
+        .runtime_dir = runtime_dir,
+        .username = username,
+        .database = "postgres",
+        .reserved_flags = 0,
+    };
+    OliphauntHandle *db = NULL;
+    fprintf(stderr, "verifying embedded startup rejects configured role: %s\n", username);
+    if (oliphaunt_init(&config, &db) == 0 || db != NULL) {
+        fprintf(stderr, "embedded startup ignored the configured database role\n");
+        if (db != NULL) {
+            oliphaunt_close(db);
+        }
+        return 1;
+    }
+    return expect_error_contains(
+        NULL,
+        "missing configured embedded role",
+        "before ReadyForQuery");
+}
+
+static int exec_query_expect_error(
+    OliphauntHandle *db,
+    const char *sql,
+    const char *sqlstate) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_query(&query, &query_len, sql);
+
+    OliphauntResponse response = {0};
+    fprintf(stderr, "executing restricted-role denial probe: %s\n", sql);
+    int rc = oliphaunt_exec_protocol(db, query, query_len, &response);
+    free(query);
+    if (rc != 0) {
+        fprintf(stderr, "restricted-role protocol probe failed at ABI level: %s\n", oliphaunt_last_error(db));
+        return 1;
+    }
+    if (!contains_tag(&response, 'E') ||
+        !contains_tag(&response, 'Z') ||
+        !contains_bytes(&response, sqlstate)) {
+        fprintf(
+            stderr,
+            "restricted-role probe did not return ErrorResponse/ReadyForQuery with SQLSTATE %s: %s\n",
+            sqlstate,
+            sql);
+        oliphaunt_free_response(&response);
+        return 1;
+    }
+    oliphaunt_free_response(&response);
+    return 0;
+}
+
+static int expect_restricted_role_state(OliphauntHandle *db, const char *marker) {
+    char sql[1024];
+    int written = snprintf(
+        sql,
+        sizeof(sql),
+        "SELECT CASE WHEN session_user = 'oliphaunt_broker' "
+        "AND current_user = 'oliphaunt_broker' "
+        "AND current_setting('is_superuser') = 'off' "
+        "AND current_schemas(false) = ARRAY['oliphaunt_broker', 'public']::name[] "
+        "AND NOT (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = 'oliphaunt_broker') "
+        "THEN '%s' ELSE 'restricted-role-unsafe' END",
+        marker);
+    if (written < 0 || (size_t)written >= sizeof(sql)) {
+        fprintf(stderr, "restricted-role state query exceeded its fixed buffer\n");
+        return 1;
+    }
+    return exec_query_expect_bytes(db, sql, marker);
+}
+
+static int probe_restricted_role_boundary(const char *pgdata, const char *runtime_dir) {
+    static const char *const startup_args[] = {
+        "-c",
+        "search_path=\"$user\", public",
+    };
+    OliphauntConfig config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = pgdata,
+        .runtime_dir = runtime_dir,
+        .username = "oliphaunt_broker",
+        .database = "postgres",
+        .reserved_flags = 0,
+        .startup_args = startup_args,
+        .startup_arg_count = sizeof(startup_args) / sizeof(startup_args[0]),
+    };
+    OliphauntHandle *db = NULL;
+    fprintf(stderr, "opening embedded backend as configured restricted role\n");
+    if (oliphaunt_init(&config, &db) != 0 || db == NULL) {
+        fprintf(stderr, "configured restricted role did not reach ReadyForQuery: %s\n", oliphaunt_last_error(db));
+        return 1;
+    }
+    if (exec_query_expect_bytes(
+            db,
+            "SELECT current_setting('search_path')",
+            "\"$user\", public") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    const unsigned char command_tags[] = {'C', 'Z'};
+    if (exec_query_expect_error(
+            db,
+            "BEGIN; "
+            "ALTER ROLE oliphaunt_broker NOSUPERUSER; "
+            "SET SESSION AUTHORIZATION oliphaunt_broker; "
+            "SELECT 1 / 0",
+            "22012") != 0 ||
+        exec_query_expect_tags(db, "ROLLBACK", command_tags, sizeof(command_tags)) != 0 ||
+        exec_query_expect_bytes(
+            db,
+            "SELECT CASE WHEN current_setting('is_superuser') = 'off' "
+            "AND (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = 'oliphaunt_broker') "
+            "THEN 'failed-bootstrap-fail-closed' ELSE 'failed-bootstrap-unsafe' END",
+            "failed-bootstrap-fail-closed") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    fprintf(stderr, "detaching after failed bootstrap and reopening resident backend\n");
+    if (oliphaunt_detach(db) != 0) {
+        fprintf(stderr, "failed-bootstrap detach failed: %s\n", oliphaunt_last_error(db));
+        oliphaunt_close(db);
+        return 1;
+    }
+    OliphauntHandle *reopened = NULL;
+    if (oliphaunt_init(&config, &reopened) != 0 || reopened == NULL) {
+        fprintf(stderr, "failed-bootstrap resident reopen failed: %s\n", oliphaunt_last_error(NULL));
+        oliphaunt_close(db);
+        return 1;
+    }
+    db = reopened;
+    if (exec_query_expect_bytes(
+            db,
+            "SELECT current_setting('search_path')",
+            "\"$user\", public") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    const char *bootstrap_sql =
+        "BEGIN; "
+        "REASSIGN OWNED BY oliphaunt_broker TO postgres; "
+        "CREATE SCHEMA IF NOT EXISTS oliphaunt_broker AUTHORIZATION oliphaunt_broker; "
+        "GRANT CONNECT, TEMPORARY ON DATABASE postgres TO oliphaunt_broker; "
+        "REVOKE CREATE ON DATABASE postgres FROM oliphaunt_broker; "
+        "GRANT USAGE, CREATE ON SCHEMA oliphaunt_broker TO oliphaunt_broker; "
+        "REVOKE CREATE ON SCHEMA public FROM PUBLIC, oliphaunt_broker; "
+        "GRANT USAGE ON SCHEMA public TO oliphaunt_broker; "
+        "GRANT pg_checkpoint TO oliphaunt_broker; "
+        "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_relation_filepath(regclass) "
+        "FROM PUBLIC, oliphaunt_broker; "
+        "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_tablespace_location(oid) "
+        "FROM PUBLIC, oliphaunt_broker; "
+        "ALTER ROLE oliphaunt_broker SET search_path TO \"$user\", public; "
+        "ALTER ROLE oliphaunt_broker NOSUPERUSER NOCREATEDB NOCREATEROLE "
+        "INHERIT LOGIN NOREPLICATION NOBYPASSRLS; "
+        "SET SESSION AUTHORIZATION oliphaunt_broker; "
+        "SET search_path TO \"$user\", public; "
+        "COMMIT";
+    if (exec_query_expect_tags(db, bootstrap_sql, command_tags, sizeof(command_tags)) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+    if (exec_query_expect_error(db, "SET ROLE postgres", "42501") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    if (expect_restricted_role_state(db, "restricted-role-safe") != 0 ||
+        exec_query_expect_bytes(
+            db,
+            "CREATE TABLE restricted_role_protocol_probe(value text); "
+            "INSERT INTO restricted_role_protocol_probe VALUES ('restricted-ddl-dml-ok'); "
+            "SELECT value FROM restricted_role_protocol_probe",
+            "restricted-ddl-dml-ok") != 0 ||
+        exec_query_expect_tags(db, "CHECKPOINT", command_tags, sizeof(command_tags)) != 0 ||
+        exec_query_expect_error(db, "SHOW data_directory", "42501") != 0 ||
+        exec_query_expect_error(db, "SET SESSION AUTHORIZATION postgres", "42501") != 0 ||
+        exec_query_expect_error(db, "ALTER ROLE oliphaunt_broker SUPERUSER", "42501") != 0 ||
+        exec_query_expect_tags(
+            db,
+            "BEGIN; "
+            "SET LOCAL SESSION AUTHORIZATION oliphaunt_broker; "
+            "ALTER ROLE oliphaunt_broker PASSWORD NULL; "
+            "ROLLBACK",
+            command_tags,
+            sizeof(command_tags)) != 0 ||
+        expect_restricted_role_state(db, "restricted-rollback-safe") != 0 ||
+        exec_query_expect_tags(
+            db,
+            "RESET ROLE; RESET SESSION AUTHORIZATION",
+            command_tags,
+            sizeof(command_tags)) != 0 ||
+        exec_query_expect_error(db, "SET ROLE postgres", "42501") != 0 ||
+        expect_restricted_role_state(db, "restricted-reset-safe") != 0 ||
+        exec_query_expect_tags(db, "DISCARD ALL", command_tags, sizeof(command_tags)) != 0 ||
+        exec_query_expect_bytes(db, "SELECT session_user", "oliphaunt_broker") != 0 ||
+        exec_query_expect_bytes(db, "SELECT current_user", "oliphaunt_broker") != 0 ||
+        exec_query_expect_bytes(db, "SELECT current_setting('is_superuser')", "off") != 0 ||
+        exec_query_expect_bytes(
+            db,
+            "SELECT current_setting('search_path')",
+            "\"$user\", public") != 0 ||
+        exec_query_expect_bytes(db, "SELECT current_schemas(false)::text", "{oliphaunt_broker,public}") != 0 ||
+        exec_query_expect_bytes(
+            db,
+            "SELECT CASE WHEN NOT (SELECT rolsuper FROM pg_catalog.pg_roles "
+            "WHERE rolname = 'oliphaunt_broker') THEN 'catalog-nosuper' ELSE 'catalog-super' END",
+            "catalog-nosuper") != 0 ||
+        expect_restricted_role_state(db, "restricted-discard-safe") != 0 ||
+        exec_query_expect_bytes(
+            db,
+            "CREATE TABLE restricted_role_post_discard_probe(value text); "
+            "INSERT INTO restricted_role_post_discard_probe VALUES ('post-discard-ddl-dml-ok'); "
+            "SELECT value FROM restricted_role_post_discard_probe",
+            "post-discard-ddl-dml-ok") != 0 ||
+        exec_query_expect_error(db, "SET ROLE postgres", "42501") != 0 ||
+        exec_query_expect_error(db, "SET SESSION AUTHORIZATION postgres", "42501") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    if (oliphaunt_close(db) != 0) {
+        fprintf(stderr, "closing restricted-role probe failed: %s\n", oliphaunt_last_error(db));
+        return 1;
+    }
+    fprintf(stderr, "configured restricted-role protocol probe passed\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--expect-root-locked") == 0) {
+        return expect_root_locked_in_probe_process(argv[2], argv[3]);
+    }
+    if (argc == 4 && strcmp(argv[1], "--expect-configured-role-rejected") == 0) {
+        return expect_configured_role_rejected(
+            "oliphaunt_missing_authenticated_role",
+            argv[2],
+            argv[3]);
+    }
+    if (argc == 4 && strcmp(argv[1], "--expect-configured-role-login-rejected") == 0) {
+        return expect_configured_role_rejected(
+            "oliphaunt_no_login_authenticated_role",
+            argv[2],
+            argv[3]);
+    }
+    if (argc == 4 && strcmp(argv[1], "--probe-restricted-role-boundary") == 0) {
+        return probe_restricted_role_boundary(argv[2], argv[3]);
+    }
     if (argc != 3) {
-        fprintf(stderr, "usage: %s <pgdata> <runtime-dir>\n", argv[0]);
+        fprintf(
+            stderr,
+            "usage: %s <pgdata> <runtime-dir> | --expect-configured-role-rejected <pgdata> <runtime-dir> | --expect-configured-role-login-rejected <pgdata> <runtime-dir> | --probe-restricted-role-boundary <pgdata> <runtime-dir>\n",
+            argv[0]);
         return 2;
     }
 
@@ -1970,7 +2385,7 @@ int main(int argc, char **argv) {
     if (set_pgdata_env_for_smoke(host_pgdata) != 0) {
         return 1;
     }
-    if (run_cycle(argv[1], argv[2]) != 0) {
+    if (run_cycle(argv[0], argv[1], argv[2]) != 0) {
         return 1;
     }
     if (expect_pgdata_env("oliphaunt_close", host_pgdata) != 0) {

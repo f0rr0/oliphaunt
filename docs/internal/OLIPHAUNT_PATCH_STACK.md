@@ -40,6 +40,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | 18 | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: contain embedded process signals |
 | 19 | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: link Windows embedded modules to host |
 | 20 | `0020-liboliphaunt-enforce-embedded-signal-boundary.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: enforce embedded signal boundary |
+| 21 | `0021-liboliphaunt-authenticate-embedded-role.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: authenticate embedded role |
 
 ## Changed Upstream Files
 
@@ -48,6 +49,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/backend/access/transam/xlogarchive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
 - `src/backend/archive/shell_archive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
 - `src/backend/commands/event_trigger.c` (`0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`)
+- `src/backend/commands/variable.c` (`0021-liboliphaunt-authenticate-embedded-role.patch`)
 - `src/backend/libpq/be-secure.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
 - `src/backend/libpq/pqcomm.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
 - `src/backend/meson.build` (`0019-liboliphaunt-link-windows-embedded-modules-to-host.patch`)
@@ -59,6 +61,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/backend/storage/ipc/procsignal.c` (`0018-liboliphaunt-contain-embedded-proc-signals.patch`)
 - `src/backend/tcop/postgres.c` (`0002-liboliphaunt-add-embedded-entrypoint.patch`, `0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0005-liboliphaunt-restore-host-cwd.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0010-liboliphaunt-use-host-runtime-paths.patch`, `0014-liboliphaunt-use-portable-embedded-socketpair.patch`, `0018-liboliphaunt-contain-embedded-proc-signals.patch`)
 - `src/backend/utils/fmgr/dfmgr.c` (`0006-liboliphaunt-add-static-extension-loader.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
+- `src/backend/utils/init/postinit.c` (`0021-liboliphaunt-authenticate-embedded-role.patch`)
 - `src/bin/initdb/initdb.c` (`0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch`)
 - `src/include/libpq/libpq-be.h` (`0001-liboliphaunt-add-backend-host-io.patch`)
 - `src/include/port.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`, `0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
@@ -66,6 +69,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/include/storage/ipc.h` (`0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`)
 - `src/include/tcop/backend_startup.h` (`0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch`)
 - `src/include/tcop/tcopprot.h` (`0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
+- `src/include/utils/guc_hooks.h` (`0021-liboliphaunt-authenticate-embedded-role.patch`)
 - `src/include/utils/hsearch.h` (`0017-liboliphaunt-namespace-dynahash-host-collisions.patch`)
 - `src/port/chklocale.c` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
 - `src/port/pqsignal.c` (`0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
@@ -79,6 +83,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/backend/access/transam/xlogarchive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
 | `src/backend/archive/shell_archive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
 | `src/backend/commands/event_trigger.c` | Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior. |
+| `src/backend/commands/variable.c` | Oliphaunt session-authorization assignments monotonically latch an observed authenticated-role demotion without catalog access during transaction cleanup. |
 | `src/backend/libpq/be-secure.c` | Backend secure read/write path delegates to a host I/O vtable only when OLIPHAUNT_EMBEDDED is set. |
 | `src/backend/libpq/pqcomm.c` | Standalone embedded sessions avoid waiting on a non-existent postmaster death latch. |
 | `src/backend/meson.build` | Embedded MSVC extension modules link to the oliphaunt host import library instead of the standalone postgres executable. |
@@ -90,6 +95,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/backend/storage/ipc/procsignal.c` | The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals. |
 | `src/backend/tcop/postgres.c` | Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition. |
 | `src/backend/utils/fmgr/dfmgr.c` | Static extension lookup reuses PostgreSQL dynamic function manager semantics. |
+| `src/backend/utils/init/postinit.c` | Oliphaunt host-I/O sessions initialize the immutable authenticated identity from the configured role while ordinary standalone startup remains unchanged. |
 | `src/bin/initdb/initdb.c` | Base runtimes skip ICU-backed collation setup until optional ICU data is present. |
 | `src/include/libpq/libpq-be.h` | Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED. |
 | `src/include/port.h` | Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary. |
@@ -97,6 +103,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/include/storage/ipc.h` | Embedded cleanup and proc_exit guard declarations. |
 | `src/include/tcop/backend_startup.h` | Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration. |
 | `src/include/tcop/tcopprot.h` | Embedded entrypoint and returning PostgresMain declarations. |
+| `src/include/utils/guc_hooks.h` | Declares the Oliphaunt-only per-session authenticated-role latch reset used by InitPostgres. |
 | `src/include/utils/hsearch.h` | Apple builds namespace PostgreSQL dynahash symbols that otherwise bind to unrelated libSystem exports. |
 | `src/port/chklocale.c` | Android embedded builds avoid unsupported locale-environment mutation. |
 | `src/port/pqsignal.c` | Embedded backend signal registration and emission preserve the host-owned SIGUSR1 disposition while delegating other signals. |
@@ -141,6 +148,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | Embedded ProcSignal delivery cannot escape into the host process | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | `oliphaunt_send_proc_signal`, `pid != MyProcPid`, `procsignal_sigusr1_handler(SIGUSR1)`, `host owns SIGUSR1` | The one-backend embedded runtime dispatches ProcSignal flags synchronously, rejects foreign PIDs, and leaves the host SIGUSR1 disposition untouched; normal PostgreSQL server builds retain upstream signal delivery. |
 | Windows embedded extension modules link to the host DLL provider | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | `oliphaunt_embedded_module_provider`, `requires an embedded MSVC Windows build`, `pg_mod_link_args += oliphaunt_embedded_module_provider`, `oliphaunt_embedded_module_provider == ''` | Embedded MSVC extension modules resolve PostgreSQL backend symbols from the oliphaunt host import library; ordinary PostgreSQL modules retain the upstream postgres executable link contract. |
 | Embedded backend and extension signal calls preserve host SIGUSR1 ownership | `0020-liboliphaunt-enforce-embedded-signal-boundary.patch` | `oliphaunt_embedded_kill`, `oliphaunt_embedded_raise`, `!defined(FRONTEND)`, `if (signo == SIGUSR1)` | Embedded backend and extension calls cannot replace or emit host-owned SIGUSR1; other signals delegate to the platform implementation, while frontend tools and normal PostgreSQL builds retain upstream behavior. |
+| Embedded sessions authenticate as the configured database role | `0021-liboliphaunt-authenticate-embedded-role.patch` | `MyProcPort->oliphaunt_io != NULL`, `InitializeSessionUserId(username, useroid, false)`, `!role_form->rolcanlogin`, `is not permitted to log in`, `assign_session_authorization`, `ResetOliphauntAuthenticatedRoleLatch`, `oliphaunt_authenticated_role_is_superuser = false`, `InitializeSessionUserIdStandalone` | Only the Oliphaunt host-I/O backend resolves its immutable authenticated identity from the configured LOGIN role and latches an observed demotion for that session so stale RESET, rollback, and DISCARD state fail closed without catalog work in GUC cleanup; ordinary standalone PostgreSQL keeps bootstrap-superuser recovery semantics. |
 
 ## Guardrails
 

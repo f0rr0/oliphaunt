@@ -94,10 +94,10 @@
       "inputs": [
         {
           "path": "tools/release/render_swiftpm_release_package.mjs",
-          "sha256": "f04e4364aac7c7852ff8957f6f337bff303f133634795ddd88bc85e0cf2ff699"
+          "sha256": "53db95639e8781b344de445becec25098a8ecf9bd96f61b0ff79858af87b65a0"
         }
       ]
     }
   ],
-  "sha256": "036f517f9b6cb431205dce53ba03f7e7bb4c4d12b30a6156524cd3b5878c07cc"
+  "sha256": "d80a34f4345b7709e6651d11ba25f61b6d1d09a2a6420795e7b7d24f50cacc44"
 }
