@@ -53,6 +53,16 @@ are causal experiments, not canonical capability qualification: the private
 SPI cannot ship, the delay boundary was sampled only once per value, and the
 fail-stop policy is not yet a production implementation.
 
+A final repeated physical experiment closes the native-execution mechanism
+question without changing the advertised capability. Two 30-trial batches at
+commit `adc8cf09` ran the one-second actor-block fail-stop path 60/60. Two more
+30-trial batches at commit `b5b5177e` ran `pg_sleep(60)` while a DEBUG work item
+outside `WorkerCore` called `abort()` during native execution; that path also
+recovered 60/60. Every counted trial produced a different worker PID and epoch,
+a new validated Ready generation, and healthy SQL. This is repeated mechanism
+evidence on one iPhone15,2/iOS 26.5 beta stack, not a Release reliability or
+shipping-policy claim.
+
 The exact simulator artifact manifest is
 `oliphaunt-ios-broker-artifacts-v1`, arm64, iOS 26.0, PostgreSQL 18.4, C ABI 6,
 `brokerDatabaseRole=oliphaunt_broker`, and
@@ -550,6 +560,29 @@ not evidence that the OS termination primitive failed. Both private mechanisms
 remain unsupported implementation details and are retained only to diagnose
 the public API gap.
 
+The final DEBUG-only repetition used the public manager/reconnect path and no
+private ExtensionFoundation SPI. The actor-block control passed 60/60 trials:
+the request became `outcomeUnknown` in 1.003-1.068 seconds, then a fresh PID,
+epoch, Ready generation, and healthy SQL response were observed. The stronger
+native control armed `.duringNativeExecution`, issued
+`SELECT pg_sleep(60), 'must-not-complete'::text AS status`, and let a global
+Dispatch work item call `abort()` while the worker actor/thread was inside the
+native call. It also passed 60/60 trials. Its terminal was observed in 250-267
+ms because the fixture waits 250 ms to prove the main actor remains responsive;
+the injected work item itself is scheduled after 50 ms.
+
+All native-control trials had launch-attempt counters `1 -> 1 -> 2` and Ready
+counters `1 -> 1 -> 2`. Their 120 worker epochs and 180 host/initial/recovered
+PIDs were unique, the old worker was absent at report publication, per-trial
+cleanup passed, and no fixture process remained afterward. Launch-to-report
+latency was 3.191-3.541 seconds (nearest-rank p50 3.342 seconds; p95 3.465
+seconds). With 60/60 observed successes, the one-sided exact 95% IID lower
+success bound is 95.13%. The IID assumption is weak for serial trials on one
+device/build/install, so this establishes repeatability on that tested stack,
+not a production SLA. The DEBUG timer is deliberately armed for a known fault;
+it is not a progress-sensitive policy that can distinguish a valid slow query
+from a native hang.
+
 The final signed Debug physical semantic launches recorded these generations:
 
 | App launch / host | Cause | Epoch | Worker PID | Result |
@@ -839,9 +872,10 @@ dedicated physical hang lanes directly support advertising
 `hangRestartable=false`: their immediate public replacement attempts did not
 recover. The later DEBUG mechanism experiment proves recovery is possible once
 teardown completes or the old process is made unambiguously unavailable, but
-one successful 100 ms sample and a diagnostic fail-stop hook do not establish a
-shipping reliability contract. The actual Release background transitions
-quiesced and closed admission, used no keepalive, and recovered on foreground,
+even 60/60 actor-block and 60/60 native-call fail-stop trials on one physical
+stack do not establish a shipping reliability contract. The actual Release
+background transitions quiesced and closed admission, used no keepalive, and
+recovered on foreground,
 directly supporting `backgroundContinuable=false`. No capability implies
 indefinite background execution, root switching, multiple physical sessions,
 backup/restore, or server semantics.
@@ -942,10 +976,11 @@ The remaining blockers and explicit limits are:
    state at 0 and 50 ms, but a fresh healthy worker at 100 and 250 ms. This
    strongly identifies asynchronous teardown/process reuse as the immediate
    failure mechanism, while also proving it is not a universal inability to
-   restart. The measured boundary is not an API guarantee. A bounded retry
-   policy or independent fail-stop watchdog still needs repeated clean-lifetime,
-   suspension, native-hang, and resource-integrity testing before the capability
-   can truthfully become `true`.
+   restart. The measured boundary is not an API guarantee. The repeated DEBUG
+   fail-stop controls now cover clean-lifetime actor and native-call recovery on
+   this one stack, but a bounded progress-sensitive policy still needs Release,
+   suspension, data/resource-integrity, and broader device/OS testing before the
+   capability can truthfully become `true`.
 5. **Backup/restore is unavailable.** The additive bounded archive ABI and its
    interruption tests do not exist.
 6. **Direct-mode comparison and broader lifecycle coverage remain.** The stable
@@ -1006,9 +1041,11 @@ unavailable and is not claimed. The storage audit does not cover
 locked-before-first-unlock access. Immediate deliberate-hang recovery was not
 obtained in the canonical simulator or physical lane; the follow-up device
 matrix obtained it after a short public teardown delay and through diagnostic
-force-fresh controls, but did not establish repeated reliability. Backup/restore,
-direct-mode comparison and contention, extended lifecycle/device coverage,
-TestFlight, and App Store qualification also remain unproved. CoreSimulator's
-global root and quarantine helper remain simulator-only limitations. The
-evidence therefore supports the stated feasibility verdict, not production
-readiness.
+force-fresh controls. The final DEBUG controls then repeated actor-block and
+native-call fail-stop recovery 60/60 times each on the same physical stack,
+establishing mechanism repeatability but not a production policy or SLA.
+Backup/restore, direct-mode comparison and contention, extended
+lifecycle/device coverage, TestFlight, and App Store qualification also remain
+unproved. CoreSimulator's global root and quarantine helper remain
+simulator-only limitations. The evidence therefore supports the stated
+feasibility verdict, not production readiness.
