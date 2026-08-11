@@ -39,7 +39,9 @@ function writeExecutable(file, contents) {
 }
 
 function archiveFixture(source, archive) {
-  run("tar", ["-czf", archive, "-C", source, "."]);
+  run("tar", ["--format", "ustar", "-czf", archive, "-C", source, "."], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
 }
 
 function sha256(file) {

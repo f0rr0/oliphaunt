@@ -161,7 +161,7 @@ describe("normal publication plan", () => {
     const runtime = realSelection("src/runtimes/liboliphaunt/native/CHANGELOG.md");
     expect(runtime.release.directProducts).toEqual(["liboliphaunt-native"]);
     expect(runtime.release.releaseProducts).toContain("liboliphaunt-native");
-    expect(runtime.release.releaseProducts).toContain("liboliphaunt-wasix");
+    expect(runtime.release.releaseProducts).not.toContain("liboliphaunt-wasix");
     expect(runtime.release.releaseProducts).toContain("oliphaunt-extension-contrib-pg18");
     expect(extensionSqlNames("oliphaunt-extension-contrib-pg18", "normal-publication-plan.test"))
       .toContain("amcheck");

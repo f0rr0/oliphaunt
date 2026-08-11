@@ -50,44 +50,6 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  # Planner-only exact-file invalidation edge. These files define the hosted
-  # JavaScript candidate supervisor, Windows privilege boundary, and runtime
-  # fixtures; changing any one must rerun every same-run desktop proof lane.
-  js-exact-candidate-trigger:
-    tags: ["release", "planner"]
-    command: "true"
-    inputs:
-      - "/tools/release/js-exact-candidate-consumer.mjs"
-      - "/tools/release/exact-candidate-command-watchdog.mjs"
-      - "/tools/release/extension-manifest-discovery-proof.mjs"
-      - "/tools/release/extension-registry-carrier-materializer.mjs"
-      - "/tools/release/rust-build-script-sha256.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/src/sdks/js/src/native/extension-contract.ts"
-      - "/tools/release/run-windows-standard-user-exact-candidate.ps1"
-      - "/tools/release/fixtures/js-exact-candidate-runtime.mjs"
-      - "/tools/release/fixtures/js-exact-candidate-procsignal.mjs"
-      - "/tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs"
-      - "/tools/release/fixtures/js-exact-candidate-jsr.mjs"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-  # Planner-only exact-file invalidation edge. The hosted E2E job owns the
-  # executable frozen-candidate proof; this task prevents unrelated release
-  # tooling edits from selecting its expensive WASIX producer closure.
-  wasix-rust-exact-candidate-trigger:
-    tags: ["release", "planner"]
-    command: "true"
-    inputs:
-      - "/src/sources/toolchains/wasix.toml"
-      - "/tools/release/exact-cargo-candidate-consumer.mjs"
-      - "/tools/release/wasix-rust-exact-candidate-consumer.mjs"
-      - "/tools/release/rust-build-script-sha256.mjs"
-      - "/tools/release/wasix-aot-manifest.mjs"
-      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
   # Planner-only source edge for the fail-closed validation that runs after
   # both iOS carrier producers and before either artifact upload.
   ios-carrier-validation-trigger:
@@ -103,8 +65,7 @@ tasks:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
-      # The canonical release gate invokes graph.mjs directly. These inputs
-      # ensure graph-policy-only changes select its single hosted owner.
+      # Release planning and mutation tests query Moon and CI selection code.
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
       - "/.github/**/*"
@@ -141,8 +102,7 @@ tasks:
       - "/tools/test/create-liboliphaunt-release-fixture.mjs"
       - "/tools/test/release-fixture-utils.mjs"
     options:
-      # This task owns live repository-graph validation in hosted CI. Its graph
-      # read set includes dynamically declared paths and nested Moon queries.
+      # Release planning observes live Git and Moon state.
       cache: false
       runFromWorkspaceRoot: true
   broker-dependency-license-audit:

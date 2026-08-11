@@ -20,7 +20,6 @@ import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import {
   compatibilityEntriesForBumpedProducts,
   releasePleaseWorktreeTransitions,
-  requireCompleteRuntimeLinkedTransitions,
 } from "./release-please-transition.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
 import {
@@ -28,10 +27,6 @@ import {
   exampleCargoReleaseVersionBindings,
 } from "./example-cargo-policy.mjs";
 import { synchronizeDependentReleaseCandidates } from "./release-dependent-candidates.mjs";
-import {
-  releaseSemanticFingerprintPath,
-  syncReleaseSemanticInputFingerprints,
-} from "./release-semantic-inputs.mjs";
 import { releasePleaseConfigAfterBootstrapConsumption } from "./release-please-bootstrap.mjs";
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
@@ -40,7 +35,6 @@ const PREFIX = "sync-release-pr.mjs";
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "build-dependencies"];
 const LOCKFILES = [
   path.join(ROOT, "Cargo.lock"),
-  path.join(ROOT, "src/sdks/rust/tests/release-consumer/Cargo.lock"),
 ];
 const PNPM_LOCKFILE = path.join(ROOT, "pnpm-lock.yaml");
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, "release-please-config.json");
@@ -335,7 +329,7 @@ function typescriptOptionalRuntimePackages() {
   return typescriptOptionalRuntimePackageProducts(PREFIX).map(({ packageName }) => packageName);
 }
 
-async function syncTypescriptOptionalRuntimeDependencies(changes, { write }) {
+function typescriptOptionalRuntimeVersionsFromPackage() {
   const file = path.join(ROOT, "src/sdks/js/package.json");
   const data = readJsonObject(file);
   const optional = data.optionalDependencies;
@@ -348,6 +342,16 @@ async function syncTypescriptOptionalRuntimeDependencies(changes, { write }) {
   if (!setsEqual(actualKeys, expectedKeys)) {
     fail(`${rel(file)} optionalDependencies must be exactly ${expectedPackages.join(", ")}`);
   }
+  return Object.fromEntries(expectedPackages.map((packageName) => [packageName, optional[packageName]]));
+}
+
+async function syncTypescriptOptionalRuntimeDependencies(changes, { write, transitions }) {
+  if (!transitions.some(({ product }) => product === "oliphaunt-js")) {
+    return;
+  }
+  const file = path.join(ROOT, "src/sdks/js/package.json");
+  const data = readJsonObject(file);
+  const optional = data.optionalDependencies;
   const expectedVersions = await expectedTypescriptOptionalRuntimeVersions();
   let changed = false;
   const details = [];
@@ -391,7 +395,7 @@ function syncElectronExampleDependencies(changes, { write }) {
 }
 
 async function syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write }) {
-  const expectedVersions = await expectedTypescriptOptionalRuntimeVersions();
+  const expectedVersions = typescriptOptionalRuntimeVersionsFromPackage();
   const lines = readText(PNPM_LOCKFILE).split(/(?<=\n)/u);
   const expectedPackages = new Set(typescriptOptionalRuntimePackages());
   const seen = new Set();
@@ -470,6 +474,7 @@ export function cargoManifestPaths({
     .split("\0")
     .filter(Boolean)
     .map((file) => path.join(root, file))
+    .filter((file) => existsSync(file))
     .sort(compareText);
 }
 
@@ -553,9 +558,15 @@ function desiredCargoPathDependencyVersions(manifestPath, localPackages) {
   return desired;
 }
 
-function syncCargoPathDependencyPins(changes, { write }) {
+function syncCargoPathDependencyPins(changes, { write, transitions }) {
   const localPackages = localCargoPackagesByManifest();
+  const selectedRoots = transitions
+    .map(({ product }) => path.join(ROOT, packagePath(product)))
+    .sort((left, right) => right.length - left.length || compareText(left, right));
   for (const manifestPath of cargoManifestPaths()) {
+    if (!selectedRoots.some((root) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`))) {
+      continue;
+    }
     const desired = desiredCargoPathDependencyVersions(manifestPath, localPackages);
     if (desired.size === 0) {
       continue;
@@ -936,21 +947,6 @@ function syncExtensionEvidenceSummary(changes, { write }) {
   }
 }
 
-function syncDerivedReleaseSemanticFingerprints(changes, { write }) {
-  const graph = loadGraph(PREFIX);
-  const result = syncReleaseSemanticInputFingerprints(graph, {
-    root: ROOT,
-    write,
-    prefix: PREFIX,
-  });
-  for (const change of result.changes) {
-    changes.push({
-      path: path.join(ROOT, change.path),
-      detail: `${change.product} release-semantic fingerprint refreshed after derived release input changes`,
-    });
-  }
-}
-
 function parseArgs(argv) {
   const args = { check: false, generatedReleaseCheck: false };
   for (const arg of argv) {
@@ -979,10 +975,7 @@ async function main(argv) {
   const args = parseArgs(argv);
   const changes = [];
   const write = !args.check;
-  const initialGraph = loadGraph(PREFIX);
-  let products = initialGraph.products;
   let transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-  requireCompleteRuntimeLinkedTransitions(products, transitions, { prefix: PREFIX });
   if (transitions.length > 0) {
     const dependentCandidates = synchronizeDependentReleaseCandidates({
       root: ROOT,
@@ -995,26 +988,22 @@ async function main(argv) {
     });
     changes.push(...dependentCandidates.changes);
     if (write && dependentCandidates.candidates.length > 0) {
-      products = graphProducts();
       transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
-      requireCompleteRuntimeLinkedTransitions(products, transitions, { prefix: PREFIX });
     }
   }
   syncReleasePleaseBootstrapBoundary(changes, { write });
   await syncCompatibilityVersions(changes, { write, transitions });
   syncExtensionRegistryMetadata(changes, { write });
-  await syncTypescriptOptionalRuntimeDependencies(changes, { write });
+  await syncTypescriptOptionalRuntimeDependencies(changes, { write, transitions });
   syncElectronExampleDependencies(changes, { write });
   await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
-  syncCargoPathDependencyPins(changes, { write });
+  syncCargoPathDependencyPins(changes, { write, transitions });
   syncExampleCargoRegistryPins(changes, { write });
   syncLockfiles(changes, { write });
   if (!args.generatedReleaseCheck) {
     syncAssetInputFingerprint(changes, { write });
     syncExtensionEvidenceSummary(changes, { write });
   }
-  syncDerivedReleaseSemanticFingerprints(changes, { write });
-
   if (changes.length === 0) {
     console.log("release PR derived files are in sync");
     return;
@@ -1057,22 +1046,11 @@ export function releaseDerivedPathInventory() {
     ELECTRON_EXAMPLE_PACKAGE,
     ASSET_INPUT_FINGERPRINT_PATH,
     EXTENSION_EVIDENCE_SUMMARY_PATH,
-    ...releaseSemanticFingerprintDerivedEntries().map(({ path: pathText }) => path.join(ROOT, pathText)),
     ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
     ...exactExtensionProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),
     path.join(ROOT, "src/sdks/js/package.json"),
     ...cargoManifestPaths(),
   ].map(rel))].sort(compareText);
-}
-
-export function releaseSemanticFingerprintDerivedEntries() {
-  const graph = loadGraph(PREFIX);
-  return graph.release_semantic_inputs.products
-    .map((product) => ({
-      product,
-      path: releaseSemanticFingerprintPath(graph, product, { prefix: PREFIX }),
-    }))
-    .sort((left, right) => compareText(left.path, right.path));
 }
 
 if (import.meta.main) {

@@ -5,6 +5,6 @@ small IPC surface to the renderer through preload. The app uses `nativeServer`
 mode with a persistent root under Electron's user data directory.
 
 ```sh
-examples/tools/with-local-registries.sh pnpm --dir examples/electron install
-examples/tools/with-local-registries.sh pnpm --dir examples/electron start
+pnpm --dir examples/electron install
+pnpm --dir examples/electron start
 ```

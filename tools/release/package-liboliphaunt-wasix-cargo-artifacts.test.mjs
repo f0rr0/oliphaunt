@@ -212,7 +212,9 @@ describe("aggregate WASIX Cargo artifact packaging", () => {
     mkdirSync(path.dirname(source), { recursive: true });
     writeFileSync(source, expected);
     const carrier = path.join(root, "carrier.tar.gz");
-    run("tar", ["-czf", carrier, "-C", path.join(root, "stage"), carrierRoot]);
+    run("tar", ["--format", "ustar", "-czf", carrier, "-C", path.join(root, "stage"), carrierRoot], {
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
 
     const destination = path.join(root, "materialized", "extension.tar.zst");
     extractArchiveMemberToFile(carrier, member, destination);

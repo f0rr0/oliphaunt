@@ -2,12 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { compareText, runtimeTiedContribProducts } from "./release-graph.mjs";
-import {
-  exactReleasePleaseQualificationTransportBaseline,
-  exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
-  isUnreleasedReleasePleaseManifest,
-} from "./release-please-bootstrap.mjs";
+import { compareText } from "./release-graph.mjs";
 
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 
@@ -89,11 +84,11 @@ export function releasePleaseManifestTransitions(
   config,
   beforeManifest,
   afterManifest,
-  { parentSha, prefix = "release-please-transition" } = {},
+  { prefix = "release-please-transition" } = {},
 ) {
   object(config, "release-please-config.json", prefix);
   const after = object(afterManifest, ".release-please-manifest.json", prefix);
-  let before = beforeManifest === null
+  const before = beforeManifest === null
     ? null
     : object(beforeManifest, "parent .release-please-manifest.json", prefix);
   const products = packageProducts(config, prefix);
@@ -108,35 +103,10 @@ export function releasePleaseManifestTransitions(
     );
   }
 
-  if (
-    before !== null &&
-    isUnreleasedReleasePleaseManifest(after) &&
-    !isUnreleasedReleasePleaseManifest(before)
-  ) {
-    const rollback = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
-      config,
-      before,
-      after,
-      parentSha === undefined ? [] : [parentSha],
-      { prefix },
-    );
-    if (rollback !== null) before = rollback.normalizedBeforeManifest;
-  }
-
   if (before !== null) {
     const removed = Object.keys(before).filter((packagePath) => !currentPaths.has(packagePath)).sort();
     if (removed.length > 0) {
-      const baseline = exactReleasePleaseQualificationTransportBaseline(
-        config,
-        before,
-        after,
-        parentSha === undefined ? [] : [parentSha],
-        { prefix },
-      );
-      if (baseline === null) {
-        throw transitionError(prefix, `release-please package paths cannot disappear across normalization: ${removed.join(", ")}`);
-      }
-      before = baseline.normalizedBeforeManifest;
+      throw transitionError(prefix, `release-please package paths cannot disappear across normalization: ${removed.join(", ")}`);
     }
   }
 
@@ -161,37 +131,6 @@ export function releasePleaseManifestTransitions(
     }
   }
   return transitions.sort((left, right) => compareText(left.product, right.product));
-}
-
-/**
- * Release Please's pinned linked-versions plugin is responsible for creating
- * otherwise-missing candidates. Verify its complete deterministic output
- * before any derived files are rewritten.
- */
-export function requireCompleteRuntimeLinkedTransitions(
-  products,
-  transitions,
-  { prefix = "release-please-transition" } = {},
-) {
-  const tied = runtimeTiedContribProducts(products, prefix);
-  const byProduct = new Map(transitions.map((transition) => [transition.product, transition]));
-  if (!tied.some((product) => byProduct.has(product))) return null;
-
-  const missing = tied.filter((product) => !byProduct.has(product));
-  if (missing.length > 0) {
-    throw transitionError(
-      prefix,
-      `Release Please linked-versions output is incomplete; every runtime-tied product must advance in one release bump. Missing: ${missing.join(", ")}`,
-    );
-  }
-  const versions = new Set(tied.map((product) => byProduct.get(product).after));
-  if (versions.size !== 1) {
-    throw transitionError(
-      prefix,
-      `Release Please linked-versions output must advance every runtime-tied product to one version; got ${[...versions].sort().join(", ")}`,
-    );
-  }
-  return versions.values().next().value;
 }
 
 export function compatibilityEntriesForBumpedProducts(entries, transitions) {
@@ -252,5 +191,5 @@ export function releasePleaseWorktreeTransitions(
       throw transitionError(prefix, "a missing parent release-please manifest is valid only for the unreleased 0.0.0 introduction state");
     }
   }
-  return releasePleaseManifestTransitions(config, before, after, { parentSha: parent, prefix });
+  return releasePleaseManifestTransitions(config, before, after, { prefix });
 }

@@ -12,8 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { extractArchiveTree } from "./local-registry-publish.mjs";
-import { extractReleaseArchiveTree } from "./release-product-dry-run.mjs";
+import { extractReleaseArchiveTree } from "./package-release-carriers.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
 
 const ARCHIVER = path.join(ROOT, "tools/release/archive_dir.mjs");
@@ -58,10 +57,7 @@ test("native npm ZIP assembly preserves complete nested runtime trees", () => {
     });
     expect(packed.status, packed.stderr || packed.stdout).toBe(0);
 
-    const stages = [
-      ["exact-candidate", extractArchiveTree],
-      ["release-dry-run", extractReleaseArchiveTree],
-    ];
+    const stages = [["release-package", extractReleaseArchiveTree]];
     for (const [name, extract] of stages) {
       const stage = path.join(root, name, "runtime");
       extract(archive, "runtime", stage);

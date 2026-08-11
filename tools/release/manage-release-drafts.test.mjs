@@ -442,8 +442,8 @@ test("remote tag capture retains delayed records and accepts a complete empty fi
   assert.deepEqual([...emptySnapshot.values()], [null, null, null]);
 });
 
-test("the 49-product first release stays inside a bounded GitHub REST request budget", () => {
-  const selected = selection();
+test("the batch lifecycle mutates each exact tag, draft, and promotion once", () => {
+  const selected = selection(3);
   const headRef = "d".repeat(40);
   const tags = new Map(selected.map(({ tag }) => [tag, null]));
   let releases = new Map();
@@ -495,7 +495,7 @@ test("the 49-product first release stays inside a bounded GitHub REST request bu
     repo: "o/r",
     selected,
   }, dependencies);
-  assert.equal(restRequests, 101, "stage adds two release snapshots plus 98 exact mutations");
+  assert.equal(restRequests, 9, "stage adds two release snapshots plus six exact mutations");
   assert.equal(tagSnapshots, 4);
 
   reconcileSelectedReleasesSync({
@@ -507,7 +507,7 @@ test("the 49-product first release stays inside a bounded GitHub REST request bu
     repo: "o/r",
     selected,
   }, dependencies);
-  assert.equal(restRequests, 102);
+  assert.equal(restRequests, 10);
   assert.equal(tagSnapshots, 5);
 
   dependencies.mutatePromotion = ({ expectedId, metadata }) => {
@@ -526,9 +526,8 @@ test("the 49-product first release stays inside a bounded GitHub REST request bu
     repo: "o/r",
     selected,
   }, dependencies);
-  assert.equal(restRequests, 153, "all four commands use only 153 REST requests for 49 products");
+  assert.equal(restRequests, 15);
   assert.equal(tagSnapshots, 7);
-  assert.ok(restRequests < 200);
 });
 
 test("batch staging waits for the complete draft list without replaying successful POSTs", () => {
@@ -1037,111 +1036,6 @@ test("required release snapshots reject conflicting metadata without waiting", (
     /conflicts with frozen release metadata/u,
   );
   assert.equal(sleeps, 0);
-});
-
-test("same-version recovery preflight accepts only absent or exact-SHA resumable state", () => {
-  const selected = selection(2);
-  const headRef = "d".repeat(40);
-  const absentTags = new Map(selected.map(({ tag }) => [tag, null]));
-  const context = {
-    budget: budget(),
-    command: "recovery-preflight",
-    environment: {},
-    expectedState: "staged",
-    headRef,
-    repo: "o/r",
-    selected,
-  };
-  assert.deepEqual(reconcileSelectedReleasesSync(context, {
-    readReleaseMap: () => new Map(),
-    readTagMap: () => new Map(absentTags),
-  }), { exactReleaseCount: 0, exactTagCount: 0, selectedCount: 2 });
-
-  const exactTags = tagState(selected, headRef);
-  assert.deepEqual(reconcileSelectedReleasesSync(context, {
-    // GitHub omits drafts from List releases for the read-only dry-run token.
-    readReleaseMap: () => new Map(),
-    readTagMap: () => exactTags,
-  }), { exactReleaseCount: 0, exactTagCount: 2, selectedCount: 2 });
-
-  const exactReleases = new Map(selected.map(({ metadata, tag }, index) => [
-    tag,
-    { ...metadata, draft: index === 0, id: index + 1 },
-  ]));
-  assert.deepEqual(reconcileSelectedReleasesSync(context, {
-    readReleaseMap: () => exactReleases,
-    readTagMap: () => exactTags,
-  }), { exactReleaseCount: 2, exactTagCount: 2, selectedCount: 2 });
-
-  const partialTags = new Map(absentTags);
-  partialTags.set(selected[0].tag, exactTags.get(selected[0].tag));
-  assert.deepEqual(reconcileSelectedReleasesSync(context, {
-    readReleaseMap: () => new Map([[selected[0].tag, exactReleases.get(selected[0].tag)]]),
-    readTagMap: () => partialTags,
-  }), { exactReleaseCount: 1, exactTagCount: 1, selectedCount: 2 });
-
-  const conflictingTag = new Map(exactTags);
-  conflictingTag.set(selected[0].tag, {
-    ref: `refs/tags/${selected[0].tag}`,
-    sha: "e".repeat(40),
-    type: "commit",
-  });
-  assert.throws(() => reconcileSelectedReleasesSync(context, {
-    readReleaseMap: () => exactReleases,
-    readTagMap: () => conflictingTag,
-  }), /targets commit:/u);
-
-  assert.throws(
-    () => reconcileSelectedReleasesSync(context, {
-      readReleaseMap: () => new Map([[
-        selected[0].tag,
-        { ...selected[0].metadata, body: "conflict", draft: true, id: 1 },
-      ]]),
-      readTagMap: () => exactTags,
-    }),
-    /conflicts with frozen release metadata/u,
-  );
-});
-
-test("GitHub-staged recovery preflight requires the complete exact source-bound set", () => {
-  const selected = selection(2);
-  const headRef = "d".repeat(40);
-  const exactTags = tagState(selected, headRef);
-  const exactReleases = new Map(selected.map(({ metadata, tag }, index) => [
-    tag,
-    { ...metadata, draft: true, id: index + 1 },
-  ]));
-  const context = {
-    budget: budget(),
-    command: "recovery-staged-preflight",
-    environment: {},
-    expectedState: "staged",
-    headRef,
-    repo: "o/r",
-    selected,
-  };
-  const noSleep = { releaseSnapshotSleep: () => {} };
-  assert.deepEqual(reconcileSelectedReleasesSync(context, {
-    ...noSleep,
-    readReleaseMap: () => exactReleases,
-    readTagMap: () => exactTags,
-  }), { exactReleaseCount: 2, exactTagCount: 2, selectedCount: 2 });
-
-  const partialTags = new Map(exactTags);
-  partialTags.set(selected[0].tag, null);
-  assert.throws(() => reconcileSelectedReleasesSync(context, {
-    ...noSleep,
-    readReleaseMap: () => exactReleases,
-    readTagMap: () => partialTags,
-  }), /tag .* does not exist/u);
-
-  const partialReleases = new Map(exactReleases);
-  partialReleases.delete(selected[0].tag);
-  assert.throws(() => reconcileSelectedReleasesSync(context, {
-    ...noSleep,
-    readReleaseMap: () => partialReleases,
-    readTagMap: () => exactTags,
-  }), /did not converge to staged state/u);
 });
 
 test("batch staging reconciles ambiguous responses once and exact reruns issue no mutations", () => {

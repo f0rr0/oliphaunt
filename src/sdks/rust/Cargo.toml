@@ -10,7 +10,6 @@ homepage.workspace = true
 license = "MIT"
 exclude = [
   ".gitignore",
-  ".release-semantic-inputs.json",
   "crates/oliphaunt-build/**",
   "moon.yml",
   "release.toml",

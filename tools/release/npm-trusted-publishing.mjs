@@ -5,8 +5,8 @@ function object(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-// This validator is a package-byte semantic input: it defines the npm
-// manifests accepted by deterministic carrier materialization. Operational
+// This validator defines the npm manifests accepted by deterministic carrier
+// materialization. Operational
 // runtime and registry trust checks live in npm-trusted-publishing-runtime.mjs
 // so changes to release transport do not spuriously version package products.
 export function validateNpmTrustedPublishingManifest(manifest, context = "npm package") {

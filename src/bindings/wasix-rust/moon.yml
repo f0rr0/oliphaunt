@@ -127,7 +127,6 @@ tasks:
       - "/tools/release/release-cli-utils.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-semantic-inputs.mjs"
       - "/tools/release/rust-native-targets.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/swift-source-carrier-contract.mjs"
@@ -179,7 +178,6 @@ tasks:
       - "/src/bindings/wasix-rust/examples/**/*"
       - "!/src/bindings/wasix-rust/examples/**/node_modules"
       - "!/src/bindings/wasix-rust/examples/**/node_modules/**"
-      - "/examples/tools/with-local-registries.sh"
       - "/src/bindings/wasix-rust/tools/check-examples.sh"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
     options:

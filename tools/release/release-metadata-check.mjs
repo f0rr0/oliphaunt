@@ -9,8 +9,8 @@ function parseArgs(argv) {
     if (arg === "-h" || arg === "--help") {
       console.log(`usage: tools/release/release-metadata-check.mjs [legacy passthrough args]
 
-Runs live release policy, Release Please, artifact-target, release-PR,
-metadata, generated-docs, and consumer-shape checks without replaying mutation
+Runs Release Please, artifact-target, release-PR, publication metadata,
+generated-docs, and consumer-shape checks without replaying mutation
 unit tests.
 This is an internal post-qualification or generated-metadata replay surface;
 use release-check.mjs for the full local gate.
@@ -22,7 +22,6 @@ use release-check.mjs for the full local gate.
 
 function main(argv) {
   parseArgs(argv);
-  run(TOOL, [process.execPath, "tools/policy/check-release-policy.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check_release_please_config.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check_artifact_targets.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check-extension-publication-legal-clearance.mjs"]);

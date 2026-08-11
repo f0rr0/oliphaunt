@@ -19,10 +19,6 @@ import { gunzipSync } from "node:zlib";
 import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
-  SUPPORTED_SDK_PRODUCT_DRY_RUNS,
-  runSdkProductDryRun,
-} from "./release-sdk-product-dry-run.mjs";
-import {
   artifactTargets,
   compareText,
   currentProductVersionSync,
@@ -33,11 +29,7 @@ import {
 import {
   packageNativeExtensionCargoCrates,
   stageExtensionNpmPackages,
-} from "./extension-registry-carrier-materializer.mjs";
-import {
-  cargoPackageIdentityFromCrate,
-  npmPackageIdentity,
-} from "./local-registry-publish.mjs";
+} from "./package-extension-release-carriers.mjs";
 import { packageExtensionCargoFacades } from "./package-extension-cargo-facades.mjs";
 import {
   WASIX_CARGO_ARTIFACT_SCHEMA,
@@ -85,7 +77,7 @@ import {
 import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
-const TOOL = "release-product-dry-run.mjs";
+const TOOL = "package-release-carriers.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
 const LIBOLIPHAUNT_NATIVE_KIND = "native-runtime";
 const LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT = "oliphaunt-tools";
@@ -102,8 +94,7 @@ const NODE_DIRECT_PRODUCT = "oliphaunt-node-direct";
 const NODE_DIRECT_KIND = "node-direct-addon";
 const NODE_DIRECT_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/node-direct/packages");
 
-export const SUPPORTED_BUN_PRODUCT_DRY_RUNS = new Set([
-  ...SUPPORTED_SDK_PRODUCT_DRY_RUNS,
+export const RELEASE_CARRIER_PRODUCTS = new Set([
   ...exactExtensionProducts(TOOL),
   LIBOLIPHAUNT_NATIVE_PRODUCT,
   BROKER_PRODUCT,
@@ -1211,13 +1202,13 @@ export async function nodeDirectOptionalNpmTarballs(version) {
   return tarballs;
 }
 
-async function runNodeDirectDryRun() {
+async function packageNodeDirectCarriers() {
   run(TOOL, ["src/runtimes/node-direct/tools/check-package.sh", "package-shape"]);
   ensureNodeDirectReleaseAssets();
   await nodeDirectOptionalNpmTarballs(currentProductVersionSync(NODE_DIRECT_PRODUCT, TOOL));
 }
 
-function runBrokerDryRun() {
+function packageBrokerCarriers() {
   const version = currentProductVersionSync(BROKER_PRODUCT, TOOL);
   ensureBrokerReleaseAssets();
   brokerNpmTarballs(version);
@@ -1363,14 +1354,14 @@ export function liboliphauntNativeCargoArtifactPackages(version = currentProduct
   return validateNativeCargoArtifacts(outputDir);
 }
 
-async function runLiboliphauntNativeDryRun() {
+async function packageLiboliphauntNativeCarriers() {
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   liboliphauntNativeCargoArtifactPackages(version);
   liboliphauntNpmTarballs(version);
   const manifest = buildMavenArtifactManifest("liboliphaunt-native-runtime", { runtime: true });
   await stageMavenArtifactManifest(
     manifest,
-    path.join(ROOT, "target/release/maven-staging/liboliphaunt-native-maven-dry-run"),
+    path.join(ROOT, "target/release/maven-staging/liboliphaunt-native"),
   );
 }
 
@@ -1488,7 +1479,7 @@ export function liboliphauntWasixCargoArtifactPackages(version = currentProductV
   return validateWasixCargoArtifacts(outputDir);
 }
 
-function runWasixRuntimeDryRun() {
+function packageWasixRuntimeCarriers() {
   liboliphauntWasixCargoArtifactPackages(currentProductVersionSync(WASIX_PRODUCT, TOOL));
 }
 
@@ -1500,13 +1491,7 @@ function releaseSurfaceResult(surface) {
   return { surface, staged: [], skipped: [] };
 }
 
-function stagedTarballs(result) {
-  return result.staged
-    .filter((entry) => entry.endsWith(".tgz"))
-    .map((entry) => path.isAbsolute(entry) ? entry : path.join(ROOT, entry));
-}
-
-export function extensionAssetPaths(product) {
+function requireExtensionAssets(product) {
   run(TOOL, [
     process.execPath,
     "tools/release/check-staged-artifacts.mjs",
@@ -1514,107 +1499,54 @@ export function extensionAssetPaths(product) {
     product,
     "--require-full-extension-targets",
   ]);
-  const assetDir = path.join(extensionPackageDir(product), "release-assets");
-  if (!isDirectory(assetDir)) {
-    fail(`${product} extension package did not create ${rel(assetDir)}`);
-  }
-  const assets = readdirSync(assetDir)
-    .sort(compareText)
-    .map((name) => path.join(assetDir, name))
-    .filter(isFile);
-  if (assets.length === 0) {
-    fail(`${product} extension package produced no release assets`);
-  }
-  return assets.map(rel);
 }
 
-export function buildMavenArtifactManifest(name, { runtime = false, extensions = false, extensionProducts = [] } = {}) {
-  const outputPath = path.join(ROOT, "target/release/maven-artifacts", `${name}.tsv`);
-  const command = [
-    process.execPath,
-    "tools/release/build_maven_artifact_manifest.mjs",
-    "--output",
-    rel(outputPath),
-  ];
-  if (runtime) {
-    command.push("--runtime");
-  }
-  if (extensions) {
-    command.push("--extensions");
-  }
-  for (const extensionProduct of extensionProducts) {
-    command.push("--extension-product", extensionProduct);
-  }
-  run(TOOL, command);
-  return outputPath;
-}
-
-async function runExtensionMavenArtifactDryRun(product) {
+async function packageExtensionMavenCarriers(product) {
   const manifest = buildMavenArtifactManifest(product, {
     extensions: true,
     extensionProducts: [product],
   });
   await stageMavenArtifactManifest(
     manifest,
-    path.join(ROOT, "target/release/maven-staging", `${product}-maven-dry-run`),
+    path.join(ROOT, "target/release/maven-staging", product),
   );
 }
 
-function runExtensionNpmArtifactDryRun(product) {
-  const roots = [extensionPackageDir(product)];
-  const packages = new Set();
+function packageExtensionNpmCarriers(product) {
   const targets = extensionRegistryPackageTargetSets(product, TOOL).npmTargets;
   for (const target of targets) {
     const result = releaseSurfaceResult(`${product}-npm-${target}`);
-    const tarballRoot = stageExtensionNpmPackages(
-      roots,
-      path.join(ROOT, "target/release/extension-dry-run/npm", product, target),
+    const output = stageExtensionNpmPackages(
+      [extensionPackageDir(product)],
+      path.join(ROOT, "target/release/extension-carriers/npm", product, target),
       target,
       result,
       { metaTargets: targets },
     );
-    if (tarballRoot === null) {
-      fail(`${product} npm dry-run failed for ${target}: ${result.skipped.join("; ")}`);
-    }
-    for (const tarball of stagedTarballs(result)) {
-      const identity = npmPackageIdentity(tarball);
-      if (identity === null) {
-        fail(`${product} npm dry-run could not read package identity from ${rel(tarball)}`);
-      }
-      packages.add(`${identity.name}@${identity.version}`);
+    if (output === null || result.staged.length === 0) {
+      fail(`${product} npm carrier packaging failed for ${target}: ${result.skipped.join("; ")}`);
     }
   }
-  console.log(`${product} npm dry-run packages: ${[...packages].sort(compareText).join(", ")}`);
 }
 
-function runExtensionNativeCargoArtifactDryRun(product) {
-  const roots = [extensionPackageDir(product)];
-  const packages = [];
+function packageExtensionNativeCargoCarriers(product) {
   for (const target of extensionRegistryPackageTargetSets(product, TOOL).nativeCargoTargets) {
     const result = releaseSurfaceResult(`${product}-cargo-${target}`);
     const crates = packageNativeExtensionCargoCrates(
-      roots,
-      path.join(ROOT, "target/release/extension-dry-run/cargo", product, `native-${target}`),
+      [extensionPackageDir(product)],
+      path.join(ROOT, "target/release/extension-carriers/cargo", product, `native-${target}`),
       target,
       true,
       result,
     );
     if (crates.length === 0) {
-      fail(`${product} native Cargo dry-run failed for ${target}: ${result.skipped.join("; ")}`);
-    }
-    for (const cratePath of crates) {
-      const identity = cargoPackageIdentityFromCrate(cratePath);
-      if (identity === null) {
-        fail(`${product} native Cargo dry-run could not read package identity from ${rel(cratePath)}`);
-      }
-      packages.push(`${identity.name}@${identity.version}`);
+      fail(`${product} native Cargo carrier packaging failed for ${target}: ${result.skipped.join("; ")}`);
     }
   }
-  console.log(`${product} native Cargo dry-run packages: ${packages.sort(compareText).join(", ")}`);
 }
 
-function runExtensionWasixCargoArtifactDryRun(product) {
-  const outputDir = path.join(ROOT, "target/release/extension-dry-run/cargo", product, "wasix");
+function packageExtensionWasixCargoCarriers(product) {
+  const outputDir = path.join(ROOT, "target/release/extension-carriers/cargo", product, "wasix");
   run(TOOL, [
     process.execPath,
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
@@ -1626,132 +1558,79 @@ function runExtensionWasixCargoArtifactDryRun(product) {
   ]);
   const manifestPath = path.join(outputDir, "packages.json");
   if (!isFile(manifestPath)) {
-    fail(`${product} WASIX Cargo dry-run did not generate ${rel(manifestPath)}`);
+    fail(`${product} WASIX Cargo packaging did not generate ${rel(manifestPath)}`);
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   if (manifest?.schema !== WASIX_CARGO_ARTIFACT_SCHEMA || !Array.isArray(manifest.packages)) {
-    fail(`${product} WASIX Cargo dry-run generated an invalid package manifest`);
+    fail(`${product} WASIX Cargo packaging generated an invalid package manifest`);
   }
-  const expectedExtensionInventory = expectedWasixExtensionPackageInventory(TOOL, [product]);
   try {
     validateWasixExtensionArtifactInventory(
       manifest.packages,
-      expectedExtensionInventory,
+      expectedWasixExtensionPackageInventory(TOOL, [product]),
     );
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  const packages = manifest.packages.map((pkg) => {
-    if (
-      pkg === null
-      || Array.isArray(pkg)
-      || typeof pkg !== "object"
-      || typeof pkg.name !== "string"
-      || pkg.name.length === 0
-      || (pkg.kind !== "wasix-extension" && pkg.kind !== "wasix-extension-aot")
-    ) {
-      fail(`${product} WASIX Cargo dry-run generated an invalid extension package row`);
-    }
-    return pkg.name;
-  });
-  packages.sort(compareText);
-  console.log(`${product} WASIX Cargo dry-run packages: ${packages.join(", ")}`);
 }
 
-function runExtensionCargoFacadeDryRun(product) {
+function packageExtensionFacade(product) {
   const packages = packageExtensionCargoFacades(
     [product],
-    path.join(ROOT, "target/release/extension-dry-run/cargo", product, "facade"),
+    path.join(ROOT, "target/release/extension-carriers/cargo", product, "facade"),
   );
   if (packages.length !== 1 || packages[0].name !== product) {
-    fail(`${product} Cargo facade dry-run did not generate its canonical facade crate`);
+    fail(`${product} Cargo facade packaging did not generate its canonical package`);
   }
-  console.log(`${product} Cargo facade dry-run package: ${product}@${packages[0].version}`);
 }
 
-async function runExtensionDryRun(product) {
-  for (const asset of extensionAssetPaths(product)) {
-    console.log(`${product} release asset: ${asset}`);
-  }
-  await runExtensionMavenArtifactDryRun(product);
-  runExtensionNpmArtifactDryRun(product);
-  runExtensionNativeCargoArtifactDryRun(product);
-  runExtensionWasixCargoArtifactDryRun(product);
-  runExtensionCargoFacadeDryRun(product);
+async function packageExtensionCarriers(product) {
+  requireExtensionAssets(product);
+  await packageExtensionMavenCarriers(product);
+  packageExtensionNpmCarriers(product);
+  packageExtensionNativeCargoCarriers(product);
+  packageExtensionWasixCargoCarriers(product);
+  packageExtensionFacade(product);
 }
 
-export async function runBunProductDryRun(product, { allowDirty = false } = {}) {
-  if (SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
-    await runSdkProductDryRun(product, { allowDirty });
-    return;
+export async function packageReleaseCarriers(products) {
+  const selected = new Set(products);
+  if (selected.has(LIBOLIPHAUNT_NATIVE_PRODUCT)) {
+    await packageLiboliphauntNativeCarriers();
   }
-  if (product === LIBOLIPHAUNT_NATIVE_PRODUCT) {
-    await runLiboliphauntNativeDryRun();
-    return;
+  if (selected.has(BROKER_PRODUCT)) {
+    packageBrokerCarriers();
   }
-  if (product === BROKER_PRODUCT) {
-    runBrokerDryRun();
-    return;
+  if (selected.has(WASIX_PRODUCT)) {
+    packageWasixRuntimeCarriers();
   }
-  if (product === WASIX_PRODUCT) {
-    runWasixRuntimeDryRun();
-    return;
+  if (selected.has(NODE_DIRECT_PRODUCT)) {
+    await packageNodeDirectCarriers();
   }
-  if (product === NODE_DIRECT_PRODUCT) {
-    await runNodeDirectDryRun();
-    return;
-  }
-  if (exactExtensionProducts(TOOL).includes(product)) {
-    await runExtensionDryRun(product);
-    return;
-  }
-  fail(`no Bun publish dry-run handler for ${product}`, 2);
-}
-
-function usage() {
-  console.log(`usage: tools/release/release-product-dry-run.mjs --product PRODUCT [--allow-dirty]
-
-Runs Bun-owned product publish dry-run checks. Release-wide checks and registry
-dependency checks are owned by release-publish.mjs before this helper is invoked
-from the public publish dry-run command surface.
-`);
-}
-
-function parseArgs(argv) {
-  const args = {
-    allowDirty: false,
-    product: null,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--allow-dirty") {
-      args.allowDirty = true;
-    } else if (arg === "--product") {
-      const value = argv[index + 1];
-      if (!value) {
-        usage();
-        fail("--product requires a value", 2);
-      }
-      args.product = value;
-      index += 1;
-    } else if (arg.startsWith("--product=")) {
-      args.product = arg.slice("--product=".length);
-    } else if (arg === "-h" || arg === "--help") {
-      usage();
-      process.exit(0);
-    } else {
-      usage();
-      fail(`unknown argument ${arg}`, 2);
+  for (const product of exactExtensionProducts(TOOL)) {
+    if (selected.has(product)) {
+      await packageExtensionCarriers(product);
     }
   }
-  if (args.product === null) {
-    usage();
-    fail("--product is required", 2);
+}
+
+function parseProducts(argv) {
+  const index = argv.indexOf("--products-json");
+  if (index < 0 || !argv[index + 1]) {
+    fail("usage: package-release-carriers.mjs --products-json JSON", 2);
   }
-  return args;
+  let products;
+  try {
+    products = JSON.parse(argv[index + 1]);
+  } catch (error) {
+    fail(`--products-json must be valid JSON: ${error.message}`, 2);
+  }
+  if (!Array.isArray(products) || !products.every((product) => typeof product === "string")) {
+    fail("--products-json must be a JSON string array", 2);
+  }
+  return products;
 }
 
 if (import.meta.main) {
-  const args = parseArgs(Bun.argv.slice(2));
-  await runBunProductDryRun(args.product, { allowDirty: args.allowDirty });
+  await packageReleaseCarriers(parseProducts(Bun.argv.slice(2)));
 }

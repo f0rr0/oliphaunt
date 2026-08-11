@@ -17,6 +17,33 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/policy/check-source-inputs.sh"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/**/*"
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/dependencies/**/source.toml"
+      - "/src/extensions/external/*/upstream-license-data.json"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
+      - "/tools/policy/check-source-inputs.sh"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-fetch-core.test.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/policy/verify-source-tree.py"
+      - "/tools/dev/setup-maestro.sh"
+      - "/tools/dev/setup-maestro.test.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   source-fetch:
     tags: ["source", "fetch"]
     command: "bun tools/policy/fetch-sources.mjs all"

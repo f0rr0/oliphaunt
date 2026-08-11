@@ -32,6 +32,12 @@ function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+function portableTar(args) {
+  execFileSync("tar", ["--format=ustar", ...args], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+}
+
 function archive(root, name, member, format, legal = undefined) {
   const staging = path.join(root, `stage-${name}`);
   const leaf = path.join(staging, member);
@@ -48,7 +54,7 @@ function archive(root, name, member, format, legal = undefined) {
   if (format === "zip") {
     execFileSync("zip", ["-qry", output, legal?.insideMember === false ? "." : member], { cwd: staging });
   } else {
-    execFileSync("tar", ["-czf", output, "-C", staging, legal?.insideMember === false ? "." : member]);
+    portableTar(["-czf", output, "-C", staging, legal?.insideMember === false ? "." : member]);
   }
   return output;
 }
@@ -406,7 +412,7 @@ test("bundle carriers verify exact nested bytes without consulting truncated tar
     const releaseAssets = path.join(root, "release-assets");
     mkdirSync(releaseAssets, { recursive: true });
     const carrierFile = path.join(releaseAssets, carrierName);
-    execFileSync("tar", ["--format=ustar", "-czf", carrierFile, "-C", path.dirname(carrierStage), carrierRoot]);
+    portableTar(["-czf", carrierFile, "-C", path.dirname(carrierStage), carrierRoot]);
     const manifestFile = path.join(root, "extension-artifacts.json");
     const writeBundle = () => writeFileSync(manifestFile, `${JSON.stringify({
       schema: "oliphaunt-extension-ci-artifacts-v2",
@@ -441,7 +447,7 @@ test("bundle carriers verify exact nested bytes without consulting truncated tar
 
     const tampered = path.join(carrierStage, "extensions", sqlNames[0], extensions[0].assets[0].name);
     writeFileSync(tampered, "repacked bytes that do not match the logical row\n");
-    execFileSync("tar", ["--format=ustar", "-czf", carrierFile, "-C", path.dirname(carrierStage), carrierRoot]);
+    portableTar(["-czf", carrierFile, "-C", path.dirname(carrierStage), carrierRoot]);
     writeBundle();
     assert.throws(
       () => buildSwiftExtensionCarrierManifest({ extensionManifest: manifestFile, localUrls: true }),

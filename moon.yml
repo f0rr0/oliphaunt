@@ -21,52 +21,12 @@ tasks:
     tags: ["policy", "aggregate", "quality", "static"]
     command: "true"
     deps:
-      - "repo:structure"
       - "repo:tooling"
-      - "repo:ci-policy"
+      - "ci-workflows:check"
       - "repo:docs-policy"
-      - "repo:release-policy"
       - "repo:release-metadata"
-      - "repo:moon-graph"
-      - "repo:test-policy"
-      - "repo:test-strategy"
       - "repo:prek"
       - "release-tools:broker-dependency-license-audit"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  structure:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/policy/check-repo-structure.sh"
-    inputs:
-      - "/.github/**/*"
-      - "/.gitignore"
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/benchmarks/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/README.md"
-      - "/coverage/**/*"
-      - "/docs/**/*"
-      - "/src/shared/fixtures/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -87,25 +47,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  ci-policy:
-    tags: ["policy", "assertion", "quality", "static"]
-    script: |
-      tools/dev/bun.sh test tools/policy/assertions/workflow-contract-core.test.mjs tools/policy/assertions/workflow-semantics.test.mjs
-      bun tools/policy/assertions/assert-ci-workflows.mjs
-    inputs:
-      - "/.github/**/*"
-      - "/docs/architecture/final-product-source-architecture.md"
-      - "/docs/maintainers/tooling.md"
-      - "/tools/policy/assertions/assert-ci-workflows.mjs"
-      - "/tools/policy/assertions/workflow-contract-core.mjs"
-      - "/tools/policy/assertions/workflow-contract-core.test.mjs"
-      - "/tools/policy/assertions/workflow-semantics.mjs"
-      - "/tools/policy/assertions/workflow-semantics.test.mjs"
-      - "/tools/policy/check-release-policy.mjs"
-      - "/tools/release/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   docs-policy:
     tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-docs.sh"
@@ -119,38 +60,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-policy:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/dev/bun.sh tools/policy/check-release-policy.mjs"
-    inputs:
-      - "/.github/**/*"
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/Package.swift"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/release/**/*"
-      - "/tools/policy/check-release-policy.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      # release-tools:check owns this exact proof in hosted CI.
-      runInCI: skip
   release-metadata:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
@@ -178,32 +87,6 @@ tasks:
       runFromWorkspaceRoot: true
       # release-tools:check owns this exact proof in hosted CI.
       runInCI: skip
-  moon-graph:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/policy/check-moon-product-graph.mjs"
-    inputs:
-      - "/.moon/workspace.yml"
-      - "/.moon/toolchains.yml"
-      - "/.release-please-manifest.json"
-      - "/benchmarks/moon.yml"
-      - "/coverage/**/*"
-      - "/examples/**/package.json"
-      - "/moon.yml"
-      - "/package.json"
-      - "/pnpm-workspace.yaml"
-      - "/release-please-config.json"
-      - "/src/**/package.json"
-      - "/src/extensions/generated/sdk/rust.json"
-      - "/src/**/release.toml"
-      - "/src/**/moon.yml"
-      - "/src/**/targets/*.toml"
-      - "/tools/**/moon.yml"
-      - "/tools/graph/**/*"
-      - "/tools/policy/check-moon-product-graph.mjs"
-      - "/tools/release/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   prek:
     tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
     command: "bash tools/policy/check-prek.sh"
@@ -236,26 +119,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test-policy:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/policy/check-rust-test-topology.sh"
-    inputs:
-      - "/.config/nextest.toml"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/src/**/*.rs"
-      - "/src/**/Cargo.toml"
-      - "/src/**/moon.yml"
-      - "/src/**/tools/*.sh"
-      - "/tools/perf/runner/**/*.rs"
-      - "/tools/perf/runner/Cargo.toml"
-      - "/tools/xtask/**/*.rs"
-      - "/tools/xtask/Cargo.toml"
-      - "/tools/xtask/moon.yml"
-      - "/tools/policy/check-rust-test-topology.sh"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
     command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
@@ -285,26 +148,6 @@ tasks:
       cache: local
       runFromWorkspaceRoot: true
       runInCI: false
-  test-strategy:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/policy/check-test-strategy.mjs"
-    inputs:
-      - "/.moon/**/*"
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/**/moon.yml"
-      - "/src/**/release.toml"
-      - "/src/shared/contracts/**/*"
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/js/package.json"
-      - "/src/sdks/react-native/package.json"
-      - "/src/sdks/react-native/src/specs/NativeOliphaunt.ts"
-      - "/tools/policy/check-test-strategy.mjs"
-      - "/tools/policy/moon.mjs"
-      - "/tools/release/release-graph.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   package:
     tags: ["package"]
     command: "bash tools/policy/check-crate-package.sh --allow-dirty"

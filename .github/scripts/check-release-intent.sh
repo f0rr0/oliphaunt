@@ -18,37 +18,9 @@ if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! release_contract="$(
-  bun -e '
-import {
-  RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
-  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
-} from "./tools/release/release-please-bootstrap.mjs";
-console.log([
-  RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-  RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH,
-  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
-].join("\t"));
-'
-)"; then
-  echo "could not load the release-please history-repair contract" >&2
-  exit 1
-fi
-IFS=$'\t' read -r \
-  canonical_bootstrap_sha \
-  repair_before_sha \
-  repair_candidate_branch \
-  introduction_subject <<< "${release_contract}"
-
 # A manual dispatch on main has no immutable `before` event field. The
 # workflow supplies `${github.sha}^`; resolve and bind that value to the exact
-# sole parent before any version or ancestry decision. This rejects the old
-# moving `origin/main` self-comparison as well as a merge/orphan ambiguity.
-# Non-main diagnostic and history-repair dispatches retain their existing
-# comparison with current `origin/main`.
+# sole parent before any version or ancestry decision.
 if [[ "${event_name}" == "workflow_dispatch" ]] &&
   {
     [[ "${full_ref}" == "refs/heads/main" ]] ||
@@ -74,83 +46,10 @@ if [[ "${event_name}" == "workflow_dispatch" ]] &&
   base_ref="${dispatch_parent}"
 fi
 
-# The current authorized protected-main rewrite reports the immediately
-# superseded protected-main tip as `github.event.before`. This is intentionally
-# distinct from the immutable displaced-main release-metadata baseline. Its
-# one-shot before/ref/event tuple and the exact unreleased introduction shape
-# make this exception non-replayable. A temporary-branch qualification proves
-# the replacement tree before the rewrite; only a later exact-main run can
-# produce publication qualification. Every other non-fast-forward comparison
-# remains strict.
 if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
   ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
-  rewrite_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
-  read -r -a rewrite_commit_and_parents <<< "${rewrite_parents}"
-  if [[ "${#rewrite_commit_and_parents[@]}" -ne 2 ]]; then
-    echo "protected-main history repair requires an exact one-parent introduction commit" >&2
-    exit 1
-  fi
-  rewrite_parent="${rewrite_commit_and_parents[1]}"
-  rewrite_subject="$(git show -s --format=%s "${head_ref}^{commit}")"
-
-  candidate_bootstrap_sha="$(
-    git show "${head_ref}:release-please-config.json" |
-      bun -e '
-const config = JSON.parse(await Bun.stdin.text());
-const value = config?.["bootstrap-sha"];
-if (typeof value === "string") process.stdout.write(value);
-'
-  )"
-  candidate_manifest_unreleased="$(
-    git show "${head_ref}:.release-please-manifest.json" |
-      bun -e '
-const manifest = JSON.parse(await Bun.stdin.text());
-const versions = manifest && !Array.isArray(manifest) && typeof manifest === "object"
-  ? Object.values(manifest)
-  : [];
-process.stdout.write(String(versions.length > 0 && versions.every((version) => version === "0.0.0")));
-'
-  )"
-
-  repair_trailers="$(git show -s --format=%B "${head_ref}^{commit}" | git interpret-trailers --parse)"
-  repair_candidate_lines="$(
-    printf '%s\n' "${repair_trailers}" |
-      grep -Ei '^Oliphaunt-History-Repair-Candidate:' || true
-  )"
-  repair_candidate_count="$(
-    printf '%s\n' "${repair_candidate_lines}" |
-      awk 'NF { count += 1 } END { print count + 0 }'
-  )"
-  history_repair_candidate_sha=""
-  if [[ "${repair_candidate_count}" == "1" ]]; then
-    history_repair_candidate_sha="${repair_candidate_lines#Oliphaunt-History-Repair-Candidate: }"
-  fi
-
-  if [[ "${event_name}" != "push" ]] ||
-    [[ "${full_ref}" != "refs/heads/main" ]] ||
-    [[ "${head_branch}" != "main" ]] ||
-    [[ "${base_ref}" != "${repair_before_sha}" ]] ||
-    [[ "${subject}" != "${introduction_subject}" ]] ||
-    [[ "${rewrite_subject}" != "${introduction_subject}" ]] ||
-    [[ "${rewrite_parent}" != "${canonical_bootstrap_sha}" ]] ||
-    [[ "${candidate_bootstrap_sha}" != "${canonical_bootstrap_sha}" ]] ||
-    [[ "${candidate_manifest_unreleased}" != "true" ]] ||
-    [[ "${repair_candidate_count}" != "1" ]] ||
-    [[ "${repair_candidate_lines}" != "Oliphaunt-History-Repair-Candidate: ${history_repair_candidate_sha}" ]] ||
-    [[ ! "${history_repair_candidate_sha}" =~ ^[0-9a-f]{40}$ ]] ||
-    [[ "${history_repair_candidate_sha}" == "${rewrite_commit_and_parents[0]}" ]]; then
-    echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
-    echo "non-fast-forward main updates are allowed only for the exact current introduction repair" >&2
-    exit 1
-  fi
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    {
-      echo "history_repair=true"
-      echo "history_repair_candidate_sha=${history_repair_candidate_sha}"
-    } >> "${GITHUB_OUTPUT}"
-  fi
-  echo "authorized current main history repair; comparing ${head_ref} to its exact introduction parent" >&2
-  base_ref="${head_ref}^{commit}^"
+  echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
+  exit 1
 fi
 
 release_types="$({
@@ -253,72 +152,6 @@ for (const [path, version] of Object.entries(data).sort(([left], [right]) =>
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
-is_first_release_rollback_transport=false
-is_released_to_seed_manifest_transition=false
-if [[ -n "${base_release_manifest_versions}" ]] &&
-  [[ -n "${head_release_manifest_versions}" ]] &&
-  printf '%s\n' "${head_release_manifest_versions}" |
-    awk '
-      NF {
-        count += 1
-        if ($0 !~ /=0[.]0[.]0$/) exit 1
-      }
-      END { if (count == 0) exit 1 }
-    ' &&
-  printf '%s\n' "${base_release_manifest_versions}" |
-    awk '
-      NF && $0 !~ /=0[.]0[.]0$/ { released += 1 }
-      END { if (released == 0) exit 1 }
-    '; then
-  is_released_to_seed_manifest_transition=true
-fi
-if [[ "${is_released_to_seed_manifest_transition}" == true ]] &&
-  [[ "${event_name}" == "workflow_dispatch" ]] &&
-  [[ "${full_ref}" == "refs/heads/${repair_candidate_branch}" ]] &&
-  [[ "${head_branch}" == "${repair_candidate_branch}" ]] &&
-  [[ "${CI_WASM_TARGET:-}" == "all" ]] &&
-  [[ "${CI_NATIVE_TARGET:-}" == "all" ]] &&
-  [[ "${CI_MOBILE_TARGET:-}" == "all" ]]; then
-  resolved_base=""
-  if resolved_base="$(git rev-parse "${base_ref}^{commit}" 2>/dev/null)" &&
-    [[ "${resolved_base}" == "${repair_before_sha}" ]]; then
-    rollback_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
-    read -r -a rollback_commit_and_parents <<< "${rollback_parents}"
-    if [[ "${#rollback_commit_and_parents[@]}" -eq 2 ]] &&
-      [[ "${rollback_commit_and_parents[1]}" == "${repair_before_sha}" ]] &&
-      {
-        git show "${head_ref}:release-please-config.json"
-        printf '\0'
-        git show "${base_ref}:.release-please-manifest.json"
-        printf '\0'
-        git show "${head_ref}:.release-please-manifest.json"
-      } |
-        ROLLBACK_PARENT_SHA="${rollback_commit_and_parents[1]}" bun -e '
-import {
-  exactReleasePleaseUnpublishedFirstReleaseRollbackTransport,
-} from "./tools/release/release-please-bootstrap.mjs";
-try {
-  const fields = new TextDecoder().decode(await Bun.stdin.arrayBuffer()).split("\0");
-  if (fields.length !== 3) throw new Error("expected three rollback transport JSON inputs");
-  const [config, beforeManifest, afterManifest] = fields.map((field) => JSON.parse(field));
-  const transport = exactReleasePleaseUnpublishedFirstReleaseRollbackTransport(
-    config,
-    beforeManifest,
-    afterManifest,
-    [process.env.ROLLBACK_PARENT_SHA],
-    { prefix: "check-release-intent" },
-  );
-  if (transport === null) process.exit(1);
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-'; then
-      is_first_release_rollback_transport=true
-    fi
-  fi
-fi
-
 if [[ -z "${base_versions}" || -z "${head_versions}" || -z "${head_release_manifest_versions}" ]]; then
   echo "could not read package versions or release-please manifest versions" >&2
   exit 1
@@ -341,26 +174,8 @@ else
   changed_existing_release_manifest_versions=""
 fi
 
-rollback_version_changes_are_seed_state=false
-if [[ "${is_first_release_rollback_transport}" == true ]] &&
-  [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
-  printf '%s\n%s\n' \
-    "${changed_existing_versions}" \
-    "${changed_existing_release_manifest_versions}" |
-    awk '
-      NF {
-        count += 1
-        if ($0 !~ / -> 0[.]0[.]0$/) exit 1
-      }
-      END { if (count == 0) exit 1 }
-    '; then
-  rollback_version_changes_are_seed_state=true
-  echo "authorized exact unpublished first-release rollback qualification transport" >&2
-fi
-
 if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" ]] &&
-  [[ "${is_release_pr}" != true ]] &&
-  [[ "${rollback_version_changes_are_seed_state}" != true ]]; then
+  [[ "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
 This PR changes one or more workspace package versions or release-please
 manifest versions.
@@ -413,51 +228,6 @@ if [[ "${is_release_pr}" == true ]]; then
   tools/dev/bun.sh tools/release/verify-release-commit.mjs \
     --products-json "${release_products_json}" \
     --head-ref "${head_ref}"
-fi
-
-# A same-version partial-publication recovery is not a product release, but it
-# must fail before expensive planning unless its exact original release,
-# linear trailer chain, zero-product impact, and unchanged metadata all verify.
-qualification_mode="full-payload"
-recovery_release_sha=""
-recovery_controller_sha=""
-if git show -s --format=%B "${head_ref}^{commit}" |
-  grep -qi "^Oliphaunt-Release-Recovery-Of:"; then
-  recovery_candidate_output="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-recovery-candidate.XXXXXX")"
-  if ! tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
-    --derive-products \
-    --head-ref "${head_ref}" \
-    --github-output "${recovery_candidate_output}"; then
-    rm -f "${recovery_candidate_output}"
-    exit 1
-  fi
-  verified_recovery_mode="$(sed -n 's/^mode=//p' "${recovery_candidate_output}")"
-  recovery_release_sha="$(sed -n 's/^release_sha=//p' "${recovery_candidate_output}")"
-  recovery_controller_sha="$(sed -n 's/^publication_sha=//p' "${recovery_candidate_output}")"
-  recovery_mode_count="$(grep -c '^mode=' "${recovery_candidate_output}" || true)"
-  recovery_release_count="$(grep -c '^release_sha=' "${recovery_candidate_output}" || true)"
-  recovery_controller_count="$(grep -c '^publication_sha=' "${recovery_candidate_output}" || true)"
-  rm -f "${recovery_candidate_output}"
-  if [[ "${recovery_mode_count}" != "1" ]] ||
-    [[ "${recovery_release_count}" != "1" ]] ||
-    [[ "${recovery_controller_count}" != "1" ]] ||
-    [[ "${verified_recovery_mode}" != "release-recovery" ]] ||
-    [[ ! "${recovery_release_sha}" =~ ^[0-9a-f]{40}$ ]] ||
-    [[ ! "${recovery_controller_sha}" =~ ^[0-9a-f]{40}$ ]] ||
-    [[ "${recovery_controller_sha}" != "$(git rev-parse "${head_ref}^{commit}")" ]] ||
-    [[ "${recovery_release_sha}" == "${recovery_controller_sha}" ]]; then
-    echo "verified recovery lineage did not emit one exact release/controller binding" >&2
-    exit 1
-  fi
-  qualification_mode="recovery-control"
-fi
-
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  {
-    echo "qualification_mode=${qualification_mode}"
-    echo "recovery_release_sha=${recovery_release_sha}"
-    echo "recovery_controller_sha=${recovery_controller_sha}"
-  } >> "${GITHUB_OUTPUT}"
 fi
 
 release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"

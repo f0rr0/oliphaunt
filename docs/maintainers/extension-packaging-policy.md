@@ -19,9 +19,12 @@ Release ownership is not the same thing as SQL selection. The 32 promoted
 PostgreSQL 18 contrib members belong to one independently tagged distribution
 product, `oliphaunt-extension-contrib-pg18`. Its packaging version, changelog,
 and compatibility metadata live at `src/extensions/contrib/`; it is
-runtime-bound and shares the runtime linked-version group. Contrib member
-folders retain exact build, target, and evidence metadata but do not own leaf
-versions, changelogs, tags, or package identities.
+independently versioned from both runtime products. Contrib member folders
+retain exact build, target, and evidence metadata but do not own leaf versions,
+changelogs, tags, or package identities. Release selection follows directed
+dependencies: a changed runtime may select a consumer with an exact
+compatibility pin, but a native change does not select WASIX and a WASIX change
+does not select native.
 
 Every build-enabled, stable promoted external extension is an independently
 tagged release product. Its packaging version, changelog, immutable upstream
@@ -32,8 +35,8 @@ packages merely because its source pin exists.
 
 For an external extension, `release.toml` is the active-public-product
 boundary, not general build metadata. A deferred extension must have no
-`release.toml`, `VERSION`, `CHANGELOG.md`, release-semantic fingerprint,
-Release Please component, or Moon release-product metadata. Its source pin,
+`release.toml`, `VERSION`, `CHANGELOG.md`, Release Please component, or Moon
+release-product metadata. Its source pin,
 recipe, target profiles, build tasks, and qualification evidence remain so CI
 can continue proving the implementation without reserving or publishing a
 package identity.

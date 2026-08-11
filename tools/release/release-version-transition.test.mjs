@@ -210,17 +210,19 @@ test("a compatibility edit with the wrong source-product version cannot be ignor
   );
 });
 
-test("runtime-tied expansion fails when a required peer did not advance", (t) => {
+test("a native release does not require WASIX to advance", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
   const versions = { ...V1, "liboliphaunt-native": "2.0.0" };
   writeSnapshot(f.root, versions, { vectorCompatibility: "native=2.0.0,wasix=1.0.0" });
   commit(f.root, "incomplete runtime release");
 
-  assert.throws(
-    () => buildPlanFromProductTags(graph(versions), "HEAD", { prefix: "transition-test", root: f.root }),
-    /liboliphaunt-wasix has release-affecting changes .* manifest version remains 1[.]0[.]0/u,
-  );
+  const plan = buildPlanFromProductTags(graph(versions), "HEAD", {
+    prefix: "transition-test",
+    root: f.root,
+  });
+  assert.deepEqual(plan.releaseProducts, ["liboliphaunt-native"]);
+  assert.equal(plan.changedFiles.includes("packages/vector/release.toml"), true);
 });
 
 test("production closure fails instead of reintroducing an unchanged downstream product", (t) => {
@@ -285,30 +287,30 @@ test("untagged bootstrap 0.0.0 products are not first-release candidates", (t) =
   assert.deepEqual(plan.releaseProducts, []);
 });
 
-test("an exact existing current-version tag is selected only for explicit recovery", (t) => {
+test("an exact existing current-version tag is selected only for an explicit rerun", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
   const excluded = buildPlanFromProductTags(graph(V1), f.head, { prefix: "transition-test", root: f.root });
   assert.deepEqual(excluded.releaseProducts, []);
 
-  const recovered = buildPlanFromProductTags(graph(V1), f.head, {
+  const rerun = buildPlanFromProductTags(graph(V1), f.head, {
     includeCurrentTags: true,
     prefix: "transition-test",
     root: f.root,
   });
-  assert.deepEqual(recovered.releaseProducts, [
+  assert.deepEqual(rerun.releaseProducts, [
     "liboliphaunt-native",
     "liboliphaunt-wasix",
     "oliphaunt-extension-vector",
   ]);
-  assert.deepEqual(recovered.currentTaggedProducts, recovered.releaseProducts);
+  assert.deepEqual(rerun.currentTaggedProducts, rerun.releaseProducts);
 });
 
-test("a tooling-only descendant cannot recover an older same-version tag", (t) => {
+test("a tooling-only descendant cannot rerun an older same-version tag", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
   mkdirSync(path.join(f.root, "tools/release"), { recursive: true });
-  writeFileSync(path.join(f.root, "tools/release/recovery-note.mjs"), "export const recovery = true;\n");
+  writeFileSync(path.join(f.root, "tools/release/rerun-note.mjs"), "export const rerun = true;\n");
   commit(f.root, "repair release tooling");
 
   const plan = buildPlanFromProductTags(graph(V1), "HEAD", {
@@ -320,7 +322,7 @@ test("a tooling-only descendant cannot recover an older same-version tag", (t) =
   assert.deepEqual(plan.currentTaggedProducts, []);
 });
 
-test("a regressed head manifest cannot recover through an older current-version tag", (t) => {
+test("a regressed head manifest cannot rerun through an older current-version tag", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
   const v2 = { ...V1, "liboliphaunt-native": "2.0.0", "liboliphaunt-wasix": "2.0.0" };

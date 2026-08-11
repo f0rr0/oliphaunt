@@ -23,7 +23,7 @@ export const GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR =
 export const GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE =
   Math.floor(60_000 / GITHUB_CONTENT_WRITE_INTERVAL_MS) + 1;
 
-const SCHEMA = "oliphaunt-github-content-write-pacer-v2";
+const SCHEMA = "oliphaunt-github-content-write-pacer-v3";
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
 const MAX_LOCK_WAIT_MS = 60_000;
 const TEST_TIMING_ENV = "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE";
@@ -92,7 +92,7 @@ function parseState(file, expectedIdentity, timing) {
   ) {
     fail("pacer state has a malformed envelope");
   }
-  for (const field of ["headSha", "repository", "rootRunId"]) {
+  for (const field of ["headSha", "repository", "runId"]) {
     if (state[field] !== expectedIdentity[field]) {
       fail(`pacer state ${field} does not match the current release lineage`);
     }

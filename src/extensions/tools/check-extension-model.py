@@ -32,7 +32,6 @@ EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
 EXTERNAL_ROOT = ROOT / "src/extensions/external"
 EXTENSION_ENVELOPE_FILENAMES = {
-    ".release-semantic-inputs.json",
     "CHANGELOG.md",
     "VERSION",
     "artifacts.toml",
@@ -2315,7 +2314,7 @@ def validate_evidence(catalog: dict, require_current: bool = False) -> dict:
 
         # Evidence observations are immutable history. A run for an older
         # semantic input set remains valid history, but it cannot satisfy a
-        # current exact-candidate support claim.
+        # current CI support claim.
         if (
             run_digest != current_digest
             or run_digest_inputs != digest_inputs
@@ -2378,7 +2377,7 @@ def validate_evidence(catalog: dict, require_current: bool = False) -> dict:
         if require_current and missing:
             first = missing[0]
             fail(
-                f"public extension claim {extension_id} lacks current exact-candidate "
+                f"public extension claim {extension_id} lacks current CI "
                 f"{first['evidence-tier']} evidence for "
                 f"{first['artifact-family']}/{first['platform-target']} modes "
                 f"{first['runtime-modes']}"
@@ -2394,7 +2393,7 @@ def validate_evidence(catalog: dict, require_current: bool = False) -> dict:
                 "platform-targets": targets,
                 "runtime-modes": modes,
                 "evidence-required": tiers,
-                "qualification-status": "qualified" if not missing else "requires-exact-candidate-ci",
+                "qualification-status": "qualified" if not missing else "requires-current-ci",
                 "latest-accepted-evidence": accepted,
                 "missing-current-evidence": missing,
             }
@@ -2407,7 +2406,7 @@ def validate_evidence(catalog: dict, require_current: bool = False) -> dict:
         "qualification-authority": {
             "kind": "exact-sha-ci",
             "collector": "src/extensions/tools/collect-wasix-evidence.sh",
-            "current-source-status": "qualified" if qualified else "requires-exact-candidate-ci",
+            "current-source-status": "qualified" if qualified else "requires-current-ci",
         },
         "generated-from": [
             {"name": "extension-catalog", "path": rel(CATALOG)},
@@ -2440,7 +2439,7 @@ def record_wasix_evidence_run(catalog: dict, run_id: str, observed_at: str) -> N
         "runAttempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
     if os.environ.get("GITHUB_ACTIONS") != "true":
-        fail("full WASIX release evidence may only be recorded by the exact-candidate GitHub Actions collector")
+        fail("full WASIX release evidence may only be recorded by the GitHub Actions collector")
     for field in ("repository", "workflow", "job"):
         if not required_github[field]:
             fail(f"GitHub Actions evidence is missing {field}")
@@ -2557,7 +2556,6 @@ def run_xtask_check() -> None:
 def self_test() -> None:
     digest_inputs = set(source_digest_inputs())
     for path in [
-        "src/extensions/external/vector/.release-semantic-inputs.json",
         "src/extensions/external/vector/VERSION",
         "src/extensions/external/vector/CHANGELOG.md",
         "src/extensions/external/vector/release.toml",
@@ -2672,14 +2670,14 @@ def self_test() -> None:
                 encoding="utf-8",
             )
             table = validate_evidence(catalog)
-            if table["qualification-authority"]["current-source-status"] != "requires-exact-candidate-ci":
+            if table["qualification-authority"]["current-source-status"] != "requires-current-ci":
                 fail("self-test expected stale evidence to remain history without qualifying current source")
             try:
                 validate_evidence(catalog, require_current=True)
             except SystemExit:
                 pass
             else:
-                fail("self-test expected exact-candidate qualification to reject stale evidence")
+                fail("self-test expected current-CI qualification to reject stale evidence")
 
             matrix_before = globals()["EVIDENCE_MATRIX"].read_bytes()
             run_before = stale_run.read_bytes()

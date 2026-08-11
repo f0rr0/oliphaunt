@@ -105,8 +105,8 @@ Node archive and extracted runtime binary for every supported host.
 `moon-cli.toml` and `pnpm.toml` pin their archives, component hashes, executable
 modes, and extracted-tree identities. `moon-plugins.toml` pins both each OCI
 manifest digest and the manifest-bound WASM blob. `npm-publisher.toml` applies
-the same archive and complete-tree contract to the npm CLI used by publication
-and exact-candidate consumer checks. The proto version in Moon configuration is
+the same archive and complete-tree contract to the npm CLI used by publication.
+The proto version in Moon configuration is
 a compatibility contract only; CI does not hydrate tools through proto.
 
 Bootstrap downloads are HTTPS-only, bounded, checksum-verified, validated for
@@ -313,22 +313,6 @@ If a task is slow, first check whether its inputs are too broad, outputs are
 missing, dependency scopes are wrong, or CI is proving runner state that cannot
 be safely cached.
 
-Graph policy fixtures are split by contract:
-
-- `tools/graph/synthetic/affected.toml` checks Moon owner/downstream behavior.
-- `tools/graph/synthetic/release.toml` checks release product selection.
-- `tools/graph/synthetic/coverage.toml` checks coverage routing.
-
-Do not add mixed synthetic cases that assert unrelated contracts in one table.
-
-### Advisory reference audits
-
-Low textual reference counts are cleanup leads, not correctness failures. Agents
-may inspect them with `moon run dev-tools:helper-reference-audit` and
-`moon run dev-tools:source-reference-audit`. Both tasks are intentionally local,
-uncached, and excluded from CI because public entrypoints and generated or
-indirect references require human or agent review before removal.
-
 ## Policy Design
 
 Policy checks protect externally meaningful contracts, not the current spelling
@@ -341,9 +325,8 @@ of an implementation. Prefer these forms, in order:
 
 Do not assert function names, step display names, source line order, prose
 fragments, or exhaustive file inventories. Refactoring should fail policy only
-when it changes a contract. `repository-semantics.mjs` owns the small set of
-cross-repository layout and toolchain invariants; focused checkers own release,
-SDK, extension, workflow, dependency, and evidence behavior.
+when it changes a contract. Focused checks own release, SDK, extension,
+workflow, dependency, and evidence behavior.
 
 The repository-local skills under `.codex/skills/` are the operational runbooks
 for agent-built changes. Use `qualify-oliphaunt-change` for selecting proof,
@@ -356,7 +339,7 @@ as source-text assertions in CI.
 
 Keep code in the narrowest owning domain: product behavior beside the product,
 shared source/asset operations in `tools/xtask`, performance behavior in
-`tools/perf`, graph selection in `tools/graph`, release contracts in
+`tools/perf`, CI selection in `tools/graph`, release contracts in
 `tools/release`, and repository invariants in `tools/policy`. Split a module
 when it has independent inputs, outputs, or failure modes. File names and helper
 boundaries are implementation details, not policy APIs.

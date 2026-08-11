@@ -129,8 +129,8 @@ removing it. Do not turn reference counts into a required CI gate.
   the dispatched commit's immutable sole parent. Never fall back to
   `origin/main` for a main dispatch: after a merge that moving ref is the
   dispatched head itself and turns release-intent validation into an invalid
-  self-comparison. Non-main diagnostic and history-repair dispatches retain
-  their explicit comparison to current `origin/main`.
+  self-comparison. Non-main diagnostic dispatches retain their explicit
+  comparison to current `origin/main`.
 - The `pull_request.closed` event is a runnerless cancellation tombstone. It
   shares the PR concurrency group so merging cancels obsolete PR work, while
   every root and `always()` aggregate job skips before runner allocation. It

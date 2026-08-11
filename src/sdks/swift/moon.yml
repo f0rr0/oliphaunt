@@ -142,8 +142,6 @@ tasks:
       - "/tools/release/release-cli-utils.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-semantic-inputs.mjs"
-      - "/tools/release/release-semantic-inputs.toml"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/render_swiftpm_release_package.mjs"
       - "/tools/release/rust-native-targets.mjs"

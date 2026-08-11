@@ -42,7 +42,7 @@ test("the release workflow preserves the embedded carrier and validates independ
 });
 
 test("the release workflow projects extension roots to the selected release products", () => {
-  for (const name of ["Assemble exact candidate Cargo registry", "Freeze exhaustive publication lock"]) {
+  for (const name of ["Freeze exhaustive publication lock"]) {
     const step = workflowStep(name);
     assert.match(step, /--family extension-artifacts/u);
     assert.match(step, /artifact_root="target\/extension-artifacts\/\$product"/u);

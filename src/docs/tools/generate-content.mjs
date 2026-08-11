@@ -41,15 +41,6 @@ function releaseProductMetadata() {
   const tagSeparator = releasePlease['tag-separator'] ?? '-';
   const tagVersionPrefix = releasePlease['include-v-in-tag'] === false ? '' : 'v';
   const defaultInitialVersion = releasePlease['initial-version'];
-  const linkedVersionGroups = new Map();
-  for (const plugin of releasePlease.plugins ?? []) {
-    if (plugin?.type !== 'linked-versions' || typeof plugin.groupName !== 'string') {
-      continue;
-    }
-    for (const component of plugin.components ?? []) {
-      linkedVersionGroups.set(component, plugin.groupName);
-    }
-  }
   const products = {};
   for (const [packagePath, packageConfig] of Object.entries(packages)) {
     const productId = packageConfig.component;
@@ -63,14 +54,11 @@ function releaseProductMetadata() {
       throw new Error(`release version metadata is incomplete for ${productId}`);
     }
     const extensionVersioning = metadata.extension?.versioning;
-    const linkedVersionGroup = linkedVersionGroups.get(productId);
     products[productId] = {
       ...metadata,
       current_version: currentVersion,
       initial_version: initialVersion,
-      version_relationship:
-        extensionVersioning ??
-        (linkedVersionGroup ? `linked:${linkedVersionGroup}` : 'independent'),
+      version_relationship: extensionVersioning ?? 'independent',
       tag_prefix: `${productId}${tagSeparator}${tagVersionPrefix}`,
     };
   }
@@ -770,10 +758,12 @@ global or per-product initial version.
 
 Use this matrix before upgrading an app dependency. Start with the package your
 app installs, then read the products it depends on for runtime artifact,
-extension, and compatibility notes. A linked or runtime-bound release
-relationship does not turn the repository into one version.
+extension, and compatibility notes. A compatibility relationship does not turn
+the repository into one version.
 
-Release coupling is derived from Moon production and peer dependency scopes.
+Release Please selects changed product paths. Derived selection then follows
+Moon production/peer edges and exact compatibility fields from dependency to
+consumer. Native and WASIX are independent products; neither selects the other.
 
 | Product | Current source version | First public version | Version relationship | Publish targets | Tag prefix |
 | --- | --- | --- | --- | --- | --- |

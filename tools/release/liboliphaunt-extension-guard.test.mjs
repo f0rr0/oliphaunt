@@ -98,8 +98,8 @@ test("all desktop packagers enforce the exact base embedded-module inventory", (
   assert.match(windows, /FileAttributes\]::ReparsePoint/u);
 });
 
-test("both npm release paths require every embedded core module member", () => {
-  for (const script of ["local-registry-publish.mjs", "release-product-dry-run.mjs"]) {
+test("the npm release packager requires every embedded core module member", () => {
+  for (const script of ["package-release-carriers.mjs"]) {
     const source = readFileSync(path.join(ROOT, "tools/release", script), "utf8");
     assert.match(
       source,

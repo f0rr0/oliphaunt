@@ -28,11 +28,6 @@ import {
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
 import {
-  CONTINUATION_CORE_JOURNAL_MEMBER,
-  CONTINUATION_PACER_MEMBER,
-  continuationGitHubStateIdentity,
-} from "../../tools/release/github-release-continuation-state.mjs";
-import {
   captureCommandBytes,
   captureCommandOutput,
 } from "../../tools/dev/capture-command-output.mjs";
@@ -345,18 +340,12 @@ export function readExactContinuationArtifact(repo, pointer) {
   return { bytes, metadata, parent, root };
 }
 
-function memberContract(operation) {
-  const common = new Set(["release-continuation-contract.json"]);
-  if (operation === "publish-bootstrap") {
-    common.add("bootstrap-execution-result.json");
-    common.add("bootstrap-ledger/");
-  } else {
-    common.add("normal-publication-execution-result.json");
-    common.add("normal-publication-checkpoint.json");
-    common.add(CONTINUATION_PACER_MEMBER);
-    common.add(CONTINUATION_CORE_JOURNAL_MEMBER);
-  }
-  return common;
+function memberContract() {
+  return new Set([
+    "release-continuation-contract.json",
+    "bootstrap-execution-result.json",
+    "bootstrap-ledger/",
+  ]);
 }
 
 function memberBytes(archive, member) {
@@ -394,7 +383,7 @@ export function openContinuationEnvelope(bytes, pointer) {
       const checkpointName = member.startsWith("bootstrap-ledger/")
         ? member.slice("bootstrap-ledger/".length)
         : member;
-      if (normalizedPointer.operation === "publish-bootstrap" && CHECKPOINT.test(checkpointName)) {
+      if (CHECKPOINT.test(checkpointName)) {
         if (member !== checkpointName && member !== `bootstrap-ledger/${checkpointName}`) {
           throw error(`bootstrap checkpoint has unexpected archive path ${member}`);
         }
@@ -403,21 +392,12 @@ export function openContinuationEnvelope(bytes, pointer) {
         throw error(`continuation artifact contains unexpected member ${JSON.stringify(member)}`);
       }
     }
-    const resultName = normalizedPointer.operation === "publish-bootstrap"
-      ? "bootstrap-execution-result.json"
-      : "normal-publication-execution-result.json";
-    const stateName = "normal-publication-checkpoint.json";
+    const resultName = "bootstrap-execution-result.json";
     const requiredMembers = ["release-continuation-contract.json", resultName];
-    if (normalizedPointer.operation === "publish") {
-      requiredMembers.push(CONTINUATION_PACER_MEMBER, CONTINUATION_CORE_JOURNAL_MEMBER);
-    }
     for (const required of requiredMembers) {
       if (!seen.has(required)) throw error(`continuation artifact is missing ${required}`);
     }
-    if (normalizedPointer.operation === "publish" && !seen.has(stateName)) {
-      throw error(`continuation artifact is missing ${stateName}`);
-    }
-    if (normalizedPointer.operation === "publish-bootstrap" && checkpoints.length === 0) {
+    if (checkpoints.length === 0) {
       throw error("bootstrap continuation artifact contains no immutable checkpoints");
     }
     const contractBytes = memberBytes(archive, "release-continuation-contract.json");
@@ -445,7 +425,6 @@ export function openContinuationEnvelope(bytes, pointer) {
         !== normalizedPointer.rateLimitDeferralBudget
       || contract.lineage.rateLimitDeferralsUsed
         !== normalizedPointer.rateLimitDeferralsUsed
-      || stableJson(contract.githubState) !== stableJson(normalizedPointer.githubState)
     ) {
       throw error("continuation contract generation policy differs from its pointer");
     }
@@ -473,47 +452,22 @@ export function openContinuationEnvelope(bytes, pointer) {
     ) {
       throw error("continuation execution result disagrees with the sealed outcome envelope");
     }
-    let stateBytes = null;
-    let githubPacerBytes = null;
-    let githubCoreJournalBytes = null;
-    let checkpointEntries = [];
-    if (normalizedPointer.operation === "publish") {
-      stateBytes = memberBytes(archive, stateName);
-      if (sha256Bytes(stateBytes) !== contract.state.digest || contract.state.entryCount !== 1) {
-        throw error("normal-publication checkpoint bytes do not match the continuation contract");
-      }
-      githubPacerBytes = memberBytes(archive, CONTINUATION_PACER_MEMBER);
-      githubCoreJournalBytes = memberBytes(archive, CONTINUATION_CORE_JOURNAL_MEMBER);
-      const observedGitHubState = continuationGitHubStateIdentity({
-        journalBytes: githubCoreJournalBytes,
-        lineage: {
-          headSha: contract.source.commit,
-          repository: contract.githubState.repository,
-          rootRunId: String(contract.lineage.rootRunId),
-        },
-        pacerBytes: githubPacerBytes,
-      });
-      if (stableJson(observedGitHubState) !== stableJson(contract.githubState)) {
-        throw error("continuation GitHub pacer/journal bytes do not match the contract");
-      }
-    } else {
-      checkpointEntries = checkpoints
-        .map(({ member, name }) => ({ bytes: memberBytes(archive, member), name }))
-        .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-      if (new Set(checkpointEntries.map(({ name }) => name)).size !== checkpointEntries.length) {
-        throw error("bootstrap continuation artifact repeats a checkpoint identity");
-      }
-      const identity = checkpointEntries.map(({ bytes: entryBytes, name }) => ({
-        name,
-        sha256: sha256Bytes(entryBytes),
-        size: entryBytes.length,
-      }));
-      if (
-        sha256Bytes(stableJson(identity)) !== contract.state.digest
-        || checkpointEntries.length !== contract.state.entryCount
-      ) {
-        throw error("bootstrap checkpoint set does not match the continuation contract");
-      }
+    const checkpointEntries = checkpoints
+      .map(({ member, name }) => ({ bytes: memberBytes(archive, member), name }))
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    if (new Set(checkpointEntries.map(({ name }) => name)).size !== checkpointEntries.length) {
+      throw error("bootstrap continuation artifact repeats a checkpoint identity");
+    }
+    const identity = checkpointEntries.map(({ bytes: entryBytes, name }) => ({
+      name,
+      sha256: sha256Bytes(entryBytes),
+      size: entryBytes.length,
+    }));
+    if (
+      sha256Bytes(stableJson(identity)) !== contract.state.digest
+      || checkpointEntries.length !== contract.state.entryCount
+    ) {
+      throw error("bootstrap checkpoint set does not match the continuation contract");
     }
     return {
       checkpointEntries,
@@ -521,9 +475,6 @@ export function openContinuationEnvelope(bytes, pointer) {
       contractBytes,
       executionResult,
       executionResultBytes,
-      githubCoreJournalBytes,
-      githubPacerBytes,
-      stateBytes,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });

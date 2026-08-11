@@ -32,17 +32,18 @@ Create these environments:
 | `release-pr` | Create/update the generated release PR | `RELEASE_PR_TOKEN` | main only |
 | `release-dry-run` | Exact-SHA artifact assembly and dry-run | none | main only |
 | `release-bootstrap` | Creation of npm/crates identities that do not exist yet | Only the short-lived, registry-scoped `CRATES_IO_BOOTSTRAP_TOKEN` and/or `NPM_BOOTSTRAP_TOKEN` required by the approved lock | `main` for a root dispatch and `oliphaunt-release-transport/*` tags for verified continuations; independent approval when available |
-| `release-publish` | Normal trusted publication | Maven Central credentials and signing key | `main` for a root dispatch and `oliphaunt-release-transport/*` tags for verified continuations; independent approval when available |
+| `release-publish` | Normal trusted publication | Maven Central credentials and signing key | `main` only; independent approval when available |
 
 Use a GitHub App or narrowly scoped bot token for `RELEASE_PR_TOKEN`; PRs created by the default workflow token do not trigger the normal PR workflow. Keep bootstrap tokens out of repository secrets and out of `release-publish`. Delete/revoke them immediately after trusted publishers are configured.
 
 Use exact custom deployment branch/tag policies. `release-pr` and
-`release-dry-run` allow only the `main` branch. `release-bootstrap` and
-`release-publish` allow only the `main` branch plus tags matching
-`oliphaunt-release-transport/*`; no other branch or tag is allowed. The
-workflow accepts that tag namespace only when the suffix is the full exact
-release SHA, the tag points directly to that commit, and the sealed
-continuation pointer agrees. A transport tag is never updated or deleted.
+`release-dry-run` and `release-publish` allow only the `main` branch.
+`release-bootstrap` also allows tags matching
+`oliphaunt-release-transport/*` for its verified continuations; no other branch
+or tag is allowed. The workflow accepts that tag namespace only when the suffix
+is the full exact release SHA, the tag points directly to that commit, and the
+sealed bootstrap-continuation pointer agrees. A transport tag is never updated
+or deleted.
 Environment approval is optional for dry-run and recommended for the
 irreversible bootstrap and publish operations when a second maintainer is
 available. In that case, require the independent reviewer and prevent
@@ -84,9 +85,9 @@ and environment claims before either mutating operation.
 
 | Registry | Exact external configuration | Ref binding |
 | --- | --- | --- |
-| crates.io | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish` | crates.io has no branch field; the GitHub environment admits root `main` dispatches and exact verified `oliphaunt-release-transport/*` continuation tags |
-| npm | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish`, allowed action `npm publish` | npm has no branch field; the GitHub environment admits root `main` dispatches and exact verified `oliphaunt-release-transport/*` continuation tags |
-| JSR | link `@oliphaunt/ts` to GitHub repository `f0rr0/oliphaunt` | JSR has no publisher branch field; root publication is admitted from `main`, while a continuation must use the exact verified transport tag |
+| crates.io | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish` | Normal publication is a root `main` dispatch |
+| npm | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish`, allowed action `npm publish` | Normal publication is a root `main` dispatch |
+| JSR | link `@oliphaunt/ts` to GitHub repository `f0rr0/oliphaunt` | Normal publication is a root `main` dispatch |
 
 This identity follows GitHub's [OIDC claim
 reference](https://docs.github.com/en/actions/reference/security/oidc), the
@@ -123,36 +124,27 @@ only in those environments; do not add repository-level duplicates or a
 reusable-workflow secret bridge. GitHub automatically provides the scoped
 `GITHUB_TOKEN`. Every job declares its own effective permissions: dry-run is
 read-only, bootstrap adds OIDC for npm provenance and `contents: write`,
-preparation gets release-PR writes, and the three normal-publish phases receive
-only their required staging, registry, or finalization grants. Bootstrap's
+preparation gets release-PR writes, and normal publish runs in one direct job
+with the `release-publish` grants. Bootstrap's
 content write is solely for the root generation to create the immutable
 release transport tag immediately before its first registry mutation;
 continuation generations do not create, move, or delete repository refs.
-The normal registry job also declares `contents: write` because GitHub's release
-list omits drafts from tokens without push access. Its workflow contract permits
-only the live `manage-release-drafts.mjs verify --state staged` read at that
-boundary and rejects staging or promotion there.
 Dry-run and publish share one YAML-anchored step list but remain separate
 permission and environment boundaries.
-For same-version recovery, the read-only dry-run validates every public release
-that is visible to its token and every selected product tag. A GitHub-staged
-boundary additionally requires the complete exact-source tag set and replays
-the pinned failed-run staging artifact; the later `publish` rerun alone uses its
-content-write token to require the complete live draft/public release set before
-any mutation. A hidden draft is therefore never misclassified as absent proof,
-and dry-run does not gain repository write capability merely to list drafts.
+The read-only dry-run validates every public release visible to its token and
+every selected product tag. `publish` uses its content-write token to require
+the complete live draft/public release set before mutation. A hidden draft is
+therefore never misclassified as absent proof, and dry-run does not gain write
+capability merely to list drafts.
 
-The direct continuation DAG does not widen those boundaries.
+The bootstrap continuation DAG does not widen those boundaries.
 `dispatch-bootstrap-continuation` consumes only outputs from
-`publish-bootstrap`, and `dispatch-publish-continuation` consumes only outputs
-from `publish-registry`. Both dispatcher jobs are environment-free and
-secret-free, with Actions write only for the bounded exact-child dispatch and
-repository read for its transport checkout. Each verifies and dispatches the
-exact `oliphaunt-release-transport/<full-sha>` tag created by the root
-generation; the child validates that tag, exact SHA, and parent authorization
-instead of resolving current `main`. Policy regressions reject a write-capable
-dry-run, detached shared step lists, secret-bearing continuation dispatchers,
-or a continuation wired to any other parent.
+`publish-bootstrap`. It is environment-free and secret-free, with Actions
+write only for the bounded exact-child dispatch and repository read for its
+transport checkout. It verifies and dispatches the exact
+`oliphaunt-release-transport/<full-sha>` tag created by the root generation; the
+child validates that tag, exact SHA, and parent authorization instead of
+resolving current `main`. Normal publish has no continuation dispatcher.
 
 Audit the live controls without changing them:
 
@@ -166,8 +158,8 @@ Use `--governance team` only when an independent maintainer is actually
 available. Bootstrap state is an explicit credential lifecycle, not an
 authorization shortcut:
 
-- `idle` is the default before first-identity bootstrap, including history
-  repair, qualification, release-PR preparation, and dry-run; it requires both
+- `idle` is the default before first-identity bootstrap, including
+  qualification, release-PR preparation, and dry-run; it requires both
   bootstrap tokens to be absent;
 - `ready` is valid only after every reviewed short-lived Cargo/npm token
   required by the approved lock has been installed for an imminent
@@ -266,25 +258,13 @@ empty. The frozen publisher retries only that explicit non-mutating rejection,
 using the exact same locked bytes and only while the bounded mutation deadline
 can accommodate the server delay. Ambiguous transport and other server errors
 are never blindly replayed: registry state is checked, matching bytes resume,
-and otherwise the immutable checkpoint chain is used by the next run.
+and the maintainer uses GitHub's rerun on the original Release run.
 
-Normal publication has a separate per-user version-update bucket: 30 versions
-immediately, then one version per minute. For `C` pending Cargo versions, the
-untouched-default rate-limit floor after the initial burst is
-`max(0, C - 30) * 1 minute`; generated part carriers increase `C`. Publication
-work overlaps bucket refill, so admission models each Cargo operation as
-`start = max(previous_finish, (index - burst) * refill)` rather than adding all
-wait and upload durations. No capacity secret is accepted: a support-side
-exception naturally permits earlier uploads, while `429 Retry-After` remains
-authoritative. The normal-publish gate
-inventories every exact `name@version` before tags or packages are mutated and
-rejects missing names that should have gone through bootstrap.
-It uses 30 seconds per pending Cargo carrier as a calibrated admission estimate
-inside the Cargo lane, models independent npm/Maven/JSR lanes and explicit
-cross-registry dependencies, and adds a separate executor reserve. A late run
-fails before mutation instead of assuming that a support exception also makes
-uploads instantaneous. This estimate is not a worst-case visibility bound;
-the absolute deadline and exact-lock recovery contract remain authoritative.
+Normal publication does not predict registry capacity or deliberately admit a
+partial batch. It inventories every exact `name@version`, rejects missing names
+that require bootstrap, and attempts the complete dependency-ordered plan once
+inside the job deadline. A rerun byte-proves matching public versions and
+publishes only those still absent.
 Trusted-publishing credentials are also bounded: crates.io issues each token
 for 30 minutes, so the Cargo executor refreshes and revokes tokens in batches
 well inside that lifetime rather than retaining the workflow's first token.
@@ -293,7 +273,9 @@ deadline. A batch cannot acquire a token unless two bounded exchanges plus the
 mandatory revoke budget remain, and publication receives a deadline that
 excludes that revoke budget even when a carrier fails.
 
-Generated Cargo `*-part-NNN` crates are allowed only when a `.crate` would exceed crates.io's package-size limit. They are carriers in the frozen lock, publish before their aggregator, and are not independent release products. Capacity and duration decisions must use the frozen-lock count, never the catalog count alone.
+Generated Cargo `*-part-NNN` crates are allowed only when a `.crate` would
+exceed crates.io's package-size limit. They are carriers in the frozen lock,
+publish before their aggregator, and are not independent release products.
 
 ### npm
 
@@ -385,8 +367,8 @@ bytes with the configured key and passphrase, requires the signature to use the
 primary key rather than an incompatible signing subkey, verifies the detached
 signature and fingerprint, confirms that exact primary fingerprint is
 retrievable from at least one Central-supported keyserver, deletes the
-temporary keyring, and repeats that proof in the registry job immediately
-before mutation. The earlier staging job additionally constructs the complete
+temporary keyring, and repeats that proof immediately before mutation. The
+normal publish job also constructs the complete
 lock-selected Central bundle without upload and requires Central metadata,
 exact primary/sources/javadoc files, nonempty payloads, signatures, checksums,
 safe paths, and a total archive size strictly below 1 GB. Placeholder
@@ -408,7 +390,7 @@ On the normal single-identity path, the root protected publish job first reads
 its first run attempt, the helper validates current `main` before creating or
 accepting the exact direct-commit tag. Only a genuine GitHub rerun
 (`GITHUB_RUN_ATTEMPT > 1`) of the exact root operation, original
-`refs/heads/main` workflow SHA, and empty continuation may reuse an already
+`refs/heads/main` workflow SHA may reuse an already
 exact tag after `main` advances; a missing, wrong, or annotated tag cannot use
 that exception. The job then stages each selected product tag and draft GitHub
 release directly at the qualified SHA. Before
@@ -430,98 +412,62 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
 2. Merge the introduction tree through the qualified path. Its parent must be
    the full `bootstrap-sha` boundary recorded in `release-please-config.json`,
    so legacy release commits are excluded from the first product releases. Do
-   not rewrite history after any affected identity is public. Before
-   publication, if the exact protected-main introduction run exposes a defect,
-   archive and bundle that introduction, qualify the corrected replacement
-   tree on a temporary branch, and repeat the controlled rewrite. Rotate only
-   the one-shot `RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA` predecessor to the
-   current main tip; never move `bootstrap-sha` or the displaced-main metadata
-   baseline. An earlier predecessor remains invalid, and the replacement must
-   receive a fresh exact-main `Qualified` run before this sequence continues.
-   When the current tip is the still-unpublished generated first-release
-   commit, create the qualification transport as its direct child on the exact
-   branch exported by
-   `RELEASE_PLEASE_HISTORY_REPAIR_CANDIDATE_BRANCH`. Its desired tree must restore
-   `bootstrap-sha`, the complete Release Please manifest at `0.0.0`, and every
-   changed workspace package version to `0.0.0`; the parent manifest must
-   exactly equal the configured first versions, including Swift `0.6.0`.
-   Dispatch CI from that exact branch with `wasm_target=all`,
-   `native_target=all`, and `mobile_target=all`. The intent, transition,
-   coverage, and candidate-binding gates reject every other event, ref,
-   branch, base, parent, path set, partial reset, or target selection. This
-   temporary result remains transport evidence only: the later
-   non-fast-forward `main` introduction still requires the exact one-parent
-   bootstrap shape and one canonical qualified-candidate trailer.
-   If the current tip is already an unreleased introduction, its replacement
-   candidate instead keeps the complete manifest unchanged at `0.0.0`; the
-   coverage gate treats that as an ordinary unchanged release state, not as a
-   second first-release rollback.
-   With explicit maintainer authorization before any identity is public, the
-   cost-constrained recovery variant may keep CI disabled through this repair
-   and the generated release merge, then run exactly one manual all-target CI
-   qualification on the final release-bump SHA. It must retain all archive,
-   bundle, absence, local-gate, direct-parent, tree, signature, lease,
-   protection, and lifecycle proofs; it must not claim either intermediate
-   commit was hosted-qualified. Follow the bounded exception in
-   `.codex/skills/release-oliphaunt/references/recovery.md`.
+   not rewrite history after any affected identity is public. A defect creates
+   a new ordinary candidate and requires fresh qualification.
 3. Run `prepare-release-pr` from current `main`; review the single generated release-bump commit.
-   After a pre-publication history rewrite, first inspect every displaced
-   merged release PR. Only after proving its merge is unreachable from current
-   `main` and that no affected tag/package is public may you remove its stale
-   `autorelease: pending` label. Do not add `autorelease: tagged` when no
-   release was tagged. The workflow independently repeats this check through an
-   exact-head Pulls REST inventory before expensive setup; it does not trust an
-   eventually consistent label-filtered search.
    A large Release Please update may arrive internally as multiple transport
    chunks; the prepare job validates and collapses the exact canonical PR tree
    to this single commit before it is reviewable or mergeable. The prepare job
-   must also converge all derived pins, locks, compatibility values, evidence,
-   and terminal release-semantic fingerprints, then validate their exact Git
-   blobs before pushing the normalized head. A raw Release Please head is never
+   must also converge all derived pins, locks, compatibility values, and
+   evidence, then validate their exact Git blobs before pushing the normalized
+   head. A raw Release Please head is never
    mergeable merely because its direct versions and changelogs look complete.
 4. Merge it and wait for that exact commit's non-cancelled `Qualified` CI run.
 5. Run `publish-dry-run`. It must download that run's artifacts, create/freeze the publication lock, create the deterministic lock-bound Cargo/npm bootstrap capsule, and perform clean package/install checks without credentials. Preserve the successful run ID that contains both approval artifacts.
 6. If npm/crates first identities are missing, run `publish-bootstrap`. It selects one same-SHA dry-run containing both the lock and capsule and verifies their byte binding. Before any registry identity becomes public, it resolves the exact merged Release Please PR by the release SHA, requires pending or already-tagged lifecycle state, and proves the tagged label still exists. At the mutation boundary it uses the exact root transport rule above; an absent tag is its first mutation and requires the immediately preceding current-main proof. A genuine exact rerun may reuse only the direct-commit tag created by its earlier attempt. It then installs the capsule without rebuilding, writes a genesis checkpoint before the first registry mutation, and appends immutable byte receipts throughout the run. An incomplete but progressing job uploads the chain and self-dispatches the next bounded generation at that exact tag; the child restores only the exact parent artifact ID/digest/size and validates the tag, SHA, and continuation contract before resuming. It does not reconsult moving `main`. Manual recovery can inventory compatible same-SHA evidence, but an automatic child never selects a mutable “latest” artifact. After the chain seals, use the exact lock's `trusted-publisher-config.mjs` plan, audit, and explicit apply flow above; retain the final reports and revoke the bootstrap tokens. Bootstrap does not promote GitHub releases or publish unrelated registries.
-7. Run normal `publish` on the same current `main` SHA. Before the first mutation it repeats the exact Release Please markability assertion. At the mutation boundary the root staging job uses that same transport rule before any product-tag or draft mutation: an absent tag requires current-main proof and creation, while only a genuine exact rerun may reuse its prior exact tag after `main` advances. One transaction executes three sequential jobs with fresh deadlines: GitHub staging, exact registry publication, and consumer verification/final promotion. The jobs exchange only manifest-validated immutable Actions artifacts: the approved dry-run capsule carries Cargo/npm bytes once, the stage handoff carries only required non-capsule registry inputs and evidence, and the registry handoff carries receipts rather than package payloads. Downstream jobs revalidate the transport tag, exact source/tree, products, lock, approved artifact IDs/digests/sizes, and remote staged state before mutation; they do not require `main` to remain frozen after the root pin. Finalization runs bounded parallel public Cargo/npm/Maven/JSR and Git/Swift probes from fresh anonymous caches, uploads deterministic receipt-bound evidence, reasserts markability immediately before promotion, promotes every exact draft, then adds `autorelease: tagged` and removes `autorelease: pending` through separately reconciled mutations inside the same literal final step. These additive/removal operations preserve unrelated PR labels. The macOS host probe complements, but does not replace, same-SHA platform CI and the exhaustive per-carrier receipts.
+7. Run normal `publish` on the same current `main` SHA. Before the first
+   mutation it repeats the exact Release Please markability assertion and pins
+   the immutable transport tag. One protected job stages GitHub releases,
+   attempts the complete dependency-ordered registry plan, runs public
+   Cargo/npm/Maven/JSR and Git/Swift probes from fresh anonymous caches, and
+   promotes drafts last. It has no normal checkpoint, continuation, or phase
+   handoff. If it stops, use GitHub's rerun on the original Release run;
+   matching immutable state is byte-verified and skipped. The final label updates add
+   `autorelease: tagged` and remove `autorelease: pending` without replacing
+   unrelated labels.
 8. Preserve the publication lock, ledger, provenance, and workflow URL with the release.
 
 The first generated release PR consumes the one-time `bootstrap-sha` boundary.
 `sync-release-pr.mjs` removes it on that PR once any manifest entry advances
 from `0.0.0`; the release-bump commit must contain that removal. Never delete
 the boundary on the unreleased introduction tree. Never restore it on a
-publishable release-bump tree. The only post-bump restoration permitted is the
-exact, still-unpublished first-release rollback qualification transport in
-step 2 above; it is a direct child of the displaced bump solely to prove the
-corrected unreleased introduction tree.
+publishable release-bump tree.
 
 On the normal single-identity path, `release_commit` is only an equality
-assertion for the workflow commit; it
-cannot select an older commit. On a root dispatch, the workflow ref must be
-`main`; on a continuation it must be
+assertion for the workflow commit; it cannot select an older commit and the
+workflow ref must be `main`. A bootstrap continuation uses
 `oliphaunt-release-transport/<release_commit>`. Release tooling fixes create a
-new candidate SHA and require new qualification. The same-version dual-identity
-exception below still uses the current controller as `release_commit`; it
-resolves the older publication source only through the immutable recovery
-record. There is no temporary Release Please target branch.
+new candidate SHA and require new qualification. There is no temporary Release
+Please target branch, and a later commit cannot finish the release.
 
 ## Recovery
 
-Publishing is resumable but not cross-registry atomic. On failure, preserve and validate the complete content-addressed checkpoint chain, then inventory all selected identities against the frozen lock. Matching immutable versions may be skipped only after registry bytes are proved; a mismatched version/tag/asset or ledger checkpoint stops the release. Product-semantic repository changes require a new version and new exact-SHA qualification.
+Publishing is not cross-registry atomic. On normal-publish failure, preserve
+the lock and responses, inventory all selected identities, and use GitHub's
+rerun on the original Release run at the exact same commit. Matching immutable
+versions may be skipped only after registry bytes are proved; a mismatch stops
+the release. Only first-identity bootstrap restores a content-addressed
+checkpoint chain. Product changes require a new version and exact-SHA
+qualification.
 
-A zero-owner release-control/test fix after partial immutable publication may
-instead use the documented same-version recovery. It keeps the original
-release commit/tree, exact pinned payload CI inventory, approved lock/capsule,
-recorded immutable boundary, and any required terminal ledger as the
-publication source. A later current-main controller receives fresh
-recovery-control CI and an approved control-equivalence dry-run, but supplies
-only workflow/transport/OIDC/pacing code. The original complete payload CI is
-still reverified independently. Lock replay must be byte-identical to the
-original, including source and lock digest; tags/releases/assets remain
-source-bound. Recovery bootstrap and continuations are disabled, and an
-interruption is resumed through an idempotent root `publish` rerun. No matching
-public immutable identity is uploaded again. Use
-`.codex/skills/release-oliphaunt/references/recovery.md` for that recovery and
-the separate pre-publication history-repair procedure.
+Normal recovery reruns `publish` at the exact same release commit with the same
+qualified artifacts and approved lock. Use GitHub's rerun for the failed
+Release run rather than a fresh dispatch after `main` moves. The original run
+and referenced CI/dry-run artifacts must still be available. The rerun
+byte-verifies public registry and GitHub state, skips exact matches, and writes
+only missing state. A required fix creates a new candidate and requires normal
+versioning and qualification. First-identity bootstrap alone restores its checkpoint chain. See
+`.codex/skills/release-oliphaunt/references/recovery.md` for recovery.
 
 ## External readiness checklist
 
@@ -530,10 +476,10 @@ the separate pre-publication history-repair procedure.
 - main requires `Required`, squash-only merges, linear history, resolved
   conversations, stale-approval dismissal, administrator enforcement, and no
   force-push or deletion;
-- `release-pr` and `release-dry-run` admit only the `main` branch;
-  `release-bootstrap` and `release-publish` admit only `main` plus the
+- `release-pr`, `release-dry-run`, and `release-publish` admit only the `main`
+  branch; `release-bootstrap` additionally admits the
   `oliphaunt-release-transport/*` tag pattern required for exact verified
-  continuations; bootstrap and publish use independent approval and
+  bootstrap continuations; bootstrap and publish use independent approval and
   prevent-self-review when a second maintainer exists, while solo operation
   keeps self-review prevention disabled;
 - `release-pr` can create a PR that triggers normal CI;

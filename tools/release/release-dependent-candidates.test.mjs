@@ -93,17 +93,19 @@ function set(value) {
   return new Set(value);
 }
 
-test("runtime-only closure includes linked runtimes and every true downstream consumer", () => {
+test("native closure includes its directed consumers without forcing WASIX", () => {
   const closure = dependentReleaseClosure(topologyGraph(), [NATIVE], { prefix: "closure-test" });
   assert.deepEqual(
     set(closure.requiredProducts),
-    set([NATIVE, WASIX, CONTRIB, WASIX_RUST, RUST, BROKER, JS, SWIFT, REACT_NATIVE, EXTERNAL]),
+    set([NATIVE, CONTRIB, RUST, BROKER, JS, SWIFT, REACT_NATIVE, EXTERNAL]),
   );
   assert.deepEqual(
     closure.reasons[EXTERNAL].map(({ kind, sourceProduct }) => [kind, sourceProduct]),
-    [["compatibility", NATIVE], ["compatibility", WASIX]],
-    "build-scoped Moon edges do not select the external extension, but directed compatibility fields do",
+    [["compatibility", NATIVE]],
+    "only the selected runtime's directed compatibility edge applies",
   );
+  assert.equal(closure.requiredProducts.includes(WASIX), false);
+  assert.equal(closure.requiredProducts.includes(WASIX_RUST), false);
 });
 
 test("the real runtime plan distinguishes Moon build impact from the final publish fixed point", () => {
@@ -134,15 +136,17 @@ test("the real runtime plan distinguishes Moon build impact from the final publi
       true,
     );
   }
-  assert.equal(plan.requiredReleaseProducts.includes(WASIX_RUST), true);
+  assert.equal(plan.requiredReleaseProducts.includes(WASIX), false);
+  assert.equal(plan.requiredReleaseProducts.includes(WASIX_RUST), false);
 });
 
-test("WASIX-only closure reaches the same linked runtime fixed point", () => {
+test("WASIX closure includes its directed consumers without forcing native", () => {
   const closure = dependentReleaseClosure(topologyGraph(), [WASIX], { prefix: "closure-test" });
   assert.deepEqual(
     set(closure.requiredProducts),
-    set([NATIVE, WASIX, CONTRIB, WASIX_RUST, RUST, BROKER, JS, SWIFT, REACT_NATIVE, EXTERNAL]),
+    set([WASIX, CONTRIB, WASIX_RUST, EXTERNAL]),
   );
+  assert.equal(closure.requiredProducts.includes(NATIVE), false);
 });
 
 test("Rust-only closure follows production consumers and terminates across a compatibility cycle", () => {
@@ -194,16 +198,17 @@ test("an otherwise-missing first release fails closed instead of guessing policy
   );
 });
 
-test("planner refuses to replace incomplete Release Please linked candidates", () => {
+test("planner does not synthesize the independent WASIX runtime from a native transition", () => {
   const graph = topologyGraph({ versions: { [NATIVE]: "1.1.0" } });
-  assert.throws(
-    () => planDependentReleaseCandidates(
-      graph,
-      [{ product: NATIVE, packagePath: graph.products[NATIVE].path, before: "1.0.0", after: "1.1.0" }],
-      { prefix: "closure-test" },
-    ),
-    /linked runtime candidates are incomplete.*liboliphaunt-wasix.*oliphaunt-extension-contrib-pg18/u,
+  const plan = planDependentReleaseCandidates(
+    graph,
+    [{ product: NATIVE, packagePath: graph.products[NATIVE].path, before: "1.0.0", after: "1.1.0" }],
+    { prefix: "closure-test" },
   );
+  assert.equal(plan.requiredProducts.includes(WASIX), false);
+  assert.equal(plan.requiredProducts.includes(WASIX_RUST), false);
+  assert.equal(plan.candidates.some(({ product }) => product === CONTRIB), true);
+  assert.equal(plan.candidates.some(({ product }) => product === EXTERNAL), true);
 });
 
 test("planner rejects SemVer components outside the safe integer range", () => {

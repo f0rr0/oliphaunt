@@ -855,8 +855,6 @@ describe("GitHub release attestation receipt", () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].file).toBe(local);
-    expect(calls[0].predicateType).toBe("https://slsa.dev/provenance/v1");
-    expect(calls[0].recoveryExpectations).toBeUndefined();
     expect(records[0].subjects).toEqual(subjects);
 
     await expect(verifyAttestationBundles(lock, [bundlePath], {
@@ -891,28 +889,6 @@ describe("GitHub release attestation receipt", () => {
     ]);
     expect(args).toContain("--deny-self-hosted-runners");
 
-    const recoveryType =
-      "https://github.com/f0rr0/oliphaunt/attestations/same-version-recovery-promotion/v1";
-    const controller = "4".repeat(40);
-    const recoveryArgs = ghBundleVerifyArgs({
-      bundlePath: "/tmp/recovery-bundle.json",
-      file: "/tmp/asset.tar.zst",
-      head: controller,
-      predicateType: recoveryType,
-      repo: REPO,
-    });
-    expect(
-      recoveryArgs.slice(
-        recoveryArgs.indexOf("--predicate-type"),
-        recoveryArgs.indexOf("--predicate-type") + 2,
-      ),
-    ).toEqual(["--predicate-type", recoveryType]);
-    expect(
-      recoveryArgs.slice(
-        recoveryArgs.indexOf("--source-digest"),
-        recoveryArgs.indexOf("--source-digest") + 2,
-      ),
-    ).toEqual(["--source-digest", controller]);
   });
 
   test("accepts only gh's known empty RFC3161 protobuf canonicalization", () => {

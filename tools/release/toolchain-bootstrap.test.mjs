@@ -4,7 +4,6 @@ import {EventEmitter} from 'node:events';
 import {test} from 'node:test';
 
 const LOCAL_SCRIPT_TIMEOUT_MS = 55_000;
-const COLD_REGISTRY_SCRIPT_TIMEOUT_MS = 180_000;
 const TERMINATION_GRACE_MS = 5_000;
 const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000;
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
@@ -18,11 +17,6 @@ const INSTALLER_FAULT_SUITES = [
   {script: '.github/actions/setup-moon/install-pinned-toolchain.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-npm-publisher/install.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
-  // Unlike the local archive fault fixtures above, this exercises a genuinely
-  // empty pnpm store and downloads the complete pinned Verdaccio graph. Keep a
-  // separate finite budget so a slow registry cannot masquerade as an installer
-  // defect without weakening the fast-suite hang detector.
-  {script: 'tools/release/install-verdaccio-runtime.test.sh', timeoutMs: COLD_REGISTRY_SCRIPT_TIMEOUT_MS},
 ];
 
 function appendBounded(chunks, state, chunk, label) {

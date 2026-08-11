@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,31 +22,12 @@ import {
   createReleaseContinuationContract,
   createReleaseContinuationPointer,
   sha256Bytes,
+  stableJson,
 } from "./release-continuation-contract.mjs";
 
 const SHA = "a".repeat(40);
 const TREE = "b".repeat(40);
 const DIGEST = "c".repeat(64);
-
-function githubState({ journalDigest = DIGEST, journalSize = 100, pacerDigest = DIGEST, pacerSize = 100 } = {}) {
-  return {
-    coreRequestJournal: {
-      digest: journalDigest,
-      lastReservedAtMs: 900,
-      sequence: 2,
-      size: journalSize,
-    },
-    headSha: SHA,
-    pacer: {
-      digest: pacerDigest,
-      lastReservedAtMs: 1_000,
-      sequence: 1,
-      size: pacerSize,
-    },
-    repository: "f0rr0/oliphaunt",
-    rootRunId: 100,
-  };
-}
 
 function pointer() {
   const contract = createReleaseContinuationContract({
@@ -57,7 +38,6 @@ function pointer() {
         { id: 2, name: "oliphaunt-bootstrap-capsule", size: 1, digest: `sha256:${DIGEST}` },
       ],
     },
-    githubState: null,
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,
@@ -84,7 +64,6 @@ function pointer() {
     },
     products: ["a"],
     source: { commit: SHA, tree: TREE },
-    stageHandoff: null,
     state: { digest: DIGEST, entryCount: 1, kind: "bootstrap-ledger" },
   });
   return createReleaseContinuationPointer({
@@ -164,134 +143,6 @@ function authorizationArtifact(bytes) {
     name: "release-continuation-authorization",
     size: bytes.length,
   };
-}
-
-async function normalContinuationZip(extraMembers = [], { tamperJournal = false, tamperPacer = false } = {}) {
-  const checkpointBytes = Buffer.from("exact checkpoint bytes\n");
-  const executionResult = {
-    admittedIds: ["carrier:npm:a"],
-    completedIds: ["carrier:npm:a"],
-    decision: "deferred",
-    deferralMode: "progress",
-    lock: { catalogDigest: DIGEST, lockDigest: DIGEST, packageEnvelopeDigest: DIGEST },
-    newlyCompletedIds: ["carrier:npm:a"],
-    notBeforeEpochSeconds: 1_800_000_000,
-    operation: "publish",
-    products: ["a"],
-    remainingIds: ["carrier:cargo:b"],
-    schema: "oliphaunt-normal-publication-execution-result-v1",
-    source: { commit: SHA, tree: TREE },
-  };
-  const executionResultBytes = Buffer.from(`${JSON.stringify(executionResult, null, 2)}\n`);
-  const pacerBytes = Buffer.from(`${JSON.stringify({
-    schema: "oliphaunt-github-content-write-pacer-v2",
-    headSha: SHA,
-    repository: "f0rr0/oliphaunt",
-    rootRunId: "100",
-    coldStartMs: 3_600_000,
-    intervalMs: 10_000,
-    sequence: 1,
-    lastReservedAtMs: 1_000,
-    lastLabel: "root stage",
-    reservations: [{ label: "root stage", reservedAtMs: 1_000, sequence: 1 }],
-  })}\n`);
-  const journalBytes = Buffer.from(`${JSON.stringify({
-    schema: "oliphaunt-github-core-request-journal-v2",
-    headSha: SHA,
-    repository: "f0rr0/oliphaunt",
-    rootRunId: "100",
-    sequence: 2,
-    attempts: [
-      { label: "read one", reservedAtMs: 800, sequence: 1 },
-      { label: "read two", reservedAtMs: 900, sequence: 2 },
-    ],
-  })}\n`);
-  const contract = createReleaseContinuationContract({
-    approvedPublication: {
-      runId: 20,
-      artifacts: [
-        { id: 1, name: "oliphaunt-publication-lock", size: 1, digest: `sha256:${DIGEST}` },
-        { id: 2, name: "oliphaunt-bootstrap-capsule", size: 1, digest: `sha256:${DIGEST}` },
-      ],
-    },
-    githubState: githubState({
-      journalDigest: sha256Bytes(journalBytes),
-      journalSize: journalBytes.length,
-      pacerDigest: sha256Bytes(pacerBytes),
-      pacerSize: pacerBytes.length,
-    }),
-    lineage: {
-      capacityDeferralAllowance: false,
-      deadlineDeferralBudget: 1,
-      deadlineDeferralsUsed: 0,
-      generation: 1,
-      maxGenerations: 6,
-      parentRunAttempt: 2,
-      parentRunId: 100,
-      rateLimitDeferralBudget: 3,
-      rateLimitDeferralsUsed: 0,
-      rootRunId: 100,
-    },
-    lock: { lockDigest: DIGEST, catalogDigest: DIGEST, packageEnvelopeDigest: DIGEST },
-    operation: "publish",
-    outcome: {
-      completedCount: 1,
-      decision: "deferred",
-      deferralMode: "progress",
-      executionResultDigest: sha256Bytes(executionResultBytes),
-      notBeforeEpochSeconds: 1_800_000_000,
-      progressCount: 1,
-      remainingCount: 1,
-      stateDigest: sha256Bytes(checkpointBytes),
-    },
-    products: ["a"],
-    source: { commit: SHA, tree: TREE },
-    stageHandoff: {
-      artifact: {
-        digest: `sha256:${DIGEST}`,
-        id: 3,
-        name: `github-stage-handoff-${SHA}-100-2`,
-        size: 1,
-      },
-      runId: 100,
-    },
-    state: {
-      digest: sha256Bytes(checkpointBytes),
-      entryCount: 1,
-      kind: "normal-publication-checkpoint",
-    },
-  });
-  const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-normal-continuation-test-"));
-  try {
-    writeFileSync(path.join(directory, "normal-publication-checkpoint.json"), checkpointBytes);
-    writeFileSync(path.join(directory, "normal-publication-execution-result.json"), executionResultBytes);
-    const pacerMember = tamperPacer
-      ? Buffer.from(pacerBytes.toString("utf8").replaceAll("root stage", "rewritten stage"))
-      : pacerBytes;
-    const journalMember = tamperJournal
-      ? Buffer.from(journalBytes.toString("utf8").replace("read one", "rewritten read"))
-      : journalBytes;
-    writeFileSync(path.join(directory, "oliphaunt-github-content-write-pacer.json"), pacerMember);
-    writeFileSync(path.join(directory, "oliphaunt-github-core-request-journal.json"), journalMember);
-    writeFileSync(
-      path.join(directory, "release-continuation-contract.json"),
-      `${JSON.stringify(contract, null, 2)}\n`,
-    );
-    for (const member of extraMembers) writeFileSync(path.join(directory, member), "{}\n");
-    const bytes = await createDeterministicZip(directory);
-    const pointer = createReleaseContinuationPointer({
-      contract,
-      artifact: {
-        digest: `sha256:${sha256Bytes(bytes)}`,
-        id: 10,
-        name: "normal-publication-continuation",
-        size: bytes.length,
-      },
-    });
-    return { bytes, pointer };
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
 }
 
 test("artifact metadata and root/parent/current run lineage are exact", () => {
@@ -441,29 +292,87 @@ test("authorization ZIP joins immutable transport, canonical receipt, pointer, a
   );
 });
 
-test("normal continuation envelope is exactly checkpoint, typed result, contract, and GitHub state", async () => {
-  const exact = await normalContinuationZip();
-  const envelope = openContinuationEnvelope(exact.bytes, exact.pointer);
-  assert.equal(envelope.executionResult.deferralMode, "progress");
-  assert.equal(envelope.stateBytes.toString("utf8"), "exact checkpoint bytes\n");
-  assert.match(envelope.githubPacerBytes.toString("utf8"), /root stage/u);
-  assert.match(envelope.githubCoreJournalBytes.toString("utf8"), /read one/u);
+test("bootstrap continuation envelope contains only its ledger, result, and contract", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-bootstrap-envelope-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const ledger = path.join(directory, "bootstrap-ledger");
+  mkdirSync(ledger);
+  const checkpointName = `checkpoint-000000-${DIGEST}.json`;
+  const checkpointBytes = Buffer.from("exact checkpoint bytes\n");
+  writeFileSync(path.join(ledger, checkpointName), checkpointBytes);
+  const stateDigest = sha256Bytes(stableJson([{
+    name: checkpointName,
+    sha256: sha256Bytes(checkpointBytes),
+    size: checkpointBytes.length,
+  }]));
+  const executionResult = {
+    admittedIds: ["cargo:a"],
+    completedIds: ["cargo:a"],
+    decision: "deferred",
+    deferralMode: "progress",
+    lock: { catalogDigest: DIGEST, lockDigest: DIGEST, packageEnvelopeDigest: DIGEST },
+    newlyCompletedIds: ["cargo:a"],
+    notBeforeEpochSeconds: 1_800_000_000,
+    operation: "publish-bootstrap",
+    products: ["a"],
+    remainingIds: ["cargo:b"],
+    schema: "oliphaunt-bootstrap-execution-result-v1",
+    source: { commit: SHA, tree: TREE },
+  };
+  const executionResultBytes = Buffer.from(`${JSON.stringify(executionResult, null, 2)}\n`);
+  writeFileSync(path.join(directory, "bootstrap-execution-result.json"), executionResultBytes);
+  const contract = createReleaseContinuationContract({
+    approvedPublication: {
+      runId: 20,
+      artifacts: [
+        { id: 1, name: "oliphaunt-publication-lock", size: 1, digest: `sha256:${DIGEST}` },
+        { id: 2, name: "oliphaunt-bootstrap-capsule", size: 1, digest: `sha256:${DIGEST}` },
+      ],
+    },
+    lineage: {
+      capacityDeferralAllowance: false,
+      deadlineDeferralBudget: 1,
+      deadlineDeferralsUsed: 0,
+      generation: 1,
+      maxGenerations: 6,
+      parentRunAttempt: 2,
+      parentRunId: 100,
+      rateLimitDeferralBudget: 3,
+      rateLimitDeferralsUsed: 0,
+      rootRunId: 100,
+    },
+    lock: { lockDigest: DIGEST, catalogDigest: DIGEST, packageEnvelopeDigest: DIGEST },
+    operation: "publish-bootstrap",
+    outcome: {
+      completedCount: 1,
+      decision: "deferred",
+      deferralMode: "progress",
+      executionResultDigest: sha256Bytes(executionResultBytes),
+      notBeforeEpochSeconds: 1_800_000_000,
+      progressCount: 1,
+      remainingCount: 1,
+      stateDigest,
+    },
+    products: ["a"],
+    source: { commit: SHA, tree: TREE },
+    state: { digest: stateDigest, entryCount: 1, kind: "bootstrap-ledger" },
+  });
+  writeFileSync(
+    path.join(directory, "release-continuation-contract.json"),
+    `${JSON.stringify(contract, null, 2)}\n`,
+  );
+  const bytes = await createDeterministicZip(directory);
+  const continuationPointer = createReleaseContinuationPointer({
+    contract,
+    artifact: {
+      digest: `sha256:${sha256Bytes(bytes)}`,
+      id: 10,
+      name: "oliphaunt-bootstrap-ledger",
+      size: bytes.length,
+    },
+  });
 
-  for (const member of [
-    "normal-publication-plan.json",
-    "registry-integrity-receipts.json",
-  ]) {
-    const substituted = await normalContinuationZip([member]);
-    assert.throws(
-      () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
-      new RegExp(`unexpected member .*${member.replaceAll(".", "[.]")}`, "u"),
-    );
-  }
-  for (const options of [{ tamperJournal: true }, { tamperPacer: true }]) {
-    const substituted = await normalContinuationZip([], options);
-    assert.throws(
-      () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
-      /pacer\/journal bytes do not match the contract/u,
-    );
-  }
+  const envelope = openContinuationEnvelope(bytes, continuationPointer);
+  assert.equal(envelope.executionResult.deferralMode, "progress");
+  assert.equal(envelope.checkpointEntries[0].bytes.toString("utf8"), "exact checkpoint bytes\n");
 });

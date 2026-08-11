@@ -285,23 +285,8 @@ const expectedPaths = new Set(pathsById.values());
 const actualPaths = new Set(Object.keys(packages));
 const manifestPaths = new Set(Object.keys(manifest));
 const sortedDifference = (left, right) => [...left].filter((item) => !right.has(item)).sort();
-function expectedRuntimeLinkedComponents(pathsById) {
-  const runtimes = ['liboliphaunt-native', 'liboliphaunt-wasix'];
-  for (const runtime of runtimes) {
-    if (!pathsById.has(runtime)) {
-      fail(`release-please runtime linked-version group is missing ${runtime}`);
-    }
-  }
-  const contribExtensions = [...pathsById.entries()]
-    .filter(([component, packagePath]) =>
-      component.startsWith('oliphaunt-extension-')
-      && (packagePath === 'src/extensions/contrib' || packagePath.startsWith('src/extensions/contrib/')))
-    .map(([component]) => component)
-    .sort();
-  return [...runtimes, ...contribExtensions];
-}
 
-function validatePlugins(plugins, pathsById) {
+function validatePlugins(plugins) {
   if (!Array.isArray(plugins)) {
     fail('release-please plugins must be a list');
   }
@@ -310,16 +295,9 @@ function validatePlugins(plugins, pathsById) {
       type: 'node-workspace',
       merge: false,
     },
-    {
-      type: 'linked-versions',
-      groupName: 'liboliphaunt-runtime',
-      components: expectedRuntimeLinkedComponents(pathsById),
-    },
   ];
   if (JSON.stringify(plugins) !== JSON.stringify(expected)) {
-    fail(
-      'release-please plugins must use node-workspace without internal merging plus a linked-versions group for liboliphaunt-native, liboliphaunt-wasix, and contrib extensions',
-    );
+    fail('release-please plugins must use node-workspace without internal merging');
   }
 }
 
@@ -411,7 +389,7 @@ if (config['bump-minor-pre-major'] !== true) {
 if (config['bump-patch-for-minor-pre-major'] !== true) {
   fail('release-please must patch-bump feat commits after the 0.1.0 bootstrap while versions stay below 1.0.0');
 }
-validatePlugins(config.plugins ?? [], pathsById);
+validatePlugins(config.plugins ?? []);
 
 const idsByPath = new Map([...pathsById.entries()].map(([product, packagePath]) => [packagePath, product]));
 for (const [packagePath, packageConfig] of Object.entries(packages)) {

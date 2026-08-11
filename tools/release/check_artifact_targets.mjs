@@ -4,17 +4,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { BUILDER_JOBS, planForFullRun } from "../graph/ci_plan.mjs";
-import {
-  assertCiWorkflow,
-  assertReleaseWorkflow,
-  parseWorkflow,
-} from "../policy/assertions/workflow-semantics.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
 import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
   extensionArtifactsWasixMatrix,
-  jsExactCandidateConsumerMatrix,
   liboliphauntNativeAndroidRuntimeMatrix,
   liboliphauntNativeDesktopRuntimeMatrix,
   liboliphauntNativeIosRuntimeMatrix,
@@ -39,6 +33,7 @@ import {
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { ROOT, compareText, loadGraph } from "./release-graph.mjs";
+import { parseWorkflow } from "./read-workflow.mjs";
 import { declaredCarrierMap, loadPublicationCatalog } from "./publication-catalog.mjs";
 
 const TOOL = "check_artifact_targets.mjs";
@@ -632,47 +627,6 @@ function validateMergedSameRunDownload(workflow, jobId, pattern, artifactPath) {
   );
 }
 
-function validateJsExactIosExtensionInput(workflow) {
-  const jobId = "js-sdk-exact-candidate-consumer";
-  const artifact = "liboliphaunt-native-extension-artifacts-ios-xcframework";
-  const inputPath = "target/js-exact-candidate-input/ios-extensions";
-  const allDownloads = actionSteps(workflow, jobId, "actions/download-artifact@");
-  const downloads = allDownloads
-    .filter((step) => step.with?.name === artifact);
-  invariant(downloads.length === 1, `${jobId} must download ${artifact} exactly once`);
-  invariant(
-    downloads[0].with?.path === inputPath
-      && downloads[0].with?.["run-id"] === undefined
-      && downloads[0].with?.pattern === undefined
-      && downloads[0].with?.repository === undefined
-      && downloads[0].with?.["github-token"] === undefined,
-    `${jobId}/${artifact} must use same-run immutable input path ${inputPath}`,
-  );
-  invariant(
-    allDownloads.filter((step) => step.with?.path === inputPath).length === 1,
-    `${jobId}/${artifact} input path ${inputPath} must not be shared with another download`,
-  );
-
-  const consumerSteps = workflowJob(workflow, jobId).steps
-    .filter((step) => step.id === "js_exact_candidate_consumer");
-  invariant(consumerSteps.length === 1, `${jobId} must declare exactly one exact-candidate consumer step`);
-  const flagValues = [...String(consumerSteps[0].run ?? "").matchAll(
-    /(?:^|\s)--ios-extension-artifact-root(?:=|\s+)([^\s\\]+)/gu,
-  )].map((match) => match[1]);
-  assertSameStrings(
-    flagValues,
-    [inputPath],
-    `${jobId} --ios-extension-artifact-root values`,
-  );
-  const genericRootValues = [...String(consumerSteps[0].run ?? "").matchAll(
-    /(?:^|\s)--artifact-root(?:=|\s+)([^\s\\]+)/gu,
-  )].map((match) => match[1]);
-  invariant(
-    !genericRootValues.includes(inputPath),
-    `${jobId} must bind ${inputPath} only through --ios-extension-artifact-root`,
-  );
-}
-
 export function validateCiArtifactCoverage(workflow, inventory) {
   const matrixRows = {
     nativeDesktop: inventory.matrices.nativeDesktop.include,
@@ -684,7 +638,6 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     extensionWasix: inventory.matrices.extensionWasix.include,
     wasixAot: inventory.matrices.wasixAot.include,
     reactNativeAndroid: inventory.matrices.reactNativeAndroid.include,
-    jsExact: inventory.matrices.jsExact.include,
   };
   const releaseAssets = (product, kind) => ciReleaseAssetArtifactRows(product, kind, TOOL).map(({ artifactName }) => artifactName);
   const npmPackages = (product, kind) => ciNpmPackageArtifactRows(product, kind, TOOL).map(({ artifactName }) => artifactName);
@@ -774,44 +727,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowConsumer(workflow, "liboliphaunt-wasix-release-assets", ["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot"], ["liboliphaunt-wasix-runtime-portable", ...wasixAot]);
   validateWorkflowConsumer(workflow, "extension-packages", ["extension-artifacts-native", "extension-artifacts-wasix", "liboliphaunt-wasix-aot"], [...nativeExtensionArtifacts, ...wasixExtensionArtifacts, ...extensionAot]);
   validateWorkflowConsumer(workflow, "mobile-extension-packages", ["extension-artifacts-native"], nativeExtensionArtifacts);
-  validateWorkflowConsumer(
-    workflow,
-    "js-sdk-exact-candidate-consumer",
-    ["broker-runtime", "extension-artifacts-native", "js-sdk-package", "liboliphaunt-native-desktop", "liboliphaunt-native-ios", "node-direct"],
-    [
-      ...matrixRows.jsExact.flatMap((row) => [
-        row.native_artifact,
-        row.extension_artifact,
-        row.broker_artifact,
-        row.node_artifact,
-      ]),
-      "liboliphaunt-native-icu-data",
-      "liboliphaunt-native-release-assets-ios-xcframework",
-      "liboliphaunt-native-extension-artifacts-ios-xcframework",
-      "oliphaunt-js-sdk-package-artifacts",
-    ],
-    matrixRows.jsExact,
-  );
-  validateJsExactIosExtensionInput(workflow);
   const iosRelease = ["liboliphaunt-native-release-assets-ios-xcframework"];
   validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios"], iosRelease);
-  validateWorkflowConsumer(
-    workflow,
-    "rust-sdk-exact-candidate-consumer",
-    ["broker-runtime", "extension-artifacts-native", "liboliphaunt-native-desktop", "rust-sdk-package"],
-    [
-      "liboliphaunt-native-extension-artifacts-linux-x64-gnu",
-      "liboliphaunt-native-release-assets-linux-x64-gnu",
-      "oliphaunt-broker-release-assets-linux-x64-gnu",
-      "oliphaunt-rust-sdk-package-artifacts",
-    ],
-  );
-  validateWorkflowConsumer(
-    workflow,
-    "wasix-rust-exact-candidate-consumer",
-    ["liboliphaunt-wasix-release-assets", "wasix-rust-package"],
-    ["liboliphaunt-wasix-release-assets", "oliphaunt-wasix-rust-package-artifacts"],
-  );
   validateWorkflowConsumer(workflow, "react-native-sdk-package", ["liboliphaunt-native-ios"], iosRelease);
   validateWorkflowConsumer(workflow, "mobile-build-android", ["liboliphaunt-native-android", "mobile-extension-packages", "kotlin-sdk-package", "react-native-sdk-package"], [
     ...matrixRows.reactNativeAndroid.map(({ target }) => `liboliphaunt-native-target-${target}`),
@@ -874,7 +791,6 @@ export function repositoryInventory() {
       nativeAndroid: liboliphauntNativeAndroidRuntimeMatrix(),
       nativeIos: liboliphauntNativeIosRuntimeMatrix(),
       reactNativeAndroid: reactNativeAndroidMobileAppMatrix(),
-      jsExact: jsExactCandidateConsumerMatrix(),
       extensionNative: extensionArtifactsNativeMatrix(),
       extensionWasix: extensionArtifactsWasixMatrix(),
       wasixAot: liboliphauntWasixAotRuntimeMatrix(),
@@ -907,9 +823,6 @@ export function validateRepository() {
   validateExtensionCarrierCoverage(inventory.graph, inventory.catalog, inventory.products);
   validateStructuredExtensionRecipes(inventory.products, inventory.extensions, inventory.graph);
   const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
-  const release = parseWorkflow(ROOT, ".github/workflows/release.yml");
-  assertCiWorkflow(ci, { builderJobs: BUILDER_JOBS });
-  assertReleaseWorkflow(release);
   validateCiArtifactCoverage(ci, inventory);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
   const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));

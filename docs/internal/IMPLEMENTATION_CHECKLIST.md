@@ -811,7 +811,7 @@ Run before claiming this architecture complete:
   focused macOS `OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES=amcheck`
   `build-postgres18-macos.sh`, `bash -n` for touched shell scripts,
   `cargo run -p xtask -- assets verify-committed`,
-  `bun tools/policy/assertions/assert-source-inputs.mjs`,
+  `bash tools/policy/check-source-inputs.sh`,
   `python3 src/extensions/tools/check-extension-model.py --check`,
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,

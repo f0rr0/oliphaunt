@@ -27,7 +27,7 @@ assert_npm_package() {
   local package_name="$1"
   local expected_version="$2"
   local resolver_package="${3:-}"
-  examples/tools/with-local-registries.sh pnpm --dir "$app_dir" exec node - "$package_name" "$expected_version" "$resolver_package" <<'NODE'
+  pnpm --dir "$app_dir" exec node - "$package_name" "$expected_version" "$resolver_package" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -124,7 +124,7 @@ prepare_wasix_sidecar() {
   cp -R "$root/$app_dir/src-wasix/." "$scratch/"
   rm -f "$scratch/Cargo.lock"
 
-  examples/tools/with-local-registries.sh cargo build \
+  cargo build \
     --quiet \
     --manifest-path "$scratch/Cargo.toml" \
     --target-dir "$scratch/target"
@@ -147,7 +147,7 @@ prepare_wasix_sidecar() {
   wasix_sidecar_env=("OLIPHAUNT_WASIX_TODO_SIDECAR=$sidecar")
 }
 
-examples/tools/with-local-registries.sh pnpm --dir "$app_dir" install --no-frozen-lockfile
+pnpm --dir "$app_dir" install --no-frozen-lockfile
 electron_pkg="$root/$app_dir/node_modules/electron"
 electron_platform="$(node -p 'process.platform')"
 electron_arch="$(node -p 'process.arch')"
@@ -168,7 +168,7 @@ if [ "$app_dir" = "examples/electron" ]; then
   assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "$tools_linux_version" "@oliphaunt/ts"
   assert_npm_package "@oliphaunt/extension-hstore" "$hstore_version"
 fi
-examples/tools/with-local-registries.sh pnpm --dir "$app_dir" build
+pnpm --dir "$app_dir" build
 prepare_wasix_sidecar
 
 run_smoke=(
@@ -176,7 +176,6 @@ run_smoke=(
   "OLIPHAUNT_E2E_ELECTRON=$electron"
   "OLIPHAUNT_E2E_ELECTRON_APP=$root/$app_dir"
   "${wasix_sidecar_env[@]}"
-  examples/tools/with-local-registries.sh
   node
   "$root/examples/tools/electron-driver-smoke.mjs"
 )

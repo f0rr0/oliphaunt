@@ -144,6 +144,12 @@ url = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_
 mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip"
 sha256 = "{digest}"
 entry_count = "4"
+
+[command_line_tools.mac]
+url = "https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip"
+mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip"
+sha256 = "{digest}"
+entry_count = "4"
 ''', encoding="utf-8")
 
 manifest("android.toml", good_sha)

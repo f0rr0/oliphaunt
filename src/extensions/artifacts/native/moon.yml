@@ -26,6 +26,7 @@ tasks:
     command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
     deps:
       - "extension-model:check"
+      - "extension-artifacts-native:observed-phase-test"
     inputs:
       - "/src/extensions/**/*"
       - "!/src/extensions/generated/docs"
@@ -45,6 +46,15 @@ tasks:
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/Cargo.lock"
       - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  observed-phase-test:
+    tags: ["quality", "unit"]
+    command: "bash src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
+    inputs:
+      - "/src/extensions/artifacts/native/tools/run-observed-phase.sh"
+      - "/src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true

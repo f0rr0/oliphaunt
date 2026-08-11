@@ -129,8 +129,7 @@ JSON
     --output "$scratch_root/pnpm-workspace.yaml" \
     --package "src/sdks/react-native"
   # Generate a package-scoped scratch lockfile. The root lockfile includes
-  # example importers that intentionally resolve unpublished local-registry
-  # @oliphaunt/* packages and should not be fetched by the SDK package check.
+  # unrelated example importers that should not be fetched by the SDK check.
   rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/fixtures"
   mkdir -p "$scratch_root/tools/dev"

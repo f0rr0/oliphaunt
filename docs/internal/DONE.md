@@ -1013,9 +1013,8 @@ Latest local release work:
   AOT packs, so a normal `oliphaunt-wasix` install resolves the target-independent
   `liboliphaunt-wasix-portable` crate plus only the current platform's
   `liboliphaunt-wasix-aot-*` crate;
-- source-only `tools/policy/check-rust-test-topology.sh` no longer runs broad
-  Cargo product validation from the root policy lane. `pnpm moon run
-  liboliphaunt-wasix:smoke` is now the hard runtime gate and requires portable
+- Rust product validation runs in product-owned tasks. `pnpm moon run
+  liboliphaunt-wasix:smoke` is the hard runtime gate and requires portable
   assets plus the host AOT pack;
 - `.github/scripts/download-wasix-runtime-build-artifacts.mjs` is a thin wrapper
   over `xtask assets download`; exact-SHA, latest-compatible, host-target, and

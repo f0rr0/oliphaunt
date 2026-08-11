@@ -105,7 +105,7 @@ test("dispatch transport requires the documented HTTP 200 response", () => {
 
 test("dispatch opts into the 2026 Actions response contract and one canonical pointer input", () => {
   const pointer = {
-    operation: "publish",
+    operation: "publish-bootstrap",
     releaseCommit: "a".repeat(40),
     pointerDigest: "b".repeat(64),
   };
@@ -117,7 +117,7 @@ test("dispatch opts into the 2026 Actions response contract and one canonical po
     ref: releaseTransportTagName(pointer.releaseCommit),
     return_run_details: true,
     inputs: {
-      operation: "publish",
+      operation: "publish-bootstrap",
       release_commit: "a".repeat(40),
       continuation_pointer: JSON.stringify(pointer),
     },

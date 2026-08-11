@@ -188,7 +188,6 @@ function tags(task) {
 
 const policyProjectIds = new Set([
   'dev-tools',
-  'graph-tools',
   'perf-tools',
   'policy-tools',
   'release-tools',

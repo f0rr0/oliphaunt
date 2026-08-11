@@ -25,7 +25,6 @@ function pointer() {
       ],
       runId: 20,
     },
-    githubState: null,
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,
@@ -52,7 +51,6 @@ function pointer() {
     },
     products: ["a"],
     source: { commit: SHA, tree: TREE },
-    stageHandoff: null,
     state: { digest: DIGEST, entryCount: 1, kind: "bootstrap-ledger" },
   });
   return createReleaseContinuationPointer({

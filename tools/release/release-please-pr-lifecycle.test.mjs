@@ -64,7 +64,7 @@ test("merged pending preflight uses exact current REST state", () => {
       environment: ENVIRONMENT,
       listPullRequests: () => [blocker],
     }),
-    /#99 .*pending/u,
+    /autorelease: pending: #99/u,
   );
 });
 

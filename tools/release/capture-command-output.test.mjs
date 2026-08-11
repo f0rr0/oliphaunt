@@ -779,7 +779,6 @@ test("test spawn facade delegates explicitly closed output and emulates execSync
 test("Bun-owned release inventories route captured children through file-backed capture", () => {
   for (const relative of [
     "tools/release/release-check.mjs",
-    "tools/release/release-semantic-inputs.mjs",
     "tools/release/sync-release-pr.mjs",
   ]) {
     const source = readFileSync(path.join(ROOT, relative), "utf8");
@@ -792,11 +791,11 @@ test("release materializers do not parse child-process pipes", () => {
   for (const relative of [
     "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
     "tools/release/package_broker_cargo_artifacts.mjs",
-    "tools/release/release-product-dry-run.mjs",
+    "tools/release/package-release-carriers.mjs",
+    "tools/release/package-extension-release-carriers.mjs",
     "tools/release/check-staged-artifacts.mjs",
     "tools/release/publication-lock.mjs",
     "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
-    "tools/release/extension-registry-carrier-materializer.mjs",
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
   ]) {
     const source = readFileSync(path.join(ROOT, relative), "utf8");
@@ -812,7 +811,6 @@ test("release materializers do not parse child-process pipes", () => {
 test("artifact recovery parsers never consume synchronous child pipes", () => {
   for (const relative of [
     ".github/scripts/download-bootstrap-ledger.mjs",
-    ".github/scripts/download-normal-publication-checkpoint.mjs",
     ".github/scripts/release-continuation-artifact.mjs",
   ]) {
     const source = readFileSync(path.join(ROOT, relative), "utf8");

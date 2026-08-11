@@ -44,7 +44,7 @@ if (( ${#continuation_pointer} > 32768 )); then
   exit 1
 fi
 if [[ -n "${continuation_pointer}" ]]; then
-  if [[ "${RELEASE_OPERATION}" != "publish" && "${RELEASE_OPERATION}" != "publish-bootstrap" ]]; then
+  if [[ "${RELEASE_OPERATION}" != "publish-bootstrap" ]]; then
     echo "continuation_pointer is not valid for ${RELEASE_OPERATION}" >&2
     exit 1
   fi

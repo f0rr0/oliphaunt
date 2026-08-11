@@ -25,7 +25,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -59,7 +59,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -93,7 +93,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -127,7 +127,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -161,7 +161,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -195,7 +195,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -229,7 +229,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -263,7 +263,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -297,7 +297,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -331,7 +331,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -365,7 +365,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -399,7 +399,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -433,7 +433,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -467,7 +467,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -501,7 +501,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -535,7 +535,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -569,7 +569,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -603,7 +603,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -637,7 +637,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -671,7 +671,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -705,7 +705,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -739,7 +739,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -773,7 +773,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -807,7 +807,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -841,7 +841,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -875,7 +875,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -909,7 +909,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -943,7 +943,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -977,7 +977,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1011,7 +1011,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1045,7 +1045,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1079,7 +1079,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1113,7 +1113,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1147,7 +1147,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1181,7 +1181,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1215,7 +1215,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1249,7 +1249,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1283,7 +1283,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1317,7 +1317,7 @@
       ],
       "postgres-major": 18,
       "public": true,
-      "qualification-status": "requires-exact-candidate-ci",
+      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1344,10 +1344,10 @@
   ],
   "qualification-authority": {
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
-    "current-source-status": "requires-exact-candidate-ci",
+    "current-source-status": "requires-current-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:d30cde83f40642f68c2dd7f2b1fe1bf1a9ca05122a7a6232fca42d624a06fed2",
+  "source-digest": "sha256:d53b63632b97073aa9df520e8ad41622e9b32f84cc08e072f629e861af12be21",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",

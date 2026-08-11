@@ -23,19 +23,6 @@ import {
 } from "./publication-lock.mjs";
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
 import { swiftExtensionCarrierAssetName } from "./ios-carrier-manifest.mjs";
-import {
-  RECOVERY_PROMOTION_PREDICATE_TYPE,
-  createRecoveryPromotionPredicate,
-  normalizeRecoveryPromotionController,
-  recoveryPromotionSubjectsFromLock,
-  validateRecoveryPromotionPredicateEnvelope,
-  validateRecoveryPromotionStatement,
-} from "./recovery-promotion-attestation.mjs";
-import {
-  isSameVersionRecoverySourcesDocument,
-  selectSameVersionRecoverySource,
-  validateSameVersionRecoverySource,
-} from "./same-version-recovery-source.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "verify_github_release_attestations.mjs";
@@ -59,8 +46,6 @@ const GITHUB_RELEASE_FALLBACK_QUERY_CONCURRENCY = 1;
 const GH_ATTESTATION_VERIFY_TIMEOUT_MS = 5 * 60 * 1000;
 const GH_ATTESTATION_VERIFY_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const GITHUB_ATTESTATION_RECEIPT_SCHEMA = "oliphaunt-github-release-attestation-receipt-v1";
-const GITHUB_RECOVERY_ATTESTATION_RECEIPT_SCHEMA =
-  "oliphaunt-github-release-attestation-receipt-v2";
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const IN_TOTO_STATEMENT_V1 = "https://in-toto.io/Statement/v1";
 const GITHUB_RELEASE_ARTIFACT_ROLES = new Set([
@@ -1878,55 +1863,9 @@ function githubSignerWorkflow(repo) {
   return `${repo}/.github/workflows/release.yml`;
 }
 
-function normalizeRecoveryPromotionReceipt(lock, attestations, predicate) {
-  validateRecoveryPromotionPredicateEnvelope(predicate);
-  if (
-    predicate.originalLock.schema !== lock.schema
-    || predicate.originalLock.lockDigest !== lock.lockDigest
-    || predicate.originalLock.catalogDigest !== lock.catalogDigest
-    || predicate.originalLock.packageEnvelopeDigest !== lock.packageEnvelopeDigest
-    || predicate.originalLock.source.commit !== lock.source.commit
-    || predicate.originalLock.source.tree !== lock.source.tree
-  ) {
-    throw new Error(
-      "recovery promotion predicate does not match the frozen publication lock",
-    );
-  }
-  if (
-    predicate.controller.source.commit === lock.source.commit
-    || predicate.controller.source.tree === lock.source.tree
-  ) {
-    throw new Error(
-      "recovery promotion receipt requires distinct controller and publication source identities",
-    );
-  }
-  if (attestations.length !== 1) {
-    throw new Error(
-      "recovery promotion receipt requires exactly one custom attestation bundle",
-    );
-  }
-  const [attestation] = attestations;
-  if (
-    stableStringify(attestation.subjects)
-      !== stableStringify(predicate.subjects)
-  ) {
-    throw new Error(
-      "recovery promotion receipt subjects differ from its validated predicate",
-    );
-  }
-  return {
-    bundleSha256: attestation.bundleSha256,
-    controller: predicate.controller,
-    predicate,
-    predicateEvidenceDigest: predicate.evidenceDigest,
-    predicateType: RECOVERY_PROMOTION_PREDICATE_TYPE,
-  };
-}
-
 export function buildGithubAttestationReceipt({
   attestations,
   lock,
-  recoveryPromotionPredicate = undefined,
   releases,
   repo = repository(),
 }) {
@@ -1936,23 +1875,13 @@ export function buildGithubAttestationReceipt({
     frozenGithubReleaseAssets(lock),
     attestations,
   );
-  const recoveryPromotion = recoveryPromotionPredicate === undefined
-    ? undefined
-    : normalizeRecoveryPromotionReceipt(
-        lock,
-        normalizedAttestations,
-        recoveryPromotionPredicate,
-      );
   const receipt = {
     attestations: normalizedAttestations,
     head: lock.source.commit,
     lockDigest: lock.lockDigest,
-    ...(recoveryPromotion === undefined ? {} : { recoveryPromotion }),
     releases: normalizedReleases,
     repository: canonicalRepo,
-    schema: recoveryPromotion === undefined
-      ? GITHUB_ATTESTATION_RECEIPT_SCHEMA
-      : GITHUB_RECOVERY_ATTESTATION_RECEIPT_SCHEMA,
+    schema: GITHUB_ATTESTATION_RECEIPT_SCHEMA,
     signerWorkflow: githubSignerWorkflow(canonicalRepo),
     sourceRef: "refs/heads/main",
     sourceTree: lock.source.tree,
@@ -1963,14 +1892,11 @@ export function buildGithubAttestationReceipt({
 
 export function validateGithubAttestationReceipt(receipt, lock, { repo = repository() } = {}) {
   const canonicalRepo = normalizedRepository(repo);
-  const recoveryReceipt =
-    receipt?.schema === GITHUB_RECOVERY_ATTESTATION_RECEIPT_SCHEMA;
   assertKeySet(receipt, [
     "attestations",
     "head",
     "lockDigest",
     "receiptDigest",
-    ...(recoveryReceipt ? ["recoveryPromotion"] : []),
     "releases",
     "repository",
     "schema",
@@ -1979,10 +1905,7 @@ export function validateGithubAttestationReceipt(receipt, lock, { repo = reposit
     "sourceTree",
   ], "GitHub attestation receipt");
   if (
-    !new Set([
-      GITHUB_ATTESTATION_RECEIPT_SCHEMA,
-      GITHUB_RECOVERY_ATTESTATION_RECEIPT_SCHEMA,
-    ]).has(receipt.schema)
+    receipt.schema !== GITHUB_ATTESTATION_RECEIPT_SCHEMA
     || receipt.repository !== canonicalRepo
     || receipt.head !== lock.source.commit
     || receipt.sourceTree !== lock.source.tree
@@ -2002,22 +1925,6 @@ export function validateGithubAttestationReceipt(receipt, lock, { repo = reposit
     frozenGithubReleaseAssets(lock),
     receipt.attestations,
   );
-  const recoveryPromotion = recoveryReceipt
-    ? normalizeRecoveryPromotionReceipt(
-        lock,
-        attestations,
-        receipt.recoveryPromotion?.predicate,
-      )
-    : undefined;
-  if (
-    recoveryReceipt
-    && stableStringify(recoveryPromotion)
-      !== stableStringify(receipt.recoveryPromotion)
-  ) {
-    throw new Error(
-      "GitHub recovery promotion receipt is not in deterministic canonical form",
-    );
-  }
   if (
     stableStringify(releases) !== stableStringify(receipt.releases)
     || stableStringify(attestations) !== stableStringify(receipt.attestations)
@@ -2188,22 +2095,9 @@ function decodeBundleStatement(bundle, context) {
   return statement;
 }
 
-function statementSubjects(statement, context, {
-  recoveryExpectations = undefined,
-} = {}) {
+function statementSubjects(statement, context) {
   if (statement._type !== IN_TOTO_STATEMENT_V1) {
     throw new Error(`${context} must be an in-toto v1 statement`);
-  }
-  if (recoveryExpectations !== undefined) {
-    if (statement.predicateType !== RECOVERY_PROMOTION_PREDICATE_TYPE) {
-      throw new Error(
-        `${context} must use the approved same-version recovery predicate type`,
-      );
-    }
-    return validateRecoveryPromotionStatement(
-      statement,
-      recoveryExpectations,
-    ).subjects;
   }
   if (statement.predicateType !== SLSA_PROVENANCE_V1) {
     throw new Error(`${context} must be an in-toto v1 SLSA provenance v1 statement`);
@@ -2236,7 +2130,6 @@ export function ghBundleVerifyArgs({
   bundlePath,
   file,
   head,
-  predicateType = SLSA_PROVENANCE_V1,
   repo,
 }) {
   if (typeof head !== "string" || !/^[0-9a-f]{40}$/u.test(head)) {
@@ -2257,7 +2150,7 @@ export function ghBundleVerifyArgs({
     "--format",
     "json",
     "--predicate-type",
-    predicateType,
+    SLSA_PROVENANCE_V1,
     "--signer-workflow",
     githubSignerWorkflow(canonicalRepo),
     "--signer-digest",
@@ -2275,15 +2168,12 @@ function runGhBundleVerification({
   bundlePath,
   file,
   head,
-  predicateType,
-  recoveryExpectations,
   repo,
 }) {
   const args = ghBundleVerifyArgs({
     bundlePath,
     file,
     head,
-    predicateType,
     repo,
   });
   const result = captureCommandOutput("gh", args, {
@@ -2312,15 +2202,10 @@ function runGhBundleVerification({
   );
   const statement = verified.verificationResult?.statement;
   requireObject(statement, `gh verification statement for ${bundlePath}`);
-  return statementSubjects(
-    statement,
-    `gh verified statement for ${bundlePath}`,
-    { recoveryExpectations },
-  );
+  return statementSubjects(statement, `gh verified statement for ${bundlePath}`);
 }
 
 export async function verifyAttestationBundles(lock, bundlePaths, {
-  recoveryExpectations = undefined,
   repo = repository(),
   verifyBundleImpl = runGhBundleVerification,
 } = {}) {
@@ -2333,14 +2218,7 @@ export async function verifyAttestationBundles(lock, bundlePaths, {
     throw new Error("attestation bundles contaminate a release selection with no frozen GitHub assets");
   }
   const expectedByKey = new Map(assets.map((asset) => [githubAssetSubjectKey(asset), asset]));
-  const predicateType = recoveryExpectations === undefined
-    ? SLSA_PROVENANCE_V1
-    : RECOVERY_PROMOTION_PREDICATE_TYPE;
-  const signerHead = recoveryExpectations === undefined
-    ? lock.source.commit
-    : normalizeRecoveryPromotionController(
-        recoveryExpectations.controller,
-      ).source.commit;
+  const signerHead = lock.source.commit;
   const records = [];
   const suppliedPaths = new Set();
   const suppliedDigests = new Set();
@@ -2360,7 +2238,6 @@ export async function verifyAttestationBundles(lock, bundlePaths, {
     const untrustedSubjects = statementSubjects(
       decodeBundleStatement(bundle, `attestation bundle ${bundlePath}`),
       `unverified statement for ${bundlePath}`,
-      { recoveryExpectations },
     );
     const representatives = untrustedSubjects
       .map((subject) => expectedByKey.get(githubAssetSubjectKey(subject)))
@@ -2375,8 +2252,6 @@ export async function verifyAttestationBundles(lock, bundlePaths, {
       bundlePath: absolute,
       file,
       head: signerHead,
-      predicateType,
-      recoveryExpectations,
       repo: canonicalRepo,
     });
     if (stableStringify(verifiedSubjects) !== stableStringify(untrustedSubjects)) {
@@ -2409,7 +2284,7 @@ export async function writeImmutableReceipt(file, receipt, {
     try {
       // Linking a fully-written temporary inode publishes the receipt in one
       // filesystem operation. An interruption can leave a disposable temp,
-      // never a truncated immutable target that blocks safe recovery.
+      // never a truncated immutable target that blocks a safe rerun.
       await linkImpl(temporary, absolute);
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
@@ -2450,9 +2325,6 @@ function parseReceiptArgs(command, argv) {
     productsJson: undefined,
     publicationLock: undefined,
     receipt: undefined,
-    recoveryApproval: undefined,
-    recoveryController: undefined,
-    recoveryProvenance: undefined,
     repo: repository(),
   };
   const assign = (key, value, flag) => {
@@ -2479,12 +2351,6 @@ function parseReceiptArgs(command, argv) {
       assign("publicationLock", value, flag);
     } else if (flag === "--receipt") {
       assign("receipt", value, flag);
-    } else if (flag === "--recovery-approval") {
-      assign("recoveryApproval", value, flag);
-    } else if (flag === "--recovery-controller") {
-      assign("recoveryController", value, flag);
-    } else if (flag === "--recovery-provenance") {
-      assign("recoveryProvenance", value, flag);
     } else if (flag === "--repo") {
       assign("repo", value, flag);
     } else if (flag === "--help" || flag === "-h") {
@@ -2507,30 +2373,6 @@ function parseReceiptArgs(command, argv) {
   }
   if (command === "finalize" && (args.output !== undefined || args.attestationBundles.length > 0)) {
     throw new Error("finalize does not accept --output or --attestation-bundle");
-  }
-  const recoveryInputs = [
-    args.recoveryApproval,
-    args.recoveryController,
-    args.recoveryProvenance,
-  ];
-  const recoveryInputCount = recoveryInputs.filter((value) => value !== undefined).length;
-  if (![0, recoveryInputs.length].includes(recoveryInputCount)) {
-    throw new Error(
-      "same-version recovery requires --recovery-approval, "
-        + "--recovery-controller, and --recovery-provenance together",
-    );
-  }
-  if (command === "finalize" && recoveryInputCount > 0) {
-    throw new Error("finalize does not accept same-version recovery input files");
-  }
-  if (
-    command === "pre-mutation"
-    && recoveryInputCount > 0
-    && args.attestationBundles.length !== 1
-  ) {
-    throw new Error(
-      "same-version recovery requires exactly one custom promotion attestation bundle",
-    );
   }
   return args;
 }
@@ -2555,52 +2397,8 @@ function assertRequestedProducts(lock, productsJson) {
 
 function receiptUsage() {
   console.log("usage:");
-  console.log("  tools/release/verify_github_release_attestations.mjs pre-mutation --publication-lock FILE --head-ref REF --output FILE [--products-json JSON] [--attestation-bundle FILE ...] [--recovery-controller FILE --recovery-provenance FILE --recovery-approval FILE]");
+  console.log("  tools/release/verify_github_release_attestations.mjs pre-mutation --publication-lock FILE --head-ref REF --output FILE [--products-json JSON] [--attestation-bundle FILE ...]");
   console.log("  tools/release/verify_github_release_attestations.mjs finalize --publication-lock FILE --head-ref REF --receipt FILE [--products-json JSON]");
-}
-
-async function loadRecoveryAttestationExpectations(args, lock) {
-  if (args.recoveryController === undefined) return undefined;
-  const read = async (file, context) =>
-    parseJsonBytes(
-      await readBoundedRegularFile(
-        path.resolve(file),
-        MAX_ATTESTATION_RECEIPT_BYTES,
-        context,
-      ),
-      context,
-    );
-  const controller = normalizeRecoveryPromotionController(
-    await read(args.recoveryController, "same-version recovery controller"),
-  );
-  const recoveryApproval = await read(
-    args.recoveryApproval,
-    "same-version recovery approval",
-  );
-  const provenance = await read(
-    args.recoveryProvenance,
-    "same-version recovery provenance",
-  );
-  let provenanceRecord;
-  if (isSameVersionRecoverySourcesDocument(provenance)) {
-    provenanceRecord = selectSameVersionRecoverySource(
-      provenance,
-      lock.source.commit,
-    );
-  } else {
-    provenanceRecord = validateSameVersionRecoverySource(provenance);
-    if (provenanceRecord.releaseSource.commit !== lock.source.commit) {
-      throw new Error(
-        "same-version recovery provenance does not match the publication lock source",
-      );
-    }
-  }
-  return {
-    controller,
-    lock,
-    provenanceRecord,
-    recoveryApproval,
-  };
 }
 
 async function receiptMain(command, argv) {
@@ -2614,26 +2412,15 @@ async function receiptMain(command, argv) {
   assertRequestedProducts(lock, args.productsJson);
   const repo = normalizedRepository(args.repo);
   if (command === "pre-mutation") {
-    const recoveryExpectations = await loadRecoveryAttestationExpectations(
-      args,
-      lock,
-    );
     const releases = await queryLockedGithubReleases(lock, { repo });
     const attestations = await verifyAttestationBundles(
       lock,
       args.attestationBundles,
-      { recoveryExpectations, repo },
+      { repo },
     );
-    const recoveryPromotionPredicate = recoveryExpectations === undefined
-      ? undefined
-      : createRecoveryPromotionPredicate({
-          ...recoveryExpectations,
-          subjects: recoveryPromotionSubjectsFromLock(lock),
-        });
     const receipt = buildGithubAttestationReceipt({
       attestations,
       lock,
-      recoveryPromotionPredicate,
       releases,
       repo,
     });

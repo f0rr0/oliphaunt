@@ -66,12 +66,13 @@ Consumer apps select them by SQL extension name. If a developer provides a
 verified custom artifact for `acme_ext`, the app selects `acme_ext`.
 
 Each promoted exact extension has its own product tag, changelog, and package
-version. PostgreSQL contrib extension packages are runtime-bound and move with
-the compatible Oliphaunt runtime group. External extension packages own
-independent packaging SemVer; their immutable upstream version/commit and
-compatible Oliphaunt runtime versions are separate metadata. Do not assume an
-external package version matches either its upstream project version or the
-runtime version.
+version. The PostgreSQL contrib bundle and both runtime products are versioned
+independently. Exact compatibility metadata creates directed dependency edges:
+a changed dependency may select its consumer, but never the reverse. External
+extension packages own independent packaging SemVer; their immutable upstream
+version/commit and compatible Oliphaunt runtime versions are separate metadata.
+Do not assume an external package version matches either its upstream project
+version or the runtime version.
 
 ## Verifying App Artifacts
 

@@ -15,7 +15,6 @@ import {
   brokerRuntimeMatrix,
   extensionArtifactsNativeMatrix,
   extensionArtifactsWasixMatrix,
-  jsExactCandidateConsumerMatrix,
   liboliphauntNativeAndroidRuntimeMatrix,
   liboliphauntNativeDesktopRuntimeMatrix,
   liboliphauntNativeIosRuntimeMatrix,
@@ -29,7 +28,6 @@ import {
   exactExtensionProducts,
   extensionSqlNames,
 } from "../release/release-artifact-targets.mjs";
-import { verifyPublicationRecoveryCandidate } from "../release/verify-publication-candidate.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "ci_plan.mjs";
@@ -37,7 +35,6 @@ const PREFIX = "ci_plan.mjs";
 export const BASE_JOBS = new Set(["affected"]);
 export const ALWAYS_JOBS = new Set(BASE_JOBS);
 export const FULL_PAYLOAD_QUALIFICATION_MODE = "full-payload";
-export const RECOVERY_CONTROL_QUALIFICATION_MODE = "recovery-control";
 export const BUILDER_JOBS = new Set([
   "broker-release-assets",
   "broker-runtime",
@@ -45,7 +42,6 @@ export const BUILDER_JOBS = new Set([
   "extension-artifacts-wasix",
   "extension-packages",
   "js-sdk-package",
-  "js-sdk-exact-candidate-consumer",
   "kotlin-maven-staging",
   "kotlin-sdk-package",
   "liboliphaunt-native-android",
@@ -94,16 +90,6 @@ const MOBILE_E2E_JOBS = {
 export const NATIVE_EXTENSION_LIFECYCLE_JOB = "native-extension-lifecycle";
 export const NATIVE_EXTENSION_LIFECYCLE_AGGREGATE_JOB =
   "native-extension-lifecycle-aggregate";
-export const RUST_EXACT_CANDIDATE_CONSUMER_JOB =
-  "rust-sdk-exact-candidate-consumer";
-export const WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB =
-  "wasix-rust-exact-candidate-consumer";
-const WASIX_RUST_EXACT_CANDIDATE_TRIGGER_TASKS = new Set([
-  "release-tools:wasix-rust-exact-candidate-trigger",
-]);
-const JS_EXACT_CANDIDATE_TRIGGER_TASKS = new Set([
-  "release-tools:js-exact-candidate-trigger",
-]);
 const IOS_CARRIER_VALIDATION_TRIGGER_TASKS = new Set([
   "release-tools:ios-carrier-validation-trigger",
 ]);
@@ -129,14 +115,6 @@ const WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS = new Set([
   "extension-packages",
   "extension-artifacts-wasix",
 ]);
-const JS_EXACT_CANDIDATE_TRIGGER_JOBS = new Set([
-  "broker-runtime",
-  "js-sdk-package",
-  "liboliphaunt-native-desktop",
-  "liboliphaunt-native-release-assets",
-  "node-direct",
-]);
-
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
   process.exit(2);
@@ -349,22 +327,6 @@ export function addImpliedJobs(jobs, tasks) {
     jobs.add("liboliphaunt-native-ios");
   }
 
-  if (jobs.has("js-sdk-exact-candidate-consumer")) {
-    jobs.add("js-sdk-package");
-    jobs.add("liboliphaunt-native-desktop");
-    // Extension npm meta packages embed the checksum-bound iOS carrier
-    // manifest for every host target. Exact-candidate materialization must
-    // therefore receive the same-run base XCFramework even on Linux/Windows.
-    jobs.add("liboliphaunt-native-ios");
-    jobs.add("broker-runtime");
-    jobs.add("node-direct");
-  }
-
-  if (jobs.has(WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB)) {
-    jobs.add("wasix-rust-package");
-    for (const job of WASM_RUNTIME_JOBS) jobs.add(job);
-  }
-
   if (intersects(jobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
     jobs.add("extension-packages");
   }
@@ -391,20 +353,11 @@ export function addImpliedJobs(jobs, tasks) {
     jobs.add("liboliphaunt-wasix-aot");
   }
 
-  // Add lifecycle proof producers last. This keeps a focused Linux proof from
-  // recursively selecting every release-package target while preserving exact
-  // same-run producer edges for the proof consumer.
-  if (
-    jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
-      || jobs.has(RUST_EXACT_CANDIDATE_CONSUMER_JOB)
-  ) {
+  if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
     jobs.add("extension-artifacts-native");
     jobs.add("liboliphaunt-native-desktop");
     jobs.add("broker-runtime");
     jobs.add("rust-sdk-package");
-  }
-  if (jobs.has("js-sdk-exact-candidate-consumer")) {
-    jobs.add("extension-artifacts-native");
   }
 
   // The exact Maven staging gate consumes the Kotlin package artifact. Keep
@@ -444,26 +397,10 @@ export function planJobsForAffected(directProjects, tasks) {
   ) {
     jobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
   }
-  if (directProjects.has("oliphaunt-rust") || directTaskProjects.has("oliphaunt-rust")) {
-    jobs.add(RUST_EXACT_CANDIDATE_CONSUMER_JOB);
-  }
   if (directProjects.has("ci-workflows")) {
     for (const job of ALL_BUILDER_JOBS) {
       jobs.add(job);
     }
-  }
-  if (
-    intersects(jobs, JS_EXACT_CANDIDATE_TRIGGER_JOBS)
-      || intersects(tasks, JS_EXACT_CANDIDATE_TRIGGER_TASKS)
-  ) {
-    jobs.add("js-sdk-exact-candidate-consumer");
-  }
-  if (
-    jobs.has("wasix-rust-package")
-      || intersects(jobs, WASM_RUNTIME_JOBS)
-      || intersects(tasks, WASIX_RUST_EXACT_CANDIDATE_TRIGGER_TASKS)
-  ) {
-    jobs.add(WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB);
   }
   addImpliedJobs(jobs, tasks);
   if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
@@ -499,7 +436,6 @@ export function nativeTargetSubsetForJobs(jobs, tasks) {
   const targets = mobileNativeTargetsForJobs(jobs);
   if (
     jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
-    || jobs.has(RUST_EXACT_CANDIDATE_CONSUMER_JOB)
   ) {
     targets.add("linux-x64-gnu");
   }
@@ -546,12 +482,6 @@ export function mobileE2eJobsForPlan(jobs) {
   if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
     selected.push(NATIVE_EXTENSION_LIFECYCLE_AGGREGATE_JOB);
   }
-  if (jobs.has(RUST_EXACT_CANDIDATE_CONSUMER_JOB)) {
-    selected.push(RUST_EXACT_CANDIDATE_CONSUMER_JOB);
-  }
-  if (jobs.has(WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB)) {
-    selected.push(WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB);
-  }
   return selected.sort(compareText);
 }
 
@@ -561,7 +491,7 @@ export function liboliphauntNativeIosRuntimeMatrixForPlan(
   nativeTarget = process.env.NATIVE_TARGET || "all",
 ) {
   if (!jobs.has("liboliphaunt-native-ios")) return emptyMatrix();
-  if (jobs.has("react-native-sdk-package") || jobs.has("js-sdk-exact-candidate-consumer")) {
+  if (jobs.has("react-native-sdk-package")) {
     return liboliphauntNativeIosRuntimeMatrix("all", new Set(["ios-xcframework"]));
   }
   return liboliphauntNativeIosRuntimeMatrix(nativeTarget, selectedTargets ?? undefined);
@@ -573,22 +503,7 @@ export function liboliphauntNativeDesktopRuntimeMatrixForPlan(
   nativeTarget = process.env.NATIVE_TARGET || "all",
 ) {
   if (!jobs.has("liboliphaunt-native-desktop")) return emptyMatrix();
-  if (!jobs.has("js-sdk-exact-candidate-consumer")) {
-    return liboliphauntNativeDesktopRuntimeMatrix(nativeTarget, selectedTargets ?? undefined);
-  }
-
-  // Every JavaScript exact-candidate row needs its same-target runtime, while
-  // the target-independent @oliphaunt/icu candidate has one canonical producer
-  // in the macOS row. A focused dispatch therefore keeps only its requested JS
-  // target plus macOS when macOS is not already that target.
-  const requiredTargets = new Set(
-    jsExactCandidateConsumerMatrix(nativeTarget).include.map(({ target }) => target),
-  );
-  for (const target of selectedTargets ?? []) {
-    if (/^(?:linux|macos|windows)-/u.test(target)) requiredTargets.add(target);
-  }
-  requiredTargets.add("macos-arm64");
-  return liboliphauntNativeDesktopRuntimeMatrix("all", requiredTargets);
+  return liboliphauntNativeDesktopRuntimeMatrix(nativeTarget, selectedTargets ?? undefined);
 }
 
 function focusedMobileNativeTargets(mobileTarget, nativeTarget, focusedMobileJobs) {
@@ -624,54 +539,12 @@ export function planForPullRequest() {
   return { jobs, projects, tasks: directTasks, reason, selectedTargets: selectedNativeTargets };
 }
 
-export function recoveryControlPlanForAffected(
-  { directProjects, projects, directTasks },
-  { releaseSha, controllerSha },
-) {
-  return {
-    jobs: new Set(BASE_JOBS),
-    projects: new Set(projects),
-    tasks: new Set(directTasks),
-    reason:
-      `same-version recovery control changes from ${releaseSha} to ${controllerSha}; `
-      + `direct affected projects: ${sorted(directProjects).join(", ") || "(none)"}; `
-      + `downstream affected projects: ${sorted(projects).join(", ") || "(none)"}; `
-      + `direct affected tasks: ${sorted(directTasks).join(", ") || "(none)"}`,
-    selectedTargets: null,
-    qualificationMode: RECOVERY_CONTROL_QUALIFICATION_MODE,
-    qualificationBaseSha: releaseSha,
-    qualificationHeadSha: controllerSha,
-  };
-}
-
-export function planForRecoveryControl() {
-  const base = process.env.MOON_BASE?.trim().toLowerCase();
-  const head = process.env.MOON_HEAD?.trim().toLowerCase();
-  if (!/^[0-9a-f]{40}$/u.test(base ?? "") || !/^[0-9a-f]{40}$/u.test(head ?? "")) {
-    throw new Error("recovery-control planning requires exact MOON_BASE and MOON_HEAD commit SHAs");
-  }
-  const recovery = verifyPublicationRecoveryCandidate({ headRef: head });
-  if (recovery === null) {
-    throw new Error("recovery-control planning requires a fully verified same-version recovery lineage");
-  }
-  if (recovery.releaseSha !== base || recovery.publicationSha !== head) {
-    throw new Error(
-      "recovery-control affected range does not match the verified release source and controller",
-    );
-  }
-  return recoveryControlPlanForAffected(affectedProjectsAndTasks(), {
-    releaseSha: recovery.releaseSha,
-    controllerSha: recovery.publicationSha,
-  });
-}
-
 export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
   const extensionJobs = new Set([
     "extension-artifacts-native",
     "extension-artifacts-wasix",
     "extension-packages",
     NATIVE_EXTENSION_LIFECYCLE_JOB,
-    "js-sdk-exact-candidate-consumer",
     ...Object.keys(MOBILE_JOB_SURFACES),
   ]);
   if (!intersects(jobs, extensionJobs)) {
@@ -799,11 +672,8 @@ export function planForFullRun({
     } else {
       focusedJobs = setUnion(BASE_JOBS, new Set([
         "liboliphaunt-native-desktop",
-        "broker-runtime",
-        "node-direct",
-        "js-sdk-exact-candidate-consumer",
       ]));
-      focusedProjects = new Set(["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]);
+      focusedProjects = new Set(["liboliphaunt-native"]);
       if (nativeTarget === "linux-x64-gnu") {
         focusedJobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
       }
@@ -839,11 +709,7 @@ export function planForFullRun({
     BASE_JOBS,
     BUILDER_JOBS,
     WASM_RUNTIME_JOBS,
-    new Set([
-      NATIVE_EXTENSION_LIFECYCLE_JOB,
-      RUST_EXACT_CANDIDATE_CONSUMER_JOB,
-      WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB,
-    ]),
+    new Set([NATIVE_EXTENSION_LIFECYCLE_JOB]),
   );
   addImpliedJobs(jobs, targetsForJobs(jobs));
   return {
@@ -872,9 +738,6 @@ function renderPlan(
     tasks,
     reason,
     selectedTargets,
-    qualificationMode = FULL_PAYLOAD_QUALIFICATION_MODE,
-    qualificationBaseSha = null,
-    qualificationHeadSha = null,
   },
   {
     nativeTarget = process.env.NATIVE_TARGET || "all",
@@ -891,9 +754,6 @@ function renderPlan(
     selectedExtensionProducts,
     nativeTarget,
     wasmTarget,
-    qualificationMode,
-    qualificationBaseSha,
-    qualificationHeadSha,
   });
 }
 
@@ -925,42 +785,25 @@ export function extensionArtifactsNativeMatrixForPlan(
   selectedExtensionProducts,
   nativeTarget = process.env.NATIVE_TARGET || "all",
 ) {
-  const jsCandidateTargets = jobs.has("js-sdk-exact-candidate-consumer")
-    ? new Set(jsExactCandidateConsumerMatrix(nativeTarget).include.map((row) => row.target))
-    : null;
-  const matrixTargets = jsCandidateTargets !== null && !jobs.has("extension-packages")
-    ? jsCandidateTargets
-    : selectedTargets ?? undefined;
   const matrix = extensionArtifactsNativeMatrix(
     nativeTarget,
-    jobs.has("extension-packages") ? undefined : matrixTargets,
+    jobs.has("extension-packages") ? undefined : selectedTargets ?? undefined,
     selectedExtensionProducts ?? undefined,
   );
-  if (!jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB) && jsCandidateTargets === null) {
+  if (!jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
     return matrix;
   }
 
   const exactProducts = new Set(exactExtensionProducts());
-  const requiredTargets = new Set(jsCandidateTargets ?? []);
-  if (jsCandidateTargets !== null) {
-    // Every extension npm meta package embeds both its same-host carrier and
-    // its Apple carrier. Keep the independently downloaded iOS extension
-    // payload in the exact-consumer producer closure for every desktop row.
-    requiredTargets.add("ios-xcframework");
-  }
-  if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
-    requiredTargets.add("linux-x64-gnu");
-  }
-  const proofProducts = jsCandidateTargets !== null
-    ? exactProducts
-    : extensionProductDependencyClosure(selectedExtensionProducts ?? exactProducts);
+  const requiredTargets = new Set(["linux-x64-gnu"]);
+  const proofProducts = extensionProductDependencyClosure(selectedExtensionProducts ?? exactProducts);
   const proofRows = extensionArtifactsNativeMatrix(
     "all",
     requiredTargets,
     proofProducts,
   ).include;
   if (proofRows.length !== requiredTargets.size) {
-    throw new Error("exact-candidate extension consumers do not have one complete producer row per required target");
+    throw new Error("native extension lifecycle does not have a complete Linux producer row");
   }
   const include = matrix.include.filter((row) => !requiredTargets.has(row.target));
   include.push(...proofRows);
@@ -1009,27 +852,7 @@ export function renderPlanWithSelection({
   selectedExtensionProducts,
   nativeTarget = process.env.NATIVE_TARGET || "all",
   wasmTarget = process.env.WASM_TARGET || "all",
-  qualificationMode = FULL_PAYLOAD_QUALIFICATION_MODE,
-  qualificationBaseSha = null,
-  qualificationHeadSha = null,
 }) {
-  if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
-    throw new Error(`unknown CI qualification mode ${qualificationMode}`);
-  }
-  if (qualificationMode === RECOVERY_CONTROL_QUALIFICATION_MODE) {
-    if (
-      !/^[0-9a-f]{40}$/u.test(qualificationBaseSha ?? "")
-      || !/^[0-9a-f]{40}$/u.test(qualificationHeadSha ?? "")
-      || qualificationBaseSha === qualificationHeadSha
-    ) {
-      throw new Error("recovery-control plan requires distinct exact source and controller SHAs");
-    }
-    if (JSON.stringify(sorted(jobs)) !== JSON.stringify(sorted(BASE_JOBS))) {
-      throw new Error("recovery-control plan must not select builder or E2E payload jobs");
-    }
-  } else if (qualificationBaseSha !== null || qualificationHeadSha !== null) {
-    throw new Error("full-payload plan must not carry a recovery affected range");
-  }
   const extensionProducts = sorted(selectedExtensionProducts ?? new Set());
   const extensionSqlNames = extensionSqlNamesForProducts(extensionProducts);
   const nativeLifecycleProducts = jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
@@ -1040,9 +863,9 @@ export function renderPlanWithSelection({
   const nativeLifecycleSqlNames = extensionSqlNamesForProducts(nativeLifecycleProducts);
   const nativeLifecycleShards = nativeExtensionLifecycleShardPlan(nativeLifecycleProducts);
   const plan = {
-    qualification_mode: qualificationMode,
-    qualification_base_sha: qualificationBaseSha,
-    qualification_head_sha: qualificationHeadSha,
+    qualification_mode: FULL_PAYLOAD_QUALIFICATION_MODE,
+    qualification_base_sha: null,
+    qualification_head_sha: null,
     jobs: sorted(jobs),
     builder_jobs: sorted(new Set([...jobs].filter((job) => BUILDER_JOBS.has(job)))),
     e2e_jobs: mobileE2eJobsForPlan(jobs),
@@ -1092,7 +915,6 @@ export function renderPlanWithSelection({
     broker_runtime_matrix: jobs.has("broker-runtime")
       ? brokerRuntimeMatrix(
           !jobs.has("broker-release-assets")
-            && !jobs.has("js-sdk-exact-candidate-consumer")
             && jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)
             && selectedTargets?.size === 1
             && selectedTargets.has("linux-x64-gnu")
@@ -1103,58 +925,9 @@ export function renderPlanWithSelection({
     node_direct_runtime_matrix: jobs.has("node-direct")
       ? nodeDirectRuntimeMatrix(nativeTarget)
       : emptyMatrix(),
-    js_exact_candidate_consumer_matrix: jobs.has("js-sdk-exact-candidate-consumer")
-      ? jsExactCandidateConsumerMatrix(nativeTarget)
-      : emptyMatrix(),
     reason,
   };
-  assertJsExactCandidatePlanClosure(plan);
   return plan;
-}
-
-export function assertJsExactCandidatePlanClosure(plan) {
-  if (!plan.jobs.includes("js-sdk-exact-candidate-consumer")) return;
-  const rows = plan.js_exact_candidate_consumer_matrix?.include ?? [];
-  if (rows.length === 0) {
-    throw new Error("JavaScript exact-candidate plan selected no consumer targets");
-  }
-  const consumerTargets = rows.map(({ target }) => target);
-  if (new Set(consumerTargets).size !== consumerTargets.length) {
-    throw new Error("JavaScript exact-candidate plan repeats a consumer target");
-  }
-  const producerTargets = {
-    native: new Set((plan.liboliphaunt_native_desktop_runtime_matrix?.include ?? []).map(({ target }) => target)),
-    iosBase: new Set((plan.liboliphaunt_native_ios_runtime_matrix?.include ?? []).map(({ target }) => target)),
-    extension: new Set((plan.extension_artifacts_native_matrix?.include ?? []).map(({ target }) => target)),
-    broker: new Set((plan.broker_runtime_matrix?.include ?? []).map(({ target }) => target)),
-    node: new Set((plan.node_direct_runtime_matrix?.include ?? []).map(({ target }) => target)),
-  };
-  if (!producerTargets.native.has("macos-arm64")) {
-    throw new Error("JavaScript exact-candidate plan omits the canonical macOS portable ICU producer");
-  }
-  if (!producerTargets.iosBase.has("ios-xcframework")) {
-    throw new Error("JavaScript exact-candidate plan omits the checksum-bound iOS base carrier producer");
-  }
-  if (!producerTargets.extension.has("ios-xcframework")) {
-    throw new Error("JavaScript exact-candidate plan omits the checksum-bound iOS extension carrier producer");
-  }
-  for (const row of rows) {
-    for (const [label, targets] of Object.entries(producerTargets).filter(([label]) => label !== "iosBase")) {
-      if (!targets.has(row.target)) {
-        throw new Error(`JavaScript exact-candidate ${row.target} has no same-run ${label} producer`);
-      }
-    }
-    for (const [field, expected] of [
-      ["native_artifact", `liboliphaunt-native-release-assets-${row.target}`],
-      ["extension_artifact", `liboliphaunt-native-extension-artifacts-${row.target}`],
-      ["broker_artifact", `oliphaunt-broker-release-assets-${row.target}`],
-      ["node_artifact", `oliphaunt-node-direct-npm-package-${row.target}`],
-    ]) {
-      if (row[field] !== expected) {
-        throw new Error(`JavaScript exact-candidate ${row.target} has invalid ${field} ${row[field]}`);
-      }
-    }
-  }
 }
 
 function sortedValue(value) {
@@ -1192,13 +965,7 @@ function writePlanArtifact(plan) {
 export function emitGithubOutputs() {
   let planned;
   try {
-    const qualificationMode = process.env.CI_QUALIFICATION_MODE || FULL_PAYLOAD_QUALIFICATION_MODE;
-    if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
-      throw new Error(`unknown CI qualification mode ${qualificationMode}`);
-    }
-    if (qualificationMode === RECOVERY_CONTROL_QUALIFICATION_MODE) {
-      planned = renderPlan(planForRecoveryControl());
-    } else if (process.env.GITHUB_EVENT_NAME === "pull_request") {
+    if (process.env.GITHUB_EVENT_NAME === "pull_request") {
       const pullRequestPlan = planForPullRequest();
       let directProjects = new Set();
       try {

@@ -37,8 +37,7 @@ import {
   stageBrokerDependencyLicenses,
 } from "./broker-dependency-license-contract.mjs";
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
-import { brokerNpmTarballs } from "./release-product-dry-run.mjs";
-import { brokerNpmTarballs as localRegistryBrokerNpmTarballs } from "./local-registry-publish.mjs";
+import { brokerNpmTarballs } from "./package-release-carriers.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
@@ -333,19 +332,6 @@ test("real npm target tarballs reopen the exact target-specific dependency closu
     });
   }
 
-  const localTarballs = localRegistryBrokerNpmTarballs(
-    BROKER_VERSION,
-    scratch(t, "local-registry-npm-stage"),
-    scratch(t, "local-registry-npm-tarballs"),
-    assetDir,
-  );
-  assert.equal(localTarballs.length, packageTargets.size);
-  for (const [packageName, tarball] of localTarballs) {
-    assertBrokerDependencyLicensesInArchive(tarball, {
-      target: packageTargets.get(packageName),
-      prefix: "package",
-    });
-  }
 });
 
 test("concurrent real Cargo payload packagers are isolated and reopen exact target closures", { timeout: TIMEOUT }, async (t) => {

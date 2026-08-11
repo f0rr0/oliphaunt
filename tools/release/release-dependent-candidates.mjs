@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   RELEASE_DEPENDENCY_SCOPES,
   releaseOrder,
-  runtimeTiedContribProducts,
 } from "./release-graph.mjs";
 
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
@@ -157,19 +156,6 @@ export function dependentReleaseEdges(
     }
   }
 
-  const tied = runtimeTiedContribProducts(products, prefix);
-  for (const source of tied) {
-    for (const target of tied) {
-      if (source === target) continue;
-      edges.push({
-        source,
-        target,
-        kind: "linked-runtime",
-        id: "liboliphaunt-runtime",
-      });
-    }
-  }
-
   return [...new Map(edges.sort(compareEdges).map((edge) => [edgeKey(edge), edge])).values()];
 }
 
@@ -298,24 +284,6 @@ export function planDependentReleaseCandidates(
       );
     }
     byProduct.set(product, transition);
-  }
-
-  const tied = runtimeTiedContribProducts(graph.products, prefix);
-  if (tied.some((product) => byProduct.has(product))) {
-    const missing = tied.filter((product) => !byProduct.has(product));
-    if (missing.length > 0) {
-      throw error(
-        prefix,
-        `Release Please linked runtime candidates are incomplete; missing ${missing.join(", ")}`,
-      );
-    }
-    const versions = new Set(tied.map((product) => byProduct.get(product).after));
-    if (versions.size !== 1) {
-      throw error(
-        prefix,
-        `Release Please linked runtime candidates must share one version, got ${[...versions].sort(compareText).join(", ")}`,
-      );
-    }
   }
 
   const closure = dependentReleaseClosure(graph, [...byProduct.keys()], { prefix });
@@ -538,10 +506,7 @@ function reasonText(reason) {
       `(release compatibility field \`${reason.id}\`)`
     );
   }
-  return (
-    `align with \`${reason.sourceProduct}\` ${reason.sourceVersion} ` +
-    `(linked runtime group \`${reason.id}\`)`
-  );
+  throw error("release-dependent-candidates", `unsupported dependent release reason ${reason.kind}`);
 }
 
 function updateChangelog(text, candidate, context, prefix) {

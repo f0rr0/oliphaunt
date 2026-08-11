@@ -49,6 +49,9 @@ export function expectedOidcIdentity(environment = process.env) {
   if (typeof continuationPointer !== "string") {
     throw new Error("RELEASE_CONTINUATION_POINTER must be a string");
   }
+  if (continuationPointer !== "" && operation !== "publish-bootstrap") {
+    throw new Error("RELEASE_CONTINUATION_POINTER is valid only for publish-bootstrap");
+  }
   const ref = required(environment, "GITHUB_REF");
   const expectedRef = continuationPointer === "" ? "refs/heads/main" : releaseTransportFullRef(sha);
   if (ref !== expectedRef) {

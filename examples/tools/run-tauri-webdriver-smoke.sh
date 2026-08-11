@@ -46,8 +46,8 @@ rm -rf "$scratch"
 app_dir="$(examples/tools/stage-tauri-webdriver-app.sh "$source_app_path" "$scratch")"
 rm -f "$app_dir/src-tauri/Cargo.lock"
 
-examples/tools/with-local-registries.sh pnpm --dir "$app_dir" install --no-frozen-lockfile
-examples/tools/with-local-registries.sh pnpm --dir "$app_dir" tauri build --debug
+pnpm --dir "$app_dir" install --no-frozen-lockfile
+pnpm --dir "$app_dir" tauri build --debug
 
 package_name="$(
   awk -F'"' '
@@ -68,7 +68,6 @@ run_smoke=(
   env
   "OLIPHAUNT_E2E_TAURI_DRIVER=$driver"
   "OLIPHAUNT_E2E_TAURI_APP=$application"
-  examples/tools/with-local-registries.sh
   node
   "$root/examples/tools/tauri-webdriver-smoke.mjs"
 )

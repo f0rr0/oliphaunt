@@ -9,10 +9,9 @@ import { run } from "./release-cli-utils.mjs";
 const TOOL = "release-check.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
 export const DEDICATED_GATE_TESTS = new Set([
-  "tools/policy/assertions/assert-ambient-js-tools.test.mjs",
-  "tools/policy/assertions/assert-ordinal-release-ordering.test.mjs",
   "tools/release/toolchain-bootstrap.test.mjs",
 ]);
+export const MUTATION_TEST_MAX_CONCURRENCY = 4;
 export const MUTATION_TEST_TIMEOUT_MS = 30_000;
 
 export function mutationTestEnvironment(inheritedEnvironment = process.env) {
@@ -81,8 +80,7 @@ function parseArgs(argv) {
     if (arg === "-h" || arg === "--help") {
       console.log(`usage: tools/release/release-check.mjs [legacy passthrough args]
 
-Runs the live repository-structure, repository-graph, and release metadata
-gates followed by release mutation unit tests. Current passthrough flags remain
+Runs release metadata gates followed by release mutation unit tests. Current passthrough flags remain
 accepted for compatibility with release workflow and Moon callers.
 `);
       process.exit(0);
@@ -92,12 +90,12 @@ accepted for compatibility with release workflow and Moon callers.
 
 function main(argv) {
   parseArgs(argv);
-  run(TOOL, ["bash", "tools/policy/check-repo-structure.sh"]);
-  run(TOOL, [process.execPath, "tools/graph/graph.mjs", "check"]);
   run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...argv]);
   run(TOOL, [
     process.execPath,
     "test",
+    "--isolate",
+    `--max-concurrency=${MUTATION_TEST_MAX_CONCURRENCY}`,
     `--timeout=${MUTATION_TEST_TIMEOUT_MS}`,
     ...mutationTests("tools/policy"),
     ...mutationTests("tools/release"),

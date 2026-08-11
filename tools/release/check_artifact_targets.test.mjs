@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { parseWorkflow } from "../policy/assertions/workflow-semantics.mjs";
 import {
   repositoryInventory,
   validateArtifactTargetContract,
@@ -12,6 +11,7 @@ import {
   validateExtensionCoverage,
   validateMatrixCoverage,
 } from "./check_artifact_targets.mjs";
+import { parseWorkflow } from "./read-workflow.mjs";
 import { ROOT } from "./release-graph.mjs";
 
 const inventory = repositoryInventory();
@@ -251,102 +251,6 @@ describe("publication and workflow artifact handoff", () => {
     const downloads = workflow.jobs["liboliphaunt-native-release-assets"].steps.filter(({ uses }) => String(uses ?? "").startsWith("actions/download-artifact@"));
     downloads.find(({ with: options }) => options?.pattern === "liboliphaunt-native-release-assets-*").with.pattern = "liboliphaunt-native-release-assets-linux-*";
     expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(/does not download required artifact/u);
-  });
-
-  test("rejects a Rust exact-candidate consumer detached from its SDK artifact", () => {
-    const workflow = clone(ci);
-    workflow.jobs["rust-sdk-exact-candidate-consumer"].steps = workflow.jobs["rust-sdk-exact-candidate-consumer"].steps
-      .filter(({ with: options }) => options?.name !== "oliphaunt-rust-sdk-package-artifacts");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /does not download required artifact oliphaunt-rust-sdk-package-artifacts/u,
-    );
-  });
-
-  test("rejects a WASIX Rust exact-candidate consumer detached from its SDK artifact", () => {
-    const workflow = clone(ci);
-    workflow.jobs["wasix-rust-exact-candidate-consumer"].steps = workflow.jobs["wasix-rust-exact-candidate-consumer"].steps
-      .filter(({ with: options }) => options?.name !== "oliphaunt-wasix-rust-package-artifacts");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /does not download required artifact oliphaunt-wasix-rust-package-artifacts/u,
-    );
-  });
-
-  test("rejects a WASIX Rust exact-candidate consumer detached from its runtime candidates", () => {
-    const workflow = clone(ci);
-    workflow.jobs["wasix-rust-exact-candidate-consumer"].needs = workflow.jobs["wasix-rust-exact-candidate-consumer"].needs
-      .filter((job) => job !== "liboliphaunt-wasix-release-assets");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /must depend on artifact producer liboliphaunt-wasix-release-assets/u,
-    );
-  });
-
-  test("rejects a JavaScript exact-candidate consumer coupled to the aggregate instead of desktop producers", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].needs = workflow.jobs["js-sdk-exact-candidate-consumer"].needs
-      .filter((job) => job !== "liboliphaunt-native-desktop");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /must depend on artifact producer liboliphaunt-native-desktop/u,
-    );
-  });
-
-  test("rejects a JavaScript exact-candidate consumer without its iOS base carrier producer", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].needs = workflow.jobs["js-sdk-exact-candidate-consumer"].needs
-      .filter((job) => job !== "liboliphaunt-native-ios");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /must depend on artifact producer liboliphaunt-native-ios/u,
-    );
-  });
-
-  test("rejects a JavaScript exact-candidate consumer without the same-run iOS base carrier", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].steps = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
-      .filter(({ with: options }) => options?.name !== "liboliphaunt-native-release-assets-ios-xcframework");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /does not download required artifact liboliphaunt-native-release-assets-ios-xcframework/u,
-    );
-  });
-
-  test("rejects a JavaScript exact-candidate consumer without the same-run iOS extension carrier", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].steps = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
-      .filter(({ with: options }) => options?.name !== "liboliphaunt-native-extension-artifacts-ios-xcframework");
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /does not download required artifact liboliphaunt-native-extension-artifacts-ios-xcframework/u,
-    );
-  });
-
-  test("rejects a mutable or aliased iOS extension input path", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].steps
-      .find(({ with: options }) => options?.name === "liboliphaunt-native-extension-artifacts-ios-xcframework")
-      .with.path = "target/js-exact-candidate-input/extensions";
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /must use same-run immutable input path target\/js-exact-candidate-input\/ios-extensions/u,
-    );
-  });
-
-  test("rejects an iOS extension input selected from another workflow run", () => {
-    const workflow = clone(ci);
-    workflow.jobs["js-sdk-exact-candidate-consumer"].steps
-      .find(({ with: options }) => options?.name === "liboliphaunt-native-extension-artifacts-ios-xcframework")
-      .with["run-id"] = "123";
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /must use same-run immutable input path target\/js-exact-candidate-input\/ios-extensions/u,
-    );
-  });
-
-  test("rejects an iOS extension download not bound to the named consumer input", () => {
-    const workflow = clone(ci);
-    const step = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
-      .find(({ id }) => id === "js_exact_candidate_consumer");
-    step.run = step.run.replace(
-      /\s*--ios-extension-artifact-root target\/js-exact-candidate-input\/ios-extensions \\\n/u,
-      "\n",
-    );
-    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
-      /--ios-extension-artifact-root values/u,
-    );
   });
 
   test("rejects portable ICU artifact-name collisions across desktop rows", () => {

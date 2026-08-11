@@ -4,35 +4,20 @@ const EXACT_SHA = /^[0-9a-f]{40}$/u;
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
 
 export function qualifiedReplayCandidateBinding({
-  candidateMode,
-  controllerSha,
-  releaseSourceSha,
+  releaseSha,
   runId,
 }) {
-  const controller = String(controllerSha ?? "").toLowerCase();
-  const source = String(releaseSourceSha ?? "").toLowerCase();
+  const sha = String(releaseSha ?? "").toLowerCase();
   const normalizedRunId = String(runId ?? "");
-  if (!EXACT_SHA.test(controller) || !EXACT_SHA.test(source)) {
-    throw new Error("qualified release replay candidate binding requires exact controller and source SHAs");
+  if (!EXACT_SHA.test(sha)) {
+    throw new Error("qualified release replay candidate binding requires an exact release SHA");
   }
   if (!POSITIVE_INTEGER.test(normalizedRunId)) {
     throw new Error("qualified release replay candidate binding requires a positive CI run ID");
   }
-  if (!new Set(["release-bump", "release-recovery"]).has(candidateMode)) {
-    throw new Error(`qualified release replay candidate mode is invalid: ${candidateMode}`);
-  }
-  const recovery = candidateMode === "release-recovery";
-  if (recovery && controller === source) {
-    throw new Error("qualified recovery replay requires distinct controller and release source SHAs");
-  }
-  if (!recovery && controller !== source) {
-    throw new Error("ordinary qualified replay requires identical controller and release source SHAs");
-  }
   return Object.freeze({
-    candidateRoot: recovery
-      ? "target/recovery-payload-candidate"
-      : "target/release-candidate",
-    candidateSha: recovery ? source : controller,
+    candidateRoot: "target/release-candidate",
+    candidateSha: sha,
     qualificationMode: "full-payload",
     runId: normalizedRunId,
   });
@@ -59,20 +44,10 @@ export function assertQualifiedReplaySourceState({
   repo,
   headRef,
   expectedSha,
-  releaseSourceRef = headRef,
-  expectedReleaseSourceSha = expectedSha,
 }) {
   const normalizedExpected = String(expectedSha ?? "").toLowerCase();
   if (!EXACT_SHA.test(normalizedExpected)) {
     throw new Error("qualified release replay requires an exact 40-character RELEASE_HEAD_SHA");
-  }
-  const normalizedExpectedReleaseSource = String(
-    expectedReleaseSourceSha ?? "",
-  ).toLowerCase();
-  if (!EXACT_SHA.test(normalizedExpectedReleaseSource)) {
-    throw new Error(
-      "qualified release replay requires an exact 40-character RELEASE_SOURCE_SHA",
-    );
   }
   const checkoutHead = git(repo, ["rev-parse", "HEAD^{commit}"]).toLowerCase();
   if (checkoutHead !== normalizedExpected) {
@@ -83,25 +58,6 @@ export function assertQualifiedReplaySourceState({
   const resolved = git(repo, ["rev-parse", `${headRef}^{commit}`]).toLowerCase();
   if (resolved !== normalizedExpected) {
     throw new Error(`qualified release replay head mismatch: expected ${normalizedExpected}, got ${resolved}`);
-  }
-  const resolvedReleaseSource = git(
-    repo,
-    ["rev-parse", `${releaseSourceRef}^{commit}`],
-  ).toLowerCase();
-  if (resolvedReleaseSource !== normalizedExpectedReleaseSource) {
-    throw new Error(
-      "qualified release replay source mismatch: "
-        + `expected ${normalizedExpectedReleaseSource}, got ${resolvedReleaseSource}`,
-    );
-  }
-  const mergeBase = git(
-    repo,
-    ["merge-base", resolvedReleaseSource, resolved],
-  ).toLowerCase();
-  if (mergeBase !== resolvedReleaseSource) {
-    throw new Error(
-      `qualified release replay source ${resolvedReleaseSource} is not an ancestor of ${resolved}`,
-    );
   }
   const suppressedIndexEntries = git(repo, ["ls-files", "-v", "-z"], {
     allowEmptyOutput: true,

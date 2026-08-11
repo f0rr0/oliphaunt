@@ -99,8 +99,6 @@ test("Swift and React Native package-artifact caches track carrier code, graph m
     "/tools/release/product-version.mjs",
     "/tools/release/release-artifact-targets.mjs",
     "/tools/release/release-graph.mjs",
-    "/tools/release/release-semantic-inputs.mjs",
-    "/tools/release/release-semantic-inputs.toml",
     "/tools/release/swift-source-carrier-contract.mjs",
   ];
   for (const [product, file] of [

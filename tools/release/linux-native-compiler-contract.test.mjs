@@ -11,8 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseWorkflow } from "../policy/assertions/workflow-semantics.mjs";
 import { PLATFORM_COMPATIBILITY_POLICY } from "./platform-compatibility-policy.mjs";
+import { parseWorkflow } from "./read-workflow.mjs";
 import { ROOT } from "./release-graph.mjs";
 
 const SETUP = path.join(ROOT, ".github/scripts/setup-native-build-tools.sh");

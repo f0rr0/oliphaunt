@@ -30,7 +30,6 @@ import {
   productConfigRows,
   releaseOrder,
   releaseProductProjectId,
-  runtimeTiedContribProducts,
 } from "./release-graph.mjs";
 import {
   expectedExtensionAotTargets,
@@ -159,18 +158,6 @@ function runGraph() {
 
 function runProductProjects() {
   printJson(graphProductProjects(loadGraph(TOOL)));
-}
-
-function runRuntimeTiedProducts(argv) {
-  for (const value of argv) {
-    fail(`unknown argument ${value}`);
-  }
-  printJson(
-    runtimeTiedContribProducts(loadGraph(TOOL).products, TOOL).map((product) => ({
-      group: "liboliphaunt-runtime",
-      product,
-    })),
-  );
 }
 
 function runProductConfigs(argv) {
@@ -906,7 +893,6 @@ function usage() {
 Commands:
   graph
   product-projects
-  runtime-tied-products
   product-configs [--product PRODUCT]
   moon-release-metadata [--product PRODUCT]
   moon-projects [--project PROJECT]
@@ -940,8 +926,6 @@ function main(argv) {
     runGraph();
   } else if (command === "product-projects") {
     runProductProjects();
-  } else if (command === "runtime-tied-products") {
-    runRuntimeTiedProducts(rest);
   } else if (command === "product-configs") {
     runProductConfigs(rest);
   } else if (command === "moon-release-metadata") {

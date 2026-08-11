@@ -106,9 +106,9 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "bun tools/policy/assertions/assert-source-inputs.mjs extensions"
+    command: "bun src/extensions/tools/check-extension-model.mjs --check"
     deps:
-      - "postgres18:check"
+      - "source-inputs:check"
       - "extension-runtime-contract:check"
       - "oliphaunt-extension-contrib-pg18:check"
       - "extension-age:check"
@@ -167,12 +167,7 @@ tasks:
       - "!/src/extensions/evidence/**"
       - "/tools/xtask/**/*"
       - "/tools/dev/capture-command-output.mjs"
-      - "/tools/policy/assertions/assert-source-inputs.mjs"
-      - "/tools/policy/fetch-sources.mjs"
       - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-fetch-core.test.mjs"
-      - "/tools/policy/source-archive.py"
-      - "/tools/policy/verify-source-tree.py"
       - "/tools/release/extension-qualification-candidates.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"

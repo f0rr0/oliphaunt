@@ -66,9 +66,7 @@ import {
 } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
-// Keep the established diagnostic prefix for callers importing the public
-// compatibility surface from local-registry-publish.mjs.
-const TOOL = "local-registry-publish.mjs";
+const TOOL = "package-extension-release-carriers.mjs";
 // npm does not impose crates.io's 10 MiB package limit. Keep one deliberately
 // generous guard against accidentally publishing an unbounded staging tree,
 // but never manufacture package identities merely to satisfy a repository-
@@ -90,7 +88,7 @@ function windowsCommandShim(command, platform = process.platform) {
     : command;
 }
 
-export function localRegistryCommandInvocation(
+export function packageCommandInvocation(
   command,
   args,
   { platform = process.platform, cwd = ROOT } = {},
@@ -107,9 +105,9 @@ export function localRegistryCommandInvocation(
   };
 }
 
-function captureLocalCommandOutput(command, args, options = {}) {
+function capturePackageCommandOutput(command, args, options = {}) {
   const cwd = options.cwd ?? ROOT;
-  const invocation = localRegistryCommandInvocation(command, args, { cwd });
+  const invocation = packageCommandInvocation(command, args, { cwd });
   return captureCommandOutput(invocation.command, invocation.args, {
     ...options,
     cwd: invocation.cwd ?? cwd,
@@ -117,9 +115,9 @@ function captureLocalCommandOutput(command, args, options = {}) {
   });
 }
 
-function captureLocalCommandBytes(command, args, options = {}) {
+function capturePackageCommandBytes(command, args, options = {}) {
   const cwd = options.cwd ?? ROOT;
-  const invocation = localRegistryCommandInvocation(command, args, { cwd });
+  const invocation = packageCommandInvocation(command, args, { cwd });
   return captureCommandBytes(invocation.command, invocation.args, {
     ...options,
     cwd: invocation.cwd ?? cwd,
@@ -253,7 +251,7 @@ export function discoverExtensionManifests(roots) {
 }
 
 function runArchiveCommand(args, label) {
-  const result = captureLocalCommandOutput(args[0], args.slice(1), {
+  const result = capturePackageCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
     label,
     maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
@@ -269,7 +267,7 @@ function runArchiveCommand(args, label) {
 }
 
 function archiveTempDir() {
-  const root = path.join(ROOT, "target", "local-registry-archive-extract");
+  const root = path.join(ROOT, "target", "extension-carrier-archive-extract");
   mkdirSync(root, { recursive: true });
   return mkdtempSync(path.join(root, "extract-"));
 }
@@ -304,7 +302,7 @@ function pnpmPackForNpmPublish(packageDir, tarballRoot) {
   const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(packageName));
   rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
-  const result = captureLocalCommandOutput("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
+  const result = capturePackageCommandOutput("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
     cwd: packageDir,
     label: `pnpm pack for ${packageName}`,
     maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
@@ -794,8 +792,8 @@ function checkedArchiveMemberPath(name, archive) {
 
 function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRuntimeVersion }) {
   // Native release assets are stripped and platform-validated on their target
-  // builders. Registry carrier assembly must preserve those qualified bytes;
-  // host-side binary rewriting would make candidates coordinator-dependent.
+  // builders. Carrier assembly preserves those qualified bytes; host-side
+  // binary rewriting would make output coordinator-dependent.
   let validated;
   try {
     validated = validateExtensionArtifactArchive({
@@ -827,7 +825,7 @@ function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRu
 }
 
 function assertRegularArchiveMember(archive, member) {
-  const result = captureLocalCommandOutput("tar", ["-tvf", archive, member], {
+  const result = capturePackageCommandOutput("tar", ["-tvf", archive, member], {
     cwd: ROOT,
     label: `inspect ${member} in ${rel(archive)}`,
     maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
@@ -859,7 +857,7 @@ function extractArchiveMemberToFile(archive, member, destination) {
       0o600,
     );
     destinationCreated = true;
-    result = captureLocalCommandBytes("tar", ["-xOf", archive, member], {
+    result = capturePackageCommandBytes("tar", ["-xOf", archive, member], {
       cwd: ROOT,
       label: `read ${member} from ${rel(archive)}`,
       maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
@@ -1153,9 +1151,9 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
     const previousIdentityDigest = stagedIdentities.get(identity);
     if (previousIdentityDigest !== undefined) {
       if (previousIdentityDigest !== identityDigest) {
-        fail(TOOL, `conflicting exact extension candidates discovered for ${identity}`);
+        fail(TOOL, `conflicting extension packages discovered for ${identity}`);
       }
-      result.skipped.push(`deduplicated byte-identical extension candidate ${identity} from ${rel(manifestPath)}`);
+      result.skipped.push(`deduplicated byte-identical extension package ${identity} from ${rel(manifestPath)}`);
       continue;
     }
     stagedIdentities.set(identity, identityDigest);
@@ -1775,7 +1773,7 @@ function cargoPackage(crateDir, targetDir, legal, { noVerify = false } = {}) {
   if (noVerify) {
     command.push("--no-verify");
   }
-  const invocation = localRegistryCommandInvocation(command[0], command.slice(1), { cwd: ROOT });
+  const invocation = packageCommandInvocation(command[0], command.slice(1), { cwd: ROOT });
   const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: invocation.cwd ?? ROOT,
     env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },
@@ -2110,9 +2108,9 @@ export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, st
     });
     if (stagedIdentities.has(identity)) {
       if (stagedIdentities.get(identity) !== digest) {
-        fail(TOOL, `conflicting native extension Cargo candidates discovered for ${identity}`);
+        fail(TOOL, `conflicting native extension Cargo packages discovered for ${identity}`);
       }
-      result.skipped.push(`deduplicated byte-identical native extension Cargo candidate ${identity}`);
+      result.skipped.push(`deduplicated byte-identical native extension Cargo package ${identity}`);
       continue;
     }
     stagedIdentities.set(identity, digest);

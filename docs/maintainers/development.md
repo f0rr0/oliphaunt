@@ -76,14 +76,8 @@ The validation entrypoint is split by maintainer workflow:
   plus AOT crate template checks;
 - `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`: dependency invariants
   and clippy;
-- `tools/policy/check-rust-test-topology.sh`: fast policy check proving Rust
-  doctests and executable tests are owned by product Moon tasks instead of a
-  broad root Cargo wrapper;
-- `moon run ci-workflows:check`: local `actionlint` and `zizmor` checks using
-  the same zizmor config and severity/persona as CI. `actionlint` covers
-  workflow syntax, expression, and shell wiring; `zizmor` covers workflow
-  security findings. Keep both, but do not add another workflow linter unless
-  it replaces one of these responsibilities;
+- `moon run ci-workflows:check`: workflow syntax and security checks plus the
+  behavior tests for helpers invoked by Actions;
 - `moon run liboliphaunt-wasix:smoke`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
 - `moon run integration-examples:check`: Tauri/Rust/frontend example checks;
@@ -225,8 +219,7 @@ Gradle configuration-cache behavior itself.
 The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
-- release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`,
-  `tools/policy/check-rust-test-topology.sh`, and
+- release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs` and
   `tools/policy/check-wasm-artifacts.sh`
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,

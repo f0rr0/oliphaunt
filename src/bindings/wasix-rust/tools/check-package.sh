@@ -93,7 +93,7 @@ reject_pattern '(^|/)(payload|artifacts|target)(/|$)'
 reject_pattern '(^|/)assets/generated(/|$)'
 reject_pattern '^src/runtimes/'
 reject_pattern '^src/extensions/generated/'
-reject_pattern '^(\.gitignore|\.release-semantic-inputs\.json|moon.yml|release.toml)$'
+reject_pattern '^(\.gitignore|moon.yml|release.toml)$'
 reject_pattern '^tools/'
 
 if ! awk '

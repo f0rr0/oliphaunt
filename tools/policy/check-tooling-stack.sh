@@ -8,8 +8,6 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 cd "$root"
 
 bun tools/policy/assertions/repository-semantics.mjs tooling
-bun tools/policy/check-python-entrypoints.mjs
 bun tools/policy/check-rust-helper-crates.mjs
-bun tools/policy/assertions/assert-moon-task-policy.mjs
 
 echo "tooling stack checks passed"

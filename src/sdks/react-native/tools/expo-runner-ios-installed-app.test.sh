@@ -385,7 +385,7 @@ if ! verify_mobile_e2e_smoke_receipt ios "$scratch_root" \
   rejected=1
 fi
 [ "$rejected" -eq 1 ] || fail_test "outer postcondition accepted a different candidate tree"
-grep -Fq 'receipt is not bound to the exact candidate commit and tree' "$test_root/candidate-tree.stderr" ||
+grep -Fq 'receipt is not bound to the current commit and tree' "$test_root/candidate-tree.stderr" ||
   fail_test "candidate-tree mismatch omitted its typed binding diagnostic"
 
 # The shared outer postcondition protects both mobile wrappers. Missing,

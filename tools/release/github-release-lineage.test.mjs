@@ -8,24 +8,14 @@ const base = {
   GITHUB_SHA: "a".repeat(40),
 };
 
-test("uses the verified root run across child runs and rerun attempts", () => {
-  expect(githubReleaseLineageIdentity({
-    ...base,
-    GITHUB_RUN_ATTEMPT: "9",
-    OLIPHAUNT_RELEASE_ROOT_RUN_ID: "100",
-  })).toEqual({
+test("uses the current run for the runner-local journal", () => {
+  expect(githubReleaseLineageIdentity(base)).toEqual({
     headSha: "a".repeat(40),
     repository: "f0rr0/oliphaunt",
-    rootRunId: "100",
+    runId: "200",
   });
 });
-test("defaults to the current run only for a root release", () => {
-  expect(githubReleaseLineageIdentity(base).rootRunId).toBe("200");
-});
 
-test("rejects malformed current and root run identities", () => {
+test("rejects a malformed current run identity", () => {
   expect(() => githubReleaseLineageIdentity({ ...base, GITHUB_RUN_ID: "" })).toThrow("GITHUB_RUN_ID");
-  expect(() => githubReleaseLineageIdentity({ ...base, OLIPHAUNT_RELEASE_ROOT_RUN_ID: "child" })).toThrow(
-    "OLIPHAUNT_RELEASE_ROOT_RUN_ID",
-  );
 });

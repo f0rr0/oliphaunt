@@ -303,7 +303,6 @@ mod asset_fingerprint_tests {
     #[test]
     fn release_envelope_files_do_not_invalidate_binary_assets() {
         for file in [
-            "src/extensions/external/vector/.release-semantic-inputs.json",
             "src/extensions/external/vector/CHANGELOG.md",
             "src/extensions/external/vector/VERSION",
             "src/extensions/external/vector/targets/artifacts.toml",

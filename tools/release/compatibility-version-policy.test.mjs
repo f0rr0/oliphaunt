@@ -269,7 +269,7 @@ test("a transitioned contrib sink follows current source, then binds to its tag 
   git(root, "tag", `${CONTRIB}-v1.0.0`);
   const released = { ...V1, [NATIVE]: "1.1.0", [CONTRIB]: "1.1.0" };
   writeState(root, released);
-  const releaseCommit = commit(root, "chore(release): linked runtime release");
+  const releaseCommit = commit(root, "chore(release): runtime consumer release");
   const entry = { ...EXTERNAL_ENTRY, product: CONTRIB };
 
   assert.deepEqual(

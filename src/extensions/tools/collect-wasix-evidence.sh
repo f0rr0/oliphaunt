@@ -14,7 +14,7 @@ done
 
 for name in GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_WORKFLOW GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_JOB CI_HEAD_SHA; do
   if [ -z "${!name:-}" ]; then
-    echo "$name is required; full release evidence is recorded only by exact-candidate GitHub Actions" >&2
+    echo "$name is required; full release evidence is recorded only by GitHub Actions" >&2
     exit 1
   fi
 done

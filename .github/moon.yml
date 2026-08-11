@@ -40,12 +40,10 @@ tasks:
       - "/tools/dev/setup-android-sdk.test.sh"
       - "/tools/dev/start-android-emulator-ci.sh"
       - "/tools/dev/start-android-emulator-ci.test.sh"
+      - "/tools/policy/assertions/workflow-security.mjs"
+      - "/tools/policy/assertions/workflow-security.test.mjs"
       - "/tools/policy/check-workflows.sh"
-      - "/tools/release/install-verdaccio-runtime.sh"
-      - "/tools/release/install-verdaccio-runtime.test.sh"
       - "/tools/release/toolchain-bootstrap.test.mjs"
-      - "/tools/release/verdaccio-runtime/package.json"
-      - "/tools/release/verdaccio-runtime/pnpm-lock.yaml"
     options:
       cache: true
       runFromWorkspaceRoot: true

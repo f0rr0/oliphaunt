@@ -13,7 +13,6 @@ const SAFE_PRODUCT = /^[A-Za-z0-9._-]+$/u;
 const SAFE_RESOLUTION = /^[A-Za-z0-9._-]+$/u;
 const DEFER_RESOLUTION = "defer-product-from-publication-catalog";
 const FORBIDDEN_DEFERRED_FILES = [
-  ".release-semantic-inputs.json",
   "CHANGELOG.md",
   "VERSION",
   "release.toml",

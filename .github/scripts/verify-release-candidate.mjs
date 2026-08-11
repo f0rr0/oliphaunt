@@ -10,7 +10,6 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
-  RECOVERY_CONTROL_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from "./release-candidate-lib.mjs";
 
@@ -59,7 +58,7 @@ function parseArgs(argv) {
   if (!candidatePath || !values.has("plan") || !values.has("wasix-evidence-required")) {
     fail(
       "usage: verify-release-candidate.mjs <candidate-json> --plan <ci-plan.json> "
-      + "--wasix-evidence-required true|false [--qualification-mode full-payload|recovery-control] "
+      + "--wasix-evidence-required true|false [--qualification-mode full-payload] "
       + "[--wasix-evidence-root <directory>]",
     );
   }
@@ -71,8 +70,8 @@ function parseArgs(argv) {
     fail("--wasix-evidence-root is required when WASIX evidence is required");
   }
   const qualificationMode = values.get("qualification-mode") ?? FULL_PAYLOAD_QUALIFICATION_MODE;
-  if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(qualificationMode)) {
-    fail("--qualification-mode must be full-payload or recovery-control");
+  if (qualificationMode !== FULL_PAYLOAD_QUALIFICATION_MODE) {
+    fail("--qualification-mode must be full-payload");
   }
   return {
     candidatePath,

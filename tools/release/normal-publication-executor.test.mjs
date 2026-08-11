@@ -5,7 +5,6 @@ import {
   executeNormalPublicationPlan,
 } from "./normal-publication-executor.mjs";
 import { runOrThrow } from "./release-cli-utils.mjs";
-import { RegistryPublicationDeferredError } from "./registry-publication-deferral.mjs";
 
 function operation(ecosystem, index, carrierId = `${ecosystem}:package-${index}`) {
   return {
@@ -110,7 +109,6 @@ describe("normal publication executor", () => {
       },
     });
     expect(calls.toSorted()).toEqual(["jsr:package-2", "maven:a+maven:b", "npm:package-0"]);
-    expect(results.decision).toBe("complete");
     expect(results.operationResults).toEqual([
       "receipt:npm:package-0",
       ["receipt:maven:a", "receipt:maven:b"],
@@ -154,7 +152,6 @@ describe("normal publication executor", () => {
     releaseNpm.resolve();
     releaseCargo.resolve();
     const result = await run;
-    expect(result.decision).toBe("complete");
     expect(result.operationResults).toEqual(["npm:package-0", "cargo:package-1", "npm:package-2"]);
     expect(secondNpmStarted).toBe(true);
   });
@@ -261,6 +258,31 @@ describe("normal publication executor", () => {
     ]);
   });
 
+  test("a root rerun reconciles a published carrier and continues its missing dependent", async () => {
+    const cargo = operation("cargo", 0);
+    const npm = { ...operation("npm", 1), dependencies: [cargo.id] };
+    const calls = [];
+    const result = await executeNormalPublicationPlan({
+      plan: { operations: [cargo, npm] },
+      cargoVersionPublished: async () => true,
+      publishCarrier: async ({ carrierId }, context) => {
+        calls.push({ carrierId, context });
+        return { id: carrierId, proof: context.alreadyPublished ? "reconciled" : "published" };
+      },
+      publishMaven: () => { throw new Error("must not publish Maven"); },
+      tokenOptions: { fetchImpl: () => { throw new Error("must not acquire token"); } },
+    });
+
+    expect(calls).toEqual([
+      { carrierId: cargo.carrierId, context: { alreadyPublished: true } },
+      { carrierId: npm.carrierId, context: { alreadyPublished: undefined } },
+    ]);
+    expect(result.operationResults).toEqual([
+      { id: cargo.carrierId, proof: "reconciled" },
+      { id: npm.carrierId, proof: "published" },
+    ]);
+  });
+
   test("uses fresh masked and revoked tokens for bounded contiguous Cargo batches", async () => {
     const methods = [];
     const masks = [];
@@ -282,40 +304,6 @@ describe("normal publication executor", () => {
     expect(masks).toEqual(["::add-mask::token-a\n", "::add-mask::token-b\n", "::add-mask::token-c\n"]);
     expect(calls.map(({ cargoToken }) => cargoToken)).toEqual(["token-a", "token-a", "token-b", "token-b", "token-c"]);
     expect(new Set(calls.map(({ tokenDeadlineEpochMs }) => tokenDeadlineEpochMs))).toEqual(new Set([1_201_000]));
-  });
-
-  test("defers before the next upload when a Cargo batch ages out and still revokes", async () => {
-    const methods = [];
-    let now = 1_000;
-    const first = operation("cargo", 0);
-    const second = operation("cargo", 1);
-    const uploads = [];
-    const result = await executeNormalPublicationPlan({
-      plan: { operations: [first, second] },
-      cargoVersionPublished: async () => false,
-      publishCarrier: async ({ carrierId }) => {
-        uploads.push(carrierId);
-        now = 1_201_000;
-        return carrierId;
-      },
-      publishMaven: () => { throw new Error("must not publish Maven"); },
-      nowImpl: () => now,
-      tokenOptions: {
-        env: tokenEnvironment,
-        fetchImpl: tokenFetch(methods),
-        maskImpl: () => {},
-      },
-    });
-    expect(uploads).toEqual([first.carrierId]);
-    expect(methods).toEqual(["GET", "POST", "DELETE"]);
-    expect(result).toMatchObject({
-      decision: "deferred",
-      completedOperationIds: [first.id],
-      newlyCompletedOperationIds: [first.id],
-      remainingOperationIds: [second.id],
-      deferReason: "deadline",
-      notBeforeEpochSeconds: 1_202,
-    });
   });
 
   test("releases the temporary token after a carrier failure", async () => {
@@ -424,161 +412,6 @@ describe("normal publication executor", () => {
     });
     expect(methods).toEqual(["GET", "POST", "DELETE"]);
     expect(contexts[0].tokenDeadlineEpochMs).toBe(940_000);
-  });
-
-  test("returns typed partial progress only for a genuine safe registry deferral", async () => {
-    const cargo = operation("cargo", 0);
-    const npm = operation("npm", 1);
-    const checkpointed = [];
-    const result = await executeNormalPublicationPlan({
-      plan: { operations: [cargo, npm] },
-      cargoVersionPublished: async () => true,
-      publishCarrier: async ({ id, carrierId }) => {
-        if (id === cargo.id) {
-          throw new RegistryPublicationDeferredError({
-            reason: "deadline",
-            notBeforeEpochSeconds: 1_800_000_000,
-            context: "no Cargo request started before the bounded deadline",
-          });
-        }
-        return carrierId;
-      },
-      publishMaven: () => { throw new Error("must not publish Maven"); },
-      onOperationComplete: async ({ id }) => checkpointed.push(id),
-      tokenOptions: { fetchImpl: () => { throw new Error("must not acquire token"); } },
-    });
-    expect(result).toEqual({
-      decision: "deferred",
-      operationResults: [undefined, npm.carrierId],
-      admittedOperationIds: [cargo.id, npm.id],
-      completedOperationIds: [npm.id],
-      newlyCompletedOperationIds: [npm.id],
-      remainingOperationIds: [cargo.id],
-      deferReason: "deadline",
-      notBeforeEpochSeconds: 1_800_000_000,
-    });
-    expect(checkpointed).toEqual([npm.id]);
-
-    const first = operation("npm", 0);
-    const zeroProgress = await executeNormalPublicationPlan({
-      plan: { operations: [first] },
-      cargoVersionPublished: async () => true,
-      publishCarrier: async () => {
-        throw new RegistryPublicationDeferredError({
-          reason: "rate-limit",
-          notBeforeEpochSeconds: 1_800_000_060,
-          context: "explicit registry 429 on the first operation",
-        });
-      },
-      publishMaven: async () => {
-        throw new Error("must not publish Maven");
-      },
-    });
-    expect(zeroProgress).toEqual({
-      decision: "deferred",
-      operationResults: [undefined],
-      admittedOperationIds: [first.id],
-      completedOperationIds: [],
-      newlyCompletedOperationIds: [],
-      remainingOperationIds: [first.id],
-      deferReason: "rate-limit",
-      notBeforeEpochSeconds: 1_800_000_060,
-    });
-
-    const lookalike = Object.assign(new Error("ambiguous transport failure"), {
-      reason: "rate-limit",
-      notBeforeEpochSeconds: 1_800_000_000,
-    });
-    await expect(executeNormalPublicationPlan({
-      plan: { operations: [{ ...npm, operationOrder: 0 }] },
-      cargoVersionPublished: async () => true,
-      publishCarrier: async () => { throw lookalike; },
-      publishMaven: async () => {},
-    })).rejects.toBe(lookalike);
-  });
-
-  test("never invokes callbacks for unadmitted operations and checkpoints a typed progress continuation", async () => {
-    const cargo = operation("cargo", 0);
-    const npmFirst = operation("npm", 1);
-    const npmLater = {
-      ...operation("npm", 2),
-      dependencies: [npmFirst.id],
-    };
-    const maven = {
-      id: "maven:atomic-deployment",
-      kind: "maven-atomic-deployment",
-      ecosystem: "maven",
-      carrierIds: ["maven:a", "maven:b"],
-      dependencies: [],
-      operationOrder: 3,
-    };
-    const calls = [];
-    const checkpointed = [];
-    const result = await executeNormalPublicationPlan({
-      plan: { operations: [cargo, npmFirst, npmLater, maven] },
-      admittedOperationIds: [cargo.id, npmFirst.id],
-      cargoVersionPublished: async () => true,
-      publishCarrier: async ({ id, carrierId }) => {
-        calls.push(id);
-        return carrierId;
-      },
-      publishMaven: async () => {
-        throw new Error("unadmitted Maven callback must not run");
-      },
-      onOperationComplete: async ({ id }) => checkpointed.push(id),
-      tokenOptions: { fetchImpl: () => { throw new Error("must not acquire token"); } },
-      nowImpl: () => 1_800_000_000_000,
-    });
-    expect(calls.toSorted()).toEqual([cargo.id, npmFirst.id]);
-    expect(checkpointed.toSorted()).toEqual([cargo.id, npmFirst.id]);
-    expect(result).toMatchObject({
-      decision: "deferred",
-      deferReason: "capacity",
-      admittedOperationIds: [cargo.id, npmFirst.id],
-      completedOperationIds: [cargo.id, npmFirst.id],
-      newlyCompletedOperationIds: [cargo.id, npmFirst.id],
-      remainingOperationIds: [npmLater.id, maven.id],
-      notBeforeEpochSeconds: 1_800_000_001,
-    });
-  });
-
-  test("rejects a non-closed or reordered admission before any callback", async () => {
-    const first = operation("npm", 0);
-    const second = { ...operation("jsr", 1), dependencies: [first.id] };
-    let called = false;
-    const callbacks = {
-      cargoVersionPublished: async () => { called = true; },
-      publishCarrier: async () => { called = true; },
-      publishMaven: async () => { called = true; },
-    };
-    await expect(executeNormalPublicationPlan({
-      plan: { operations: [first, second] },
-      admittedOperationIds: [second.id],
-      ...callbacks,
-    })).rejects.toThrow(/omits dependencies/u);
-    await expect(executeNormalPublicationPlan({
-      plan: { operations: [first, second] },
-      admittedOperationIds: [second.id, first.id],
-      ...callbacks,
-    })).rejects.toThrow(/ordered projection/u);
-    expect(called).toBe(false);
-  });
-
-  test("treats checkpoint errors as hard even when they use the deferral type", async () => {
-    const npm = operation("npm", 0);
-    await expect(executeNormalPublicationPlan({
-      plan: { operations: [npm] },
-      cargoVersionPublished: async () => true,
-      publishCarrier: async () => npm.carrierId,
-      publishMaven: async () => {},
-      onOperationComplete: async () => {
-        throw new RegistryPublicationDeferredError({
-          reason: "deadline",
-          notBeforeEpochSeconds: 1_800_000_000,
-          context: "invalid checkpoint control flow",
-        });
-      },
-    })).rejects.toThrow(/immutable checkpoint failed/u);
   });
 
   test("rejects malformed plans and oversized batches before mutation", async () => {

@@ -7,7 +7,7 @@ import {
 import path from "node:path";
 import test from "node:test";
 
-import { executableShell } from "./workflow-contract-core.mjs";
+import { executableShell } from "./workflow-security.mjs";
 
 const ROOT = process.cwd();
 const WORKFLOW_ROOTS = [".github/workflows", ".github/actions"];

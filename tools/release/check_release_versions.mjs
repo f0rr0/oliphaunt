@@ -13,7 +13,6 @@ import {
   loadGraph,
   parseStableVersion as graphParseStableVersion,
   releaseProductProjectId as graphReleaseProductProjectId,
-  runtimeTiedContribProducts,
   tagMatchPattern,
   tagPrefixes as graphTagPrefixes,
 } from "./release-graph.mjs";
@@ -446,37 +445,6 @@ async function validateReleaseDependencies(products, graph) {
   }
 }
 
-async function validateRuntimeTiedContribRelease(products, graph) {
-  const selected = new Set(products);
-  const tiedProducts = runtimeTiedContribProducts(graph.products, TOOL);
-  const selectedTied = tiedProducts.filter((product) => selected.has(product));
-  if (selectedTied.length === 0) {
-    return;
-  }
-
-  const missing = tiedProducts.filter((product) => !selected.has(product));
-  if (missing.length > 0) {
-    fail(
-      `liboliphaunt-native, liboliphaunt-wasix, and contrib extensions are versioned together; selected ${selectedTied.join(
-        ", ",
-      )} but missing ${missing.join(", ")}`,
-    );
-  }
-
-  const versions = new Map();
-  for (const product of tiedProducts) {
-    versions.set(product, await currentVersion(product));
-  }
-  const distinctVersions = [...new Set(versions.values())].sort();
-  if (distinctVersions.length > 1) {
-    fail(
-      `runtime-tied products must share one release version: ${[...versions.entries()]
-        .map(([product, version]) => `${product}=${version}`)
-        .join(", ")}`,
-    );
-  }
-}
-
 function parseArgs(argv) {
   const args = {
     productsJson: undefined,
@@ -533,7 +501,6 @@ async function main(argv) {
   for (const product of selected) {
     currentTagAtHead[product] = await validateProduct(product, graph.products[product], args.headRef);
   }
-  await validateRuntimeTiedContribRelease(selected, graph);
   await validateReleaseDependencies(selected, graph);
   if (args.checkRegistries) {
     const inventory = await validateRegistryPublication(

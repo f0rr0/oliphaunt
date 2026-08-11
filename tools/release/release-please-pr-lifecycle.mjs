@@ -180,8 +180,7 @@ export function assertCleanReleasePleaseState({
     throw lifecycleError(
       "merged main Release Please PRs still have autorelease: pending: "
         + blockers.map(({ number, url }) => `#${number} ${url}`).join(", ")
-        + "; finish publication, or prove a pre-publication history-repair merge is superseded "
-        + "before removing only its pending label",
+        + "; finish publication before preparing another release",
     );
   }
   return { base, blockers: [], repository };

@@ -39,15 +39,6 @@
     {
       "type": "node-workspace",
       "merge": false
-    },
-    {
-      "type": "linked-versions",
-      "groupName": "liboliphaunt-runtime",
-      "components": [
-        "liboliphaunt-native",
-        "liboliphaunt-wasix",
-        "oliphaunt-extension-contrib-pg18"
-      ]
     }
   ],
   "packages": {

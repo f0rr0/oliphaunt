@@ -154,11 +154,14 @@ validate_extracted_links() {
   local asset_name="$2"
   local link
   local resolved
+  local resolved_root
+
+  resolved_root="$(readlink -f -- "$root")" || fail "$asset_name extraction root cannot be resolved: $root"
 
   while IFS= read -r -d '' link; do
     resolved="$(readlink -f -- "$link")" || fail "$asset_name contains a dangling symbolic link: $link"
     case "$resolved" in
-      "$root" | "$root"/*) ;;
+      "$resolved_root" | "$resolved_root"/*) ;;
       *) fail "$asset_name contains a symbolic link escaping its extraction root: $link -> $resolved" ;;
     esac
   done < <(find "$root" -type l -print0)
@@ -188,7 +191,7 @@ require_only_top_level() {
   local actual
   local expected
 
-  actual="$(find "$root" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)"
+  actual="$(find "$root" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)"
   expected="$(printf '%s\n' "$@" | sort)"
   [ "$actual" = "$expected" ] ||
     fail "unexpected archive top-level layout under $root: expected [$expected], got [$actual]"

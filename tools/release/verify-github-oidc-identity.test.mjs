@@ -49,26 +49,32 @@ test("models the direct release workflow identity", () => {
 });
 
 test("models continuations only on the exact SHA-derived transport tag", () => {
-  for (const operation of ["publish", "publish-bootstrap"]) {
-    const continuation = expectedOidcIdentity({
-      ...environment(operation),
-      GITHUB_REF: releaseTransportFullRef(SHA),
-      RELEASE_CONTINUATION_POINTER: "sealed-pointer",
-    });
-    assert.equal(continuation.ref, releaseTransportFullRef(SHA));
-    assert.equal(continuation.ref_type, "tag");
-    assert.equal(
-      continuation.workflow_ref,
-      `f0rr0/oliphaunt/.github/workflows/release.yml@${releaseTransportFullRef(SHA)}`,
-    );
-  }
+  const continuation = expectedOidcIdentity({
+    ...environment("publish-bootstrap"),
+    GITHUB_REF: releaseTransportFullRef(SHA),
+    RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+  });
+  assert.equal(continuation.ref, releaseTransportFullRef(SHA));
+  assert.equal(continuation.ref_type, "tag");
+  assert.equal(
+    continuation.workflow_ref,
+    `f0rr0/oliphaunt/.github/workflows/release.yml@${releaseTransportFullRef(SHA)}`,
+  );
 
   assert.throws(
     () => expectedOidcIdentity({
-      ...environment(),
+      ...environment("publish-bootstrap"),
       RELEASE_CONTINUATION_POINTER: "sealed-pointer",
     }),
     /trusted publication ref mismatch/u,
+  );
+  assert.throws(
+    () => expectedOidcIdentity({
+      ...environment("publish"),
+      GITHUB_REF: releaseTransportFullRef(SHA),
+      RELEASE_CONTINUATION_POINTER: "sealed-pointer",
+    }),
+    /valid only for publish-bootstrap/u,
   );
   assert.throws(
     () => expectedOidcIdentity({
@@ -79,7 +85,7 @@ test("models continuations only on the exact SHA-derived transport tag", () => {
   );
   assert.throws(
     () => expectedOidcIdentity({
-      ...environment(),
+      ...environment("publish-bootstrap"),
       GITHUB_REF: releaseTransportFullRef("f".repeat(40)),
       RELEASE_CONTINUATION_POINTER: "sealed-pointer",
     }),
@@ -164,7 +170,7 @@ test("rejects substituted or malformed current-job workflow aliases", () => {
 
 test("rejects a root-branch current-job alias on an exact transport continuation", () => {
   const env = {
-    ...environment(),
+    ...environment("publish-bootstrap"),
     GITHUB_REF: releaseTransportFullRef(SHA),
     RELEASE_CONTINUATION_POINTER: "sealed-pointer",
   };

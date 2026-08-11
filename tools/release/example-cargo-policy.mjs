@@ -1,16 +1,9 @@
 #!/usr/bin/env bun
 
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  EXAMPLE_CARGO_REGISTRY_SOURCE,
-  candidateRegistryDigest,
-  candidateRegistryPackages,
-  verifyCandidateRegistryPackage,
-} from "./example-cargo-registry.mjs";
 import {
   loadPublicationCatalog,
   resolveActualCarrier,
@@ -24,10 +17,8 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TOOL = "example-cargo-policy.mjs";
-const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
 const WASIX_PRODUCT_MANIFEST_PATH =
   "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml";
-const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 
 const ADVISORY_VERSION_FLOORS = new Map([
   ["crossbeam-epoch", "0.9.20"],
@@ -157,10 +148,6 @@ function objectTable(value) {
 
 function readToml(file) {
   return Bun.TOML.parse(readFileSync(file, "utf8"));
-}
-
-function sha256File(file) {
-  return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
 function effectivePublishVersion(version, initialVersion) {
@@ -429,129 +416,6 @@ export function validateResolvedPackagePolicy(
     { toolchainVersions },
   ));
   return failures;
-}
-
-export {
-  candidateRegistryDigest,
-  candidateRegistryPackages,
-  verifyCandidateRegistryPackage,
-};
-
-export function validateCandidateRegistry(indexDir) {
-  const packages = candidateRegistryPackages(indexDir);
-  const context = catalogContext();
-  const failures = [];
-  for (const entry of packages) {
-    try {
-      const expected = expectedCarrierVersion(entry.name, context);
-      if (entry.vers !== expected) {
-        failures.push(`${entry.name} candidate version ${entry.vers}; expected catalog version ${expected}`);
-      }
-      verifyCandidateRegistryPackage(indexDir, entry);
-    } catch (error) {
-      failures.push(error.message);
-    }
-  }
-  if (failures.length > 0) fail(failures.join("\n"));
-  return {
-    packages,
-    sha256: candidateRegistryDigest(packages),
-  };
-}
-
-export function validateCandidateSourceSelection(lockfile, packages, candidateRows) {
-  const failures = [];
-  const byName = packageByName(packages);
-  const candidateByName = new Map(candidateRows.map((entry) => [entry.name, entry]));
-  for (const [name, candidate] of candidateByName) {
-    const resolved = byName.get(name) ?? [];
-    if (resolved.length === 0) continue;
-    if (resolved.length !== 1) {
-      failures.push(`${lockfile}: selected candidate ${name}@${candidate.vers} resolved ${resolved.length} package rows`);
-      continue;
-    }
-    const pkg = resolved[0];
-    if (pkg.source !== EXAMPLE_CARGO_REGISTRY_SOURCE) {
-      failures.push(
-        `${lockfile}: selected candidate ${name}@${candidate.vers} resolved from ${pkg.source ?? "path"}; expected ${EXAMPLE_CARGO_REGISTRY_SOURCE}`,
-      );
-    }
-    if (pkg.version !== candidate.vers) {
-      failures.push(`${lockfile}: selected candidate ${name} resolved ${pkg.version}; index has ${candidate.vers}`);
-    }
-    if (!HEX_SHA256.test(pkg.checksum ?? "")) {
-      failures.push(`${lockfile}: ${name}@${pkg.version} must have an exact candidate checksum`);
-    } else if (pkg.checksum !== candidate.cksum) {
-      failures.push(`${lockfile}: ${name}@${pkg.version} lock checksum differs from candidate index`);
-    }
-  }
-  for (const pkg of packages) {
-    if (pkg.source !== EXAMPLE_CARGO_REGISTRY_SOURCE) continue;
-    const candidate = candidateByName.get(pkg.name);
-    if (candidate === undefined) {
-      failures.push(`${lockfile}: local candidate ${pkg.name}@${pkg.version} is not present in the candidate index`);
-    }
-  }
-  return failures;
-}
-
-export function validateCandidateLock(policyId, lockfile, indexDir, { registryVerified = false } = {}) {
-  const policy = exampleCargoPolicyById(policyId);
-  const data = readToml(lockfile);
-  const packages = Array.isArray(data.package) ? data.package : [];
-  const failures = validateResolvedPackagePolicy(lockfile, packages, {
-    wasixToolchain: policy.wasixToolchain,
-    toolchainVersions: canonicalWasixCargoToolchainVersions(ROOT),
-  });
-  const context = catalogContext();
-  const byName = packageByName(packages);
-  const candidateRows = candidateRegistryPackages(indexDir);
-  const candidateByName = new Map(candidateRows.map((entry) => [entry.name, entry]));
-  failures.push(...validateCandidateSourceSelection(lockfile, packages, candidateRows));
-  for (const required of policy.requiredPackages) {
-    const resolved = byName.get(required) ?? [];
-    if (resolved.length !== 1) {
-      failures.push(`${lockfile}: expected exactly one required Oliphaunt package ${required}, found ${resolved.length}`);
-    }
-  }
-  for (const pkg of packages) {
-    if (!isOliphauntCargoName(pkg.name) || pkg.source === undefined) continue;
-    let expectedVersion;
-    try {
-      expectedVersion = expectedCarrierVersion(pkg.name, context);
-    } catch (error) {
-      failures.push(`${lockfile}: ${error.message}`);
-      continue;
-    }
-    if (pkg.version !== expectedVersion) {
-      failures.push(`${lockfile}: ${pkg.name} resolved ${pkg.version}; expected catalog version ${expectedVersion}`);
-    }
-    const candidate = candidateByName.get(pkg.name);
-    if (candidate === undefined) {
-      if (pkg.source === EXAMPLE_CARGO_REGISTRY_SOURCE) {
-        failures.push(`${lockfile}: ${pkg.name}@${pkg.version} uses the candidate source but is absent from its index`);
-      } else if (pkg.source !== CRATES_IO_SOURCE) {
-        failures.push(`${lockfile}: unchanged ${pkg.name}@${pkg.version} must resolve from crates.io, got ${pkg.source}`);
-      }
-      continue;
-    }
-    if (!registryVerified) {
-      try {
-        verifyCandidateRegistryPackage(indexDir, candidate);
-      } catch (error) {
-        failures.push(error.message);
-      }
-    }
-  }
-  if (failures.length > 0) {
-    fail(failures.join("\n"));
-  }
-  return {
-    policy: policy.id,
-    packages: packages.length,
-    candidatePackages: packages.filter((pkg) => pkg.source === EXAMPLE_CARGO_REGISTRY_SOURCE).length,
-    sha256: sha256File(lockfile),
-  };
 }
 
 function main(argv) {

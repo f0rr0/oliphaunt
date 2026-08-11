@@ -140,15 +140,8 @@ requireFile("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json");
 requireFile("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml");
 requireText("src/bindings/wasix-rust/moon.yml", String.raw`^  example-check:$`);
 requireText("src/bindings/wasix-rust/moon.yml", String.raw`tags: \["examples", "quality", "ci-wasm-regression"\]`);
-requireText(
-  "src/bindings/wasix-rust/tools/check-examples.sh",
-  String.raw`examples/tools/with-local-registries\.sh bash "\$0"`,
-);
 requireText("src/bindings/wasix-rust/tools/check-examples.sh", "PNPM_CONFIG_LOCKFILE");
 
-requireFile("examples/tools/with-local-registries.sh");
-requireText("examples/tools/with-local-registries.sh", String.raw`export CARGO_HOME="\$cargo_home"`);
-requireText("examples/tools/with-local-registries.sh", "--patch-candidates");
 requireFile("examples/tools/run-tauri-webdriver-smoke.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.test.sh");
@@ -190,10 +183,6 @@ for (const example of ["tauri", "tauri-wasix", "electron", "electron-wasix"]) {
   requireFile(`examples/${example}/package.json`);
   requireFile(`examples/${example}/pnpm-workspace.yaml`);
   requireFile(`examples/${example}/README.md`);
-  requireFile(`examples/${example}/.npmrc`);
-  requireText(`examples/${example}/.npmrc`, String.raw`^registry=http://127\.0\.0\.1:4873/$`);
-  requireText(`examples/${example}/.npmrc`, String.raw`^link-workspace-packages=false$`);
-  requireText(`examples/${example}/.npmrc`, String.raw`^prefer-workspace-packages=false$`);
 }
 for (const example of ["electron", "electron-wasix"]) {
   requireText(`examples/${example}/pnpm-workspace.yaml`, String.raw`electron: true`);
@@ -206,8 +195,6 @@ requireFile("examples/tauri/src-tauri/Cargo.toml");
 requireFile("examples/tauri-wasix/src-tauri/Cargo.toml");
 requireFile("examples/electron-wasix/src-wasix/Cargo.toml");
 requireFile("tools/release/example-cargo-policy.mjs");
-requireFile("tools/release/prepare-example-cargo-candidate.mjs");
-requireFile("tools/release/validate-example-cargo-candidates.mjs");
 for (const { packageName, version } of electronReleaseDependencies(ROOT)) {
   requireDependencyVersion("examples/electron/package.json", packageName, version);
 }

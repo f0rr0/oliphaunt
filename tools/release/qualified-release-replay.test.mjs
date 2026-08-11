@@ -45,74 +45,11 @@ test("qualified replay binds a clean checkout to one exact commit", () => {
   }
 });
 
-test("qualified replay separately binds a recovery controller and release source", () => {
-  const { repo, sha: releaseSourceSha } = fixture();
-  try {
-    writeFileSync(path.join(repo, "tracked.txt"), "controller\n");
-    git(repo, "add", "tracked.txt");
-    git(repo, "commit", "--quiet", "-m", "fix(release): controller");
-    const controllerSha = git(repo, "rev-parse", "HEAD");
-
-    assert.deepEqual(
-      assertQualifiedReplaySourceState({
-        repo,
-        headRef: controllerSha,
-        expectedSha: controllerSha,
-        releaseSourceRef: releaseSourceSha,
-        expectedReleaseSourceSha: releaseSourceSha,
-      }),
-      { sha: controllerSha },
-    );
-    assert.throws(
-      () => assertQualifiedReplaySourceState({
-        repo,
-        headRef: controllerSha,
-        expectedSha: controllerSha,
-        releaseSourceRef: controllerSha,
-        expectedReleaseSourceSha: releaseSourceSha,
-      }),
-      /source mismatch/u,
-    );
-    assert.throws(
-      () => assertQualifiedReplaySourceState({
-        repo,
-        headRef: controllerSha,
-        expectedSha: controllerSha,
-        releaseSourceRef: releaseSourceSha,
-        expectedReleaseSourceSha: "abc",
-      }),
-      /exact 40-character RELEASE_SOURCE_SHA/u,
-    );
-
-    git(repo, "switch", "--quiet", "-c", "sibling-source", releaseSourceSha);
-    writeFileSync(path.join(repo, "tracked.txt"), "sibling\n");
-    git(repo, "add", "tracked.txt");
-    git(repo, "commit", "--quiet", "-m", "test: sibling source");
-    const siblingSourceSha = git(repo, "rev-parse", "HEAD");
-    git(repo, "switch", "--quiet", "--detach", controllerSha);
-    assert.throws(
-      () => assertQualifiedReplaySourceState({
-        repo,
-        headRef: controllerSha,
-        expectedSha: controllerSha,
-        releaseSourceRef: siblingSourceSha,
-        expectedReleaseSourceSha: siblingSourceSha,
-      }),
-      /is not an ancestor/u,
-    );
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("qualified replay selects controller evidence normally and frozen source evidence for recovery", () => {
+test("qualified replay selects exact release evidence", () => {
   const source = "1".repeat(40);
-  const controller = "2".repeat(40);
   assert.deepEqual(
     qualifiedReplayCandidateBinding({
-      candidateMode: "release-bump",
-      controllerSha: source,
-      releaseSourceSha: source,
+      releaseSha: source,
       runId: "123",
     }),
     {
@@ -122,43 +59,13 @@ test("qualified replay selects controller evidence normally and frozen source ev
       runId: "123",
     },
   );
-  assert.deepEqual(
-    qualifiedReplayCandidateBinding({
-      candidateMode: "release-recovery",
-      controllerSha: controller,
-      releaseSourceSha: source,
-      runId: "456",
-    }),
-    {
-      candidateRoot: "target/recovery-payload-candidate",
-      candidateSha: source,
-      qualificationMode: "full-payload",
-      runId: "456",
-    },
-  );
   for (const fixture of [
     {
-      candidateMode: "release-recovery",
-      controllerSha: source,
-      releaseSourceSha: source,
-      runId: "456",
+      releaseSha: "not-a-sha",
+      runId: "123",
     },
     {
-      candidateMode: "release-bump",
-      controllerSha: controller,
-      releaseSourceSha: source,
-      runId: "456",
-    },
-    {
-      candidateMode: "unknown",
-      controllerSha: controller,
-      releaseSourceSha: source,
-      runId: "456",
-    },
-    {
-      candidateMode: "release-recovery",
-      controllerSha: controller,
-      releaseSourceSha: source,
+      releaseSha: source,
       runId: "0",
     },
   ]) {

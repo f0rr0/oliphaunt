@@ -3,10 +3,6 @@ import {
   CRATES_IO_TRUSTED_TOKEN_MAX_BATCH_AGE_MS,
   withCratesIoTrustedPublishingToken,
 } from "./crates-io-trusted-publishing.mjs";
-import {
-  isRegistryPublicationDeferredError,
-  RegistryPublicationDeferredError,
-} from "./registry-publication-deferral.mjs";
 
 const ECOSYSTEMS = ["cargo", "npm", "maven", "jsr"];
 
@@ -190,9 +186,6 @@ export async function executeNormalPublicationPlan({
   cargoVersionPublished,
   publishCarrier,
   publishMaven,
-  completedOperationResults = new Map(),
-  admittedOperationIds = undefined,
-  onOperationComplete = () => {},
   tokenOptions = {},
   batchSize = CRATES_IO_TRUSTED_TOKEN_DEFAULT_BATCH_SIZE,
   nowImpl = Date.now,
@@ -201,72 +194,12 @@ export async function executeNormalPublicationPlan({
   if (typeof cargoVersionPublished !== "function" || typeof publishCarrier !== "function" || typeof publishMaven !== "function") {
     throw error("cargoVersionPublished, publishCarrier, and publishMaven callbacks are required");
   }
-  if (!(completedOperationResults instanceof Map)) {
-    throw error("completedOperationResults must be a Map keyed by canonical operation id");
-  }
-  if (typeof onOperationComplete !== "function") {
-    throw error("onOperationComplete must be a function");
-  }
   const boundedBatchSize = strictBatchSize(batchSize);
   const operations = plan.operations;
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
-  const completedOperationIds = new Set(completedOperationResults.keys());
-  for (const operationId of completedOperationIds) {
-    if (!operationById.has(operationId)) {
-      throw error(`completed operation ${operationId} is absent from the canonical publication plan`);
-    }
-  }
-  for (const operationId of completedOperationIds) {
-    const operation = operationById.get(operationId);
-    const missingDependencies = operation.dependencies.filter((dependency) => !completedOperationIds.has(dependency));
-    if (missingDependencies.length > 0) {
-      throw error(`completed operation ${operationId} is missing completed dependencies: ${missingDependencies.join(", ")}`);
-    }
-  }
-  const canonicalRemainingOperationIds = operations
-    .filter(({ id }) => !completedOperationIds.has(id))
-    .map(({ id }) => id);
-  const exactAdmittedOperationIds = admittedOperationIds ?? canonicalRemainingOperationIds;
-  if (
-    !Array.isArray(exactAdmittedOperationIds)
-    || exactAdmittedOperationIds.some((id) => typeof id !== "string" || id.length === 0)
-    || new Set(exactAdmittedOperationIds).size !== exactAdmittedOperationIds.length
-  ) {
-    throw error("admittedOperationIds must be a unique string list");
-  }
-  const admittedOperationIdSet = new Set(exactAdmittedOperationIds);
-  const canonicalAdmittedOperationIds = operations
-    .filter(({ id }) => admittedOperationIdSet.has(id))
-    .map(({ id }) => id);
-  if (
-    canonicalAdmittedOperationIds.length !== admittedOperationIdSet.size
-    || canonicalAdmittedOperationIds.some((id, index) => id !== exactAdmittedOperationIds[index])
-    || exactAdmittedOperationIds.some((id) => completedOperationIds.has(id))
-  ) {
-    throw error("admittedOperationIds must be an ordered projection of remaining canonical operations");
-  }
-  if (canonicalRemainingOperationIds.length > 0 && exactAdmittedOperationIds.length === 0) {
-    throw error("an incomplete normal-publication invocation must admit at least one operation");
-  }
-  const satisfiedOperationIds = new Set([...completedOperationIds, ...exactAdmittedOperationIds]);
-  for (const operationId of exactAdmittedOperationIds) {
-    const missingDependencies = operationById.get(operationId).dependencies.filter(
-      (dependency) => !satisfiedOperationIds.has(dependency),
-    );
-    if (missingDependencies.length > 0) {
-      throw error(`admitted operation ${operationId} omits dependencies: ${missingDependencies.join(", ")}`);
-    }
-  }
   const completions = new Map(operations.map((operation) => [operation.id, deferred()]));
   const results = new Array(operations.length);
-  for (const [operationId, value] of completedOperationResults) {
-    const operation = operationById.get(operationId);
-    results[operation.operationOrder] = value;
-    completions.get(operationId).resolve();
-  }
   let firstFailure;
-  const deferrals = [];
-  const newlyCompletedOperationIds = new Set();
   let aborted = false;
   let signalAbort;
   const abortSignal = new Promise((resolve) => {
@@ -275,11 +208,7 @@ export async function executeNormalPublicationPlan({
 
   function failAll(cause) {
     const failure = cause instanceof Error ? cause : error(String(cause));
-    if (isRegistryPublicationDeferredError(failure)) {
-      if (!deferrals.includes(failure)) deferrals.push(failure);
-    } else if (firstFailure === undefined) {
-      firstFailure = failure;
-    }
+    if (firstFailure === undefined) firstFailure = failure;
     if (!aborted) {
       aborted = true;
       signalAbort();
@@ -287,7 +216,7 @@ export async function executeNormalPublicationPlan({
   }
 
   function requireActive() {
-    if (aborted) throw firstFailure ?? deferrals[0];
+    if (aborted) throw firstFailure ?? error("publication aborted");
   }
 
   async function waitForDependencies(operation) {
@@ -300,22 +229,14 @@ export async function executeNormalPublicationPlan({
   }
 
   async function complete(operation, value) {
-    try {
-      await onOperationComplete(operation, value);
-    } catch (cause) {
-      throw error(
-        `immutable checkpoint failed for ${operation.id}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    }
     results[operation.operationOrder] = value;
-    newlyCompletedOperationIds.add(operation.id);
     completions.get(operation.id).resolve();
   }
 
   async function runSimpleLane(ecosystem) {
     try {
       for (const operation of operations.filter(
-        (candidate) => candidate.ecosystem === ecosystem && admittedOperationIdSet.has(candidate.id),
+        (candidate) => candidate.ecosystem === ecosystem,
       )) {
         await waitForDependencies(operation);
         requireActive();
@@ -331,7 +252,7 @@ export async function executeNormalPublicationPlan({
 
   async function runCargoLane() {
     const cargo = operations.filter(
-      (operation) => operation.ecosystem === "cargo" && admittedOperationIdSet.has(operation.id),
+      (operation) => operation.ecosystem === "cargo",
     );
     try {
       for (const operationsBatch of cargoBatches(cargo, operationById, boundedBatchSize)) {
@@ -377,11 +298,7 @@ export async function executeNormalPublicationPlan({
             }
             const operationNow = nowImpl();
             if (operationNow >= tokenDeadlineEpochMs) {
-              throw new RegistryPublicationDeferredError({
-                reason: "deadline",
-                notBeforeEpochSeconds: Math.floor(operationNow / 1000) + 1,
-                context: `temporary Cargo token batch expired before ${item.operation.carrierId}`,
-              });
+              throw error(`temporary Cargo token batch expired before ${item.operation.carrierId}`);
             }
             await complete(
               item.operation,
@@ -404,28 +321,5 @@ export async function executeNormalPublicationPlan({
     ...ECOSYSTEMS.filter((ecosystem) => ecosystem !== "cargo").map(runSimpleLane),
   ]);
   if (firstFailure !== undefined) throw firstFailure;
-  const completedIds = new Set([...completedOperationIds, ...newlyCompletedOperationIds]);
-  const remainingOperationIds = operations.filter(({ id }) => !completedIds.has(id)).map(({ id }) => id);
-  const capacityDeferred = remainingOperationIds.length > 0 && deferrals.length === 0;
-  const publicationDeferred = deferrals.length > 0 || capacityDeferred;
-  const capacityNotBeforeEpochSeconds = capacityDeferred ? Math.floor(nowImpl() / 1000) + 1 : null;
-  return {
-    decision: publicationDeferred ? "deferred" : "complete",
-    operationResults: results,
-    admittedOperationIds: [...exactAdmittedOperationIds],
-    completedOperationIds: operations.filter(({ id }) => completedIds.has(id)).map(({ id }) => id),
-    newlyCompletedOperationIds: operations.filter(({ id }) => newlyCompletedOperationIds.has(id)).map(({ id }) => id),
-    remainingOperationIds,
-    deferReason: publicationDeferred
-      ? deferrals.length === 0
-        ? "capacity"
-        : (deferrals.some(({ reason }) => reason === "deadline") ? "deadline" : "rate-limit")
-      : null,
-    notBeforeEpochSeconds: publicationDeferred
-      ? Math.max(
-          capacityNotBeforeEpochSeconds ?? 0,
-          ...deferrals.map(({ notBeforeEpochSeconds }) => notBeforeEpochSeconds),
-        )
-      : null,
-  };
+  return { operationResults: results };
 }

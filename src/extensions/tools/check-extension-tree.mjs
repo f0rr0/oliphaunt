@@ -68,7 +68,7 @@ async function checkExternal(path) {
   const release = resolve(path, 'release.toml');
   const publicationBlocker = resolve(path, 'publication-blocker.toml');
   if (existsSync(publicationBlocker)) {
-    for (const forbidden of [release, resolve(path, 'VERSION'), resolve(path, 'CHANGELOG.md'), resolve(path, '.release-semantic-inputs.json')]) {
+    for (const forbidden of [release, resolve(path, 'VERSION'), resolve(path, 'CHANGELOG.md')]) {
       if (existsSync(forbidden)) {
         fail(`${rel(forbidden)} is release-product metadata and is forbidden while publication-blocker.toml is present`);
       }

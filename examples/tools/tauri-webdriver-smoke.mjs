@@ -49,7 +49,7 @@ try {
   await setValue(port, sessionId, "#title", `Ship Tauri e2e ${Date.now()}`);
   await setValue(port, sessionId, "#notes", "created by raw WebDriver");
   await setValue(port, sessionId, "#area", "examples");
-  await setValue(port, sessionId, "#context", "local registry");
+  await setValue(port, sessionId, "#context", "public packages");
   await click(port, sessionId, "button[type='submit']");
   await waitForText(port, sessionId, "article.todo", "created by raw WebDriver", 60_000);
   await click(port, sessionId, "article.todo input[type='checkbox']");

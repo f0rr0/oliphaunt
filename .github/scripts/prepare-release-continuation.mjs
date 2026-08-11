@@ -20,7 +20,6 @@ import {
   RELEASE_CONTINUATION_RATE_LIMIT_DEFERRAL_BUDGET,
   continuationStateIdentity,
   createReleaseContinuationContract,
-  normalizeArtifactIdentity,
   parseContinuationJson,
   sha256File,
   stableJson,
@@ -28,16 +27,6 @@ import {
   validateReleaseExecutionResult,
 } from "../../tools/release/release-continuation-contract.mjs";
 import { bootstrapPublicationPlan } from "../../tools/release/bootstrap-publication-plan.mjs";
-import { runGitHubReadSync } from "../../tools/release/github-read.mjs";
-import {
-  CONTINUATION_CORE_JOURNAL_MEMBER,
-  CONTINUATION_PACER_MEMBER,
-  continuationGitHubStateIdentity,
-} from "../../tools/release/github-release-continuation-state.mjs";
-import { normalPublicationPlan } from "../../tools/release/normal-publication-plan.mjs";
-import {
-  RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS,
-} from "../../tools/release/release-continuation-read-budget.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_CONTRACT = "target/release/release-continuation-contract.json";
@@ -93,66 +82,6 @@ function lockBinding(lock) {
   };
 }
 
-function githubJson(environment, repo, endpoint, label, githubReadOptions = {}) {
-  const raw = runGitHubReadSync(["api", "-H", "X-GitHub-Api-Version: 2022-11-28", `repos/${repo}/${endpoint}`], {
-    ...githubReadOptions,
-    cwd: ROOT,
-    deadlineMs: RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS,
-    environment,
-    label,
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  return json(raw, label);
-}
-
-function exactStageArtifact(environment, { operation, releaseCommit }, githubReadOptions = {}) {
-  if (operation === "publish-bootstrap") return null;
-  const repo = required("GH_REPO", environment);
-  const id = safeInteger(required("STAGE_HANDOFF_ARTIFACT_ID", environment), "STAGE_HANDOFF_ARTIFACT_ID");
-  const expectedDigest = required("STAGE_HANDOFF_ARTIFACT_DIGEST", environment);
-  const expectedName = required("STAGE_HANDOFF_ARTIFACT_NAME", environment);
-  const runId = safeInteger(required("STAGE_HANDOFF_RUN_ID", environment), "STAGE_HANDOFF_RUN_ID");
-  const metadata = githubJson(
-    environment,
-    repo,
-    `actions/artifacts/${id}`,
-    `GitHub-stage artifact ${id}`,
-    githubReadOptions,
-  );
-  const artifact = normalizeArtifactIdentity({
-    digest: metadata.digest,
-    id: metadata.id,
-    name: metadata.name,
-    size: metadata.size_in_bytes,
-  }, "GitHub-stage artifact metadata");
-  if (
-    artifact.id !== id
-    || artifact.digest !== expectedDigest
-    || artifact.name !== expectedName
-    || metadata.expired !== false
-  ) {
-    throw error("GitHub-stage artifact metadata does not match the sealed stage handoff");
-  }
-  if (metadata.workflow_run?.id !== undefined && Number(metadata.workflow_run.id) !== runId) {
-    throw error("GitHub-stage artifact is bound to the wrong root Release run");
-  }
-  const run = githubJson(
-    environment,
-    repo,
-    `actions/runs/${runId}`,
-    `GitHub-stage Release run ${runId}`,
-    githubReadOptions,
-  );
-  if (
-    Number(run.id) !== runId
-    || run.head_sha !== releaseCommit
-    || run.event !== "workflow_dispatch"
-  ) {
-    throw error("GitHub-stage handoff run is not bound to the exact release workflow dispatch");
-  }
-  return { artifact, runId };
-}
-
 function atomicJson(file, value) {
   atomicBytes(file, Buffer.from(`${JSON.stringify(value, null, 2)}\n`));
 }
@@ -174,61 +103,6 @@ function atomicBytes(file, bytes) {
   }
 }
 
-function snapshotGitHubState(environment, { currentPointer, currentRunId, operation, releaseCommit }) {
-  if (operation === "publish-bootstrap") return null;
-  const repository = required("GITHUB_REPOSITORY", environment);
-  const rootRunId = safeInteger(
-    required("OLIPHAUNT_RELEASE_ROOT_RUN_ID", environment),
-    "OLIPHAUNT_RELEASE_ROOT_RUN_ID",
-  );
-  const expectedRootRunId = currentPointer === null ? currentRunId : currentPointer.rootRunId;
-  if (rootRunId !== expectedRootRunId) {
-    throw error("installed GitHub state does not belong to the exact continuation root run");
-  }
-  const pacerBytes = readFileSync(
-    path.resolve(required("OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH", environment)),
-  );
-  const journalBytes = readFileSync(
-    path.resolve(required("OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH", environment)),
-  );
-  const githubState = continuationGitHubStateIdentity({
-    journalBytes,
-    lineage: { headSha: releaseCommit, repository, rootRunId: String(rootRunId) },
-    pacerBytes,
-  });
-  const pacerSnapshot = environment.RELEASE_CONTINUATION_GITHUB_PACER_SNAPSHOT_PATH
-    || path.join("target/release", CONTINUATION_PACER_MEMBER);
-  const journalSnapshot = environment.RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_SNAPSHOT_PATH
-    || path.join("target/release", CONTINUATION_CORE_JOURNAL_MEMBER);
-  atomicBytes(pacerSnapshot, pacerBytes);
-  atomicBytes(journalSnapshot, journalBytes);
-  return githubState;
-}
-
-export function captureContinuationGitHubState(
-  environment,
-  { currentPointer, currentRunId, operation, releaseCommit },
-  { githubReadOptions = {} } = {},
-) {
-  const normalizedPointer = currentPointer === null
-    ? null
-    : validateReleaseContinuationPointer(currentPointer, { operation, releaseCommit });
-  // The stage-handoff identity costs two journaled GitHub reads. Resolve it
-  // before freezing the state so a child inherits every charged request.
-  const stageHandoff = exactStageArtifact(
-    environment,
-    { operation, releaseCommit },
-    githubReadOptions,
-  );
-  const githubState = snapshotGitHubState(environment, {
-    currentPointer: normalizedPointer,
-    currentRunId,
-    operation,
-    releaseCommit,
-  });
-  return { githubState, stageHandoff };
-}
-
 export function buildContinuationContract({
   operation,
   releaseCommit,
@@ -237,10 +111,8 @@ export function buildContinuationContract({
   products,
   result,
   executionResultFile,
-  githubState,
   state,
   approvedPublication,
-  stageHandoff,
   currentPointer,
   currentRunId,
   currentRunAttempt,
@@ -293,7 +165,6 @@ export function buildContinuationContract({
   let deadlineDeferralsUsed = normalizedResult.deferralMode === "pre-mutation-deadline" ? 1 : 0;
   let rateLimitDeferralsUsed = normalizedResult.deferralMode === "rate-limit" ? 1 : 0;
   let rootRunId = currentRunId;
-  let parentPointer = null;
   if (
     normalizedResult.notBeforeEpochSeconds - nowEpochSeconds
       > RELEASE_CONTINUATION_MAX_DISPATCH_DELAY_SECONDS
@@ -308,7 +179,6 @@ export function buildContinuationContract({
       operation,
       releaseCommit,
     });
-    parentPointer = pointer;
     if (normalizedResult.deferralMode === "pre-mutation-capacity") {
       throw error("pre-mutation capacity deferral cannot recur in a continuation generation");
     }
@@ -342,24 +212,6 @@ export function buildContinuationContract({
     maxGenerations = pointer.maxGenerations;
     rootRunId = pointer.rootRunId;
   }
-  if (operation === "publish" && parentPointer !== null) {
-    for (const key of ["pacer", "coreRequestJournal"]) {
-      const previous = parentPointer.githubState[key];
-      const current = githubState?.[key];
-      if (
-        current === undefined
-        || current.sequence < previous.sequence
-        || (current.sequence === previous.sequence && current.digest !== previous.digest)
-        || (current.sequence > previous.sequence && current.digest === previous.digest)
-        || (
-          previous.lastReservedAtMs !== null
-          && (current.lastReservedAtMs === null || current.lastReservedAtMs < previous.lastReservedAtMs)
-        )
-      ) {
-        throw error(`GitHub ${key} state did not monotonically extend the exact parent continuation`);
-      }
-    }
-  }
   if (maxGenerations > RELEASE_CONTINUATION_GENERATION_CEILING) {
     throw error(
       `exact publication plan plus its frozen zero-progress allowances exceeds the `
@@ -368,7 +220,6 @@ export function buildContinuationContract({
   }
   return createReleaseContinuationContract({
     approvedPublication,
-    githubState,
     lineage: {
       capacityDeferralAllowance,
       deadlineDeferralBudget: RELEASE_CONTINUATION_DEADLINE_DEFERRAL_BUDGET,
@@ -395,7 +246,6 @@ export function buildContinuationContract({
     },
     products,
     source: { commit: releaseCommit, tree: releaseTree },
-    stageHandoff,
     state,
   });
 }
@@ -414,9 +264,8 @@ export async function main(environment = process.env) {
   const lock = loadPublicationLock(publicationLockFile);
   assertPublicationLockSource(lock, releaseCommit);
   const releaseTree = lock.source.tree;
-  const exactPlanIds = operation === "publish-bootstrap"
-    ? bootstrapPublicationPlan(lock, products).map(({ id }) => id)
-    : normalPublicationPlan(lock, products).operations.map(({ id }) => id);
+  if (operation !== "publish-bootstrap") throw error("only bootstrap publication can continue");
+  const exactPlanIds = bootstrapPublicationPlan(lock, products).map(({ id }) => id);
   const result = json(readFileSync(executionResultFile, "utf8"), "release execution result");
   const state = continuationStateIdentity(operation, statePath);
   const approvedPublication = {
@@ -426,12 +275,6 @@ export async function main(environment = process.env) {
   const currentPointer = continuationPointerFromEnvironment(environment);
   const currentRunId = safeInteger(required("GITHUB_RUN_ID", environment), "GITHUB_RUN_ID");
   const currentRunAttempt = safeInteger(required("GITHUB_RUN_ATTEMPT", environment), "GITHUB_RUN_ATTEMPT");
-  const { githubState, stageHandoff } = captureContinuationGitHubState(environment, {
-    currentPointer,
-    currentRunId,
-    operation,
-    releaseCommit,
-  });
   const contract = buildContinuationContract({
     approvedPublication,
     currentPointer,
@@ -445,8 +288,6 @@ export async function main(environment = process.env) {
     releaseTree,
     result,
     executionResultFile,
-    githubState,
-    stageHandoff,
     state,
   });
   const output = environment.RELEASE_CONTINUATION_CONTRACT_PATH || DEFAULT_CONTRACT;

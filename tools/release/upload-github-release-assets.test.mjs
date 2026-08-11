@@ -15,17 +15,7 @@ import {
   exactReleaseMetadata,
   readReleaseByTagSync,
 } from "./github-release-mutations.mjs";
-import {
-  allArtifactTargets,
-  exactExtensionProducts,
-} from "./release-artifact-targets.mjs";
-import { loadGraph } from "./release-graph.mjs";
-import {
-  FIRST_RELEASE_NOMINAL_CORE_REQUESTS,
-  FIRST_RELEASE_TRANSFER_REQUEST_TOTAL,
-} from "./github-release-request-budget.mjs";
 import { readGitHubCoreRequestJournal } from "./github-core-request-journal.mjs";
-import { expectedExtensionGithubReleaseAssetCount } from "./publication-lock.mjs";
 import {
   assertExactFrozenUploadSelection,
   DEFAULT_GITHUB_RELEASE_ASSET_UPLOAD_TIMEOUT_MS,
@@ -553,84 +543,6 @@ test("asset replacement while GitHub digest metadata converges is terminal", () 
     /remote asset id changed from 80 to 81/u,
   );
   assert.equal(mutationCalls, 1);
-});
-
-test("the complete aggregate-extension asset path leaves bounded API headroom", () => {
-  const products = exactExtensionProducts("upload-github-release-assets.test");
-  const catalog = products.map((product) => ({
-    product,
-    // Build-derived iOS module/dependency XCFrameworks are release assets in
-    // addition to the base target payloads and three metadata files.
-    assetCount: expectedExtensionGithubReleaseAssetCount(product),
-  }));
-  assert.equal(products.length, 8);
-  assert.equal(products.includes("oliphaunt-extension-postgis"), true);
-  assert.equal(catalog.reduce((total, { assetCount }) => total + assetCount, 0), 108);
-  assert.equal(MAX_SAFE_EMBEDDED_RELEASE_ASSETS, 0);
-  let requests = 0;
-  let assetIndex = 0;
-  for (const { assetCount, product } of catalog) {
-    const assets = Array.from({ length: assetCount }, () => {
-      assetIndex += 1;
-      return frozenAsset(`${product}-${assetIndex}.tgz`, assetIndex);
-    });
-    const uploadPlan = plan(assets, product);
-    const remote = new Map();
-    uploadFrozenReleaseAssetsSync(uploadPlan, uploadDependencies(uploadPlan, remote, {
-      readRelease: () => {
-        requests += 1;
-        return releaseFor(uploadPlan, remote);
-      },
-      readAssets: () => {
-        requests += 1;
-        return new Map(remote);
-      },
-      uploadAsset: ({ asset }) => {
-        requests += 1;
-        remote.set(asset.name, remoteAsset(asset, 1_000 + requests));
-      },
-    }));
-  }
-  assert.equal(requests, 108 + (4 * products.length));
-
-  const binaryProducts = [
-    "liboliphaunt-native",
-    "liboliphaunt-wasix",
-    "oliphaunt-broker",
-    "oliphaunt-node-direct",
-  ];
-  const binaryAssetCount = binaryProducts.reduce(
-    (total, product) => total + allArtifactTargets(
-      { product, publishedOnly: true, surface: "github-release" },
-      "upload-github-release-assets.test",
-    ).length,
-    0,
-  );
-  assert.equal(binaryAssetCount, 33);
-  const allUploaderRequests = requests
-    + binaryAssetCount
-    + (4 * binaryProducts.length)
-    // Swift, Kotlin, and React Native each read one release and one dedicated
-    // exact asset inventory to prove an empty set.
-    + 6;
-  assert.equal(allUploaderRequests, 195);
-
-  const selectedProductCount = Object.keys(
-    loadGraph("upload-github-release-assets.test").products,
-  ).length;
-  assert.equal(selectedProductCount, 18);
-  // The manager's independently simulated budget is three mutations per
-  // selected product plus six batched release-list snapshots across
-  // preflight, stage, verify, and promotion. Pre/final receipts each read one
-  // release page plus one dedicated asset inventory for all 18 products.
-  const releaseApiRequests = allUploaderRequests
-    + ((3 * selectedProductCount) + 6)
-    + (2 * (1 + selectedProductCount));
-  assert.equal(releaseApiRequests, 293);
-  assert.ok(
-    releaseApiRequests + FIRST_RELEASE_TRANSFER_REQUEST_TOTAL + 6
-      <= FIRST_RELEASE_NOMINAL_CORE_REQUESTS,
-  );
 });
 
 test("large future product inventories use the paginated asset endpoint", () => {

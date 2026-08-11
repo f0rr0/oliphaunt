@@ -445,7 +445,7 @@ do
 done
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^crates/oliphaunt-build/'
-reject_cargo_package_entry_pattern "$package_listing" '^(\.gitignore|\.release-semantic-inputs\.json|moon.yml|release.toml|tools/)'
+reject_cargo_package_entry_pattern "$package_listing" '^(\.gitignore|moon.yml|release.toml|tools/)'
 
 build_package_listing="$root/target/liboliphaunt-sdk-check/oliphaunt-build-cargo-package-list.txt"
 printf '\n==> cargo package -p oliphaunt-build --locked --allow-dirty --list\n'

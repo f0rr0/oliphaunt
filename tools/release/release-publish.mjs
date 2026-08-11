@@ -35,8 +35,6 @@ import {
 } from "./publication-lock.mjs";
 import {
   inspectCratesIoVersionState,
-  NORMAL_REGISTRY_JSR_SECONDS_PER_CARRIER,
-  NORMAL_REGISTRY_MAVEN_OPERATION_SECONDS,
   parseRegistryMutationDeadline,
 } from "./crates-io-bootstrap-capacity.mjs";
 import { uploadCargoOnceAndReconcileExactVersion } from "./cargo-upload-reconciliation.mjs";
@@ -54,15 +52,7 @@ import {
   prepareFrozenMavenBundle,
   publishFrozenMavenBundle,
 } from "./frozen-maven-publish.mjs";
-import {
-  SUPPORTED_BUN_PRODUCT_DRY_RUNS,
-  runBunProductDryRun,
-} from "./release-product-dry-run.mjs";
-import { runExternalExtensionRegistryConsumerProof } from "./external-extension-registry-consumer.mjs";
-import {
-  stagedKotlinMavenRepo,
-  stagedJsrSourceDir,
-} from "./release-sdk-product-dry-run.mjs";
+import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from "./kotlin-maven-staging.mjs";
 import {
   compareText,
   currentProductVersionSync,
@@ -73,13 +63,6 @@ import {
   executeNormalPublicationPlan,
 } from "./normal-publication-executor.mjs";
 import { normalPublicationPlan } from "./normal-publication-plan.mjs";
-import {
-  loadNormalPublicationAdmission,
-} from "./normal-publication-admission.mjs";
-import {
-  DEFAULT_NORMAL_PUBLICATION_CHECKPOINT,
-  openNormalPublicationCheckpoint,
-} from "./normal-publication-checkpoint.mjs";
 import { loadBootstrapLedger } from "./bootstrap-ledger.mjs";
 import {
   verifyLockedCarrierIntegrity,
@@ -98,7 +81,6 @@ import {
 } from "./concurrent-github-release-asset-upload.mjs";
 import { loadGraph } from "./release-graph.mjs";
 import { readSelectedRemoteTagMapSync } from "../../.github/scripts/manage-release-drafts.mjs";
-import { validateReleaseExecutionResult } from "./release-continuation-contract.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
@@ -108,26 +90,17 @@ const REGISTRY_PUBLICATION_CHECK = [
 ];
 const REGISTRY_DEADLINE_RESERVE_MS = 5_000;
 const JSR_PUBLISH_TIMEOUT_MS = 5 * 60_000;
-const NORMAL_EXECUTION_RESULT_PATH = path.resolve(
-  ROOT,
-  process.env.OLIPHAUNT_NORMAL_PUBLICATION_EXECUTION_RESULT
-    ?? "target/release/normal-publication-execution-result.json",
-);
+const MAVEN_PUBLISH_MINIMUM_WINDOW_MS = 35 * 60_000;
 
 function usage() {
   console.log(`usage: tools/release/release-publish.mjs <publish|publish-dry-run> [publish args] [--publication-lock FILE]
 
-Runs protected release publish and publish dry-run operations through the Bun
-release command surface. The public no-product publish dry-run and product
-dry-runs are handled in Bun, including the legacy --wasm shortcut for the WASIX
-Rust SDK dry-run. Protected publish steps and no-product publish validation are
-handled in Bun.
-
-Product dry-runs normally run the full release gate. The protected workflow may
-pass --qualified-ci after downloading the exact-SHA Qualified record. That mode
+Runs protected release publication and read-only release validation. The
+protected workflow may pass --qualified-ci after downloading the exact-SHA
+Qualified record. That mode
 reverifies the fixed candidate/plan/evidence paths, binds a clean checkout to
-RELEASE_HEAD_SHA, binds --head-ref to RELEASE_SOURCE_SHA for product identity
-and tag checks, and then runs every live metadata check without replaying the
+RELEASE_HEAD_SHA and binds --head-ref to that same release commit for product identity
+and tag checks, and then runs live metadata and registry checks without replaying the
 already-proved mutation unit tests. --qualified-ci is incompatible with
 --allow-dirty and is rejected outside GitHub Actions.
 
@@ -139,7 +112,7 @@ Bootstrap mode cannot publish GitHub releases/assets, Maven, or JSR.
 
 Normal registry publication uses one lock-derived global topology:
   publish --registry-plan --products-json JSON --head-ref SHA \
-    --publication-lock FILE --registry-admission FILE
+    --publication-lock FILE
 `);
 }
 
@@ -151,34 +124,6 @@ function fail(message, exitCode = 2) {
 function exitTypedRegistryDeferral(cause) {
   console.error(encodeRegistryPublicationDeferral(cause));
   process.exit(REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE);
-}
-
-function writeNormalExecutionResult(value) {
-  const normalized = validateReleaseExecutionResult(value, {
-    operation: "publish",
-    releaseCommit: value.source.commit,
-    releaseTree: value.source.tree,
-    lock: value.lock,
-    products: value.products,
-  });
-  mkdirSync(path.dirname(NORMAL_EXECUTION_RESULT_PATH), { recursive: true });
-  const temporary = `${NORMAL_EXECUTION_RESULT_PATH}.tmp-${process.pid}`;
-  rmSync(temporary, { force: true });
-  writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  renameSync(temporary, NORMAL_EXECUTION_RESULT_PATH);
-  if (process.env.GITHUB_OUTPUT?.trim()) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `complete=${normalized.decision === "complete" ? "true" : "false"}\n`
-        + `deferred=${normalized.decision === "deferred" ? "true" : "false"}\n`
-        + `deferral_mode=${normalized.deferralMode ?? ""}\n`
-        + `progress_count=${normalized.newlyCompletedIds.length}\n`
-        + `completed_count=${normalized.completedIds.length}\n`
-        + `remaining_count=${normalized.remainingIds.length}\n`
-        + `not_before_epoch=${normalized.notBeforeEpochSeconds ?? 0}\n`,
-    );
-  }
-  return normalized;
 }
 
 function removeValueFlag(args, name) {
@@ -204,10 +149,9 @@ function removeValueFlag(args, name) {
 
 const lockArgs = removeValueFlag(Bun.argv.slice(2), "--publication-lock");
 const ledgerArgs = removeValueFlag(lockArgs.args, "--bootstrap-ledger");
-const admissionArgs = removeValueFlag(ledgerArgs.args, "--registry-admission");
-const argv = admissionArgs.args.filter((arg) => arg !== "--bootstrap-identities");
+const argv = ledgerArgs.args.filter((arg) => arg !== "--bootstrap-identities");
 const command = argv[0];
-const BOOTSTRAP_IDENTITIES = admissionArgs.args.includes("--bootstrap-identities");
+const BOOTSTRAP_IDENTITIES = ledgerArgs.args.includes("--bootstrap-identities");
 const PUBLICATION_LOCK_PATH = path.resolve(
   ROOT,
   lockArgs.value ?? process.env.OLIPHAUNT_PUBLICATION_LOCK ?? DEFAULT_PUBLICATION_LOCK,
@@ -220,15 +164,7 @@ const REGISTRY_RECEIPT_EVIDENCE_PATH = path.resolve(
   ROOT,
   process.env.OLIPHAUNT_REGISTRY_RECEIPTS ?? "target/release/registry-integrity-receipts.json",
 );
-const NORMAL_PUBLICATION_CHECKPOINT_PATH = path.resolve(
-  ROOT,
-  process.env.OLIPHAUNT_NORMAL_PUBLICATION_CHECKPOINT ?? DEFAULT_NORMAL_PUBLICATION_CHECKPOINT,
-);
-const NORMAL_PUBLICATION_ADMISSION_PATH = admissionArgs.value === null
-  ? null
-  : path.resolve(ROOT, admissionArgs.value);
 let ACTIVE_PUBLICATION_LOCK = null;
-const LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust";
 const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
 const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "liboliphaunt-native",
@@ -238,10 +174,10 @@ const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
 ]);
 
 function activePublicationSourceRef(environment = process.env) {
-  const configured = environment.RELEASE_SOURCE_SHA?.trim();
+  const configured = environment.RELEASE_HEAD_SHA?.trim();
   if (configured === undefined || configured === "") return "HEAD";
   if (!/^[0-9a-f]{40}$/u.test(configured)) {
-    fail("RELEASE_SOURCE_SHA must be a full lowercase commit SHA when provided");
+    fail("RELEASE_HEAD_SHA must be a full lowercase commit SHA when provided");
   }
   return configured;
 }
@@ -330,22 +266,25 @@ function isDirectory(file) {
   }
 }
 
+function stagedKotlinMavenRepo() {
+  return validateStagedKotlinMavenRepo({
+    version: currentProductVersionSync("oliphaunt-kotlin", TOOL),
+  });
+}
+
+function stagedJsrSourceDir(product) {
+  const directory = path.join(ROOT, "target", "sdk-artifacts", product, "jsr-source");
+  if (!isDirectory(directory)) {
+    fail(`${product} requires staged JSR source under target/sdk-artifacts/${product}/jsr-source`);
+  }
+  return directory;
+}
+
 function noProductPublishDryRunPassthrough(args) {
   if (args.includes("--wasm") || selectsProducts(args)) {
     return null;
   }
   return args.filter((arg) => arg !== "--allow-dirty");
-}
-
-function legacyWasmPublishDryRunPlan(args) {
-  if (!args.includes("--wasm") || selectsProducts(args)) {
-    return null;
-  }
-  return {
-    allowDirty: args.includes("--allow-dirty"),
-    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--wasm"),
-    product: LEGACY_WASM_DRY_RUN_PRODUCT,
-  };
 }
 
 function parseProductsJson(args) {
@@ -798,7 +737,7 @@ async function publishLockedMavenProducts(products, slug) {
     const deadlineEpochSeconds = registryMutationDeadlineSeconds();
     requirePreMutationRegistryWindow({
       deadlineEpochSeconds,
-      minimumMilliseconds: NORMAL_REGISTRY_MAVEN_OPERATION_SECONDS * 1000,
+      minimumMilliseconds: MAVEN_PUBLISH_MINIMUM_WINDOW_MS,
       reserveMilliseconds: REGISTRY_DEADLINE_RESERVE_MS,
       context: `Maven Central atomic deployment for ${products.slice().sort(compareText).join(",")}`,
     });
@@ -850,37 +789,6 @@ function registryMutationDeadlineSeconds() {
     throw new Error("REGISTRY_MUTATION_DEADLINE_EPOCH is required for protected registry mutation");
   }
   return parseRegistryMutationDeadline(raw);
-}
-
-function normalRegistryAuthoritativeWindowSeconds() {
-  const raw = releaseEnvironment("NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS");
-  if (!/^[1-9][0-9]*$/u.test(raw) || !Number.isSafeInteger(Number(raw))) {
-    throw new Error("NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS must be a positive safe integer");
-  }
-  return Number(raw);
-}
-
-function loadBoundNormalPublicationAdmission({ lock, products, plan, checkpoint }) {
-  if (NORMAL_PUBLICATION_ADMISSION_PATH === null) {
-    throw new Error("--registry-admission is required for exact normal registry publication");
-  }
-  const expectedDigest = releaseEnvironment("NORMAL_PUBLICATION_ADMISSION_DIGEST");
-  if (!/^[0-9a-f]{64}$/u.test(expectedDigest)) {
-    throw new Error("NORMAL_PUBLICATION_ADMISSION_DIGEST must be a lowercase SHA-256 digest");
-  }
-  const admission = loadNormalPublicationAdmission(NORMAL_PUBLICATION_ADMISSION_PATH, {
-    authoritativeWindowSeconds: normalRegistryAuthoritativeWindowSeconds(),
-    checkpoint,
-    lock,
-    plan,
-    products,
-  });
-  if (admission.admissionDigest !== expectedDigest) {
-    throw new Error(
-      `normal publication admission digest ${admission.admissionDigest} differs from the capacity-step output ${expectedDigest}`,
-    );
-  }
-  return admission;
 }
 
 function registryMutationRemainingMilliseconds(context, minimum = 1) {
@@ -1203,7 +1111,7 @@ async function publishTypescriptJsr(headRef, { version: versionOverride, source:
       JSR_PUBLISH_TIMEOUT_MS,
       requirePreMutationRegistryWindow({
         deadlineEpochSeconds: registryMutationDeadlineSeconds(),
-        minimumMilliseconds: NORMAL_REGISTRY_JSR_SECONDS_PER_CARRIER * 1000,
+        minimumMilliseconds: JSR_PUBLISH_TIMEOUT_MS,
         reserveMilliseconds: REGISTRY_DEADLINE_RESERVE_MS,
         context: `JSR publish for ${packageName}@${version}`,
       }),
@@ -1471,51 +1379,12 @@ function requireNormalRegistryProductInputs(products) {
 
 async function publishNormalRegistryPlan(products, headRef) {
   assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
-  rmSync(NORMAL_EXECUTION_RESULT_PATH, { force: true });
-  const canonicalProducts = [...products].sort(compareText);
   const plan = normalPublicationPlan(ACTIVE_PUBLICATION_LOCK, products);
   if (plan.carrierCount === 0) {
-    const checkpoint = openNormalPublicationCheckpoint({
-      file: NORMAL_PUBLICATION_CHECKPOINT_PATH,
-      lock: ACTIVE_PUBLICATION_LOCK,
-      products,
-      plan,
-    });
-    const admission = loadBoundNormalPublicationAdmission({
-      checkpoint: checkpoint.checkpoint,
-      lock: ACTIVE_PUBLICATION_LOCK,
-      plan,
-      products,
-    });
-    if (
-      admission.completedOperationIds.length !== 0
-      || admission.admittedOperationIds.length !== 0
-      || admission.unadmittedOperationIds.length !== 0
-    ) {
-      throw new Error("empty registry topology received a nonempty normal-publication admission partition");
-    }
     writeRegistryReceiptEvidence(REGISTRY_RECEIPT_EVIDENCE_PATH, ACTIVE_PUBLICATION_LOCK, {
       products,
       ecosystems: ["cargo", "npm", "maven", "jsr"],
       receipts: [],
-    });
-    writeNormalExecutionResult({
-      schema: "oliphaunt-normal-publication-execution-result-v1",
-      operation: "publish",
-      decision: "complete",
-      deferralMode: null,
-      source: { commit: ACTIVE_PUBLICATION_LOCK.source.commit, tree: ACTIVE_PUBLICATION_LOCK.source.tree },
-      lock: {
-        lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
-        catalogDigest: ACTIVE_PUBLICATION_LOCK.catalogDigest,
-        packageEnvelopeDigest: ACTIVE_PUBLICATION_LOCK.packageEnvelopeDigest,
-      },
-      products: canonicalProducts,
-      admittedIds: [],
-      completedIds: [],
-      newlyCompletedIds: [],
-      remainingIds: [],
-      notBeforeEpochSeconds: null,
     });
     console.log("Selected release contains no registry carriers; preserved exact empty registry receipt evidence and skipped registry mutation.");
     return;
@@ -1542,49 +1411,15 @@ async function publishNormalRegistryPlan(products, headRef) {
       throw new Error(`complete bootstrap ledger contains ${id}, which is absent from the exact normal publication plan`);
     }
   }
-  const checkpoint = openNormalPublicationCheckpoint({
-    file: NORMAL_PUBLICATION_CHECKPOINT_PATH,
-    lock: ACTIVE_PUBLICATION_LOCK,
-    products,
-    plan,
-    initialReceipts: [...provenReceipts.values()],
-  });
-  const admission = loadBoundNormalPublicationAdmission({
-    checkpoint: checkpoint.checkpoint,
-    lock: ACTIVE_PUBLICATION_LOCK,
-    plan,
-    products,
-  });
-  const completedOperationResults = await checkpoint.reconcileCompleted();
-  const startingCompletedOperationIds = new Set(completedOperationResults.keys());
-  const canonicalStartingCompletedIds = plan.operations
-    .filter(({ id }) => startingCompletedOperationIds.has(id))
-    .map(({ id }) => id);
-  if (
-    JSON.stringify(canonicalStartingCompletedIds)
-      !== JSON.stringify(admission.completedOperationIds)
-  ) {
-    throw new Error("live reconciled checkpoint operations differ from the immutable capacity admission");
-  }
-  const admittedIds = admission.admittedOperationIds;
   console.log(
-    `Executing exactly ${admittedIds.length}/${plan.operations.length - canonicalStartingCompletedIds.length} `
-      + `remaining dependency-ordered registry operations for ${plan.carrierCount} exact frozen carriers.`,
+    `Reconciling all ${plan.operations.length} dependency-ordered registry operations `
+      + `for ${plan.carrierCount} exact frozen carriers.`,
   );
   if (provenReceipts.size > 0) {
     console.log(`Reusing ${provenReceipts.size} lock-bound Cargo/npm receipts from the complete, preverified bootstrap ledger.`);
   }
-  if (completedOperationResults.size > 0) {
-    console.log(
-      `Reconciled and resumed ${completedOperationResults.size} atomically checkpointed registry operations from ` +
-      `${path.relative(ROOT, NORMAL_PUBLICATION_CHECKPOINT_PATH)}.`,
-    );
-  }
   const execution = await executeNormalPublicationPlan({
     plan,
-    completedOperationResults,
-    admittedOperationIds: admittedIds,
-    onOperationComplete: checkpoint.recordOperation,
     batchSize: process.env.CRATES_IO_TRUSTED_PUBLISH_BATCH_SIZE,
     cargoVersionPublished: async (operation) => {
       if (provenReceipts.has(operation.carrierId)) return true;
@@ -1594,50 +1429,6 @@ async function publishNormalRegistryPlan(products, headRef) {
     publishCarrier: (operation, context) => publishNormalCarrier(operation, headRef, context, provenReceipts),
     publishMaven: (operation) => publishNormalMavenOperation(operation, headRef),
   });
-  if (JSON.stringify(execution.admittedOperationIds) !== JSON.stringify(admittedIds)) {
-    throw new Error("normal registry executor substituted the immutable admitted operation subset");
-  }
-  const deferralMode = execution.decision === "complete"
-    ? null
-    : execution.newlyCompletedOperationIds.length > 0
-      ? "progress"
-      : execution.deferReason === "rate-limit"
-        ? "rate-limit"
-        : execution.deferReason === "deadline"
-          ? "pre-mutation-deadline"
-          : (() => {
-              throw new Error(
-                `zero-progress normal-publication deferral requires an explicit rate-limit or deadline reason; got `
-                  + `${execution.deferReason ?? "none"}`,
-              );
-            })();
-  const executionResultValue = {
-    schema: "oliphaunt-normal-publication-execution-result-v1",
-    operation: "publish",
-    decision: execution.decision,
-    deferralMode,
-    source: { commit: ACTIVE_PUBLICATION_LOCK.source.commit, tree: ACTIVE_PUBLICATION_LOCK.source.tree },
-    lock: {
-      lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
-      catalogDigest: ACTIVE_PUBLICATION_LOCK.catalogDigest,
-      packageEnvelopeDigest: ACTIVE_PUBLICATION_LOCK.packageEnvelopeDigest,
-    },
-    products: canonicalProducts,
-    admittedIds: admission.admittedOperationIds,
-    completedIds: execution.completedOperationIds,
-    newlyCompletedIds: execution.newlyCompletedOperationIds,
-    remainingIds: execution.remainingOperationIds,
-    notBeforeEpochSeconds: execution.notBeforeEpochSeconds,
-  };
-  if (executionResultValue.decision === "deferred") {
-    const executionResult = writeNormalExecutionResult(executionResultValue);
-    console.log(
-      `Checkpointed ${executionResult.newlyCompletedIds.length} new registry operation(s); `
-        + `${executionResult.remainingIds.length} operation(s) remain for a continuation no earlier than `
-        + `${executionResult.notBeforeEpochSeconds}.`,
-    );
-    return;
-  }
   const completeReceipts = collectNormalPublicationReceipts({
     plan,
     initialReceipts: [...provenReceipts.values()],
@@ -1648,7 +1439,6 @@ async function publishNormalRegistryPlan(products, headRef) {
     ecosystems: ["cargo", "npm", "maven", "jsr"],
     receipts: [...completeReceipts.values()],
   });
-  writeNormalExecutionResult(executionResultValue);
   console.log(`Preserved ${completeReceipts.size} exact-lock registry receipts at ${path.relative(ROOT, REGISTRY_RECEIPT_EVIDENCE_PATH)}.`);
 }
 
@@ -1667,7 +1457,7 @@ function jsonOutput(args) {
   }
 }
 
-function productPublishDryRunPlan(args) {
+function releaseValidationPlan(args) {
   const requested = parseProductsJson(args);
   if (requested === null) {
     return null;
@@ -1677,33 +1467,21 @@ function productPublishDryRunPlan(args) {
   if (qualifiedCi && allowDirty) {
     fail("--qualified-ci cannot be combined with --allow-dirty");
   }
-  const unsupportedRequested = requested.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
-  if (unsupportedRequested.length > 0) {
-    fail(`unsupported Bun product publish dry-run selection: ${unsupportedRequested.join(", ")}`);
-  }
-  const ordered = releaseOrderedProducts(requested);
-  const unsupportedOrdered = ordered.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
-  if (unsupportedOrdered.length > 0) {
-    fail(`release graph selected unsupported Bun product publish dry-run dependencies: ${unsupportedOrdered.join(", ")}`);
-  }
+  releaseOrderedProducts(requested);
   return {
-    allowDirty,
     qualifiedCi,
-    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--qualified-ci" && arg !== "--wasm"),
-    products: ordered,
+    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--qualified-ci"),
   };
 }
 
-function verifyQualifiedCiReplay(productDryRunPlan) {
+function verifyQualifiedCiReplay(validationPlan) {
   if (process.env.GITHUB_ACTIONS !== "true") {
     fail("--qualified-ci is valid only inside the protected GitHub Actions release workflow");
   }
   for (const name of [
-    "CANDIDATE_MODE",
     "CI_RUN_ID",
     "GITHUB_REPOSITORY",
     "RELEASE_HEAD_SHA",
-    "RELEASE_SOURCE_SHA",
     "WASIX_EVIDENCE_REQUIRED",
   ]) {
     if (!process.env[name]?.trim()) {
@@ -1713,17 +1491,15 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   if (!["true", "false"].includes(process.env.WASIX_EVIDENCE_REQUIRED)) {
     fail("--qualified-ci requires WASIX_EVIDENCE_REQUIRED to be true or false");
   }
-  const releaseSourceRef = flagValue(
-    productDryRunPlan.passthrough,
+  const headRef = flagValue(
+    validationPlan.passthrough,
     "--head-ref",
   ) ?? "HEAD";
   try {
     assertQualifiedReplaySourceState({
       repo: ROOT,
-      headRef: process.env.RELEASE_HEAD_SHA,
+      headRef,
       expectedSha: process.env.RELEASE_HEAD_SHA,
-      releaseSourceRef,
-      expectedReleaseSourceSha: process.env.RELEASE_SOURCE_SHA,
     });
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -1731,9 +1507,7 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   let replay;
   try {
     replay = qualifiedReplayCandidateBinding({
-      candidateMode: process.env.CANDIDATE_MODE,
-      controllerSha: process.env.RELEASE_HEAD_SHA,
-      releaseSourceSha: process.env.RELEASE_SOURCE_SHA,
+      releaseSha: process.env.RELEASE_HEAD_SHA,
       runId: process.env.CI_RUN_ID,
     });
   } catch (error) {
@@ -1760,29 +1534,25 @@ function verifyQualifiedCiReplay(productDryRunPlan) {
   });
 }
 
-async function runProductDryRunPlan(productDryRunPlan) {
-  if (productDryRunPlan.qualifiedCi) {
-    verifyQualifiedCiReplay(productDryRunPlan);
+function runReleaseValidation(validationPlan) {
+  if (validationPlan.qualifiedCi) {
+    verifyQualifiedCiReplay(validationPlan);
     run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs"]);
   } else {
     run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
   }
-  run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
-  for (const product of productDryRunPlan.products) {
-    await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
-  }
-  await runExternalExtensionRegistryConsumerProof(productDryRunPlan.products);
+  run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...validationPlan.passthrough]);
 }
 
 async function publishNoProduct(args) {
   const productsJson = flagValue(args, "--products-json");
-  const productDryRunPlan = productPublishDryRunPlan(args);
+  const validationPlan = releaseValidationPlan(args);
   if (productsJson !== null) {
     run(TOOL, ["tools/release/check_publish_environment.mjs", "--products-json", productsJson]);
   }
-  if (productDryRunPlan !== null) {
-    await runProductDryRunPlan(productDryRunPlan);
-    console.log("publish environment and dry-run checks passed; package-native publish steps run in the Release workflow");
+  if (validationPlan !== null) {
+    runReleaseValidation(validationPlan);
+    console.log("publish environment and release checks passed; package publishing runs in the Release workflow");
     return;
   }
   run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
@@ -1802,19 +1572,9 @@ if (isNoProductPublishDryRun(command, argv.slice(1))) {
   process.exit(0);
 }
 
-const productDryRunPlan = command === "publish-dry-run" ? productPublishDryRunPlan(argv.slice(1)) : null;
-if (productDryRunPlan !== null) {
-  await runProductDryRunPlan(productDryRunPlan);
-  process.exit(0);
-}
-
-const legacyWasmDryRunPlan = command === "publish-dry-run" ? legacyWasmPublishDryRunPlan(argv.slice(1)) : null;
-if (legacyWasmDryRunPlan !== null) {
-  run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
-  if (legacyWasmDryRunPlan.passthrough.length > 0) {
-    run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...legacyWasmDryRunPlan.passthrough]);
-  }
-  await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });
+const validationPlan = command === "publish-dry-run" ? releaseValidationPlan(argv.slice(1)) : null;
+if (validationPlan !== null) {
+  runReleaseValidation(validationPlan);
   process.exit(0);
 }
 
@@ -1852,12 +1612,6 @@ if (BOOTSTRAP_IDENTITIES) {
 if (BOOTSTRAP_IDENTITIES && normalRegistryPlanSelected) {
   fail("--registry-plan is forbidden during identity bootstrap");
 }
-if (BOOTSTRAP_IDENTITIES && NORMAL_PUBLICATION_ADMISSION_PATH !== null) {
-  fail("--registry-admission is forbidden during identity bootstrap");
-}
-if (!normalRegistryPlanSelected && NORMAL_PUBLICATION_ADMISSION_PATH !== null) {
-  fail("--registry-admission is valid only with --registry-plan");
-}
 if (BOOTSTRAP_IDENTITIES && bootstrapCarrierId !== null) {
   try {
     await publishBootstrapCarrier(
@@ -1874,9 +1628,6 @@ if (normalRegistryPlanSelected) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested === null || publishProductStep !== null) {
     fail("--registry-plan requires --products-json and cannot be combined with --product/--step");
-  }
-  if (NORMAL_PUBLICATION_ADMISSION_PATH === null) {
-    fail("--registry-plan requires the immutable --registry-admission emitted by capacity preflight");
   }
   const withoutMode = argv.slice(1).filter((value) => value !== "--registry-plan");
   const unexpected = unexpectedValueFlagArguments(withoutMode, new Set(["--products-json", "--head-ref"]));

@@ -20,11 +20,8 @@ export const RELEASE_CONTINUATION_DEADLINE_DEFERRAL_BUDGET = 1;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const GIT_OBJECT = /^[0-9a-f]{40,64}$/u;
 const CHECKPOINT = /^checkpoint-[0-9]{6}-[0-9a-f]{64}[.]json$/u;
-const OPERATIONS = new Set(["publish-bootstrap", "publish"]);
-const EXECUTION_RESULT_SCHEMAS = new Map([
-  ["publish-bootstrap", "oliphaunt-bootstrap-execution-result-v1"],
-  ["publish", "oliphaunt-normal-publication-execution-result-v1"],
-]);
+const OPERATION = "publish-bootstrap";
+const EXECUTION_RESULT_SCHEMA = "oliphaunt-bootstrap-execution-result-v1";
 
 function error(message) {
   return new Error(`release-continuation-contract: ${message}`);
@@ -103,8 +100,8 @@ function orderedUniqueStrings(value, context, { allowEmpty = true } = {}) {
 }
 
 function operation(value) {
-  if (!OPERATIONS.has(value)) throw error(`unsupported continuation operation ${JSON.stringify(value)}`);
-  return value;
+  if (value !== OPERATION) throw error(`continuation operation must be ${OPERATION}`);
+  return OPERATION;
 }
 
 function source(value, context = "source") {
@@ -164,77 +161,6 @@ function approvedPublication(value) {
     throw error("approvedPublication.artifacts must be the frozen lock and bootstrap capsule");
   }
   return { artifacts, runId };
-}
-
-function stageHandoff(value, expectedOperation) {
-  if (expectedOperation === "publish-bootstrap") {
-    if (value !== null) throw error("bootstrap continuation must not contain a GitHub-stage handoff");
-    return null;
-  }
-  exactKeys(value, ["artifact", "runId"], "stageHandoff");
-  const runId = positiveInteger(value.runId, "stageHandoff.runId");
-  const artifact = normalizeArtifactIdentity(value.artifact, "stageHandoff.artifact");
-  if (!artifact.name.startsWith("github-stage-handoff-")) {
-    throw error("stageHandoff.artifact must be an immutable GitHub-stage handoff");
-  }
-  return { artifact, runId };
-}
-
-function githubStateFile(value, context, { allowEmpty }) {
-  exactKeys(value, ["digest", "lastReservedAtMs", "sequence", "size"], context);
-  if (typeof value.digest !== "string" || !SHA256.test(value.digest)) {
-    throw error(`${context}.digest must be a lowercase SHA-256 digest`);
-  }
-  const sequence = safeInteger(value.sequence, `${context}.sequence`, {
-    minimum: allowEmpty ? 0 : 1,
-  });
-  const size = positiveInteger(value.size, `${context}.size`);
-  let lastReservedAtMs = null;
-  if (sequence === 0) {
-    if (value.lastReservedAtMs !== null) {
-      throw error(`${context}.lastReservedAtMs must be null for an empty state`);
-    }
-  } else {
-    lastReservedAtMs = safeInteger(
-      value.lastReservedAtMs,
-      `${context}.lastReservedAtMs`,
-    );
-  }
-  return { digest: value.digest, lastReservedAtMs, sequence, size };
-}
-
-function githubState(value, expectedOperation) {
-  if (expectedOperation === "publish-bootstrap") {
-    if (value !== null) {
-      throw error("bootstrap continuation must not contain GitHub-stage pacing state");
-    }
-    return null;
-  }
-  exactKeys(
-    value,
-    ["coreRequestJournal", "headSha", "pacer", "repository", "rootRunId"],
-    "githubState",
-  );
-  if (typeof value.headSha !== "string" || !GIT_OBJECT.test(value.headSha)) {
-    throw error("githubState.headSha must be a lowercase Git object id");
-  }
-  if (
-    typeof value.repository !== "string"
-    || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value.repository)
-  ) {
-    throw error("githubState.repository must be OWNER/NAME");
-  }
-  return {
-    coreRequestJournal: githubStateFile(
-      value.coreRequestJournal,
-      "githubState.coreRequestJournal",
-      { allowEmpty: true },
-    ),
-    headSha: value.headSha,
-    pacer: githubStateFile(value.pacer, "githubState.pacer", { allowEmpty: false }),
-    repository: value.repository,
-    rootRunId: positiveInteger(value.rootRunId, "githubState.rootRunId"),
-  };
 }
 
 function lineage(value) {
@@ -372,19 +298,13 @@ function outcome(value) {
   return normalized;
 }
 
-function state(value, expectedOperation) {
+function state(value) {
   exactKeys(value, ["digest", "entryCount", "kind"], "state");
-  const expectedKind = expectedOperation === "publish-bootstrap"
-    ? "bootstrap-ledger"
-    : "normal-publication-checkpoint";
-  if (value.kind !== expectedKind) throw error(`state.kind must be ${expectedKind}`);
+  if (value.kind !== "bootstrap-ledger") throw error("state.kind must be bootstrap-ledger");
   if (typeof value.digest !== "string" || !SHA256.test(value.digest)) {
     throw error("state.digest must be a lowercase SHA-256 digest");
   }
   const entryCount = positiveInteger(value.entryCount, "state.entryCount");
-  if (expectedOperation === "publish" && entryCount !== 1) {
-    throw error("normal-publication checkpoint state must contain exactly one entry");
-  }
   return { digest: value.digest, entryCount, kind: value.kind };
 }
 
@@ -393,7 +313,6 @@ function contractBase(value) {
     value,
     [
       "approvedPublication",
-      "githubState",
       "lineage",
       "lock",
       "operation",
@@ -401,7 +320,6 @@ function contractBase(value) {
       "products",
       "schema",
       "source",
-      "stageHandoff",
       "state",
     ],
     "continuation contract body",
@@ -412,7 +330,6 @@ function contractBase(value) {
   const normalizedOperation = operation(value.operation);
   const normalized = {
     approvedPublication: approvedPublication(value.approvedPublication),
-    githubState: githubState(value.githubState, normalizedOperation),
     lineage: lineage(value.lineage),
     lock: lockBinding(value.lock),
     operation: normalizedOperation,
@@ -420,31 +337,14 @@ function contractBase(value) {
     products: uniqueStrings(value.products, "products", { allowEmpty: false }),
     schema: value.schema,
     source: source(value.source),
-    stageHandoff: stageHandoff(value.stageHandoff, normalizedOperation),
-    state: state(value.state, normalizedOperation),
+    state: state(value.state),
   };
-  if (
-    normalized.operation === "publish"
-    && normalized.stageHandoff.runId !== normalized.lineage.rootRunId
-  ) {
-    throw error("normal continuation stage handoff must belong to the exact root Release run");
-  }
-  if (
-    normalized.operation === "publish"
-    && (
-      normalized.githubState.headSha !== normalized.source.commit
-      || normalized.githubState.rootRunId !== normalized.lineage.rootRunId
-    )
-  ) {
-    throw error("normal continuation GitHub state must bind the exact source and root lineage");
-  }
   if (normalized.outcome.deferralMode === "pre-mutation-capacity") {
     if (
-      normalized.operation !== "publish"
-      || normalized.lineage.generation !== 1
+      normalized.lineage.generation !== 1
       || normalized.lineage.capacityDeferralAllowance !== true
     ) {
-      throw error("pre-mutation capacity deferral is allowed only on a root normal-publication generation");
+      throw error("pre-mutation capacity deferral is allowed only on a root bootstrap generation");
     }
   } else if (
     normalized.lineage.generation === 1
@@ -491,7 +391,6 @@ export function validateReleaseContinuationContract(value, expected = {}) {
     [
       "approvedPublication",
       "contractDigest",
-      "githubState",
       "lineage",
       "lock",
       "operation",
@@ -499,7 +398,6 @@ export function validateReleaseContinuationContract(value, expected = {}) {
       "products",
       "schema",
       "source",
-      "stageHandoff",
       "state",
     ],
     "continuation contract",
@@ -539,7 +437,6 @@ export function createReleaseContinuationPointer({ contract, artifact }) {
     deadlineDeferralsUsed: normalizedContract.lineage.deadlineDeferralsUsed,
     contractDigest: normalizedContract.contractDigest,
     generation: normalizedContract.lineage.generation,
-    githubState: normalizedContract.githubState,
     maxGenerations: normalizedContract.lineage.maxGenerations,
     operation: normalizedContract.operation,
     parentRunAttempt: normalizedContract.lineage.parentRunAttempt,
@@ -563,7 +460,6 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
       "deadlineDeferralBudget",
       "deadlineDeferralsUsed",
       "generation",
-      "githubState",
       "maxGenerations",
       "operation",
       "parentRunAttempt",
@@ -593,7 +489,6 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
       "pointer.deadlineDeferralsUsed",
     ),
     generation: positiveInteger(value.generation, "pointer.generation"),
-    githubState: githubState(value.githubState, value.operation),
     maxGenerations: positiveInteger(value.maxGenerations, "pointer.maxGenerations"),
     operation: operation(value.operation),
     parentRunAttempt: positiveInteger(value.parentRunAttempt, "pointer.parentRunAttempt"),
@@ -612,15 +507,6 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
   };
   if (typeof body.capacityDeferralAllowance !== "boolean") {
     throw error("pointer.capacityDeferralAllowance must be a boolean");
-  }
-  if (
-    body.operation === "publish"
-    && (
-      body.githubState.headSha !== body.releaseCommit
-      || body.githubState.rootRunId !== body.rootRunId
-    )
-  ) {
-    throw error("pointer GitHub state does not match its release or root lineage");
   }
   if (
     body.deadlineDeferralBudget !== RELEASE_CONTINUATION_DEADLINE_DEFERRAL_BUDGET
@@ -658,14 +544,7 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
 }
 
 export function continuationStateIdentity(operationName, statePath) {
-  const normalizedOperation = operation(operationName);
-  if (normalizedOperation === "publish") {
-    return {
-      digest: sha256File(statePath),
-      entryCount: 1,
-      kind: "normal-publication-checkpoint",
-    };
-  }
+  operation(operationName);
   const metadata = lstatSync(statePath);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     throw error(`${statePath} must be a regular bootstrap-ledger directory`);
@@ -718,7 +597,7 @@ export function validateReleaseExecutionResult(value, expected = {}) {
     "execution result",
   );
   const normalizedOperation = operation(value.operation);
-  if (value.schema !== EXECUTION_RESULT_SCHEMAS.get(normalizedOperation)) {
+  if (value.schema !== EXECUTION_RESULT_SCHEMA) {
     throw error(`execution result schema does not match ${normalizedOperation}`);
   }
   if (!new Set(["complete", "deferred"]).has(value.decision)) {
@@ -776,11 +655,10 @@ export function validateReleaseExecutionResult(value, expected = {}) {
       }
     } else if (normalized.deferralMode === "pre-mutation-capacity") {
       if (
-        normalized.operation !== "publish"
-        || normalized.admittedIds.length !== 0
+        normalized.admittedIds.length !== 0
         || normalized.newlyCompletedIds.length !== 0
       ) {
-        throw error("pre-mutation capacity deferral must admit and mutate zero normal-publication operations");
+        throw error("pre-mutation capacity deferral must admit and mutate zero bootstrap operations");
       }
     } else if (normalized.deferralMode === "rate-limit") {
       const admittedRemainingCargo = normalized.admittedIds.some((id) =>

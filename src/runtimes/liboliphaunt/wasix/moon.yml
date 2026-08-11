@@ -43,10 +43,7 @@ tasks:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
     deps:
-      - "postgres18:check"
-      - "source-toolchains:check"
-      - "third-party-shared:check"
-      - "third-party-wasix:check"
+      - "source-inputs:check"
       - "extension-runtime-contract:check"
       - "shared-fixtures:check"
     inputs:

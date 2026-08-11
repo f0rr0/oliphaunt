@@ -938,17 +938,12 @@ fn find_local_extension_archive(
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
     let archive_name = format!("{}-{version}-wasix-portable.tar.zst", package.product);
     let roots = if let Some(path) = env::var_os("OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT") {
-        // An explicit root binds qualification to exact same-run inputs. Do not
-        // silently fall back to stale workspace or package-cache artifacts.
+        // An explicit root takes precedence over workspace and package assets.
         vec![PathBuf::from(path)]
     } else {
         let mut roots = Vec::new();
         if let Some(repo_root) = repo_root {
             roots.push(repo_root.join("target/extension-artifacts"));
-            roots.push(
-                repo_root
-                    .join("target/local-registry-artifacts/oliphaunt-extension-package-artifacts"),
-            );
         }
         roots.push(manifest_dir.join("extension-artifacts"));
         roots

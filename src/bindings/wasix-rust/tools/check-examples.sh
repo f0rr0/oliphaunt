@@ -7,10 +7,6 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-if [[ -z "${CARGO_REGISTRIES_OLIPHAUNT_LOCAL_INDEX:-}" ]]; then
-  exec examples/tools/with-local-registries.sh bash "$0"
-fi
-
 run() {
   printf '\n==> %s\n' "$*"
   "$@"

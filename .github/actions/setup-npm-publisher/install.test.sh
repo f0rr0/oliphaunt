@@ -49,13 +49,15 @@ console.log(process.env.OLIPHAUNT_WRAPPER_ARGV_PROBE === "1"
 EOF
 printf '{"name":"npm","version":"11.18.0"}\n' >"$work/payload/package/package.json"
 chmod 0755 "$work/payload/package/bin/npm-cli.js" "$work/payload/package/bin/npx-cli.js"
-tar -C "$work/payload" -czf "$work/npm.tgz" package
+COPYFILE_DISABLE=1 tar --format ustar -C "$work/payload" -czf "$work/npm.tgz" package
 archive_bytes="$(wc -c <"$work/npm.tgz" | tr -d '[:space:]')"
 archive_sha256="$(sha256sum "$work/npm.tgz" | awk '{print $1}')"
 archive_sha512="$(sha512sum "$work/npm.tgz" | awk '{print $1}')"
 entry_count="$(tar -tzf "$work/npm.tgz" | wc -l | tr -d '[:space:]')"
 expanded_bytes="$(
-  find "$work/payload/package" -type f -printf '%s\n' | awk '{ total += $1 } END { print total }'
+  find "$work/payload/package" -type f \
+    -exec sh -c 'for file do wc -c < "$file"; done' sh {} + |
+    awk '{ total += $1 } END { print total }'
 )"
 python3 "$extractor" extract --archive "$work/npm.tgz" --format tar.gz --prefix package \
   --entry-count "$entry_count" --expected-bytes "$archive_bytes" \

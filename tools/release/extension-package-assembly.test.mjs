@@ -24,7 +24,6 @@ const EXTENSION_ASSET_CONTRACT_INPUT = "/tools/release/extension-runtime-asset-c
 const EXTENSION_ASSET_CONTRACT_CONSUMER_INPUTS = new Set([
   "/tools/release/build-extension-ci-artifacts.mjs",
   "/tools/release/check-staged-artifacts.mjs",
-  "/tools/release/extension-registry-carrier-materializer.mjs",
   "/tools/release/publication-lock.mjs",
 ]);
 const roots = [];
@@ -139,7 +138,6 @@ test("Moon plans both extension assembly tasks for every producer and validator 
     "/src/shared/extension-runtime-contract/**/*",
     "/tools/dev/bun.sh",
     "/tools/release/extension-target-profiles.toml",
-    "/tools/release/release-semantic-inputs.toml",
   ];
   for (const taskName of ["assemble-mobile", "assemble-release"]) {
     const taskInputs = new Set(project.tasks[taskName].inputs);
@@ -158,7 +156,9 @@ test("Moon tasks that consume the public extension asset projection own its exac
     encoding: "utf8",
   });
   assert.equal(listed.status, 0, listed.stderr);
-  const projectFiles = listed.stdout.split(/\r?\n/u).filter(Boolean);
+  const projectFiles = listed.stdout
+    .split(/\r?\n/u)
+    .filter((file) => file && existsSync(path.join(ROOT, file)));
   assert.ok(projectFiles.length > 0, "repository must contain Moon project files");
 
   for (const projectFile of projectFiles) {

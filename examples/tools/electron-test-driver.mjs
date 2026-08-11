@@ -94,7 +94,7 @@ async function rendererTodoSmoke(timeoutMs) {
   setValue("#title", title);
   setValue("#notes", notes);
   setValue("#area", "examples");
-  setValue("#context", "local registry");
+  setValue("#context", "public packages");
   setValue("#priority", "1");
   required("button[type='submit']").click();
 

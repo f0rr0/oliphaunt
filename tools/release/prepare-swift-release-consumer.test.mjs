@@ -11,7 +11,7 @@ function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-swift-release-consumer-"));
   const version = "1.2.3";
   const asset = path.join(root, `liboliphaunt-${version}-apple-spm-xcframework.zip`);
-  writeFileSync(asset, "exact candidate xcframework bytes\n");
+  writeFileSync(asset, "xcframework bytes\n");
   const checksum = createHash("sha256").update(readFileSync(asset)).digest("hex");
   const url =
     `https://github.com/f0rr0/oliphaunt/releases/download/` +

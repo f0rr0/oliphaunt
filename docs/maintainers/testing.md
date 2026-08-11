@@ -35,16 +35,11 @@ Merging a PR emits a `pull_request.closed` cancellation tombstone in the
 existing PR concurrency group. That event allocates no runners: the plan,
 release-intent, and every `always()` aggregate skip. Its only purpose is to
 cancel obsolete PR work before the `main` commit is qualified; work completed
-before cancellation has still consumed runner time. A cost-constrained
-pre-publication repair instead keeps CI disabled through all intermediate
-updates and the final merge, then enables CI and performs exactly one manual
-full dispatch on the final `main` SHA. Never pair that dispatch with an
-automatic push run: non-PR runs sharing the SHA group serialize rather than
-cancel each other.
+before cancellation has still consumed runner time.
 For a manual dispatch on `main`, release intent compares the dispatched SHA
 with its immutable sole parent; it never uses the moving `origin/main` ref,
-which already names the head after a merge. Non-main diagnostic and
-history-repair dispatches continue to compare with current `origin/main`.
+which already names the head after a merge. Non-main diagnostic dispatches
+continue to compare with current `origin/main`.
 
 Target-scoped consumer diagnostics do not inherit an implicit success barrier
 from a multi-platform producer matrix. Mobile extension packaging and Android
@@ -72,51 +67,14 @@ or security-lifecycle assertion. The broker is additionally built and started
 in its pinned older linker baseline so the rehearsal cannot merely document a
 runner-induced floor regression.
 
-### Candidate Cargo example locks
+### Cargo example manifests
 
-Cargo examples are registry-neutral source fixtures. Their manifests use
-ordinary crates.io dependencies with exact Oliphaunt versions; they do not
-commit `registry = "oliphaunt-local"`, a candidate `[patch.crates-io]` table, or
-a nested `Cargo.lock`. Exact candidate archives are outputs of cross-platform
-CI, so a source commit cannot also contain their final checksums without
-creating a build-commit-build cycle.
-
-The static source check rejects registry coupling, stale product versions,
-committed nested locks, and missing ignore rules:
+Cargo examples use crates.io dependencies pinned to the current Oliphaunt versions.
+They do not commit nested lockfiles. Validate them with:
 
 ```sh
 tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
-
-The same-run WASIX Rust exact-candidate consumer assembles an exact local
-registry from candidate artifacts, generates a clean consumer lock, and
-enforces the canonical stable Wasmer/WASIX/WebC set before `Qualified` can pass.
-The release dry-run independently repeats that policy across the Cargo
-examples: it copies each example to `target/`, injects exact
-`[patch.crates-io]` entries for candidate packages, generates a lock, validates
-candidate versions and checksums against both the registry index and `.crate`
-bytes, enforces the canonical toolchain set and advisory floors, and runs a
-full `cargo fetch --locked`. Both proofs record the generated lock digest. Run
-the example proof locally with:
-
-```sh
-tools/dev/bun.sh tools/release/validate-example-cargo-candidates.mjs \
-  --index target/release-work/candidate-registries/cargo/index
-```
-
-This closure is deliberately broader than the direct runtime crates. Fresh
-consumer resolution previously broke twice after upstream publication:
-[issue #37](https://github.com/f0rr0/oliphaunt/issues/37) admitted two
-incompatible WebC identities, and
-[issue #72](https://github.com/f0rr0/oliphaunt/issues/72) mixed
-`wasmer-wasix` with a different `virtual-net` prerelease. Update the canonical
-Wasmer, WASIX-family, and WebC pins as one reviewed toolchain change; never
-repair only the leaf named by the latest compiler error.
-
-For a later partial release, only packages present in that candidate registry
-are patched; unchanged published packages and all third-party dependencies
-resolve from crates.io. Candidate manifests and locks must never be copied back
-into source.
 
 Cross-product behavior belongs in `docs/maintainers/sdk-parity-policy.md` and executable parity
 checks. Do not centralize platform tests into a fake shared test harness when a

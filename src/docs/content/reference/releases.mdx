@@ -27,8 +27,8 @@ it in an application.
 
 | Relationship | Products | Rule |
 | --- | --- | --- |
-| Independently versioned | SDKs and helper runtimes | Each product owns its SemVer and compatibility fields; a runtime change can select dependent product releases without giving them one shared version |
-| Runtime-bound linked group | Native/WASIX runtimes and the PostgreSQL 18 contrib bundle product | The configured linked group moves together because the bundle's exact member bytes are built for the runtime contract |
+| Independently versioned | Native, WASIX, contrib, SDKs, and helper runtimes | Release Please selects changed product paths; each product owns its SemVer, and native and WASIX do not move together |
+| Directed compatibility | Products with exact dependency or runtime compatibility fields | A changed dependency can select its consumer, but selection never travels backwards and does not create a shared version |
 | Upstream-bound | External exact-extension products | Packaging SemVer is independent; immutable upstream version/commit and compatible runtime versions are recorded separately |
 | Documentation | Public documentation site | Guides and references can change without a package release |
 

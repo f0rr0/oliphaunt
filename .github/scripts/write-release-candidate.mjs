@@ -10,7 +10,6 @@ import {
   assertCandidateBindingShape,
   candidateQualificationMode,
   FULL_PAYLOAD_QUALIFICATION_MODE,
-  RECOVERY_CONTROL_QUALIFICATION_MODE,
   wasixEvidenceBinding,
 } from "./release-candidate-lib.mjs";
 
@@ -61,7 +60,7 @@ try {
   fail(error.message);
 }
 const expectedQualificationMode = requiredEnv("CI_QUALIFICATION_MODE");
-if (![FULL_PAYLOAD_QUALIFICATION_MODE, RECOVERY_CONTROL_QUALIFICATION_MODE].includes(expectedQualificationMode)) {
+if (expectedQualificationMode !== FULL_PAYLOAD_QUALIFICATION_MODE) {
   fail(`CI_QUALIFICATION_MODE is invalid: ${expectedQualificationMode}`);
 }
 if (candidateQualificationMode({ affectedPlan }) !== expectedQualificationMode) {

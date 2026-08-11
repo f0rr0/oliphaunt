@@ -29,7 +29,6 @@ import {
   moonReleaseMetadataRows,
   parseStableVersion,
   releaseOrder,
-  runtimeTiedContribProducts,
   versionFiles,
 } from "./release-graph.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
@@ -53,8 +52,6 @@ import {
   publicToolsAotCargoDependencies,
   publicToolsFeatureDependencies,
 } from "./wasix-cargo-artifact-contract.mjs";
-import { assertReleaseSemanticInputsCurrent } from "./release-semantic-inputs.mjs";
-import { verifyPublicationRecoveryCandidate } from "./verify-publication-candidate.mjs";
 
 const TOOL = "check-release-metadata.mjs";
 const STABLE_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
@@ -294,8 +291,6 @@ function validateGraph(graph) {
     releaseMetadata(product, TOOL);
   }
   assert(sameStrings(releaseOrder(graph.products, graph.moon_projects, new Set(productIds), TOOL), productIds), "release order must cover every product exactly once");
-  const tied = runtimeTiedContribProducts(graph.products, TOOL);
-  assert(new Set(tied.map((product) => graph.products[product].version)).size === 1, "native, WASIX, and contrib products must share one version");
   validateReleasePleaseVersions(graph);
 }
 
@@ -350,8 +345,7 @@ function compatibilityValue(entry, ref = null) {
 function validateCompatibility(graph) {
   const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true, prefix: TOOL });
   assert(new Set(entries.map((entry) => entry.id)).size === entries.length, "compatibility field ids must be globally unique");
-  const recovery = verifyPublicationRecoveryCandidate({ repo: ROOT, headRef: "HEAD" });
-  const transitionHeadRef = recovery?.releaseSha ?? "HEAD";
+  const transitionHeadRef = "HEAD";
   const transitions = releasePleaseWorktreeTransitions(ROOT, {
     headRef: transitionHeadRef,
     prefix: TOOL,
@@ -609,7 +603,6 @@ function parseArgs(argv) {
 function main(argv) {
   const args = parseArgs(argv);
   const graph = loadGraph(TOOL);
-  assertReleaseSemanticInputsCurrent(graph, { root: ROOT, prefix: TOOL });
   validateGraph(graph);
   const compatibilityFields = validateCompatibility(graph);
   const targetReport = validateCatalogAndTargets(graph);

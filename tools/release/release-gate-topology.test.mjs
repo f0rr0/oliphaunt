@@ -15,7 +15,6 @@ import { test } from "node:test";
 
 import {
   DEDICATED_GATE_TESTS,
-  MUTATION_TEST_TIMEOUT_MS,
   mutationTestEnvironment,
   mutationTests,
 } from "./release-check.mjs";
@@ -23,10 +22,6 @@ import { uniqueValueFlag } from "./release-cli-utils.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const TOOLCHAIN_GATE = "tools/release/toolchain-bootstrap.test.mjs";
-const STRUCTURE_GATE_TESTS = [
-  "tools/policy/assertions/assert-ambient-js-tools.test.mjs",
-  "tools/policy/assertions/assert-ordinal-release-ordering.test.mjs",
-];
 const INSTALLER_FAULT_SUITES = [
   "tools/dev/extract-pinned-zip.test.sh",
   "tools/dev/install-pinned-js-runtime.test.sh",
@@ -37,7 +32,6 @@ const INSTALLER_FAULT_SUITES = [
   ".github/actions/setup-moon/install-pinned-toolchain.test.sh",
   ".github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh",
   ".github/actions/setup-npm-publisher/install.test.sh",
-  "tools/release/install-verdaccio-runtime.test.sh",
 ];
 
 function read(relative) {
@@ -84,13 +78,6 @@ test("release CLI value flags reject ambiguous duplicate identities", () => {
   );
 });
 
-test("canonical release check owns repository structure suites exactly once", () => {
-  assert.deepEqual([...DEDICATED_GATE_TESTS], [...STRUCTURE_GATE_TESTS, TOOLCHAIN_GATE]);
-  for (const structureTest of STRUCTURE_GATE_TESTS) {
-    assert(!mutationTests("tools/policy").includes(structureTest));
-  }
-});
-
 test("workflow qualification owns every installer fault suite exactly once", () => {
   assert(DEDICATED_GATE_TESTS.has(TOOLCHAIN_GATE));
   assert(!mutationTests("tools/release").includes(TOOLCHAIN_GATE));
@@ -115,10 +102,6 @@ test("workflow qualification owns every installer fault suite exactly once", () 
     "/tools/dev/curl-platform-flags.sh",
     "/tools/dev/install-pinned-winflexbison.sh",
     "/tools/dev/install-pinned-winflexbison.test.sh",
-    "/tools/release/install-verdaccio-runtime.sh",
-    "/tools/release/install-verdaccio-runtime.test.sh",
-    "/tools/release/verdaccio-runtime/package.json",
-    "/tools/release/verdaccio-runtime/pnpm-lock.yaml",
   ]) {
     assert(workflowInputs.has(input), `${input} must invalidate the installer qualification gate`);
   }
@@ -204,44 +187,6 @@ test("mutation test discovery rejects a successful partial NUL inventory", () =>
   }
 });
 
-test("qualified replay proves hosted evidence and clean source before omitting mutation tests", () => {
-  const releaseCheck = read("tools/release/release-check.mjs");
-  const structureCommand = Bun.YAML.parse(read("moon.yml")).tasks?.structure?.command;
-  assert.equal(structureCommand, "bash tools/policy/check-repo-structure.sh");
-  const canonicalStructureInvocation = `run(TOOL, ["bash", "tools/policy/check-repo-structure.sh"]);`;
-  const canonicalGraphInvocation = `run(TOOL, [process.execPath, "tools/graph/graph.mjs", "check"]);`;
-  assert.equal(occurrences(releaseCheck, canonicalStructureInvocation), 1);
-  assert.equal(occurrences(releaseCheck, canonicalGraphInvocation), 1);
-  assert.match(releaseCheck, /release-metadata-check[.]mjs/u);
-  const releaseMetadataCheck = read("tools/release/release-metadata-check.mjs");
-  assert.match(releaseMetadataCheck, /src\/docs\/tools\/check-docs-product[.]mjs/u);
-  assert(
-    releaseCheck.indexOf(canonicalStructureInvocation) < releaseCheck.indexOf(canonicalGraphInvocation)
-      && releaseCheck.indexOf(canonicalGraphInvocation) < releaseCheck.indexOf("release-metadata-check.mjs"),
-    "live structure and graph entrypoints must run before release metadata and mutation tests",
-  );
-  assert.equal(MUTATION_TEST_TIMEOUT_MS, 30_000);
-  assert.match(releaseCheck, /`--timeout=\$\{MUTATION_TEST_TIMEOUT_MS\}`/u);
-  assert.match(releaseCheck, /environment: mutationTestEnvironment[(][)]/u);
-  assert.doesNotMatch(releaseCheck, /metadata-only/u);
-  const publisher = read("tools/release/release-publish.mjs");
-  assert.match(publisher, /qualifiedCi && allowDirty/u);
-  assert.match(publisher, /process[.]env[.]GITHUB_ACTIONS !== "true"/u);
-  assert.match(publisher, /assertQualifiedReplaySourceState/u);
-  assert.match(publisher, /headRef: process[.]env[.]RELEASE_HEAD_SHA/u);
-  assert.match(publisher, /expectedReleaseSourceSha: process[.]env[.]RELEASE_SOURCE_SHA/u);
-  assert.match(publisher, /qualifiedReplayCandidateBinding/u);
-  assert.match(publisher, /verify-release-candidate[.]mjs/u);
-  assert.match(publisher, /replay[.]candidateRoot.*oliphaunt-release-candidate[.]json/u);
-  assert.match(publisher, /--qualification-mode/u);
-  assert.match(publisher, /RELEASE_HEAD_SHA: replay[.]candidateSha/u);
-  const qualifiedReplay = read("tools/release/qualified-release-replay.mjs");
-  assert.match(qualifiedReplay, /target\/release-candidate/u);
-  assert.match(qualifiedReplay, /target\/recovery-payload-candidate/u);
-  assert.match(qualifiedReplay, /qualificationMode: "full-payload"/u);
-  assert.match(publisher, /release-metadata-check[.]mjs/u);
-});
-
 test("release mutation tests cannot consume a live publish request journal", () => {
   assert.deepEqual(
     mutationTestEnvironment({
@@ -255,54 +200,6 @@ test("release mutation tests cannot consume a live publish request journal", () 
     }),
     { KEEP_ME: "preserved" },
   );
-});
-
-test("the canonical release gate is the single hosted repository-graph validator", () => {
-  const graphProject = Bun.YAML.parse(read("tools/graph/moon.yml"));
-  const graphCheck = graphProject.tasks?.check;
-  const graphGenerate = graphProject.tasks?.generate;
-  assert.equal(graphCheck?.options?.cache, false);
-  assert.equal(graphCheck?.options?.runInCI, false);
-  assert.deepEqual(graphCheck?.outputs ?? [], []);
-  assert.equal(graphGenerate?.options?.cache, false);
-  assert.deepEqual(graphGenerate?.outputs, ["/target/graph/**/*"]);
-
-  const releaseProject = Bun.YAML.parse(read("tools/release/moon.yml"));
-  const releaseCheck = releaseProject.tasks?.check;
-  assert.equal(releaseCheck?.options?.cache, false);
-  const releaseInputs = new Set(releaseCheck?.inputs ?? []);
-  for (const required of [
-    "/.moon/workspace.yml",
-    "/.moon/toolchains.yml",
-    "/.github/**/*",
-    "/benchmarks/moon.yml",
-    "/coverage/baseline.toml",
-    "/examples/moon.yml",
-    "/moon.yml",
-    "/package.json",
-    "/pnpm-lock.yaml",
-    "/release-please-config.json",
-    "/.release-please-manifest.json",
-    "/src/**/*",
-    "/tools/**/moon.yml",
-    "/tools/graph/**/*",
-    "/tools/release/**/*",
-  ]) {
-    assert(releaseInputs.has(required), `${required} must select the hosted graph owner`);
-  }
-
-  const graphSource = read("tools/graph/graph.mjs");
-  assert.equal(
-    occurrences(graphSource, "writeGraph(graph);"),
-    1,
-    "only graph generation may write target/graph output",
-  );
-});
-
-test("nested Bun policy tests inherit the bounded repository timeout", () => {
-  const sourceInputs = read("tools/policy/assertions/assert-source-inputs.mjs");
-  assert.match(sourceInputs, /\['test', '--timeout=30000'/u);
-  assert.match(sourceInputs, /arg[.]startsWith\('--timeout='\)/u);
 });
 
 test("Moon release aliases delegate to one canonical check target", () => {

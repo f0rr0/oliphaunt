@@ -1,20 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
-  mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
-  writeFileSync,
 } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import {
   EXAMPLE_CARGO_POLICIES,
   REQUIRED_WASIX_CONSUMER_PINS,
   exampleCargoReleaseVersionBindings,
-  validateCandidateLock,
-  validateCandidateSourceSelection,
   validateExampleManifestPolicy,
   validateResolvedPackagePolicy,
   validateWasixConsumerDependencyPins,
@@ -239,60 +232,4 @@ describe("ephemeral example Cargo policy", () => {
     );
   });
 
-  test("rejects candidate fallback to crates.io", () => {
-    const checksum = "a".repeat(64);
-    expect(validateCandidateSourceSelection("fixture.lock", [{
-      name: "oliphaunt-wasix",
-      version: "0.1.0",
-      source: cratesIo,
-      checksum,
-    }], [{ name: "oliphaunt-wasix", vers: "0.1.0", cksum: checksum }])).toContain(
-      "fixture.lock: selected candidate oliphaunt-wasix@0.1.0 resolved from registry+https://github.com/rust-lang/crates.io-index; expected registry+https://cargo.oliphaunt.invalid/index",
-    );
-  });
-
-  test("rejects candidate lock checksum drift", () => {
-    expect(validateCandidateSourceSelection("fixture.lock", [{
-      name: "oliphaunt-wasix",
-      version: "0.1.0",
-      source: "registry+https://cargo.oliphaunt.invalid/index",
-      checksum: "b".repeat(64),
-    }], [{ name: "oliphaunt-wasix", vers: "0.1.0", cksum: "a".repeat(64) }])).toContain(
-      "fixture.lock: oliphaunt-wasix@0.1.0 lock checksum differs from candidate index",
-    );
-  });
-
-  test("the real candidate-lock entrypoint loads the canonical WASIX toolchain", () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-wasix-candidate-lock-"));
-    try {
-      const lockfile = path.join(root, "Cargo.lock");
-      const index = path.join(root, "registry/index");
-      mkdirSync(path.join(index, "fi/xt"), { recursive: true });
-      writeFileSync(lockfile, "version = 3\n");
-      writeFileSync(
-        path.join(index, "config.json"),
-        `${JSON.stringify({ dl: "file:///nonexistent/{crate}-{version}.crate" })}\n`,
-      );
-      writeFileSync(
-        path.join(index, "fi/xt/fixture-dep"),
-        `${JSON.stringify({
-          name: "fixture-dep",
-          vers: "1.0.0",
-          deps: [],
-          cksum: "a".repeat(64),
-          features: {},
-          yanked: false,
-        })}\n`,
-      );
-
-      expect(() => validateCandidateLock(
-        "wasix-tauri",
-        lockfile,
-        index,
-        { registryVerified: true },
-      )).toThrow("expected exactly one resolved wasmer package, found 0");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });

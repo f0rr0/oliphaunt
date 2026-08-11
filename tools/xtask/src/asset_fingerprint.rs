@@ -94,8 +94,7 @@ pub(crate) fn is_asset_binary_semantic_input(file: &str) -> bool {
 
     !matches!(
         name,
-        ".release-semantic-inputs.json"
-            | "CHANGELOG.md"
+        "CHANGELOG.md"
             | "VERSION"
             | "artifacts.toml"
             | "publication-blocker.toml"

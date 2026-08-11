@@ -5,10 +5,6 @@ import crypto from "node:crypto";
 
 import { moonCommand } from "../dev/moon-command.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import {
-  loadReleaseSemanticInputs,
-  releaseSemanticProductsForPath,
-} from "./release-semantic-inputs.mjs";
 
 export const ROOT = path.resolve(import.meta.dir, "../..");
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -288,7 +284,15 @@ function readMoonProjectConfig(file, prefix) {
 }
 
 export function moonProjectsById(prefix = "release-graph") {
-  const files = gitNulRecords(["ls-files", "-z", "--", "*moon.yml"]);
+  const files = gitNulRecords([
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--",
+    "*moon.yml",
+  ]).filter((file) => existsSync(path.join(ROOT, file)));
   if (files.length === 0) {
     fail(prefix, "repository does not contain any tracked moon.yml project files");
   }
@@ -511,12 +515,6 @@ export function loadGraph(prefix = "release-graph") {
     products: graphProducts(moonProjects, prefix),
     moon_projects: Object.fromEntries(moonProjects),
   };
-  Object.defineProperty(graph, "release_semantic_inputs", {
-    value: loadReleaseSemanticInputs(graph, { root: ROOT, prefix }),
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
   return graph;
 }
 
@@ -637,8 +635,6 @@ export function isExtensionProduct(product) {
   return product.startsWith("oliphaunt-extension-");
 }
 
-export const LIBOLIPHAUNT_RUNTIME_PRODUCTS = ["liboliphaunt-native", "liboliphaunt-wasix"];
-
 export function wasixEvidenceProductsForRelease(
   products,
   projects,
@@ -671,48 +667,6 @@ export function wasixEvidenceProductsForRelease(
     }
   }
   return required;
-}
-
-function extensionClass(product, config, prefix) {
-  const extension = config?.extension;
-  if (extension === undefined) {
-    return undefined;
-  }
-  if (extension === null || Array.isArray(extension) || typeof extension !== "object") {
-    fail(prefix, `${product}.extension must be a table when present`);
-  }
-  const klass = extension.class;
-  if (typeof klass !== "string" || klass.length === 0) {
-    fail(prefix, `${product}.extension.class must be a non-empty string`);
-  }
-  return klass;
-}
-
-export function runtimeTiedContribProducts(products, prefix = "release-graph") {
-  if (products === null || Array.isArray(products) || typeof products !== "object") {
-    fail(prefix, "release metadata must define [products.<id>] entries");
-  }
-  for (const runtimeProduct of LIBOLIPHAUNT_RUNTIME_PRODUCTS) {
-    if (!(runtimeProduct in products)) {
-      fail(prefix, `runtime-tied release group is missing ${runtimeProduct}`);
-    }
-  }
-  const contrib = Object.entries(products)
-    .filter(([product, config]) => isExtensionProduct(product) && extensionClass(product, config, prefix) === "contrib")
-    .map(([product]) => product)
-    .sort(compareText);
-  return [...LIBOLIPHAUNT_RUNTIME_PRODUCTS, ...contrib];
-}
-
-export function expandRuntimeTiedProducts(products, selected, prefix = "release-graph") {
-  const selectedSet = new Set(selected);
-  const tiedProducts = runtimeTiedContribProducts(products, prefix);
-  if (tiedProducts.some((product) => selectedSet.has(product))) {
-    for (const product of tiedProducts) {
-      selectedSet.add(product);
-    }
-  }
-  return selectedSet;
 }
 
 export function publishStepTargetCoverageRows({ product = undefined } = {}, prefix = "release-graph") {
@@ -1139,7 +1093,7 @@ function versionFromProductTag(config, tag, prefix) {
  * Path impact is deliberately not considered here. A normal candidate must
  * have advanced its own Release Please manifest version since its latest
  * reachable product tag. An exact current-version tag is eligible only for an
- * explicitly requested exact-commit recovery.
+ * explicitly requested exact-commit rerun.
  */
 export function productVersionTransitionStatus(
   product,
@@ -1219,7 +1173,7 @@ export function productVersionTransitionStatus(
     if (currentTagCommit === headCommit) {
       return {
         eligible: includeCurrentTags,
-        recovery: includeCurrentTags,
+        rerun: includeCurrentTags,
         firstRelease: false,
         baseVersion: headVersion,
         headVersion,
@@ -1236,7 +1190,7 @@ export function productVersionTransitionStatus(
     }
     return {
       eligible: false,
-      recovery: false,
+      rerun: false,
       firstRelease: false,
       baseVersion: headVersion,
       headVersion,
@@ -1249,7 +1203,7 @@ export function productVersionTransitionStatus(
     const firstRelease = compareVersion(headParts, [0, 0, 0]) > 0;
     return {
       eligible: firstRelease,
-      recovery: false,
+      rerun: false,
       firstRelease,
       baseVersion: null,
       headVersion,
@@ -1259,7 +1213,7 @@ export function productVersionTransitionStatus(
   }
   return {
     eligible: comparison > 0,
-    recovery: false,
+    rerun: false,
     firstRelease: false,
     baseVersion,
     headVersion,
@@ -1468,7 +1422,6 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     fail(prefix, "Moon project graph is missing from release plan metadata");
   }
   const directProjects = new Set();
-  const semanticInputProducts = new Set();
   for (const file of files) {
     const owner = ownerProjectForPath(projects, file);
     if (owner !== undefined) {
@@ -1480,20 +1433,10 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     for (const releaseOwner of releaseOwnerProjectsForPath(products, projects, file, prefix)) {
       directProjects.add(releaseOwner);
     }
-    if (graph.release_semantic_inputs !== undefined) {
-      for (const product of releaseSemanticProductsForPath(graph.release_semantic_inputs, file, { prefix })) {
-        semanticInputProducts.add(product);
-        directProjects.add(releaseProductProjectId(product, products, projects, prefix));
-      }
-    }
   }
   const affectedProjects = downstreamProjects(projects, directProjects);
   const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProductSet = expandRuntimeTiedProducts(
-    products,
-    releaseProductsForProjects(products, projects, releaseProjects, prefix),
-    prefix,
-  );
+  const releaseProductSet = releaseProductsForProjects(products, projects, releaseProjects, prefix);
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   const releaseProductProjects = new Set(
     releaseProducts.map((product) => releaseProductProjectId(product, products, projects, prefix)),
@@ -1507,7 +1450,6 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   return finalizePlan({
     changedFiles: files,
     directProducts: direct,
-    semanticInputProducts: [...semanticInputProducts].sort(compareText),
     releaseProducts,
     directMoonProjects: [...directProjects].sort(compareText),
     affectedMoonProjects: [...affectedProjects].sort(compareText),
@@ -1517,7 +1459,6 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     docsOnly: releaseProducts.length === 0 && docsOnlyChange(files),
     versioning: graph.policy?.versioning ?? "independent",
     extensionSelection: "exact-sql-extension",
-    runtimeTiedProducts: runtimeTiedContribProducts(products, prefix),
   });
 }
 
@@ -1583,7 +1524,7 @@ export function buildPlanFromProductTags(
       continue;
     }
     versionEligibleProducts.add(product);
-    if (transition.recovery) {
+    if (transition.rerun) {
       direct.add(product);
       currentTaggedProducts.add(product);
       continue;
@@ -1604,16 +1545,12 @@ export function buildPlanFromProductTags(
   );
   const affectedProjects = downstreamProjects(projects, directProjects);
   const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProductSet = expandRuntimeTiedProducts(
-    products,
-    releaseProductsForProjects(products, projects, releaseProjects, prefix),
-    prefix,
-  );
+  const releaseProductSet = releaseProductsForProjects(products, projects, releaseProjects, prefix);
   const ineligibleClosure = [...releaseProductSet].filter((product) => !versionEligibleProducts.has(product)).sort(compareText);
   if (ineligibleClosure.length > 0) {
     throw new Error(
-      `${prefix}: release dependency/runtime-tied closure requires product(s) without a verified manifest ` +
-      `version transition or exact-tag recovery: ${ineligibleClosure.join(", ")}`,
+      `${prefix}: release dependency closure requires product(s) without a verified manifest ` +
+      `version transition or exact-tag rerun: ${ineligibleClosure.join(", ")}`,
     );
   }
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
@@ -1634,25 +1571,18 @@ export function buildPlanFromProductTags(
     extensionSelection: "exact-sql-extension",
     productBaseRefs,
     currentTaggedProducts: [...currentTaggedProducts].sort(compareText),
-    runtimeTiedProducts: runtimeTiedContribProducts(products, prefix),
   });
 }
 
-export function releaseProductsSlug(products, { runtimeTiedProducts = [] } = {}) {
+export function releaseProductsSlug(products) {
   if (products.length === 0) {
     return "none";
   }
-  const runtimeTiedSet = new Set(runtimeTiedProducts);
-  const slugProducts =
-    runtimeTiedProducts.length > 0 && runtimeTiedProducts.every((product) => products.includes(product))
-      ? ["liboliphaunt-runtime", ...products.filter((product) => !runtimeTiedSet.has(product))]
-      : products;
   const shortNames = {
-    "liboliphaunt-runtime": "runtime",
     "liboliphaunt-native": "native",
     "liboliphaunt-wasix": "wasix",
   };
-  return slugProducts.map((product) => shortNames[product] ?? product.replace("oliphaunt-", "")).join("-");
+  return products.map((product) => shortNames[product] ?? product.replace("oliphaunt-", "")).join("-");
 }
 
 function stableJson(value) {
@@ -1678,9 +1608,7 @@ export function finalizePlan(plan) {
   };
   const digest = crypto.createHash("sha256").update(stableJson(hashInput)).digest("hex").slice(0, 12);
   plan.planHash = digest;
-  const slug = releaseProductsSlug(plan.releaseProducts ?? [], {
-    runtimeTiedProducts: plan.runtimeTiedProducts ?? [],
-  });
+  const slug = releaseProductsSlug(plan.releaseProducts ?? []);
   plan.releaseBranch = `release/${slug}-${digest}`;
   return plan;
 }

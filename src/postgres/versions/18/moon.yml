@@ -15,14 +15,3 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
-
-tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bun tools/policy/assertions/assert-source-inputs.mjs postgres18"
-    inputs:
-      - "/src/postgres/versions/18/**/*"
-      - "/tools/policy/assertions/assert-source-inputs.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true

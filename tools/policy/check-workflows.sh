@@ -33,10 +33,10 @@ if grep -R --line-number --fixed-strings 'python3 - <<' .github/workflows .githu
   exit 1
 fi
 # actionlint 1.7.12 predates GitHub's `concurrency.queue: max` schema addition.
-# Ignore only that parser diagnostic; the structured workflow contract below
-# requires the field on the one serialized release dispatcher.
 run actionlint -ignore 'unexpected key "queue" for "concurrency" section'
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
+run tools/dev/bun.sh test tools/policy/assertions/workflow-security.test.mjs
+run tools/dev/bun.sh tools/policy/assertions/workflow-security.mjs
 run node --test \
   .github/scripts/configure-macos-release-toolchains.test.mjs \
   .github/scripts/moon-task-capabilities.test.mjs \

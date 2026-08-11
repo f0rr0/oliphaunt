@@ -400,7 +400,7 @@ if (
   receipt.candidateSha !== candidateSha ||
   receipt.candidateTree !== candidateTree
 ) {
-  throw new Error(`${platform} mobile E2E receipt is not bound to the exact candidate commit and tree`);
+  throw new Error(`${platform} mobile E2E receipt is not bound to the current commit and tree`);
 }
 const expected = (metadata.extensions ?? [])
   .filter(row => row['mobile-release-ready'] === true && (

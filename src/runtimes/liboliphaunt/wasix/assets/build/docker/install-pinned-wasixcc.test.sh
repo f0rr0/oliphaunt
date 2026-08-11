@@ -47,9 +47,11 @@ done
 printf '\x00\x61\x73\x6d\x01\x00\x00\x00' >"$output"
 DRIVER
 chmod 0755 "$work_root/fake-wasixccenv"
+driver_fixture="$work_root/driver-fixture"
+mkdir -p "$driver_fixture"
+cp "$work_root/fake-wasixccenv" "$driver_fixture/wasixccenv"
 tar -czf "$fixtures/wasixcc-x86_64-unknown-linux-gnu.tar.gz" \
-  -C "$work_root" fake-wasixccenv \
-  --transform='s/fake-wasixccenv/wasixccenv/'
+  -C "$driver_fixture" wasixccenv
 
 for sysroot_name in sysroot sysroot-eh sysroot-ehpic sysroot-exnref-eh sysroot-exnref-ehpic; do
   sysroot_fixture="$work_root/wasix-$sysroot_name/sysroot"
@@ -359,9 +361,11 @@ version_fixtures="$work_root/version-fixtures"
 cp -a "$fixtures" "$version_fixtures"
 sed 's/wasixcc 0\.4\.3/wasixcc 0.4.2/' "$work_root/fake-wasixccenv" >"$work_root/wrong-version-wasixccenv"
 chmod 0755 "$work_root/wrong-version-wasixccenv"
+wrong_version_fixture="$work_root/wrong-version-fixture"
+mkdir -p "$wrong_version_fixture"
+cp "$work_root/wrong-version-wasixccenv" "$wrong_version_fixture/wasixccenv"
 tar -czf "$version_fixtures/wasixcc-x86_64-unknown-linux-gnu.tar.gz" \
-  -C "$work_root" wrong-version-wasixccenv \
-  --transform='s/wrong-version-wasixccenv/wasixccenv/'
+  -C "$wrong_version_fixture" wasixccenv
 version_manifest="$work_root/version-assets.tsv"
 write_manifest "$version_fixtures" "$version_manifest"
 version_root="$work_root/version/.wasixcc"

@@ -15,13 +15,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { githubReleaseLineageIdentity } from "./github-release-lineage.mjs";
-import { validateContinuationCoreJournal } from "./github-release-continuation-state.mjs";
 
 export const GITHUB_CORE_REQUEST_ROLLING_WINDOW_MS = 60 * 60_000;
 export const GITHUB_CORE_REQUEST_ROLLING_CEILING = 900;
 export const GITHUB_CORE_REQUEST_RETRY_RESERVE = 100;
 
-const SCHEMA = "oliphaunt-github-core-request-journal-v2";
+const SCHEMA = "oliphaunt-github-core-request-journal-v3";
 const MAX_LOCK_WAIT_MS = 60_000;
 
 export class GitHubCoreRequestJournalError extends Error {
@@ -73,6 +72,50 @@ function emptyState(expectedIdentity) {
   };
 }
 
+function validateState(state, expectedIdentity) {
+  if (state === null || Array.isArray(state) || typeof state !== "object") {
+    fail("core-request journal must be an object");
+  }
+  const expectedKeys = ["attempts", "headSha", "repository", "runId", "schema", "sequence"];
+  if (JSON.stringify(Object.keys(state).sort()) !== JSON.stringify(expectedKeys)) {
+    fail(`core-request journal keys must be exactly ${expectedKeys.join(", ")}`);
+  }
+  if (state.schema !== SCHEMA) fail(`core-request journal schema must be ${SCHEMA}`);
+  for (const key of ["headSha", "repository", "runId"]) {
+    if (state[key] !== expectedIdentity[key]) {
+      fail(`core-request journal ${key} does not match the current release`);
+    }
+  }
+  if (!Number.isSafeInteger(state.sequence) || state.sequence < 0) {
+    fail("core-request journal sequence must be a non-negative safe integer");
+  }
+  if (!Array.isArray(state.attempts) || state.attempts.length !== state.sequence) {
+    fail("core-request journal attempts do not match its sequence");
+  }
+  let previous = -1;
+  const attempts = state.attempts.map((attempt, index) => {
+    if (
+      attempt === null
+      || Array.isArray(attempt)
+      || typeof attempt !== "object"
+      || JSON.stringify(Object.keys(attempt).sort())
+        !== JSON.stringify(["label", "reservedAtMs", "sequence"])
+    ) {
+      fail(`core-request attempt ${index + 1} has invalid fields`);
+    }
+    validateLabel(attempt.label);
+    if (!Number.isSafeInteger(attempt.reservedAtMs) || attempt.reservedAtMs < previous) {
+      fail("core-request journal attempts are not timestamp ordered");
+    }
+    if (attempt.sequence !== index + 1) {
+      fail("core-request journal attempt sequences are not contiguous");
+    }
+    previous = attempt.reservedAtMs;
+    return { ...attempt };
+  });
+  return { ...expectedIdentity, attempts, schema: SCHEMA, sequence: state.sequence };
+}
+
 function parseState(file, expectedIdentity) {
   if (!existsSync(file)) return emptyState(expectedIdentity);
   assertRegularFile(file, "core-request journal");
@@ -83,10 +126,10 @@ function parseState(file, expectedIdentity) {
     fail("core-request journal is not valid JSON", { cause });
   }
   try {
-    return validateContinuationCoreJournal(state, expectedIdentity);
+    return validateState(state, expectedIdentity);
   } catch (cause) {
     fail(
-      `core-request journal has a malformed envelope or continuation provenance: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `core-request journal has a malformed envelope: ${cause instanceof Error ? cause.message : String(cause)}`,
       { cause },
     );
   }
