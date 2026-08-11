@@ -48,7 +48,11 @@
 
             let faultAcknowledgementStartedAt = ContinuousClock.now
             let deadlockFault: BrokerWorkerFault =
-                recoveryStrategy == "selfExitWatchdog" ? .deadlockWithFailStop : .deadlock
+                switch recoveryStrategy {
+                case "selfExitWatchdog": .deadlockWithFailStop
+                case "nativeFailStopWatchdog": .duringNativeExecution
+                default: .deadlock
+                }
             try await control.injectFault(deadlockFault)
             let faultAcknowledgementElapsedMilliseconds = elapsedMilliseconds(
                 faultAcknowledgementStartedAt.duration(to: .now)
@@ -75,8 +79,12 @@
 
             let heartbeat = await MainActor.run { MainActorHeartbeat() }
             let hangTriggerStartedAt = ContinuousClock.now
+            let hangingSQL =
+                recoveryStrategy == "nativeFailStopWatchdog"
+                ? "SELECT pg_sleep(60), 'must-not-complete'::text AS status"
+                : "SELECT 'must-not-complete'::text AS status"
             let hangingQuery = Task.detached {
-                try await database.query("SELECT 'must-not-complete'::text AS status")
+                try await database.query(hangingSQL)
             }
             try await Task.sleep(for: .milliseconds(250))
             await MainActor.run {
@@ -238,6 +246,7 @@
             let supported = [
                 "public",
                 "selfExitWatchdog",
+                "nativeFailStopWatchdog",
             ]
             guard supported.contains(value) else {
                 throw HangFaultFailure.assertion(
