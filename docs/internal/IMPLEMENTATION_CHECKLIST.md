@@ -793,16 +793,15 @@ Run before claiming this architecture complete:
   and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-extension-vector"]'`.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
-  blockers: the WASIX runtime committed asset-input fingerprint was stale,
-  Android x86_64 and Linux arm64 native-runtime source fetches failed through
+  blockers: Android x86_64 and Linux arm64 native-runtime source fetches failed through
   `ftpmirror.gnu.org` libiconv 502s, Apple extension runtime builds passed the
   embedded `-bundle_loader` through `PG_LDFLAGS` so PostgreSQL's Darwin default
   `BE_DLLLIBS=-bundle_loader ../../src/backend/postgres` won and failed when
   the backend executable link was intentionally tolerated, and the Windows
   exact-extension row still selected `pgcrypto` even though the current Windows
   runtime disables SSL/OpenSSL and does not package that dependency. The
-  follow-up refreshes `asset-inputs.sha256`, switches libiconv inputs to the
-  canonical GNU URL, routes Darwin PGXS embedded bundle-loader wiring through
+  follow-up switches libiconv inputs to the canonical GNU URL, routes Darwin
+  PGXS embedded bundle-loader wiring through
   `BE_DLLLIBS`, keeps Bash strict-mode arrays guarded by explicit counts, and
   marks Windows `pgcrypto` unpublished with an OpenSSL runtime dependency
   reason. The native exact-extension matrix now keeps Android/iOS/Linux/macOS
@@ -1026,17 +1025,6 @@ Run before claiming this architecture complete:
   `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD` reports
   `crates:oliphaunt-wasix@0.6.0` plus the renamed internal WASIX crates.
-- [x] GitHub Builds run `27434296236` on `cf0ef3f2` proved the WASIX rename
-  commit still had a stale committed WASIX asset-input fingerprint. The
-  `build-liboliphaunt-wasix-runtime` job failed during
-  `cargo run -p xtask -- assets verify-committed` with computed fingerprint
-  `aed54dc5dbe84544a6627a5fe30d8a7670ea670558e0bc184d57061f8848911e` while
-  `src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256`
-  still held `183cff37e33e3349577c6061a85e9ee96a2e30ee5dfeddc93b0eb7789a1f926a`.
-  The follow-up refreshes the committed fingerprint with
-  `cargo run -p xtask -- assets input-fingerprint --write`. A replacement
-  same-SHA `Builds` run is required because `27434296236` cannot be green
-  builder evidence.
 - [x] GitHub Builds run `27448574605` on `927457d3` proved the native
   exact-extension source-fetch gap after decoupling artifact packaging from Rust:
   all native extension rows failed before build work because CI runs

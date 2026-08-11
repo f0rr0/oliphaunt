@@ -1,5 +1,4 @@
 use super::*;
-use crate::asset_fingerprint::asset_input_fingerprint;
 use crate::source_spine::source_checkout_path;
 
 pub(crate) fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<()> {
@@ -133,7 +132,6 @@ pub(crate) fn verify_committed_assets() -> Result<()> {
     check_postgres_source_spine()?;
     check_source_lane_isolation()?;
     check_rust_startup_abi_boundary()?;
-    check_or_write_asset_input_fingerprint(false)?;
     check_no_committed_portable_asset_blobs()?;
     check_no_committed_aot_artifacts()?;
     check_aot_crate_templates(&manifest)?;
@@ -206,159 +204,9 @@ fn check_no_committed_portable_asset_blobs() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> {
-    let fingerprint = asset_input_fingerprint()?;
-    let path = Path::new(ASSET_INPUT_FINGERPRINT_PATH);
-    if write {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-        }
-        fs::write(path, format!("{fingerprint}\n"))
-            .with_context(|| format!("write {}", path.display()))?;
-        println!("wrote {}", path.display());
-        return Ok(());
-    }
-
-    let expected = fs::read_to_string(path).with_context(|| {
-        format!(
-            "read {}; run `cargo run -p xtask -- assets input-fingerprint --write` after refreshing assets",
-            path.display()
-        )
-    })?;
-    ensure_eq(
-        fingerprint.as_str(),
-        expected.trim(),
-        "committed asset input fingerprint",
-    )
-}
-
 #[cfg(test)]
-mod asset_fingerprint_tests {
-    use std::path::Path;
-
+mod aot_matrix_tests {
     use super::aot_target_specs;
-    use crate::asset_fingerprint::{
-        ASSET_INPUT_PATHS, WASIX_XTASK_BINARY_PRODUCER_INPUTS, is_asset_binary_semantic_input,
-        normalize_internal_asset_package_manifest, normalize_workspace_lockfile,
-    };
-
-    #[test]
-    fn fingerprint_inventory_covers_every_active_wasix_producer_surface() {
-        for path in [
-            "src/runtimes/liboliphaunt/wasix/moon.yml",
-            "src/runtimes/liboliphaunt/wasix/tools",
-        ] {
-            assert!(ASSET_INPUT_PATHS.contains(&path), "{path}");
-        }
-
-        let carrier_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/runtimes/liboliphaunt/wasix/crates");
-        for entry in std::fs::read_dir(&carrier_root).expect("read WASIX carrier template root") {
-            let entry = entry.expect("read WASIX carrier template entry");
-            if !entry
-                .file_type()
-                .expect("read WASIX carrier template type")
-                .is_dir()
-            {
-                continue;
-            }
-            let name = entry
-                .file_name()
-                .to_str()
-                .expect("WASIX carrier template name is UTF-8")
-                .to_owned();
-            let path = format!("src/runtimes/liboliphaunt/wasix/crates/{name}");
-            assert!(ASSET_INPUT_PATHS.contains(&path.as_str()), "{path}");
-        }
-
-        for path in [
-            "tools/xtask/Cargo.toml",
-            "tools/xtask/src/aot_serializer.rs",
-            "tools/xtask/src/asset_fingerprint.rs",
-            "tools/xtask/src/asset_manifest.rs",
-            "tools/xtask/src/asset_pipeline.rs",
-            "tools/xtask/src/extension_catalog.rs",
-            "tools/xtask/src/fs_utils.rs",
-            "tools/xtask/src/main.rs",
-            "tools/xtask/src/postgres_guard.rs",
-            "tools/xtask/src/template_runner.rs",
-        ] {
-            assert!(WASIX_XTASK_BINARY_PRODUCER_INPUTS.contains(&path), "{path}");
-        }
-        for path in [
-            "tools/xtask/src",
-            "tools/xtask/src/asset_checks.rs",
-            "tools/xtask/src/asset_io.rs",
-            "tools/xtask/src/release_workspace.rs",
-            "tools/xtask/src/source_spine.rs",
-        ] {
-            assert!(!ASSET_INPUT_PATHS.contains(&path), "{path}");
-            assert!(
-                !WASIX_XTASK_BINARY_PRODUCER_INPUTS.contains(&path),
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
-    fn release_envelope_files_do_not_invalidate_binary_assets() {
-        for file in [
-            "src/extensions/external/vector/CHANGELOG.md",
-            "src/extensions/external/vector/VERSION",
-            "src/extensions/external/vector/targets/artifacts.toml",
-            "src/extensions/external/example_deferred/publication-blocker.toml",
-            "src/extensions/external/vector/release.toml",
-            "src/extensions/external/vector/upstream-license-data.json",
-            "src/extensions/external/vector/moon.yml",
-            "src/extensions/external/vector/smoke.sql",
-            "src/sources/toolchains/android-emulator-runner.toml",
-            "src/sources/toolchains/maestro.toml",
-            "src/sources/toolchains/node.toml",
-            "src/sources/toolchains/moon.yml",
-            "src/postgres/versions/18/fetch-source.test.sh",
-            "src/postgres/versions/18/testdata/curl",
-            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh",
-            "tools/xtask/src/asset_checks.rs",
-            "tools/xtask/src/asset_io.rs",
-            "tools/xtask/src/release_workspace.rs",
-            "tools/xtask/src/source_spine.rs",
-        ] {
-            assert!(!is_asset_binary_semantic_input(file), "{file}");
-        }
-        for file in [
-            "src/extensions/external/vector/source.toml",
-            "src/extensions/external/vector/patches/0001-wasix.patch",
-            "src/sources/toolchains/wasix.toml",
-            "src/postgres/versions/18/fetch-source.sh",
-            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh",
-            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh",
-            "src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem",
-            "src/runtimes/liboliphaunt/wasix/assets/build/build.sh",
-            "src/runtimes/liboliphaunt/wasix/moon.yml",
-            "src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh",
-            "src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh",
-            "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
-            "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/build.rs",
-        ] {
-            assert!(is_asset_binary_semantic_input(file), "{file}");
-        }
-    }
-
-    #[test]
-    fn cargo_manifest_normalization_only_masks_the_product_version() {
-        let manifest = "[package]\nname = \"producer\"\nversion = \"1.2.3\"\n\n[dependencies]\nserde = \"1.0\"\n";
-        let normalized = normalize_internal_asset_package_manifest(manifest);
-        assert!(normalized.contains("version = \"<release-version>\""));
-        assert!(normalized.contains("serde = \"1.0\""));
-    }
-
-    #[test]
-    fn lockfile_normalization_masks_only_workspace_package_versions() {
-        let lockfile = "version = 4\n\n[[package]]\nname = \"local\"\nversion = \"1.2.3\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid\"\n";
-        let normalized = normalize_workspace_lockfile(lockfile);
-        assert!(normalized.contains("name = \"local\"\nversion = \"<release-version>\""));
-        assert!(normalized.contains("name = \"serde\"\nversion = \"1.0.0\""));
-    }
 
     #[test]
     fn aot_matrix_pins_every_wasmer_llvm_archive() {

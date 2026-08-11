@@ -196,15 +196,6 @@ oliphaunt-target = { version = "=0.1.0", features = [
   );
 });
 
-test("release sync refreshes the evidence summary after the asset fingerprint", () => {
-  const source = readFileSync(path.join(ROOT, "tools/release/sync-release-pr.mjs"), "utf8");
-  const fingerprintCall = source.indexOf("syncAssetInputFingerprint(changes, { write });");
-  const summaryCall = source.indexOf("syncExtensionEvidenceSummary(changes, { write });");
-  assert.notEqual(fingerprintCall, -1);
-  assert.notEqual(summaryCall, -1);
-  assert.equal(fingerprintCall < summaryCall, true);
-});
-
 test("generated release readiness closes the cheap pre-fanout fixed point", () => {
   const result = spawnSync(
     process.execPath,

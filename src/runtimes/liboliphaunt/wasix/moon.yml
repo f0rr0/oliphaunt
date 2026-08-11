@@ -43,7 +43,6 @@ tasks:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
     deps:
-      - "source-inputs:check"
       - "extension-runtime-contract:check"
       - "shared-fixtures:check"
     inputs:

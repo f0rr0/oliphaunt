@@ -1347,7 +1347,7 @@
     "current-source-status": "requires-current-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:d53b63632b97073aa9df520e8ad41622e9b32f84cc08e072f629e861af12be21",
+  "source-digest": "sha256:9b267e9453785004f502eb0e2c36bda7819293747ec55953fc484b513f67e710",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1358,7 +1358,6 @@
     "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
-    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
     "src/extensions/external/age/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",

@@ -56,11 +56,9 @@ tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --write
 cargo run -p xtask -- assets verify-committed
 ```
 
-If and only if the verification reports that source pins, patches, recipes,
-compiler inputs, or binary producer code changed, refresh it with
-`cargo run -p xtask -- assets input-fingerprint --write` and then verify again.
-Version, changelog, registry coordinate, and `targets/artifacts.toml` edits are
-package-envelope changes and must leave it unchanged. `--write-evidence`
+Source-pin, patch, recipe, compiler-input, or producer-code changes require the
+product-owned portable/AOT build. Version, changelog, registry coordinate, and
+`targets/artifacts.toml` edits are package-envelope changes. `--write-evidence`
 regenerates claims only; it never creates or updates an observed passing run.
 
 5. Verify the model and release graph:

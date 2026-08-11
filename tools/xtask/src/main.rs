@@ -11,7 +11,6 @@ use walkdir::WalkDir;
 
 mod aot_serializer;
 mod asset_checks;
-mod asset_fingerprint;
 mod asset_io;
 mod asset_manifest;
 mod asset_pipeline;
@@ -70,8 +69,6 @@ const POSTGRES_PREPARE_SCRIPT: &str =
 const DEFAULT_SOURCE_LANE: &str = "stable";
 const DEFAULT_ASSET_BUILD_PROFILE: &str = "release";
 const SOURCE_CHECKOUT_ROOT: &str = "target/oliphaunt-sources/checkouts";
-const ASSET_INPUT_FINGERPRINT_PATH: &str =
-    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256";
 const GENERATED_ASSETS_DIR: &str = "target/oliphaunt-wasix/assets";
 const GENERATED_AOT_DIR: &str = "target/oliphaunt-wasix/aot";
 const ASSET_CRATE_PAYLOAD_DIR: &str = "src/runtimes/liboliphaunt/wasix/crates/assets/payload";
@@ -246,10 +243,6 @@ fn assets(args: Vec<String>) -> Result<()> {
             let write = args.iter().any(|arg| arg == "--write");
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
             generate_wasix_export_list(write, source_lane)
-        }
-        Some("input-fingerprint") => {
-            let write = args.iter().any(|arg| arg == "--write");
-            check_or_write_asset_input_fingerprint(write)
         }
         Some("aot") => {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
@@ -503,7 +496,6 @@ fn print_usage() {
         "  cargo run -p xtask -- assets download --sha <sha> [--required-job <job-name>] --target <target-id>"
     );
     eprintln!("  cargo run -p xtask -- assets download --run-id <id> --all-targets");
-    eprintln!("  cargo run -p xtask -- assets download --latest-compatible --target <target-id>");
     eprintln!("  cargo run -p xtask -- assets download --release <tag> --target <target-id>");
     eprintln!("  cargo run -p xtask -- assets install-local --target-triple <triple>");
     eprintln!(
@@ -512,7 +504,6 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets ci-artifacts");
     eprintln!("  cargo run -p xtask -- assets aot-targets");
     eprintln!("  cargo run -p xtask -- assets internal-packages");
-    eprintln!("  cargo run -p xtask -- assets input-fingerprint --write");
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release --target-triple <triple> [--execute]"
     );

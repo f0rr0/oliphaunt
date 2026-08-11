@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(git rev-parse --show-toplevel)"
+root="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
 helper="$root/src/extensions/external/postgis/tools/reproducible-time.sh"
 shim="$root/src/extensions/external/postgis/tools/reproducible-bin/date"
 expected_epoch=1776193981

@@ -1017,8 +1017,8 @@ Latest local release work:
   liboliphaunt-wasix:smoke` is the hard runtime gate and requires portable
   assets plus the host AOT pack;
 - `.github/scripts/download-wasix-runtime-build-artifacts.mjs` is a thin wrapper
-  over `xtask assets download`; exact-SHA, latest-compatible, host-target, and
-  all-target WASIX runtime artifact downloads share one implementation;
+  over `xtask assets download`; exact-SHA, host-target, and all-target WASIX
+  runtime artifact downloads share one implementation;
 - AOT serialization is now owned by a maintainer-only `xtask` feature. The
   normal runtime tree keeps headless Wasmer loading, while
   `xtask --features aot-serializer` is the only path that enables Wasmer LLVM;

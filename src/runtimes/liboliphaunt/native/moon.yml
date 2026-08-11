@@ -42,7 +42,6 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
     deps:
-      - "source-inputs:check"
       - "extension-runtime-contract:check"
       - "liboliphaunt-native:external-source-fetch-test"
       - "liboliphaunt-native:generation-lifecycle-test"

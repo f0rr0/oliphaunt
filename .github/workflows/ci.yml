@@ -1572,7 +1572,7 @@ jobs:
             target/oliphaunt-wasix/wasix-build/work/geos-wasix
             target/oliphaunt-wasix/wasix-build/work/geos-wasix-build
             target/oliphaunt-wasix/wasix-build/build
-          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ hashFiles('src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256') }}
+          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
@@ -1640,7 +1640,7 @@ jobs:
             target/oliphaunt-wasix/wasix-build/work/geos-wasix
             target/oliphaunt-wasix/wasix-build/work/geos-wasix-build
             target/oliphaunt-wasix/wasix-build/build
-          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ hashFiles('src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256') }}
+          key: wasix-build-${{ runner.os }}-${{ env.ASSET_PROFILE }}-${{ env.WASMER_LLVM_VERSION }}-${{ env.WASMER_LLVM_LINUX_X64_BYTES }}-${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}-${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Upload portable WASIX build outputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

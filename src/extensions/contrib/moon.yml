@@ -24,7 +24,6 @@ tasks:
     tags: ["quality", "static"]
     command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib"
     deps:
-      - "source-inputs:check"
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/contrib/**/*"

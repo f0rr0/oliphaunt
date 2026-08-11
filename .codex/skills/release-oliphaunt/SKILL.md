@@ -100,11 +100,8 @@ another repository mutation.
 
 ## Local gates
 
-If the candidate intentionally changes WASIX binary-semantic inputs, refresh
-`asset-inputs.sha256` first with
-`cargo run -p xtask -- assets input-fingerprint --write`; a pure release
-version/changelog/envelope change must leave that fingerprint unchanged. See
-`docs/maintainers/assets.md` for the exact boundary.
+If the candidate changes WASIX source pins, build recipes, toolchain inputs, or
+producer code, require the product-owned portable/AOT build and runtime checks.
 
 Run these from the repository root:
 

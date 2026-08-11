@@ -477,7 +477,6 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
     ensure_file(&generated_assets.join("manifest.json"))?;
     let manifest = read_asset_manifest_from(generated_assets)?;
     ensure_packaged_asset_matches_source_lane(&manifest, DEFAULT_SOURCE_LANE)?;
-    ensure_file(Path::new(ASSET_INPUT_FINGERPRINT_PATH))?;
 
     let staging = output_dir.join("staging/portable-wasix");
     if staging.exists() {

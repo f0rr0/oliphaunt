@@ -108,7 +108,6 @@ tasks:
     tags: ["quality", "static"]
     command: "bun src/extensions/tools/check-extension-model.mjs --check"
     deps:
-      - "source-inputs:check"
       - "extension-runtime-contract:check"
       - "oliphaunt-extension-contrib-pg18:check"
       - "extension-age:check"

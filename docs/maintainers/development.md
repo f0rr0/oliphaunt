@@ -271,7 +271,6 @@ cargo run -p xtask -- assets check --strict-generated
 cargo run -p xtask --features template-runner -- assets template
 cargo run -p xtask -- assets source-spine --check-patch-applies
 cargo run -p xtask -- assets audit-upstream --strict
-cargo run -p xtask -- assets input-fingerprint --write
 cargo run -p xtask -- package-size --enforce
 ```
 
@@ -347,25 +346,22 @@ moon run liboliphaunt-wasix:smoke
 ```
 
 Downloaded-artifact mode is the intended way to test a CI-produced runtime
-locally without rebuilding Postgres/WASIX. Download the successful `CI`
-workflow runtime artifacts for the exact commit and install the host target
-payloads into the same ignored generated locations used by the local build path:
+locally without rebuilding Postgres/WASIX. Select either the exact successful
+`CI` workflow run or the full 40-character commit SHA and install the host
+target payloads into the same ignored generated locations used by the local
+build path:
 
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets download --sha <sha> --target-triple "$host"
+cargo run -p xtask -- assets download --run-id <id> --target-triple "$host"
+# Or select the successful CI run for one exact commit:
+cargo run -p xtask -- assets download --sha <full-40-character-sha> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
-For Rust-only work where the asset inputs have not changed, the same command
-can install the latest compatible `main` bundle after verifying the
-asset-input fingerprint:
-
-```sh
-host="$(rustc -vV | awk '/^host:/{print $2}')"
-cargo run -p xtask -- assets download --latest-compatible --target-triple "$host"
-moon run liboliphaunt-wasix:smoke
-```
+Workflow-run downloads require the authenticated GitHub CLI. The downloader
+accepts only the requested run or exact SHA and validates the packaged runtime
+and AOT manifests and checksums before installation.
 
 Released artifact bundles can be installed without the GitHub CLI because they
 are public GitHub release assets:
@@ -376,11 +372,14 @@ cargo run -p xtask -- assets download --release <tag> --target-triple "$host"
 moon run liboliphaunt-wasix:smoke
 ```
 
+Release downloads validate the published checksum manifest, archive checksums,
+and packaged runtime/AOT manifests before installation.
+
 Release validation can download every supported target from the exact `CI`
 workflow SHA:
 
 ```sh
-cargo run -p xtask -- assets download --sha <sha> --all-targets
+cargo run -p xtask -- assets download --sha <full-40-character-sha> --all-targets
 tools/dev/bun.sh tools/release/release-check.mjs
 ```
 
@@ -399,11 +398,10 @@ The `CI` pull-request job uses Moon affectedness over `postgres18`, `third-party
 `source-toolchains`, `extensions`, and `oliphaunt-wasix:release-check`, plus a small producer path
 allowlist, to decide whether the expensive asset build is required. Non-asset
 PRs become an explicit no-op after source-controlled input checks.
-Asset-producing PRs verify source pins, the committed asset-input fingerprint,
-extension catalog metadata, generated metadata policy, and then run the full
-portable/AOT producer workflow before merge. `main` and
-explicit maintainer dispatches remain trusted producer lanes for release
-artifacts.
+Asset-producing PRs verify source pins, extension catalog metadata, generated
+metadata policy, and then run the full portable/AOT producer workflow before
+merge. `main` and explicit maintainer dispatches remain trusted producer lanes
+for release artifacts.
 
 Release process details are tracked in [release.md](release.md). Historical
 progress notes under `docs/internal/` are archived and non-normative; they are

@@ -140,8 +140,8 @@ gap must be represented as an explicit unsupported error and justified in
 - `tools/xtask/src/main.rs` is the command router plus shared helpers. WASIX
   asset build, packaging, generated manifest, AOT packaging, and staged metadata
   orchestration lives in `tools/xtask/src/asset_pipeline.rs`. Source-controlled
-  asset verification, canonical generated-asset layout checks, asset input
-  fingerprinting, AOT target catalog checks, and upstream-fix audits live in
+  asset verification, canonical generated-asset layout checks, AOT target
+  catalog checks, and upstream-fix audits live in
   `tools/xtask/src/asset_checks.rs`. Generated asset manifest DTOs, AOT
   manifest DTOs, asset packaging descriptors, and WASM link-metadata parsing
   live in

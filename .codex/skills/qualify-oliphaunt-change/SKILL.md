@@ -11,12 +11,10 @@ Use the repository graph to select work, but require the full exact-SHA gate for
 
 1. Inspect the diff and ask Moon for affected projects/tasks. Do not infer affected products from directory names alone.
 2. Run formatting/static checks and focused unit/package tests first. Run expensive producer/E2E lanes only when their inputs or release contract changed.
-3. If the diff intentionally changes WASIX binary-semantic inputs (source pins,
-   patches, build recipes, the WASIX toolchain, or producer code), refresh the
-   committed fingerprint before qualification with
-   `cargo run -p xtask -- assets input-fingerprint --write`. Do not refresh it
-   for version, changelog, package-description, smoke-expectation, or
-   target-envelope-only changes. See `docs/maintainers/assets.md`.
+3. If the diff changes WASIX source pins, patches, build recipes, the toolchain,
+   or producer code, run the product-owned source checks and portable/AOT build.
+   Version, changelog, package-description, smoke-expectation, and
+   target-envelope-only changes do not require that expensive build.
 4. For any release, package identity, workflow, version, or extension change, run:
 
 ```sh

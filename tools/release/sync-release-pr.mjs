@@ -47,12 +47,6 @@ const TOML_TABLE_RE = /^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$/u;
 const PNPM_TYPESCRIPT_OPTIONAL_RUNTIME_KEY_RE =
   /^(\s*)'(@oliphaunt\/(?:broker|liboliphaunt|node-direct|tools)-[^']+)':\s*$/u;
 const PNPM_SPECIFIER_RE = /^(\s*specifier:\s*)(\S+)(\s*)$/u;
-const ASSET_INPUT_FINGERPRINT_PATH = path.join(
-  ROOT,
-  "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
-);
-const ASSET_INPUT_FINGERPRINT_MISMATCH_RE =
-  /committed asset input fingerprint must be '([0-9a-f]+)', got '([0-9a-f]+)'/u;
 const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   ROOT,
   "src/extensions/generated/docs/extension-evidence.json",
@@ -854,40 +848,6 @@ function commandOutputForError(result) {
   return parts.join("\n") || `exit ${result.status}`;
 }
 
-function syncAssetInputFingerprint(changes, { write }) {
-  const command = ["run", "-p", "xtask", "--", "assets", "input-fingerprint"];
-  if (write) {
-    command.push("--write");
-  }
-  const before = readOptionalText(ASSET_INPUT_FINGERPRINT_PATH);
-  const result = captureCommandOutput("cargo", command, {
-    cwd: ROOT,
-    label: `cargo ${command.join(" ")}`,
-  });
-  const output = commandOutputForError(result);
-  if (result.status !== 0) {
-    const mismatch = ASSET_INPUT_FINGERPRINT_MISMATCH_RE.exec(output);
-    if (!write && mismatch !== null) {
-      changes.push({
-        path: ASSET_INPUT_FINGERPRINT_PATH,
-        detail: `${mismatch[1]} -> ${mismatch[2]}`,
-      });
-      return;
-    }
-    fail(`\`cargo ${command.join(" ")}\` failed:\n${output}`);
-  }
-  if (!write) {
-    return;
-  }
-  const after = readOptionalText(ASSET_INPUT_FINGERPRINT_PATH);
-  if (before !== after) {
-    changes.push({
-      path: ASSET_INPUT_FINGERPRINT_PATH,
-      detail: `${before?.trim() ?? "<missing>"} -> ${after?.trim() ?? "<missing>"}`,
-    });
-  }
-}
-
 export function extensionEvidenceSummaryCommand({ write }) {
   return [
     process.execPath,
@@ -1001,7 +961,6 @@ async function main(argv) {
   syncExampleCargoRegistryPins(changes, { write });
   syncLockfiles(changes, { write });
   if (!args.generatedReleaseCheck) {
-    syncAssetInputFingerprint(changes, { write });
     syncExtensionEvidenceSummary(changes, { write });
   }
   if (changes.length === 0) {
@@ -1044,7 +1003,6 @@ export function releaseDerivedPathInventory() {
     PNPM_LOCKFILE,
     RELEASE_PLEASE_CONFIG,
     ELECTRON_EXAMPLE_PACKAGE,
-    ASSET_INPUT_FINGERPRINT_PATH,
     EXTENSION_EVIDENCE_SUMMARY_PATH,
     ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
     ...exactExtensionProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),

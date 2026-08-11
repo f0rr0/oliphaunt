@@ -30,7 +30,8 @@
 - An existence check never authorizes an immutable-version skip. Prove crates.io checksums, npm SRI, Maven payload bytes, and the JSR file manifest against the publication lock, and preserve final receipts before release promotion.
 - Before promotion, derive every applicable public consumer surface and dependency closure from the exact lock; probe each anonymous Cargo/npm/Maven/JSR entry independently plus Git/Swift in fresh caches under one deadline, require every resolver lock to contain its complete frozen closure, retry only transient visibility failures, and preserve deterministic evidence bound to both immutable receipt sets. Never hide a missing lock dependency in a receipt-only category. A macOS host install does not prove every OS carrier, and a pre-promotion Swift probe proves the public source tag/manifest rather than draft binary-target availability.
 - Normal npm and JSR publication uses GitHub-hosted OIDC. Normal Cargo publication exchanges OIDC for a fresh temporary token per bounded carrier batch and revokes it in `finally`; Maven credentials remain protected environment secrets. Bootstrap credentials are short-lived, isolated, and revoked after exact trusted-publisher configuration is audited; npm bootstrap specifically requires a granular `@oliphaunt` read/write token with 2FA bypass from a 2FA-enabled actor.
-- A pure version/changelog update may change the package envelope and lock, but must not change the WASIX binary-semantic input fingerprint.
+- A pure version/changelog update may change the package envelope and lock, but
+  must not alter the existing WASIX runtime or AOT bytes.
 - Never upload an immutable public version twice, move a public product tag, or
   force-push a history containing affected public releases. Retry only at the
   exact release commit through GitHub's rerun of the original Release run; the

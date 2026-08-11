@@ -97,8 +97,8 @@ Asset provenance is recorded in runtime source pins under
 `src/sources/third-party/**`, extension-owned source pins under
 `src/extensions/external/**/source.toml` and
 `src/extensions/external/**/dependencies/**/source.toml`,
-`src/sources/toolchains/**`, the committed asset input fingerprint, and the
-generated runtime/AOT manifests produced by the
+`src/sources/toolchains/**`, the exact producer commit, and the generated
+runtime/AOT manifests produced by the
 `CI` workflow's WASM runtime lane. Generated manifests record source pins,
 runtime hashes, `initdb` hashes, PGDATA template hashes, extension archive
 hashes, target information, and Wasmer engine identity. PostgreSQL ICU support
@@ -132,7 +132,7 @@ validation, and a live exact-commit fetch from every newly declared endpoint.
 WASIX build and work trees are generated under
 `target/oliphaunt-wasix/wasix-build/**`. The source tree
 `src/runtimes/liboliphaunt/wasix/assets/build/**` is reserved for scripts, patches,
-Docker inputs, and shims that should affect the committed asset fingerprint.
+Docker inputs, and shims that define the build at the exact producer commit.
 
 Normal development and source-free validation do not clone upstream repositories
 or run Docker. The source-free gate is:
@@ -141,10 +141,10 @@ or run Docker. The source-free gate is:
 cargo run -p xtask -- assets verify-committed
 ```
 
-It verifies source pins, source/build input fingerprints, extension
-metadata/constants when generated manifests are installed, AOT crate templates,
-and the absence of committed PGDATA template, portable WASIX, or native AOT
-blobs.
+It verifies source pins, source and toolchain inputs, extension
+metadata/constants when generated manifests are installed, AOT crate
+templates, and the absence of committed PGDATA template, portable WASIX, or
+native AOT blobs.
 
 Release assets are built with the `release` profile by default: WASIX C code
 uses `-O2 -g0`, and Binaryen runs the wasixcc default optimization plus
@@ -152,11 +152,11 @@ uses `-O2 -g0`, and Binaryen runs the wasixcc default optimization plus
 profile remains available for explicit O3/ThinLTO comparison builds.
 
 Generated runtime hashes in package metadata are refreshed in the release
-staging workspace. The committed `asset-inputs.sha256` is a
-binary-semantic digest of source pins, patches, build recipes, producer code,
-toolchain inputs, and normalized dependency locks. Release versions,
-changelogs, package descriptions, and smoke expectations belong to the
-publication envelope/lock and do not invalidate the expensive binary build.
+staging workspace. CI-produced assets are selected by exact workflow run or
+exact commit, and their manifests and checksums bind the installed runtime and
+AOT bytes. Release versions, changelogs, package descriptions, and smoke
+expectations belong to the publication envelope/lock and do not alter those
+runtime bytes.
 
 The WASIX builder declares its immutable bootstrap inputs in
 `src/sources/toolchains/wasix.toml`: the Ubuntu base image digest, Dockerfile
@@ -185,8 +185,7 @@ snapshot service changes its certificate chain:
 3. Run the pinned APT helper fault tests, source-spine verification, and a clean
    Docker builder build. The build must reach the snapshot with normal peer
    verification and print the pinned wasixcc, Clang, and Binaryen versions.
-4. Refresh `asset-inputs.sha256`, then require the complete portable/AOT build
-   and exact-SHA hosted qualification.
+4. Require the complete portable/AOT build and exact-SHA hosted qualification.
 
 Treat any base image, frontend, snapshot, trust-root, source-set, APT helper, or
 package-list change as a binary-semantic toolchain change. Ubuntu documents
@@ -199,13 +198,13 @@ trusted producer runs: one Linux/Docker job builds portable WASIX modules from
 `src/runtimes/liboliphaunt/wasix/assets/build` into `target/oliphaunt-wasix/assets`,
 then native matrix jobs generate and package target-specific Wasmer AOT crates
 into `target/oliphaunt-wasix/aot/<target>`. Artifacts are uploaded with
-checksums, manifests, and the committed asset-input fingerprint.
+checksums and manifests.
 
 Pull requests run a Moon-based asset plan instead of GitHub path-filtering the
 workflow. The plan uses `moon query affected` for the PR base/head, plus the
 asset producer path allowlist, to decide whether the expensive producer jobs are
-required. Non-asset PRs become an explicit no-op after the source-controlled
-asset-input checks. Asset-producing PRs run those input checks and the same full
+required. Non-asset PRs become an explicit no-op after the source and toolchain
+checks. Asset-producing PRs run those checks and the same full
 portable/AOT producer path as `main` and explicit maintainer dispatches.
 
 Manual `CI` dispatches use the same producer path. Maintainers may select
@@ -219,24 +218,25 @@ only inside the `CI` workflow's WASM AOT jobs or a maintainer's explicit
 local artifact build. Normal contributors and end users never need LLVM; they
 use committed Rust sources plus downloaded or released AOT payloads.
 
-The normal CI runtime matrix downloads the latest compatible `CI` workflow
-WASM runtime bundle, verifies that the downloaded fingerprint matches the
-current source inputs, installs the payloads into ignored generated paths, and
-runs runtime tests. Changes to source pins, WASIX patches, extension catalogs,
-build scripts, or AOT crate templates are treated as asset-producing: pull
-requests must pass the source-controlled asset-input gate and the full producer
-workflow before merge, while `main` and explicit maintainer dispatches remain
-trusted producer lanes for release artifacts. Release validation downloads the
-exact-SHA portable and AOT bundles, stages them into a clean release workspace,
-validates package contents, and only then publishes.
+The normal CI runtime matrix downloads a `CI` workflow WASM runtime bundle by
+exact run ID or exact commit SHA, validates its packaged manifests and
+checksums, installs the payloads into ignored generated paths, and runs runtime
+tests. Changes to source pins, WASIX patches, extension catalogs, build scripts,
+or AOT crate templates are treated as asset-producing: pull requests must pass
+the source and toolchain checks and the full producer workflow before
+merge, while `main` and explicit maintainer dispatches remain trusted producer
+lanes for release artifacts. Release validation downloads the exact-SHA
+portable and AOT bundles, stages them into a clean release workspace, validates
+package contents, and only then publishes.
 
 Published releases also attach public `.tar.zst` mirrors of the validated
 portable WASIX and target AOT bundles. `xtask assets download --release <tag>`
 installs those release assets directly and does not require the GitHub CLI.
-
-After an intentional asset-source change and regenerated artifacts, refresh the
-committed input fingerprint:
+For workflow artifacts, select one exact run or full commit SHA; all three modes
+validate checksums and packaged manifests before installation:
 
 ```sh
-cargo run -p xtask -- assets input-fingerprint --write
+cargo run -p xtask -- assets download --run-id <id> --target-triple <triple>
+cargo run -p xtask -- assets download --sha <full-40-character-sha> --target-triple <triple>
+cargo run -p xtask -- assets download --release <tag> --target-triple <triple>
 ```

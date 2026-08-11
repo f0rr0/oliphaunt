@@ -9,7 +9,7 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | Release products, versions, tags, and recovery | `release.md` | `release-please-config.json`, `.release-please-manifest.json`, active-product `release.toml`, `tools/release/publication-catalog.mjs`, `.github/scripts/manage-release-drafts.mjs` |
 | Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `tools/release/check_publish_environment.mjs` |
 | CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mjs`, Moon project files |
-| Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, `tools/xtask`, the committed binary-semantic fingerprint |
+| Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, exact producer SHA, runtime/AOT manifests and checksums, `tools/xtask` |
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, exact-member `targets/artifacts.toml`, evidence matrix, release catalog |
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |
 | Repository layout | `repo-structure.md` | Moon graph and build/package manifests |

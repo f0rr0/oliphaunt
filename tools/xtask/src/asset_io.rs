@@ -81,9 +81,8 @@ pub(super) fn download_assets(args: &[String]) -> Result<()> {
         ensure!(
             value_after(args, "--run-id").is_none()
                 && value_after(args, "--sha").is_none()
-                && !args.iter().any(|arg| arg == "--latest-compatible")
                 && required_job.is_none(),
-            "assets download accepts only one of --run-id, --sha, --latest-compatible, or --release; --required-job applies only to workflow-run downloads"
+            "assets download accepts only one of --run-id, --sha, or --release; --required-job applies only to workflow-run downloads"
         );
         download_assets_from_release(tag, &targets)?;
         let target_list = targets.join(", ");
@@ -152,82 +151,33 @@ fn asset_download_run_candidates(
 ) -> Result<Vec<String>> {
     let run_id = value_after(args, "--run-id");
     let sha = value_after(args, "--sha");
-    let latest_compatible = args.iter().any(|arg| arg == "--latest-compatible");
-    let selected_modes =
-        usize::from(run_id.is_some()) + usize::from(sha.is_some()) + usize::from(latest_compatible);
-    if selected_modes != 1 {
-        bail!(
-            "assets download requires exactly one of --run-id <id>, --sha <sha>, or --latest-compatible"
-        );
+    match (run_id, sha) {
+        (Some(run_id), None) => filter_runs_by_required_job(vec![run_id.to_owned()], required_job),
+        (None, Some(sha)) => {
+            ensure!(
+                sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "assets download --sha requires a full 40-character commit SHA"
+            );
+            let output = github_read_output(
+                &[
+                    "run",
+                    "list",
+                    "--workflow",
+                    "CI",
+                    "--commit",
+                    sha,
+                    "--limit",
+                    "20",
+                    "--json",
+                    "databaseId,status,headSha",
+                ],
+                &format!("find CI workflow run for SHA {sha}"),
+            )
+            .with_context(|| format!("find CI workflow run for SHA {sha}"))?;
+            filter_runs_by_required_job(parse_exact_sha_run_ids(&output, sha)?, required_job)
+        }
+        _ => bail!("assets download requires exactly one of --run-id <id> or --sha <sha>"),
     }
-
-    if let Some(run_id) = run_id {
-        return filter_runs_by_required_job(vec![run_id.to_owned()], required_job);
-    }
-
-    if let Some(sha) = sha {
-        ensure!(
-            sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "assets download --sha requires a full 40-character commit SHA"
-        );
-        let output = github_read_output(
-            &[
-                "run",
-                "list",
-                "--workflow",
-                "CI",
-                "--commit",
-                sha,
-                "--limit",
-                "20",
-                "--json",
-                "databaseId,status,headSha",
-            ],
-            &format!("find CI workflow run for SHA {sha}"),
-        )
-        .with_context(|| format!("find CI workflow run for SHA {sha}"))?;
-        return filter_runs_by_required_job(parse_exact_sha_run_ids(&output, sha)?, required_job);
-    }
-
-    let branch = value_after(args, "--branch").unwrap_or("main");
-    let output = github_read_output(
-        &[
-            "run",
-            "list",
-            "--workflow",
-            "CI",
-            "--branch",
-            branch,
-            "--status",
-            "success",
-            "--limit",
-            "20",
-            "--json",
-            "databaseId",
-            "--jq",
-            ".[].databaseId",
-        ],
-        &format!("find latest successful CI workflow runs on {branch}"),
-    )
-    .with_context(|| format!("find latest successful CI workflow runs on {branch}"))?;
-    filter_runs_by_required_job(parse_gh_run_ids(&output)?, required_job)
-}
-
-fn parse_gh_run_ids(output: &str) -> Result<Vec<String>> {
-    let mut runs = Vec::new();
-    for line in output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        ensure!(
-            line.bytes().all(|byte| byte.is_ascii_digit()) && !line.starts_with('0'),
-            "GitHub returned invalid workflow run id {line:?}"
-        );
-        runs.push(line.to_owned());
-    }
-    ensure!(!runs.is_empty(), "no CI workflow artifact found");
-    Ok(runs)
 }
 
 fn parse_exact_sha_run_ids(output: &str, sha: &str) -> Result<Vec<String>> {
@@ -812,19 +762,6 @@ fn extract_tar_zst(archive: &Path, destination: &Path) -> Result<()> {
     })
 }
 
-fn verify_downloaded_asset_fingerprint(download_dir: &Path) -> Result<()> {
-    let expected = fs::read_to_string(ASSET_INPUT_FINGERPRINT_PATH)
-        .with_context(|| format!("read {}", ASSET_INPUT_FINGERPRINT_PATH))?;
-    let downloaded_path = download_dir.join(ASSET_INPUT_FINGERPRINT_PATH);
-    let downloaded = fs::read_to_string(&downloaded_path)
-        .with_context(|| format!("read {}", downloaded_path.display()))?;
-    ensure_eq(
-        downloaded.trim(),
-        expected.trim(),
-        "downloaded asset-input fingerprint",
-    )
-}
-
 fn validate_downloaded_artifacts(download_dir: &Path, targets: &[String]) -> Result<()> {
     for entry in WalkDir::new(download_dir).follow_links(false) {
         let entry = entry.with_context(|| format!("walk {}", download_dir.display()))?;
@@ -835,7 +772,6 @@ fn validate_downloaded_artifacts(download_dir: &Path, targets: &[String]) -> Res
             entry.path().display()
         );
     }
-    verify_downloaded_asset_fingerprint(download_dir)?;
     let downloaded_assets = download_dir.join(GENERATED_ASSETS_DIR);
     ensure_file(&downloaded_assets.join("manifest.json"))?;
     let downloaded_manifest = read_asset_manifest_from(&downloaded_assets)?;
