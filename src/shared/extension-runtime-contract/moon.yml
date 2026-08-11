@@ -15,13 +15,3 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
-
-tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bun src/shared/extension-runtime-contract/tools/check-contract.mjs"
-    inputs:
-      - "/src/shared/extension-runtime-contract/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true

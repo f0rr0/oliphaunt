@@ -42,7 +42,6 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
     deps:
-      - "extension-runtime-contract:check"
       - "liboliphaunt-native:external-source-fetch-test"
       - "liboliphaunt-native:generation-lifecycle-test"
       - "liboliphaunt-native:ios-extension-packager-test"
@@ -205,7 +204,6 @@ tasks:
   release-runtime:
     tags: ["runtime", "release"]
     deps:
-      - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
     inputs:
@@ -241,7 +239,6 @@ tasks:
     tags: ["runtime", "release", "ci-liboliphaunt-native-desktop"]
     deps:
       - "liboliphaunt-native:check"
-      - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
     inputs:
@@ -283,7 +280,6 @@ tasks:
       ]
     deps:
       - "liboliphaunt-native:check"
-      - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
     inputs:

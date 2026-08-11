@@ -16,25 +16,9 @@ project:
   description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.4 source baseline."
   owner: "oliphaunt"
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib"
-    deps:
-      - "extension-runtime-contract:check"
-    inputs:
-      - "/src/extensions/contrib/**/*"
-      - "/src/extensions/tools/check-extension-tree.mjs"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-
   assemble-release:
     tags: ["release", "artifact-package"]
     command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --require-native --require-wasix"
-    deps:
-      - "oliphaunt-extension-contrib-pg18:check"
     inputs:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"

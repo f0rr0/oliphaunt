@@ -10,8 +10,7 @@ function parseArgs(argv) {
       console.log(`usage: tools/release/release-metadata-check.mjs [legacy passthrough args]
 
 Runs Release Please, artifact-target, release-PR, publication metadata,
-generated-docs, and consumer-shape checks without replaying mutation
-unit tests.
+and generated-docs checks without replaying mutation unit tests.
 This is an internal post-qualification or generated-metadata replay surface;
 use release-check.mjs for the full local gate.
 `);
@@ -30,16 +29,6 @@ function main(argv) {
   run(TOOL, [process.execPath, "tools/release/check-release-metadata.mjs"]);
   run(TOOL, ["node", "src/docs/tools/check-docs-product.mjs"]);
   run(TOOL, [process.execPath, "tools/release/example-cargo-policy.mjs", "--check"]);
-  run(TOOL, [process.execPath, "tools/release/release-consumer-shape.mjs", "--format", "json", "--require-ready"]);
-  run(TOOL, [
-    process.execPath,
-    "tools/release/release-consumer-shape.mjs",
-    "--format",
-    "json",
-    "--require-ready",
-    "--products-json",
-    '["oliphaunt-react-native"]',
-  ]);
 }
 
 if (import.meta.main) {

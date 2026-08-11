@@ -208,8 +208,8 @@ The default `release-check.mjs` invocation includes publication metadata
 validation and the release mutation unit suite. `check-release-metadata.mjs`
 is the canonical product, version, registry ownership, and dependency graph
 validator. `release-metadata-check.mjs` is a distinct internal replay surface
-that also executes Release Please, artifact, changelog, synchronization, and
-consumer-shape checks. The workflow may
+that also executes Release Please, artifact, changelog, and synchronization
+checks. The workflow may
 call it only after the structured generated-release commit verifier succeeds,
 or after the exact hosted qualification record is reverified against a clean
 checkout at `RELEASE_HEAD_SHA`. Do not substitute it for the full local
@@ -445,8 +445,7 @@ If the job stops after a public write, GitHub's rerun of the original Release
 run inventories the complete lock and proves registry bytes before deciding
 whether an operation remains.
 
-The post-publication consumer gate is an actual anonymous public-endpoint
-probe, not the static consumer-shape policy check used during qualification.
+The post-publication consumer gate is an anonymous public-endpoint probe.
 It derives its products, ecosystem lanes, dependency roots, full carrier
 closure, versions, Maven coordinates, and Git tags from the same frozen lock.
 In parallel clean temporary homes/caches it resolves each Cargo consumer root

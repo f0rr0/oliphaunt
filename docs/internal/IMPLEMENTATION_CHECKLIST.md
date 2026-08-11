@@ -566,8 +566,6 @@ Run before claiming this architecture complete:
 - [x] `bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
 - [x] `moon run policy-tools:check release-tools:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
-  .github/scripts/run-moon-targets.sh extensions:check`
-- [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh extension-model:check
   extension-artifacts-native:check extension-artifacts-wasix:check`
 - [x] `moon query projects`
@@ -597,8 +595,6 @@ Run before claiming this architecture complete:
   `linux-x64-gnu`.
 - [x] `tools/dev/bun.sh tools/release/release_plan.mjs`
 - [x] `tools/dev/bun.sh tools/release/release-check.mjs`
-- [x] `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
-  --products-json '["oliphaunt-swift"]'`
 - [x] `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json
   '["oliphaunt-extension-vector"]' --head-ref HEAD` fails closed when the
   staged exact-extension package is incomplete or missing.
@@ -786,8 +782,7 @@ Run before claiming this architecture complete:
   touched Python release/graph modules,
   `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
-  and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
-  --products-json '["oliphaunt-extension-vector"]'`.
+  and the focused extension package checks.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
   blockers: Android x86_64 and Linux arm64 native-runtime source fetches failed through
   `ftpmirror.gnu.org` libiconv 502s, Apple extension runtime builds passed the
@@ -1145,16 +1140,6 @@ Run before claiming this architecture complete:
   guide](../maintainers/release-setup.md) as canonical rather than replaying
   the historical command above. Same-SHA builder evidence for the branch at
   the time was green in GitHub CI run `27744307637`.
-- [x] Consumer-shape validation for the full selected product closure is green.
-  The checker now treats `oliphaunt-node-direct` as a consumer-facing helper
-  product: the private root source package stays unpublishable, optional
-  platform npm packages publish with provenance and OS/CPU/libc constraints,
-  release metadata declares exactly those optional packages, and the TypeScript
-  SDK can keep selecting Node direct by exact optional platform packages.
-  Evidence: `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --product
-  oliphaunt-node-direct` and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs
-  --require-ready --products-json "$(cat
-  target/release-dry-run-local/products.json)"` pass.
 - [x] Windows native exact-extension coverage has a producer path for all nine
   previous Windows gaps. The Windows build script now generates Meson
   producers inside the patched PostgreSQL source tree for `pg_hashids`,

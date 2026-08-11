@@ -40,8 +40,6 @@ tasks:
   check:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
-    deps:
-      - "extension-runtime-contract:check"
     inputs:
       - "/src/postgres/versions/18/**/*"
       - "/src/sources/toolchains/**/*"

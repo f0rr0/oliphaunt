@@ -544,10 +544,8 @@ Keep these gates:
 
 Enforcement ownership:
 
-- `tools/dev/bun.sh tools/release/release-consumer-shape.mjs` validates
-  structured package manifests, registry carriers, platform selectors,
-  exact-extension targets, and the Moon tasks that own executable consumer
-  proofs. It does not scan implementation spelling or documentation prose.
+- Release metadata and artifact-target checks validate package manifests,
+  registry carriers, platform selectors, and exact-extension targets.
 - Product `package` and `release-check` tasks own packed-package, clean-project,
   no-network, and runtime behavior. Candidate CI executes those tasks on the
   runner and artifact combinations they require.

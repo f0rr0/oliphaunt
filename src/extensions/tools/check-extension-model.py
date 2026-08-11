@@ -35,6 +35,7 @@ EXTENSION_ENVELOPE_FILENAMES = {
     "CHANGELOG.md",
     "VERSION",
     "artifacts.toml",
+    "moon.yml",
     "publication-blocker.toml",
     "release.toml",
 }
