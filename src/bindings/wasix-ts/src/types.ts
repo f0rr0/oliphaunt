@@ -154,18 +154,14 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
-/** Advanced overrides are intentionally isolated from the ordinary open path. */
-export type WasixAdvancedOpenOptions = Readonly<{
-  /**
-   * Override the exact default runtime carrier. All three assets remain one
-   * indivisible, integrity-checked identity.
-   */
-  runtime?: WasixRuntimeDescriptor;
-}>;
+/** Where package-owned WASIX lifecycle work runs. */
+export type ExecutionMode = 'direct' | 'worker';
 
-export type WasixOpenOptions = {
-  /** Low-level runtime replacement; ordinary consumers should omit this. */
-  advanced?: WasixAdvancedOpenOptions;
+export type OpenConfig = {
+  /** Worker-isolated by default; direct opens in and then blocks the caller's realm. */
+  execution?: ExecutionMode;
+  /** Low-level, indivisible runtime-carrier override; ordinary consumers should omit this. */
+  advanced?: Readonly<{ runtime?: WasixRuntimeDescriptor }>;
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;
@@ -177,15 +173,24 @@ export type WasixOpenOptions = {
   storage?: WasixStorage;
 };
 
-export type WasixDatabase = {
+export type OliphauntDatabase = {
   execute(sql: string): Promise<Uint8Array>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   /** CHECKPOINT PostgreSQL, then atomically publish the current persistent PGDATA snapshot. */
   checkpoint(): Promise<void>;
+  transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   close(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
-export type OliphauntWasixClient = {
-  open(options?: WasixOpenOptions): Promise<WasixDatabase>;
+/** A database session pinned to one callback-scoped PostgreSQL transaction. */
+export type OliphauntTransaction = {
+  execute(sql: string): Promise<Uint8Array>;
+  query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
+  execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+};
+
+export type OliphauntClient = {
+  open(config?: OpenConfig): Promise<OliphauntDatabase>;
 };

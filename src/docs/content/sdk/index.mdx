@@ -17,9 +17,10 @@ keeps ecosystem-native naming and exposes only the behavior its host supports.
   embeds or supervises the native runtime family.
 - Choose Rust WASIX (`oliphaunt-wasix`) when Rust owns the portable WASIX host
   and needs Rust direct, local server, extension, or data-movement APIs.
-- Choose WASIX TypeScript (`@oliphaunt/wasix`) when a browser module Worker or
-  Node worker thread owns portable PostgreSQL. Memory is the default;
-  extensions are selective imports and IndexedDB is a browser-only opt-in.
+- Choose WASIX TypeScript (`@oliphaunt/wasix`) when portable PostgreSQL runs
+  directly or in a module Worker in a browser, or in a Node worker thread.
+  Memory is the default; extensions are selective imports and IndexedDB is a
+  browser-only opt-in.
 - Choose the C ABI only when building another native language binding or
   integrating `liboliphaunt` directly.
 
@@ -50,7 +51,7 @@ optional dump tooling. WASIX TypeScript intentionally exposes only
 | Question | Why it matters |
 | --- | --- |
 | Which package do I install? | Package identity determines native versus WASIX runtime ownership. |
-| Which host runs PostgreSQL? | Native process, Rust WASIX host, browser Worker, and Node worker thread have different lifecycle behavior. |
+| Which host runs PostgreSQL? | Native process, Rust WASIX host, browser caller realm or Worker, and Node worker thread have different lifecycle behavior. |
 | What is the storage default? | Sensible defaults avoid configuration while explicit storage opts into persistence. |
 | How do I select extensions? | Native SDKs select exact SQL names; WASIX TypeScript imports exact portable descriptors. |
 | Which APIs are actually present? | Server, capability, streaming, transaction-helper, and data-movement support differs by product. |

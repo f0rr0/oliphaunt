@@ -120,12 +120,24 @@ try {
     assertRunning(browser);
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression:
-        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
+        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',target:document.documentElement.dataset.oliphauntBenchmarkTarget??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
       returnByValue: true,
     });
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
     if (snapshot.state === 'passed') {
-      console.log(`wasix-ts browser ${benchmark ? 'benchmark' : 'smoke'}: PASS ${snapshot.output}`);
+      if (benchmark) {
+        // Keep the raw samples available to CI and local callers even when the
+        // performance gate fails. Embedding the full payload in an uncaught
+        // Error truncates it in Node's diagnostic formatter.
+        console.log(
+          `wasix-ts browser benchmark: ${snapshot.target === 'met' ? 'PASS' : 'TARGET MISSED'} ${snapshot.output}`,
+        );
+        if (snapshot.target !== 'met') {
+          throw new Error(`browser benchmark missed its required target: ${snapshot.status}`);
+        }
+      } else {
+        console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
+      }
       break;
     }
     if (snapshot.state === 'failed') {

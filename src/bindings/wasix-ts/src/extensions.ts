@@ -6,7 +6,7 @@ import {
   layoutRuntime,
   loadAsset,
 } from './archive.js';
-import type { SerializedRuntimeDescriptor, WorkerOpenOptions } from './rpc.js';
+import type { SerializedOpenOptions, SerializedRuntimeDescriptor } from './rpc.js';
 import { canonicalStorageContract, type WasixStorageCompatibility } from './storage-provider.js';
 import type { WasixAssetManifest } from './types.js';
 
@@ -61,7 +61,7 @@ export type PreparedBrowserRuntime = {
  * separate for execution after PostgreSQL reaches ReadyForQuery.
  */
 export async function prepareBrowserRuntime(
-  options: WorkerOpenOptions,
+  options: SerializedOpenOptions,
 ): Promise<PreparedBrowserRuntime> {
   const descriptor = options.runtime;
   const [manifestBytes, runtimeBytes, pgdataBytes] = await Promise.all([
@@ -134,7 +134,7 @@ export async function prepareBrowserRuntime(
 function storageCompatibility(
   runtime: SerializedRuntimeDescriptor,
   manifest: WasixAssetManifest,
-  carriers: WorkerOpenOptions['extensionCarriers'],
+  carriers: SerializedOpenOptions['extensionCarriers'],
 ): WasixStorageCompatibility {
   return {
     schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
@@ -182,7 +182,7 @@ export function assertRuntimeDescriptorMatchesManifest(
 
 export function assertExactCarrierClosure(
   resolved: readonly ProjectedExtensionInstall[],
-  carriers: WorkerOpenOptions['extensionCarriers'],
+  carriers: SerializedOpenOptions['extensionCarriers'],
 ): void {
   const expected = new Set(resolved.map((extension) => extension['sql-name']));
   const actual = new Set(Object.keys(carriers));
@@ -254,7 +254,7 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
 
 export function resolveBrowserExtensions(
   manifest: WasixAssetManifest,
-  carriers: WorkerOpenOptions['extensionCarriers'],
+  carriers: SerializedOpenOptions['extensionCarriers'],
   requested: readonly string[],
 ): ResolvedBrowserExtensions {
   const runtimeSupport = new Set(manifest['runtime-support'].map((entry) => entry.name));
@@ -328,7 +328,7 @@ export function resolveBrowserExtensions(
 }
 
 function extensionFromCarrier(
-  carrier: WorkerOpenOptions['extensionCarriers'][string],
+  carrier: SerializedOpenOptions['extensionCarriers'][string],
 ): ProjectedExtensionInstall {
   const lifecycle = carrier.install.lifecycle;
   return {
@@ -359,7 +359,7 @@ function extensionFromCarrier(
 export function assertExtensionCarriersCompatible(
   runtime: SerializedRuntimeDescriptor,
   manifest: WasixAssetManifest,
-  carriers: WorkerOpenOptions['extensionCarriers'],
+  carriers: SerializedOpenOptions['extensionCarriers'],
 ): void {
   const postgresMajor = manifest.runtime['postgres-version'].split('.')[0];
   for (const carrier of Object.values(carriers)) {

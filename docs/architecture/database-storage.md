@@ -99,8 +99,8 @@ not expose a dirty-file feed.
 
 Consequences are part of the public contract:
 
-- one worker owns an IndexedDB database at a time, enforced with the Web Locks
-  API;
+- one open database owns an IndexedDB database at a time, enforced with the Web
+  Locks API;
 - a PostgreSQL statement error recovers through `ReadyForQuery` and does not
   poison storage;
 - an IndexedDB load, compatibility, ownership, or snapshot failure is a

@@ -8,32 +8,29 @@ import {
   type QueryResult,
   toUint8Array,
 } from './query.js';
-import type { BinaryInput, WasixDatabase } from './types.js';
+import type { BinaryInput, OliphauntDatabase, OliphauntTransaction } from './types.js';
 
-type DatabaseWorkerRequest =
-  | { method: 'exec'; input: Uint8Array }
-  | { method: 'checkpoint' }
-  | { method: 'close' };
+const transactionPinnedMessage =
+  'Oliphaunt WASIX database is pinned to an active transaction; use the callback transaction handle';
 
-/** @internal Narrow transport seam used by the database state-machine tests. */
-export type WasixDatabaseWorker = {
-  request(
-    request: DatabaseWorkerRequest,
-    transfer?: Transferable[],
-  ): Promise<Uint8Array | undefined>;
-  terminate(): void;
+/** @internal Execution seam shared by direct and worker-backed database handles. */
+export type WasixDatabaseSession = {
+  exec(input: Uint8Array): Promise<Uint8Array>;
+  checkpoint(): Promise<void>;
+  close(): Promise<void>;
 };
 
-/** @internal Main-thread database state machine; public construction stays in openWasix(). */
-export class WorkerWasixDatabase implements WasixDatabase {
-  readonly #rpc: WasixDatabaseWorker;
+/** @internal Public database state machine; construction stays behind Oliphaunt.open(). */
+export class WasixDatabaseImpl implements OliphauntDatabase {
+  readonly #session: WasixDatabaseSession;
   #tail = Promise.resolve();
   #closed = false;
   #closeAttempt: Promise<void> | undefined;
   #persistenceFailure: WasixStorageError | undefined;
+  #activeTransaction = false;
 
-  constructor(rpc: WasixDatabaseWorker) {
-    this.#rpc = rpc;
+  constructor(session: WasixDatabaseSession) {
+    this.#session = session;
   }
 
   async execute(sql: string): Promise<Uint8Array> {
@@ -52,37 +49,27 @@ export class WorkerWasixDatabase implements WasixDatabase {
   }
 
   #execOwned(bytes: Uint8Array): Promise<Uint8Array> {
-    this.#assertOpen();
+    this.#assertAvailable();
     return this.#serialize(async () => {
       // A checkpoint failure may have been ahead of this operation in the
       // serialized queue. Recheck here so queued work cannot run against the
       // unpublished, deliberately poisoned generation.
       this.#assertHealthy();
-      const response = await this.#rpc.request({ method: 'exec', input: bytes }, [bytes.buffer]);
-      if (!(response instanceof Uint8Array)) {
-        throw new Error('Oliphaunt WASIX worker returned an invalid protocol response');
-      }
-      return response;
+      return this.#session.exec(bytes);
     });
   }
 
   async checkpoint(): Promise<void> {
-    this.#assertOpen();
+    this.#assertAvailable();
     await this.#serialize(async () => {
       this.#assertHealthy();
       // Preserve PostgreSQL error identity: first complete the ordinary pgwire
       // exchange and parse any ErrorResponse on the main thread. Only a
       // successful CHECKPOINT asks the worker to publish its PGDATA snapshot.
-      const response = await this.#rpc.request({
-        method: 'exec',
-        input: simpleQuery('CHECKPOINT'),
-      });
-      if (!(response instanceof Uint8Array)) {
-        throw new Error('Oliphaunt WASIX worker returned an invalid CHECKPOINT response');
-      }
+      const response = await this.#session.exec(simpleQuery('CHECKPOINT'));
       assertSuccessfulQueryResponse(response);
       try {
-        await this.#rpc.request({ method: 'checkpoint' });
+        await this.#session.checkpoint();
       } catch (error) {
         // PostgreSQL has already committed the CHECKPOINT in the live memory
         // filesystem. If publication fails, no later query may widen the gap
@@ -100,18 +87,45 @@ export class WorkerWasixDatabase implements WasixDatabase {
     });
   }
 
+  async transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
+    this.#assertAvailable();
+    if (typeof body !== 'function') {
+      throw new TypeError('Oliphaunt WASIX transaction body must be a function');
+    }
+    this.#activeTransaction = true;
+    const attempt = this.#serialize(async () => {
+      this.#assertHealthy();
+      const transaction = new WasixTransactionImpl((input) => this.#session.exec(input));
+      try {
+        await transaction.execute('BEGIN');
+        const result = await body(transaction);
+        transaction.seal();
+        await transaction.finish('COMMIT');
+        return result;
+      } catch (error) {
+        transaction.seal();
+        await transaction.finish('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        transaction.seal();
+      }
+    });
+    return await attempt.finally(() => {
+      this.#activeTransaction = false;
+    });
+  }
+
   close(): Promise<void> {
     if (this.#closeAttempt !== undefined) {
       return this.#closeAttempt;
     }
+    if (this.#activeTransaction) {
+      return Promise.reject(
+        new Error('cannot close Oliphaunt WASIX while a transaction is active'),
+      );
+    }
     this.#closed = true;
-    this.#closeAttempt = this.#serialize(async () => {
-      try {
-        await this.#rpc.request({ method: 'close' });
-      } finally {
-        this.#rpc.terminate();
-      }
-    });
+    this.#closeAttempt = this.#serialize(() => this.#session.close());
     return this.#closeAttempt;
   }
 
@@ -124,6 +138,13 @@ export class WorkerWasixDatabase implements WasixDatabase {
       throw new Error('Oliphaunt WASIX database is closed');
     }
     this.#assertHealthy();
+  }
+
+  #assertAvailable(): void {
+    this.#assertOpen();
+    if (this.#activeTransaction) {
+      throw new Error(transactionPinnedMessage);
+    }
   }
 
   #assertHealthy(): void {
@@ -144,6 +165,80 @@ export class WorkerWasixDatabase implements WasixDatabase {
     this.#tail = result.then(
       () => undefined,
       () => undefined,
+    );
+    return result;
+  }
+}
+
+class WasixTransactionImpl implements OliphauntTransaction {
+  readonly #exec: (input: Uint8Array) => Promise<Uint8Array>;
+  #tail = Promise.resolve();
+  #active = true;
+  #failed = false;
+  #firstFailure: unknown;
+
+  constructor(exec: (input: Uint8Array) => Promise<Uint8Array>) {
+    this.#exec = exec;
+  }
+
+  execute(sql: string): Promise<Uint8Array> {
+    return this.#execOwned(simpleQuery(sql), (response) => {
+      assertSuccessfulQueryResponse(response);
+      return response;
+    });
+  }
+
+  query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
+    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
+    return this.#execOwned(input, parseQueryResponse);
+  }
+
+  execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
+    return this.#execOwned(toUint8Array(input).slice(), (response) => response);
+  }
+
+  seal(): void {
+    this.#active = false;
+  }
+
+  finish(sql: 'COMMIT' | 'ROLLBACK'): Promise<void> {
+    return this.#enqueue(async () => {
+      const response = await this.#exec(simpleQuery(sql));
+      assertSuccessfulQueryResponse(response);
+      // PostgreSQL spells COMMIT in an aborted transaction as a successful
+      // `ROLLBACK` CommandComplete. Sending the command is important: a caught
+      // error may have been recovered with ROLLBACK TO SAVEPOINT and should be
+      // allowed to commit. Only propagate the first queued failure when the
+      // server confirms that COMMIT actually rolled the transaction back.
+      if (sql === 'COMMIT' && this.#failed) {
+        const commandTag = parseQueryResponse(response).commandTag;
+        if (commandTag !== 'COMMIT') {
+          throw this.#firstFailure;
+        }
+      }
+    });
+  }
+
+  #execOwned<Result>(
+    input: Uint8Array,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    if (!this.#active) {
+      return Promise.reject(new Error('Oliphaunt WASIX transaction is no longer active'));
+    }
+    return this.#enqueue(async () => decode(await this.#exec(input)));
+  }
+
+  #enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.#tail.then(operation);
+    this.#tail = result.then(
+      () => undefined,
+      (error: unknown) => {
+        if (!this.#failed) {
+          this.#failed = true;
+          this.#firstFailure = error;
+        }
+      },
     );
     return result;
   }
