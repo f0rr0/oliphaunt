@@ -5,6 +5,33 @@ import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 
 describe('WASIX database recovery state', () => {
+  it('transfers generated packets directly while preserving public raw input ownership', async () => {
+    const executions: Array<{ input: Uint8Array; transfer: Transferable[] | undefined }> = [];
+    const rpc: WasixDatabaseWorker = {
+      async request(request, transfer) {
+        if (request.method === 'exec') {
+          executions.push({ input: request.input, transfer });
+          return ready();
+        }
+        return undefined;
+      },
+      terminate() {},
+    };
+    const database = new WorkerWasixDatabase(rpc);
+
+    await database.execute('select 42');
+    const raw = Uint8Array.of('Q'.charCodeAt(0), 0, 0, 0, 5, 0);
+    await database.execProtocolRaw(raw);
+
+    expect(executions).toHaveLength(2);
+    expect(executions[0]?.transfer).toEqual([executions[0]?.input.buffer]);
+    expect(executions[1]?.transfer).toEqual([executions[1]?.input.buffer]);
+    expect(executions[1]?.input).not.toBe(raw);
+    expect(executions[1]?.input.buffer).not.toBe(raw.buffer);
+    expect(raw).toEqual(Uint8Array.of('Q'.charCodeAt(0), 0, 0, 0, 5, 0));
+    await database.close();
+  });
+
   it('shares one close attempt, including its failure, with every caller', async () => {
     let rejectClose: ((error: Error) => void) | undefined;
     let closeStarted: (() => void) | undefined;

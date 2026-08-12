@@ -37,19 +37,22 @@ export class WorkerWasixDatabase implements WasixDatabase {
   }
 
   async execute(sql: string): Promise<Uint8Array> {
-    const response = await this.execProtocolRaw(simpleQuery(sql));
+    const response = await this.#execOwned(simpleQuery(sql));
     assertSuccessfulQueryResponse(response);
     return response;
   }
 
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
     const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
-    return parseQueryResponse(await this.execProtocolRaw(input));
+    return parseQueryResponse(await this.#execOwned(input));
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
+    return this.#execOwned(toUint8Array(input).slice());
+  }
+
+  #execOwned(bytes: Uint8Array): Promise<Uint8Array> {
     this.#assertOpen();
-    const bytes = toUint8Array(input).slice();
     return this.#serialize(async () => {
       // A checkpoint failure may have been ahead of this operation in the
       // serialized queue. Recheck here so queued work cannot run against the
