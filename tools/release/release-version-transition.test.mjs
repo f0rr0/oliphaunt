@@ -108,23 +108,20 @@ function graph(versions) {
       "liboliphaunt-native": {
         id: "liboliphaunt-native",
         source: PRODUCTS["liboliphaunt-native"],
-        dependsOn: [],
-        dependencyScopes: {},
+        dependencies: [],
       },
       "liboliphaunt-wasix": {
         id: "liboliphaunt-wasix",
         source: PRODUCTS["liboliphaunt-wasix"],
-        dependsOn: [],
-        dependencyScopes: {},
+        dependencies: [],
       },
       "oliphaunt-extension-vector": {
         id: "oliphaunt-extension-vector",
         source: PRODUCTS["oliphaunt-extension-vector"],
-        dependsOn: ["liboliphaunt-native", "liboliphaunt-wasix"],
-        dependencyScopes: {
-          "liboliphaunt-native": "build",
-          "liboliphaunt-wasix": "build",
-        },
+        dependencies: [
+          { id: "liboliphaunt-native", scope: "build", source: "explicit" },
+          { id: "liboliphaunt-wasix", scope: "build", source: "explicit" },
+        ],
       },
     },
   };
@@ -232,10 +229,11 @@ test("production closure fails instead of reintroducing an unchanged downstream 
   writeSnapshot(f.root, versions, { vectorCompatibility: "native=2.0.0,wasix=2.0.0" });
   commit(f.root, "release runtimes");
   const releaseGraph = graph(versions);
-  releaseGraph.moon_projects["oliphaunt-extension-vector"].dependencyScopes = {
-    "liboliphaunt-native": "production",
-    "liboliphaunt-wasix": "production",
-  };
+  releaseGraph.moon_projects["oliphaunt-extension-vector"].dependencies =
+    releaseGraph.moon_projects["oliphaunt-extension-vector"].dependencies.map((dependency) => ({
+      ...dependency,
+      scope: "production",
+    }));
 
   assert.throws(
     () => buildPlanFromProductTags(releaseGraph, "HEAD", { prefix: "transition-test", root: f.root }),

@@ -33,13 +33,16 @@ function product(id, version = "1.0.0", extra = {}) {
   };
 }
 
-function project(id, dependsOn = [], dependencyScopes = {}) {
+function project(id, dependencies = []) {
   return {
     id,
     source: `packages/${id}`,
-    dependsOn,
-    dependencyScopes,
+    dependencies,
   };
+}
+
+function dependency(id, scope = "production") {
+  return { id, scope, source: "explicit" };
 }
 
 function topologyGraph(overrides = {}) {
@@ -68,17 +71,13 @@ function topologyGraph(overrides = {}) {
   const moon_projects = {
     [NATIVE]: project(NATIVE),
     [WASIX]: project(WASIX),
-    [WASIX_RUST]: project(WASIX_RUST, [WASIX], { [WASIX]: "production" }),
-    [RUST]: project(RUST, [NATIVE], { [NATIVE]: "production" }),
-    [BROKER]: project(BROKER, [NATIVE, RUST], { [NATIVE]: "production", [RUST]: "production" }),
-    [JS]: project(JS, [NATIVE, RUST, BROKER], {
-      [NATIVE]: "peer",
-      [RUST]: "production",
-      [BROKER]: "production",
-    }),
-    [SWIFT]: project(SWIFT, [NATIVE], { [NATIVE]: "production" }),
-    [REACT_NATIVE]: project(REACT_NATIVE, [SWIFT], { [SWIFT]: "production" }),
-    [EXTERNAL]: project(EXTERNAL, [NATIVE, WASIX], { [NATIVE]: "build", [WASIX]: "build" }),
+    [WASIX_RUST]: project(WASIX_RUST, [dependency(WASIX)]),
+    [RUST]: project(RUST, [dependency(NATIVE)]),
+    [BROKER]: project(BROKER, [dependency(NATIVE), dependency(RUST)]),
+    [JS]: project(JS, [dependency(NATIVE, "peer"), dependency(RUST), dependency(BROKER)]),
+    [SWIFT]: project(SWIFT, [dependency(NATIVE)]),
+    [REACT_NATIVE]: project(REACT_NATIVE, [dependency(SWIFT)]),
+    [EXTERNAL]: project(EXTERNAL, [dependency(NATIVE, "build"), dependency(WASIX, "build")]),
   };
   return { products, moon_projects };
 }
@@ -143,8 +142,8 @@ test("shared contrib source directly selects both runtime owners and no contrib 
   );
   assert.deepEqual(plan.directProducts, [NATIVE, WASIX]);
   assert.equal(Object.hasOwn(graph.products, "oliphaunt-extension-contrib-pg18"), false);
-  assert.equal(graph.moon_projects[NATIVE].dependsOn.includes(WASIX), false);
-  assert.equal(graph.moon_projects[WASIX].dependsOn.includes(NATIVE), false);
+  assert.equal(graph.moon_projects[NATIVE].dependencies.some(({ id }) => id === WASIX), false);
+  assert.equal(graph.moon_projects[WASIX].dependencies.some(({ id }) => id === NATIVE), false);
   for (const file of [
     "src/postgres/versions/18/source.toml",
     "src/extensions/contrib/amcheck/targets/artifacts.toml",
@@ -520,8 +519,7 @@ test("synchronizer writes only declared release files and is closed on its expan
     product,
     project(
       product,
-      [SIMPLE, RUST_CONSUMER, NODE_CONSUMER].includes(product) ? [SOURCE] : [],
-      [SIMPLE, RUST_CONSUMER, NODE_CONSUMER].includes(product) ? { [SOURCE]: "production" } : {},
+      [SIMPLE, RUST_CONSUMER, NODE_CONSUMER].includes(product) ? [dependency(SOURCE)] : [],
     ),
   ]));
   for (const [product, config] of Object.entries(moon_projects)) {

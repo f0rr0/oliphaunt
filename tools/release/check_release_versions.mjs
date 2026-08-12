@@ -430,7 +430,8 @@ async function validateReleaseDependencies(products, graph) {
       fail(`selected product ${product} is missing from release metadata`);
     }
     const project = moonProjects[productProject[product]] ?? {};
-    const dependencies = (Array.isArray(project.dependsOn) ? project.dependsOn : [])
+    const dependencies = (Array.isArray(project.dependencies) ? project.dependencies : [])
+      .map((dependency) => dependency?.id)
       .filter((dependency) => dependency in projectProduct)
       .map((dependency) => projectProduct[dependency]);
     for (const dependency of dependencies) {

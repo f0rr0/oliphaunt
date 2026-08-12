@@ -948,7 +948,7 @@ export function registryPackageRows(
 }
 
 export function releaseMetadata(product, prefix) {
-  const release = graph(prefix).moon_projects?.[product]?.project?.metadata?.release;
+  const release = graph(prefix).moon_projects?.[product]?.config?.project?.metadata?.release;
   if (!release) {
     fail(prefix, `Moon release metadata does not include ${product}`);
   }

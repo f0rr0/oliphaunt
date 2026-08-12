@@ -183,10 +183,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          install-workspace: "false"
 
       - name: Check release intent
         env:
@@ -1823,10 +1823,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          install-workspace: "false"
 
       - name: Download same-run Linux native runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1899,10 +1899,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          install-workspace: "false"
 
       - name: Download all same-run native lifecycle shard receipts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1961,16 +1961,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Set up Bun
-        uses: ./.github/actions/setup-bun
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
         with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Set up Node and pnpm
-        uses: ./.github/actions/setup-node-pnpm
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          pnpm-version: ${{ env.PNPM_VERSION }}
+          install-workspace: "false"
 
       - name: Warm pinned extension metadata formatter
         run: |

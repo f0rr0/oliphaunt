@@ -150,9 +150,9 @@ function productDependencies(product, config, graph) {
     }
   }
   const project = graph.moon_projects?.[product];
-  for (const dependency of project?.dependsOn ?? []) {
-    if (dependency in graph.products && dependency !== product) {
-      dependencies.add(dependency);
+  for (const dependency of project?.dependencies ?? []) {
+    if (dependency.id in graph.products && dependency.id !== product) {
+      dependencies.add(dependency.id);
     }
   }
   return [...dependencies].sort(compareText);

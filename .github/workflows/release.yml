@@ -1454,17 +1454,10 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
-      - name: Set up pinned Node.js
-        id: setup_bootstrap_node
-        timeout-minutes: 3
-        uses: ./.github/actions/setup-node-runtime
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
         with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Set up pinned Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
+          install-workspace: "false"
 
       - name: Plan bootstrap releases
         id: release_plan

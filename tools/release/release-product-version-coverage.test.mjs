@@ -99,11 +99,10 @@ function graph(versions) {
     version_files: [`${PRODUCT_PATHS[id]}/VERSION`],
     ...extra,
   });
-  const project = (id, dependsOn = [], dependencyScopes = {}) => ({
+  const project = (id, dependencies = []) => ({
     id,
     source: PRODUCT_PATHS[id],
-    dependsOn,
-    dependencyScopes,
+    dependencies,
   });
   return {
     policy: { versioning: "independent" },
@@ -123,8 +122,10 @@ function graph(versions) {
       [WASIX]: project(WASIX),
       [VECTOR]: project(
         VECTOR,
-        [NATIVE, WASIX],
-        { [NATIVE]: "build", [WASIX]: "build" },
+        [
+          { id: NATIVE, scope: "build", source: "explicit" },
+          { id: WASIX, scope: "build", source: "explicit" },
+        ],
       ),
     },
   };

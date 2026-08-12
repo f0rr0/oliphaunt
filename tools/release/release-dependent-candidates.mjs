@@ -106,16 +106,17 @@ export function dependentReleaseEdges(
   for (const target of productIds) {
     const targetProject = productProjects[target];
     const project = object(projects[targetProject], `Moon project ${targetProject}`, prefix);
-    const scopes = project.dependencyScopes ?? {};
-    if (scopes === null || Array.isArray(scopes) || typeof scopes !== "object") {
-      throw error(prefix, `Moon project ${targetProject}.dependencyScopes must be an object`);
+    const dependencies = project.dependencies ?? [];
+    if (!Array.isArray(dependencies)) {
+      throw error(prefix, `Moon project ${targetProject}.dependencies must be a list`);
     }
-    const dependencies = project.dependsOn ?? [];
-    if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== "string")) {
-      throw error(prefix, `Moon project ${targetProject}.dependsOn must be a string list`);
-    }
-    for (const dependencyProject of [...new Set(dependencies)].sort(compareText)) {
-      const scope = scopes[dependencyProject] ?? "production";
+    for (const dependency of dependencies) {
+      object(dependency, `Moon project ${targetProject} dependency`, prefix);
+      const dependencyProject = dependency.id;
+      const scope = dependency.scope;
+      if (typeof dependencyProject !== "string" || typeof scope !== "string") {
+        throw error(prefix, `Moon project ${targetProject} dependencies must have string ids and scopes`);
+      }
       if (!RELEASE_DEPENDENCY_SCOPES.has(scope)) continue;
       for (const source of productsByProject.get(dependencyProject) ?? []) {
         if (source === target) continue;

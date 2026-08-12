@@ -29,6 +29,15 @@ const GENERATED_PATH_PARTS = new Set([
   "target",
 ]);
 
+// A release-tool process operates on one checkout. Cache only Moon's resolved
+// topology; loadGraph still rereads version files and release manifests.
+let moonProjectsSnapshot;
+let moonProjectsSnapshotCommand;
+
+function cloneMoonProjects(projects) {
+  return new Map([...projects].map(([id, project]) => [id, structuredClone(project)]));
+}
+
 export function fail(prefix, message) {
   console.error(`${prefix}: ${message}`);
   process.exit(1);
@@ -63,10 +72,6 @@ export function readToml(relativePath, prefix) {
   return value;
 }
 
-export function moonBin() {
-  return moonCommand();
-}
-
 export function commandJson(args, prefix) {
   const result = captureCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
@@ -82,25 +87,6 @@ export function commandJson(args, prefix) {
     fail(prefix, `${args[0]} did not return a JSON object`);
   }
   return value;
-}
-
-function gitNulRecords(args) {
-  try {
-    const result = captureCommandOutput("git", args, {
-      cwd: ROOT,
-      label: `git ${args.join(" ")}`,
-      stdoutTerminator: "\0",
-    });
-    if (result.error !== undefined || result.status !== 0) {
-      throw new Error(result.error?.message || result.stderr.trim() || `git exited ${result.status}`);
-    }
-    return result.stdout
-      .split("\0")
-      .filter(Boolean);
-  } catch (error) {
-    const detail = error.stderr || error.stdout || error.message;
-    fail("release-graph", `git ${args.join(" ")} failed: ${String(detail).trim()}`);
-  }
 }
 
 export function gitSucceeds(args) {
@@ -181,149 +167,89 @@ function releasePleasePackagesByComponent(prefix) {
   return { config, byComponent };
 }
 
-function addDependency(dependencyScopes, projectId, scope) {
-  if (!projectId || scope === undefined) {
-    return;
+export function moonProjectsById(prefix = "release-graph") {
+  const command = moonCommand();
+  if (moonProjectsSnapshot !== undefined && moonProjectsSnapshotCommand === command) {
+    return cloneMoonProjects(moonProjectsSnapshot);
   }
-  const existing = dependencyScopes[projectId];
-  if (existing === "production" && scope !== "production") {
-    return;
+  const result = commandJson([command, "query", "projects"], prefix);
+  if (!Array.isArray(result.projects)) {
+    fail(prefix, "moon query projects did not return a projects array");
   }
-  dependencyScopes[projectId] = scope;
-}
-
-function parseTaskDependencyProject(target) {
-  if (typeof target !== "string" || target.length === 0 || target.startsWith("^")) {
-    return undefined;
-  }
-  const separator = target.indexOf(":");
-  return separator > 0 ? target.slice(0, separator) : undefined;
-}
-
-function readMoonProjectConfig(file, prefix) {
-  const pathParts = file.split("/");
-  const source = pathParts.length === 1 ? "." : pathParts.slice(0, -1).join("/");
-  let config;
-  try {
-    config = Bun.YAML.parse(readFileSync(path.join(ROOT, file), "utf8"));
-  } catch (error) {
-    fail(prefix, `${file} is invalid Moon project YAML: ${error.message}`);
-  }
-  if (config === null || Array.isArray(config) || typeof config !== "object") {
-    fail(prefix, `${file} must contain a Moon project object`);
-  }
-  const id = config.id;
-  if (typeof id !== "string" || id.length === 0) {
-    fail(prefix, `${file} must declare a non-empty Moon project id`);
-  }
-
-  const dependencyScopes = {};
-  const rawDeps = config.dependsOn ?? [];
-  if (!Array.isArray(rawDeps)) {
-    fail(prefix, `${file}.dependsOn must be a list when present`);
-  }
-  for (const dependency of rawDeps) {
-    if (typeof dependency === "string") {
-      addDependency(dependencyScopes, dependency, "production");
-    } else if (
-      dependency !== null &&
-      typeof dependency === "object" &&
-      !Array.isArray(dependency) &&
-      typeof dependency.id === "string"
-    ) {
-      addDependency(dependencyScopes, dependency.id, String(dependency.scope || "production"));
-    } else {
-      fail(prefix, `${file}.dependsOn entries must be project ids or dependency objects`);
+  const parsed = new Map();
+  for (const row of result.projects) {
+    assertObject(row, "Moon query project", prefix);
+    const { id, source } = row;
+    if (typeof id !== "string" || id.length === 0) {
+      fail(prefix, "moon query projects returned a project without an id");
     }
+    if (typeof source !== "string" || source.length === 0) {
+      fail(prefix, `Moon project ${id} does not have a source path`);
+    }
+    if (parsed.has(id)) {
+      fail(prefix, `duplicate Moon project id ${id}`);
+    }
+    const dependencies = row.dependencies ?? [];
+    if (!Array.isArray(dependencies)) {
+      fail(prefix, `Moon project ${id}.dependencies must be a list`);
+    }
+    const dependencyIds = new Set();
+    for (const dependency of dependencies) {
+      assertObject(dependency, `Moon project ${id} dependency`, prefix);
+      if (
+        typeof dependency.id !== "string" || dependency.id.length === 0
+        || typeof dependency.scope !== "string" || dependency.scope.length === 0
+        || dependencyIds.has(dependency.id)
+      ) {
+        fail(prefix, `Moon project ${id} dependencies require unique ids and resolved scopes`);
+      }
+      dependencyIds.add(dependency.id);
+    }
+    const config = assertObject(row.config, `Moon project ${id}.config`, prefix);
+    const tags = assertStringList(config.tags ?? [], `Moon project ${id}.config.tags`, prefix);
+    const project = assertObject(config.project ?? {}, `Moon project ${id}.config.project`, prefix);
+    parsed.set(id, {
+      id,
+      source,
+      dependencies: dependencies
+        .map((dependency) => ({ ...dependency }))
+        .sort((left, right) => compareText(left.id, right.id)),
+      config: {
+        tags: [...tags].sort(compareText),
+        project,
+      },
+    });
   }
-
-  const tasks = config.tasks && typeof config.tasks === "object" && !Array.isArray(config.tasks) ? config.tasks : {};
-  for (const [taskId, task] of Object.entries(tasks)) {
-    if (task === null || Array.isArray(task) || typeof task !== "object" || task.deps === undefined) {
-      continue;
-    }
-    if (!Array.isArray(task.deps)) {
-      fail(prefix, `${file}.tasks.${taskId}.deps must be a list when present`);
-    }
-    for (const dependency of task.deps) {
-      const target = typeof dependency === "string"
-        ? dependency
-        : dependency !== null && typeof dependency === "object" && !Array.isArray(dependency)
-          ? dependency.target
-          : undefined;
-      const projectId = parseTaskDependencyProject(target);
-      if (projectId !== undefined && projectId !== id) {
-        addDependency(dependencyScopes, projectId, "build");
+  if (parsed.size === 0) {
+    fail(prefix, "moon query projects did not return any projects");
+  }
+  for (const project of parsed.values()) {
+    for (const dependency of project.dependencies) {
+      if (!parsed.has(dependency.id)) {
+        fail(prefix, `Moon project ${project.id} depends on unknown project ${dependency.id}`);
       }
     }
   }
-
-  const project =
-    config.project && typeof config.project === "object" && !Array.isArray(config.project) ? { ...config.project } : {};
-  if (project.release !== undefined) {
-    const metadata =
-      project.metadata && typeof project.metadata === "object" && !Array.isArray(project.metadata)
-        ? project.metadata
-        : {};
-    project.metadata = { ...metadata, release: project.release };
-    delete project.release;
-  } else if (project.metadata === undefined && Object.keys(project).length > 0) {
-    project.metadata = {};
-  }
-  return {
-    id,
-    source,
-    layer: typeof config.layer === "string" ? config.layer : undefined,
-    dependsOn: Object.keys(dependencyScopes).sort(compareText),
-    dependencyScopes: Object.fromEntries(
-      Object.entries(dependencyScopes).sort(([left], [right]) => compareText(left, right)),
-    ),
-    tags: Array.isArray(config.tags) ? [...config.tags].sort(compareText) : [],
-    project,
-  };
-}
-
-export function moonProjectsById(prefix = "release-graph") {
-  const files = gitNulRecords([
-    "ls-files",
-    "-z",
-    "--cached",
-    "--others",
-    "--exclude-standard",
-    "--",
-    "*moon.yml",
-  ]).filter((file) => existsSync(path.join(ROOT, file)));
-  if (files.length === 0) {
-    fail(prefix, "repository does not contain any tracked moon.yml project files");
-  }
-  const parsed = new Map();
-  for (const file of files.sort(compareText)) {
-    const project = readMoonProjectConfig(file, prefix);
-    if (parsed.has(project.id)) {
-      fail(prefix, `duplicate Moon project id ${project.id}`);
-    }
-    parsed.set(project.id, project);
-  }
-  return parsed;
+  moonProjectsSnapshot = parsed;
+  moonProjectsSnapshotCommand = command;
+  return cloneMoonProjects(parsed);
 }
 
 function moonReleaseProjectsByComponent(projects, prefix) {
   const products = new Map();
   for (const project of projects.values()) {
+    const config = project.config;
     const metadata =
-      project.project &&
-      typeof project.project === "object" &&
-      !Array.isArray(project.project) &&
-      project.project.metadata &&
-      typeof project.project.metadata === "object" &&
-      !Array.isArray(project.project.metadata)
-        ? project.project.metadata
+      config.project.metadata &&
+      typeof config.project.metadata === "object" &&
+      !Array.isArray(config.project.metadata)
+        ? config.project.metadata
         : {};
     const release =
       metadata.release && typeof metadata.release === "object" && !Array.isArray(metadata.release)
         ? metadata.release
         : undefined;
-    if (!project.tags.includes("release-product")) {
+    if (!config.tags.includes("release-product")) {
       if (release !== undefined) {
         fail(prefix, `Moon project ${project.id} declares release metadata but is not tagged release-product`);
       }
@@ -537,7 +463,7 @@ export function moonReleaseMetadataRows({ product = undefined } = {}, prefix = "
     fail(prefix, `unknown release product ${product}`);
   }
   return productIds.map((productId) => {
-    const release = graph.moon_projects?.[productId]?.project?.metadata?.release;
+    const release = graph.moon_projects?.[productId]?.config?.project?.metadata?.release;
     if (release === null || Array.isArray(release) || typeof release !== "object") {
       fail(prefix, `Moon release metadata does not include ${productId}`);
     }
@@ -580,7 +506,9 @@ export function wasixEvidenceProductsForRelease(
         && entry.source_product === "liboliphaunt-wasix",
     );
     const projectId = releaseProductProjectId(product, products, projects, prefix);
-    const projectRequiresWasix = (projects[projectId]?.dependsOn ?? []).includes("liboliphaunt-wasix");
+    const projectRequiresWasix = (projects[projectId]?.dependencies ?? []).some(
+      (dependency) => dependency.id === "liboliphaunt-wasix",
+    );
     if (compatibilityRequiresWasix || projectRequiresWasix) {
       required.push(product);
     }
@@ -1208,15 +1136,14 @@ export function releaseOwnerProjectsForPath(products, projects, candidate, prefi
 export function dependentsByProject(projects, { releaseOnly = false } = {}) {
   const dependents = Object.fromEntries(Object.keys(projects).map((project) => [project, new Set()]));
   for (const [project, config] of Object.entries(projects)) {
-    const scopes = config.dependencyScopes ?? {};
-    for (const dependency of config.dependsOn ?? []) {
-      if (releaseOnly && !RELEASE_DEPENDENCY_SCOPES.has(scopes[dependency] ?? "production")) {
+    for (const dependency of config.dependencies ?? []) {
+      if (releaseOnly && !RELEASE_DEPENDENCY_SCOPES.has(dependency.scope)) {
         continue;
       }
-      if (!(dependency in dependents)) {
-        dependents[dependency] = new Set();
+      if (!(dependency.id in dependents)) {
+        dependents[dependency.id] = new Set();
       }
-      dependents[dependency].add(project);
+      dependents[dependency.id].add(project);
     }
   }
   return dependents;
@@ -1279,11 +1206,10 @@ export function releaseOrder(products, projects, selected, prefix = "release-gra
     for (const product of [...remaining].sort(compareText)) {
       const projectId = productProject[product];
       const projectConfig = projects[projectId] ?? {};
-      const scopes = projectConfig.dependencyScopes ?? {};
       const deps = new Set(
-        (projectConfig.dependsOn ?? []).filter((dependency) =>
-          RELEASE_DEPENDENCY_SCOPES.has(scopes[dependency] ?? "production"),
-        ),
+        (projectConfig.dependencies ?? [])
+          .filter((dependency) => RELEASE_DEPENDENCY_SCOPES.has(dependency.scope))
+          .map((dependency) => dependency.id),
       );
       const selectedDeps = Object.entries(productProject)
         .filter(([candidate, candidateProject]) => selectedSet.has(candidate) && deps.has(candidateProject))
