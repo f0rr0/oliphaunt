@@ -7,12 +7,14 @@ export type {
   BackgroundPreparationOptions,
   BackgroundPreparationResult,
   BinaryInput,
+  DatabaseStorage,
   DurabilityProfile,
   EngineCapabilities,
   EngineMode,
   EngineModeSupport,
   ExtensionSizeReport,
   OpenConfig,
+  OliphauntDatabase,
   PackageSizeReport,
   PackageSizeReportOptions,
   ProcessMemoryReport,
@@ -22,11 +24,10 @@ export type {
   RawProtocolTransport,
   RuntimeFootprintProfile,
   PostgresStartupGUC,
+  RestoreDestinationPolicy,
   RestoreOptions,
 } from './client';
 export {
-  OliphauntDatabase,
-  createOliphauntClient,
   supportsBackupFormat,
   supportsRestoreFormat,
 } from './client';
@@ -70,16 +71,4 @@ export {
   MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
   mobileReleaseExtensionProofPlan,
 } from './mobileExtensionProof';
-export type { JsiRawProtocolTransport } from './jsiTransport';
-export type {
-  NativeCapabilities,
-  NativeEngineModeSupport,
-  NativeExtensionSizeReport,
-  NativeOpenConfig,
-  NativePackageSizeReport,
-  NativeProcessMemoryReport,
-  NativeResourceConfig,
-  Spec as NativeOliphauntModule,
-} from './specs/NativeOliphaunt';
-
 export const Oliphaunt = createOliphauntClient(NativeOliphaunt);

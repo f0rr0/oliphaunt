@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { Oliphaunt, type OliphauntDatabase } from '../index.js';
+import { Oliphaunt } from '../index.js';
 import type { BackupArtifact, EngineMode, OpenConfig } from '../types.js';
 
 async function main(): Promise<void> {
@@ -76,7 +76,7 @@ async function smokeMode(engine: EngineMode, config: OpenConfig): Promise<void> 
   const root = await mkdtemp(join(tmpdir(), `oliphaunt-js-${engine}-`));
   const db = await Oliphaunt.open({
     ...config,
-    root,
+    storage: { kind: 'directory', path: root },
   });
   let closed = false;
   try {
@@ -141,10 +141,8 @@ async function restoreSmokeBackup(
   await rm(restoredRoot, { recursive: true, force: true });
   try {
     await Oliphaunt.restore({
-      engine: engine === 'nativeDirect' ? 'nativeDirect' : 'nativeBroker',
-      root: restoredRoot,
+      destination: restoredRoot,
       libraryPath: config.libraryPath,
-      brokerExecutable: config.brokerExecutable,
       artifact,
     });
     assert.match(await readFile(join(restoredRoot, 'pgdata', 'PG_VERSION'), 'utf8'), /^\d+\n$/);
@@ -153,7 +151,7 @@ async function restoreSmokeBackup(
     }
     const restored = await Oliphaunt.open({
       ...config,
-      root: restoredRoot,
+      storage: { kind: 'directory', path: restoredRoot },
     });
     try {
       const result = await restored.query('SELECT 1 AS value');

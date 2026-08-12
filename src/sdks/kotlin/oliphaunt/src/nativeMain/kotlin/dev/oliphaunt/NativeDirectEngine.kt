@@ -79,7 +79,7 @@ public class NativeDirectEngine(
         if (config.mode != EngineMode.NativeDirect) {
             throw OliphauntException("NativeDirectEngine supports NativeDirect, got ${config.mode}")
         }
-        validateRootPath(config.root, "database root")
+        validateDatabaseStorage(config.storage)
         validateStartupIdentity(config.username ?: username, "username")
         validateStartupIdentity(config.database ?: database, "database")
         validateStartupGucs(config.startupGucs)
@@ -95,9 +95,12 @@ public class NativeDirectEngine(
             )
         }
 
-        val root = config.root ?: temporaryRoot()
-        val pgdata = "$root/pgdata"
-        ensureDirectory(root)
+        val storageDirectory = when (val storage = config.storage) {
+            DatabaseStorage.TemporaryDirectory -> temporaryStorageDirectory()
+            is DatabaseStorage.Directory -> storage.path
+        }
+        val pgdata = "$storageDirectory/pgdata"
+        ensureDirectory(storageDirectory)
         ensureDirectory(pgdata)
         val ownerDispatcher = newSingleThreadContext("oliphaunt-native-owner")
         val session: CPointer<OliphauntKotlinSession> =
@@ -116,6 +119,7 @@ public class NativeDirectEngine(
                                 abi_version = OLIPHAUNT_ABI_VERSION
                                 this.pgdata = pgdata.cstr.getPointer(this@memScoped)
                                 runtime_dir = resolvedRuntimeDirectory.cstr.getPointer(this@memScoped)
+                                module_dir = null
                                 this.username = effectiveUsername.cstr.getPointer(this@memScoped)
                                 database = effectiveDatabase.cstr.getPointer(this@memScoped)
                                 reserved_flags = 0u
@@ -127,9 +131,8 @@ public class NativeDirectEngine(
                             resolvedLibrary,
                             nativeConfig.ptr,
                         ) ?: run {
-                            if (config.root == null) {
-                                removeDirectoryBestEffort(root)
-                            }
+                            // Native direct is process-resident and can retain
+                            // this directory after rejecting a logical reopen.
                             throw OliphauntException(lastError(null))
                         }
                     }
@@ -145,13 +148,13 @@ public class NativeDirectEngine(
     }
 
     override suspend fun restore(request: RestoreRequest): String {
-        validateRootPath(request.root, "restore root")
+        validateDirectoryPath(request.destination, "restore destination")
         if (request.artifact.format != BackupFormat.PhysicalArchive) {
             throw OliphauntException("Kotlin native restore currently requires PhysicalArchive, got ${request.artifact.format}")
         }
         val resolvedLibrary = libraryPath ?: env("OLIPHAUNT_KOTLIN_LIBRARY") ?: env("LIBOLIPHAUNT_PATH")
         val flags =
-            if (request.targetPolicy == RestoreTargetPolicy.ReplaceExisting) {
+            if (request.destinationPolicy == RestoreDestinationPolicy.ReplaceExisting) {
                 OLIPHAUNT_RESTORE_REPLACE_EXISTING
             } else {
                 0uL
@@ -162,7 +165,7 @@ public class NativeDirectEngine(
                     val options =
                         alloc<OliphauntRestoreOptions> {
                             abi_version = OLIPHAUNT_ABI_VERSION
-                            root = request.root.cstr.getPointer(this@memScoped)
+                            destination = request.destination.cstr.getPointer(this@memScoped)
                             format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE
                             data =
                                 if (request.artifact.bytes.isEmpty()) {
@@ -181,7 +184,7 @@ public class NativeDirectEngine(
         if (rc != 0) {
             throw OliphauntException(lastError(null))
         }
-        return request.root
+        return request.destination
     }
 }
 
@@ -191,12 +194,13 @@ private class NativeDirectSession(
 ) : OliphauntSession {
     private val executionMutex = Mutex()
     private val stateMutex = Mutex()
+    private var closing = false
 
     override suspend fun capabilities(): EngineCapabilities {
         val flags =
             withContext(ownerDispatcher) {
                 executionMutex.withLock {
-                    val current = stateMutex.withLock { session ?: throw OliphauntException("database is closed") }
+                    val current = stateMutex.withLock { requireOpenSession() }
                     oliphaunt_kotlin_capabilities(current)
                 }
             }
@@ -205,7 +209,7 @@ private class NativeDirectSession(
 
     override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse = withContext(ownerDispatcher) {
         executionMutex.withLock {
-            val current = stateMutex.withLock { session ?: throw OliphauntException("database is closed") }
+            val current = stateMutex.withLock { requireOpenSession() }
             memScoped {
                 val response =
                     alloc<OliphauntResponse> {
@@ -250,7 +254,7 @@ private class NativeDirectSession(
     ) {
         withContext(ownerDispatcher) {
             executionMutex.withLock {
-                val current = stateMutex.withLock { session ?: throw OliphauntException("database is closed") }
+                val current = stateMutex.withLock { requireOpenSession() }
                 val callbackBox = NativeStreamCallbackBox(onChunk)
                 val stableRef = StableRef.create(callbackBox)
                 try {
@@ -287,7 +291,7 @@ private class NativeDirectSession(
         }
         return withContext(ownerDispatcher) {
             executionMutex.withLock {
-                val current = stateMutex.withLock { session ?: throw OliphauntException("database is closed") }
+                val current = stateMutex.withLock { requireOpenSession() }
                 memScoped {
                     val response =
                         alloc<OliphauntResponse> {
@@ -323,7 +327,7 @@ private class NativeDirectSession(
     override suspend fun cancel() {
         val (returnCode, current) =
             stateMutex.withLock {
-                val current = session ?: throw OliphauntException("database is closed")
+                val current = requireOpenSession()
                 oliphaunt_kotlin_cancel(current) to current
             }
         if (returnCode != 0) {
@@ -335,7 +339,10 @@ private class NativeDirectSession(
         val current =
             stateMutex.withLock {
                 val current = session ?: return
-                session = null
+                if (closing) {
+                    throw OliphauntException("database close is already in progress")
+                }
+                closing = true
                 current
             }
         val rc =
@@ -345,12 +352,31 @@ private class NativeDirectSession(
                         oliphaunt_kotlin_close(current)
                     }
                 }
-            } finally {
-                ownerDispatcher.close()
+            } catch (error: Throwable) {
+                stateMutex.withLock {
+                    closing = false
+                }
+                throw error
             }
         if (rc != 0) {
-            throw OliphauntException(lastError(null))
+            val message = lastError(current)
+            stateMutex.withLock {
+                closing = false
+            }
+            throw OliphauntException(message)
         }
+        stateMutex.withLock {
+            session = null
+            closing = false
+        }
+        ownerDispatcher.close()
+    }
+
+    private fun requireOpenSession(): CPointer<OliphauntKotlinSession> {
+        if (closing) {
+            throw OliphauntException("database is closed")
+        }
+        return session ?: throw OliphauntException("database is closed")
     }
 }
 
@@ -387,10 +413,9 @@ private fun nativeDirectCapabilities(flags: ULong): EngineCapabilities = EngineC
     processIsolated = false,
     independentSessions = false,
     maxClientSessions = 1,
-    multiRoot = flags and OLIPHAUNT_CAP_MULTI_INSTANCE != 0uL,
-    reopenable = flags and OLIPHAUNT_CAP_LOGICAL_REOPEN != 0uL,
-    sameRootLogicalReopen = flags and OLIPHAUNT_CAP_LOGICAL_REOPEN != 0uL,
-    rootSwitchable = false,
+    multipleInstances = flags and OLIPHAUNT_CAP_MULTI_INSTANCE != 0uL,
+    sameInstanceLogicalReopen = flags and OLIPHAUNT_CAP_LOGICAL_REOPEN != 0uL,
+    instanceSwitchable = false,
     crashRestartable = false,
     protocolRaw = flags and OLIPHAUNT_CAP_PROTOCOL_RAW != 0uL,
     protocolStream = flags and OLIPHAUNT_CAP_PROTOCOL_STREAM != 0uL,
@@ -421,15 +446,11 @@ private fun ensureDirectory(path: String) {
     }
 }
 
-private fun temporaryRoot(): String = ProcessTemporaryRoot.path
+private fun temporaryStorageDirectory(): String = ProcessTemporaryStorageDirectory.path
 
-private object ProcessTemporaryRoot {
+private object ProcessTemporaryStorageDirectory {
     val path: String by lazy {
         val base = env("TMPDIR") ?: "/tmp"
         "$base/oliphaunt-direct-${getpid()}-${Random.nextInt()}"
     }
-}
-
-private fun removeDirectoryBestEffort(path: String) {
-    oliphaunt_kotlin_remove_tree(path)
 }

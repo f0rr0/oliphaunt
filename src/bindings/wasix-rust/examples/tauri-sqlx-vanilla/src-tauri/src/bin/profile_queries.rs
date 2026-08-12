@@ -20,11 +20,11 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|index| args.get(index + 1))
         .map(PathBuf::from);
 
-    let root = env::var_os("OLIPHAUNT_WASM_TAURI_PROFILE_DIR")
+    let database_directory = env::var_os("OLIPHAUNT_WASM_TAURI_PROFILE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::temp_dir().join("oliphaunt-wasix-tauri-sqlx-profile"));
 
-    let state = BenchState::new(root);
+    let state = BenchState::new(database_directory);
     let report = state.profile_queries(fresh, row_count).await?;
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(path) = json_out {

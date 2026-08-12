@@ -10,7 +10,7 @@ surface so you can jump from a product concept to the item you need.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `Oliphaunt::builder()`, `OliphauntBuilder` | Choose root, mode, durability, runtime assets, startup identity, and extensions |
+| Opening | `Oliphaunt::builder()`, `OliphauntBuilder`, `DatabaseStorage`, `DatabaseInitialization` | Choose storage, initialization, mode, durability, startup identity, and extensions |
 | Runtime mode | `EngineMode`, `native_direct()`, `native_broker()`, `native_server()` | Select direct, broker, or server behavior explicitly |
 | Capabilities | `EngineCapabilities`, `supported_modes()` | Check protocol, streaming, backup, restore, extension, and session support |
 | SQL | `query`, `execute`, `query_params` | Run simple and parameterized SQL through the selected runtime |

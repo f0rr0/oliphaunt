@@ -10,7 +10,7 @@ SDK surface by task.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `OliphauntDatabase.open`, `OliphauntConfiguration` | Open a persistent or temporary root with Apple-friendly defaults |
+| Opening | `OliphauntDatabase.open`, `OliphauntConfiguration`, `OliphauntDatabaseStorage` | Use temporary storage by default or an explicit persistent file URL |
 | Runtime mode | `OliphauntEngineMode`, `supportedModes()` | Discover modes advertised by the selected Apple target |
 | Capabilities | `OliphauntCapabilities` | Check protocol, streaming, backup, restore, lifecycle, and extension support |
 | SQL | `query`, `execute`, `OliphauntQueryResult` | Run SQL and read typed values by row and column |

@@ -586,9 +586,9 @@ function staticArtifactPlan(record) {
     'oliphaunt-wasix': [
       {
         source: 'target/docs/generated/api/wasm/doc',
-        destination: 'wasm/doc',
-        href: apiArtifactHref('wasm/doc/oliphaunt_wasix/index.html'),
-        label: 'Open WASM rustdoc',
+        destination: 'wasix/doc',
+        href: apiArtifactHref('wasix/doc/oliphaunt_wasix/index.html'),
+        label: 'Open Rust WASIX rustdoc',
       },
     ],
   };
@@ -645,19 +645,19 @@ title: API Reference
 
 Use this page when you know the SDK and need the API surface by task. SDK guides
 show the first integration path. These maps point to the language reference for
-configuration, query results, lifecycle, extension selection, backup and
-restore, and error handling.
+configuration, query results, lifecycle, extension selection, data movement
+where exposed, and error handling. Shared concepts do not imply API parity.
 
 ## Choose By Task
 
 | Task | Look for |
 | --- | --- |
-| Open a database | builder or open configuration, root storage, runtime mode, durability |
+| Open a database | builder or open configuration, storage, runtime host or mode, durability |
 | Run SQL | query, execute, parameters, row access, result typing |
 | Use raw protocol | raw bytes, streaming, response ownership, cancellation |
 | Manage lifecycle | close, background, foreground, cancellation, capability checks |
-| Move data | backup, restore, dump, archive validation |
-| Ship extensions | exact SQL extension names, dependency files, artifact reports |
+| Move data | backup, restore, dump, checkpoint, or archive APIs where exposed |
+| Ship extensions | exact ecosystem-native selectors, dependency files, artifact reports |
 | Handle errors | SDK errors, PostgreSQL SQLSTATE data, capability errors |
 
 ## Language References
@@ -696,7 +696,7 @@ function apiReferenceFileName(record) {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasm',
+    'oliphaunt-wasix': 'wasix',
   };
   return names[record.id] ?? record.id;
 }
@@ -863,7 +863,7 @@ const routePresentation = {
     collapsible: false,
   },
   sdk: {
-    description: 'Choose Rust, Swift, Kotlin, React Native, TypeScript, WASM, or the C ABI.',
+    description: 'Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI.',
     icon: 'PackageCheck',
     defaultOpen: false,
   },
@@ -903,7 +903,7 @@ const routePresentation = {
     icon: 'Braces',
   },
   'oliphaunt-wasix': {
-    description: 'First-class WASM/WASIX runtime family and dump/restore flows.',
+    description: 'Rust WASIX plus the separate browser-and-Node WASIX TypeScript binding.',
     icon: 'Boxes',
   },
 };
@@ -1019,7 +1019,7 @@ function writeFumadocsMeta(manifest) {
   writeJson(path.join(siteDocsRoot, 'meta.json'), {
     title: 'Oliphaunt',
     description:
-      'Embedded PostgreSQL SDK documentation for native, mobile, desktop, React Native, TypeScript, and WASM apps.',
+      'Embedded PostgreSQL SDK documentation for native, Rust WASIX, and WASIX TypeScript apps.',
     pages: ['start', 'sdk', 'learn', 'reference'],
   });
   for (const route of manifest.routes ?? []) {
@@ -1067,7 +1067,7 @@ function writeLlmFiles(routeRecords) {
   const summary = [
     '# Oliphaunt Docs',
     '',
-    'Oliphaunt is embedded PostgreSQL for native, mobile, desktop, React Native, TypeScript, and WASM apps.',
+    'Oliphaunt is embedded PostgreSQL for native, Rust WASIX, and WASIX TypeScript apps.',
     '',
     '## Public routes',
     ...routeRecords.map((record) => `- ${record.title}: ${record.route}`),

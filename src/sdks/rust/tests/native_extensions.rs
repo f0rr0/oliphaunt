@@ -455,7 +455,7 @@ fn run_direct_extension_child_install_backup(
 ) -> Result<()> {
     let db = block_on(
         Oliphaunt::builder()
-            .path(root)
+            .directory(root)
             .native_direct()
             .extension(extension)
             .open(),
@@ -481,7 +481,7 @@ fn run_direct_extension_child_install_backup(
 fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path) -> Result<()> {
     let db = block_on(
         Oliphaunt::builder()
-            .path(root)
+            .directory(root)
             .native_direct()
             .extension(extension)
             .existing_only()
@@ -561,7 +561,7 @@ fn extension_builder(
     root: &Path,
 ) -> oliphaunt::OliphauntBuilder {
     let mut builder = Oliphaunt::builder()
-        .path(root)
+        .directory(root)
         .engine(mode)
         .extension(extension);
     if let Some(broker) = broker {

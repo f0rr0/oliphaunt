@@ -133,7 +133,12 @@ const productPaths = releasePleaseProductPaths(releasePleaseConfig);
 const versionedProducts = new Set();
 
 for (const [product, packagePath] of productPaths.entries()) {
-  if (beforeManifest[packagePath] !== afterManifest[packagePath]) {
+  const before = beforeManifest[packagePath];
+  const after = afterManifest[packagePath];
+  if (before === undefined && after === '0.0.0') {
+    continue;
+  }
+  if (before !== after) {
     versionedProducts.add(product);
   }
 }

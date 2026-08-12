@@ -41,8 +41,8 @@ elif [ "$runner" = "crash" ]; then
 fi
 scratch_root="${OLIPHAUNT_EXPO_IOS_SCRATCH:-$root/target/oliphaunt-expo-ios-$runner}"
 example_dir="${OLIPHAUNT_EXPO_IOS_EXAMPLE_DIR:-$scratch_root/src/sdks/react-native/examples/expo}"
-crash_root_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
-[ -n "$crash_root_suffix" ] || crash_root_suffix="run"
+crash_storage_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
+[ -n "$crash_storage_suffix" ] || crash_storage_suffix="run"
 package_work="$scratch_root/src/sdks/react-native"
 pack_dir="${OLIPHAUNT_EXPO_IOS_PACK_DIR:-$root/target/oliphaunt-rn-expo-pack/ios}"
 tarball="$pack_dir/$(react_native_package_tarball_name "$rn_dir")"
@@ -114,11 +114,11 @@ durability_profile="${OLIPHAUNT_EXPO_IOS_DURABILITY:-${OLIPHAUNT_EXPO_MOBILE_DUR
 startup_gucs="${OLIPHAUNT_EXPO_IOS_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
 wal_segsize_mb="${OLIPHAUNT_EXPO_IOS_WAL_SEGSIZE_MB:-${OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB:-16}}"
 benchmark_preset="${OLIPHAUNT_EXPO_IOS_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
-crash_root_override="${OLIPHAUNT_EXPO_IOS_CRASH_ROOT:-}"
+crash_storage_override="${OLIPHAUNT_EXPO_IOS_CRASH_STORAGE:-}"
 mobile_template_initdb="${OLIPHAUNT_EXPO_IOS_INITDB:-}"
 metro_pid=""
 metro_bundle_runner=""
-metro_bundle_root=""
+metro_bundle_storage=""
 ios_simulator_log_pid=""
 ios_simulator_log_file=""
 
@@ -851,11 +851,11 @@ build_ios_app() {
 
 start_metro_if_needed() {
   local bundle_runner="${1:-$runner}"
-  local bundle_root="${2:-}"
+  local bundle_storage="${2:-}"
   mkdir -p "$scratch_root"
   mkdir -p "$(dirname "$metro_dev_log")"
   if [ -n "${metro_pid:-}" ] && kill -0 "$metro_pid" >/dev/null 2>&1; then
-    if [ "$metro_bundle_runner" = "$bundle_runner" ] && [ "$metro_bundle_root" = "$bundle_root" ]; then
+    if [ "$metro_bundle_runner" = "$bundle_runner" ] && [ "$metro_bundle_storage" = "$bundle_storage" ]; then
       return 0
     fi
     stop_owned_metro
@@ -879,13 +879,13 @@ start_metro_if_needed() {
       EXPO_PUBLIC_OLIPHAUNT_BENCHMARK_PRESET="$benchmark_preset" \
       EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS="$startup_gucs" \
       EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB="$wal_segsize_mb" \
-      EXPO_PUBLIC_OLIPHAUNT_ROOT="$bundle_root" \
+      EXPO_PUBLIC_OLIPHAUNT_STORAGE_DIRECTORY="$bundle_storage" \
       pnpm exec expo start --dev-client --port "$metro_port" --host lan --clear \
         >"$scratch_root/metro.log" 2>&1
     ) &
     metro_pid="$!"
     metro_bundle_runner="$bundle_runner"
-    metro_bundle_root="$bundle_root"
+    metro_bundle_storage="$bundle_storage"
 
     for _ in $(seq 1 60); do
       if port_is_listening; then
@@ -982,15 +982,15 @@ main() {
   prepare_expo_example_workspace
   preflight_physical_ios_device
   if is_reuse_installed_physical_ios_app; then
-    local device_id crash_root scratch_metro_offset dev_metro_offset
+    local device_id crash_storage scratch_metro_offset dev_metro_offset
     device_id="$(select_ios_physical_device_id)" ||
       fail "failed to resolve a paired physical iOS device; set OLIPHAUNT_EXPO_IOS_DEVICE_ID"
     echo "Reusing installed iOS app $app_id on physical device: $device_id" >&2
     install_react_native_sdk_from_source_for_reuse
     if [ "$runner" = "crash" ]; then
-      crash_root="$crash_root_override"
-      [ -n "$crash_root" ] || crash_root="app-support://oliphaunt-crash-recovery-root-$crash_root_suffix"
-      exercise_ios_device_crash_recovery "$device_id" "$crash_root"
+      crash_storage="$crash_storage_override"
+      [ -n "$crash_storage" ] || crash_storage="app-data:oliphaunt-crash-recovery-$crash_storage_suffix"
+      exercise_ios_device_crash_recovery "$device_id" "$crash_storage"
       return
     fi
     if uses_ios_metro; then

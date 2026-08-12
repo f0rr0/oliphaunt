@@ -1190,20 +1190,28 @@ require_text 'physical iOS runs require Developer Disk Image services' src/sdks/
   "iOS physical-device benchmark harness must fail fast when Developer Disk Image services are unavailable"
 require_text '-allowProvisioningUpdates' src/sdks/react-native/tools/expo-ios-runner.sh \
   "iOS physical-device benchmark harness must support explicit automatic provisioning"
-require_text 'crash_root_suffix' src/sdks/react-native/tools/expo-ios-runner.sh \
-  "iOS crash recovery roots must be isolated per scratch run"
-require_text 'oliphaunt-crash-recovery-root-$crash_root_suffix' src/sdks/react-native/tools/expo-ios-runner.sh \
-  "iOS crash recovery must avoid stale persistent roots across benchmark runs"
-require_text 'rm -rf "$root_path"' src/sdks/react-native/tools/expo-runner-ios-installed-app.sh \
-  "iOS simulator crash recovery must clear the per-run root before the write phase"
+require_text 'OLIPHAUNT_EXPO_IOS_CRASH_STORAGE' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS crash recovery must expose a storage-named override"
+reject_text 'OLIPHAUNT_EXPO_IOS_CRASH_ROOT' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS crash recovery must not retain the old root-named override"
+require_text 'crash_storage_suffix' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS crash recovery storage must be isolated per scratch run"
+require_text 'app-data:oliphaunt-crash-recovery-$crash_storage_suffix' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS crash recovery must avoid stale persistent storage across benchmark runs"
+require_text 'rm -rf "$crash_storage"' src/sdks/react-native/tools/expo-runner-ios-installed-app.sh \
+  "iOS simulator crash recovery must clear the per-run storage before the write phase"
 require_text 'liboliphauntBenchmarkPreset' src/sdks/react-native/tools/expo-runner-android-device.sh \
   "Android Expo benchmark harness must pass the benchmark preset into the installed app"
-require_text 'crash_root_suffix' src/sdks/react-native/tools/expo-android-runner.sh \
-  "Android crash recovery roots must be isolated per scratch run"
-require_text 'oliphaunt-crash-recovery-root-$crash_root_suffix' src/sdks/react-native/tools/expo-android-runner.sh \
-  "Android crash recovery must avoid stale persistent roots across benchmark runs"
-require_text 'rm -rf "$crash_root"' src/sdks/react-native/tools/expo-runner-android-device.sh \
-  "Android crash recovery must clear the per-run root before the write phase"
+require_text 'OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android crash recovery must expose a storage-named override"
+reject_text 'OLIPHAUNT_EXPO_ANDROID_CRASH_ROOT' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android crash recovery must not retain the old root-named override"
+require_text 'crash_storage_suffix' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android crash recovery storage must be isolated per scratch run"
+require_text 'oliphaunt-crash-recovery-storage-$crash_storage_suffix' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android crash recovery must avoid stale persistent storage across benchmark runs"
+require_text 'rm -rf "$crash_storage"' src/sdks/react-native/tools/expo-runner-android-device.sh \
+  "Android crash recovery must clear the per-run storage before the write phase"
 require_text 'benchmarkOptionsForPreset' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
   "Expo benchmark app must size benchmark workloads from a named preset"
 require_text 'refreshing native extension artifacts through fingerprinted build script' src/runtimes/liboliphaunt/native/tools/check-track.sh \

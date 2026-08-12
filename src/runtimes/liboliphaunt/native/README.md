@@ -114,8 +114,6 @@ Normal `oliphaunt_exec_protocol`, `oliphaunt_exec_simple_query`, and streaming
 execution do not impose a synthetic query timeout; callers should use
 `oliphaunt_cancel` to interrupt long-running SQL. Ordinary SDK close is a
 lifecycle detach/wait boundary, not an implicit query cancellation primitive.
-The legacy `OLIPHAUNT_TIMEOUT_MS` name remains a startup-time fallback during
-the migration.
 
 The C runtime keeps throughput-oriented PostgreSQL defaults for direct callers:
 `shared_buffers=128MB`, `wal_buffers=4MB`, and `min_wal_size=80MB`. SDKs that
@@ -195,11 +193,11 @@ same root cannot be opened or replaced concurrently.
 
 ## Physical Archive Contract
 
-`oliphaunt_backup(..., OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE, ...)` emits a
-same-version concrete root archive. `oliphaunt_backup_ex` uses the same archive
-writer and can append generated metadata entries such as `manifest.properties`
-or `.oliphaunt/backup-manifest.properties` while the archive is being produced,
-which avoids a second full archive copy in SDKs. The C ABI accepts only regular
+`oliphaunt_backup` accepts an `OliphauntBackupOptions` record and emits a
+same-version concrete root archive. Its generated-file list can append metadata
+entries such as `manifest.properties` or
+`.oliphaunt/backup-manifest.properties` while the archive is being produced,
+avoiding a second full archive copy in SDKs. The C ABI accepts only regular
 files and directories under `pgdata`; symlinks, hardlinks, device nodes, FIFOs,
 sockets, sparse/special tar records, external tablespaces, and linked WAL
 directories are rejected. `oliphaunt_restore` enforces the same rule before

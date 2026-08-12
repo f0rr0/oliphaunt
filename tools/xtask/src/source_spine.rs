@@ -338,10 +338,10 @@ pub(super) fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()
     if manifest.sources.is_empty() {
         bail!("source metadata must contain at least one source pin");
     }
-    ensure_eq(&manifest.toolchain.wasmer, "7.2.0", "toolchain.wasmer")?;
+    ensure_eq(&manifest.toolchain.wasmer, "7.2.1", "toolchain.wasmer")?;
     ensure_eq(
         &manifest.toolchain.wasmer_wasix,
-        "0.702.0",
+        "0.702.1",
         "toolchain.wasmer-wasix",
     )?;
     ensure_eq(&manifest.toolchain.webc, "12.0.0", "toolchain.webc")?;

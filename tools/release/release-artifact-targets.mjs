@@ -1694,6 +1694,7 @@ export function extensionRegistryPackageTargetSets(product, prefix = "release-ar
     androidTargets,
     npmTargets: nativeDynamicTargets,
     nativeCargoTargets: nativeDynamicTargets,
+    includeWasixNpm: wasixRuntimeTargets.includes("wasix-portable"),
     // An AOT carrier is meaningful only when at least one exact SQL member has
     // a native module to precompile. SQL/resource-only products still publish
     // their portable archive but must not reserve empty host-AOT identities.

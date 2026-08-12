@@ -1059,7 +1059,7 @@ fn native_liboliphaunt_builder(
     tuning: &NativeBenchmarkTuning,
 ) -> NativeOliphauntBuilder {
     let builder = NativeOliphaunt::builder()
-        .path(root)
+        .directory(root)
         .durability(tuning.durability)
         .runtime_footprint(tuning.runtime_footprint)
         .startup_gucs(tuning.startup_gucs.clone());
@@ -1181,7 +1181,7 @@ pub(super) fn run_native_liboliphaunt_speed_hotspot_diagnostic_case(
     let db = runtime
         .block_on(
             NativeOliphaunt::builder()
-                .path(&root)
+                .directory(&root)
                 .native_direct()
                 .durability(options.durability)
                 .open(),

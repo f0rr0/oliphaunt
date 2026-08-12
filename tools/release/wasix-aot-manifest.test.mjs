@@ -34,8 +34,8 @@ test("rejects stale prerelease Wasmer metadata", () => {
     () =>
       assertCanonicalWasixAotManifest(
         manifest({
-          "wasmer-version": "7.2.0-alpha.3",
-          "wasmer-wasix-version": "0.702.0-alpha.3",
+          "wasmer-version": "7.2.1-alpha.3",
+          "wasmer-wasix-version": "0.702.1-alpha.3",
         }),
         { expectedTarget: "x86_64-unknown-linux-gnu" },
       ),
@@ -47,7 +47,7 @@ test("rejects stale prerelease Wasmer-WASIX metadata", () => {
   assert.throws(
     () =>
       assertCanonicalWasixAotManifest(
-        manifest({ "wasmer-wasix-version": "0.702.0-alpha.3" }),
+        manifest({ "wasmer-wasix-version": "0.702.1-alpha.3" }),
         { expectedTarget: "x86_64-unknown-linux-gnu" },
       ),
     /wasmer-wasix-version must match canonical WASIX metadata/u,

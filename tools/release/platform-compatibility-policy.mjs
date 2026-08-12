@@ -117,8 +117,8 @@ function sameVersion(left, right) {
 }
 
 export const PUBLIC_PLATFORM_COMPATIBILITY_BLOCK = Object.freeze({
-  start: "<!-- BEGIN GENERATED PLATFORM COMPATIBILITY -->",
-  end: "<!-- END GENERATED PLATFORM COMPATIBILITY -->",
+  start: "{/* BEGIN GENERATED PLATFORM COMPATIBILITY */}",
+  end: "{/* END GENERATED PLATFORM COMPATIBILITY */}",
 });
 
 /**

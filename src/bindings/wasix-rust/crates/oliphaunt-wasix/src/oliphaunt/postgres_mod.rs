@@ -29,10 +29,11 @@ use webc::metadata::Command as WebcCommand;
 use webc::metadata::annotations::{WASI_RUNNER_URI, Wasi};
 
 use super::aot;
-use super::base::{OliphauntPaths, RuntimeLayout};
+use super::base::{OliphauntPaths, RuntimeLayout, virtual_cluster_is_complete};
 use super::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use super::extensions::Extension;
+use super::storage::PgDataStorage;
 use super::timing;
 
 mod stdio;
@@ -192,6 +193,7 @@ pub struct PostgresMod {
     wasi_stderr: TailCaptureHandle,
     protocol_stdio_attachment: Option<ProtocolStdioAttachment>,
     paths: OliphauntPaths,
+    pgdata_storage: PgDataStorage,
     pgdata_template_root: Option<PathBuf>,
     startup_config: StartupConfig,
     startup_response: Option<Vec<u8>>,
@@ -324,27 +326,16 @@ impl PostgresMod {
         )
     }
 
-    pub(crate) fn new_prepared(
-        paths: OliphauntPaths,
-        runtime_layout: RuntimeLayout,
-    ) -> Result<Self> {
-        Self::new_prepared_with_config(
-            paths,
-            runtime_layout,
-            PostgresConfig::default(),
-            StartupConfig::default(),
-        )
-    }
-
     pub(crate) fn new_prepared_with_config(
         paths: OliphauntPaths,
         runtime_layout: RuntimeLayout,
+        pgdata_storage: PgDataStorage,
         postgres_config: PostgresConfig,
         startup_config: StartupConfig,
     ) -> Result<Self> {
         postgres_config.validate()?;
         startup_config.validate()?;
-        ensure_runtime_dirs(&paths)?;
+        ensure_runtime_dirs(&paths, &pgdata_storage)?;
         #[cfg(feature = "extensions")]
         let runtime_root = runtime_layout.local_root.clone();
         let module_runtime_root = runtime_layout.module_root.clone();
@@ -385,6 +376,7 @@ impl PostgresMod {
                 store: &mut store,
                 paths: &paths,
                 runtime_layout: &runtime_layout,
+                pgdata_storage: &pgdata_storage,
                 postgres_config: &postgres_config,
                 startup_config: &startup_config,
                 module: module.clone(),
@@ -425,6 +417,7 @@ impl PostgresMod {
             wasi_stderr,
             protocol_stdio_attachment: None,
             paths,
+            pgdata_storage,
             pgdata_template_root: runtime_layout.pgdata_template_root.clone(),
             startup_config,
             startup_response: None,
@@ -435,7 +428,7 @@ impl PostgresMod {
         Ok(pg)
     }
 
-    pub fn paths(&self) -> &OliphauntPaths {
+    pub(crate) fn paths(&self) -> &OliphauntPaths {
         &self.paths
     }
 
@@ -448,7 +441,7 @@ impl PostgresMod {
         self.guest_allocator.allocation_counts()
     }
 
-    pub fn ensure_cluster(&mut self) -> Result<()> {
+    pub(crate) fn ensure_cluster(&mut self) -> Result<()> {
         self.initialize_cluster()?;
         self.start_backend()
     }
@@ -458,8 +451,12 @@ impl PostgresMod {
             return Ok(());
         }
 
+        let initialized = match &self.pgdata_storage {
+            PgDataStorage::HostDirectory => self.paths.is_cluster_initialized(),
+            PgDataStorage::Memory(filesystem) => virtual_cluster_is_complete(filesystem.as_ref()),
+        };
         ensure!(
-            self.paths.is_cluster_initialized(),
+            initialized,
             "PGDATA is not initialized; install the WASIX runtime assets and PGDATA template before opening"
         );
         self.cluster_ready = true;
@@ -678,8 +675,9 @@ impl PostgresMod {
     pub(crate) fn run_split_initdb(
         paths: &OliphauntPaths,
         runtime_layout: &RuntimeLayout,
+        pgdata_storage: &PgDataStorage,
     ) -> Result<()> {
-        run_split_initdb(paths, runtime_layout)
+        run_split_initdb(paths, runtime_layout, pgdata_storage)
     }
 
     pub fn send_protocol(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
@@ -1118,6 +1116,7 @@ struct WasixInstantiateInput<'a> {
     store: &'a mut Store,
     paths: &'a OliphauntPaths,
     runtime_layout: &'a RuntimeLayout,
+    pgdata_storage: &'a PgDataStorage,
     postgres_config: &'a PostgresConfig,
     startup_config: &'a StartupConfig,
     module: Module,
@@ -1135,11 +1134,7 @@ fn instantiate_wasix_module(
     let _guard = input.runtime.enter();
     let root_fs = {
         let _phase = timing::phase("wasix.instantiate.root_fs");
-        if input.runtime_layout.uses_shared_overlay() {
-            mountfs_overlay_wasi_root(input.paths, input.runtime_layout)?
-        } else {
-            host_wasi_root(&input.paths.runtime_root())?
-        }
+        database_wasi_root(input.paths, input.runtime_layout, input.pgdata_storage)?
     };
 
     let mut runner = WasiRunner::new();
@@ -1197,43 +1192,47 @@ fn add_pgdata_preopen(builder: &mut wasmer_wasix::WasiEnvBuilder) -> Result<()> 
     Ok(())
 }
 
-fn host_wasi_root(runtime_root: &Path) -> Result<WasiFsRoot> {
-    let root = maybe_trace_filesystem(host_filesystem(runtime_root)?);
-    Ok(WasiFsRoot::from_filesystem(wasi_root_with_devices(root)?))
-}
-
-fn mountfs_overlay_wasi_root(
+fn database_wasi_root(
     paths: &OliphauntPaths,
     runtime_layout: &RuntimeLayout,
+    pgdata_storage: &PgDataStorage,
 ) -> Result<WasiFsRoot> {
-    let _phase = timing::phase("wasix.mountfs_overlay_construct");
-    let runtime_root = paths.runtime_root();
-    let primary =
-        virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(host_filesystem(&runtime_root)?));
-    let secondary = virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(host_filesystem(
-        &runtime_layout.module_root,
-    )?));
-    let overlay = Arc::new(virtual_fs::OverlayFileSystem::new(primary, [secondary]));
+    let _phase = timing::phase("wasix.storage_mount_construct");
     let root: Arc<dyn virtual_fs::FileSystem + Send + Sync> =
-        if let Some(pgdata) = pgdata_overlay_filesystem(paths, runtime_layout)? {
-            wasi_root_with_pgdata_mount(overlay, pgdata)?
+        if runtime_layout.uses_shared_overlay() {
+            let primary = virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(host_filesystem(
+                &paths.runtime_root(),
+            )?));
+            let secondary = virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(
+                host_filesystem(&runtime_layout.module_root)?,
+            ));
+            Arc::new(virtual_fs::OverlayFileSystem::new(primary, [secondary]))
         } else {
-            overlay
+            maybe_trace_filesystem(host_filesystem(&paths.runtime_root())?)
         };
-
+    let pgdata = pgdata_filesystem(paths, runtime_layout, pgdata_storage)?;
+    let root = wasi_root_with_pgdata_mount(root, pgdata)?;
     Ok(WasiFsRoot::from_filesystem(wasi_root_with_devices(root)?))
 }
 
-fn pgdata_overlay_filesystem(
+fn pgdata_filesystem(
     paths: &OliphauntPaths,
     runtime_layout: &RuntimeLayout,
-) -> Result<Option<Arc<dyn virtual_fs::FileSystem + Send + Sync>>> {
-    if let Some(pgdata_template_root) = &runtime_layout.pgdata_template_root {
-        let fs =
-            EagerCopyOverlayFileSystem::new(paths.pgdata.clone(), pgdata_template_root.clone())?;
-        return Ok(Some(maybe_trace_filesystem(Arc::new(fs))));
+    pgdata_storage: &PgDataStorage,
+) -> Result<Arc<dyn virtual_fs::FileSystem + Send + Sync>> {
+    match pgdata_storage {
+        PgDataStorage::Memory(filesystem) => Ok(maybe_trace_filesystem(filesystem.clone())),
+        PgDataStorage::HostDirectory => {
+            if let Some(pgdata_template_root) = &runtime_layout.pgdata_template_root {
+                let fs = EagerCopyOverlayFileSystem::new(
+                    paths.pgdata.clone(),
+                    pgdata_template_root.clone(),
+                )?;
+                return Ok(maybe_trace_filesystem(Arc::new(fs)));
+            }
+            Ok(maybe_trace_filesystem(host_filesystem(&paths.pgdata)?))
+        }
     }
-    Ok(None)
 }
 
 fn wasi_root_with_pgdata_mount(
@@ -1259,7 +1258,11 @@ fn build_wasix_runtime(
     Arc::new(wasix_runtime)
 }
 
-fn run_split_initdb(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> Result<()> {
+fn run_split_initdb(
+    paths: &OliphauntPaths,
+    runtime_layout: &RuntimeLayout,
+    pgdata_storage: &PgDataStorage,
+) -> Result<()> {
     let _phase = timing::phase("initdb.split_wasix");
     let initdb_module = runtime_layout.module_root.join("bin/initdb");
     let postgres_module = runtime_layout.module_root.join("bin/postgres");
@@ -1274,8 +1277,10 @@ fn run_split_initdb(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> R
         postgres_module.display()
     );
 
-    fs::create_dir_all(&paths.pgdata)
-        .with_context(|| format!("create fresh PGDATA {}", paths.pgdata.display()))?;
+    if matches!(pgdata_storage, PgDataStorage::HostDirectory) {
+        fs::create_dir_all(&paths.pgdata)
+            .with_context(|| format!("create fresh PGDATA {}", paths.pgdata.display()))?;
+    }
 
     let (engine, _) = aot::load_runtime_module()?;
     let process_runtime = process_wasix_runtime(&engine)?;
@@ -1310,7 +1315,7 @@ fn run_split_initdb(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> R
     );
 
     let package = split_initdb_binary_package(&initdb_module, &postgres_module)?;
-    let root_fs = split_initdb_root_filesystem(paths, runtime_layout)?;
+    let root_fs = split_initdb_root_filesystem(paths, runtime_layout, pgdata_storage)?;
     root_fs
         .read_dir(Path::new(PGDATA_DIR))
         .with_context(|| format!("verify split initdb {PGDATA_DIR} mount"))?;
@@ -1350,7 +1355,7 @@ fn run_split_initdb(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> R
         if let Err(err) = result {
             let stdout = stdout_capture.text();
             let stderr = stderr_capture.text();
-            let diagnostics = split_initdb_diagnostics(paths, runtime_layout);
+            let diagnostics = split_initdb_diagnostics(paths, runtime_layout, pgdata_storage);
             return Err(err).with_context(|| {
                 format!(
                     "run split WASIX initdb\n{}\ninitdb stdout:\n{}\ninitdb stderr:\n{}",
@@ -1375,6 +1380,7 @@ fn run_split_initdb(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> R
 fn split_initdb_root_filesystem(
     paths: &OliphauntPaths,
     runtime_layout: &RuntimeLayout,
+    pgdata_storage: &PgDataStorage,
 ) -> Result<Arc<dyn virtual_fs::FileSystem + Send + Sync>> {
     let root: Arc<dyn virtual_fs::FileSystem + Send + Sync> =
         if runtime_layout.uses_shared_overlay() {
@@ -1389,7 +1395,7 @@ fn split_initdb_root_filesystem(
             maybe_trace_filesystem(host_filesystem(&paths.runtime_root())?)
         };
 
-    let pgdata = maybe_trace_filesystem(host_filesystem(&paths.pgdata)?);
+    let pgdata = pgdata_filesystem(paths, runtime_layout, pgdata_storage)?;
     // initdb execs a child postgres command during bootstrap. Keep PGDATA inside
     // the root filesystem view so both commands inherit the same /base mount.
     let root = wasi_root_with_pgdata_mount(root, pgdata)?;
@@ -1445,10 +1451,33 @@ fn run_package_command_with_root(
     Ok(())
 }
 
-fn split_initdb_diagnostics(paths: &OliphauntPaths, runtime_layout: &RuntimeLayout) -> String {
+fn split_initdb_diagnostics(
+    paths: &OliphauntPaths,
+    runtime_layout: &RuntimeLayout,
+    pgdata_storage: &PgDataStorage,
+) -> String {
+    if let PgDataStorage::Memory(filesystem) = pgdata_storage {
+        let entries = filesystem
+            .read_dir(Path::new("/"))
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .take(16)
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_else(|err| format!("<unavailable: {err}>"));
+        return format!(
+            "initdb diagnostics:\n  layout_kind={:?}\n  storage=memory\n  runtime_workspace={}\n  module_directory={}\n  database_entries={entries}",
+            runtime_layout.kind,
+            path_state(&paths.runtime_root()),
+            path_state(&runtime_layout.module_root),
+        );
+    }
     let pgdata_parent = paths.pgdata.parent().unwrap_or(&paths.pgdata);
     format!(
-        "initdb diagnostics:\n  layout_kind={:?}\n  pgdata_host={}\n  pgdata_parent={}\n  runtime_root={}\n  module_root={}\n  pgdata_entries={}",
+        "initdb diagnostics:\n  layout_kind={:?}\n  storage=directory\n  data_directory={}\n  data_parent={}\n  runtime_workspace={}\n  module_directory={}\n  database_entries={}",
         runtime_layout.kind,
         path_state(&paths.pgdata),
         path_state(pgdata_parent),
@@ -2169,15 +2198,18 @@ const DEFAULT_STARTUP_GUCS: &[(&str, &str)] = &[
     ("shared_buffers", "128MB"),
 ];
 
-fn ensure_runtime_dirs(paths: &OliphauntPaths) -> Result<()> {
-    for path in [
+fn ensure_runtime_dirs(paths: &OliphauntPaths, pgdata_storage: &PgDataStorage) -> Result<()> {
+    let mut directories = vec![
         paths.runtime_root(),
-        paths.pgdata.clone(),
         paths.runtime_root().join("home"),
         paths.runtime_root().join("dev"),
         paths.runtime_root().join("dev/shm"),
         paths.runtime_root().join("tmp"),
-    ] {
+    ];
+    if matches!(pgdata_storage, PgDataStorage::HostDirectory) {
+        directories.push(paths.pgdata.clone());
+    }
+    for path in directories {
         fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
     }
 

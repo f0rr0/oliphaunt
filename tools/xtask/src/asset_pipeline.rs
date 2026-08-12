@@ -2955,8 +2955,8 @@ mod tests {
             postgres_version: postgres_version.map(str::to_owned),
             target_triple: "aarch64-apple-darwin".to_owned(),
             engine: "llvm-opta".to_owned(),
-            wasmer_version: "7.2.0".to_owned(),
-            wasmer_wasix_version: "0.702.0".to_owned(),
+            wasmer_version: "7.2.1".to_owned(),
+            wasmer_wasix_version: "0.702.1".to_owned(),
             artifacts: vec![AotManifestArtifact {
                 name: "runtime:oliphaunt".to_owned(),
                 path: "oliphaunt.aot.zst".to_owned(),
@@ -3024,8 +3024,8 @@ mod tests {
         let mut manifest: AotManifest =
             serde_json::from_str(&fs::read_to_string(&path).expect("read AOT manifest"))
                 .expect("parse AOT manifest");
-        manifest.wasmer_version = "7.2.0-alpha.3".to_owned();
-        manifest.wasmer_wasix_version = "0.702.0-alpha.3".to_owned();
+        manifest.wasmer_version = "7.2.1-alpha.3".to_owned();
+        manifest.wasmer_wasix_version = "0.702.1-alpha.3".to_owned();
         fs::write(
             &path,
             serde_json::to_string(&manifest).expect("serialize AOT manifest"),

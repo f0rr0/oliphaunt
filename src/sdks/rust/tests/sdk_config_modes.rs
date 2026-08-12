@@ -5,17 +5,18 @@ use std::thread;
 use std::time::Duration;
 
 use oliphaunt::{
-    BackupArtifact, BackupFormat, BenchmarkMetric, BenchmarkTarget, EngineCapabilities, EngineMode,
-    EngineSession, Error, Extension, NativeBrokerRuntime, NativeRuntime, NativeServerRuntime,
-    Oliphaunt, OliphauntRuntime, PerformanceGateSet, RestoreRequest, Result,
-    RuntimeFootprintProfile, SessionConcurrency, SessionPin, Transaction,
+    BackupArtifact, BackupFormat, BenchmarkMetric, BenchmarkTarget, DatabaseInitialization,
+    DatabaseStorage, EngineCapabilities, EngineMode, EngineSession, Error, Extension,
+    NativeBrokerRuntime, NativeRuntime, NativeServerRuntime, Oliphaunt, OliphauntRuntime,
+    PerformanceGateSet, RestoreRequest, Result, RuntimeFootprintProfile, SessionConcurrency,
+    SessionPin, Transaction,
 };
 use serde::Deserialize;
 
 #[test]
 fn config_is_native_only_and_extensions_are_explicit() {
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .username("app_user")
         .database("app_db")
         .extension(Extension::Vector)
@@ -37,9 +38,16 @@ fn config_is_native_only_and_extensions_are_explicit() {
 }
 
 #[test]
+fn temporary_directory_storage_is_the_default() {
+    let config = Oliphaunt::builder().build_config().unwrap();
+
+    assert_eq!(config.storage, DatabaseStorage::TemporaryDirectory);
+}
+
+#[test]
 fn open_config_validation_resolves_extension_dependencies_before_runtime_selection() {
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .extension(Extension::Earthdistance)
         .build_config()
         .unwrap();
@@ -53,7 +61,7 @@ fn open_config_validation_resolves_extension_dependencies_before_runtime_selecti
 #[test]
 fn config_rejects_invalid_connection_identity() {
     let username_error = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .username(" \n")
         .build_config()
         .unwrap_err();
@@ -63,7 +71,7 @@ fn config_rejects_invalid_connection_identity() {
     );
 
     let database_error = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .database("app\0db")
         .build_config()
         .unwrap_err();
@@ -132,28 +140,31 @@ fn runtime_footprint_profiles_define_the_mobile_pg18_startup_contract() {
 }
 
 #[test]
-fn open_config_rejects_empty_persistent_root_before_runtime_selection() {
-    let error = Oliphaunt::builder().path("").build_config().unwrap_err();
-    assert_eq!(
-        error,
-        Error::InvalidConfig("database root must not be empty".to_owned())
-    );
-}
-
-#[test]
-fn open_config_rejects_nul_persistent_root_before_runtime_selection() {
+fn open_config_rejects_empty_storage_directory_before_runtime_selection() {
     let error = Oliphaunt::builder()
-        .path("target/test-roots/native\0direct")
+        .directory("")
         .build_config()
         .unwrap_err();
     assert_eq!(
         error,
-        Error::InvalidConfig("database root must not contain NUL bytes".to_owned())
+        Error::InvalidConfig("database storage directory must not be empty".to_owned())
     );
 }
 
 #[test]
-fn restore_rejects_nul_target_root_before_archive_unpack() {
+fn open_config_rejects_nul_storage_directory_before_runtime_selection() {
+    let error = Oliphaunt::builder()
+        .directory("target/test-roots/native\0direct")
+        .build_config()
+        .unwrap_err();
+    assert_eq!(
+        error,
+        Error::InvalidConfig("database storage directory must not contain NUL bytes".to_owned())
+    );
+}
+
+#[test]
+fn restore_rejects_nul_destination_before_archive_unpack() {
     let error = block_on(Oliphaunt::restore(RestoreRequest::physical_archive(
         "target/test-roots/native\0restore",
         BackupArtifact {
@@ -164,34 +175,14 @@ fn restore_rejects_nul_target_root_before_archive_unpack() {
     .unwrap_err();
     assert_eq!(
         error,
-        Error::Engine("restore target root must not contain NUL bytes".to_owned())
+        Error::Engine("restore destination must not contain NUL bytes".to_owned())
     );
 }
 
 #[test]
-fn tooling_and_runtime_executable_paths_are_validated_before_startup() {
-    let initdb_empty = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
-        .initdb_tooling_only("")
-        .build_config()
-        .unwrap_err();
-    assert_eq!(
-        initdb_empty,
-        Error::InvalidConfig("initdb path must not be empty".to_owned())
-    );
-
-    let initdb_nul = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
-        .initdb_tooling_only("target/native\0initdb")
-        .build_config()
-        .unwrap_err();
-    assert_eq!(
-        initdb_nul,
-        Error::InvalidConfig("initdb path must not contain NUL bytes".to_owned())
-    );
-
+fn runtime_executable_paths_are_validated_before_startup() {
     let broker_empty = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
         .broker_executable("")
         .build_config()
@@ -202,7 +193,7 @@ fn tooling_and_runtime_executable_paths_are_validated_before_startup() {
     );
 
     let broker_nul = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
         .broker_executable("target/native\0broker")
         .build_config()
@@ -213,7 +204,7 @@ fn tooling_and_runtime_executable_paths_are_validated_before_startup() {
     );
 
     let server_empty = Oliphaunt::builder()
-        .path("target/test-roots/native-server")
+        .directory("target/test-roots/native-server")
         .native_server()
         .server_executable("")
         .build_config()
@@ -224,7 +215,7 @@ fn tooling_and_runtime_executable_paths_are_validated_before_startup() {
     );
 
     let server_nul = Oliphaunt::builder()
-        .path("target/test-roots/native-server")
+        .directory("target/test-roots/native-server")
         .native_server()
         .server_executable("target/native\0postgres")
         .build_config()
@@ -236,9 +227,16 @@ fn tooling_and_runtime_executable_paths_are_validated_before_startup() {
 }
 
 #[test]
+fn fresh_initdb_uses_packaged_tooling_without_consumer_paths() {
+    let config = Oliphaunt::builder().fresh_initdb().build_config().unwrap();
+
+    assert_eq!(config.initialization, DatabaseInitialization::FreshInitdb);
+}
+
+#[test]
 fn direct_mode_rejects_fake_multi_session_pools() {
     let zero = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .native_direct()
         .max_client_sessions(0)
         .build_config()
@@ -249,7 +247,7 @@ fn direct_mode_rejects_fake_multi_session_pools() {
     );
 
     let error = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .native_direct()
         .max_client_sessions(2)
         .build_config()
@@ -268,7 +266,7 @@ fn direct_mode_rejects_fake_multi_session_pools() {
 #[test]
 fn broker_mode_rejects_fake_multi_session_pools() {
     let zero = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
         .max_client_sessions(0)
         .build_config()
@@ -279,7 +277,7 @@ fn broker_mode_rejects_fake_multi_session_pools() {
     );
 
     let error = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
         .max_client_sessions(2)
         .build_config()
@@ -301,7 +299,7 @@ fn server_mode_advertises_true_independent_sessions() {
     assert!(!EngineCapabilities::for_mode(EngineMode::NativeBroker).connection_strings);
 
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-server")
+        .directory("target/test-roots/native-server")
         .native_server()
         .max_client_sessions(16)
         .build_config()
@@ -326,10 +324,9 @@ fn direct_broker_server_lifecycle_capabilities_are_honest() {
         SessionConcurrency::SerializedSingleSession
     );
     assert!(!direct.process_isolated);
-    assert!(!direct.multi_root);
-    assert!(direct.reopenable);
-    assert!(direct.same_root_logical_reopen);
-    assert!(!direct.root_switchable);
+    assert!(!direct.multiple_instances);
+    assert!(direct.same_instance_logical_reopen);
+    assert!(!direct.instance_switchable);
     assert!(!direct.crash_restartable);
     assert_eq!(direct.max_client_sessions, 1);
     assert!(!direct.connection_strings);
@@ -342,10 +339,9 @@ fn direct_broker_server_lifecycle_capabilities_are_honest() {
         SessionConcurrency::SerializedSingleSession
     );
     assert!(broker.process_isolated);
-    assert!(broker.multi_root);
-    assert!(broker.reopenable);
-    assert!(!broker.same_root_logical_reopen);
-    assert!(broker.root_switchable);
+    assert!(broker.multiple_instances);
+    assert!(!broker.same_instance_logical_reopen);
+    assert!(broker.instance_switchable);
     assert!(broker.crash_restartable);
     assert_eq!(broker.max_client_sessions, 1);
     assert!(!broker.connection_strings);
@@ -358,10 +354,9 @@ fn direct_broker_server_lifecycle_capabilities_are_honest() {
         SessionConcurrency::IndependentSessions
     );
     assert!(server.process_isolated);
-    assert!(!server.multi_root);
-    assert!(server.reopenable);
-    assert!(!server.same_root_logical_reopen);
-    assert!(server.root_switchable);
+    assert!(!server.multiple_instances);
+    assert!(!server.same_instance_logical_reopen);
+    assert!(server.instance_switchable);
     assert!(!server.crash_restartable);
     assert_eq!(server.max_client_sessions, 32);
     assert!(server.connection_strings);
@@ -371,20 +366,20 @@ fn direct_broker_server_lifecycle_capabilities_are_honest() {
 #[test]
 fn broker_and_server_modes_select_process_isolated_defaults() {
     let broker_config = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
         .build_config()
         .unwrap();
     assert_eq!(broker_config.mode, EngineMode::NativeBroker);
     assert_eq!(broker_config.broker.max_client_sessions, 1);
-    assert_eq!(broker_config.broker.max_roots, 1);
+    assert_eq!(broker_config.broker.max_instances, 1);
     let broker_capabilities = EngineCapabilities::for_mode(EngineMode::NativeBroker);
-    assert!(broker_capabilities.multi_root);
-    assert!(broker_capabilities.root_switchable);
+    assert!(broker_capabilities.multiple_instances);
+    assert!(broker_capabilities.instance_switchable);
     assert!(broker_capabilities.crash_restartable);
 
     let server_config = Oliphaunt::builder()
-        .path("target/test-roots/native-server")
+        .directory("target/test-roots/native-server")
         .native_server()
         .server_port(55432)
         .build_config()
@@ -392,17 +387,16 @@ fn broker_and_server_modes_select_process_isolated_defaults() {
     assert_eq!(server_config.mode, EngineMode::NativeServer);
     assert_eq!(server_config.server.port, Some(55432));
     let server_capabilities = EngineCapabilities::for_mode(EngineMode::NativeServer);
-    assert!(server_capabilities.root_switchable);
+    assert!(server_capabilities.instance_switchable);
     assert!(!server_capabilities.crash_restartable);
 }
 
 #[test]
-fn direct_mode_advertises_resident_single_root_lifecycle() {
+fn direct_mode_advertises_resident_single_instance_lifecycle() {
     let capabilities = EngineCapabilities::for_mode(EngineMode::NativeDirect);
 
-    assert!(capabilities.reopenable);
-    assert!(capabilities.same_root_logical_reopen);
-    assert!(!capabilities.root_switchable);
+    assert!(capabilities.same_instance_logical_reopen);
+    assert!(!capabilities.instance_switchable);
     assert!(!capabilities.crash_restartable);
     assert!(!capabilities.process_isolated);
     assert_eq!(capabilities.max_client_sessions, 1);
@@ -413,17 +407,17 @@ fn direct_mode_advertises_resident_single_root_lifecycle() {
 }
 
 #[test]
-fn broker_accepts_supervised_multi_root_configuration() {
+fn broker_accepts_supervised_multiple_instances_configuration() {
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-broker")
+        .directory("target/test-roots/native-broker")
         .native_broker()
-        .broker_max_roots(2)
+        .broker_max_instances(2)
         .build_config()
         .unwrap();
 
-    assert_eq!(config.broker.max_roots, 2);
+    assert_eq!(config.broker.max_instances, 2);
     let runtime = NativeBrokerRuntime::from_config(&config.broker);
-    assert_eq!(runtime.max_roots(), 2);
+    assert_eq!(runtime.max_instances(), 2);
 }
 
 #[test]
@@ -431,7 +425,7 @@ fn broker_and_server_runtimes_are_mode_specific() {
     let broker_error = expect_open_error(block_on(
         Oliphaunt::builder()
             .native_direct()
-            .path("target/test-roots/wrong-broker-mode")
+            .directory("target/test-roots/wrong-broker-mode")
             .runtime(NativeBrokerRuntime::from_package())
             .open(),
     ));
@@ -446,7 +440,7 @@ fn broker_and_server_runtimes_are_mode_specific() {
     let server_error = expect_open_error(block_on(
         Oliphaunt::builder()
             .native_broker()
-            .path("target/test-roots/wrong-server-mode")
+            .directory("target/test-roots/wrong-server-mode")
             .runtime(NativeServerRuntime::from_package())
             .open(),
     ));
@@ -528,12 +522,9 @@ fn native_modes_advertise_core_sdk_capabilities() {
     assert!(EngineCapabilities::for_mode(EngineMode::NativeDirect).simple_query);
     assert!(EngineCapabilities::for_mode(EngineMode::NativeBroker).simple_query);
     assert!(EngineCapabilities::for_mode(EngineMode::NativeServer).simple_query);
-    assert!(EngineCapabilities::for_mode(EngineMode::NativeDirect).reopenable);
-    assert!(EngineCapabilities::for_mode(EngineMode::NativeBroker).reopenable);
-    assert!(EngineCapabilities::for_mode(EngineMode::NativeServer).reopenable);
-    assert!(EngineCapabilities::for_mode(EngineMode::NativeDirect).same_root_logical_reopen);
-    assert!(!EngineCapabilities::for_mode(EngineMode::NativeBroker).same_root_logical_reopen);
-    assert!(!EngineCapabilities::for_mode(EngineMode::NativeServer).same_root_logical_reopen);
+    assert!(EngineCapabilities::for_mode(EngineMode::NativeDirect).same_instance_logical_reopen);
+    assert!(!EngineCapabilities::for_mode(EngineMode::NativeBroker).same_instance_logical_reopen);
+    assert!(!EngineCapabilities::for_mode(EngineMode::NativeServer).same_instance_logical_reopen);
     assert_eq!(
         EngineCapabilities::for_mode(EngineMode::NativeDirect).backup_formats,
         vec![BackupFormat::PhysicalArchive]

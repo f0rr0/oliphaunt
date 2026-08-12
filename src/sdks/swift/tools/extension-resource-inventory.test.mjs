@@ -17,7 +17,7 @@ import {
 
 const sdk = path.resolve(import.meta.dirname, "..");
 const root = path.resolve(process.argv[2] ?? path.join(sdk, ".build", "inventory-test"));
-const fixtureFile = path.join(sdk, "Tests", "Fixtures", "swiftpm-extension-input.json");
+const fixtureFile = path.join(sdk, "Tests", "Fixtures", "swiftpm-extension-selection.json");
 
 async function main() {
   await fs.rm(root, { recursive: true, force: true });

@@ -1467,6 +1467,51 @@ jobs:
           path: target/sdk-artifacts/oliphaunt-js
           if-no-files-found: error
 
+  wasix-ts-sdk-package:
+    name: Builds / wasix-typescript-sdk
+    needs:
+      - affected
+      - liboliphaunt-wasix-runtime
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust and wasm-pack
+        uses: ./.github/actions/setup-rust
+        with:
+          tools: wasm-pack@0.15.0
+
+      - name: Download same-run portable WASIX outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-portable
+          path: .
+
+      - name: Build and smoke WASIX TypeScript SDK package
+        run: |
+          pnpm --dir src/bindings/wasix-ts package:build
+          node src/bindings/wasix-ts/tools/smoke-node.mjs
+          OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
+
+      - name: Upload WASIX TypeScript SDK package artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-ts-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-wasix-ts
+          if-no-files-found: error
+
   wasix-rust-package:
     name: Builds / wasix-rust-binding
     needs:
@@ -2446,6 +2491,7 @@ jobs:
       - kotlin-maven-staging
       - react-native-sdk-package
       - js-sdk-package
+      - wasix-ts-sdk-package
       - wasix-rust-package
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot

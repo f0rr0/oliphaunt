@@ -9,6 +9,7 @@ packages:
   - "src/runtimes/node-direct/packages/*"
   - "src/sdks/react-native"
   - "src/sdks/react-native/examples/expo"
+  - "src/bindings/wasix-ts"
   - "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla"
 
 catalog:

@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{Oliphaunt, OliphauntServer};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntServer};
 use sqlx::{Connection, Executor, Row};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -15,7 +15,7 @@ const CANCEL_REQUEST_CODE: i32 = 80_877_102;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_extended_query_works() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -47,7 +47,7 @@ async fn tokio_postgres_extended_query_works() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_extended_query_errors_recover_after_sync() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -91,7 +91,7 @@ async fn tokio_postgres_extended_query_errors_recover_after_sync() -> Result<()>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_bind_errors_recover_after_sync() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -127,7 +127,7 @@ async fn sqlx_bind_errors_recover_after_sync() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_pipelined_extended_queries_keep_ready_state() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -148,7 +148,7 @@ async fn tokio_postgres_pipelined_extended_queries_keep_ready_state() -> Result<
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_mixed_pipelined_success_error_success_recovers() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -177,7 +177,7 @@ async fn tokio_postgres_mixed_pipelined_success_error_success_recovers() -> Resu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -259,7 +259,7 @@ async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -315,7 +315,7 @@ async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_copy_from_stdin_streams_through_backend_copy_state() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -367,7 +367,7 @@ async fn raw_wire_copy_from_stdin_streams_through_backend_copy_state() -> Result
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server
         .tcp_addr()
         .context("temporary TCP server should expose addr")?;
@@ -424,7 +424,7 @@ async fn raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump() -> Resul
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -494,10 +494,7 @@ async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
 async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
     let dir = tempfile::TempDir::new().context("create Unix socket tempdir")?;
     let socket_path = dir.path().join("oliphaunt.sock");
-    let server = OliphauntServer::builder()
-        .temporary()
-        .unix(&socket_path)
-        .start()?;
+    let server = OliphauntServer::builder().unix(&socket_path).start()?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = UnixStream::connect(socket_path).context("connect raw Unix client")?;
@@ -530,7 +527,7 @@ async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_disconnect_during_extended_query_does_not_poison_backend() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -559,7 +556,7 @@ async fn raw_wire_disconnect_during_extended_query_does_not_poison_backend() -> 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_query_works() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -591,7 +588,7 @@ async fn sqlx_query_works() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_prepared_statement_reuse_works() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -611,7 +608,7 @@ async fn tokio_postgres_prepared_statement_reuse_works() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_transaction_error_recovers_after_rollback() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -643,7 +640,7 @@ async fn sqlx_transaction_error_recovers_after_rollback() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_transaction_commit_and_rollback_preserve_state() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -687,7 +684,7 @@ async fn sqlx_transaction_commit_and_rollback_preserve_state() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_transaction_commit_rollback_and_error_recovery() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let (mut client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -760,7 +757,7 @@ async fn tokio_postgres_transaction_commit_rollback_and_error_recovery() -> Resu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_extended_query_errors_recover_after_sync() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -796,7 +793,7 @@ async fn sqlx_extended_query_errors_recover_after_sync() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_simple_query_timezone_errors_recover() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -851,7 +848,6 @@ async fn sqlx_simple_query_timezone_errors_recover() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_server_startup_postgres_config_uses_real_guc_handling() -> Result<()> {
     let server = OliphauntServer::builder()
-        .temporary()
         .postgres_config("synchronous_commit", "off")
         .postgres_config("work_mem", "8MB")
         .start()?;
@@ -891,11 +887,10 @@ async fn sqlx_server_startup_postgres_config_uses_real_guc_handling() -> Result<
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins() -> Result<()> {
     let server = OliphauntServer::builder()
-        .temporary()
         .relaxed_durability(true)
         .relaxed_durability(false)
         .start()?;
-    let mut conn = sqlx::PgConnection::connect(&server.database_url())
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect to disabled relaxed durability server")?;
     let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
@@ -906,11 +901,10 @@ async fn sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins() -> 
     server.shutdown()?;
 
     let server = OliphauntServer::builder()
-        .temporary()
         .relaxed_durability(true)
         .postgres_config("synchronous_commit", "on")
         .start()?;
-    let mut conn = sqlx::PgConnection::connect(&server.database_url())
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect to overridden relaxed durability server")?;
     let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
@@ -928,7 +922,9 @@ async fn sqlx_server_startup_identity_can_select_existing_user_and_database() ->
     let seed_root = root.path().to_path_buf();
     let seed_task_root = seed_root.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut admin = Oliphaunt::builder().path(seed_task_root).open()?;
+        let mut admin = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(seed_task_root))
+            .open()?;
         admin.exec("CREATE ROLE server_user LOGIN", None)?;
         admin.exec("CREATE DATABASE server_db OWNER server_user", None)?;
         admin.close()?;
@@ -938,11 +934,11 @@ async fn sqlx_server_startup_identity_can_select_existing_user_and_database() ->
     .context("join startup identity seed task")??;
 
     let server = OliphauntServer::builder()
-        .path(seed_root)
+        .storage(DatabaseStorage::Directory(seed_root))
         .username("server_user")
         .database("server_db")
         .start()?;
-    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
 
     let row =
         sqlx::query("SELECT current_user AS current_user, current_database() AS current_database")
@@ -958,7 +954,7 @@ async fn sqlx_server_startup_identity_can_select_existing_user_and_database() ->
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_startup_options_are_forwarded_to_postgres() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
     let mut config = tokio_postgres::Config::new();
     config
@@ -991,7 +987,7 @@ async fn tokio_postgres_startup_options_are_forwarded_to_postgres() -> Result<()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_control_packets_are_handled_safely() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     let ssl_response = tokio::task::spawn_blocking(move || -> Result<u8> {
@@ -1034,7 +1030,7 @@ async fn postgres_control_packets_are_handled_safely() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_startup_identity_is_delegated_to_postgres() -> Result<()> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     let bad_user = tokio::task::spawn_blocking(move || -> Result<Option<String>> {

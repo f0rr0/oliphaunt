@@ -1,13 +1,19 @@
 ---
-title: Dump, Restore, And Upgrade
-description: Use logical dumps, physical archives, CLI exports, and restore flows for the WASM runtime.
+title: Rust WASIX Dump, Restore, And Upgrade
+description: Use the Rust binding's logical dumps, physical archives, CLI exports, and restore flows.
 ---
 
-# Dump, Restore, And Upgrade
+# Rust WASIX Dump, Restore, And Upgrade
 
 `oliphaunt-wasix` uses the WASIX `pg_dump` binary from the shipped portable
 runtime asset for portable SQL exports, restores, and version-to-version
 upgrades.
+
+<Callout type="info" title="Rust-only data-movement APIs">
+This page documents `oliphaunt-wasix`. The
+[WASIX TypeScript binding](./browser-typescript) exposes browser IndexedDB
+checkpoint snapshots, not these physical archive or logical dump/restore APIs.
+</Callout>
 
 <WasmDataMovement />
 
@@ -17,12 +23,12 @@ Use logical dumps when you need:
 
 - a portable SQL export;
 - an upgrade path between `oliphaunt-wasix` releases;
-- a way to move data between different roots safely.
+- a way to move data between different stores safely.
 
 Use physical data-dir archives when you need:
 
 - a same-version clone;
-- a same-runtime restore into another `oliphaunt-wasix` root;
+- a same-runtime restore into another `oliphaunt-wasix` store;
 - a fast local snapshot of the current cluster state.
 
 Use logical dumps for cross-version upgrades. Keep physical archives for
@@ -30,13 +36,20 @@ same-version clones and restores.
 
 ## Direct API
 
+Enable the `tools` feature for `PgDumpOptions`, `dump_sql()`, and `dump_bytes()`:
+
+```toml
+[dependencies]
+oliphaunt-wasix = { version = "0.1", features = ["tools"] }
+```
+
 Dump an already-open `Oliphaunt` database to SQL:
 
 ```rust,no_run
 use oliphaunt_wasix::{PgDumpOptions, Oliphaunt};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::temporary()?;
+    let mut db = Oliphaunt::open()?;
     db.exec("CREATE TABLE items(value TEXT)", None)?;
     db.exec("INSERT INTO items VALUES ('alpha')", None)?;
 
@@ -54,7 +67,7 @@ Get UTF-8 bytes instead:
 use oliphaunt_wasix::{PgDumpOptions, Oliphaunt};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::temporary()?;
+    let mut db = Oliphaunt::open()?;
     let bytes = db.dump_bytes(PgDumpOptions::new())?;
     assert!(!bytes.is_empty());
     db.close()?;
@@ -75,7 +88,7 @@ already uses `OliphauntServer`:
 use oliphaunt_wasix::{PgDumpOptions, OliphauntServer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = OliphauntServer::builder().start()?;
     let sql = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
     assert!(!sql.is_empty());
     server.shutdown()?;
@@ -111,17 +124,19 @@ Managed connection and output flags are reserved by the API:
 
 ## CLI
 
-Dump a persistent root:
+The CLI is also part of the crate's `tools` feature.
+
+Dump a persistent directory:
 
 ```sh
-oliphaunt-wasix-dump --root ./.oliphaunt
+oliphaunt-wasix-dump --directory ./.oliphaunt
 ```
 
 Pass through normal `pg_dump` shaping flags after `--`:
 
 ```sh
-oliphaunt-wasix-dump --root ./.oliphaunt -- --schema-only
-oliphaunt-wasix-dump --root ./.oliphaunt -- --quote-all-identifiers
+oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only
+oliphaunt-wasix-dump --directory ./.oliphaunt -- --quote-all-identifiers
 ```
 
 ## Restore
@@ -132,12 +147,12 @@ Restore a logical dump by executing the SQL against a new database:
 use oliphaunt_wasix::{PgDumpOptions, Oliphaunt};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut source = Oliphaunt::temporary()?;
+    let mut source = Oliphaunt::open()?;
     source.exec("CREATE TABLE items(value TEXT)", None)?;
     source.exec("INSERT INTO items VALUES ('alpha')", None)?;
     let dump_sql = source.dump_sql(PgDumpOptions::new())?;
 
-    let mut restored = Oliphaunt::temporary()?;
+    let mut restored = Oliphaunt::open()?;
     restored.exec(&dump_sql, None)?;
 
     source.close()?;
@@ -146,8 +161,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For same-version root copies, prefer `dump_data_dir()` /
-`load_data_dir_archive(...)` or `try_clone()`.
+For same-version physical copies, use `backup()` and open a new builder with
+`DatabaseInitialization::PhysicalArchive(bytes)`, or use `try_clone()`.
 
 ## Upgrade Guidance
 

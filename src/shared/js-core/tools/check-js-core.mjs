@@ -12,8 +12,10 @@ function read(path) {
 const mirrors = [
   ['src/shared/js-core/src/protocol.ts', 'src/sdks/js/src/protocol.ts'],
   ['src/shared/js-core/src/protocol.ts', 'src/sdks/react-native/src/protocol.ts'],
+  ['src/shared/js-core/src/protocol.ts', 'src/bindings/wasix-ts/src/protocol.ts'],
   ['src/shared/js-core/src/query.ts', 'src/sdks/js/src/query.ts'],
   ['src/shared/js-core/src/query.ts', 'src/sdks/react-native/src/query.ts'],
+  ['src/shared/js-core/src/query.ts', 'src/bindings/wasix-ts/src/query.ts'],
 ];
 
 for (const [canonicalPath, mirrorPath] of mirrors) {

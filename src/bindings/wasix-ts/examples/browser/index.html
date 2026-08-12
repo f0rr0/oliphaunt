@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>Oliphaunt WASIX browser smoke</title>
+    <style>
+      :root {
+        color: #171713;
+        background: #f5f1e8;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      main {
+        width: min(760px, calc(100% - 32px));
+        margin: 64px auto;
+      }
+      textarea,
+      pre {
+        box-sizing: border-box;
+        width: 100%;
+        border: 1px solid #938b7d;
+        border-radius: 8px;
+        background: #fffdf8;
+        padding: 16px;
+      }
+      textarea {
+        min-height: 120px;
+      }
+      button {
+        margin: 12px 0 24px;
+        border: 0;
+        border-radius: 999px;
+        background: #315d44;
+        color: white;
+        padding: 10px 18px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+      #status {
+        color: #695f51;
+      }
+      pre {
+        min-height: 100px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Oliphaunt WASIX in a browser</h1>
+      <p id="status">Loading the WASIX runtime and PostgreSQL template…</p>
+      <textarea id="sql">SELECT version(), 40 + 2 AS answer;</textarea>
+      <button id="run" disabled>Run query</button>
+      <pre id="output"></pre>
+      <script type="module" src="/main.ts"></script>
+    </main>
+  </body>
+</html>

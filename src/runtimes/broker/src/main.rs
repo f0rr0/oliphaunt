@@ -10,10 +10,10 @@ use std::sync::Arc;
 use std::thread;
 
 use oliphaunt::{
-    BackupArtifact, BackupFormat, BootstrapStrategy, DEFAULT_DATABASE, DEFAULT_USERNAME,
-    DatabaseRoot, DurabilityProfile, EngineCancel, EngineMode, Extension, NativeDirectConfig,
+    BackupArtifact, BackupFormat, DEFAULT_DATABASE, DEFAULT_USERNAME, DatabaseInitialization,
+    DatabaseStorage, DurabilityProfile, EngineCancel, EngineMode, Extension, NativeDirectConfig,
     NativeRuntime, Oliphaunt, OliphauntRuntime, OpenConfig, PostgresStartupGuc, RestoreRequest,
-    RootLockPolicy, RuntimeFootprintProfile, StorageConfig,
+    RuntimeFootprintProfile,
 };
 
 const ENV_BROKER_AUTH_TOKEN: &str = "OLIPHAUNT_BROKER_AUTH_TOKEN";
@@ -33,11 +33,8 @@ fn run() -> oliphaunt::Result<()> {
     let args = BrokerArgs::parse(args)?;
     let config = OpenConfig {
         mode: EngineMode::NativeDirect,
-        storage: StorageConfig {
-            root: DatabaseRoot::Path(args.root),
-            bootstrap: args.bootstrap,
-            lock_policy: RootLockPolicy::ExclusiveProcess,
-        },
+        storage: DatabaseStorage::Directory(args.root),
+        initialization: args.bootstrap,
         direct: NativeDirectConfig::default(),
         broker: Default::default(),
         server: Default::default(),
@@ -127,23 +124,23 @@ fn run() -> oliphaunt::Result<()> {
 }
 
 struct RestoreArgs {
-    root: PathBuf,
+    destination: PathBuf,
     artifact: PathBuf,
     replace_existing: bool,
 }
 
 impl RestoreArgs {
     fn parse(args: Vec<String>) -> oliphaunt::Result<Self> {
-        let mut root = None;
+        let mut destination = None;
         let mut artifact = None;
         let mut replace_existing = false;
         let mut iter = args.into_iter();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "--root" => {
-                    root = Some(iter.next().ok_or_else(|| {
+                "--destination" => {
+                    destination = Some(iter.next().ok_or_else(|| {
                         oliphaunt::Error::InvalidConfig(
-                            "restore --root requires a filesystem path".to_owned(),
+                            "restore --destination requires a filesystem path".to_owned(),
                         )
                     })?);
                 }
@@ -164,9 +161,9 @@ impl RestoreArgs {
         }
 
         Ok(Self {
-            root: root
+            destination: destination
                 .ok_or_else(|| {
-                    oliphaunt::Error::InvalidConfig("restore --root is required".to_owned())
+                    oliphaunt::Error::InvalidConfig("restore --destination is required".to_owned())
                 })?
                 .into(),
             artifact: artifact
@@ -189,7 +186,7 @@ impl RestoreArgs {
             format: BackupFormat::PhysicalArchive,
             bytes,
         };
-        let mut request = RestoreRequest::physical_archive(self.root, artifact);
+        let mut request = RestoreRequest::physical_archive(self.destination, artifact);
         if self.replace_existing {
             request = request.replace_existing();
         }
@@ -289,7 +286,7 @@ struct BrokerArgs {
     root: std::path::PathBuf,
     endpoint: BrokerListenEndpoint,
     cancel_endpoint: BrokerListenEndpoint,
-    bootstrap: BootstrapStrategy,
+    bootstrap: DatabaseInitialization,
     durability: DurabilityProfile,
     runtime_footprint: RuntimeFootprintProfile,
     startup_gucs: Vec<PostgresStartupGuc>,
@@ -305,7 +302,6 @@ impl BrokerArgs {
         let mut endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
         let mut cancel_endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
         let mut bootstrap = "packaged-template".to_owned();
-        let mut initdb = None;
         let mut durability = DurabilityProfile::Safe;
         let mut runtime_footprint = RuntimeFootprintProfile::Throughput;
         let mut startup_gucs = Vec::new();
@@ -350,13 +346,6 @@ impl BrokerArgs {
                     bootstrap = iter.next().ok_or_else(|| {
                         oliphaunt::Error::InvalidConfig("--bootstrap requires a value".to_owned())
                     })?;
-                }
-                "--initdb" => {
-                    initdb = Some(iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--initdb requires a filesystem path".to_owned(),
-                        )
-                    })?);
                 }
                 "--durability" => {
                     durability = parse_durability(&iter.next().ok_or_else(|| {
@@ -413,7 +402,7 @@ impl BrokerArgs {
                 }
             }
         }
-        let bootstrap = parse_bootstrap(&bootstrap, initdb)?;
+        let bootstrap = parse_bootstrap(&bootstrap)?;
         let auth_token = env::var(ENV_BROKER_AUTH_TOKEN).map_err(|_| {
             oliphaunt::Error::InvalidConfig(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
         })?;
@@ -440,34 +429,11 @@ impl BrokerArgs {
     }
 }
 
-fn parse_bootstrap(value: &str, initdb: Option<String>) -> oliphaunt::Result<BootstrapStrategy> {
+fn parse_bootstrap(value: &str) -> oliphaunt::Result<DatabaseInitialization> {
     match value {
-        "packaged-template" => {
-            if initdb.is_some() {
-                return Err(oliphaunt::Error::InvalidConfig(
-                    "--initdb is only valid with --bootstrap initdb-tooling-only".to_owned(),
-                ));
-            }
-            Ok(BootstrapStrategy::PackagedTemplate)
-        }
-        "existing-only" => {
-            if initdb.is_some() {
-                return Err(oliphaunt::Error::InvalidConfig(
-                    "--initdb is only valid with --bootstrap initdb-tooling-only".to_owned(),
-                ));
-            }
-            Ok(BootstrapStrategy::ExistingOnly)
-        }
-        "initdb-tooling-only" => {
-            let initdb = initdb.ok_or_else(|| {
-                oliphaunt::Error::InvalidConfig(
-                    "--bootstrap initdb-tooling-only requires --initdb".to_owned(),
-                )
-            })?;
-            Ok(BootstrapStrategy::InitdbToolingOnly {
-                initdb: initdb.into(),
-            })
-        }
+        "packaged-template" => Ok(DatabaseInitialization::PackagedTemplate),
+        "fresh-initdb" => Ok(DatabaseInitialization::FreshInitdb),
+        "existing-only" => Ok(DatabaseInitialization::ExistingOnly),
         _ => Err(oliphaunt::Error::InvalidConfig(format!(
             "unknown bootstrap strategy '{value}'"
         ))),

@@ -11,7 +11,7 @@ export type JsiRawProtocolTransport = {
   ) => Promise<void>;
   readonly backup: (handle: number, format: string) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
-    root: string,
+    destination: string,
     format: string,
     artifact: Uint8Array,
     replaceExisting: boolean,
@@ -96,13 +96,19 @@ export async function backupJsi(
 
 export async function restoreJsi(
   transport: JsiRawProtocolTransport,
-  root: string,
+  destination: string,
   format: string,
   artifact: Uint8Array,
   replaceExisting: boolean,
   libraryPath: string | null,
 ): Promise<string> {
-  const restored = await transport.restore(root, format, artifact, replaceExisting, libraryPath);
+  const restored = await transport.restore(
+    destination,
+    format,
+    artifact,
+    replaceExisting,
+    libraryPath,
+  );
   if (typeof restored !== 'string') {
     throw new Error('liboliphaunt JSI restore returned a non-string response');
   }

@@ -7,8 +7,7 @@ use libloading::Library;
 use super::OliphauntRuntimeSource;
 use crate::error::{Error, Result};
 
-pub(super) const ABI_VERSION: u32 = 6;
-pub(super) const INIT_OPTIONS_ABI_VERSION: u32 = 1;
+pub(super) const ABI_VERSION: u32 = 7;
 pub(super) const CAP_PROTOCOL_RAW: u64 = 1 << 0;
 pub(super) const CAP_PROTOCOL_STREAM: u64 = 1 << 1;
 pub(super) const CAP_MULTI_INSTANCE: u64 = 1 << 2;
@@ -36,18 +35,12 @@ pub(super) struct NativeConfig {
     pub(super) abi_version: u32,
     pub(super) pgdata: *const c_char,
     pub(super) runtime_dir: *const c_char,
+    pub(super) module_dir: *const c_char,
     pub(super) username: *const c_char,
     pub(super) database: *const c_char,
     pub(super) reserved_flags: u64,
     pub(super) startup_args: *const *const c_char,
     pub(super) startup_arg_count: usize,
-}
-
-#[repr(C)]
-pub(super) struct NativeInitOptions {
-    pub(super) abi_version: u32,
-    pub(super) module_dir: *const c_char,
-    pub(super) reserved_flags: u64,
 }
 
 #[repr(C)]
@@ -75,11 +68,7 @@ pub(super) struct NativeBackupOptions {
 }
 
 pub(super) type NativeHandle = c_void;
-type InitExFn = unsafe extern "C" fn(
-    *const NativeConfig,
-    *const NativeInitOptions,
-    *mut *mut NativeHandle,
-) -> c_int;
+type InitFn = unsafe extern "C" fn(*const NativeConfig, *mut *mut NativeHandle) -> c_int;
 type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
 type ExecSimpleQueryFn =
@@ -100,8 +89,7 @@ type LastErrorFn = unsafe extern "C" fn(*mut NativeHandle) -> *const c_char;
 type VersionFn = unsafe extern "C" fn() -> *const c_char;
 type CapabilitiesFn = unsafe extern "C" fn() -> u64;
 type FreeResponseFn = unsafe extern "C" fn(*mut NativeResponse);
-type BackupFn = unsafe extern "C" fn(*mut NativeHandle, u32, *mut NativeResponse) -> c_int;
-type BackupExFn = unsafe extern "C" fn(
+type BackupFn = unsafe extern "C" fn(
     *mut NativeHandle,
     *const NativeBackupOptions,
     *mut NativeResponse,
@@ -109,7 +97,7 @@ type BackupExFn = unsafe extern "C" fn(
 
 pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
-    pub(super) init_ex: InitExFn,
+    pub(super) init: InitFn,
     pub(super) exec_protocol: ExecProtocolFn,
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
     pub(super) exec_protocol_stream: Option<ExecProtocolStreamFn>,
@@ -120,8 +108,7 @@ pub(super) struct NativeSymbols {
     _version: VersionFn,
     pub(super) capabilities: CapabilitiesFn,
     pub(super) free_response: FreeResponseFn,
-    pub(super) backup: Option<BackupFn>,
-    pub(super) backup_ex: Option<BackupExFn>,
+    pub(super) backup: BackupFn,
 }
 
 // SAFETY: NativeSymbols is immutable after load. Function pointers are plain C
@@ -138,7 +125,7 @@ impl NativeSymbols {
     pub(super) fn load(source: &OliphauntRuntimeSource) -> Result<Self> {
         let path = resolve_library_path(source)?;
         let library = load_native_library(&path)?;
-        let init_ex = load_symbol(&library, b"oliphaunt_init_ex\0")?;
+        let init = load_symbol(&library, b"oliphaunt_init\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
         let exec_protocol_stream =
@@ -150,8 +137,7 @@ impl NativeSymbols {
         let version = load_symbol(&library, b"oliphaunt_version\0")?;
         let capabilities = load_symbol(&library, b"oliphaunt_capabilities\0")?;
         let free_response = load_symbol(&library, b"oliphaunt_free_response\0")?;
-        let backup = load_optional_symbol(&library, b"oliphaunt_backup\0");
-        let backup_ex = load_optional_symbol(&library, b"oliphaunt_backup_ex\0");
+        let backup = load_symbol(&library, b"oliphaunt_backup\0")?;
         Ok(Self {
             // liboliphaunt embeds PostgreSQL, which owns process-global runtime
             // state while a backend session is active. Logical SDK close uses
@@ -160,7 +146,7 @@ impl NativeSymbols {
             // signal handlers, or other global runtime pointers that PostgreSQL
             // installed inside the host process.
             _library: ManuallyDrop::new(library),
-            init_ex,
+            init,
             exec_protocol,
             exec_simple_query,
             exec_protocol_stream,
@@ -172,7 +158,6 @@ impl NativeSymbols {
             capabilities,
             free_response,
             backup,
-            backup_ex,
         })
     }
 

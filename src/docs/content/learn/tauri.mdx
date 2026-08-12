@@ -9,7 +9,8 @@ Use the Rust SDK from Tauri state. `oliphaunt` is the native SDK for Tauri and
 Rust desktop apps; it owns direct embedded mode, broker mode, and server mode
 over native PostgreSQL.
 
-WASM is a separate runtime family. Native Tauri apps start with the Rust SDK.
+WASIX bindings are separate products. Native Tauri apps start with the native
+Rust SDK unless they deliberately choose the Rust WASIX host.
 
 <TauriAppPattern />
 
@@ -17,13 +18,13 @@ WASM is a separate runtime family. Native Tauri apps start with the Rust SDK.
 
 Keep the database handle in Rust state and expose narrow Tauri commands to the
 webview. The webview calls app-specific commands such as `add_item` or
-`search_items`; Rust owns the root directory, lock, runtime handle, lifecycle,
+`search_items`; Rust owns the storage directory, lock, runtime handle, lifecycle,
 and backup APIs.
 
 | Need | Recommended mode |
 | --- | --- |
 | One embedded app database with lowest overhead | `NativeDirect` |
-| Multiple roots or helper-process ownership | `NativeBroker` |
+| Multiple database instances or helper-process ownership | `NativeBroker` |
 | SQLx pools, ORMs, `psql`, or `pg_dump` | `NativeServer` |
 
 ## Direct Rust State
@@ -54,7 +55,7 @@ use oliphaunt::Oliphaunt;
 
 async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<Oliphaunt> {
     Oliphaunt::builder()
-        .path(app_data_dir.join("postgres"))
+        .directory(app_data_dir.join("postgres"))
         .native_direct()
         .open()
         .await
@@ -75,7 +76,7 @@ use oliphaunt::Oliphaunt;
 
 async fn open_server_mode() -> oliphaunt::Result<String> {
     let db = Oliphaunt::builder()
-        .path("./.liboliphaunt")
+        .directory("./.liboliphaunt")
         .native_server()
         .max_client_sessions(8)
         .open()
@@ -86,11 +87,11 @@ async fn open_server_mode() -> oliphaunt::Result<String> {
 ```
 
 Use `NativeBroker` for desktop apps that want helper-process ownership or
-multiple database roots managed by the Rust SDK.
+multiple database instances managed by the Rust SDK.
 
 ## Extensions And Assets
 
-Select exact SQL extension names in Rust configuration before opening the root.
+Select exact SQL extension names in Rust configuration before opening the database.
 Package only the extension artifacts your Tauri app uses, then verify the app
 artifact before release. An app that selects `vector` ships `vector` and its
 declared dependencies.
@@ -98,8 +99,8 @@ declared dependencies.
 ## Backup And Restore
 
 Use the Rust SDK backup and restore APIs for app export/import flows. Keep live
-PostgreSQL roots behind the Rust SDK. The SDK validates archive format, selected
-extensions, locks, and restore targets before moving data.
+PostgreSQL storage behind the Rust SDK. The SDK validates archive format, selected
+extensions, locks, and restore destinations before moving data.
 
 ## Operational Guidance
 

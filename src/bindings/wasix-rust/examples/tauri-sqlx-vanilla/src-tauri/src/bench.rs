@@ -4,16 +4,14 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use oliphaunt_wasix::{
-    install_into, preload_runtime_module, OliphauntPaths, OliphauntServer, PgDumpOptions,
-    PsqlOptions,
-};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntServer, PgDumpOptions, PsqlOptions};
 use serde::Serialize;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex as AsyncMutex;
 
 const DEFAULT_ROW_COUNT: u32 = 10_000;
+const INITIALIZED_MARKER: &str = ".tauri-sqlx-profile-initialized";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,10 +36,10 @@ pub struct QueryTiming {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchReport {
-    pub root: String,
+    pub database_directory: String,
     pub proxy_addr: String,
     pub cold_start: bool,
-    pub pgdata_template: bool,
+    pub packaged_template: bool,
     pub row_count: u32,
     pub startup: Vec<PhaseTiming>,
     pub workload: Vec<PhaseTiming>,
@@ -51,14 +49,14 @@ pub struct BenchReport {
 }
 
 pub struct BenchState {
-    root: PathBuf,
+    database_directory: PathBuf,
     inner: AsyncMutex<Option<DatabaseHarness>>,
 }
 
 impl BenchState {
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(database_directory: PathBuf) -> Self {
         Self {
-            root,
+            database_directory,
             inner: AsyncMutex::new(None),
         }
     }
@@ -72,7 +70,7 @@ impl BenchState {
         }
 
         if guard.is_none() {
-            let harness = DatabaseHarness::start(self.root.clone(), fresh).await?;
+            let harness = DatabaseHarness::start(self.database_directory.clone(), fresh).await?;
             *guard = Some(harness);
         }
 
@@ -84,7 +82,7 @@ impl BenchState {
 }
 
 pub struct DatabaseHarness {
-    root: PathBuf,
+    database_directory: PathBuf,
     database_url: String,
     pool: PgPool,
     _server: OliphauntServer,
@@ -93,36 +91,32 @@ pub struct DatabaseHarness {
 }
 
 impl DatabaseHarness {
-    pub async fn start(root: PathBuf, fresh: bool) -> Result<Self> {
-        if fresh && root.exists() {
-            fs::remove_dir_all(&root)
-                .with_context(|| format!("remove profile dir {}", root.display()))?;
+    pub async fn start(database_directory: PathBuf, fresh: bool) -> Result<Self> {
+        if fresh && database_directory.exists() {
+            fs::remove_dir_all(&database_directory).with_context(|| {
+                format!(
+                    "remove profile database directory {}",
+                    database_directory.display()
+                )
+            })?;
         }
-        fs::create_dir_all(&root).with_context(|| format!("create {}", root.display()))?;
-
-        let paths = OliphauntPaths::with_root(&root);
-        let cold_start = !paths.pgdata.join("PG_VERSION").exists();
+        let initialized_marker = database_directory.join(INITIALIZED_MARKER);
+        let cold_start = !initialized_marker.is_file();
         let mut startup = Vec::new();
 
-        let install_root = root.clone();
-        time_blocking(
-            &mut startup,
-            "install runtime and pgdata template",
-            move || install_into(&install_root).map(|_| ()),
-        )
-        .await?;
+        time_blocking(&mut startup, "preload Wasmer runtime", Oliphaunt::preload).await?;
 
-        let preload_paths = paths.clone();
-        time_blocking(&mut startup, "load Wasmer AOT module", move || {
-            preload_runtime_module(&preload_paths)
-        })
-        .await?;
-
-        let server_root = root.clone();
+        let server_directory = database_directory.clone();
         let server = time_blocking(&mut startup, "start oliphaunt server", move || {
-            preferred_server(server_root)
+            preferred_server(server_directory)
         })
         .await?;
+        fs::write(&initialized_marker, b"packaged-template\n").with_context(|| {
+            format!(
+                "write profile initialization marker {}",
+                initialized_marker.display()
+            )
+        })?;
         let server = time_blocking(&mut startup, "validate split WASIX tools", move || {
             validate_wasix_tools(&server)?;
             Ok(server)
@@ -144,7 +138,7 @@ impl DatabaseHarness {
         .await?;
 
         Ok(Self {
-            root,
+            database_directory,
             database_url,
             pool,
             _server: server,
@@ -323,10 +317,10 @@ impl DatabaseHarness {
         ];
 
         Ok(BenchReport {
-            root: self.root.display().to_string(),
+            database_directory: self.database_directory.display().to_string(),
             proxy_addr: self.database_url.clone(),
             cold_start: self.cold_start,
-            pgdata_template: true,
+            packaged_template: true,
             row_count,
             startup: self.startup.clone(),
             workload,
@@ -354,8 +348,10 @@ fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
     Ok(())
 }
 
-fn preferred_server(root: PathBuf) -> Result<OliphauntServer> {
-    OliphauntServer::builder().path(&root).start()
+fn preferred_server(database_directory: PathBuf) -> Result<OliphauntServer> {
+    OliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(database_directory))
+        .start()
 }
 
 fn pg_connect_options(server: &OliphauntServer) -> Result<PgConnectOptions> {

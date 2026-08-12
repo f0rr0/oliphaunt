@@ -314,12 +314,10 @@ artifact_ready() {
   local symbol
   for symbol in \
     oliphaunt_init \
-    oliphaunt_init_ex \
     oliphaunt_exec_protocol \
     oliphaunt_exec_simple_query \
     oliphaunt_exec_protocol_stream \
     oliphaunt_backup \
-    oliphaunt_backup_ex \
     oliphaunt_restore \
     oliphaunt_cancel \
     oliphaunt_detach \

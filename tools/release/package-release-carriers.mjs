@@ -30,7 +30,7 @@ import {
 } from "./release-artifact-targets.mjs";
 import {
   packageNativeExtensionCargoCrates,
-  stageExtensionNpmPackages,
+  stageExtensionNpmPackagesForTargets,
 } from "./package-extension-release-carriers.mjs";
 import { packageExtensionCargoFacades } from "./package-extension-cargo-facades.mjs";
 import {
@@ -79,6 +79,7 @@ import {
 import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import { buildMavenArtifactManifest } from "./build_maven_artifact_manifest.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { packWasixRuntimeNpmCarrier } from "./wasix-runtime-npm-carrier.mjs";
 
 const TOOL = "package-release-carriers.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -1506,9 +1507,18 @@ export function liboliphauntWasixCargoArtifactPackages(
 
 function packageWasixRuntimeCarriers() {
   const contrib = contribCarrierDescriptor(TOOL);
-  liboliphauntWasixCargoArtifactPackages(currentProductVersionSync(WASIX_PRODUCT, TOOL), {
+  const version = currentProductVersionSync(WASIX_PRODUCT, TOOL);
+  liboliphauntWasixCargoArtifactPackages(version, {
     extensionArtifactRoots: [extensionPackageDir(contrib.artifactProduct, "wasix")],
   });
+  packWasixRuntimeNpmCarrier({
+    version,
+    portableReleaseArchive: path.join(
+      ROOT,
+      `target/oliphaunt-wasix/release-assets/liboliphaunt-wasix-${version}-runtime-portable.tar.zst`,
+    ),
+  });
+  packageExtensionNpmCarriers(contrib.artifactProduct, { family: "wasix" });
 }
 
 function extensionPackageDir(product, family = "native") {
@@ -1548,20 +1558,30 @@ async function packageExtensionMavenCarriers(product) {
   );
 }
 
-function packageExtensionNpmCarriers(product) {
-  const targets = extensionRegistryPackageTargetSets(product, TOOL).npmTargets;
-  for (const target of targets) {
-    const result = releaseSurfaceResult(`${product}-npm-${target}`);
-    const output = stageExtensionNpmPackages(
-      [extensionPackageDir(product, "native")],
-      path.join(ROOT, "target/release/extension-carriers/npm", product, target),
-      target,
-      result,
-      { metaTargets: targets },
+function packageExtensionNpmCarriers(product, { family = null } = {}) {
+  const roots = [extensionPackageDir(product, family ?? "native")];
+  const targetSets = extensionRegistryPackageTargetSets(product, TOOL);
+  const targets = targetSets.npmTargets;
+  const result = releaseSurfaceResult(`${product}-npm${family === null ? "" : `-${family}`}`);
+  const staged = stageExtensionNpmPackagesForTargets(
+    roots,
+    path.join(ROOT, "target/release/extension-carriers/npm", product, family ?? "all"),
+    targets,
+    result,
+    { metaTargets: targets },
+  );
+  const missingNativeTargets = family === "wasix"
+    ? []
+    : targets.filter((target) => staged.nativeRoots[target] === null);
+  const missingWasix = family === "native"
+    ? false
+    : targetSets.includeWasixNpm && staged.wasixRoot === null;
+  if (missingNativeTargets.length > 0 || missingWasix || result.staged.length === 0) {
+    fail(
+      `${product} npm carrier packaging failed: missing native targets=${missingNativeTargets.join(",") || "none"}; `
+      + `missing portable WASIX=${missingWasix ? "yes" : "no"}; `
+      + `details=${result.skipped.join("; ") || "none"}`,
     );
-    if (output === null || result.staged.length === 0) {
-      fail(`${product} npm carrier packaging failed for ${target}: ${result.skipped.join("; ")}`);
-    }
   }
 }
 
@@ -1635,7 +1655,7 @@ async function packageContribNativeCarriers() {
   if (!isFile(manifest)) {
     fail(`${LIBOLIPHAUNT_NATIVE_PRODUCT} requires staged contrib native artifacts at ${rel(manifest)}`);
   }
-  packageExtensionNpmCarriers(product);
+  packageExtensionNpmCarriers(product, { family: "native" });
   packageExtensionNativeCargoCarriers(product);
   packageExtensionFacade(product);
 }

@@ -47,7 +47,9 @@ impl SpeedSqlSource {
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let mut db = Oliphaunt::builder().temporary().open()?;
+    let mut db = Oliphaunt::builder()
+        .storage(DatabaseStorage::TemporaryDirectory)
+        .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
     let setup_started = Instant::now();
@@ -80,7 +82,7 @@ pub(super) fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<Benchma
     let open_started = Instant::now();
     let server = benchmark_oliphaunt_server()?;
     let open_micros = open_started.elapsed().as_micros();
-    let uri = server.database_url();
+    let uri = server.connection_uri();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -141,7 +143,7 @@ pub(super) fn run_rtt_server_tokio_postgres_simple_benchmark(
     let open_started = Instant::now();
     let server = benchmark_oliphaunt_server()?;
     let open_micros = open_started.elapsed().as_micros();
-    let uri = server.database_url();
+    let uri = server.connection_uri();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -211,7 +213,9 @@ pub(super) fn run_speed_direct_benchmark(
     sql_source: SpeedSqlSource,
 ) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let mut db = Oliphaunt::builder().temporary().open()?;
+    let mut db = Oliphaunt::builder()
+        .storage(DatabaseStorage::TemporaryDirectory)
+        .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
     let mut tests = Vec::new();
@@ -249,7 +253,7 @@ pub(super) fn run_speed_server_sqlx_benchmark(
     let open_started = Instant::now();
     let server = benchmark_oliphaunt_server()?;
     let open_micros = open_started.elapsed().as_micros();
-    let uri = server.database_url();
+    let uri = server.connection_uri();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -298,7 +302,7 @@ pub(super) fn run_speed_server_sqlx_benchmark(
 #[cfg(feature = "legacy-oliphaunt")]
 fn benchmark_oliphaunt_server() -> Result<OliphauntServer> {
     OliphauntServer::builder()
-        .temporary()
+        .storage(DatabaseStorage::TemporaryDirectory)
         .database("postgres")
         .start()
 }

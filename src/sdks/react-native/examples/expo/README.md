@@ -60,10 +60,10 @@ pnpm run bench:ios
 ```
 
 Process-death recovery runs use the same dev-client build but launch a
-two-phase crash harness. The write phase opens a persistent app-private root,
+two-phase crash harness. The write phase opens persistent app-private storage,
 writes committed data, and leaves the database open. The platform script then
 force-stops/terminates the app process and relaunches the verify phase against
-the same root with a fresh phase-specific dev-client bundle, expecting
+the same storage with a fresh phase-specific dev-client bundle, expecting
 PostgreSQL recovery to make the committed row visible. Crash runs default to
 `durability=safe`; `balanced` keeps `synchronous_commit=off`, so it is a
 latency/footprint profile rather than a last-commit survival guarantee:
@@ -72,6 +72,11 @@ latency/footprint profile rather than a last-commit survival guarantee:
 pnpm run crash:android
 pnpm run crash:ios
 ```
+
+The runners choose isolated persistent storage by default. Set
+`OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE` or
+`OLIPHAUNT_EXPO_IOS_CRASH_STORAGE` to override it; the iOS runner accepts an
+`app-data:<name>` selector for the public `applicationData` storage case.
 
 The smoke script:
 
@@ -163,9 +168,9 @@ pnpm run bench:ios
 
 Set `OLIPHAUNT_EXPO_IOS_DEVICE_ID` to pick a specific paired device, and
 `OLIPHAUNT_EXPO_IOS_METRO_URL` if the device cannot reach the host address that
-the harness auto-detects. Device crash-recovery runs default to
-`app-support://oliphaunt-crash-recovery-root`, which resolves inside the app
-sandbox and survives process death.
+the harness auto-detects. Device crash-recovery runs default to the public
+`{ kind: 'applicationData', name }` storage case, which the platform SDK
+resolves inside the app sandbox and which survives process death.
 
 Physical-device runs require a working Apple Development signing setup. The
 harness first checks that the paired phone has Developer Mode and Developer Disk

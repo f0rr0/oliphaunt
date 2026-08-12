@@ -74,7 +74,7 @@ needs the handle.
 import { Oliphaunt } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
-  root: 'main.oliphaunt',
+  storage: { kind: 'applicationData', name: 'main' },
   engine: 'nativeDirect',
   extensions: ['vector'],
 });
@@ -85,8 +85,10 @@ const value = rows.getText(0, 'value');
 await db.close();
 ```
 
-Keep the database handle in app state or a service object. Multiple JavaScript
-objects share the same mobile direct session through the platform SDK.
+Keep the database object in app state or a service object and share references
+to that object. A second `Oliphaunt.open()` is rejected while the native direct
+session is opening, active, or closing; call it again only after `close()`
+completes.
 
 </Step>
 <Step>
@@ -108,7 +110,7 @@ await db.execute(`
 
 await db.query(
   'INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id',
-  ['First note', 'Stored in an embedded PostgreSQL root'],
+  ['First note', 'Stored by embedded PostgreSQL'],
 );
 
 const notes = await db.query(
@@ -125,14 +127,17 @@ streaming paths that need PostgreSQL wire messages directly.
 
 ### Configure
 
-Configure root, mode, selected exact extensions, durability, startup identity,
-and native runtime overrides through the JS API and config plugin. Build-time
-extension selection controls what ships in the app bundle; runtime root
-configuration controls where app data lives.
+Configure storage, mode, selected exact extensions, durability, and startup
+identity through the JS API and config plugin. Build-time extension selection
+controls what ships in the app bundle; runtime storage controls where app data
+lives.
 
 Keep build-time and runtime settings separate. The config plugin controls native
-artifacts in the installed app. `Oliphaunt.open()` controls the database root,
-mode, durability, and extension activation for that app run.
+artifacts in the installed app. `Oliphaunt.open()` controls storage, mode,
+durability, and extension activation for that app run. Omit `storage` for an
+SDK-owned temporary directory. Use
+`{ kind: 'applicationData', name: 'main' }` for normal persistent mobile data,
+or `{ kind: 'directory', path }` when the app already owns a platform path.
 
 </Step>
 <Step>
@@ -162,7 +167,7 @@ binary buffers.
 ### Handle lifecycle
 
 Use the SDK lifecycle hooks around background/foreground transitions. Direct
-mobile mode is same-root logically reopenable inside one resident app process.
+mobile mode can logically reopen the same instance inside one resident app process.
 Broker and server runtimes add a process boundary on targets that advertise
 those modes.
 
@@ -185,8 +190,10 @@ target platform.
 ### Back up and restore
 
 Use the React Native backup and restore APIs instead of copying platform storage
-directories from JavaScript. The SDK delegates archive validation and root
+directories from JavaScript. The SDK delegates archive validation and destination
 materialization to Swift or Kotlin, so platform storage rules stay native.
+Omit `destinationPolicy` to fail when the destination exists; use
+`destinationPolicy: 'replaceExisting'` only when replacement is deliberate.
 
 </Step>
 </Steps>

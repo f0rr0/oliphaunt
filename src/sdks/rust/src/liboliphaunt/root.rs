@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use crate::config::{EngineMode, OpenConfig};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
-use crate::storage::DatabaseRoot;
+use crate::storage::DatabaseStorage;
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
@@ -47,10 +47,12 @@ pub(crate) struct PreparedNativeRoot {
 
 impl PreparedNativeRoot {
     pub(crate) fn prepare(config: &OpenConfig, extensions: &[Extension]) -> Result<Self> {
-        let (root, temporary) = match &config.storage.root {
-            DatabaseRoot::Path(root) => (root.clone(), false),
-            DatabaseRoot::Temporary => (create_temporary_root()?, true),
+        let (root, temporary) = match &config.storage {
+            DatabaseStorage::Directory(root) => (root.clone(), false),
+            DatabaseStorage::TemporaryDirectory => (create_temporary_root()?, true),
         };
+        let mut temporary_cleanup =
+            TemporaryNativeRootCleanup::new(temporary.then(|| root.clone()));
         fs::create_dir_all(&root).map_err(|err| {
             Error::Engine(format!(
                 "create native database root {}: {err}",
@@ -67,18 +69,22 @@ impl PreparedNativeRoot {
             runtime::materialize_runtime(NativeRuntimeProfile::for_mode(config.mode), extensions)?;
         template::bootstrap_pgdata_if_needed(
             NativeRuntimeProfile::for_mode(config.mode),
+            &runtime_dir,
             &pgdata,
-            &config.storage.bootstrap,
+            &config.initialization,
+            &config.username,
         )?;
         ensure_root_manifest(&root, &pgdata)?;
 
-        Ok(Self {
+        let prepared = Self {
             root,
             pgdata,
             runtime_dir,
             lock: Some(lock),
             temporary,
-        })
+        };
+        temporary_cleanup.disarm();
+        Ok(prepared)
     }
 
     pub(crate) fn tool_path(&self, tool_name: &str) -> PathBuf {
@@ -91,6 +97,28 @@ impl PreparedNativeRoot {
 
     pub(crate) fn root_key(&self) -> Result<PathBuf> {
         native_root_key(&self.root)
+    }
+}
+
+struct TemporaryNativeRootCleanup {
+    path: Option<PathBuf>,
+}
+
+impl TemporaryNativeRootCleanup {
+    fn new(path: Option<PathBuf>) -> Self {
+        Self { path }
+    }
+
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TemporaryNativeRootCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_dir_all(path);
+        }
     }
 }
 
@@ -453,6 +481,16 @@ fn temporary_file_nonce() -> Result<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_root_cleanup_removes_unclaimed_directories() {
+        let root = create_temporary_root().unwrap();
+        {
+            let _cleanup = TemporaryNativeRootCleanup::new(Some(root.clone()));
+            assert!(root.is_dir());
+        }
+        assert!(!root.exists());
+    }
 
     #[test]
     fn native_root_lock_rejects_same_process_duplicate_and_reopens() {

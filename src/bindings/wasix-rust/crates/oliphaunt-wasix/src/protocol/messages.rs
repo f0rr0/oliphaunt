@@ -92,7 +92,7 @@ pub enum BackendMessage {
     CopyResponse(CopyResponse),
     CopyData(CopyDataMessage),
     Authentication(AuthenticationMessage),
-    Error(DatabaseError),
+    Error(PostgresError),
     Notice(NoticeMessage),
 }
 
@@ -309,11 +309,11 @@ impl NoticeOrErrorFields for NoticeMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct DatabaseError {
+pub struct PostgresError {
     pub length: usize,
     pub message: String,
     pub severity: Option<String>,
-    pub code: Option<String>,
+    pub sqlstate: Option<String>,
     pub detail: Option<String>,
     pub hint: Option<String>,
     pub position: Option<String>,
@@ -330,13 +330,13 @@ pub struct DatabaseError {
     pub routine: Option<String>,
 }
 
-impl DatabaseError {
+impl PostgresError {
     pub fn new(length: usize, message: String) -> Self {
         Self {
             length,
             message,
             severity: None,
-            code: None,
+            sqlstate: None,
             detail: None,
             hint: None,
             position: None,
@@ -355,18 +355,18 @@ impl DatabaseError {
     }
 }
 
-impl std::fmt::Display for DatabaseError {
+impl std::fmt::Display for PostgresError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message)
     }
 }
 
-impl std::error::Error for DatabaseError {}
+impl std::error::Error for PostgresError {}
 
-impl NoticeOrErrorFields for DatabaseError {
+impl NoticeOrErrorFields for PostgresError {
     fn apply_fields(&mut self, fields: &std::collections::HashMap<String, String>) {
         self.severity = fields.get("S").cloned();
-        self.code = fields.get("C").cloned();
+        self.sqlstate = fields.get("C").cloned();
         self.detail = fields.get("D").cloned();
         self.hint = fields.get("H").cloned();
         self.position = fields.get("P").cloned();

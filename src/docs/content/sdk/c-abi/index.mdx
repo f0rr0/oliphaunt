@@ -19,7 +19,7 @@ wrapper.
 Consume the released headers, libraries, and runtime assets for the target you
 are binding. Language SDKs package those artifacts through their own ecosystems,
 so app developers usually install the Rust, Swift, Kotlin, React Native,
-TypeScript, or WASM SDK.
+TypeScript, Rust WASIX, or WASIX TypeScript SDK.
 
 The public boundary is intentionally small:
 
@@ -27,7 +27,7 @@ The public boundary is intentionally small:
 - execute raw PostgreSQL protocol bytes or simple SQL;
 - stream large protocol responses;
 - back up or restore supported archive formats;
-- read capabilities and structured errors;
+- read capability bits and error strings;
 - close or detach according to the process lifecycle.
 
 The ABI owns handles and response buffers. Language bindings own serialization,
@@ -62,12 +62,11 @@ oliphaunt_close(handle);
 ## Runtime Shape
 
 The C ABI is the native direct runtime boundary. It exposes capabilities for the
-target artifact so bindings can report which runtime modes, backup formats,
-streaming behavior, and extensions are available.
+target artifact so bindings can report protocol, streaming, backup/restore,
+extension, cancellation, and lifecycle support.
 
-Direct mode owns one serialized embedded PostgreSQL session. Broker and server
-support appear through higher-level SDKs or helper processes only when the
-target runtime advertises those capabilities.
+Direct mode owns one serialized embedded PostgreSQL session. Language SDK APIs
+provide the higher-level broker and server modes.
 
 ## App Responsibilities
 
@@ -77,8 +76,8 @@ Bindings and direct C consumers own the app-facing contract above the ABI:
   simple SQL helpers provided by the ABI.
 - Serialize work according to the selected runtime mode.
 - Select exact SQL extension names before opening the database.
-- Surface `capabilities()` and structured errors in ecosystem-native types.
-- Use ABI backup and restore calls instead of copying live PostgreSQL roots.
+- Translate capability bits and error strings into ecosystem-native types.
+- Use ABI backup and restore calls instead of copying live PGDATA.
 - Capture the logical generation immediately after init when more than one host
   environment or finalizer can own cleanup, and use generation-guarded terminal
   close so stale teardown cannot close a newer lease.

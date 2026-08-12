@@ -1,10 +1,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -12,9 +11,9 @@ use std::sync::{
 };
 
 use crate::oliphaunt::backend::{BackendOpenKind, BackendSession};
+use crate::oliphaunt::base::InstallOutcome;
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_missing_extension_archives;
-use crate::oliphaunt::base::{InstallOutcome, install_into};
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
@@ -188,9 +187,8 @@ pub fn protocol_stats_snapshot() -> ProtocolStatsSnapshot {
 /// and does not call into the WASIX backend from an async runtime. That avoids
 /// nested runtime panics when an async wrapper blocks inside the embedded engine.
 #[derive(Debug, Clone)]
-pub struct OliphauntProxy {
-    root: Arc<PathBuf>,
-    prepared_root: Option<Arc<InstallOutcome>>,
+pub(crate) struct OliphauntProxy {
+    prepared_database: Arc<InstallOutcome>,
     postgres_config: Arc<PostgresConfig>,
     startup_config: Arc<StartupConfig>,
     #[cfg(feature = "extensions")]
@@ -198,21 +196,14 @@ pub struct OliphauntProxy {
 }
 
 impl OliphauntProxy {
-    /// Create a proxy that stores the Oliphaunt runtime and cluster under `root`.
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub(crate) fn from_prepared_database(outcome: InstallOutcome) -> Self {
         Self {
-            root: Arc::new(root.into()),
-            prepared_root: None,
+            prepared_database: Arc::new(outcome),
             postgres_config: Arc::new(PostgresConfig::default()),
             startup_config: Arc::new(StartupConfig::default()),
             #[cfg(feature = "extensions")]
             extensions: Arc::new(Vec::new()),
         }
-    }
-
-    pub(crate) fn with_prepared_root(mut self, outcome: InstallOutcome) -> Self {
-        self.prepared_root = Some(Arc::new(outcome));
-        self
     }
 
     pub(crate) fn with_postgres_config(mut self, postgres_config: PostgresConfig) -> Self {
@@ -230,29 +221,6 @@ impl OliphauntProxy {
     pub(crate) fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
         self.extensions = Arc::new(extensions);
         self
-    }
-
-    /// Return the root directory used for runtime installation and cluster data.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Serve a TCP listener forever. Connections are handled one at a time.
-    pub fn serve_tcp<A>(&self, addr: A) -> Result<()>
-    where
-        A: ToSocketAddrs,
-    {
-        let listener = TcpListener::bind(addr).context("bind TCP proxy listener")?;
-        self.serve_tcp_listener(listener)
-    }
-
-    /// Serve an existing TCP listener forever. Connections are handled one at a time.
-    pub fn serve_tcp_listener(&self, listener: TcpListener) -> Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream.context("accept TCP proxy connection")?;
-            self.handle_stream(stream)?;
-        }
-        Ok(())
     }
 
     pub(crate) fn serve_tcp_listener_until_ready(
@@ -281,43 +249,6 @@ impl OliphauntProxy {
         Ok(())
     }
 
-    /// Accept and handle one TCP connection. Intended for tests and supervised embedding.
-    pub fn accept_tcp_once(&self, listener: &TcpListener) -> Result<()> {
-        self.accept_tcp_connections(listener, 1)
-    }
-
-    /// Accept and handle `count` TCP connections using one embedded backend.
-    pub fn accept_tcp_connections(&self, listener: &TcpListener, count: usize) -> Result<()> {
-        for _ in 0..count {
-            let (stream, _) = listener.accept().context("accept TCP proxy connection")?;
-            self.handle_stream(stream)?;
-        }
-        Ok(())
-    }
-
-    /// Serve a Unix-domain socket forever. Connections are handled one at a time.
-    #[cfg(unix)]
-    pub fn serve_unix(&self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
-        if path.exists() {
-            std::fs::remove_file(path)
-                .with_context(|| format!("remove stale socket {}", path.display()))?;
-        }
-        let listener = UnixListener::bind(path)
-            .with_context(|| format!("bind Unix proxy socket {}", path.display()))?;
-        self.serve_unix_listener(listener)
-    }
-
-    /// Serve an existing Unix-domain listener forever. Connections are handled one at a time.
-    #[cfg(unix)]
-    pub fn serve_unix_listener(&self, listener: UnixListener) -> Result<()> {
-        for stream in listener.incoming() {
-            let stream = stream.context("accept Unix proxy connection")?;
-            self.handle_stream(stream)?;
-        }
-        Ok(())
-    }
-
     #[cfg(unix)]
     pub(crate) fn serve_unix_listener_until_ready(
         &self,
@@ -342,22 +273,6 @@ impl OliphauntProxy {
             self.handle_stream(stream)?;
         }
 
-        Ok(())
-    }
-
-    /// Accept and handle one Unix-domain socket connection.
-    #[cfg(unix)]
-    pub fn accept_unix_once(&self, listener: &UnixListener) -> Result<()> {
-        self.accept_unix_connections(listener, 1)
-    }
-
-    /// Accept and handle `count` Unix-domain socket connections using one embedded backend.
-    #[cfg(unix)]
-    pub fn accept_unix_connections(&self, listener: &UnixListener, count: usize) -> Result<()> {
-        for _ in 0..count {
-            let (stream, _) = listener.accept().context("accept Unix proxy connection")?;
-            self.handle_stream(stream)?;
-        }
         Ok(())
     }
 
@@ -442,8 +357,7 @@ impl OliphauntProxy {
                         let opened_result = {
                             let _phase = timing::phase("proxy.backend_open");
                             WireBackend::open(
-                                &self.root,
-                                self.prepared_root.as_deref(),
+                                &self.prepared_database,
                                 &self.postgres_config,
                                 &connection_startup_config,
                                 self.extensions(),
@@ -745,31 +659,23 @@ struct WireBackend {
 }
 
 impl WireBackend {
-    fn installed_outcome(
-        root: &Path,
-        prepared_root: Option<&InstallOutcome>,
-    ) -> Result<InstallOutcome> {
-        let _phase = timing::phase("proxy.backend_install");
-        match prepared_root {
-            Some(outcome) => Ok(outcome.clone()),
-            None => install_into(root),
-        }
-    }
-
     #[cfg(feature = "extensions")]
     fn open(
-        root: &Path,
-        prepared_root: Option<&InstallOutcome>,
+        prepared_database: &InstallOutcome,
         postgres_config: &PostgresConfig,
         startup_config: &StartupConfig,
         extensions: &[Extension],
     ) -> Result<Self> {
-        let outcome = Self::installed_outcome(root, prepared_root)?;
         {
             let _phase = timing::phase("proxy.extension_install");
-            install_missing_extension_archives(&outcome, extensions)?;
+            install_missing_extension_archives(prepared_database, extensions)?;
         }
-        Self::open_prepared(&outcome, postgres_config, startup_config, extensions)
+        Self::open_prepared(
+            prepared_database,
+            postgres_config,
+            startup_config,
+            extensions,
+        )
     }
 
     #[cfg(feature = "extensions")]
@@ -791,15 +697,13 @@ impl WireBackend {
 
     #[cfg(not(feature = "extensions"))]
     fn open(
-        root: &Path,
-        prepared_root: Option<&InstallOutcome>,
+        prepared_database: &InstallOutcome,
         postgres_config: &PostgresConfig,
         startup_config: &StartupConfig,
         _extensions: &[()],
     ) -> Result<Self> {
-        let outcome = Self::installed_outcome(root, prepared_root)?;
         let session = BackendSession::open(
-            outcome,
+            prepared_database.clone(),
             postgres_config.clone(),
             startup_config.clone(),
             BackendOpenKind::Proxy,
@@ -1056,7 +960,7 @@ mod tests {
         );
 
         let runtime =
-            backend_open_error_response(&anyhow!("runtime failed while opening database root"));
+            backend_open_error_response(&anyhow!("runtime failed while opening database storage"));
         assert!(runtime.windows(7).any(|window| window == b"CXX000\0"));
         assert!(
             !runtime.windows(7).any(|window| window == b"C3D000\0"),

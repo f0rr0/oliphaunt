@@ -10,7 +10,7 @@ surface by task.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `OliphauntDatabase.open`, `OliphauntConfig` | Open a persistent or temporary root from Kotlin code |
+| Opening | `OliphauntDatabase.open`, `OliphauntConfig`, `DatabaseStorage` | Use temporary storage by default or an explicit persistent directory |
 | Android facade | `OliphauntAndroid` | Resolve Android resources, ABI assets, and app-context defaults |
 | Runtime mode | `EngineMode`, `supportedModes()` | Discover modes advertised by the selected Android target |
 | Capabilities | `EngineCapabilities` | Check protocol, streaming, backup, restore, lifecycle, and extension support |

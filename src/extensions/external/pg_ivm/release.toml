@@ -22,6 +22,7 @@ registry_packages = [
   "npm:@oliphaunt/extension-pg-ivm-linux-arm64-gnu",
   "npm:@oliphaunt/extension-pg-ivm-linux-x64-gnu",
   "npm:@oliphaunt/extension-pg-ivm-macos-arm64",
+  "npm:@oliphaunt/extension-pg-ivm-wasix",
   "npm:@oliphaunt/extension-pg-ivm-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-ivm-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-ivm-android-x86_64",

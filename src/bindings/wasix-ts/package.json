@@ -1,0 +1,83 @@
+{
+  "name": "@oliphaunt/wasix",
+  "version": "0.0.0",
+  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers and Node.js.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/bindings/wasix-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "runtimeProduct": "liboliphaunt-wasix",
+    "runtimeVersion": "0.1.1",
+    "host": "wasmer-js-patched"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "node": "./lib/index.node.js",
+      "browser": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./protocol": {
+      "types": "./lib/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/query.d.ts",
+      "default": "./lib/query.js"
+    },
+    "./storage/indexed-db": {
+      "types": "./lib/storage/indexed-db.d.ts",
+      "default": "./lib/storage/indexed-db.js"
+    },
+    "./package.json": {
+      "default": "./package.json"
+    }
+  },
+  "main": "lib/index.js",
+  "module": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "pnpm run package:build && vite --config examples/browser/vite.config.ts",
+    "host:build": "bash host/build-sdk.sh",
+    "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
+    "package:check": "node tools/check-package.mjs",
+    "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
+    "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
+    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json"
+  },
+  "dependencies": {
+    "fzstd": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "catalog:",
+    "vite": "^6.0.3",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13 <25"
+  }
+}

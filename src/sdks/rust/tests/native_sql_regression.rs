@@ -31,7 +31,7 @@ fn native_sql_regression_when_env_is_available() {
 
 fn run_mode(mode: EngineMode, broker: Option<&str>) -> Result<()> {
     eprintln!("native_sql_regression::{mode:?} start");
-    let mut builder = Oliphaunt::builder().temporary().engine(mode);
+    let mut builder = Oliphaunt::builder().temporary_directory().engine(mode);
     if let Some(broker) = broker {
         builder = builder.broker_executable(broker);
     }

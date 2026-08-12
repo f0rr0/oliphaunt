@@ -17,10 +17,10 @@ type QueryTiming = {
 };
 
 type BenchReport = {
-  root: string;
+  databaseDirectory: string;
   proxyAddr: string;
   coldStart: boolean;
-  pgdataTemplate: boolean;
+  packagedTemplate: boolean;
   rowCount: number;
   startup: PhaseTiming[];
   workload: PhaseTiming[];
@@ -39,7 +39,7 @@ const workloadTotalEl = document.querySelector<HTMLElement>("#workload-total");
 const profileRowsEl = document.querySelector<HTMLElement>("#profile-rows");
 const proxyAddrEl = document.querySelector<HTMLElement>("#proxy-addr");
 const startupModeEl = document.querySelector<HTMLElement>("#startup-mode");
-const profileRootEl = document.querySelector<HTMLElement>("#profile-root");
+const databaseDirectoryEl = document.querySelector<HTMLElement>("#database-directory");
 const startupListEl = document.querySelector<HTMLElement>("#startup-list");
 const workloadListEl = document.querySelector<HTMLElement>("#workload-list");
 const queryTableEl = document.querySelector<HTMLTableSectionElement>("#query-table");
@@ -125,12 +125,14 @@ function renderReport(report: BenchReport) {
   if (proxyAddrEl) proxyAddrEl.textContent = report.proxyAddr;
   if (startupModeEl) {
     startupModeEl.textContent = report.coldStart
-      ? report.pgdataTemplate
+      ? report.packagedTemplate
         ? "cold template"
         : "cold initdb"
       : "warm reuse";
   }
-  if (profileRootEl) profileRootEl.textContent = report.root;
+  if (databaseDirectoryEl) {
+    databaseDirectoryEl.textContent = report.databaseDirectory;
+  }
 
   renderPhases(startupListEl, report.startup);
   renderPhases(workloadListEl, report.workload);

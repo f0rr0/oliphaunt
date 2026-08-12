@@ -26,6 +26,7 @@ import {
 } from '../runtime/pgwire.js';
 import {
   createServerRuntimeBinding,
+  initializeServerDataDir,
   nativeServerRuntimeEnv,
   serverCapabilities,
   serverConnectionString,
@@ -45,6 +46,7 @@ async function main(): Promise<void> {
   await testServerSupportReportsMissingExecutable();
   await testServerSupportRequiresSplitClientTools();
   await testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup();
+  await testServerRejectsNonemptyIncompletePersistentPgdata();
   await testServerRuntimeEnvIncludesPackagedLibraryDir();
   await testDenoServerModeRejectsPackageManagedExtensions();
   testPgwireStartupCancelAndBackendKeyFrames();
@@ -57,17 +59,16 @@ function testBrokerUnixSocketPathLimit(): void {
 }
 
 function testBrokerCapabilities(): void {
-  const binding = createBrokerRuntimeBinding({ maxRoots: 4 });
+  const binding = createBrokerRuntimeBinding({ maxInstances: 4 });
   assert.equal(binding.runtime, 'node');
   assert.equal(binding.rawProtocolTransport, 'broker-ipc');
   assert.equal(binding.protocolStream, true);
   assert.deepEqual(brokerCapabilities(4), {
     engine: 'nativeBroker',
     processIsolated: true,
-    multiRoot: true,
-    reopenable: true,
-    sameRootLogicalReopen: false,
-    rootSwitchable: true,
+    multipleInstances: true,
+    sameInstanceLogicalReopen: false,
+    instanceSwitchable: true,
     crashRestartable: true,
     independentSessions: false,
     maxClientSessions: 1,
@@ -91,18 +92,18 @@ async function testBrokerSupportAndRestoreFailureAreActionable(): Promise<void> 
       brokerExecutable: missing,
       libraryPath: join(root, 'liboliphaunt.dylib'),
       runtimeDirectory: join(root, 'runtime'),
-      brokerMaxRoots: 2,
+      brokerMaxInstances: 2,
     });
     assert.equal(support.engine, 'nativeBroker');
     assert.equal(support.available, false);
-    assert.equal(support.capabilities.multiRoot, true);
+    assert.equal(support.capabilities.multipleInstances, true);
     assert.match(support.unavailableReason ?? '', /brokerExecutable/);
 
     await assert.rejects(
       async () =>
         restorePhysicalArchiveWithBroker({
           brokerExecutable: missing,
-          root: join(root, 'db'),
+          destination: join(root, 'db'),
           bytes: new Uint8Array([1, 2, 3]),
           replaceExisting: true,
         }),
@@ -137,7 +138,7 @@ async function testBrokerRestorePassesNativeInstallEnv(): Promise<void> {
 
     await restorePhysicalArchiveWithBroker({
       brokerExecutable: broker,
-      root: join(root, 'db'),
+      destination: join(root, 'db'),
       bytes: new Uint8Array([1, 2, 3]),
       libraryPath,
       runtimeDirectory,
@@ -287,10 +288,9 @@ function testServerCapabilitiesAndConnectionString(): void {
   assert.deepEqual(serverCapabilities(32, 'postgres://localhost/db'), {
     engine: 'nativeServer',
     processIsolated: true,
-    multiRoot: false,
-    reopenable: true,
-    sameRootLogicalReopen: false,
-    rootSwitchable: true,
+    multipleInstances: false,
+    sameInstanceLogicalReopen: false,
+    instanceSwitchable: true,
     crashRestartable: false,
     independentSessions: true,
     maxClientSessions: 32,
@@ -364,6 +364,23 @@ async function testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup(): Promi
   }
 }
 
+async function testServerRejectsNonemptyIncompletePersistentPgdata(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-server-incomplete-'));
+  const instanceDirectory = join(root, 'database');
+  const pgdata = join(instanceDirectory, 'pgdata');
+  try {
+    await mkdir(pgdata, { recursive: true });
+    await writeFile(join(pgdata, 'partial-bootstrap.sql'), 'do not delete');
+    await assert.rejects(
+      () => initializeServerDataDir(normalizedTestConfig(instanceDirectory), join(root, 'bin')),
+      /PGDATA exists without PG_VERSION and is not empty/,
+    );
+    assert.equal(await readFile(join(pgdata, 'partial-bootstrap.sql'), 'utf8'), 'do not delete');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function testServerRuntimeEnvIncludesPackagedLibraryDir(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-server-env-'));
   const runtime = join(root, 'runtime');
@@ -432,14 +449,14 @@ async function testDenoServerModeRejectsPackageManagedExtensions(): Promise<void
 }
 
 function normalizedTestConfig(
-  root: string,
+  instanceDirectory: string,
   overrides: Partial<NormalizedOpenConfig> = {},
 ): NormalizedOpenConfig {
   return {
     engine: 'nativeDirect',
-    root,
-    pgdata: join(root, 'pgdata'),
-    temporary: true,
+    instanceDirectory,
+    pgdata: join(instanceDirectory, 'pgdata'),
+    temporaryDirectory: true,
     durability: 'safe',
     runtimeFootprint: 'throughput',
     startupArgs: [],
@@ -447,7 +464,7 @@ function normalizedTestConfig(
     database: 'postgres',
     extensions: [],
     maxClientSessions: 1,
-    brokerMaxRoots: 1,
+    brokerMaxInstances: 1,
     brokerTransport: 'auto',
     ...overrides,
   };

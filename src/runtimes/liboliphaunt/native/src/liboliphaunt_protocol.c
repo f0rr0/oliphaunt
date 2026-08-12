@@ -14,7 +14,7 @@
 #include <string.h>
 #include <time.h>
 
-#define DEFAULT_WAIT_TIMEOUT_MS 60000
+#define DEFAULT_STARTUP_TIMEOUT_MS 60000
 #define DEFAULT_STREAM_QUEUE_MAX_BYTES (4 * 1024 * 1024)
 
 static int validate_frontend_protocol_frames(OliphauntHandle *handle, const uint8_t *request, size_t request_len) {
@@ -306,13 +306,10 @@ static bool scan_ready_for_query_locked(OliphauntHandle *handle) {
 int oliphaunt_startup_timeout_ms(void) {
     const char *value = getenv("OLIPHAUNT_STARTUP_TIMEOUT_MS");
     if (value == NULL || value[0] == '\0') {
-        value = getenv("OLIPHAUNT_TIMEOUT_MS");
-    }
-    if (value == NULL || value[0] == '\0') {
-        return DEFAULT_WAIT_TIMEOUT_MS;
+        return DEFAULT_STARTUP_TIMEOUT_MS;
     }
     int parsed = atoi(value);
-    return parsed > 0 ? parsed : DEFAULT_WAIT_TIMEOUT_MS;
+    return parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
 }
 
 static void add_ms_to_timespec(struct timespec *ts, int ms) {
