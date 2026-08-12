@@ -4,12 +4,17 @@ import { appName, gitConfig } from './shared';
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: appName,
+      title: (
+        <span className="oliphaunt-wordmark">
+          <span className="oliphaunt-wordmark__mark" aria-hidden="true" />
+          <span>{appName}</span>
+        </span>
+      ),
       url: '/',
     },
     links: [
       {
-        text: 'Start',
+        text: 'Get started',
         url: '/docs/start',
       },
       {
@@ -30,6 +35,5 @@ export function baseOptions(): BaseLayoutProps {
         external: true,
       },
     ],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }

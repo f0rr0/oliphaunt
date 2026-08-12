@@ -1,231 +1,421 @@
-import {
-  ArrowRight,
-  Database,
-  ListChecks,
-  PackageCheck,
-  PlayCircle,
-  Route,
-  SearchCheck,
-} from 'lucide-react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
-import { runtimeModes, sdkSurfaces } from '@/lib/docs-data';
+import {
+  AppSurfaceRail,
+  BentoCard,
+  BentoCardCopy,
+  HeroQueryArtifact,
+  LifecycleArtifact,
+  LocalDataArtifact,
+  ModelInventory,
+  RelationshipArtifact,
+  SearchArtifact,
+} from '@/components/home-product-bento';
+import { HomeStackExplorer } from '@/components/home-stack-explorer';
+import { gitConfig } from '@/lib/shared';
 
-const maintainerPaths = [
+export const metadata: Metadata = {
+  title: {
+    absolute: 'Oliphaunt — PostgreSQL inside your app',
+  },
+  description:
+    'Build desktop and mobile products on a powerful local PostgreSQL data core, with rich relational models, sophisticated queries, and app-owned storage.',
+};
+
+const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
+const githubRoot = `${githubUrl}/tree/${gitConfig.branch}`;
+const githubBlob = `${githubUrl}/blob/${gitConfig.branch}`;
+
+const useCases = [
   {
-    title: 'Releases',
-    description: 'Version matrix, release notes, and artifact compatibility.',
-    href: '/docs/reference/releases',
-    icon: ListChecks,
+    number: '01',
+    title: 'Knowledge and creative workspaces',
+    description:
+      'Documents, projects, revision history, metadata, and retrieval live together in one local model.',
+    detail: 'Projects · content · history · search',
   },
   {
-    title: 'Extensions',
-    description: 'SQL extension names, dependencies, targets, and packaging policy.',
-    href: '/docs/reference/extensions',
-    icon: SearchCheck,
+    number: '02',
+    title: 'Field and mobile products',
+    description:
+      'Structured records and essential workflows remain available away from a database connection.',
+    detail: 'Forms · reference data · relational history',
   },
   {
-    title: 'API surfaces',
-    description: 'Language API maps plus the C ABI route for SDK bindings.',
-    href: '/docs/reference/api-reference',
-    icon: Route,
+    number: '03',
+    title: 'Local retrieval',
+    description:
+      'Store embeddings beside source data, then combine semantic search with metadata and relational filters in SQL.',
+    detail: 'Vector · full-text · structured filters',
   },
   {
-    title: 'Performance',
-    description: 'Workload results, footprint notes, and claim evidence.',
-    href: '/docs/reference/performance',
-    icon: Database,
+    number: '04',
+    title: 'Data and developer tools',
+    description:
+      'Import, inspect, transform, and query complex local datasets with familiar PostgreSQL behavior.',
+    detail: 'Import · inspect · transform · query',
   },
 ];
 
-const productSignals = [
-  { label: 'SDK surfaces', value: '7' },
-  { label: 'Runtime families', value: '4' },
-  { label: 'First query', value: '1' },
+const productCapabilities = [
+  {
+    label: 'Search in context',
+    title: 'One query can understand the whole record.',
+    description:
+      'Full-text, fuzzy, and vector retrieval meet structured filters in the same PostgreSQL query.',
+    className: 'oliphaunt-wow-ecosystem__search',
+  },
+  {
+    label: 'Understand place',
+    title: 'Make location part of the model.',
+    description:
+      'Run distance and geometry queries beside the people, assets, and events they describe.',
+    className: 'oliphaunt-wow-ecosystem__place',
+  },
+  {
+    label: 'Model naturally',
+    title: 'Give product data room to be itself.',
+    description:
+      'Use JSONB, arrays, enums, trees, generated columns, and advanced indexes in one coherent model.',
+    className: 'oliphaunt-wow-ecosystem__model',
+  },
 ];
 
-function ArrowLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <Link href={href} className="oliphaunt-arrow-link">
-      {children}
-      <ArrowRight className="size-4" />
-    </Link>
-  );
-}
+const examples = [
+  {
+    label: 'Tauri / Rust',
+    title: 'PostgreSQL in the Rust backend.',
+    description:
+      'The native runtime owns database state behind focused application commands, with a working UI path you can run and inspect.',
+    href: `${githubRoot}/examples/tauri`,
+  },
+  {
+    label: 'Electron / TypeScript',
+    title: 'PostgreSQL in the main process.',
+    description:
+      'A narrow preload API gives the renderer exactly the database capabilities the product needs.',
+    href: `${githubRoot}/examples/electron`,
+  },
+  {
+    label: 'Native + WebAssembly',
+    title: 'Four apps share one schema.',
+    description:
+      'Native and WebAssembly variants make each runtime path concrete while preserving the same product behavior.',
+    href: `${githubBlob}/examples/README.md`,
+  },
+];
+
+const footerGroups = [
+  {
+    title: 'Build',
+    links: [
+      { label: 'Get started', href: '/docs/start' },
+      { label: 'SDKs', href: '/docs/sdk' },
+      { label: 'Extensions', href: '/docs/reference/extensions' },
+    ],
+  },
+  {
+    title: 'Learn',
+    links: [
+      { label: 'How it works', href: '/docs/learn/embedded-postgres' },
+      { label: 'Compare SQLite', href: '/docs/learn/sqlite-upgrade' },
+      { label: 'Target support', href: '/docs/reference/releases' },
+    ],
+  },
+  {
+    title: 'Project',
+    links: [
+      { label: 'GitHub', href: githubUrl },
+      { label: 'Contributing', href: `${githubBlob}/CONTRIBUTING.md` },
+      { label: 'MIT license', href: `${githubBlob}/LICENSE` },
+    ],
+  },
+];
 
 export default function HomePage() {
   return (
-    <main className="flex flex-1 flex-col overflow-x-clip">
-      <section className="oliphaunt-home-hero border-b">
-        <div className="mx-auto grid w-full max-w-7xl gap-10 px-5 pb-12 pt-10 sm:px-6 md:pt-16 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center lg:pb-16">
-          <div className="min-w-0">
-            <div className="oliphaunt-rail-label">
-              <span>Oliphaunt</span>
-              <span>Docs</span>
-              <span>PostgreSQL in app storage</span>
-            </div>
-            <h1 className="mt-6 max-w-3xl text-6xl font-semibold leading-none text-fd-foreground sm:text-7xl lg:text-8xl">
-              Oliphaunt
-            </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-fd-muted-foreground sm:text-xl sm:leading-9">
-              Polyglot docs for embedded PostgreSQL SDKs, runtime modes, exact
-              extension packaging, and app-owned data movement.
-            </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/docs/start" className="oliphaunt-primary-action">
-                <PlayCircle className="size-4" />
-                Start with the docs
-              </Link>
-              <Link href="/docs/sdk" className="oliphaunt-secondary-action">
-                <PackageCheck className="size-4" />
-                Choose an SDK
-              </Link>
-            </div>
-            <div className="mt-8 grid max-w-xl grid-cols-3 border-y border-fd-border/70">
-              {productSignals.map((signal) => (
-                <div key={signal.label} className="min-w-0 border-e py-4 pe-4 last:border-e-0">
-                  <p className="text-2xl font-semibold leading-none text-fd-foreground">
-                    {signal.value}
+    <div className="oliphaunt-home oliphaunt-wow">
+      <main>
+        <section className="oliphaunt-wow-hero" aria-labelledby="hero-heading">
+          <div className="oliphaunt-wow-shell">
+            <div className="oliphaunt-wow-grid oliphaunt-wow-hero__grid">
+              <BentoCard className="oliphaunt-wow-hero__intro" tone="blue">
+                <div className="oliphaunt-wow-hero__copy">
+                  <h1 id="hero-heading">
+                    PostgreSQL,
+                    <span>built into your product.</span>
+                  </h1>
+                  <p>
+                    Give desktop and mobile apps a powerful local data core. Model rich
+                    relationships, run sophisticated queries, and keep essential workflows available
+                    wherever the user is.
                   </p>
-                  <p className="mt-2 text-xs font-medium uppercase text-fd-muted-foreground">
-                    {signal.label}
-                  </p>
+                  <div className="oliphaunt-wow-actions">
+                    <Link
+                      href="/docs/start"
+                      className="oliphaunt-wow-button oliphaunt-wow-button--light"
+                    >
+                      Start building
+                      <ArrowRight aria-hidden="true" />
+                    </Link>
+                    <Link
+                      href={githubUrl}
+                      className="oliphaunt-wow-button oliphaunt-wow-button--blue-quiet"
+                    >
+                      View on GitHub
+                    </Link>
+                  </div>
                 </div>
+                <p className="oliphaunt-wow-hero__promise">
+                  Relations <span /> search <span /> transactions <span /> local data
+                </p>
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-hero__query" tone="ink">
+                <BentoCardCopy
+                  label="One query. Whole context."
+                  title="Find the right thing."
+                  description="Blend relational filters with fuzzy, full-text, and vector retrieval."
+                  headingLevel="h2"
+                />
+                <HeroQueryArtifact />
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-hero__surfaces" tone="mint">
+                <BentoCardCopy
+                  label="One local data core"
+                  title="Every app surface."
+                  description="Meet users in the product they already want to use."
+                  headingLevel="h2"
+                />
+                <AppSurfaceRail />
+              </BentoCard>
+            </div>
+          </div>
+        </section>
+
+        <section className="oliphaunt-wow-section" aria-labelledby="possibility-heading">
+          <div className="oliphaunt-wow-shell">
+            <header className="oliphaunt-wow-heading">
+              <p>More product. One database.</p>
+              <div>
+                <h2 id="possibility-heading">Build the product PostgreSQL makes possible.</h2>
+                <p>
+                  One local system for the data, search, and workflows at the heart of your app.
+                </p>
+              </div>
+            </header>
+
+            <div className="oliphaunt-wow-grid oliphaunt-wow-capability-grid">
+              <BentoCard className="oliphaunt-wow-capability__relations" tone="paper">
+                <BentoCardCopy
+                  label="Relational core"
+                  title="Everything connects."
+                  description="Projects, content, tags, history, and metadata live in one model—ready for joins, constraints, and transactions."
+                />
+                <RelationshipArtifact />
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-capability__local" tone="blue">
+                <BentoCardCopy
+                  label="Local by design"
+                  title="No round trip."
+                  description="Core reads and writes happen where the product runs, even when the network does not."
+                />
+                <LocalDataArtifact />
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-capability__model" tone="warm">
+                <BentoCardCopy
+                  label="PostgreSQL modeling"
+                  title="Go beyond rows and blobs."
+                  description="Shape the data around the product instead of flattening the product around the database."
+                />
+                <ModelInventory />
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-capability__search" tone="mint">
+                <BentoCardCopy
+                  label="Local retrieval"
+                  title="Search in context."
+                  description="Keep source records, embeddings, metadata, and search behavior together."
+                />
+                <SearchArtifact />
+              </BentoCard>
+
+              <BentoCard className="oliphaunt-wow-capability__lifecycle" tone="ink">
+                <BentoCardCopy
+                  label="App lifecycle"
+                  title="Data that comes back."
+                  description="WAL recovery, lifecycle hooks, backup, and restore carry the database through backgrounding and relaunch."
+                />
+                <LifecycleArtifact />
+              </BentoCard>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="oliphaunt-wow-section oliphaunt-wow-use-cases"
+          aria-labelledby="use-cases-heading"
+        >
+          <div className="oliphaunt-wow-shell">
+            <header className="oliphaunt-wow-heading">
+              <p>Made for life away from the server</p>
+              <div>
+                <h2 id="use-cases-heading">Software that carries its world with it.</h2>
+                <p>For products where local data is the experience, not a temporary copy.</p>
+              </div>
+            </header>
+            <div className="oliphaunt-wow-use-cases__grid">
+              {useCases.map((useCase) => (
+                <article key={useCase.number}>
+                  <p className="oliphaunt-wow-use-cases__number">{useCase.number}</p>
+                  <div>
+                    <h3>{useCase.title}</h3>
+                    <p>{useCase.description}</p>
+                  </div>
+                  <p className="oliphaunt-wow-use-cases__detail">{useCase.detail}</p>
+                </article>
               ))}
             </div>
           </div>
+        </section>
 
-          <div className="oliphaunt-product-visual" aria-label="Oliphaunt docs product map">
-            <div className="oliphaunt-product-visual__bar oliphaunt-product-visual__bar--desktop">
-              <span>Start path</span>
-              <span>SDK to runtime to verify</span>
-            </div>
-            <div className="oliphaunt-product-visual__body">
-              <div className="oliphaunt-runtime-stack">
-                {runtimeModes.map((mode, index) => {
-                  const Icon = mode.icon;
-
-                  return (
-                    <Link key={mode.name} href={mode.href} className="oliphaunt-runtime-chip">
-                      <span className="oliphaunt-runtime-chip__index">
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <Icon className="size-4" />
-                      <code className="min-w-0 truncate">{mode.name}</code>
-                    </Link>
-                  );
-                })}
-              </div>
-
-              <div className="oliphaunt-visual-footer">
-                <div>
-                  <p>Choose</p>
-                  <span>SDK</span>
-                </div>
-                <div>
-                  <p>Configure</p>
-                  <span>Runtime</span>
-                </div>
-                <div>
-                  <p>Verify</p>
-                  <span>Query</span>
-                </div>
-              </div>
+        <section className="oliphaunt-wow-section" id="stacks" aria-labelledby="stacks-heading">
+          <div className="oliphaunt-wow-shell">
+            <div className="oliphaunt-wow-grid oliphaunt-wow-stack-grid">
+              <BentoCard className="oliphaunt-wow-stack__intro" tone="warm">
+                <BentoCardCopy
+                  label="A native fit"
+                  title="One schema. Every app surface."
+                  description="Query the same PostgreSQL model from Rust, TypeScript, Swift, Kotlin, and React Native."
+                />
+                <p className="oliphaunt-wow-stack__languages">
+                  Rust <span>TypeScript</span> Swift <span>Kotlin</span> React Native
+                </p>
+              </BentoCard>
+              <BentoCard className="oliphaunt-wow-stack__code" tone="ink">
+                <HomeStackExplorer />
+              </BentoCard>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 py-14 sm:px-6 lg:py-18">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start">
-          <div>
-            <p className="oliphaunt-section-kicker">SDK surfaces</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight md:text-5xl">
-              Choose by package and target.
-            </h2>
-            <p className="mt-4 max-w-xl text-sm leading-7 text-fd-muted-foreground">
-              Every SDK keeps the same database intent while matching its
-              platform package manager, lifecycle, concurrency model, and build
-              artifacts.
-            </p>
+        <section
+          className="oliphaunt-wow-section oliphaunt-wow-ecosystem"
+          aria-labelledby="ecosystem-heading"
+        >
+          <div className="oliphaunt-wow-shell">
+            <header className="oliphaunt-wow-heading">
+              <p>PostgreSQL as a product palette</p>
+              <div>
+                <h2 id="ecosystem-heading">Bring more of the product into one database.</h2>
+                <p>
+                  Build capabilities around the data they belong to, with the language and tools
+                  PostgreSQL gives you.
+                </p>
+              </div>
+            </header>
+            <div className="oliphaunt-wow-grid oliphaunt-wow-ecosystem__grid">
+              {productCapabilities.map((capability) => (
+                <BentoCard key={capability.label} className={capability.className} tone="paper">
+                  <BentoCardCopy
+                    label={capability.label}
+                    title={capability.title}
+                    description={capability.description}
+                  />
+                </BentoCard>
+              ))}
+            </div>
+            <Link href="/docs/reference/extensions" className="oliphaunt-wow-text-link">
+              Explore the capability catalog
+              <ArrowUpRight aria-hidden="true" />
+            </Link>
           </div>
-          <div className="divide-y border-y">
-            {sdkSurfaces.map((sdk) => {
-              const Icon = sdk.icon;
+        </section>
 
-              return (
-                <Link
-                  key={sdk.id}
-                  href={sdk.href}
-                  className="group grid min-w-0 gap-3 py-4 transition-colors hover:bg-fd-muted/35 sm:grid-cols-[auto_minmax(0,150px)_minmax(0,1fr)_minmax(0,160px)_24px] sm:items-start"
+        <section
+          className="oliphaunt-wow-section oliphaunt-wow-proof"
+          aria-labelledby="proof-heading"
+        >
+          <div className="oliphaunt-wow-shell">
+            <header className="oliphaunt-wow-heading">
+              <p>Inspect the work</p>
+              <div>
+                <h2 id="proof-heading">Real apps. Real runtimes. Real source.</h2>
+                <p>
+                  Explore working Tauri and Electron apps that create, search, complete, persist,
+                  and back up data through Oliphaunt.
+                </p>
+              </div>
+            </header>
+
+            <div className="oliphaunt-wow-grid oliphaunt-wow-proof__grid">
+              {examples.map((example) => (
+                <BentoCard
+                  key={example.label}
+                  className="oliphaunt-wow-proof__example"
+                  tone="soft-ink"
                 >
-                  <span className="oliphaunt-icon-tile">
-                    <Icon className="size-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-semibold">{sdk.title}</h3>
-                    <div className="mt-1">
-                      <code className="oliphaunt-inline-code">
-                        {sdk.packageName}
-                      </code>
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm leading-6 text-fd-muted-foreground">
-                      {sdk.target}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                    {sdk.modes.map((mode) => (
-                      <span key={mode} className="oliphaunt-mode-pill">
-                        {mode}
-                      </span>
-                    ))}
-                  </div>
-                  <ArrowRight className="hidden size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground sm:mt-1 sm:block" />
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="border-t bg-fd-card/35">
-        <div className="mx-auto w-full max-w-7xl px-5 py-12 sm:px-6">
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <div>
-              <p className="oliphaunt-section-kicker">Reference paths</p>
-              <h2 className="mt-3 text-3xl font-semibold leading-tight md:text-5xl">
-                Keep release and tooling details close.
-              </h2>
-              <p className="mt-4 max-w-lg text-sm leading-7 text-fd-muted-foreground">
-                Maintainers and SDK authors can jump straight to compatibility,
-                extension packaging, API surfaces, and performance evidence.
-              </p>
-            </div>
-            <div className="divide-y border-y">
-              {maintainerPaths.map((path) => {
-                const Icon = path.icon;
-
-                return (
-                  <Link key={path.title} href={path.href} className="oliphaunt-maintainer-row group">
-                    <span className="oliphaunt-icon-tile">
-                      <Icon className="size-4" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold">{path.title}</p>
-                      <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-                        {path.description}
-                      </p>
-                    </div>
-                    <ArrowRight className="size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
+                  <BentoCardCopy
+                    label={example.label}
+                    title={example.title}
+                    description={example.description}
+                  />
+                  <Link href={example.href}>
+                    Inspect the source
+                    <ArrowUpRight aria-hidden="true" />
                   </Link>
-                );
-              })}
+                </BentoCard>
+              ))}
+
+              <BentoCard className="oliphaunt-wow-proof__cta" tone="blue">
+                <div>
+                  <p>Ready when you are.</p>
+                  <h2>Put PostgreSQL at the heart of the product.</h2>
+                  <p>Open a local database. Run the first query. Build outward from there.</p>
+                </div>
+                <div className="oliphaunt-wow-actions">
+                  <Link
+                    href="/docs/start"
+                    className="oliphaunt-wow-button oliphaunt-wow-button--light"
+                  >
+                    Start building
+                    <ArrowRight aria-hidden="true" />
+                  </Link>
+                  <Link
+                    href="/docs/learn/embedded-postgres"
+                    className="oliphaunt-wow-button oliphaunt-wow-button--blue-quiet"
+                  >
+                    See how it works
+                  </Link>
+                </div>
+              </BentoCard>
             </div>
           </div>
+        </section>
+      </main>
+
+      <footer className="oliphaunt-wow-footer">
+        <div className="oliphaunt-wow-shell oliphaunt-wow-footer__grid">
+          <Link href="/" className="oliphaunt-wow-footer__brand">
+            <span aria-hidden="true" />
+            Oliphaunt
+          </Link>
+          {footerGroups.map((group) => (
+            <nav key={group.title} aria-label={group.title}>
+              <p>{group.title}</p>
+              {group.links.map((link) => (
+                <Link href={link.href} key={link.label}>
+                  {link.label}
+                </Link>
+              ))}
+            </nav>
+          ))}
         </div>
-      </section>
-    </main>
+      </footer>
+    </div>
   );
 }
