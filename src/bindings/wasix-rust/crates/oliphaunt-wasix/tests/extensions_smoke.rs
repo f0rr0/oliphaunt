@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::Result;
-use oliphaunt_wasix::{Oliphaunt, OliphauntError, OliphauntServer, extensions};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntError, OliphauntServer, extensions};
 use serde_json::json;
 use sqlx::{Connection, Row};
 use std::path::{Path, PathBuf};
@@ -31,15 +31,18 @@ fn first_f64(result: &oliphaunt_wasix::Results, column: &str) -> f64 {
     result.rows[0][column].as_f64().expect("floating result")
 }
 
-fn assert_oliphaunt_code(err: &anyhow::Error, expected_code: &str, message_contains: &str) {
+fn assert_oliphaunt_sqlstate(err: &anyhow::Error, expected_sqlstate: &str, message_contains: &str) {
     let pg_err = err
         .downcast_ref::<OliphauntError>()
         .expect("error should preserve Postgres fields");
-    assert_eq!(pg_err.database_error().code.as_deref(), Some(expected_code));
+    assert_eq!(
+        pg_err.postgres_error().sqlstate.as_deref(),
+        Some(expected_sqlstate)
+    );
     assert!(
-        pg_err.database_error().message.contains(message_contains),
+        pg_err.postgres_error().message.contains(message_contains),
         "expected error message to contain {message_contains:?}, got {:?}",
-        pg_err.database_error().message
+        pg_err.postgres_error().message
     );
 }
 
@@ -189,10 +192,7 @@ fn relative_files(root: &Path) -> Vec<PathBuf> {
 #[test]
 fn vector_extension_direct_smoke() -> Result<()> {
     let _trace = TestTrace::new("vector_extension_direct_smoke");
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .extension(extensions::VECTOR)
-        .open()?;
+    let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
 
     db.exec("CREATE TEMP TABLE oxide_vec (embedding vector(3))", None)?;
     db.exec("INSERT INTO oxide_vec VALUES ('[1,2,3]')", None)?;
@@ -225,7 +225,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
             None,
         )
         .expect_err("division by zero after vector load should fail");
-    assert_oliphaunt_code(&err, "22012", "division by zero");
+    assert_oliphaunt_sqlstate(&err, "22012", "division by zero");
     let recovered = db.query("SELECT 13::int AS recovered_after_vector_error", &[], None)?;
     assert_eq!(recovered.rows[0]["recovered_after_vector_error"], json!(13));
 
@@ -237,7 +237,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
             None,
         )
         .expect_err("invalid vector literal should fail inside the vector extension");
-    assert_oliphaunt_code(
+    assert_oliphaunt_sqlstate(
         &invalid_vector,
         "22P02",
         "invalid input syntax for type vector",
@@ -260,7 +260,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
             None,
         )
         .expect_err("vector distance should reject mismatched dimensions");
-    assert_oliphaunt_code(&dimension_mismatch, "22000", "different vector dimensions");
+    assert_oliphaunt_sqlstate(&dimension_mismatch, "22000", "different vector dimensions");
     let recovered = db.query(
         "SELECT 16::int AS recovered_after_dimension_mismatch",
         &[],
@@ -281,7 +281,7 @@ fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::VECTOR)
             .open()?;
         let result = db.query(
@@ -300,10 +300,7 @@ fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
 #[test]
 fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
     let _trace = TestTrace::new("vector_extension_ports_pgvector_core_type_cases");
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .extension(extensions::VECTOR)
-        .open()?;
+    let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
 
     let valid = db.query(
         "SELECT \
@@ -340,7 +337,7 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
             Ok(_) => panic!("{sql} should fail"),
             Err(err) => err,
         };
-        assert_oliphaunt_code(&err, code, message);
+        assert_oliphaunt_sqlstate(&err, code, message);
         let recovered = db.query("SELECT 17::int AS recovered", &[], None)?;
         assert_eq!(recovered.rows[0]["recovered"], json!(17));
     }
@@ -353,10 +350,7 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
 fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> Result<()> {
     let _trace =
         TestTrace::new("vector_extension_direct_transaction_commit_rollback_and_error_recovery");
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .extension(extensions::VECTOR)
-        .open()?;
+    let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
     db.exec(
         "CREATE TABLE vector_tx_items(id int PRIMARY KEY, embedding vector(3))",
         None,
@@ -397,7 +391,7 @@ fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> R
         Ok(())
     });
     let failed = failed.expect_err("invalid vector should fail inside transaction");
-    assert_oliphaunt_code(&failed, "22P02", "invalid input syntax for type vector");
+    assert_oliphaunt_sqlstate(&failed, "22P02", "invalid input syntax for type vector");
 
     let result = db.query(
         "SELECT count(*)::int AS count, \
@@ -422,12 +416,13 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
         TestTrace::new("vector_extension_install_is_demand_driven_idempotent_and_persistent");
     let root = tempfile::TempDir::new()?;
     {
-        let mut db = Oliphaunt::builder().path(root.path()).open()?;
+        let mut db = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         assert!(
-            !db.paths()
-                .pgroot
-                .join("oliphaunt")
-                .join("lib/postgresql/vector.so")
+            !root
+                .path()
+                .join("tmp/oliphaunt/lib/postgresql/vector.so")
                 .exists(),
             "vector side module should not be installed before it is requested"
         );
@@ -435,10 +430,8 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
         db.enable_extension(extensions::VECTOR)?;
         db.enable_extension(extensions::VECTOR)?;
         assert!(
-            db.paths()
-                .pgroot
-                .join("oliphaunt")
-                .join("lib/postgresql/vector.so")
+            root.path()
+                .join("tmp/oliphaunt/lib/postgresql/vector.so")
                 .exists(),
             "vector side module should be installed after enable_extension"
         );
@@ -453,7 +446,9 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
     }
 
     {
-        let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         let result = reopened.query("SELECT '[1,2,3]'::vector::text AS value", &[], None)?;
         assert_eq!(result.rows[0]["value"], json!("[1,2,3]"));
         reopened.close()?;
@@ -465,10 +460,7 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
 #[test]
 fn pg_trgm_extension_direct_smoke() -> Result<()> {
     let _trace = TestTrace::new("pg_trgm_extension_direct_smoke");
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .extension(extensions::PG_TRGM)
-        .open()?;
+    let mut db = Oliphaunt::builder().extension(extensions::PG_TRGM).open()?;
 
     let result = db.query(
         "SELECT similarity('postgres', 'postgrex') AS score",
@@ -495,10 +487,7 @@ fn pg_trgm_extension_direct_smoke() -> Result<()> {
 #[test]
 fn hstore_extension_direct_smoke() -> Result<()> {
     let _trace = TestTrace::new("hstore_extension_direct_smoke");
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .extension(extensions::HSTORE)
-        .open()?;
+    let mut db = Oliphaunt::builder().extension(extensions::HSTORE).open()?;
 
     db.exec(
         "CREATE TEMP TABLE oxide_hstore (id serial PRIMARY KEY, data hstore)",
@@ -536,7 +525,7 @@ fn hstore_extension_reopens_cleanly() -> Result<()> {
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::HSTORE)
             .open()?;
         db.exec("CREATE TABLE oxide_hstore_restart (data hstore)", None)?;
@@ -548,7 +537,9 @@ fn hstore_extension_reopens_cleanly() -> Result<()> {
     }
 
     {
-        let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         let result = reopened.query(
             "SELECT data -> 'name' AS name FROM oxide_hstore_restart",
             &[],
@@ -565,7 +556,6 @@ fn hstore_extension_reopens_cleanly() -> Result<()> {
 fn pgcrypto_extension_direct_smoke() -> Result<()> {
     let _trace = TestTrace::new("pgcrypto_extension_direct_smoke");
     let mut db = Oliphaunt::builder()
-        .temporary()
         .extension(extensions::PGCRYPTO)
         .open()?;
 
@@ -586,7 +576,7 @@ fn pgcrypto_extension_direct_smoke() -> Result<()> {
     let invalid_algorithm = db
         .query("SELECT digest('abc', 'not-a-digest')", &[], None)
         .expect_err("invalid pgcrypto digest algorithm should fail");
-    assert_oliphaunt_code(
+    assert_oliphaunt_sqlstate(
         &invalid_algorithm,
         "22023",
         "Cannot use \"not-a-digest\": No such hash algorithm",
@@ -611,7 +601,7 @@ fn pgcrypto_extension_reopens_cleanly() -> Result<()> {
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::PGCRYPTO)
             .open()?;
         db.exec(PGCRYPTO_FUNCTIONAL_SMOKE_SQL, None)?;
@@ -624,7 +614,9 @@ fn pgcrypto_extension_reopens_cleanly() -> Result<()> {
     }
 
     {
-        let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         let result = reopened.query(
             "SELECT digest_hex = encode(digest('persisted', 'sha256'), 'hex') AS ok \
              FROM oxide_pgcrypto_restart",
@@ -644,7 +636,7 @@ fn pgcrypto_extension_materializes_only_requested_assets() -> Result<()> {
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::PGCRYPTO)
             .open()?;
         db.exec(PGCRYPTO_FUNCTIONAL_SMOKE_SQL, None)?;
@@ -659,7 +651,6 @@ fn pgcrypto_extension_materializes_only_requested_assets() -> Result<()> {
 fn multiple_extension_set_direct_smoke() -> Result<()> {
     let _trace = TestTrace::new("multiple_extension_set_direct_smoke");
     let mut db = Oliphaunt::builder()
-        .temporary()
         .extensions([extensions::VECTOR, extensions::PG_TRGM])
         .open()?;
 
@@ -690,7 +681,6 @@ fn multiple_extension_set_direct_smoke() -> Result<()> {
 async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
     let _trace = TestTrace::new("pg_trgm_extension_server_sqlx_smoke");
     let server = OliphauntServer::builder()
-        .temporary()
         .extension(extensions::PG_TRGM)
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
@@ -715,7 +705,6 @@ async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
 async fn hstore_extension_server_sqlx_smoke() -> Result<()> {
     let _trace = TestTrace::new("hstore_extension_server_sqlx_smoke");
     let server = OliphauntServer::builder()
-        .temporary()
         .extension(extensions::HSTORE)
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
@@ -745,7 +734,6 @@ async fn hstore_extension_server_sqlx_smoke() -> Result<()> {
 async fn pgcrypto_extension_server_sqlx_smoke() -> Result<()> {
     let _trace = TestTrace::new("pgcrypto_extension_server_sqlx_smoke");
     let server = OliphauntServer::builder()
-        .temporary()
         .extension(extensions::PGCRYPTO)
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
@@ -768,7 +756,6 @@ async fn pgcrypto_extension_server_sqlx_smoke() -> Result<()> {
 async fn vector_extension_server_sqlx_smoke() -> Result<()> {
     let _trace = TestTrace::new("vector_extension_server_sqlx_smoke");
     let server = OliphauntServer::builder()
-        .temporary()
         .extension(extensions::VECTOR)
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
@@ -838,7 +825,6 @@ async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_reco
         "vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery",
     );
     let server = OliphauntServer::builder()
-        .temporary()
         .extension(extensions::VECTOR)
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
@@ -927,7 +913,6 @@ async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_reco
 async fn multiple_extension_set_server_sqlx_smoke() -> Result<()> {
     let _trace = TestTrace::new("multiple_extension_set_server_sqlx_smoke");
     let server = OliphauntServer::builder()
-        .temporary()
         .extensions([extensions::VECTOR, extensions::PG_TRGM])
         .start()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;

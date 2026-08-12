@@ -1,32 +1,31 @@
 ---
-title: Build With WASM
-description: Use the WASM/WASIX runtime family with shipped runtime assets, app data, lifecycle, and dump/restore flows.
+title: Build With Rust WASIX
+description: Use the Rust WASIX binding with memory by default, explicit persistence, selected extensions, and data-movement tools.
 ---
 
-# Build With WASM
+# Build With Rust WASIX
 
-Use the WASM SDK when an application needs the WebAssembly/WASIX runtime family.
-It is first-class and independent from native `liboliphaunt` SDKs.
+Use `oliphaunt-wasix` when Rust owns the WASIX host. This crate is separate
+from every native SDK and from the WASIX TypeScript binding.
 
-<Callout type="info" title="WASM is its own runtime family">
-Use this guide for the WASM/WASIX runtime. Native desktop and mobile apps use the
-native SDK pages when they embed `liboliphaunt`.
+<Callout type="info" title="This is the Rust binding">
+Browser and Node TypeScript applications use [`@oliphaunt/wasix`](./browser-typescript). The Rust
+and TypeScript bindings consume the portable WASIX runtime family, but they do not
+promise the same public API.
 </Callout>
 
-<SdkGuideSummary id="wasm" />
+<SdkGuideSummary id="wasix-rust" />
 
 <Steps>
 <Step>
 
 ### Install
 
-Install the WASM package when your application targets a WASIX host. The Rust
-crate is the API surface; package-manager-resolved WASIX runtime artifacts are
-the release boundary for consumer applications.
+Add the Rust binding. The package resolves its matching portable runtime and
+host AOT artifacts; application code does not configure archive URLs.
 
-```toml
-[dependencies]
-oliphaunt-wasix = "0.1"
+```sh
+cargo add oliphaunt-wasix
 ```
 
 </Step>
@@ -34,8 +33,8 @@ oliphaunt-wasix = "0.1"
 
 ### Open and query
 
-Create the WASM database handle, choose storage, run SQL, and close it when the
-app no longer needs the runtime.
+Omitting storage opens a fresh in-memory database initialized from the packaged
+template.
 
 <!-- oliphaunt-snippet: oliphaunt-wasix -->
 
@@ -43,12 +42,11 @@ app no longer needs the runtime.
 use oliphaunt_wasix::Oliphaunt;
 
 fn main() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().temporary().open()?;
+    let mut database = Oliphaunt::open()?;
+    let result = database.query("SELECT 1::text AS value", &[], None)?;
 
-    let rows = db.query("SELECT 1::text AS value", &[], None)?;
-    let value = rows.rows[0]["value"].as_str();
-
-    db.close()?;
+    assert_eq!(result.rows[0]["value"].as_str(), Some("1"));
+    database.close()?;
     Ok(())
 }
 ```
@@ -58,81 +56,105 @@ fn main() -> anyhow::Result<()> {
 
 ### Create app data
 
-Use the WASM API for local SQL work in supported WASIX hosts:
+Use ordinary PostgreSQL SQL and parameterized queries:
 
 ```rust
-db.query(
-    r#"
-    CREATE TABLE IF NOT EXISTS notes (
-        id bigserial PRIMARY KEY,
-        title text NOT NULL,
-        body text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-    )
-    "#,
-    &[],
+use serde_json::json;
+
+database.exec(
+    "CREATE TABLE IF NOT EXISTS notes (id bigserial PRIMARY KEY, title text NOT NULL)",
+    None,
+)?;
+database.query(
+    "INSERT INTO notes (title) VALUES ($1)",
+    &[json!("First note")],
     None,
 )?;
 
-db.query(
-    "INSERT INTO notes (title, body) VALUES ('First note', 'Stored in a WASM PostgreSQL root')",
+let notes = database.query(
+    "SELECT id, title FROM notes ORDER BY id DESC LIMIT 20",
     &[],
     None,
 )?;
-
-let notes = db.query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20", &[], None)?;
 ```
-
-Use dump/restore when moving data between WASM hosts or across runtime
-families.
 
 </Step>
 <Step>
 
 ### Configure
 
-Configure persistent or temporary storage, runtime mode, durability, and
-import/export paths through the WASM API.
+Select persistence only when the application needs it:
+
+```rust
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
+
+let database = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./app-data/main".into()))
+    .open()?;
+```
+
+`DatabaseStorage::Memory` is the default. `Directory` retains a caller-owned
+host directory, `ApplicationData` resolves platform app-data storage, and
+`TemporaryDirectory` creates a real disposable host directory. Initialization
+is a separate choice through `DatabaseInitialization`.
 
 </Step>
 <Step>
 
 ### Choose a mode
 
-WASM runtime behavior differs from native runtime behavior. Use the runtime page
-for storage, proxy/server compatibility, and host persistence details.
+Use `Oliphaunt` for direct Rust calls. Use `OliphauntServer` only when an
+existing PostgreSQL client library needs a local connection URL. These are Rust
+WASIX APIs, not aliases for native direct, broker, or server modes.
 
 </Step>
 <Step>
 
 ### Handle lifecycle
 
-Persistent roots are locked while open. A second open against the same root
-returns a lock error so one runtime owns the directory at a time.
+Close the database explicitly. Persistent directories have exclusive ownership:
+a second direct or server open against the same directory returns a lock error
+instead of starting another backend.
 
 </Step>
 <Step>
 
 ### Select extensions
 
-Install exact WASIX extension packages for the SQL extensions your app uses. The
-base runtime package does not include optional extension payloads.
+Enable only the exact Cargo features the application uses, then select the
+matching typed extension value on the builder. Optional extension payloads are
+not part of the core runtime.
+
+```toml
+[dependencies]
+oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
+```
+
+```rust
+use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
+
+let database = Oliphaunt::builder().extension(PGTAP).open()?;
+```
 
 </Step>
 <Step>
 
 ### Back up, dump, and restore
 
-Use SDK APIs for backup/restore and dump/restore flows. Prefer dump/restore when
-moving data across runtimes or versions.
+Use `backup()` or `try_clone()` for same-version physical copies. Enable
+the crate's `tools` feature and use `dump_sql()` for portable logical exports
+and version upgrades. Choose the backup format by its restore destination, and
+keep both flows behind the Rust binding rather than copying a live PostgreSQL
+directory.
 
 </Step>
 </Steps>
 
-<SdkGuideProof id="wasm" />
+<SdkGuideProof id="wasix-rust" />
 
 ## Troubleshooting
 
-Check storage backend behavior, runtime asset availability, target AOT asset
-selection, extension artifacts, host capability errors, and SQLSTATE-bearing
-PostgreSQL errors.
+Check the selected storage and initialization policy, the exact runtime/AOT
+asset pair, enabled extension features, directory ownership, and SQLSTATE-bearing
+PostgreSQL errors. Browser Worker, Node worker-thread, IndexedDB, and recovery behavior are
+documented on the [WASIX TypeScript page](./browser-typescript).

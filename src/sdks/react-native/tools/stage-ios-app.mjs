@@ -2255,9 +2255,10 @@ async function validateBaseResources(root) {
   requireProperty(manifest, "schema", "oliphaunt-runtime-resources-v1", manifestFile);
   requireProperty(manifest, "layout", "postgres-runtime-files-v1", manifestFile);
   const createable = csv(manifest.get("extensions"), `${manifestFile} extensions`);
-  const selected = manifest.has("selectedExtensions")
-    ? csv(manifest.get("selectedExtensions"), `${manifestFile} selectedExtensions`)
-    : createable;
+  if (!manifest.has("selectedExtensions")) {
+    fail(`${manifestFile} is missing selectedExtensions`);
+  }
+  const selected = csv(manifest.get("selectedExtensions"), `${manifestFile} selectedExtensions`);
   if (selected.length > 0 || createable.length > 0) {
     fail("base React Native iOS carrier is not extension-free");
   }

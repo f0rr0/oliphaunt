@@ -1,13 +1,14 @@
 ---
-title: WASIX Runtime Guide
-description: Understand WASM runtime modes, persistence choices, root locking, startup, supported targets, and server compatibility.
+title: Rust WASIX Runtime Guide
+description: Understand Rust WASIX storage, initialization, locking, startup, supported hosts, and server compatibility.
 ---
 
-# WASIX Runtime Guide
+# Rust WASIX Runtime Guide
 
-`oliphaunt-wasix` is the WASM/WASIX runtime family. It shares Oliphaunt's public
-concepts with native SDKs while using WASIX runtime assets, WASM host targets,
-and WebAssembly-specific persistence behavior.
+`oliphaunt-wasix` is the Rust host for the portable WASIX runtime. Its storage,
+assets, extensions, and server APIs are separate from native SDKs. The
+[WASIX TypeScript binding](./browser-typescript) is another WASIX host with a
+smaller worker-native API for browsers and Node.js.
 
 <WasmRuntimeMap />
 
@@ -23,47 +24,49 @@ Use `OliphauntServer` when a library expects a PostgreSQL URI:
 
 - SQLx, Diesel, SeaORM, `tokio-postgres`, or cross-language clients;
 - local TCP or Unix socket listener;
-- compatibility with existing Postgres clients inside the selected WASM host.
+- compatibility with existing Postgres clients inside the selected WASIX host.
 
-Both modes share the same embedded backend for a root.
+Both modes share the same embedded WASIX backend model.
 
-## Persistence Modes
+## Storage and initialization
 
-Direct and server builders expose the same root choices:
+Direct and server builders expose the same storage choices:
 
-- `path(...)` for a persistent database under an explicit directory;
-- `app(...)` or `app_id(...)` for a persistent database under app data;
-- `temporary()` for a cached temporary database;
-- `fresh_temporary()` for a brand-new cluster path.
+- `DatabaseStorage::Memory` is the default and keeps PGDATA in Wasmer's memory
+  filesystem;
+- `Directory(path)` is caller-owned persistent host storage;
+- `ApplicationData(identity)` resolves a retained platform app-data directory;
+- `TemporaryDirectory` allocates and owns a disposable host directory.
 
-Choose `temporary()` for most tests. Choose `fresh_temporary()` when the test
-needs a brand-new cluster and can pay the slower startup path.
+Storage says where mutable files live. `DatabaseInitialization` independently
+chooses the packaged template, a fresh WASIX `initdb`, or a compatible physical
+archive. Reopening initialized persistent storage validates and reuses it.
 
 ## Operational Limits
 
-The WASM runtime model owns one embedded backend per open root:
+The WASIX runtime model owns one embedded backend per open database:
 
 - one `Oliphaunt` instance owns one embedded backend;
 - one `OliphauntServer` exposes one embedded backend;
 - downstream client pools use one connection;
 - server mode gives local PostgreSQL client compatibility inside the selected
-  WASM host.
+  WASIX host.
 
 Generated server URLs include `sslmode=disable`. `CancelRequest` and normal
 startup packets are supported. The server-compatible API still runs against the
-embedded WASM backend for that root.
+embedded WASIX backend for that database.
 
-## Root Locking And Lifecycle
+## Persistent-storage locking and lifecycle
 
-Persistent roots are locked while open. A second direct or server open against
-the same root returns a lock error so one runtime owns the directory at a time.
+Persistent directories are locked while open. A second direct or server open
+against the same directory returns a lock error so one runtime owns it at a time.
 
 Close database clients before calling `OliphauntServer::shutdown()`. The server
 thread waits for active client work to finish before exiting.
 
-Use `dump_data_dir()`, `load_data_dir_archive(...)`, or `try_clone()` for a
-same-version physical clone. Use logical dumps through `pg_dump` for portable
-exports and upgrades.
+Use `backup()` and initialize a new database with
+`DatabaseInitialization::PhysicalArchive(bytes)`, or use `try_clone()`, for a
+same-version physical clone. Use logical dumps through `pg_dump` for portable exports and upgrades.
 
 ## Startup And Preload
 
@@ -102,12 +105,16 @@ Release assets are built for:
 - Linux arm64;
 - Windows x64.
 
-Read capabilities and package reports before enabling target-specific UI. A host
-target needs matching shipped runtime assets for the WASM runtime to open.
+Read `engine_capabilities()` and package reports before enabling target-specific
+UI. A host target needs matching shipped runtime assets for the WASIX runtime
+to open.
 
-Browser, worker, and mobile app topics belong to their platform SDK pages.
-`oliphaunt-wasix` is the Rust package for local embedded and desktop/server WASM
-hosts.
+`oliphaunt-wasix` is the Rust host package. The separate
+[`@oliphaunt/wasix` TypeScript binding](./browser-typescript) runs the portable
+guest in a browser module Worker or Node worker thread and defaults to memory.
+IndexedDB is a selective browser-only adapter; Node directory persistence is
+not exposed. Shared runtime carriers do not imply API parity, and the package
+does not route through the TypeScript product's native runtime.
 
 ## Server-Compatible Access
 

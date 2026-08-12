@@ -76,7 +76,7 @@ Restore unpacks into a staging directory first, validates required PostgreSQL
 files, validates archive/root metadata, applies regular-file and directory
 permissions, then publishes the staged root according to the selected restore
 target policy. Existing targets must be empty unless replacement was explicitly
-requested, and restore target paths must not be empty or contain NUL bytes.
+requested, and restore destination paths must not be empty or contain NUL bytes.
 
 The required restored files are:
 

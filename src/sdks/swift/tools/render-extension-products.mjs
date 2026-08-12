@@ -14,7 +14,7 @@ import {
 } from "./extension-resource-inventory.mjs";
 
 const PREFIX = "render-extension-products.mjs";
-const INPUT_SCHEMA = "oliphaunt-swiftpm-extension-input-v1";
+const SELECTION_SCHEMA = "oliphaunt-swiftpm-extension-selection-v1";
 const OUTPUT_SCHEMA = "oliphaunt-swiftpm-extension-products-v1";
 const NATIVE_RUNTIME_PRODUCT = "liboliphaunt-native";
 const OUTPUT_OWNER_MARKER = ".oliphaunt-swiftpm-extension-products";
@@ -37,8 +37,8 @@ function fail(message) {
 
 function usage() {
   console.error(
-    `usage: ${PREFIX} (--input <selection.json> | [--carrier <base-carrier.json>] ` +
-      `[--extension-carrier <exact-extension-carrier.json> ...] --extensions <csv>) ` +
+    `usage: ${PREFIX} [--carrier <base-carrier.json>] ` +
+      `[--extension-carrier <exact-extension-carrier.json> ...] --extensions <csv> ` +
       `--output-dir <directory> [--cache-dir <directory>] [--offline] [--allow-file-urls] ` +
       `[--local-binary-targets] ` +
       `[--base-package-url <git-url>] [--base-package-version <semver>] ` +
@@ -60,7 +60,7 @@ function parseArgs(argv) {
       else args.offline = true;
       continue;
     }
-    if (!["--input", "--carrier", "--extension-carrier", "--extensions", "--cache-dir", "--output-dir", "--base-package-path", "--base-package-url", "--base-package-version"].includes(arg)) {
+    if (!["--carrier", "--extension-carrier", "--extensions", "--cache-dir", "--output-dir", "--base-package-path", "--base-package-url", "--base-package-version"].includes(arg)) {
       usage();
       fail(`unknown argument ${arg}`);
     }
@@ -69,7 +69,6 @@ function parseArgs(argv) {
       fail(`${arg} requires a value`);
     }
     index += 1;
-    if (arg === "--input") args.input = value;
     if (arg === "--carrier") args.carrier = value;
     if (arg === "--extension-carrier") args.extensionCarriers.push(value);
     if (arg === "--extensions") args.extensions = value.split(",").map((row) => row.trim()).filter(Boolean);
@@ -79,11 +78,11 @@ function parseArgs(argv) {
     if (arg === "--base-package-url") args.basePackageUrl = value;
     if (arg === "--base-package-version") args.basePackageVersion = value;
   }
-  if (!args.outputDir || (args.input && (args.carrier || args.extensionCarriers.length > 0 || args.extensions?.length)) || (!args.input && !args.extensions?.length)) {
+  if (!args.outputDir || !args.extensions?.length) {
     usage();
-    fail("choose --input, or --extensions with optional base/extension carriers, and provide --output-dir");
+    fail("provide --extensions and --output-dir; carrier options are optional");
   }
-  if (!args.input && !args.carrier) args.carrier = DEFAULT_CARRIER;
+  if (!args.carrier) args.carrier = DEFAULT_CARRIER;
   return args;
 }
 
@@ -375,15 +374,15 @@ function validateNativeDependencies(
   return dependencies;
 }
 
-function validateSelection(
+export function validateSelection(
   input,
   inputDirectory,
   { allowFileUrls = false, localBinaryTargets = false } = {},
 ) {
   const root = object(input, "input");
   exactKeys(root, ["basePackage", "extensions", "nativeRuntime", "schema"], "input");
-  if (root.schema !== INPUT_SCHEMA) {
-    fail(`input schema must be ${INPUT_SCHEMA}`);
+  if (root.schema !== SELECTION_SCHEMA) {
+    fail(`input schema must be ${SELECTION_SCHEMA}`);
   }
   if (!Array.isArray(root.extensions) || root.extensions.length === 0) {
     fail("input extensions must be a non-empty selected extension array");
@@ -1117,7 +1116,7 @@ export async function publishCreateOnly(staging, output, entries, onClaim = () =
   );
 }
 
-async function writeGenerated(
+export async function writeGenerated(
   selection,
   outputDir,
   basePackagePath,
@@ -1164,32 +1163,22 @@ async function writeGenerated(
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  let input;
-  let inputDirectory;
-  let carrierCacheDir;
-  let inputFile;
-  if (args.input) {
-    inputFile = path.resolve(args.input);
-    input = JSON.parse(await fs.readFile(inputFile, "utf8"));
-    inputDirectory = path.dirname(inputFile);
-  } else {
-    const toolDirectory = path.dirname(fileURLToPath(import.meta.url));
-    const version = args.basePackageVersion ??
-      (await fs.readFile(path.resolve(toolDirectory, "../VERSION"), "utf8")).trim();
-    carrierCacheDir = args.cacheDir ?? path.join(os.homedir(), ".cache", "oliphaunt", "swift-extensions");
-    input = await resolveSwiftCarrierSelection({
-      allowFileUrls: args.allowFileUrls,
-      basePackageUrl: args.basePackageUrl,
-      basePackageVersion: version,
-      cacheDir: carrierCacheDir,
-      carrierFile: path.resolve(args.carrier),
-      extensionCarrierFiles: args.extensionCarriers.map((file) => path.resolve(file)),
-      extensions: args.extensions,
-      offline: args.offline,
-      localBinaryTargets: args.localBinaryTargets,
-    });
-    inputDirectory = process.cwd();
-  }
+  const toolDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const version = args.basePackageVersion ??
+    (await fs.readFile(path.resolve(toolDirectory, "../VERSION"), "utf8")).trim();
+  const carrierCacheDir = args.cacheDir ?? path.join(os.homedir(), ".cache", "oliphaunt", "swift-extensions");
+  const input = await resolveSwiftCarrierSelection({
+    allowFileUrls: args.allowFileUrls,
+    basePackageUrl: args.basePackageUrl,
+    basePackageVersion: version,
+    cacheDir: carrierCacheDir,
+    carrierFile: path.resolve(args.carrier),
+    extensionCarrierFiles: args.extensionCarriers.map((file) => path.resolve(file)),
+    extensions: args.extensions,
+    offline: args.offline,
+    localBinaryTargets: args.localBinaryTargets,
+  });
+  const inputDirectory = process.cwd();
   const selection = validateSelection(input, inputDirectory, {
     allowFileUrls: args.allowFileUrls,
     localBinaryTargets: args.localBinaryTargets,
@@ -1218,7 +1207,6 @@ async function main() {
     args.localBinaryTargets,
     [
       { label: "working directory", mode: "containment", path: process.cwd() },
-      { label: "selection input", mode: "containment", path: inputFile },
       { label: "base carrier", mode: "containment", path: args.carrier },
       ...args.extensionCarriers.map((carrier) => ({
         label: "extension carrier",

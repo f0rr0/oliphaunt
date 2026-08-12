@@ -11,6 +11,12 @@ import {
   EXTENSION_AOT_PACKAGE_SUFFIXES,
   EXTENSION_PORTABLE_TARGET,
 } from "./wasix-cargo-artifact-contract.mjs";
+import { extensionNpmWasixPackageForProduct } from "./extension-registry-packages.mjs";
+import {
+  WASIX_RUNTIME_NPM_PACKAGE,
+  WASIX_RUNTIME_NPM_TARGET,
+  WASIX_RUNTIME_PRODUCT,
+} from "./wasix-runtime-npm-contract.mjs";
 
 export const PUBLICATION_CATALOG_SCHEMA = "oliphaunt-publication-catalog-v1";
 
@@ -81,6 +87,20 @@ function parseRegistryIdentity(raw, product, prefix) {
 }
 
 function carrierTarget(product, ecosystem, name) {
+  if (
+    product === WASIX_RUNTIME_PRODUCT
+    && ecosystem === "npm"
+    && name === WASIX_RUNTIME_NPM_PACKAGE
+  ) {
+    return WASIX_RUNTIME_NPM_TARGET;
+  }
+  if (
+    ecosystem === "npm"
+    && product.startsWith("oliphaunt-extension-")
+    && name === extensionNpmWasixPackageForProduct(product)
+  ) {
+    return EXTENSION_PORTABLE_TARGET;
+  }
   if (
     ecosystem === "cargo"
     && name.startsWith("oliphaunt-extension-")

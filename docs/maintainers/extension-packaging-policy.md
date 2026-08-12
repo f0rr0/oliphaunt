@@ -57,6 +57,28 @@ its declared dependencies. The publication catalog defines the stable
 identities and the frozen publication lock records the actual files. Only
 oversized crates.io payload parts may be generated dynamically.
 
+JavaScript package naming keeps the established native/default surface
+unsuffixed. For example, `@oliphaunt/extension-pgtap` remains the native npm
+facade and its native platform leaves retain names such as
+`@oliphaunt/extension-pgtap-linux-x64-gnu`. The portable WASIX leaf alone is
+named `@oliphaunt/extension-pgtap-wasix`; there is no parallel `-native`
+identity. The facade, native leaves, WASIX leaf, Cargo carriers, and release
+assets all share the owning extension product's exact packaging version, tag,
+and changelog.
+
+An npm WASIX leaf is host-neutral: browser and Node WASIX hosts consume the
+same portable carrier. Its ESM descriptor selects one exact SQL extension and
+contains the verified carrier closure required to materialize it. Contrib
+members use exact package subpaths so importing one member does not create an
+implicit selector group. Each extension product freezes its own archive
+identity and `oliphaunt-wasix-extension-install-v1` projection: dependencies,
+load order, lifecycle, installed files, compact module hashes, required core
+exports, and unresolved imports. The compatible host checks the carried bytes
+against that descriptor/install contract. The base runtime carrier deliberately
+ships a core-only manifest with `extensions: []`; it owns runtime support and
+core identity, not independently versioned extension metadata. Importing a
+carrier is not by itself a browser or Node support claim.
+
 Physical aggregate carriers use `oliphaunt-extension-bundle-v1`. Their
 manifest describes the immutable nested archives and compatibility contract;
 every `kind=runtime` member has `identity=null` and is uniquely located by its
@@ -129,7 +151,6 @@ use oliphaunt::{Extension, Oliphaunt};
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .temporary()
     .native_direct()
     .extension(Extension::Vector)
     .open()

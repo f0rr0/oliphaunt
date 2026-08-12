@@ -34,6 +34,7 @@ if [ -n "$extension_product" ]; then
 fi
 asset_root="$root/target/oliphaunt-wasix/assets"
 generated_metadata="$root/src/extensions/generated/wasix/extensions.json"
+built_manifest="$asset_root/manifest.json"
 default_out_dir="$root/target/extensions/wasix/release-assets/$target_id"
 if [ -n "$extension_product" ] && [ -z "${OLIPHAUNT_EXTENSION_PRODUCTS:-}" ]; then
   default_out_dir="$default_out_dir/$extension_product"
@@ -41,6 +42,7 @@ fi
 out_dir="${OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_DIR:-$default_out_dir}"
 
 [ -f "$generated_metadata" ] || fail "missing generated WASIX extension metadata: ${generated_metadata#$root/}"
+[ -f "$built_manifest" ] || fail "missing built WASIX asset manifest: ${built_manifest#$root/}"
 [ -d "$asset_root/extensions" ] || fail "missing WASIX extension asset directory: ${asset_root#$root/}/extensions"
 
 "$root/tools/dev/bun.sh" \
@@ -48,6 +50,7 @@ out_dir="${OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_DIR:-$default_out_dir}"
   --root "$root" \
   --asset-root "$asset_root" \
   --metadata "$generated_metadata" \
+  --manifest "$built_manifest" \
   --out-dir "$out_dir" \
   --target "$target_id" \
   --extension-products "$extension_products"

@@ -31,10 +31,9 @@ public struct OliphauntStartupGUC: Equatable, Sendable {
 public struct OliphauntCapabilities: Equatable, Sendable {
     public var mode: OliphauntEngineMode
     public var processIsolated: Bool
-    public var multiRoot: Bool
-    public var reopenable: Bool
-    public var sameRootLogicalReopen: Bool
-    public var rootSwitchable: Bool
+    public var multipleInstances: Bool
+    public var sameInstanceLogicalReopen: Bool
+    public var instanceSwitchable: Bool
     public var crashRestartable: Bool
     public var independentSessions: Bool
     public var maxClientSessions: Int
@@ -51,10 +50,9 @@ public struct OliphauntCapabilities: Equatable, Sendable {
     public init(
         mode: OliphauntEngineMode,
         processIsolated: Bool,
-        multiRoot: Bool = false,
-        reopenable: Bool? = nil,
-        sameRootLogicalReopen: Bool? = nil,
-        rootSwitchable: Bool? = nil,
+        multipleInstances: Bool = false,
+        sameInstanceLogicalReopen: Bool = false,
+        instanceSwitchable: Bool = false,
         crashRestartable: Bool = false,
         independentSessions: Bool,
         maxClientSessions: Int,
@@ -70,11 +68,9 @@ public struct OliphauntCapabilities: Equatable, Sendable {
     ) {
         self.mode = mode
         self.processIsolated = processIsolated
-        self.multiRoot = multiRoot
-        let effectiveReopenable = reopenable ?? processIsolated
-        self.reopenable = effectiveReopenable
-        self.sameRootLogicalReopen = sameRootLogicalReopen ?? (!processIsolated && effectiveReopenable)
-        self.rootSwitchable = rootSwitchable ?? processIsolated
+        self.multipleInstances = multipleInstances
+        self.sameInstanceLogicalReopen = sameInstanceLogicalReopen
+        self.instanceSwitchable = instanceSwitchable
         self.crashRestartable = crashRestartable
         self.independentSessions = independentSessions
         self.maxClientSessions = maxClientSessions
@@ -130,9 +126,8 @@ public enum OliphauntSDKSupport {
             OliphauntCapabilities(
                 mode: mode,
                 processIsolated: false,
-                reopenable: true,
-                sameRootLogicalReopen: true,
-                rootSwitchable: false,
+                sameInstanceLogicalReopen: true,
+                instanceSwitchable: false,
                 crashRestartable: false,
                 independentSessions: false,
                 maxClientSessions: 1
@@ -141,10 +136,9 @@ public enum OliphauntSDKSupport {
             OliphauntCapabilities(
                 mode: mode,
                 processIsolated: true,
-                multiRoot: true,
-                reopenable: true,
-                sameRootLogicalReopen: false,
-                rootSwitchable: true,
+                multipleInstances: true,
+                sameInstanceLogicalReopen: false,
+                instanceSwitchable: true,
                 crashRestartable: true,
                 independentSessions: false,
                 maxClientSessions: 1
@@ -153,9 +147,8 @@ public enum OliphauntSDKSupport {
             OliphauntCapabilities(
                 mode: mode,
                 processIsolated: true,
-                reopenable: true,
-                sameRootLogicalReopen: false,
-                rootSwitchable: true,
+                sameInstanceLogicalReopen: false,
+                instanceSwitchable: true,
                 crashRestartable: false,
                 independentSessions: true,
                 maxClientSessions: 32,
@@ -201,9 +194,14 @@ public enum OliphauntSDKSupport {
     }
 }
 
+public enum OliphauntDatabaseStorage: Equatable, Sendable {
+    case temporaryDirectory
+    case directory(URL)
+}
+
 public struct OliphauntConfiguration: Equatable, Sendable {
     public var mode: OliphauntEngineMode
-    public var root: URL?
+    public var storage: OliphauntDatabaseStorage
     public var durability: OliphauntDurability
     public var runtimeFootprint: OliphauntRuntimeFootprintProfile
     public var startupGUCs: [OliphauntStartupGUC]
@@ -213,7 +211,7 @@ public struct OliphauntConfiguration: Equatable, Sendable {
 
     public init(
         mode: OliphauntEngineMode = .nativeDirect,
-        root: URL? = nil,
+        storage: OliphauntDatabaseStorage = .temporaryDirectory,
         durability: OliphauntDurability = .balanced,
         runtimeFootprint: OliphauntRuntimeFootprintProfile = .balancedMobile,
         startupGUCs: [OliphauntStartupGUC] = [],
@@ -222,7 +220,7 @@ public struct OliphauntConfiguration: Equatable, Sendable {
         extensions: [String] = []
     ) {
         self.mode = mode
-        self.root = root
+        self.storage = storage
         self.durability = durability
         self.runtimeFootprint = runtimeFootprint
         self.startupGUCs = startupGUCs
@@ -270,18 +268,22 @@ func validateOliphauntStartupGUCs(_ gucs: [OliphauntStartupGUC]) throws {
     }
 }
 
-func validateOliphauntRoot(_ root: URL?, label: String) throws {
-    guard let root else {
+func validateOliphauntStorage(_ storage: OliphauntDatabaseStorage) throws {
+    guard case .directory(let directory) = storage else {
         return
     }
-    guard root.isFileURL else {
+    try validateOliphauntDirectory(directory, label: "database storage directory")
+}
+
+func validateOliphauntDirectory(_ directory: URL, label: String) throws {
+    guard directory.isFileURL else {
         throw OliphauntError.engine("\(label) must be a file URL")
     }
-    if root.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    if directory.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         throw OliphauntError.engine("\(label) must not be empty")
     }
-    if root.path.utf8.contains(0) ||
-        root.absoluteString.range(of: "%00", options: .caseInsensitive) != nil {
+    if directory.path.utf8.contains(0) ||
+        directory.absoluteString.range(of: "%00", options: .caseInsensitive) != nil {
         throw OliphauntError.engine("\(label) must not contain NUL bytes")
     }
 }
@@ -310,31 +312,31 @@ public struct OliphauntBackupArtifact: Equatable, Sendable {
     }
 }
 
-public enum OliphauntRestoreTargetPolicy: String, Sendable {
+public enum OliphauntRestoreDestinationPolicy: String, Sendable {
     case failIfExists
     case replaceExisting
 }
 
 public struct OliphauntRestoreRequest: Equatable, Sendable {
     public var artifact: OliphauntBackupArtifact
-    public var root: URL
-    public var targetPolicy: OliphauntRestoreTargetPolicy
+    public var destination: URL
+    public var destinationPolicy: OliphauntRestoreDestinationPolicy
 
     public init(
         artifact: OliphauntBackupArtifact,
-        root: URL,
-        targetPolicy: OliphauntRestoreTargetPolicy = .failIfExists
+        destination: URL,
+        destinationPolicy: OliphauntRestoreDestinationPolicy = .failIfExists
     ) {
         self.artifact = artifact
-        self.root = root
-        self.targetPolicy = targetPolicy
+        self.destination = destination
+        self.destinationPolicy = destinationPolicy
     }
 
     public func replaceExisting() -> OliphauntRestoreRequest {
         OliphauntRestoreRequest(
             artifact: artifact,
-            root: root,
-            targetPolicy: .replaceExisting
+            destination: destination,
+            destinationPolicy: .replaceExisting
         )
     }
 }
@@ -495,6 +497,7 @@ private actor OliphauntAsyncSerialGate {
 
 public actor OliphauntDatabase {
     private var session: (any OliphauntSession)?
+    private var closing = false
     private var activeTransactionToken: UInt64?
     private var nextTransactionToken: UInt64 = 1
     private var activeOperationCount: Int = 0
@@ -505,10 +508,10 @@ public actor OliphauntDatabase {
     }
 
     public static func open(
-        configuration: OliphauntConfiguration,
+        configuration: OliphauntConfiguration = .init(),
         engine: any OliphauntEngine = OliphauntDefaultEngine()
     ) async throws -> OliphauntDatabase {
-        try validateOliphauntRoot(configuration.root, label: "database root")
+        try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
         try validateOliphauntStartupGUCs(configuration.startupGUCs)
@@ -524,7 +527,7 @@ public actor OliphauntDatabase {
         _ request: OliphauntRestoreRequest,
         engine: any OliphauntEngine = OliphauntDefaultEngine()
     ) async throws -> URL {
-        try validateOliphauntRoot(request.root, label: "restore root")
+        try validateOliphauntDirectory(request.destination, label: "restore destination")
         guard request.artifact.format == .physicalArchive else {
             throw OliphauntError.engine(
                 "restore currently requires a physicalArchive artifact, got \(request.artifact.format.rawValue)"
@@ -587,7 +590,7 @@ public actor OliphauntDatabase {
     }
 
     public func checkpoint() async throws {
-        _ = try await execProtocolRaw(try OliphauntProtocol.simpleQuery("CHECKPOINT"), transactionToken: nil)
+        _ = try await execute("CHECKPOINT")
     }
 
     public func prepareForBackground(
@@ -632,10 +635,7 @@ public actor OliphauntDatabase {
     }
 
     public func resumeFromBackground() async throws {
-        _ = try await execProtocolRaw(
-            try OliphauntProtocol.simpleQuery("SELECT 1"),
-            transactionToken: nil
-        )
+        _ = try await execute("SELECT 1")
     }
 
     public func transaction<T: Sendable>(
@@ -650,14 +650,14 @@ public actor OliphauntDatabase {
         let transaction = OliphauntTransaction(database: self, token: token)
 
         do {
-            _ = try await execProtocolRaw(try OliphauntProtocol.simpleQuery("BEGIN"), transactionToken: token)
+            _ = try await transaction.execute("BEGIN")
             let result = try await body(transaction)
-            _ = try await execProtocolRaw(try OliphauntProtocol.simpleQuery("COMMIT"), transactionToken: token)
+            _ = try await transaction.execute("COMMIT")
             activeTransactionToken = nil
             return result
         } catch {
             do {
-                _ = try await execProtocolRaw(try OliphauntProtocol.simpleQuery("ROLLBACK"), transactionToken: token)
+                _ = try await transaction.execute("ROLLBACK")
             } catch {
                 // Preserve the original transaction failure; rollback is best-effort cleanup.
             }
@@ -674,20 +674,26 @@ public actor OliphauntDatabase {
         guard let closingSession = session else {
             return
         }
-        self.session = nil
-        activeTransactionToken = nil
+        guard !closing else {
+            throw OliphauntError.engine("database close is already in progress")
+        }
+        closing = true
         await operationGate.acquire()
         do {
             try await closingSession.close()
+            self.session = nil
+            activeTransactionToken = nil
+            closing = false
             await operationGate.release()
         } catch {
+            closing = false
             await operationGate.release()
             throw error
         }
     }
 
     private func liveSession() throws -> any OliphauntSession {
-        guard let session else {
+        guard let session, !closing else {
             throw OliphauntError.databaseClosed
         }
         return session

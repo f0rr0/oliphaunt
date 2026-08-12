@@ -352,6 +352,12 @@
       "component": "oliphaunt-wasix-rust",
       "package-name": "oliphaunt-wasix",
       "changelog-path": "CHANGELOG.md"
+    },
+    "src/bindings/wasix-ts": {
+      "release-type": "node",
+      "component": "oliphaunt-wasix-ts",
+      "package-name": "@oliphaunt/wasix",
+      "changelog-path": "CHANGELOG.md"
     }
   }
 }

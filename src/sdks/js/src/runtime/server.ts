@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { createServer } from 'node:net';
@@ -99,10 +99,9 @@ export function serverCapabilities(
   return {
     engine: 'nativeServer',
     processIsolated: true,
-    multiRoot: false,
-    reopenable: true,
-    sameRootLogicalReopen: false,
-    rootSwitchable: true,
+    multipleInstances: false,
+    sameInstanceLogicalReopen: false,
+    instanceSwitchable: true,
     crashRestartable: false,
     independentSessions: true,
     maxClientSessions,
@@ -125,14 +124,14 @@ class ServerHandle {
   constructor(
     readonly child: ManagedChild,
     readonly client: PostgresWireClient,
-    readonly root: string,
+    readonly instanceDirectory: string,
     readonly pgdata: string,
     readonly pgCtl: string | undefined,
     readonly pgDump: string | undefined,
     readonly socketDir: string | undefined,
     readonly connectionString: string,
     readonly maxClientSessions: number,
-    readonly temporary: boolean,
+    readonly temporaryDirectory: boolean,
   ) {}
 
   capabilities(): EngineCapabilities {
@@ -189,8 +188,8 @@ class ServerHandle {
       await this.child.wait();
     }
     await removeTree(this.socketDir);
-    if (this.temporary) {
-      await removeTree(this.root);
+    if (this.temporaryDirectory) {
+      await removeTree(this.instanceDirectory);
     }
   }
 
@@ -238,14 +237,14 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     return new ServerHandle(
       child,
       client,
-      config.root,
+      config.instanceDirectory,
       config.pgdata,
       pgCtl,
       pgDump,
       socketDir,
       serverConnectionString(config.username, config.database, port),
       config.maxClientSessions,
-      config.temporary,
+      config.temporaryDirectory,
     );
   } catch (error) {
     if (child !== undefined) {
@@ -253,19 +252,24 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       await child.wait();
     }
     await removeTree(socketDir);
-    if (config.temporary) {
-      await removeTree(config.root);
+    if (config.temporaryDirectory) {
+      await removeTree(config.instanceDirectory);
     }
     throw error;
   }
 }
 
-async function initializeServerDataDir(
+export async function initializeServerDataDir(
   config: NormalizedOpenConfig,
   toolDirectory: string,
 ): Promise<void> {
   if (await isFile(join(config.pgdata, 'PG_VERSION'))) {
     return;
+  }
+  if (await directoryHasEntries(config.pgdata)) {
+    throw new Error(
+      `native server PGDATA exists without PG_VERSION and is not empty: ${config.pgdata}`,
+    );
   }
   const initdb = await optionalTool(toolDirectory, 'initdb');
   if (initdb === undefined) {
@@ -287,6 +291,17 @@ async function initializeServerDataDir(
     ],
     await nativeServerRuntimeEnv(toolDirectory),
   );
+}
+
+async function directoryHasEntries(path: string): Promise<boolean> {
+  try {
+    return (await readdir(path)).length > 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function postgresArgs(

@@ -139,17 +139,17 @@ class NativeDirectEngineTest {
         )
         assertTrue(support[0].available)
         assertEquals(1, support[0].capabilities.maxClientSessions)
-        assertFalse(support[0].capabilities.multiRoot)
-        assertTrue(support[0].capabilities.sameRootLogicalReopen)
-        assertFalse(support[0].capabilities.rootSwitchable)
+        assertFalse(support[0].capabilities.multipleInstances)
+        assertTrue(support[0].capabilities.sameInstanceLogicalReopen)
+        assertFalse(support[0].capabilities.instanceSwitchable)
         assertFalse(support[0].capabilities.crashRestartable)
         assertTrue(support[0].capabilities.supportsBackupFormat(BackupFormat.PhysicalArchive))
-        assertTrue(support[1].capabilities.multiRoot)
-        assertTrue(support[1].capabilities.rootSwitchable)
+        assertTrue(support[1].capabilities.multipleInstances)
+        assertTrue(support[1].capabilities.instanceSwitchable)
         assertTrue(support[1].capabilities.crashRestartable)
         assertTrue(support[1].unavailableReason.orEmpty().contains("broker"))
-        assertFalse(support[2].capabilities.multiRoot)
-        assertTrue(support[2].capabilities.rootSwitchable)
+        assertFalse(support[2].capabilities.multipleInstances)
+        assertTrue(support[2].capabilities.instanceSwitchable)
         assertFalse(support[2].capabilities.crashRestartable)
         assertTrue(support[2].unavailableReason.orEmpty().contains("server"))
     }
@@ -167,7 +167,7 @@ class NativeDirectEngineTest {
             val config =
                 OliphauntConfig(
                     mode = EngineMode.NativeDirect,
-                    root = nativeTestRoot("oliphaunt-direct"),
+                    storage = DatabaseStorage.Directory(nativeTestRoot("oliphaunt-direct")),
                     durability = DurabilityProfile.FastDev,
                 )
             val database =
@@ -220,17 +220,17 @@ class NativeDirectEngineTest {
                 assertEquals(BackupFormat.PhysicalArchive, archive.format)
                 assertTrue(archive.bytes.containsAscii("backup_label"), "missing backup_label in physical archive")
 
-                val restoredRoot = "${env("TMPDIR") ?: "/tmp"}/oliphaunt-restore-${getpid()}"
-                val restored =
+                val restoreDestination = "${env("TMPDIR") ?: "/tmp"}/oliphaunt-restore-${getpid()}"
+                val restoredDestination =
                     OliphauntDatabase.restore(
                         RestoreRequest(
                             artifact = archive,
-                            root = restoredRoot,
+                            destination = restoreDestination,
                         ).replaceExisting(),
                     )
-                assertEquals(restoredRoot, restored)
-                assertTrue(fileExists("$restoredRoot/pgdata/PG_VERSION"), "missing restored PG_VERSION")
-                assertTrue(fileExists("$restoredRoot/pgdata/backup_label"), "missing restored backup_label")
+                assertEquals(restoreDestination, restoredDestination)
+                assertTrue(fileExists("$restoreDestination/pgdata/PG_VERSION"), "missing restored PG_VERSION")
+                assertTrue(fileExists("$restoreDestination/pgdata/backup_label"), "missing restored backup_label")
 
                 database.close()
 

@@ -539,14 +539,14 @@ describe("canonical publication catalog", () => {
 
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
-    expect(catalog.products).toHaveLength(17);
-    expect(catalog.carriers).toHaveLength(186);
+    expect(catalog.products).toHaveLength(18);
+    expect(catalog.carriers).toHaveLength(196);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
-    }), {})).toEqual({ cargo: 103, npm: 59, maven: 23, jsr: 1 });
+    }), {})).toEqual({ cargo: 103, npm: 69, maven: 23, jsr: 1 });
     expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
-    expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(17);
+    expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);
     expect(catalog.carriers.every((carrier) => carrier.declared && carrier.product && carrier.version)).toBe(true);
   });
@@ -1135,7 +1135,6 @@ describe("publication artifact discovery and freezing", () => {
       "release-input:render-extension-products.mjs",
       "release-input:swift-carrier-resolver.mjs",
       "release-input:swiftpm-extension-consumer-fixture",
-      "release-input:swiftpm-extension-input.schema.json",
       "release-input:swiftpm-release-tree",
     ]);
     expect(() => assertLockedProductArtifacts(

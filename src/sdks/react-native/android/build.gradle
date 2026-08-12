@@ -14,7 +14,6 @@ import java.io.FileFilter
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.util.Locale
 import java.util.Properties
 
@@ -142,8 +141,6 @@ def packagedAndroidLinkEvidenceFile = (
   oliphauntProperty("oliphauntAndroidLinkEvidenceFile")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_LINK_EVIDENCE_FILE")
 )?.toString()
-def explicitPackagedRuntimeDir = (oliphauntProperty("oliphauntRuntimeDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_DIR"))?.toString()
-def explicitPackagedTemplatePgdataDir = (oliphauntProperty("oliphauntTemplatePgdataDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_TEMPLATE_PGDATA_DIR"))?.toString()
 def explicitPackagedExtensionsRaw = (oliphauntProperty("oliphauntExtensions") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSIONS"))?.toString()
 def explicitMobileStaticModulesRaw = (
   oliphauntProperty("oliphauntMobileStaticModules")
@@ -167,15 +164,6 @@ def runtimeResourcesRoot = {
   return nested
 }
 
-def runtimeResourceFiles = { String packageName ->
-  def root = runtimeResourcesRoot()
-  if (root == null) {
-    return null
-  }
-  def files = new File(new File(root, packageName), "files")
-  return files.isDirectory() ? files.absolutePath : null
-}
-
 def runtimeResourceManifestValue = { String packageName, String key ->
   def root = runtimeResourcesRoot()
   if (root == null) {
@@ -190,12 +178,9 @@ def runtimeResourceManifestValue = { String packageName, String key ->
   return properties.getProperty(key)
 }
 
-def packagedRuntimeDir = runtimeResourceFiles("runtime") ?: explicitPackagedRuntimeDir
-def packagedTemplatePgdataDir = runtimeResourceFiles("template-pgdata") ?: explicitPackagedTemplatePgdataDir
 def packagedExtensionsRaw =
   explicitPackagedExtensionsRaw
     ?: runtimeResourceManifestValue("runtime", "selectedExtensions")
-    ?: runtimeResourceManifestValue("runtime", "extensions")
 def packagedMobileStaticModulesRaw = explicitMobileStaticModulesRaw ?: runtimeResourceManifestValue("runtime", "nativeModuleStems")
 def packagedStaticRegistrySource = {
   def relative = runtimeResourceManifestValue("runtime", "mobileStaticRegistrySource")
@@ -282,12 +267,6 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
   abstract Property<String> getRuntimeResourcesDirPath()
 
   @Input
-  abstract Property<String> getRuntimeDirPath()
-
-  @Input
-  abstract Property<String> getTemplatePgdataDirPath()
-
-  @Input
   abstract ListProperty<String> getSelectedExtensions()
 
   @Input
@@ -320,38 +299,28 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     output.mkdirs()
 
     String runtimeResourcesPath = runtimeResourcesDirPath.get()
-    if (runtimeResourcesPath != null && !runtimeResourcesPath.isBlank()) {
-      File sourceRuntimeResourcesRoot = runtimeResourcesRoot(new File(runtimeResourcesPath))
-      if (!sourceRuntimeResourcesRoot.isDirectory()) {
-        throw new GradleException("Oliphaunt React Native Android runtime resources are not a Oliphaunt resource root: ${runtimeResourcesPath}")
+    if (runtimeResourcesPath == null || runtimeResourcesPath.isBlank()) {
+      if (!selectedExtensions.get().isEmpty() || !mobileStaticModuleStems.get().isEmpty()) {
+        throw new GradleException(
+          "Oliphaunt React Native Android extension selection requires " +
+            "-PoliphauntRuntimeResourcesDir=<runtime-resource output>"
+        )
       }
-      validateRuntimeResourcesSchema(sourceRuntimeResourcesRoot)
-      copyTree(sourceRuntimeResourcesRoot.toPath(), new File(output, "oliphaunt").toPath(), ["static-registry/archives"] as Set<String>)
-      validateSelectedExtensionFiles(
-        sourceRuntimeResourcesRoot,
-        new File(output, "oliphaunt/runtime/files"),
-        selectedExtensions.get(),
-        mobileStaticModuleStems.get(),
-        generatedExtensionMetadataBySqlName()
-      )
       return
     }
 
-    writeAssetPackage(
-      "runtime",
-      "postgres-runtime-files-v1",
-      blankToNull(runtimeDirPath.get()),
+    File sourceRuntimeResourcesRoot = runtimeResourcesRoot(new File(runtimeResourcesPath))
+    if (!sourceRuntimeResourcesRoot.isDirectory()) {
+      throw new GradleException("Oliphaunt React Native Android runtime resources are not a Oliphaunt resource root: ${runtimeResourcesPath}")
+    }
+    validateRuntimeResourcesSchema(sourceRuntimeResourcesRoot)
+    copyTree(sourceRuntimeResourcesRoot.toPath(), new File(output, "oliphaunt").toPath(), ["static-registry/archives"] as Set<String>)
+    validateSelectedExtensionFiles(
+      sourceRuntimeResourcesRoot,
+      new File(output, "oliphaunt/runtime/files"),
       selectedExtensions.get(),
       mobileStaticModuleStems.get(),
-      output
-    )
-    writeAssetPackage(
-      "template-pgdata",
-      "postgres-template-pgdata-v1",
-      blankToNull(templatePgdataDirPath.get()),
-      [],
-      [],
-      output
+      generatedExtensionMetadataBySqlName()
     )
   }
 
@@ -378,94 +347,12 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
       if (schema != "oliphaunt-runtime-resources-v1") {
         throw new GradleException("Oliphaunt React Native Android runtime resources ${name} manifest has unsupported schema '${schema.isEmpty() ? "<missing>" : schema}'; expected oliphaunt-runtime-resources-v1")
       }
-    }
-  }
-
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value
-  }
-
-  private void writeAssetPackage(
-    String name,
-    String layout,
-    String sourcePath,
-    List<String> requestedExtensions,
-    List<String> mobileStaticModuleStems,
-    File output
-  ) {
-    if (sourcePath == null || sourcePath.isBlank()) {
-      if (!requestedExtensions.isEmpty()) {
-        throw new GradleException("Oliphaunt Android extensions require -PoliphauntRuntimeDir=<postgres-install-root>")
-      }
-      return
-    }
-    File source = new File(sourcePath)
-    if (!source.isDirectory()) {
-      throw new GradleException("Oliphaunt Android ${name} assets source is not a directory: ${source}")
-    }
-    if (!mobileStaticModuleStems.isEmpty()) {
-      throw new GradleException(
-        "Oliphaunt React Native Android split runtime packaging cannot declare mobile static module stems. " +
-          "Use -PoliphauntRuntimeResourcesDir=<runtime-resource output> from " +
-          "`oliphaunt-resources --mobile-static-module ...` so the runtime resources include the generated static-registry source."
-      )
-    }
-    File packageDir = new File(output, "oliphaunt/${name}")
-    File filesDir = new File(packageDir, "files")
-    copyTree(source.toPath(), filesDir.toPath())
-    Map<String, Map<String, Object>> metadataBySqlName = generatedExtensionMetadataBySqlName()
-    List<String> extensions = resolveExtensionSelection(requestedExtensions, metadataBySqlName)
-    validateSelectedExtensionFiles(null, filesDir, extensions, mobileStaticModuleStems, metadataBySqlName)
-    List<String> createableExtensions = extensions.findAll { extension ->
-      Map<String, Object> metadata = generatedExtensionMetadataRow(extension, metadataBySqlName)
-      if (!(metadata["creates-extension"] instanceof Boolean)) {
+      if (!properties.containsKey("selectedExtensions")) {
         throw new GradleException(
-          "Oliphaunt React Native Android extension '${extension}' must declare canonical creates-extension metadata"
+          "Oliphaunt React Native Android runtime resources ${name} manifest is missing required selectedExtensions property"
         )
       }
-      return metadata["creates-extension"] == true
     }
-    List<String> nativeModuleStems = nativeModuleStems(extensions, metadataBySqlName)
-    Set<String> registeredModuleStems = new TreeSet<>(mobileStaticModuleStems)
-    Set<String> selectedModuleStems = new TreeSet<>(nativeModuleStems)
-    Set<String> unknownRegisteredStems = new TreeSet<>(registeredModuleStems)
-    unknownRegisteredStems.removeAll(selectedModuleStems)
-    if (!unknownRegisteredStems.isEmpty()) {
-      throw new GradleException(
-        "Oliphaunt React Native Android mobile static module stem(s) were not selected by these runtime resources: ${unknownRegisteredStems.join(",")}"
-      )
-    }
-    List<String> registeredMobileExtensions = mobileStaticRegistryRegisteredExtensions(
-      extensions,
-      registeredModuleStems,
-      metadataBySqlName
-    )
-    List<String> pendingMobileExtensions = mobileStaticRegistryPendingExtensions(
-      extensions,
-      registeredModuleStems,
-      metadataBySqlName
-    )
-    String mobileStaticRegistryState = nativeModuleStems.isEmpty()
-      ? "not-required"
-      : (pendingMobileExtensions.isEmpty() ? "complete" : "pending")
-    File manifest = new File(packageDir, "manifest.properties")
-    manifest.parentFile.mkdirs()
-    manifest.text = [
-      "schema=oliphaunt-runtime-resources-v1",
-      "cacheKey=${sha256Directory(source)}",
-      "layout=${layout}",
-      "source=${source.name}",
-      "selectedExtensions=${extensions.join(",")}",
-      "extensions=${createableExtensions.join(",")}",
-      "runtimeFeatures=",
-      "sharedPreloadLibraries=${sharedPreloadLibraries(extensions, metadataBySqlName).join(",")}",
-      "mobileStaticRegistryState=${mobileStaticRegistryState}",
-      "mobileStaticRegistryRegistered=${registeredMobileExtensions.join(",")}",
-      "mobileStaticRegistryPending=${pendingMobileExtensions.join(",")}",
-      "nativeModuleStems=${nativeModuleStems.join(",")}",
-      "mobileStaticRegistrySource=",
-      "",
-    ].join("\n")
   }
 
   private static void validateSelectedExtensionFiles(
@@ -534,9 +421,6 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     String moduleStem,
     List<String> effectiveMobileStaticModuleStems
   ) {
-    if (runtimeResourcesRoot == null) {
-      return "split runtime inputs do not provide a static-registry contract"
-    }
     if (!effectiveMobileStaticModuleStems.contains(moduleStem)) {
       return "effective mobile static module stems do not include '${moduleStem}'"
     }
@@ -648,18 +532,6 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     return rows
   }
 
-  private static List<String> generatedExtensionStringList(
-    String extension,
-    String field,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    def values = generatedExtensionMetadataRow(extension, metadataBySqlName).get(field)
-    if (!(values instanceof List)) {
-      return []
-    }
-    return values.collect { it.toString() }
-  }
-
   private static Map<String, Object> generatedExtensionMetadataRow(
     String extension,
     Map<String, Map<String, Object>> metadataBySqlName
@@ -667,9 +539,7 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     def row = metadataBySqlName[extension]
     if (row == null) {
       throw new GradleException(
-        "Oliphaunt React Native Android split runtime packaging cannot select unknown extension '${extension}'. " +
-          "Use a generated built-in extension name, or pass " +
-          "-PoliphauntRuntimeResourcesDir=<runtime-resource output> for custom prebuilt extension artifacts."
+        "Oliphaunt React Native Android runtime resources cannot select unknown extension '${extension}'"
       )
     }
     return row
@@ -682,116 +552,6 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     def row = generatedExtensionMetadataRow(extension, metadataBySqlName)
     def stem = row["native-module-stem"]
     return stem == null ? null : stem.toString()
-  }
-
-  private static List<String> resolveExtensionSelection(
-    List<String> requestedExtensions,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    Set<String> extensions = new LinkedHashSet<>()
-    requestedExtensions.each { extension ->
-      extensions.addAll(extensionDependencies(extension, metadataBySqlName))
-      extensions.add(extension)
-    }
-    List<String> resolved = extensions.toList().sort()
-    resolved.each { extension ->
-      requireMobileReleaseReady(extension, metadataBySqlName)
-    }
-    return resolved
-  }
-
-  private static List<String> extensionDependencies(
-    String extension,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    return generatedExtensionStringList(extension, "selected-extension-dependencies", metadataBySqlName)
-  }
-
-  private static void requireMobileReleaseReady(
-    String extension,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    def row = generatedExtensionMetadataRow(extension, metadataBySqlName)
-    if (row["mobile-release-ready"] != true) {
-      throw new GradleException(
-        "Oliphaunt React Native Android split runtime packaging cannot select extension '${extension}' because " +
-          "it does not have release-ready Android/iOS artifacts in the generated exact-extension catalog."
-      )
-    }
-  }
-
-  private static List<String> sharedPreloadLibraries(
-    List<String> extensions,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    extensions
-      .collectMany { generatedExtensionStringList(it, "shared-preload-libraries", metadataBySqlName) }
-      .toSet()
-      .sort()
-  }
-
-  private static List<String> mobileStaticRegistryRegisteredExtensions(
-    List<String> extensions,
-    Set<String> registeredModuleStems,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    extensions
-      .findAll { registeredModuleStems.contains(nativeModuleStem(it, metadataBySqlName)) }
-      .toSet()
-      .sort()
-  }
-
-  private static List<String> mobileStaticRegistryPendingExtensions(
-    List<String> extensions,
-    Set<String> registeredModuleStems,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    extensions
-      .findAll {
-        def stem = nativeModuleStem(it, metadataBySqlName)
-        stem != null && !registeredModuleStems.contains(stem)
-      }
-      .toSet()
-      .sort()
-  }
-
-  private static List<String> nativeModuleStems(
-    List<String> extensions,
-    Map<String, Map<String, Object>> metadataBySqlName
-  ) {
-    extensions
-      .collect { nativeModuleStem(it, metadataBySqlName) }
-      .findAll { it != null }
-      .toSet()
-      .sort()
-  }
-
-  private static String nativeModuleStem(String extension, Map<String, Map<String, Object>> metadataBySqlName) {
-    return generatedNativeModuleStem(extension, metadataBySqlName)
-  }
-
-  private static String sha256Directory(File source) {
-    MessageDigest digest = MessageDigest.getInstance("SHA-256")
-    Path rootPath = source.toPath()
-    Files.walk(rootPath).withCloseable { stream ->
-      stream.sorted().forEach { path ->
-        if (Files.isSymbolicLink(path)) {
-          throw new GradleException("Oliphaunt Android assets do not support symlinks: ${path}")
-        }
-        if (Files.isRegularFile(path)) {
-          String relative = rootPath.relativize(path).toString().replace(File.separatorChar, '/' as char)
-          digest.update(relative.getBytes("UTF-8"))
-          digest.update((byte) 0)
-          digest.update(Files.readAllBytes(path))
-          digest.update((byte) 0)
-        }
-      }
-    }
-    return digest.digest().encodeHex().toString()
-  }
-
-  private static void copyTree(Path source, Path target) {
-    copyTree(source, target, [] as Set<String>)
   }
 
   private static void copyTree(Path source, Path target, Set<String> excludedPrefixes) {
@@ -940,14 +700,12 @@ tasks.register("generateOliphauntCodegenArtifacts", Exec) {
 
 tasks.register("prepareOliphauntAndroidAssets", PrepareOliphauntAndroidAssetsTask) {
   runtimeResourcesDirPath.set(packagedRuntimeResourcesDir ?: "")
-  runtimeDirPath.set(packagedRuntimeDir ?: "")
-  templatePgdataDirPath.set(packagedTemplatePgdataDir ?: "")
   selectedExtensions.set(packagedExtensions)
   mobileStaticModuleStems.set(packagedMobileStaticModules)
   generatedExtensionMetadata.from(file("../src/generated/extensions.json"))
-  [packagedRuntimeResourcesDir, packagedRuntimeDir, packagedTemplatePgdataDir]
-    .findAll { it != null && !it.isBlank() }
-    .each { sourceDirectories.from(file(it)) }
+  if (packagedRuntimeResourcesDir != null && !packagedRuntimeResourcesDir.isBlank()) {
+    sourceDirectories.from(file(packagedRuntimeResourcesDir))
+  }
   outputDir.set(generatedOliphauntAssetsDir)
 }
 

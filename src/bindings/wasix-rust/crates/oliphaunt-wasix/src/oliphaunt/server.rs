@@ -12,9 +12,7 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
-use crate::oliphaunt::base::{
-    PreparedRoot, RootLock, RootPlan, RootSource, RootTarget, prepare_root,
-};
+use crate::oliphaunt::base::{DatabasePlan, DirectoryLock, PreparedDatabase, prepare_database};
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::{
@@ -26,19 +24,19 @@ use crate::oliphaunt::pg_dump::{
     PgDumpOptions, PsqlOptions, dump_server_sql, preflight_wasix_tools, run_server_psql,
 };
 use crate::oliphaunt::proxy::OliphauntProxy;
+use crate::oliphaunt::storage::{DatabaseInitialization, DatabaseStorage};
 use crate::oliphaunt::timing;
 
 /// A supervised local PostgreSQL socket backed by one embedded Oliphaunt runtime.
 ///
-/// This is the compatibility entry point for code that expects a PostgreSQL URL,
-/// such as `tokio-postgres`, SQLx, or tools that speak the wire protocol. The
+/// Use this entry point for code that expects a PostgreSQL URI, such as
+/// `tokio-postgres`, SQLx, or tools that speak the wire protocol. The
 /// server owns one embedded backend, so downstream pools should use a single
 /// connection.
 #[derive(Debug)]
 pub struct OliphauntServer {
-    root: PathBuf,
-    _temp_dir: Option<TempDir>,
-    _root_lock: Option<RootLock>,
+    _workspace: Option<TempDir>,
+    _directory_lock: Option<DirectoryLock>,
     endpoint: ServerEndpoint,
     startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
@@ -53,20 +51,10 @@ enum ServerEndpoint {
 }
 
 impl OliphauntServer {
-    /// Build a local Oliphaunt server. The default is a cached temporary database
+    /// Build a local Oliphaunt server. The default is an in-memory database
     /// served on `127.0.0.1:0`.
     pub fn builder() -> OliphauntServerBuilder {
         OliphauntServerBuilder::new()
-    }
-
-    /// Start a cached temporary database on a random local TCP port.
-    pub fn temporary_tcp() -> Result<Self> {
-        Self::builder().temporary().start()
-    }
-
-    /// Return the root directory used for runtime files and cluster data.
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// Return the bound TCP address, if this server is using TCP.
@@ -104,11 +92,6 @@ impl OliphauntServer {
                 )
             }
         }
-    }
-
-    /// Alias for [`connection_uri`](Self::connection_uri).
-    pub fn database_url(&self) -> String {
-        self.connection_uri()
     }
 
     /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
@@ -186,18 +169,13 @@ impl Drop for OliphauntServer {
 /// Builder for [`OliphauntServer`].
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
-    root: ServerRoot,
+    storage: DatabaseStorage,
+    initialization: DatabaseInitialization,
     endpoint: ServerEndpointConfig,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
-}
-
-#[derive(Debug, Clone)]
-enum ServerRoot {
-    Temporary { template_cache: bool },
-    Path(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -210,9 +188,8 @@ enum ServerEndpointConfig {
 impl Default for OliphauntServerBuilder {
     fn default() -> Self {
         Self {
-            root: ServerRoot::Temporary {
-                template_cache: true,
-            },
+            storage: DatabaseStorage::Memory,
+            initialization: DatabaseInitialization::PackagedTemplate,
             endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
@@ -223,35 +200,20 @@ impl Default for OliphauntServerBuilder {
 }
 
 impl OliphauntServerBuilder {
-    /// Create a builder. Defaults to a cached temporary database on
-    /// `127.0.0.1:0`.
+    /// Create a builder. Defaults to a memory database on `127.0.0.1:0`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Serve a persistent database rooted at `root`.
-    pub fn path(mut self, root: impl Into<PathBuf>) -> Self {
-        self.root = ServerRoot::Path(root.into());
+    /// Select where PostgreSQL stores its mutable database files.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.storage = storage;
         self
     }
 
-    /// Serve a temporary database cloned from the process-local template cache.
-    pub fn temporary(mut self) -> Self {
-        self.root = ServerRoot::Temporary {
-            template_cache: true,
-        };
-        self
-    }
-
-    /// Serve a temporary database initialized without the template cache.
-    ///
-    /// This is a compatibility alias for the pre-template-cache public API.
-    /// Fresh initdb uses the bundled split WASIX `initdb` module; cached
-    /// temporary databases remain the production fast path.
-    pub fn fresh_temporary(mut self) -> Self {
-        self.root = ServerRoot::Temporary {
-            template_cache: false,
-        };
+    /// Select how an empty storage allocation is initialized.
+    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
+        self.initialization = initialization;
         self
     }
 
@@ -288,13 +250,13 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Default user encoded in [`OliphauntServer::database_url`].
+    /// Default user encoded in [`OliphauntServer::connection_uri`].
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.startup_config.username = username.into();
         self
     }
 
-    /// Default database encoded in [`OliphauntServer::database_url`].
+    /// Default database encoded in [`OliphauntServer::connection_uri`].
     pub fn database(mut self, database: impl Into<String>) -> Self {
         self.startup_config.database = database.into();
         self
@@ -351,46 +313,23 @@ impl OliphauntServerBuilder {
         self.startup_config.validate()?;
         let startup_config = self.startup_config.clone();
 
-        let prepared_root = {
-            let _phase = timing::phase("server.root_prepare");
-            match self.root {
-                ServerRoot::Path(root) => {
-                    let _phase = timing::phase("server.root_prepare.path");
-                    let plan = RootPlan::new(RootTarget::Path(root), RootSource::Template);
-                    #[cfg(feature = "extensions")]
-                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
-                    prepare_root(plan)?
-                }
-                ServerRoot::Temporary { template_cache } => {
-                    let source = if template_cache {
-                        RootSource::Template
-                    } else {
-                        RootSource::FreshInitdb
-                    };
-                    let phase = if template_cache {
-                        "server.root_prepare.temporary_cached"
-                    } else {
-                        "server.root_prepare.temporary_fresh"
-                    };
-                    let _phase = timing::phase(phase);
-                    let plan = RootPlan::new(RootTarget::Temporary, source);
-                    #[cfg(feature = "extensions")]
-                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
-                    run_blocking("oliphaunt-template-cache", move || prepare_root(plan))?
-                }
-            }
+        let prepared_database = {
+            let _phase = timing::phase("server.storage_prepare");
+            let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
+            #[cfg(feature = "extensions")]
+            let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
+            run_blocking("oliphaunt-storage-prepare", move || prepare_database(plan))?
         };
-        let PreparedRoot {
-            root,
-            temp_dir,
-            root_lock,
+        let PreparedDatabase {
+            workspace,
+            directory_lock,
             outcome,
-        } = prepared_root;
+        } = prepared_database;
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let proxy = {
             let _phase = timing::phase("server.proxy_create");
-            OliphauntProxy::new(root.clone()).with_prepared_root(outcome)
+            OliphauntProxy::from_prepared_database(outcome)
         };
         let proxy = proxy
             .with_postgres_config(postgres_config)
@@ -405,9 +344,8 @@ impl OliphauntServerBuilder {
         };
 
         Ok(OliphauntServer {
-            root,
-            _temp_dir: temp_dir,
-            _root_lock: root_lock,
+            _workspace: workspace,
+            _directory_lock: directory_lock,
             endpoint,
             startup_config,
             shutdown,
@@ -576,9 +514,6 @@ fn percent_encode_query_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::percent_encode_query_value;
-    #[cfg(feature = "extensions")]
     use super::*;
     #[cfg(feature = "extensions")]
     use crate::oliphaunt::extensions::PG_TEXTSEARCH;
@@ -589,6 +524,16 @@ mod tests {
         assert_eq!(
             percent_encode_query_value("/tmp/Application Support/oliphaunt"),
             "/tmp/Application%20Support/oliphaunt"
+        );
+    }
+
+    #[test]
+    fn default_server_builder_selects_memory_and_packaged_template() {
+        let builder = OliphauntServerBuilder::default();
+        assert_eq!(builder.storage, DatabaseStorage::Memory);
+        assert_eq!(
+            builder.initialization,
+            DatabaseInitialization::PackagedTemplate
         );
     }
 

@@ -8,8 +8,11 @@ export async function createDefaultNativeBinding(
     return createDenoNativeBinding(options);
   }
   if (isBun()) {
-    const { createBunNativeBinding } = await import('./bun.js');
-    return createBunNativeBinding(options);
+    // Bun recommends Node-API for production native integrations. The addon
+    // also runs blocking database work off the JavaScript thread, which keeps
+    // cancel() and timers live while a query is executing.
+    const { createNodeNativeBinding } = await import('./node.js');
+    return createNodeNativeBinding(options, 'bun');
   }
   const { createNodeNativeBinding } = await import('./node.js');
   return createNodeNativeBinding(options);

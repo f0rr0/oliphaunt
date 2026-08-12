@@ -8,19 +8,19 @@ export type WasixSidecar = {
   process: ChildProcess;
 };
 
-export async function startWasixSidecar(root: string): Promise<WasixSidecar> {
+export async function startWasixSidecar(directory: string): Promise<WasixSidecar> {
   const configured = process.env.OLIPHAUNT_WASIX_TODO_SIDECAR;
   const command = configured || "cargo";
   const args = configured
-    ? ["--root", root]
+    ? ["--directory", directory]
     : [
         "run",
         "--quiet",
         "--manifest-path",
         join(process.cwd(), "src-wasix/Cargo.toml"),
         "--",
-        "--root",
-        root,
+        "--directory",
+        directory,
       ];
   if (configured && !existsSync(configured)) {
     throw new Error(`OLIPHAUNT_WASIX_TODO_SIDECAR does not exist: ${configured}`);

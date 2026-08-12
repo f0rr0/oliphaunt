@@ -42,15 +42,18 @@ cargo add oliphaunt-wasix
 ```
 
 ```rust,no_run
-use oliphaunt_wasix::OliphauntServer;
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer};
 use sqlx::{Connection, Row};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::temporary_tcp()?;
-    // For a persistent TCP server:
-    // let server = OliphauntServer::builder().path("./.oliphaunt").start()?;
-    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+    // The builder defaults to a true in-memory WASIX database.
+    let server = OliphauntServer::builder().start()?;
+    // For a persistent database instead:
+    // let server = OliphauntServer::builder()
+    //     .storage(DatabaseStorage::Directory("./.oliphaunt".into()))
+    //     .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS answer")
         .bind(41_i32)
@@ -66,6 +69,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 That's it. Real PostgreSQL, no service setup.
 
+Direct API query failures downcast to `OliphauntError`. Its
+`postgres_error()` accessor returns the structured `PostgresError`; branch on
+`sqlstate` and use the retained query context for diagnostics.
+
+## Storage and initialization
+
+`storage` describes the lifetime and owner of mutable database state. It is not
+an asset manifest and consumers do not provide runtime archive URLs.
+
+```rust,no_run
+use oliphaunt_wasix::{
+    ApplicationData, DatabaseInitialization, DatabaseStorage, Oliphaunt,
+};
+
+# fn example() -> anyhow::Result<()> {
+// Default: true WASIX memory storage, initialized from the packaged template.
+let mut test_db = Oliphaunt::open()?;
+test_db.close()?;
+
+// Explicit persistence in an application-owned directory.
+let mut local_db = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./.oliphaunt".into()))
+    .open()?;
+local_db.close()?;
+
+// Or let the platform resolve an application-data directory.
+let mut app_db = Oliphaunt::builder()
+    .storage(DatabaseStorage::ApplicationData(ApplicationData::new(
+        "dev", "Oliphaunt", "Example",
+    )))
+    .initialization(DatabaseInitialization::PackagedTemplate)
+    .open()?;
+app_db.close()?;
+# Ok(())
+# }
+```
+
+`DatabaseStorage::TemporaryDirectory` remains available when a real host
+directory with instance lifetime is useful. It is distinct from `Memory`:
+memory PGDATA lives in Wasmer's virtual filesystem and never gets materialized
+under the temporary runtime workspace. Initialization is independent and may
+use the packaged template, a fresh WASIX `initdb`, or a compatible physical
+backup. A caller-owned directory that contains an incomplete cluster fails
+closed; Oliphaunt never deletes or silently reinitializes it.
+
+```rust,no_run
+use oliphaunt_wasix::{DatabaseInitialization, DatabaseStorage, Oliphaunt};
+
+# fn example() -> anyhow::Result<()> {
+let mut source = Oliphaunt::open()?;
+source.exec("CREATE TABLE items (value text)", None)?;
+let backup = source.backup()?;
+source.close()?;
+
+let mut restored = Oliphaunt::builder()
+    .storage(DatabaseStorage::Directory("./restored".into()))
+    .initialization(DatabaseInitialization::PhysicalArchive(backup))
+    .open()?;
+restored.close()?;
+# Ok(())
+# }
+```
+
+The current memory boundary is PGDATA, not the whole engine process. Wasmer
+still uses an SDK-owned temporary workspace for runtime overlay files and may
+use process resources such as threads, sockets, and its AOT cache. Likewise,
+`try_clone()` takes a quiesced physical snapshot into a new memory filesystem;
+it is not a zero-copy clone of a resource-free runtime. This is the deliberate
+first implementation of the broader resource-free cloning request in issue
+[#90](https://github.com/f0rr0/oliphaunt/issues/90).
+
 ## Why oliphaunt-wasix ✨
 
 Postgres should be as easy to add to a Rust project as SQLite.
@@ -75,8 +149,8 @@ Postgres should be as easy to add to a Rust project as SQLite.
   connect through a normal local URL.
 - 🌉 **Proxy included**: expose an embedded database to non-Rust tools with
   `oliphaunt-wasix-proxy`.
-- 🧪 **Clean tests**: temporary databases are isolated, fast, and removed on
-  drop.
+- 🧪 **Clean tests**: memory databases are isolated, fast, and never create a
+  host PGDATA directory.
 - 💾 **Persistent apps**: keep local app data across restarts when you want it.
 - 🧩 **Extensions available**: install exact extension release assets owned by
   your application.
@@ -89,7 +163,7 @@ Postgres should be as easy to add to a Rust project as SQLite.
 
 Current local snapshot on `Apple M1 Pro`, `16 GB RAM`, and `macOS 26.4.1`.
 Full numbers and reproduction steps live in the
-[performance guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/performance.md). Lower is better.
+[performance guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/performance.mdx). Lower is better.
 
 | Operation | native pg + SQLx | oliphaunt-wasix + SQLx | vanilla Oliphaunt + SQLx |
 |---|---:|---:|---:|
@@ -112,7 +186,7 @@ they use.
 
 - [WASM guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/sdk/wasm/guide.mdx)
 - [Extensions](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/extensions.mdx)
-- [Performance guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/performance.md)
-- [Dump and upgrade guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/sdk/wasm/dump-restore.md)
-- [Tauri usage](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/learn/tauri.md)
-- [WASIX runtime guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/sdk/wasm/runtime.md)
+- [Performance guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/performance.mdx)
+- [Dump and upgrade guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/sdk/wasm/dump-restore.mdx)
+- [Tauri usage](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/learn/tauri.mdx)
+- [WASIX runtime guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/sdk/wasm/runtime.mdx)

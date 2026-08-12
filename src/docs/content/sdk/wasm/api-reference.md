@@ -1,25 +1,29 @@
 ---
-title: API Reference
-description: WASM SDK API map for the WASIX runtime family, protocol types, storage, extensions, and dump/restore.
+title: Rust WASIX API Reference
+description: Rust WASIX API map for protocol types, storage, extensions, and dump/restore.
 ---
 
-# API Reference
+# Rust WASIX API Reference
 
-Use the WASM rustdoc reference for exact declarations. This page maps the WASM
-SDK by task.
+Use the `oliphaunt-wasix` rustdoc reference for exact declarations. This page
+maps the Rust binding by task; it does not describe the separate
+[`@oliphaunt/wasix` TypeScript API](./browser-typescript).
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | runtime builders and root options | Open persistent or temporary WASM roots |
+| Opening | `Oliphaunt`, `OliphauntBuilder`, `OliphauntServerBuilder` | Open a memory database by default or configure storage explicitly |
+| Storage | `DatabaseStorage`, `ApplicationData` | Select memory, a temporary directory, an app-owned directory, or app data |
+| Initialization | `DatabaseInitialization` | Initialize empty storage from the packaged template, `initdb`, or a same-version physical backup |
 | Runtime assets | asset loader and catalog APIs | Select the released WASIX PostgreSQL runtime artifacts |
-| Capabilities | capability reporting | Check protocol, extension, storage, dump, restore, and server support |
-| SQL | query and execute helpers | Run SQL through the WASM runtime |
-| Raw protocol | protocol request and response types | Send PostgreSQL protocol bytes to the WASM backend |
-| Server/proxy | WASM server helper APIs | Expose PostgreSQL-compatible access where the WASM runtime supports it |
-| Extensions | exact extension selectors | Include only selected WASM-built extension artifacts |
-| Dump/restore | dump and restore APIs | Move data between compatible roots or export logical dumps |
-| Errors | WASM SDK and PostgreSQL error types | Handle runtime errors and SQLSTATE data |
+| Capabilities | `EngineCapabilities`, `engine_capabilities()` | Check protocol support for the opened Rust host |
+| SQL | query and execute helpers | Run SQL through the WASIX runtime |
+| Raw protocol | protocol request and response types | Send PostgreSQL protocol bytes to the WASIX backend |
+| Server/proxy | WASIX server helper APIs | Expose PostgreSQL-compatible access where the WASIX runtime supports it |
+| Extensions | exact extension selectors | Include only selected WASIX-built extension artifacts |
+| Backup/restore | `backup()`, `PhysicalArchive`, logical dump APIs | Move data between compatible stores or export logical dumps |
+| Errors | WASIX SDK and PostgreSQL error types | Handle runtime errors and SQLSTATE data |
 
-The WASM SDK is a first-class runtime family with its own packaged PostgreSQL
-runtime assets. Native direct, broker, and server mode behavior is documented in
-the native SDK sections.
+The Rust WASIX binding owns its packaged PostgreSQL runtime assets and Rust host
+behavior. Native direct, broker, and server modes are documented in the native
+SDK sections. The TypeScript binding intentionally omits Rust server, streaming,
+capability, and dump/restore APIs.

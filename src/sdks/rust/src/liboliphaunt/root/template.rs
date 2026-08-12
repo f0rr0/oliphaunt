@@ -14,27 +14,80 @@ use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
 use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
 use crate::error::{Error, Result};
-use crate::storage::BootstrapStrategy;
+use crate::storage::DatabaseInitialization;
 
 const PGDATA_TEMPLATE_VERSION: &str = "pg18-pgdata-template-v4";
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
+    runtime_dir: &Path,
     pgdata: &Path,
-    strategy: &BootstrapStrategy,
+    strategy: &DatabaseInitialization,
+    username: &str,
 ) -> Result<()> {
     if pgdata.join("PG_VERSION").is_file() {
         return Ok(());
     }
 
     match strategy {
-        BootstrapStrategy::PackagedTemplate => restore_pgdata_template(profile, pgdata),
-        BootstrapStrategy::ExistingOnly => Err(Error::Engine(format!(
+        DatabaseInitialization::PackagedTemplate => restore_pgdata_template(profile, pgdata),
+        DatabaseInitialization::FreshInitdb => {
+            run_initdb(runtime_dir, pgdata, username, "fresh database")
+        }
+        DatabaseInitialization::ExistingOnly => Err(Error::Engine(format!(
             "native PGDATA at {} has not been bootstrapped",
             pgdata.display()
         ))),
-        BootstrapStrategy::InitdbToolingOnly { .. } => Ok(()),
     }
+}
+
+fn run_initdb(runtime_dir: &Path, pgdata: &Path, username: &str, context: &str) -> Result<()> {
+    let initdb = native_tool_path(runtime_dir, "initdb");
+    if !initdb.is_file() {
+        return Err(Error::Engine(format!(
+            "native {context} initialization requires initdb at {}",
+            initdb.display()
+        )));
+    }
+    let mut command = Command::new(&initdb);
+    configure_template_runtime_env(&mut command, runtime_dir);
+    let output = command
+        .args(initdb_args(runtime_dir, pgdata, username))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|err| {
+            Error::Engine(format!(
+                "run native {context} initdb {}: {err}",
+                initdb.display()
+            ))
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(Error::Engine(format!(
+        "native {context} initdb {} failed with status {}: {}",
+        initdb.display(),
+        output.status,
+        stderr.trim()
+    )))
+}
+
+fn initdb_args(runtime_dir: &Path, pgdata: &Path, username: &str) -> Vec<OsString> {
+    vec![
+        "-D".into(),
+        pgdata.as_os_str().to_owned(),
+        "-U".into(),
+        username.into(),
+        "--auth=trust".into(),
+        "--no-sync".into(),
+        "--locale-provider=libc".into(),
+        "--locale=C".into(),
+        "--encoding=UTF8".into(),
+        "-L".into(),
+        runtime_dir.join("share/postgresql").into_os_string(),
+    ]
 }
 
 fn restore_pgdata_template(profile: NativeRuntimeProfile, pgdata: &Path) -> Result<()> {
@@ -190,46 +243,7 @@ fn pgdata_template_is_valid(template_dir: &Path, key: &str) -> bool {
 }
 
 fn run_template_initdb(runtime_dir: &Path, pgdata: &Path) -> Result<()> {
-    let initdb = native_tool_path(runtime_dir, "initdb");
-    if !initdb.is_file() {
-        return Err(Error::Engine(format!(
-            "native PGDATA template bootstrap requires initdb at {}",
-            initdb.display()
-        )));
-    }
-    let mut command = Command::new(&initdb);
-    configure_template_runtime_env(&mut command, runtime_dir);
-    let output = command
-        .args(template_initdb_args(runtime_dir, pgdata))
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|err| Error::Engine(format!("run native PGDATA template initdb: {err}")))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(Error::Engine(format!(
-        "native PGDATA template initdb failed with status {}: {}",
-        output.status,
-        stderr.trim()
-    )))
-}
-
-fn template_initdb_args(runtime_dir: &Path, pgdata: &Path) -> Vec<OsString> {
-    vec![
-        "-D".into(),
-        pgdata.as_os_str().to_owned(),
-        "-U".into(),
-        "postgres".into(),
-        "--auth=trust".into(),
-        "--no-sync".into(),
-        "--locale-provider=libc".into(),
-        "--locale=C".into(),
-        "--encoding=UTF8".into(),
-        "-L".into(),
-        runtime_dir.join("share/postgresql").into_os_string(),
-    ]
+    run_initdb(runtime_dir, pgdata, "postgres", "PGDATA template")
 }
 
 fn configure_template_runtime_env(command: &mut Command, runtime_dir: &Path) {
@@ -380,13 +394,17 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        configure_template_runtime_env, native_dynamic_shared_memory_type,
-        normalize_pgdata_template_conf, template_initdb_args,
+        configure_template_runtime_env, initdb_args, native_dynamic_shared_memory_type,
+        normalize_pgdata_template_conf,
     };
 
     #[test]
     fn template_initdb_forces_mobile_safe_locale() {
-        let args = template_initdb_args(Path::new("/runtime"), Path::new("/cache/template/pgdata"));
+        let args = initdb_args(
+            Path::new("/runtime"),
+            Path::new("/cache/template/pgdata"),
+            "postgres",
+        );
 
         assert!(args.iter().any(|arg| arg == OsStr::new("--locale=C")));
         assert!(
@@ -394,6 +412,26 @@ mod tests {
                 .any(|arg| arg == OsStr::new("--locale-provider=libc"))
         );
         assert!(args.iter().any(|arg| arg == OsStr::new("--encoding=UTF8")));
+    }
+
+    #[test]
+    fn fresh_initdb_uses_the_requested_identity_and_packaged_storage() {
+        let args = initdb_args(
+            Path::new("/runtime"),
+            Path::new("/app/database/pgdata"),
+            "app_user",
+        );
+
+        assert_eq!(args[0], OsStr::new("-D"));
+        assert_eq!(args[1], OsStr::new("/app/database/pgdata"));
+        assert_eq!(args[2], OsStr::new("-U"));
+        assert_eq!(args[3], OsStr::new("app_user"));
+        assert!(args.iter().any(|arg| arg == OsStr::new("--auth=trust")));
+        assert!(args.iter().any(|arg| arg == OsStr::new("--no-sync")));
+        assert!(
+            args.iter()
+                .any(|arg| arg == OsStr::new("/runtime/share/postgresql"))
+        );
     }
 
     #[test]

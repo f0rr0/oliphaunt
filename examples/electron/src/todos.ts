@@ -67,7 +67,7 @@ export function getDatabase(userData: string) {
 async function openDatabase(userData: string): Promise<Store> {
   const native = await Oliphaunt.open({
     engine: "nativeServer",
-    root: join(userData, "oliphaunt-native-todos"),
+    storage: { kind: "directory", path: join(userData, "oliphaunt-native-todos") },
     extensions: ["hstore", "pg_trgm", "unaccent"],
     maxClientSessions: 4,
   });

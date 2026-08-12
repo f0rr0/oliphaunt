@@ -2866,12 +2866,10 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
     Assert-SymbolPresent $postgresLib "oliphaunt_embedded_main"
     $exports = @(
         "oliphaunt_init",
-        "oliphaunt_init_ex",
         "oliphaunt_exec_protocol",
         "oliphaunt_exec_simple_query",
         "oliphaunt_exec_protocol_stream",
         "oliphaunt_backup",
-        "oliphaunt_backup_ex",
         "oliphaunt_restore",
         "oliphaunt_cancel",
         "oliphaunt_detach",
@@ -3114,7 +3112,6 @@ function Artifact-Ready {
     $exports = dumpbin.exe /exports $DllOut 2>$null | Out-String
     foreach ($symbol in @(
         "oliphaunt_init",
-        "oliphaunt_init_ex",
         "oliphaunt_exec_protocol",
         "oliphaunt_exec_protocol_stream",
         "oliphaunt_backup",

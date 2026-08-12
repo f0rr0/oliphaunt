@@ -61,6 +61,7 @@ import {
   assertSourceOnlyNpmArchive,
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
+import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -1104,7 +1105,21 @@ async function checkSdkProduct(product, { require }) {
     return false;
   }
   let checked = false;
-  if (["oliphaunt-js", "oliphaunt-react-native"].includes(product)) {
+  if (product === "oliphaunt-wasix-ts") {
+    const tarballs = readdirSync(root)
+      .filter((name) => name.endsWith(".tgz"))
+      .map((name) => path.join(root, name))
+      .sort(compareText);
+    if (tarballs.length !== 1) {
+      fail(`${product} must stage exactly one npm tarball under ${rel(root)}`);
+    }
+    try {
+      assertWasixTypescriptNpmArchive(tarballs[0]);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    checked = true;
+  } else if (["oliphaunt-js", "oliphaunt-react-native"].includes(product)) {
     const tarballs = readdirSync(root).filter((name) => name.endsWith(".tgz")).map((name) => path.join(root, name)).sort(compareText);
     if (tarballs.length === 0 && require) {
       fail(`${product} must stage an npm tarball under ${rel(root)}`);
@@ -1217,7 +1232,6 @@ async function checkSdkProduct(product, { require }) {
       ["extension-resource-inventory.mjs", path.join(ROOT, "src/sdks/swift/tools/extension-resource-inventory.mjs")],
       ["render-extension-products.mjs", path.join(ROOT, "src/sdks/swift/tools/render-extension-products.mjs")],
       ["swift-carrier-resolver.mjs", path.join(ROOT, "src/sdks/swift/tools/swift-carrier-resolver.mjs")],
-      ["swiftpm-extension-input.schema.json", path.join(ROOT, "src/sdks/swift/tools/swiftpm-extension-input.schema.json")],
     ]) {
       const frozen = path.join(generatorRoot, name);
       if (!isFile(frozen)) {

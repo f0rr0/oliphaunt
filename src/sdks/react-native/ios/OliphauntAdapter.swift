@@ -66,9 +66,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         completion(processMemoryDictionary(), nil)
     }
 
-    @objc(restoreWithRoot:format:artifactData:replaceExisting:libraryPath:completion:)
+    @objc(restoreWithDestination:format:artifactData:replaceExisting:libraryPath:completion:)
     public static func restore(
-        root: String,
+        destination: String,
         format: String,
         artifactData: Data,
         replaceExisting: Bool,
@@ -78,8 +78,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let request: OliphauntRestoreRequest
         let engine: OliphauntNativeDirectEngine
         do {
-            guard !root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw adapterError("restore root must not be empty")
+            guard !destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw adapterError("restore destination must not be empty")
             }
             let backupFormat = try parseBackupFormat(format)
             guard backupFormat == .physicalArchive else {
@@ -87,8 +87,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             }
             request = OliphauntRestoreRequest(
                 artifact: OliphauntBackupArtifact(format: backupFormat, bytes: artifactData),
-                root: URL(fileURLWithPath: root, isDirectory: true),
-                targetPolicy: replaceExisting ? .replaceExisting : .failIfExists
+                destination: URL(fileURLWithPath: destination, isDirectory: true),
+                destinationPolicy: replaceExisting ? .replaceExisting : .failIfExists
             )
             let config = NSMutableDictionary()
             if let libraryPath = try nonBlankValue(
@@ -230,18 +230,13 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         guard mode == .nativeDirect else {
             throw adapterError("React Native iOS currently supports nativeDirect, got \(mode.rawValue)")
         }
-        let configuredRoot = try nonBlankString(
-            config,
-            "root",
-            emptyMessage: "database root must not be empty"
-        )
-        let root = try configuredRoot.map { try resolveRootSpecifier($0) }
+        let storage = try parseDatabaseStorage(config)
         let username = try startupIdentity(config, "username")
         let database = try startupIdentity(config, "database")
         let extensions = try stringArray(config, "extensions")
         let configuration = OliphauntConfiguration(
             mode: mode,
-            root: root,
+            storage: storage,
             durability: try parseDurability(try string(config, "durability") ?? "balanced"),
             runtimeFootprint: try parseRuntimeFootprint(
                 try string(config, "runtimeFootprint") ?? "balancedMobile"
@@ -277,10 +272,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let values = NSMutableDictionary()
         values["engine"] = capabilities.mode.rawValue
         values["processIsolated"] = capabilities.processIsolated
-        values["multiRoot"] = capabilities.multiRoot
-        values["reopenable"] = capabilities.reopenable
-        values["sameRootLogicalReopen"] = capabilities.sameRootLogicalReopen
-        values["rootSwitchable"] = capabilities.rootSwitchable
+        values["multipleInstances"] = capabilities.multipleInstances
+        values["sameInstanceLogicalReopen"] = capabilities.sameInstanceLogicalReopen
+        values["instanceSwitchable"] = capabilities.instanceSwitchable
         values["crashRestartable"] = capabilities.crashRestartable
         values["independentSessions"] = capabilities.independentSessions
         values["maxClientSessions"] = capabilities.maxClientSessions
@@ -517,7 +511,10 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let createable = manifestExtensionDomain(
             manifest["extensions"] ?? ""
         )
-        let selected = manifest["selectedExtensions"].map(manifestExtensionDomain) ?? createable
+        guard let selectedExtensions = manifest["selectedExtensions"] else {
+            throw adapterError("React Native iOS runtime manifest is missing selectedExtensions")
+        }
+        let selected = manifestExtensionDomain(selectedExtensions)
         guard createable.isSubset(of: selected) else {
             let unselected = createable.subtracting(selected).sorted().joined(separator: ",")
             throw adapterError(
@@ -705,39 +702,61 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         return value
     }
 
-    private static func resolveRootSpecifier(_ value: String) throws -> URL {
-        if let suffix = value.removingPrefix("app-support://") {
-            return try sandboxRoot(base: .applicationSupportDirectory, suffix: suffix)
+    private static func parseDatabaseStorage(
+        _ config: NSDictionary
+    ) throws -> OliphauntDatabaseStorage {
+        switch try string(config, "storageKind") ?? "temporaryDirectory" {
+        case "temporaryDirectory":
+            return .temporaryDirectory
+        case "directory":
+            guard let path = try nonBlankString(
+                config,
+                "storagePath",
+                emptyMessage: "database storage directory must not be empty"
+            ) else {
+                throw adapterError("directory storage requires storagePath")
+            }
+            return .directory(URL(fileURLWithPath: path, isDirectory: true))
+        case "applicationData":
+            guard let name = try nonBlankString(
+                config,
+                "storageName",
+                emptyMessage: "applicationData storage name must not be empty"
+            ) else {
+                throw adapterError("applicationData storage requires storageName")
+            }
+            guard isPortableStorageName(name) else {
+                throw adapterError(
+                    "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen"
+                )
+            }
+            guard let baseURL = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first else {
+                throw adapterError("failed to resolve application data storage directory")
+            }
+            return .directory(
+                baseURL
+                    .appendingPathComponent("Oliphaunt", isDirectory: true)
+                    .appendingPathComponent(name, isDirectory: true)
+            )
+        case let kind:
+            throw adapterError("unknown database storage kind '\(kind)'")
         }
-        if let suffix = value.removingPrefix("documents://") {
-            return try sandboxRoot(base: .documentDirectory, suffix: suffix)
-        }
-        return URL(fileURLWithPath: value, isDirectory: true)
     }
 
-    private static func sandboxRoot(
-        base: FileManager.SearchPathDirectory,
-        suffix: String
-    ) throws -> URL {
-        let components = try validatedSandboxRootComponents(suffix)
-        guard let baseURL = FileManager.default.urls(for: base, in: .userDomainMask).first else {
-            throw adapterError("failed to resolve app sandbox directory for database root")
+    private static func isPortableStorageName(_ value: String) -> Bool {
+        let bytes = value.utf8
+        guard !bytes.isEmpty, bytes.count <= 128, value != ".", value != ".." else {
+            return false
         }
-        return components.reduce(baseURL.appendingPathComponent("Oliphaunt", isDirectory: true)) {
-            $0.appendingPathComponent($1, isDirectory: true)
+        return bytes.allSatisfy { byte in
+            (byte >= 65 && byte <= 90) ||
+                (byte >= 97 && byte <= 122) ||
+                (byte >= 48 && byte <= 57) ||
+                byte == 46 || byte == 95 || byte == 45
         }
-    }
-
-    private static func validatedSandboxRootComponents(_ suffix: String) throws -> [String] {
-        let trimmed = suffix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if trimmed.isEmpty {
-            throw adapterError("database root sandbox specifier must include a relative path")
-        }
-        let components = trimmed.split(separator: "/").map(String.init)
-        if components.contains(where: { $0 == "." || $0 == ".." }) {
-            throw adapterError("database root sandbox specifier must not contain '.' or '..'")
-        }
-        return components
     }
 
     private static func startupIdentity(_ dictionary: NSDictionary, _ key: String) throws -> String? {

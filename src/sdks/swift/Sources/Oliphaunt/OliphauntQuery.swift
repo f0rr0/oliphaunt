@@ -141,7 +141,9 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
 
 public extension OliphauntDatabase {
     func execute(_ sql: String) async throws -> Data {
-        try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
+        let response = try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
+        try assertSuccessfulOliphauntQueryResponse(response)
+        return response
     }
 
     func query(_ sql: String) async throws -> OliphauntQueryResult {
@@ -157,7 +159,9 @@ public extension OliphauntDatabase {
 
 public extension OliphauntTransaction {
     func execute(_ sql: String) async throws -> Data {
-        try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
+        let response = try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
+        try assertSuccessfulOliphauntQueryResponse(response)
+        return response
     }
 
     func query(_ sql: String) async throws -> OliphauntQueryResult {
@@ -297,6 +301,38 @@ public enum OliphauntProtocol {
         let bits = UInt16(bitPattern: value)
         data.append(UInt8((bits >> 8) & 0xff))
         data.append(UInt8(bits & 0xff))
+    }
+}
+
+func assertSuccessfulOliphauntQueryResponse(_ data: Data) throws {
+    var cursor = OliphauntByteCursor(data)
+    var sawReady = false
+
+    while !cursor.isAtEnd {
+        let tag = try cursor.readUInt8(label: "backend message tag")
+        let length = try cursor.readInt32(label: "backend message length")
+        guard length >= 4 else {
+            throw OliphauntError.engine("invalid backend message length \(length)")
+        }
+        let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
+
+        switch tag {
+        case 0x45:
+            var bodyCursor = OliphauntByteCursor(body)
+            throw OliphauntError.postgres(parseErrorResponse(&bodyCursor))
+        case 0x5a:
+            try validateReadyForQuery(body)
+            sawReady = true
+            if !cursor.isAtEnd {
+                throw OliphauntError.engine("backend returned bytes after ReadyForQuery")
+            }
+        default:
+            break
+        }
+    }
+
+    guard sawReady else {
+        throw OliphauntError.engine("query response ended before ReadyForQuery")
     }
 }
 

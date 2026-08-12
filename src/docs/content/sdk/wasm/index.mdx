@@ -1,22 +1,22 @@
 ---
-title: WASM SDK
-description: First-class WASM/WASIX runtime family for WebAssembly hosts.
+title: Rust WASIX SDK
+description: Host the portable Oliphaunt WASIX runtime from Rust with memory by default and explicit persistence.
 ---
 
-<SdkLanding id="wasm" />
+<SdkLanding id="wasix-rust" />
 
-`oliphaunt-wasix` is the first-class WASM/WASIX runtime family. It shares public
-concepts with native Oliphaunt packages while keeping its own runtime assets,
-WASM packaging story, and WebAssembly-specific behavior.
+`oliphaunt-wasix` is the Rust binding for the portable WASIX runtime. It keeps
+its package, runtime assets, extensions, storage, and behavior separate from
+the native SDK products.
 
-Use this SDK when the deployment target is a WASM/WASIX host or when a Rust app
-wants to ship the WASM runtime assets. Native desktop and mobile apps use the
-native SDKs when the native runtime is available.
+Use this SDK when Rust owns the WASIX host. Native desktop and mobile apps use
+native SDKs when they select `liboliphaunt`. Browser and Node TypeScript apps can use the
+separate [`@oliphaunt/wasix` TypeScript binding](./browser-typescript); the two
+WASIX bindings share portable runtime carriers, not a public API.
 
 ## Install
 
-Use the WASM package when your deployment target is WebAssembly/WASIX. The
-package includes the SDK surface. Consumer applications receive the matching
+Install the Rust WASIX package. Consumer applications receive the matching
 portable runtime and target AOT artifacts through package-manager dependencies.
 
 For Rust hosts:
@@ -27,48 +27,52 @@ cargo add oliphaunt-wasix
 
 ## Open And Query
 
-Open a local server-compatible runtime when you want to use existing PostgreSQL
-clients:
+Open the direct Rust API for ordinary embedded use. Storage defaults to a true
+in-memory WASIX filesystem:
 
 ```rust
-use oliphaunt_wasix::OliphauntServer;
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-fn open_server() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::builder()
-        .path("./app-data/main.oliphaunt")
-        .start()?;
+fn main() -> anyhow::Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let rows = database.query("select 1::text as value", &[], None)?;
 
-    let url = server.database_url();
-    server.shutdown()?;
+    // For persistence, select a caller-owned host directory instead:
+    // let mut database = Oliphaunt::builder()
+    //     .storage(DatabaseStorage::Directory("./app-data/main.oliphaunt".into()))
+    //     .open()?;
+
+    assert_eq!(rows.rows[0]["value"].as_str(), Some("1"));
+    database.close()?;
     Ok(())
 }
 ```
 
 ## Runtime Shape
 
-WASM mode is separate from native direct, native broker, and native server. It
+Rust WASIX is separate from native direct, native broker, and native server. It
 has its own filesystem, startup, server/proxy, dump/restore, and extension
-behavior. Use capabilities from the selected WASM runtime before enabling
-advanced features in app UI.
+behavior.
 
-The WASM product can expose direct Rust APIs or a local PostgreSQL-compatible
-URL depending on the host and configuration. It keeps runtime assets separate
-from native `liboliphaunt` while sharing exact extension names and public
-database concepts.
+The Rust binding can expose direct APIs or a local PostgreSQL-compatible URL.
+Those Rust-only server and dump APIs must not be inferred for the
+TypeScript binding, whose intentionally smaller surface is documented on its
+own page.
 
 ## App Responsibilities
 
 - Depend on the portable runtime artifact and target-specific AOT artifact for
   each supported host.
 - Install exact WASIX extension packages for the SQL extensions your app uses.
-- Use the WASM runtime guide for filesystem, server/proxy, and startup behavior.
+- Use the WASIX runtime guide for storage, server/proxy, and startup behavior.
 - Use dump and restore flows for portable data movement and upgrades.
-- Check capabilities before enabling extension, streaming, server/proxy, or
-  backup features.
+- Do not mix the crate's server, transaction, dump, or capability APIs into
+  WASIX TypeScript examples.
 
 ## First Query
 
-Use [Build With WASM](/docs/sdk/wasm/guide) for the first query and runtime
-configuration. Use [WASM runtime](/docs/sdk/wasm/runtime) for server/proxy and
-asset behavior, and [dump and restore](/docs/sdk/wasm/dump-restore) for data
-movement.
+Use [Build With Rust WASIX](/docs/sdk/wasix/guide) for the first query and
+runtime configuration. Use [Rust WASIX runtime](/docs/sdk/wasix/runtime) for
+server/proxy and asset behavior, and [dump and restore](/docs/sdk/wasix/dump-restore)
+for data movement. TypeScript applications start with
+[WASIX TypeScript](/docs/sdk/wasix/browser-typescript).

@@ -35,7 +35,7 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
                 "OliphauntNativeDirectEngine supports nativeDirect, got \(configuration.mode.rawValue)"
             )
         }
-        try validateOliphauntRoot(configuration.root, label: "database root")
+        try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username ?? username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database ?? database, label: "database")
         try validateOliphauntStartupGUCs(configuration.startupGUCs)
@@ -48,8 +48,8 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
             runtimeResources: packagedRuntimeResources
         )
 
-        let root = try Self.resolveRoot(configuration.root)
-        let pgdata = root.appendingPathComponent("pgdata", isDirectory: true)
+        let storageDirectory = try Self.resolveStorage(configuration.storage)
+        let pgdata = storageDirectory.appendingPathComponent("pgdata", isDirectory: true)
         let preparedPgdata = try packagedRuntimeResources?.preparePgdata(at: pgdata) ?? false
         let hasPgVersion = FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
@@ -57,8 +57,8 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
         if !hasPgVersion {
             try Self.requireHostInitdbSupport(
                 preparedPgdata: preparedPgdata,
-                temporaryRoot: configuration.root == nil,
-                root: root
+                managedTemporaryDirectory: configuration.storage.isTemporaryDirectory,
+                storageDirectory: storageDirectory
             )
             try FileManager.default.createDirectory(
                 at: pgdata,
@@ -84,6 +84,7 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
                                     abi_version: UInt32(OLIPHAUNT_ABI_VERSION),
                                     pgdata: pgdataCString,
                                     runtime_dir: runtimeCString,
+                                    module_dir: nil,
                                     username: usernameCString,
                                     database: databaseCString,
                                     reserved_flags: 0,
@@ -98,35 +99,32 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
             }
         }
         guard rc == 0, let session else {
-            if configuration.root == nil {
-                try? FileManager.default.removeItem(at: root)
-            }
+            // The native direct runtime is process-resident and may still own
+            // this directory after rejecting an incompatible logical reopen.
+            // Process-temporary storage is therefore reclaimed only with the
+            // process, never on a failed native open.
             throw OliphauntError.engine(Self.lastError(nil))
         }
-        return NativeDirectSession(
-            session: session,
-            root: root,
-            deleteRootOnClose: configuration.root == nil
-        )
+        return NativeDirectSession(session: session)
     }
 
     public func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
-        try validateOliphauntRoot(request.root, label: "restore root")
+        try validateOliphauntDirectory(request.destination, label: "restore destination")
         guard request.artifact.format == .physicalArchive else {
             throw OliphauntError.engine(
                 "Swift native restore currently requires physicalArchive, got \(request.artifact.format.rawValue)"
             )
         }
         let libraryPath = libraryURL?.path
-        let flags: UInt64 = request.targetPolicy == .replaceExisting
+        let flags: UInt64 = request.destinationPolicy == .replaceExisting
             ? UInt64(OLIPHAUNT_RESTORE_REPLACE_EXISTING)
             : 0
-        let rc = request.root.path.withCString { rootCString in
+        let rc = request.destination.path.withCString { destinationCString in
             libraryPath.withOptionalCString { libraryCString in
                 request.artifact.bytes.withUnsafeBytes { rawBuffer in
                     var options = OliphauntRestoreOptions(
                         abi_version: UInt32(OLIPHAUNT_ABI_VERSION),
-                        root: rootCString,
+                        destination: destinationCString,
                         format: UInt32(OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE),
                         data: rawBuffer.bindMemory(to: UInt8.self).baseAddress,
                         len: request.artifact.bytes.count,
@@ -139,7 +137,7 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
         guard rc == 0 else {
             throw OliphauntError.engine(Self.lastError(nil))
         }
-        return request.root
+        return request.destination
     }
 
     private func resolveRuntime(
@@ -236,42 +234,41 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
 
     private static func requireHostInitdbSupport(
         preparedPgdata: Bool,
-        temporaryRoot: Bool,
-        root: URL
+        managedTemporaryDirectory: Bool,
+        storageDirectory: URL
     ) throws {
         if preparedPgdata {
             return
         }
 #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-        if temporaryRoot {
-            try? FileManager.default.removeItem(at: root)
+        if managedTemporaryDirectory {
+            try? FileManager.default.removeItem(at: storageDirectory)
         }
         throw OliphauntError.engine(
-            "Swift Oliphaunt native-direct requires packaged template PGDATA or an existing PGDATA root on Apple mobile platforms; initdb cannot be assumed executable from app storage"
+            "Swift Oliphaunt native-direct requires packaged template PGDATA or an existing database storage directory on Apple mobile platforms; initdb cannot be assumed executable from app storage"
         )
 #else
-        _ = temporaryRoot
-        _ = root
+        _ = managedTemporaryDirectory
+        _ = storageDirectory
 #endif
     }
 
-    private static func resolveRoot(_ configuredRoot: URL?) throws -> URL {
-        if let configuredRoot {
-            try FileManager.default.createDirectory(
-                at: configuredRoot,
-                withIntermediateDirectories: true
-            )
-            return configuredRoot
+    private static func resolveStorage(_ storage: OliphauntDatabaseStorage) throws -> URL {
+        let directory: URL
+        switch storage {
+        case .temporaryDirectory:
+            directory = processTemporaryDirectory
+        case .directory(let configuredDirectory):
+            directory = configuredDirectory
         }
-        let root = processTemporaryRoot
         try FileManager.default.createDirectory(
-            at: root,
+            at: directory,
             withIntermediateDirectories: true
         )
-        return root
+        return directory
     }
 
-    private static let processTemporaryRoot: URL = {
+    private static let processTemporaryDirectory: URL = {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "liboliphaunt-swift-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)",
@@ -289,15 +286,20 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
 
 }
 
+private extension OliphauntDatabaseStorage {
+    var isTemporaryDirectory: Bool {
+        if case .temporaryDirectory = self {
+            return true
+        }
+        return false
+    }
+}
+
 private actor NativeDirectSession: OliphauntSession {
     private let box: NativeSessionBox
 
-    init(session: OpaquePointer, root: URL, deleteRootOnClose: Bool) {
-        self.box = NativeSessionBox(
-            pointer: session,
-            root: root,
-            deleteRootOnClose: deleteRootOnClose
-        )
+    init(session: OpaquePointer) {
+        self.box = NativeSessionBox(pointer: session)
     }
 
     deinit {
@@ -309,10 +311,9 @@ private actor NativeDirectSession: OliphauntSession {
         return OliphauntCapabilities(
             mode: .nativeDirect,
             processIsolated: false,
-            multiRoot: flags & OLIPHAUNT_CAP_MULTI_INSTANCE != 0,
-            reopenable: flags & OLIPHAUNT_CAP_LOGICAL_REOPEN != 0,
-            sameRootLogicalReopen: flags & OLIPHAUNT_CAP_LOGICAL_REOPEN != 0,
-            rootSwitchable: false,
+            multipleInstances: flags & OLIPHAUNT_CAP_MULTI_INSTANCE != 0,
+            sameInstanceLogicalReopen: flags & OLIPHAUNT_CAP_LOGICAL_REOPEN != 0,
+            instanceSwitchable: false,
             crashRestartable: false,
             independentSessions: false,
             maxClientSessions: 1,
@@ -354,15 +355,12 @@ private actor NativeDirectSession: OliphauntSession {
 private final class NativeSessionBox: @unchecked Sendable {
     private let condition = NSCondition()
     private var pointer: OpaquePointer?
+    private var closing = false
     private var closed = false
     private var activeCalls = 0
-    private let root: URL
-    private let deleteRootOnClose: Bool
 
-    init(pointer: OpaquePointer, root: URL, deleteRootOnClose: Bool) {
+    init(pointer: OpaquePointer) {
         self.pointer = pointer
-        self.root = root
-        self.deleteRootOnClose = deleteRootOnClose
     }
 
     deinit {
@@ -482,13 +480,9 @@ private final class NativeSessionBox: @unchecked Sendable {
     }
 
     func cancel() throws {
-        condition.lock()
-        let pointer = self.pointer
-        let isClosed = closed
-        condition.unlock()
-
-        guard let pointer, !isClosed else {
-            throw OliphauntError.databaseClosed
+        let pointer = try beginCancellation()
+        defer {
+            endCall()
         }
         let rc = oliphaunt_swift_cancel(pointer)
         guard rc == 0 else {
@@ -497,24 +491,26 @@ private final class NativeSessionBox: @unchecked Sendable {
     }
 
     func close() throws {
-        let pointer = prepareClose()
+        let pointer = beginClose()
         guard let pointer else {
-            cleanupRoot()
             return
         }
         let rc = oliphaunt_swift_close(pointer)
-        cleanupRoot()
-        guard rc == 0 else {
-            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(nil))
+        if rc == 0 {
+            finishClose(detached: true)
+            return
         }
+        let message = OliphauntNativeDirectEngine.lastError(pointer)
+        finishClose(detached: false)
+        throw OliphauntError.engine(message)
     }
 
     func closeBestEffort() {
-        let pointer = prepareClose()
+        let pointer = beginClose()
         if let pointer {
-            _ = oliphaunt_swift_close(pointer)
+            let rc = oliphaunt_swift_close(pointer)
+            finishClose(detached: rc == 0)
         }
-        cleanupRoot()
     }
 
     private func beginCall() throws -> OpaquePointer {
@@ -522,12 +518,27 @@ private final class NativeSessionBox: @unchecked Sendable {
         defer {
             condition.unlock()
         }
-        while !closed && activeCalls > 0 {
+        while !closing && !closed && activeCalls > 0 {
             condition.wait()
         }
-        guard let pointer, !closed else {
+        guard let pointer, !closing, !closed else {
             throw OliphauntError.databaseClosed
         }
+        activeCalls += 1
+        return pointer
+    }
+
+    private func beginCancellation() throws -> OpaquePointer {
+        condition.lock()
+        defer {
+            condition.unlock()
+        }
+        guard let pointer, !closing, !closed else {
+            throw OliphauntError.databaseClosed
+        }
+        // Cancellation is intentionally out of band and may overlap the
+        // serialized query call it interrupts. Counting it here still makes
+        // close wait until the native cancel call has released the pointer.
         activeCalls += 1
         return pointer
     }
@@ -539,32 +550,35 @@ private final class NativeSessionBox: @unchecked Sendable {
         condition.unlock()
     }
 
-    private func prepareClose() -> OpaquePointer? {
+    private func beginClose() -> OpaquePointer? {
         condition.lock()
+        while closing {
+            condition.wait()
+        }
         if closed {
             condition.unlock()
             return nil
         }
-        closed = true
+        closing = true
         let pointer = self.pointer
         while activeCalls > 0 {
             condition.wait()
         }
-        self.pointer = nil
         condition.unlock()
         return pointer
     }
 
-    private func cleanupRoot() {
-        if deleteRootOnClose {
-            /*
-             Native direct close is a logical detach. The resident PostgreSQL
-             backend may still own PGDATA until process exit, so deleting a
-             temporary root here would corrupt the live runtime.
-             */
-            _ = root
+    private func finishClose(detached: Bool) {
+        condition.lock()
+        if detached {
+            pointer = nil
+            closed = true
         }
+        closing = false
+        condition.broadcast()
+        condition.unlock()
     }
+
 }
 
 private final class NativeStreamCallbackBox: @unchecked Sendable {

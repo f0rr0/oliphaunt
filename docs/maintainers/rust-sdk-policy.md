@@ -32,9 +32,9 @@ Other SDKs should match the shared Oliphaunt concepts where the platform allows 
   engine;
 - startup identity through builder-level `username(...)` and `database(...)`
   options that feed direct, broker, and server-owned PostgreSQL sessions;
-- SDK-owned executable/tooling paths such as `initdb_tooling_only(...)`,
-  `broker_executable(...)`, and `server_executable(...)` are rejected when
-  empty or NUL-containing before process startup;
+- packaged `initdb` resolution through `fresh_initdb()` so consumers never
+  provide a tooling path; explicit broker and server executable overrides are
+  rejected when empty or NUL-containing before process startup;
 - structured PostgreSQL errors with SQLSTATE and raw `ErrorResponse` fields;
 - exact extensions selected before open;
 - physical backup/restore for same-version archives;

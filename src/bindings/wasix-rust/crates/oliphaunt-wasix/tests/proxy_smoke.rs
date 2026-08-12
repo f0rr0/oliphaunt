@@ -1,10 +1,9 @@
 #![cfg(feature = "extensions")]
 
-use anyhow::{Result, anyhow, bail, ensure};
-use oliphaunt_wasix::OliphauntProxy;
+use anyhow::{Result, bail, ensure};
+use oliphaunt_wasix::OliphauntServer;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::thread;
 use std::time::Duration;
 
 const SSL_REQUEST_CODE: i32 = 80_877_103;
@@ -12,13 +11,10 @@ const PROTOCOL_3: i32 = 196_608;
 
 #[test]
 fn tcp_proxy_handles_psql_style_connections() -> Result<()> {
-    let temp_dir = tempfile::TempDir::new()?;
-    let listener = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = listener.local_addr()?;
-    let root = temp_dir.path().to_path_buf();
-
-    let handle =
-        thread::spawn(move || OliphauntProxy::new(root).accept_tcp_connections(&listener, 2));
+    let probe = TcpListener::bind(("127.0.0.1", 0))?;
+    let addr = probe.local_addr()?;
+    drop(probe);
+    let server = OliphauntServer::builder().tcp(addr).start()?;
 
     let first = query_proxy(addr, false, "SELECT 1 AS one")?;
     assert_eq!(first, vec!["1"]);
@@ -26,9 +22,7 @@ fn tcp_proxy_handles_psql_style_connections() -> Result<()> {
     let second = query_proxy(addr, true, "SELECT 2 AS two")?;
     assert_eq!(second, vec!["2"]);
 
-    handle
-        .join()
-        .map_err(|_| anyhow!("proxy thread panicked"))??;
+    server.shutdown()?;
     Ok(())
 }
 

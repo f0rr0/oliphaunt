@@ -3,6 +3,21 @@ import Foundation
 import Testing
 
 @Test
+func configurationDefaultsToTemporaryDirectoryStorage() {
+    #expect(OliphauntConfiguration().storage == .temporaryDirectory)
+}
+
+@Test
+func openUsesDefaultConfigurationWhenOnlyAnEngineIsInjected() async throws {
+    let database = try await OliphauntDatabase.open(
+        engine: MockEngine(mode: .nativeDirect)
+    )
+    let capabilities = try await database.capabilities()
+    #expect(capabilities.mode == .nativeDirect)
+    try await database.close()
+}
+
+@Test
 func opensAndExecutesThroughInjectedEngine() async throws {
     let database = try await OliphauntDatabase.open(
         configuration: OliphauntConfiguration(mode: .nativeDirect),
@@ -230,6 +245,60 @@ func querySurfacesPostgresErrors() throws {
 }
 
 @Test
+func highLevelSQLSurfacesPostgresErrorsWhileRawProtocolPreservesBytes() async throws {
+    let expected = backendErrorResponse("ERROR", "23505", "duplicate key value")
+    let database = try await postgresErrorDatabase(failingOn: "FAIL")
+    let request = try OliphauntProtocol.simpleQuery("SELECT FAIL")
+
+    #expect(try await database.execProtocolRaw(request) == expected)
+
+    do {
+        _ = try await database.execute("SELECT FAIL")
+        Issue.record("execute should surface PostgreSQL ErrorResponse")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "23505")
+        #expect(error.message == "duplicate key value")
+    }
+
+    do {
+        _ = try await database.transaction { transaction in
+            try await transaction.execute("SELECT FAIL")
+        }
+        Issue.record("transaction execute should surface PostgreSQL ErrorResponse")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "23505")
+    }
+}
+
+@Test
+func transactionControlAndCheckpointSurfacePostgresErrors() async throws {
+    let beginDatabase = try await postgresErrorDatabase(failingOn: "BEGIN")
+    do {
+        _ = try await beginDatabase.transaction { _ in () }
+        Issue.record("BEGIN should surface PostgreSQL ErrorResponse")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "23505")
+    }
+    _ = try await beginDatabase.execute("SELECT recovered")
+
+    let commitDatabase = try await postgresErrorDatabase(failingOn: "COMMIT")
+    do {
+        _ = try await commitDatabase.transaction { _ in () }
+        Issue.record("COMMIT should surface PostgreSQL ErrorResponse")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "23505")
+    }
+    _ = try await commitDatabase.execute("SELECT recovered")
+
+    do {
+        try await postgresErrorDatabase(failingOn: "CHECKPOINT").checkpoint()
+        Issue.record("checkpoint should surface PostgreSQL ErrorResponse")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "23505")
+    }
+}
+
+@Test
 func queryNormalizesCancellationPostgresErrors() throws {
     do {
         _ = try parseOliphauntQueryResponse(backendErrorResponse(
@@ -416,7 +485,7 @@ func serverCapabilitiesExposeConnectionString() async throws {
 
     let capabilities = try await database.capabilities()
     #expect(capabilities.independentSessions)
-    #expect(!capabilities.multiRoot)
+    #expect(!capabilities.multipleInstances)
     #expect(capabilities.queryCancel)
     #expect(capabilities.backupRestore)
     #expect(capabilities.backupFormats == [.sql, .physicalArchive])
@@ -480,35 +549,35 @@ func backupRejectsUnsupportedFormatsBeforeEngineCall() async throws {
 }
 
 @Test
-func openRejectsNonFileRootBeforeEngineCall() async throws {
+func openRejectsNonFileStorageDirectoryBeforeEngineCall() async throws {
     do {
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(
                 mode: .nativeDirect,
-                root: URL(string: "https://example.invalid/liboliphaunt")!
+                storage: .directory(URL(string: "https://example.invalid/liboliphaunt")!)
             ),
             engine: MockEngine(mode: .nativeDirect)
         )
-        Issue.record("non-file database roots should be rejected before engine open")
+        Issue.record("non-file storage directories should be rejected before engine open")
     } catch OliphauntError.engine(let message) {
-        #expect(message.contains("database root must be a file URL"))
+        #expect(message.contains("database storage directory must be a file URL"))
     }
 }
 
 @Test
-func openRejectsNulRootBeforeEngineCall() async throws {
+func openRejectsNulStorageDirectoryBeforeEngineCall() async throws {
     let engine = CountingEngine()
     do {
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(
                 mode: .nativeDirect,
-                root: URL(string: "file:///tmp/oliphaunt-swift%00root")!
+                storage: .directory(URL(string: "file:///tmp/oliphaunt-swift%00storage")!)
             ),
             engine: engine
         )
-        Issue.record("NUL-containing database roots should be rejected before engine open")
+        Issue.record("NUL-containing storage directories should be rejected before engine open")
     } catch OliphauntError.engine(let message) {
-        #expect(message.contains("database root must not contain NUL bytes"))
+        #expect(message.contains("database storage directory must not contain NUL bytes"))
     }
     #expect(await engine.openCallCount() == 0)
 }
@@ -699,20 +768,41 @@ func restoreUsesCanonicalPhysicalArchiveShape() async throws {
         format: .physicalArchive,
         bytes: Data("physical-backup".utf8)
     )
-    let root = URL(fileURLWithPath: "/tmp/oliphaunt-swift-restore")
+    let destination = URL(fileURLWithPath: "/tmp/oliphaunt-swift-restore")
     let restored = try await OliphauntDatabase.restore(
-        OliphauntRestoreRequest(artifact: artifact, root: root).replaceExisting(),
-        engine: MockEngine(mode: .nativeDirect)
+        OliphauntRestoreRequest(artifact: artifact, destination: destination).replaceExisting(),
+        engine: MockEngine(
+            mode: .nativeDirect,
+            expectedRestoreDestinationPolicy: .replaceExisting
+        )
     )
 
-    #expect(restored == root)
+    #expect(restored == destination)
+}
+
+@Test
+func restoreForwardsFailIfExistsByDefault() async throws {
+    let artifact = OliphauntBackupArtifact(
+        format: .physicalArchive,
+        bytes: Data("physical-backup".utf8)
+    )
+    let destination = URL(fileURLWithPath: "/tmp/oliphaunt-swift-restore-default-policy")
+    let restored = try await OliphauntDatabase.restore(
+        OliphauntRestoreRequest(artifact: artifact, destination: destination),
+        engine: MockEngine(
+            mode: .nativeDirect,
+            expectedRestoreDestinationPolicy: .failIfExists
+        )
+    )
+
+    #expect(restored == destination)
 }
 
 @Test
 func restoreRejectsUnsupportedFormatsBeforeEngineCall() async throws {
     let request = OliphauntRestoreRequest(
         artifact: OliphauntBackupArtifact(format: .sql, bytes: Data("sql-backup".utf8)),
-        root: URL(fileURLWithPath: "/tmp/oliphaunt-swift-restore-sql")
+        destination: URL(fileURLWithPath: "/tmp/oliphaunt-swift-restore-sql")
     )
 
     do {
@@ -727,13 +817,13 @@ func restoreRejectsUnsupportedFormatsBeforeEngineCall() async throws {
 }
 
 @Test
-func restoreRejectsNonFileRootBeforeEngineCall() async throws {
+func restoreRejectsNonFileDestinationBeforeEngineCall() async throws {
     let request = OliphauntRestoreRequest(
         artifact: OliphauntBackupArtifact(
             format: .physicalArchive,
             bytes: Data("physical-backup".utf8)
         ),
-        root: URL(string: "https://example.invalid/liboliphaunt-restore")!
+        destination: URL(string: "https://example.invalid/liboliphaunt-restore")!
     )
 
     do {
@@ -741,28 +831,28 @@ func restoreRejectsNonFileRootBeforeEngineCall() async throws {
             request,
             engine: MockEngine(mode: .nativeDirect)
         )
-        Issue.record("non-file restore roots should be rejected before engine restore")
+        Issue.record("non-file restore destinations should be rejected before engine restore")
     } catch OliphauntError.engine(let message) {
-        #expect(message.contains("restore root must be a file URL"))
+        #expect(message.contains("restore destination must be a file URL"))
     }
 }
 
 @Test
-func restoreRejectsNulRootBeforeEngineCall() async throws {
+func restoreRejectsNulDestinationBeforeEngineCall() async throws {
     let engine = CountingEngine()
     let request = OliphauntRestoreRequest(
         artifact: OliphauntBackupArtifact(
             format: .physicalArchive,
             bytes: Data("physical-backup".utf8)
         ),
-        root: URL(string: "file:///tmp/oliphaunt-swift%00restore")!
+        destination: URL(string: "file:///tmp/oliphaunt-swift%00restore")!
     )
 
     do {
         _ = try await OliphauntDatabase.restore(request, engine: engine)
-        Issue.record("NUL-containing restore roots should be rejected before engine restore")
+        Issue.record("NUL-containing restore destinations should be rejected before engine restore")
     } catch OliphauntError.engine(let message) {
-        #expect(message.contains("restore root must not contain NUL bytes"))
+        #expect(message.contains("restore destination must not contain NUL bytes"))
     }
     #expect(await engine.restoreCallCount() == 0)
 }
@@ -782,6 +872,26 @@ func closeIsIdempotentAndRejectsFurtherExecution() async throws {
         Issue.record("execution after close should fail")
     } catch OliphauntError.databaseClosed {
     }
+}
+
+@Test
+func failedCloseKeepsSessionUsableAndRetriesTheSameOwner() async throws {
+    let session = FailOnceCloseSession()
+    let database = try await OliphauntDatabase.open(
+        configuration: OliphauntConfiguration(mode: .nativeDirect),
+        engine: FixedSessionEngine(session: session)
+    )
+
+    do {
+        try await database.close()
+        Issue.record("injected first close should fail")
+    } catch OliphauntError.engine(let message) {
+        #expect(message == "injected detach failure")
+    }
+
+    #expect(try await database.execProtocolRaw(Data([1, 2, 3])) == Data([1, 2, 3]))
+    try await database.close()
+    #expect(await session.closeAttemptCount() == 2)
 }
 
 @Test
@@ -953,9 +1063,9 @@ func prepareForBackgroundSkipsCheckpointWhileTransactionIsActive() async throws 
 
 @Test
 func nativeDirectEngineReportsMissingLibrary() async throws {
-    let root = try makeExistingPgdataRoot()
+    let databaseDirectory = try makeExistingDatabaseDirectory()
     defer {
-        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: databaseDirectory)
     }
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib")
@@ -963,7 +1073,10 @@ func nativeDirectEngineReportsMissingLibrary() async throws {
 
     do {
         _ = try await OliphauntDatabase.open(
-            configuration: OliphauntConfiguration(mode: .nativeDirect, root: root),
+            configuration: OliphauntConfiguration(
+                mode: .nativeDirect,
+                storage: .directory(databaseDirectory)
+            ),
             engine: engine
         )
         Issue.record("opening with a missing liboliphaunt library should fail")
@@ -1014,25 +1127,22 @@ func defaultEnginePublishesExplicitModeSupport() throws {
     #expect(support[0].capabilities.supportsBackupFormat(.physicalArchive))
     #expect(!support[0].capabilities.supportsBackupFormat(.sql))
     #expect(!support[0].capabilities.independentSessions)
-    #expect(!support[0].capabilities.multiRoot)
-    #expect(support[0].capabilities.reopenable)
-    #expect(support[0].capabilities.sameRootLogicalReopen)
-    #expect(!support[0].capabilities.rootSwitchable)
+    #expect(!support[0].capabilities.multipleInstances)
+    #expect(support[0].capabilities.sameInstanceLogicalReopen)
+    #expect(!support[0].capabilities.instanceSwitchable)
     #expect(!support[0].capabilities.crashRestartable)
     #expect(!support[1].available)
     #expect(support[1].capabilities.processIsolated)
-    #expect(support[1].capabilities.multiRoot)
-    #expect(support[1].capabilities.reopenable)
-    #expect(!support[1].capabilities.sameRootLogicalReopen)
-    #expect(support[1].capabilities.rootSwitchable)
+    #expect(support[1].capabilities.multipleInstances)
+    #expect(!support[1].capabilities.sameInstanceLogicalReopen)
+    #expect(support[1].capabilities.instanceSwitchable)
     #expect(support[1].capabilities.crashRestartable)
     #expect(support[1].unavailableReason?.contains("broker") == true)
     #expect(!support[2].available)
     #expect(support[2].capabilities.independentSessions)
-    #expect(!support[2].capabilities.multiRoot)
-    #expect(support[2].capabilities.reopenable)
-    #expect(!support[2].capabilities.sameRootLogicalReopen)
-    #expect(support[2].capabilities.rootSwitchable)
+    #expect(!support[2].capabilities.multipleInstances)
+    #expect(!support[2].capabilities.sameInstanceLogicalReopen)
+    #expect(support[2].capabilities.instanceSwitchable)
     #expect(!support[2].capabilities.crashRestartable)
     #expect(support[2].capabilities.backupFormats == [.sql, .physicalArchive])
     #expect(support[2].capabilities.supportsBackupFormat(.sql))
@@ -1089,9 +1199,9 @@ func nativeDirectExtensionIdsArePortable() async throws {
 
 @Test
 func nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory() async throws {
-    let root = try makeExistingPgdataRoot()
+    let databaseDirectory = try makeExistingDatabaseDirectory()
     defer {
-        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: databaseDirectory)
     }
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
@@ -1102,7 +1212,7 @@ func nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory() async throws
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(
                 mode: .nativeDirect,
-                root: root,
+                storage: .directory(databaseDirectory),
                 extensions: ["vector"]
             ),
             engine: engine
@@ -1116,10 +1226,10 @@ func nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory() async throws
 @Test
 func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
     let fixture = try makeRuntimeResourceFixture()
-    let root = try makeExistingPgdataRoot()
+    let databaseDirectory = try makeExistingDatabaseDirectory()
     defer {
         try? FileManager.default.removeItem(at: fixture.root)
-        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: databaseDirectory)
     }
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
@@ -1130,7 +1240,7 @@ func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(
                 mode: .nativeDirect,
-                root: root,
+                storage: .directory(databaseDirectory),
                 extensions: ["vector"]
             ),
             engine: engine
@@ -1394,7 +1504,7 @@ func runtimeResourcesUseSelectedDomainForModuleOnlyProducts() throws {
 }
 
 @Test
-func runtimeResourcesFallBackToLegacyExtensionsDomainOnlyWhenSelectionIsAbsent() throws {
+func runtimeResourcesRequireSelectedExtensions() throws {
     let fixture = try makeRuntimeResourceFixture()
     defer {
         try? FileManager.default.removeItem(at: fixture.root)
@@ -1404,7 +1514,7 @@ func runtimeResourcesFallBackToLegacyExtensionsDomainOnlyWhenSelectionIsAbsent()
         """
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
-        cacheKey=test-runtime-legacy-v1
+        cacheKey=test-runtime-missing-selection-v1
         extensions=vector
         runtimeFeatures=icu
         sharedPreloadLibraries=
@@ -1420,8 +1530,12 @@ func runtimeResourcesFallBackToLegacyExtensionsDomainOnlyWhenSelectionIsAbsent()
         cacheRoot: fixture.cacheRoot
     )
 
-    _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
-    #expect(try resources.hasPackagedResources(containing: ["vector"]))
+    do {
+        _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
+        Issue.record("runtime resources accepted a manifest without selectedExtensions")
+    } catch {
+        #expect(String(describing: error).contains("missing selectedExtensions"))
+    }
 }
 
 @Test
@@ -1782,7 +1896,7 @@ func nativeDirectCanUsePackagedRuntimeResourcesBeforeLibraryLoad() async throws 
         resourceRoot: fixture.resourceRoot,
         cacheRoot: fixture.cacheRoot
     )
-    let root = fixture.root.appendingPathComponent("database-root", isDirectory: true)
+    let databaseDirectory = fixture.root.appendingPathComponent("database-directory", isDirectory: true)
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
         runtimeResources: resources
@@ -1792,7 +1906,7 @@ func nativeDirectCanUsePackagedRuntimeResourcesBeforeLibraryLoad() async throws 
         _ = try await OliphauntDatabase.open(
             configuration: OliphauntConfiguration(
                 mode: .nativeDirect,
-                root: root,
+                storage: .directory(databaseDirectory),
                 extensions: ["vector"]
             ),
             engine: engine
@@ -1808,7 +1922,7 @@ func nativeDirectCanUsePackagedRuntimeResourcesBeforeLibraryLoad() async throws 
             .path
     ))
     #expect(FileManager.default.fileExists(
-        atPath: root.appendingPathComponent("pgdata/PG_VERSION").path
+        atPath: databaseDirectory.appendingPathComponent("pgdata/PG_VERSION").path
     ))
 }
 
@@ -1838,9 +1952,9 @@ func nativeDirectEngineExecutesAgainstLinkedLiboliphauntWhenAvailable() async th
     #expect(capabilities.queryCancel)
     #expect(capabilities.backupRestore)
     #expect(capabilities.simpleQuery)
-    #expect(!capabilities.multiRoot)
-    #expect(capabilities.sameRootLogicalReopen)
-    #expect(!capabilities.rootSwitchable)
+    #expect(!capabilities.multipleInstances)
+    #expect(capabilities.sameInstanceLogicalReopen)
+    #expect(!capabilities.instanceSwitchable)
     #expect(!capabilities.crashRestartable)
 
     let response = try await database.execProtocolRaw(try OliphauntProtocol.simpleQuery("SELECT 1 AS value"))
@@ -1889,18 +2003,22 @@ func nativeDirectEngineExecutesAgainstLinkedLiboliphauntWhenAvailable() async th
     #expect(archive.format == .physicalArchive)
     #expect(archive.bytes.range(of: Data("backup_label".utf8)) != nil)
 
-    let restoredRoot = FileManager.default.temporaryDirectory
+    let restoreDestination = FileManager.default.temporaryDirectory
         .appendingPathComponent("liboliphaunt-swift-restore-\(UUID().uuidString)", isDirectory: true)
     defer {
-        try? FileManager.default.removeItem(at: restoredRoot)
+        try? FileManager.default.removeItem(at: restoreDestination)
     }
-    let restored = try await OliphauntDatabase.restore(
-        OliphauntRestoreRequest(artifact: archive, root: restoredRoot).replaceExisting(),
+    let restoredDestination = try await OliphauntDatabase.restore(
+        OliphauntRestoreRequest(artifact: archive, destination: restoreDestination).replaceExisting(),
         engine: engine
     )
-    #expect(restored == restoredRoot)
-    #expect(FileManager.default.fileExists(atPath: restoredRoot.appendingPathComponent("pgdata/PG_VERSION").path))
-    #expect(FileManager.default.fileExists(atPath: restoredRoot.appendingPathComponent("pgdata/backup_label").path))
+    #expect(restoredDestination == restoreDestination)
+    #expect(FileManager.default.fileExists(
+        atPath: restoreDestination.appendingPathComponent("pgdata/PG_VERSION").path
+    ))
+    #expect(FileManager.default.fileExists(
+        atPath: restoreDestination.appendingPathComponent("pgdata/backup_label").path
+    ))
     try await database.close()
 }
 
@@ -1912,12 +2030,56 @@ private struct FixedSessionEngine: OliphauntEngine {
     }
 
     func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
-        request.root
+        request.destination
     }
+}
+
+private struct PostgresErrorSession: OliphauntSession {
+    let failureSQL: String
+
+    func capabilities() async -> OliphauntCapabilities {
+        OliphauntCapabilities(
+            mode: .nativeDirect,
+            processIsolated: false,
+            independentSessions: false,
+            maxClientSessions: 1
+        )
+    }
+
+    func execProtocolRaw(_ bytes: Data) async throws -> Data {
+        if String(decoding: bytes, as: UTF8.self).contains(failureSQL) {
+            return backendErrorResponse("ERROR", "23505", "duplicate key value")
+        }
+        return backendSelectResponse()
+    }
+
+    func backup(_ request: OliphauntBackupRequest) async throws -> OliphauntBackupArtifact {
+        OliphauntBackupArtifact(format: request.format, bytes: Data())
+    }
+
+    func cancel() async throws {}
+
+    func close() async throws {}
+}
+
+private func postgresErrorDatabase(failingOn sql: String) async throws -> OliphauntDatabase {
+    try await OliphauntDatabase.open(
+        configuration: OliphauntConfiguration(mode: .nativeDirect),
+        engine: FixedSessionEngine(session: PostgresErrorSession(failureSQL: sql))
+    )
 }
 
 private struct MockEngine: OliphauntEngine {
     let mode: OliphauntEngineMode
+    let expectedRestoreDestinationPolicy: OliphauntRestoreDestinationPolicy?
+
+    init(
+        mode: OliphauntEngineMode,
+        expectedRestoreDestinationPolicy: OliphauntRestoreDestinationPolicy? = nil
+    ) {
+        self.mode = mode
+        self.expectedRestoreDestinationPolicy = expectedRestoreDestinationPolicy
+    }
 
     func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
         #expect(configuration.mode == mode)
@@ -1926,8 +2088,10 @@ private struct MockEngine: OliphauntEngine {
 
     func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
         #expect(request.artifact.format == .physicalArchive)
-        #expect(request.targetPolicy == .replaceExisting)
-        return request.root
+        if let expectedRestoreDestinationPolicy {
+            #expect(request.destinationPolicy == expectedRestoreDestinationPolicy)
+        }
+        return request.destination
     }
 }
 
@@ -1952,7 +2116,7 @@ private actor CountingEngine: OliphauntEngine {
 
     func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
         restores += 1
-        return request.root
+        return request.destination
     }
 
     func openCallCount() -> Int {
@@ -2048,6 +2212,40 @@ private actor MockSession: OliphauntSession {
     func cancel() async throws {}
 
     func close() async throws {}
+}
+
+private actor FailOnceCloseSession: OliphauntSession {
+    private var closeAttempts = 0
+
+    func capabilities() async -> OliphauntCapabilities {
+        OliphauntCapabilities(
+            mode: .nativeDirect,
+            processIsolated: false,
+            independentSessions: false,
+            maxClientSessions: 1
+        )
+    }
+
+    func execProtocolRaw(_ bytes: Data) async throws -> Data {
+        bytes
+    }
+
+    func backup(_ request: OliphauntBackupRequest) async throws -> OliphauntBackupArtifact {
+        OliphauntBackupArtifact(format: request.format, bytes: Data())
+    }
+
+    func cancel() async throws {}
+
+    func close() async throws {
+        closeAttempts += 1
+        if closeAttempts == 1 {
+            throw OliphauntError.engine("injected detach failure")
+        }
+    }
+
+    func closeAttemptCount() -> Int {
+        closeAttempts
+    }
 }
 
 private actor BlockingSession: OliphauntSession {
@@ -2216,10 +2414,10 @@ private final class TransactionCapture: @unchecked Sendable {
     }
 }
 
-private func makeExistingPgdataRoot() throws -> URL {
-    let root = uniqueTempURL("liboliphaunt-swift-existing-root")
-    try writeText(root.appendingPathComponent("pgdata/PG_VERSION"), "18\n")
-    return root
+private func makeExistingDatabaseDirectory() throws -> URL {
+    let directory = uniqueTempURL("liboliphaunt-swift-existing-database")
+    try writeText(directory.appendingPathComponent("pgdata/PG_VERSION"), "18\n")
+    return directory
 }
 
 private func makeRuntimeResourceFixture() throws -> (

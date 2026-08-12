@@ -553,7 +553,7 @@ ios_metro_url() {
 
 ios_runner_url() {
   local selected_runner="$1"
-  local root_arg="${2:-}"
+  local storage_arg="${2:-}"
   local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
   if uses_ios_metro; then
     local metro_url encoded_metro_url
@@ -568,8 +568,15 @@ ios_runner_url() {
     url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
   fi
   url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
-  if [ -n "$root_arg" ]; then
-    url="$url&liboliphauntRoot=$(urlencode "$root_arg")"
+  if [ -n "$storage_arg" ]; then
+    case "$storage_arg" in
+      app-data:*)
+        url="$url&liboliphauntApplicationData=$(urlencode "${storage_arg#app-data:}")"
+        ;;
+      *)
+        url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_arg")"
+        ;;
+    esac
   fi
   printf '%s' "$url"
 }
@@ -607,23 +614,23 @@ wait_for_ios_tag() {
 
 exercise_ios_crash_recovery() {
   local device_udid="$1"
-  local root_path="$2"
+  local crash_storage="$2"
   local write_url verify_url launch_output launch_pid write_line pass scratch_offset dev_offset
 
-  if [ -z "$crash_root_override" ]; then
-    case "$root_path" in
-      app-support://*)
+  if [ -z "$crash_storage_override" ]; then
+    case "$crash_storage" in
+      app-data:*)
         ;;
       /*)
-        rm -rf "$root_path"
+        rm -rf "$crash_storage"
         ;;
     esac
   fi
 
-  start_metro_if_needed crash-write "$root_path"
+  start_metro_if_needed crash-write "$crash_storage"
   scratch_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_offset="$(file_bytes "$metro_dev_log")"
-  write_url="$(ios_runner_url crash-write "$root_path")"
+  write_url="$(ios_runner_url crash-write "$crash_storage")"
 
   echo
   echo "==> iOS crash recovery: write phase"
@@ -640,10 +647,10 @@ exercise_ios_crash_recovery() {
   echo "==> iOS crash recovery: terminate app process, then verify phase"
   run xcrun simctl terminate "$device_udid" "$app_id" || true
   stop_owned_metro
-  start_metro_if_needed crash-verify "$root_path"
+  start_metro_if_needed crash-verify "$crash_storage"
   scratch_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_offset="$(file_bytes "$metro_dev_log")"
-  verify_url="$(ios_runner_url crash-verify "$root_path")"
+  verify_url="$(ios_runner_url crash-verify "$crash_storage")"
   launch_output="$(xcrun simctl launch "$device_udid" "$app_id" --initialUrl "$verify_url")"
   printf '%s\n' "$launch_output"
   launch_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v app_id="$app_id" '$1 == app_id {print $2; exit}')"
@@ -656,11 +663,11 @@ exercise_ios_crash_recovery() {
 launch_ios_device_runner() {
   local device_id="$1"
   local selected_runner="$2"
-  local root_arg="${3:-}"
+  local storage_arg="${3:-}"
   local json="$scratch_root/devicectl-launch-$selected_runner.json"
   local log="$scratch_root/devicectl-launch-$selected_runner.log"
   local url deadline attempt launch_timeout
-  url="$(ios_runner_url "$selected_runner" "$root_arg")"
+  url="$(ios_runner_url "$selected_runner" "$storage_arg")"
   deadline=$((SECONDS + timeout_seconds))
   attempt=1
   launch_timeout="${OLIPHAUNT_EXPO_IOS_DEVICE_LAUNCH_ATTEMPT_TIMEOUT_SECONDS:-20}"
@@ -735,23 +742,23 @@ wait_for_ios_device_runner() {
 
 exercise_ios_device_crash_recovery() {
   local device_id="$1"
-  local root_path="$2"
+  local crash_storage="$2"
   local write_pid write_line pass scratch_offset dev_offset
 
-  if [ -z "$crash_root_override" ]; then
-    case "$root_path" in
-      app-support://*)
+  if [ -z "$crash_storage_override" ]; then
+    case "$crash_storage" in
+      app-data:*)
         ;;
       /*)
-        rm -rf "$root_path"
+        rm -rf "$crash_storage"
         ;;
     esac
   fi
 
-  start_metro_if_needed crash-write "$root_path"
+  start_metro_if_needed crash-write "$crash_storage"
   scratch_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_offset="$(file_bytes "$metro_dev_log")"
-  write_pid="$(launch_ios_device_runner "$device_id" crash-write "$root_path")" ||
+  write_pid="$(launch_ios_device_runner "$device_id" crash-write "$crash_storage")" ||
     fail "failed to launch iOS device crash recovery write phase"
   write_line="$(wait_for_ios_tag_from_metro OLIPHAUNT_EXPO_CRASH_WRITE_READY "$failure_tag" "$scratch_offset" "$dev_offset")" ||
     fail "Expo iOS device crash recovery write phase failed"
@@ -767,10 +774,10 @@ exercise_ios_device_crash_recovery() {
   fi
 
   stop_owned_metro
-  start_metro_if_needed crash-verify "$root_path"
+  start_metro_if_needed crash-verify "$crash_storage"
   scratch_offset="$(file_bytes "$scratch_root/metro.log")"
   dev_offset="$(file_bytes "$metro_dev_log")"
-  launch_ios_device_runner "$device_id" crash-verify "$root_path" >/dev/null ||
+  launch_ios_device_runner "$device_id" crash-verify "$crash_storage" >/dev/null ||
     fail "failed to launch iOS device crash recovery verify phase"
   pass="$(wait_for_ios_tag_from_metro "$success_tag" "$failure_tag" "$scratch_offset" "$dev_offset")" ||
     fail "Expo iOS device crash recovery verify phase failed"
@@ -820,9 +827,9 @@ install_and_launch() {
       "$app"
 
     if [ "$runner" = "crash" ]; then
-      local crash_root="$crash_root_override"
-      [ -n "$crash_root" ] || crash_root="app-support://oliphaunt-crash-recovery-root-$crash_root_suffix"
-      exercise_ios_device_crash_recovery "$device_id" "$crash_root"
+      local crash_storage="$crash_storage_override"
+      [ -n "$crash_storage" ] || crash_storage="app-data:oliphaunt-crash-recovery-$crash_storage_suffix"
+      exercise_ios_device_crash_recovery "$device_id" "$crash_storage"
       return
     fi
 
@@ -850,14 +857,14 @@ install_and_launch() {
   run xcrun simctl terminate "$device_udid" "$app_id" || true
 
   if [ "$runner" = "crash" ]; then
-    local crash_root="$crash_root_override"
-    if [ -z "$crash_root" ]; then
+    local crash_storage="$crash_storage_override"
+    if [ -z "$crash_storage" ]; then
       local container
       container="$(xcrun simctl get_app_container "$device_udid" "$app_id" data)" ||
         fail "failed to resolve iOS app data container for crash recovery"
-      crash_root="$container/Documents/oliphaunt-crash-recovery-root-$crash_root_suffix"
+      crash_storage="$container/Documents/oliphaunt-crash-recovery-storage-$crash_storage_suffix"
     fi
-    exercise_ios_crash_recovery "$device_udid" "$crash_root"
+    exercise_ios_crash_recovery "$device_udid" "$crash_storage"
     return
   fi
 

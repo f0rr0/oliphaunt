@@ -501,7 +501,7 @@ describe("PE32+ architecture and self-contained runtime imports", () => {
     });
     expect(result.files).toEqual(["bin/oliphaunt.dll", "lib/oliphaunt.lib"]);
     expect(result.binaries).toBe(2);
-    expect(result.slices).toBe(6);
+    expect(result.slices).toBe(5);
 
     expect(() =>
       inspectPlatformBinaryEntries(runtimeEntries, { target: "windows-x64-msvc" }),
@@ -632,20 +632,12 @@ describe("PE32+ architecture and self-contained runtime imports", () => {
     ).toThrow(/does not expose required symbol oliphaunt_init/u);
     expect(() =>
       inspectImportLibrary(windowsImportLibraryFixture({ importSymbols: ["oliphaunt_init"] })),
-    ).toThrow(/does not expose required symbol oliphaunt_init_ex/u);
-    expect(() =>
-      inspectImportLibrary(
-        windowsImportLibraryFixture({
-          importSymbols: ["oliphaunt_init", "oliphaunt_init_ex"],
-        }),
-      ),
     ).toThrow(/does not expose required symbol oliphaunt_logical_generation/u);
     expect(() =>
       inspectImportLibrary(
         windowsImportLibraryFixture({
           importSymbols: [
             "oliphaunt_init",
-            "oliphaunt_init_ex",
             "oliphaunt_logical_generation",
           ],
         }),

@@ -17,6 +17,7 @@ const SDK_PRODUCT_MODULES = new Map([
   ["oliphaunt-js", "./sdk-artifacts/js.mjs"],
   ["oliphaunt-react-native", "./sdk-artifacts/react-native.mjs"],
   ["oliphaunt-wasix-rust", "./sdk-artifacts/wasix-rust.mjs"],
+  ["oliphaunt-wasix-ts", "./sdk-artifacts/wasix-ts.mjs"],
 ]);
 
 function fail(message) {

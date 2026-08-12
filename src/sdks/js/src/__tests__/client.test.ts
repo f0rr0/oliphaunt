@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
+import { access, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { test } from 'vitest';
-
+import {
+  createOliphauntClient,
+  defaultEngineForRuntime,
+  supportsBackupFormat,
+  supportsRestoreFormat,
+} from '../client.js';
 import {
   CAP_BACKUP_RESTORE,
   CAP_EXTENSIONS,
@@ -19,12 +26,6 @@ import type {
   NativeRestoreOptions,
 } from '../native/types.js';
 import { simpleQuery } from '../protocol.js';
-import {
-  createOliphauntClient,
-  defaultEngineForRuntime,
-  supportsBackupFormat,
-  supportsRestoreFormat,
-} from '../client.js';
 import type { BackupFormat, RawProtocolTransport } from '../types.js';
 
 async function main(): Promise<void> {
@@ -34,7 +35,16 @@ async function main(): Promise<void> {
   await testOpenNormalizesNativeConfigAndUsesLibraryOverride();
   await testNativeDirectPreservesRuntimeDirectoryOverrideProvenance();
   await testOpenRejectsUnsupportedModesAndInvalidInputs();
+  await testPreOpenFailureDiscardsUnownedTemporaryDirectory();
+  await testDefaultTemporaryDirectorySurvivesFailedNativeOpenForRecovery();
+  await testDefaultTemporaryDirectoryReopensTheResidentDirectInstance();
+  await testDefaultTemporaryDirectoryIgnoresLibraryPathSpelling();
+  await testRelativeAndAbsoluteLibraryAliasesReuseTemporaryDirectory();
   await testExecuteQueryStreamingAndClose();
+  await testFailedCloseRemainsOpenAndRetryable();
+  await testConcurrentCloseCallsShareOneDetachAttempt();
+  await testCloseWaitsForActiveOperations();
+  await testCloseDuringTransactionIsRejected();
   await testTransactionCommitsRollsBackAndPinsSession();
   await testBackupAndRestoreUsePhysicalArchiveShape();
   await testBackgroundPreparationCancelsActiveWorkAndSkipsCheckpoint();
@@ -74,7 +84,7 @@ async function testSupportedModesExposeNativeDirectContract(): Promise<void> {
   assert.equal(support[0]?.available, true);
   assert.equal(support[0]?.capabilities.rawProtocolTransport, 'node-addon');
   assert.equal(support[0]?.capabilities.maxClientSessions, 1);
-  assert.equal(support[0]?.capabilities.multiRoot, true);
+  assert.equal(support[0]?.capabilities.multipleInstances, true);
   assert.equal(support[0]?.capabilities.protocolStream, true);
   assert.deepEqual(support[0]?.capabilities.backupFormats, ['physicalArchive']);
   assert.equal(supportsBackupFormat(support[0]!.capabilities, 'physicalArchive'), true);
@@ -82,7 +92,7 @@ async function testSupportedModesExposeNativeDirectContract(): Promise<void> {
   assert.equal(supportsRestoreFormat(support[0]!.capabilities, 'physicalArchive'), true);
   assert.equal(support[1]?.available, false);
   assert.equal(support[1]?.capabilities.processIsolated, true);
-  assert.equal(support[1]?.capabilities.rootSwitchable, true);
+  assert.equal(support[1]?.capabilities.instanceSwitchable, true);
   assert.match(support[1]?.unavailableReason ?? '', /broker/);
   assert.equal(support[2]?.available, false);
   assert.equal(support[2]?.capabilities.independentSessions, true);
@@ -101,7 +111,7 @@ async function testSupportedModesReportsNativeLoaderFailure(): Promise<void> {
   assert.equal(support.length, 3);
   assert.equal(support[0]?.available, false);
   assert.match(support[0]?.unavailableReason ?? '', /missing dylib/);
-  assert.equal(support[0]?.capabilities.reopenable, true);
+  assert.equal(support[0]?.capabilities.sameInstanceLogicalReopen, true);
 }
 
 async function testOpenNormalizesNativeConfigAndUsesLibraryOverride(): Promise<void> {
@@ -113,14 +123,14 @@ async function testOpenNormalizesNativeConfigAndUsesLibraryOverride(): Promise<v
 
   const db = await client.open({
     engine: 'nativeDirect',
-    root: '/tmp/oliphaunt-js-root',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
     libraryPath: '/tmp/liboliphaunt.so',
     runtimeDirectory: '/tmp/postgres-runtime',
     startupGUCs: ['work_mem=4MB', { name: 'app.custom', value: 'enabled' }],
     extensions: ['postgis', ' hstore '],
   });
 
-  assert.equal(db.root, '/tmp/oliphaunt-js-root');
+  assert.equal('handle' in db, false);
   assert.deepEqual(binding.factoryOptions, [{ libraryPath: '/tmp/liboliphaunt.so' }]);
   assert.deepEqual(binding.openCalls, [
     {
@@ -155,12 +165,15 @@ async function testNativeDirectPreservesRuntimeDirectoryOverrideProvenance(): Pr
   for (const runtime of ['node', 'bun'] as const) {
     const packageRuntimeDirectory = `/tmp/oliphaunt-package-runtime-${runtime}`;
     const explicitRuntimeDirectory = `/tmp/oliphaunt-explicit-runtime-${runtime}`;
-    const binding = new MockNativeBinding({ runtime, defaultRuntimeDirectory: packageRuntimeDirectory });
+    const binding = new MockNativeBinding({
+      runtime,
+      defaultRuntimeDirectory: packageRuntimeDirectory,
+    });
     const client = createOliphauntClient(() => binding);
 
     const packageManaged = await client.open({
       engine: 'nativeDirect',
-      root: `/tmp/oliphaunt-js-package-managed-${runtime}`,
+      storage: { kind: 'directory', path: `/tmp/oliphaunt-js-package-managed-${runtime}` },
       extensions: ['hstore'],
     });
     await packageManaged.close();
@@ -173,7 +186,7 @@ async function testNativeDirectPreservesRuntimeDirectoryOverrideProvenance(): Pr
 
     const explicit = await client.open({
       engine: 'nativeDirect',
-      root: `/tmp/oliphaunt-js-explicit-${runtime}`,
+      storage: { kind: 'directory', path: `/tmp/oliphaunt-js-explicit-${runtime}` },
       runtimeDirectory: explicitRuntimeDirectory,
       extensions: ['hstore'],
     });
@@ -187,41 +200,134 @@ async function testOpenRejectsUnsupportedModesAndInvalidInputs(): Promise<void> 
   const client = createOliphauntClient(() => binding);
 
   await assert.rejects(
-    async () => client.open({ engine: 'nativeServer', root: '/tmp/oliphaunt-js-root' }),
+    async () =>
+      client.open({
+        engine: 'nativeServer',
+        storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+      }),
     /serverExecutable|OLIPHAUNT_POSTGRES|@oliphaunt\/liboliphaunt-/,
   );
   await assert.rejects(
-    async () => client.open({ root: '/tmp/root', temporary: true }),
-    /root and temporary are mutually exclusive/,
+    async () => client.open({ storage: { kind: 'unknown' } as never }),
+    /unknown native database storage kind/,
   );
-  await assert.rejects(async () => client.open({ root: ' \n' }), /database root must not be empty/);
   await assert.rejects(
-    async () => client.open({ root: '/tmp/root', username: '\0' }),
+    async () => client.open({ storage: { kind: 'directory', path: ' \n' } }),
+    /database storage directory must not be empty/,
+  );
+  await assert.rejects(
+    async () => client.open({ storage: { kind: 'directory', path: '/tmp/root' }, username: '\0' }),
     /username must not contain NUL bytes/,
   );
   await assert.rejects(
-    async () => client.open({ root: '/tmp/root', startupGUCs: ['bad-name=value'] }),
+    async () =>
+      client.open({
+        storage: { kind: 'directory', path: '/tmp/root' },
+        startupGUCs: ['bad-name=value'],
+      }),
     /startup GUC name/,
   );
   await assert.rejects(
-    async () => client.open({ root: '/tmp/root', extensions: ['bad/value'] }),
+    async () =>
+      client.open({
+        storage: { kind: 'directory', path: '/tmp/root' },
+        extensions: ['bad/value'],
+      }),
     /extension id/,
   );
   await assert.rejects(
-    async () => client.open({ root: '/tmp/root', extensions: ['pg_search'] }),
+    async () =>
+      client.open({
+        storage: { kind: 'directory', path: '/tmp/root' },
+        extensions: ['pg_search'],
+      }),
     /unknown Oliphaunt extension id 'pg_search'/,
   );
-  await assert.rejects(
-    async () => client.open({ temporary: false }),
-    /database root is not configured/,
-  );
   assert.deepEqual(binding.openCalls, []);
+}
+
+async function testDefaultTemporaryDirectorySurvivesFailedNativeOpenForRecovery(): Promise<void> {
+  const binding = new MockNativeBinding({ openError: new Error('open failed') });
+  const client = createOliphauntClient(() => binding);
+
+  await assert.rejects(() => client.open(), /open failed/);
+
+  const instanceDirectory = dirname(binding.openCalls[0]!.pgdata);
+  await access(instanceDirectory);
+
+  binding.openError = undefined;
+  const recovered = await client.open();
+  assert.equal(binding.openCalls[1]!.pgdata, binding.openCalls[0]!.pgdata);
+  await recovered.close();
+  await rm(instanceDirectory, { recursive: true, force: true });
+}
+
+async function testPreOpenFailureDiscardsUnownedTemporaryDirectory(): Promise<void> {
+  const binding = new MockNativeBinding();
+  let bindingUnavailable = true;
+  const client = createOliphauntClient(() => {
+    if (bindingUnavailable) {
+      throw new Error('binding unavailable');
+    }
+    return binding;
+  });
+
+  await assert.rejects(() => client.open(), /binding unavailable/);
+
+  bindingUnavailable = false;
+  const recovered = await client.open();
+  const instanceDirectory = dirname(binding.openCalls[0]!.pgdata);
+  await access(instanceDirectory);
+  await recovered.close();
+  await rm(instanceDirectory, { recursive: true, force: true });
+}
+
+async function testDefaultTemporaryDirectoryReopensTheResidentDirectInstance(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+
+  const first = await client.open();
+  await first.close();
+  const second = await client.open();
+
+  assert.equal(binding.openCalls.length, 2);
+  assert.equal(binding.openCalls[1]!.pgdata, binding.openCalls[0]!.pgdata);
+  await second.close();
+}
+
+async function testDefaultTemporaryDirectoryIgnoresLibraryPathSpelling(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+
+  const detected = await client.open();
+  await detected.close();
+  const explicit = await client.open({ libraryPath: '/tmp/liboliphaunt.so' });
+
+  assert.equal(binding.openCalls[1]!.pgdata, binding.openCalls[0]!.pgdata);
+  await explicit.close();
+  await rm(dirname(binding.openCalls[0]!.pgdata), { recursive: true, force: true });
+}
+
+async function testRelativeAndAbsoluteLibraryAliasesReuseTemporaryDirectory(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+
+  const relative = await client.open({ libraryPath: './liboliphaunt.so' });
+  await relative.close();
+  const absolute = await client.open({ libraryPath: '/workspace/liboliphaunt.so' });
+
+  assert.equal(binding.openCalls[1]!.pgdata, binding.openCalls[0]!.pgdata);
+  await absolute.close();
+  await rm(dirname(binding.openCalls[0]!.pgdata), { recursive: true, force: true });
 }
 
 async function testExecuteQueryStreamingAndClose(): Promise<void> {
   const binding = new MockNativeBinding({ protocolStream: false });
   const client = createOliphauntClient(() => binding);
-  const db = await client.open({ engine: 'nativeDirect', root: '/tmp/oliphaunt-js-root' });
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+  });
 
   // OLIPHAUNT_DOCS_SNIPPET typescript-quickstart
   const executeBytes = await db.execute('SELECT 1');
@@ -244,10 +350,93 @@ async function testExecuteQueryStreamingAndClose(): Promise<void> {
   assert.deepEqual(binding.detachCalls, [1]);
 }
 
+async function testFailedCloseRemainsOpenAndRetryable(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-close-retry' },
+  });
+  binding.detachError = new Error('detach failed');
+
+  await assert.rejects(() => db.close(), /detach failed/);
+  await db.execute('SELECT still_open');
+  await assert.rejects(() => client.open(), /already has an active process-wide instance/);
+
+  binding.detachError = undefined;
+  await db.close();
+  assert.deepEqual(binding.detachCalls, [1, 1]);
+  await assert.rejects(() => db.execute('SELECT closed'), /database is closed/);
+}
+
+async function testConcurrentCloseCallsShareOneDetachAttempt(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-concurrent-close' },
+  });
+  binding.holdNextDetach = true;
+
+  const first = db.close();
+  const second = db.close();
+  assert.equal(second, first);
+  await Promise.resolve();
+  assert.deepEqual(binding.detachCalls, [1]);
+  await assert.rejects(() => db.execute('SELECT closing'), /database is closing/);
+  binding.releaseHeldDetach();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(binding.detachCalls, [1]);
+  await assert.rejects(() => db.execute('SELECT closed'), /database is closed/);
+}
+
+async function testCloseWaitsForActiveOperations(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-close-drain' },
+  });
+  binding.holdNextProtocolCall = true;
+
+  const active = db.execProtocolRaw(simpleQuery('SELECT slow'));
+  await Promise.resolve();
+  const closing = db.close();
+  await Promise.resolve();
+  assert.deepEqual(binding.detachCalls, []);
+  await assert.rejects(() => db.execute('SELECT rejected'), /database is closing/);
+
+  binding.releaseHeldProtocolCall();
+  await active;
+  await closing;
+  assert.deepEqual(binding.detachCalls, [1]);
+}
+
+async function testCloseDuringTransactionIsRejected(): Promise<void> {
+  const binding = new MockNativeBinding();
+  const client = createOliphauntClient(() => binding);
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-close-transaction' },
+  });
+
+  await db.transaction(async (tx) => {
+    await assert.rejects(() => db.close(), /transaction is active/);
+    await tx.execute('SELECT still_in_transaction');
+  });
+  assert.deepEqual(binding.detachCalls, []);
+  await db.close();
+  assert.deepEqual(binding.detachCalls, [1]);
+}
+
 async function testTransactionCommitsRollsBackAndPinsSession(): Promise<void> {
   const binding = new MockNativeBinding();
   const client = createOliphauntClient(() => binding);
-  const db = await client.open({ engine: 'nativeDirect', root: '/tmp/oliphaunt-js-root' });
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+  });
 
   await db.transaction(async (tx) => {
     await tx.execute('SELECT 1');
@@ -273,7 +462,10 @@ async function testBackupAndRestoreUsePhysicalArchiveShape(): Promise<void> {
     binding.factoryOptions.push(options ?? {});
     return binding;
   });
-  const db = await client.open({ engine: 'nativeDirect', root: '/tmp/oliphaunt-js-root' });
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+  });
   assert.equal(binding.openCalls[0]?.pgdata, '/tmp/oliphaunt-js-root/pgdata');
 
   await assert.rejects(async () => db.backup('sql'), /sql backup is not supported/);
@@ -281,19 +473,23 @@ async function testBackupAndRestoreUsePhysicalArchiveShape(): Promise<void> {
   assert.equal(backup.format, 'physicalArchive');
   assert.deepEqual(Array.from(backup.bytes), [0x70, 0x68, 0x79, 0x73]);
   assert.deepEqual(binding.backupCalls, [{ handle: 1, format: 'physicalArchive' }]);
+  await db.close();
 
   const restored = await client.restore({
-    engine: 'nativeDirect',
-    root: '/tmp/oliphaunt-js-restore',
+    destination: '/tmp/oliphaunt-js-restore',
     libraryPath: '/tmp/liboliphaunt.dylib',
     artifact: backup,
-    replaceExisting: true,
+    destinationPolicy: 'replaceExisting',
   });
 
   assert.equal(restored, '/tmp/oliphaunt-js-restore');
+  assert.deepEqual(binding.factoryOptions, [
+    { libraryPath: undefined },
+    { libraryPath: '/tmp/liboliphaunt.dylib' },
+  ]);
   assert.deepEqual(binding.restoreCalls, [
     {
-      root: '/tmp/oliphaunt-js-restore',
+      destination: '/tmp/oliphaunt-js-restore',
       format: 'physicalArchive',
       bytes: backup.bytes,
       replaceExisting: true,
@@ -301,10 +497,9 @@ async function testBackupAndRestoreUsePhysicalArchiveShape(): Promise<void> {
   ]);
   const restoredDb = await client.open({
     engine: 'nativeDirect',
-    root: restored,
+    storage: { kind: 'directory', path: restored },
     libraryPath: '/tmp/liboliphaunt.dylib',
   });
-  assert.equal(restoredDb.root, '/tmp/oliphaunt-js-restore');
   assert.equal(
     binding.openCalls[binding.openCalls.length - 1]?.pgdata,
     '/tmp/oliphaunt-js-restore/pgdata',
@@ -313,8 +508,7 @@ async function testBackupAndRestoreUsePhysicalArchiveShape(): Promise<void> {
   await assert.rejects(
     async () =>
       client.restore({
-        engine: 'nativeDirect',
-        root: '/tmp/root',
+        destination: '/tmp/root',
         artifact: { format: 'sql', bytes: new Uint8Array() },
       }),
     /physicalArchive/,
@@ -322,18 +516,30 @@ async function testBackupAndRestoreUsePhysicalArchiveShape(): Promise<void> {
   await assert.rejects(
     async () =>
       client.restore({
-        engine: 'nativeServer',
-        root: '/tmp/root',
+        destination: '/tmp/root',
         artifact: backup,
+        destinationPolicy: 'overwrite' as never,
       }),
-    /nativeServer restore is not supported/,
+    /unknown restore destination policy 'overwrite'/,
+  );
+  await assert.rejects(
+    async () =>
+      client.restore({
+        destination: '/tmp/root',
+        artifact: backup,
+        libraryPath: '  ',
+      }),
+    /libraryPath must not be empty/,
   );
 }
 
 async function testBackgroundPreparationCancelsActiveWorkAndSkipsCheckpoint(): Promise<void> {
   const binding = new MockNativeBinding();
   const client = createOliphauntClient(() => binding);
-  const db = await client.open({ engine: 'nativeDirect', root: '/tmp/oliphaunt-js-root' });
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+  });
   binding.holdNextProtocolCall = true;
 
   const active = db.execProtocolRaw(simpleQuery('SELECT slow'));
@@ -353,7 +559,10 @@ async function testBackgroundPreparationCancelsActiveWorkAndSkipsCheckpoint(): P
 async function testExecutionAfterCloseFailsBeforeNativeCall(): Promise<void> {
   const binding = new MockNativeBinding();
   const client = createOliphauntClient(() => binding);
-  const db = await client.open({ engine: 'nativeDirect', root: '/tmp/oliphaunt-js-root' });
+  const db = await client.open({
+    engine: 'nativeDirect',
+    storage: { kind: 'directory', path: '/tmp/oliphaunt-js-root' },
+  });
 
   await db.close();
   await assert.rejects(async () => db.execute('SELECT 1'), /database is closed/);
@@ -365,6 +574,7 @@ class MockNativeBinding implements NativeBinding {
   rawProtocolTransport: RawProtocolTransport = 'node-addon';
   protocolStream: boolean;
   defaultRuntimeDirectory?: string;
+  openError?: Error;
   flags: bigint;
   factoryOptions: NativeBindingOptions[] = [];
   openCalls: NativeOpenConfig[] = [];
@@ -376,8 +586,10 @@ class MockNativeBinding implements NativeBinding {
   cancelCalls: NativeHandle[] = [];
   detachCalls: NativeHandle[] = [];
   holdNextProtocolCall = false;
+  holdNextDetach = false;
   #nextHandle = 1;
   #releaseHeldProtocolCall: (() => void) | undefined;
+  #releaseHeldDetach: (() => void) | undefined;
 
   constructor(
     options: {
@@ -385,6 +597,7 @@ class MockNativeBinding implements NativeBinding {
       protocolStream?: boolean;
       runtime?: NativeBinding['runtime'];
       defaultRuntimeDirectory?: string;
+      openError?: Error;
     } = {},
   ) {
     this.runtime = options.runtime ?? 'node';
@@ -398,6 +611,7 @@ class MockNativeBinding implements NativeBinding {
         CAP_SIMPLE_QUERY |
         CAP_LOGICAL_REOPEN;
     this.protocolStream = options.protocolStream ?? false;
+    this.openError = options.openError;
   }
 
   version(): string {
@@ -410,6 +624,9 @@ class MockNativeBinding implements NativeBinding {
 
   open(config: NativeOpenConfig): NativeHandle {
     this.openCalls.push(config);
+    if (this.openError !== undefined) {
+      throw this.openError;
+    }
     return this.#nextHandle++;
   }
 
@@ -458,13 +675,29 @@ class MockNativeBinding implements NativeBinding {
     this.cancelCalls.push(handle);
   }
 
-  detach(handle: NativeHandle): void {
+  async detach(handle: NativeHandle): Promise<void> {
     this.detachCalls.push(handle);
+    if (this.holdNextDetach) {
+      this.holdNextDetach = false;
+      await new Promise<void>((resolve) => {
+        this.#releaseHeldDetach = resolve;
+      });
+    }
+    if (this.detachError !== undefined) {
+      throw this.detachError;
+    }
   }
+
+  detachError?: Error;
 
   releaseHeldProtocolCall(): void {
     this.#releaseHeldProtocolCall?.();
     this.#releaseHeldProtocolCall = undefined;
+  }
+
+  releaseHeldDetach(): void {
+    this.#releaseHeldDetach?.();
+    this.#releaseHeldDetach = undefined;
   }
 }
 

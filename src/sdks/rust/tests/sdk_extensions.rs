@@ -632,7 +632,7 @@ fn extension_catalog_cli_lists_release_ready_prebuilt_availability_without_nativ
 #[test]
 fn extension_selection_resolves_only_exact_extensions_and_required_dependencies() {
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .extension(Extension::Earthdistance)
         .extension(Extension::Earthdistance)
         .build_config()

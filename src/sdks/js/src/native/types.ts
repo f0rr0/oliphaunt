@@ -15,7 +15,7 @@ export type NativeOpenConfig = {
 };
 
 export type NativeRestoreOptions = {
-  root: string;
+  destination: string;
   format: BackupFormat;
   bytes: Uint8Array;
   replaceExisting: boolean;

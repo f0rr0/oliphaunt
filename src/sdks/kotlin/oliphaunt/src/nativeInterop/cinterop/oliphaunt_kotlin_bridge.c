@@ -31,7 +31,10 @@ typedef int32_t (*OliphauntCloseFn)(OliphauntHandle *handle);
 typedef const char *(*OliphauntLastErrorFn)(OliphauntHandle *handle);
 typedef uint64_t (*OliphauntCapabilitiesFn)(void);
 typedef void (*OliphauntFreeResponseFn)(OliphauntResponse *response);
-typedef int32_t (*OliphauntBackupFn)(OliphauntHandle *handle, uint32_t format, OliphauntResponse *out);
+typedef int32_t (*OliphauntBackupFn)(
+    OliphauntHandle *handle,
+    const OliphauntBackupOptions *options,
+    OliphauntResponse *out);
 typedef int32_t (*OliphauntRestoreFn)(const OliphauntRestoreOptions *options);
 
 typedef struct OliphauntKotlinSymbols {
@@ -217,7 +220,14 @@ int32_t oliphaunt_kotlin_backup(OliphauntKotlinSession *session, uint32_t format
         set_session_error(session, "invalid oliphaunt_kotlin_backup arguments");
         return -1;
     }
-    int32_t rc = session->symbols.backup(session->handle, format, out);
+    const OliphauntBackupOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .format = format,
+        .generated_files = NULL,
+        .generated_file_count = 0,
+        .reserved_flags = 0,
+    };
+    int32_t rc = session->symbols.backup(session->handle, &options, out);
     if (rc != 0 && session->symbols.last_error != NULL) {
         set_session_error(session, session->symbols.last_error(session->handle));
     }
@@ -260,6 +270,9 @@ int32_t oliphaunt_kotlin_close(OliphauntKotlinSession *session) {
             const char *message = session->symbols.last_error(session->handle);
             set_session_error(session, message);
             set_global_error(message);
+        }
+        if (rc != 0) {
+            return rc;
         }
         session->handle = NULL;
     }

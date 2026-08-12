@@ -8,14 +8,18 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use tar::{Archive, Builder, EntryType, Header};
+use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
+
+#[cfg(test)]
+use crate::oliphaunt::storage::vfs_file_exists;
+use crate::oliphaunt::storage::{vfs_create_dir_all, vfs_read, vfs_write};
 
 const PGDATA_OVERLAY_MANIFEST_NAME: &str = ".oliphaunt-wasix-pgdata-overlay.json";
 const RUNTIME_STATE_FILES: &[&str] = &["postmaster.pid", "postmaster.opts"];
 const OVERLAY_WHITEOUT_PREFIX: &str = ".wh.";
 
-/// Compression format for physical PGDATA archives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataDirArchiveFormat {
+pub(crate) enum PhysicalArchiveEncoding {
     Tar,
     TarGz,
 }
@@ -26,18 +30,69 @@ enum EntrySource {
     File(PathBuf),
 }
 
+#[derive(Debug, Clone)]
+enum VirtualEntrySource {
+    Directory,
+    File(Vec<u8>),
+}
+
 pub(crate) fn dump_pgdata_archive(
     pgdata_upper: &Path,
     pgdata_lower: Option<&Path>,
-    format: DataDirArchiveFormat,
+    format: PhysicalArchiveEncoding,
 ) -> Result<Vec<u8>> {
     let materialized = materialize_pgdata_view(pgdata_upper, pgdata_lower)?;
     dump_materialized_pgdata_archive(materialized.path(), format)
 }
 
+pub(crate) fn dump_virtual_pgdata_archive(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+    format: PhysicalArchiveEncoding,
+) -> Result<Vec<u8>> {
+    let mut entries = BTreeMap::<PathBuf, VirtualEntrySource>::new();
+    collect_virtual_pgdata_entries(filesystem, Path::new("/"), Path::new("/"), &mut entries)?;
+
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = Builder::new(&mut tar_bytes);
+        for (relative, source) in entries {
+            let archive_path = archive_path(&relative);
+            match source {
+                VirtualEntrySource::Directory => {
+                    let mut header = Header::new_gnu();
+                    header.set_entry_type(EntryType::Directory);
+                    header.set_mode(0o755);
+                    header.set_mtime(0);
+                    header.set_size(0);
+                    header.set_cksum();
+                    builder
+                        .append_data(&mut header, archive_path, Cursor::new(Vec::<u8>::new()))
+                        .context("append virtual PGDATA directory to archive")?;
+                }
+                VirtualEntrySource::File(bytes) => {
+                    let mut header = Header::new_gnu();
+                    header.set_entry_type(EntryType::Regular);
+                    header.set_mode(0o644);
+                    header.set_mtime(0);
+                    header.set_size(bytes.len() as u64);
+                    header.set_cksum();
+                    builder
+                        .append_data(&mut header, archive_path, Cursor::new(bytes))
+                        .context("append virtual PGDATA file to archive")?;
+                }
+            }
+        }
+        builder
+            .finish()
+            .context("finish virtual PGDATA tar archive")?;
+    }
+
+    compress_archive(tar_bytes, format)
+}
+
 fn dump_materialized_pgdata_archive(
     pgdata: &Path,
-    format: DataDirArchiveFormat,
+    format: PhysicalArchiveEncoding,
 ) -> Result<Vec<u8>> {
     let mut entries = BTreeMap::<PathBuf, EntrySource>::new();
     collect_pgdata_entries(pgdata, pgdata, &mut entries)?;
@@ -81,9 +136,13 @@ fn dump_materialized_pgdata_archive(
         builder.finish().context("finish PGDATA tar archive")?;
     }
 
+    compress_archive(tar_bytes, format)
+}
+
+fn compress_archive(tar_bytes: Vec<u8>, format: PhysicalArchiveEncoding) -> Result<Vec<u8>> {
     match format {
-        DataDirArchiveFormat::Tar => Ok(tar_bytes),
-        DataDirArchiveFormat::TarGz => {
+        PhysicalArchiveEncoding::Tar => Ok(tar_bytes),
+        PhysicalArchiveEncoding::TarGz => {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder
                 .write_all(&tar_bytes)
@@ -146,6 +205,91 @@ pub(crate) fn unpack_pgdata_archive(bytes: &[u8], destination: &Path) -> Result<
         entry
             .unpack(&dest)
             .with_context(|| format!("unpack PGDATA archive entry {}", path.display()))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn unpack_virtual_pgdata_archive(
+    bytes: &[u8],
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+) -> Result<()> {
+    let reader: Box<dyn Read> = if bytes.starts_with(&[0x1f, 0x8b]) {
+        Box::new(GzDecoder::new(Cursor::new(bytes)))
+    } else {
+        Box::new(Cursor::new(bytes))
+    };
+    let mut archive = Archive::new(reader);
+    for entry in archive.entries().context("read PGDATA archive entries")? {
+        let mut entry = entry.context("read PGDATA archive entry")?;
+        let path = entry
+            .path()
+            .context("read PGDATA archive entry path")?
+            .into_owned();
+        let relative = normalize_archive_path(&path)?;
+        if relative.as_os_str().is_empty() || should_skip_relative(&relative) {
+            continue;
+        }
+        let destination = Path::new("/").join(&relative);
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            vfs_create_dir_all(filesystem, &destination)?;
+            continue;
+        }
+        if !entry_type.is_file() {
+            bail!(
+                "PGDATA archive entry {} has unsupported type {:?}",
+                path.display(),
+                entry_type
+            );
+        }
+        let mut contents = Vec::new();
+        entry
+            .read_to_end(&mut contents)
+            .with_context(|| format!("read PGDATA archive entry {}", path.display()))?;
+        vfs_write(filesystem, &destination, &contents)?;
+    }
+    Ok(())
+}
+
+fn collect_virtual_pgdata_entries(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+    root: &Path,
+    current: &Path,
+    entries: &mut BTreeMap<PathBuf, VirtualEntrySource>,
+) -> Result<()> {
+    let mut children = filesystem
+        .read_dir(current)
+        .with_context(|| format!("read virtual PGDATA directory {}", current.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("read virtual PGDATA entries {}", current.display()))?;
+    children.sort_by_key(|entry| entry.path());
+
+    for child in children {
+        let path = child.path();
+        let relative = path
+            .strip_prefix(root)
+            .with_context(|| format!("strip virtual PGDATA root {}", root.display()))?
+            .to_path_buf();
+        if relative.as_os_str().is_empty() || should_skip_relative(&relative) {
+            continue;
+        }
+        let metadata = child
+            .metadata()
+            .with_context(|| format!("stat virtual PGDATA entry {}", path.display()))?;
+        if metadata.is_dir() {
+            entries.insert(relative.clone(), VirtualEntrySource::Directory);
+            collect_virtual_pgdata_entries(filesystem, root, &path, entries)?;
+        } else if metadata.is_file() {
+            entries.insert(
+                relative,
+                VirtualEntrySource::File(vfs_read(filesystem, &path)?),
+            );
+        } else {
+            bail!(
+                "virtual PGDATA entry {} has unsupported type",
+                path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -307,7 +451,7 @@ mod tests {
         fs::write(upper.join("base/1/.wh.deleted"), b"")?;
         fs::write(upper.join("base/1/.wh.tree"), b"")?;
 
-        let archive = dump_pgdata_archive(&upper, Some(&lower), DataDirArchiveFormat::Tar)?;
+        let archive = dump_pgdata_archive(&upper, Some(&lower), PhysicalArchiveEncoding::Tar)?;
         let entries = archive_entries(&archive)?;
 
         assert!(entries.contains("base/1/kept"));
@@ -329,7 +473,7 @@ mod tests {
         fs::write(upper.join("base/1/.wh.recreated"), b"")?;
         fs::write(upper.join("base/1/recreated"), b"upper")?;
 
-        let archive = dump_pgdata_archive(&upper, Some(&lower), DataDirArchiveFormat::Tar)?;
+        let archive = dump_pgdata_archive(&upper, Some(&lower), PhysicalArchiveEncoding::Tar)?;
         let mut unpacked = Archive::new(Cursor::new(archive));
         let mut found = false;
         for entry in unpacked.entries()? {
@@ -343,6 +487,28 @@ mod tests {
             }
         }
         assert!(found, "expected recreated upper file in archive");
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_pgdata_archive_round_trips_and_drops_runtime_state() -> Result<()> {
+        let source = virtual_fs::mem_fs::FileSystem::default();
+        vfs_write(&source, Path::new("/PG_VERSION"), b"18\n")?;
+        vfs_write(&source, Path::new("/global/pg_control"), b"control")?;
+        vfs_write(&source, Path::new("/base/1/value"), b"kept")?;
+        vfs_write(&source, Path::new("/postmaster.pid"), b"stale")?;
+
+        let archive = dump_virtual_pgdata_archive(&source, PhysicalArchiveEncoding::TarGz)?;
+        let restored = virtual_fs::mem_fs::FileSystem::default();
+        unpack_virtual_pgdata_archive(&archive, &restored)?;
+
+        assert_eq!(vfs_read(&restored, Path::new("/PG_VERSION"))?, b"18\n");
+        assert_eq!(
+            vfs_read(&restored, Path::new("/global/pg_control"))?,
+            b"control"
+        );
+        assert_eq!(vfs_read(&restored, Path::new("/base/1/value"))?, b"kept");
+        assert!(!vfs_file_exists(&restored, Path::new("/postmaster.pid")));
         Ok(())
     }
 

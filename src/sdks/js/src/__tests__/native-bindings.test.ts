@@ -16,20 +16,19 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
-
-import Oliphaunt, { createNodeNativeBinding, type OliphauntClient, simpleQuery } from '../index.js';
+import * as publicEntrypoint from '../index.js';
+import Oliphaunt, { type OliphauntClient, simpleQuery } from '../index.js';
 import { resolveDenoNativeInstall } from '../native/assets-deno.js';
 import { liboliphauntPackageTarget, nativeRuntimeLibraryEnvironment } from '../native/common.js';
+import { createDenoNativeBinding } from '../native/deno.js';
 import { nativeModuleSuffixForTarget } from '../native/extension-runtime.js';
-import { createDenoNativeBinding, invokeDenoInit } from '../native/deno.js';
-import { invokeBunInit } from '../native/bun.js';
 import {
   cString,
+  OLIPHAUNT_BACKUP_OPTIONS_SIZE,
   OLIPHAUNT_CONFIG_SIZE,
-  OLIPHAUNT_INIT_OPTIONS_SIZE,
   OLIPHAUNT_RESPONSE_SIZE,
+  packBackupOptions,
   packConfigPointers,
-  packInitOptionsPointers,
   packPointerArray,
   packRestoreOptionsPointers,
   readResponseLength,
@@ -37,13 +36,12 @@ import {
   responseBuffer,
   writePointer,
 } from '../native/ffi-layout.js';
+import { createNodeNativeBinding } from '../native/node.js';
 import { readTypeScriptPackageVersions } from './package-metadata.js';
 
 async function main(): Promise<void> {
   testIndexExportsDefaultClient();
   testFfiLayoutPackingAndBounds();
-  testBunNativeInitUsesPerHandleModuleDirectory();
-  testDenoNativeInitUsesPerHandleModuleDirectory();
   testPackagedRuntimeLibraryEnvironment();
   await testNodeNativeBindingUsesExplicitAssetsAndAddon();
   await testDenoAssetResolverHonorsExplicitPaths();
@@ -93,6 +91,16 @@ function testIndexExportsDefaultClient(): void {
   assert.equal(typeof (Oliphaunt as OliphauntClient).open, 'function');
   assert.equal(typeof (Oliphaunt as OliphauntClient).supportedModes, 'function');
   assert.equal(simpleQuery('SELECT 1')[0], 0x51);
+  for (const internalName of [
+    'createOliphauntClient',
+    'OliphauntDatabase',
+    'nativeDirectCapabilities',
+    'createDefaultNativeBinding',
+    'createNodeNativeBinding',
+    'createDenoNativeBinding',
+  ]) {
+    assert.equal(internalName in publicEntrypoint, false, `${internalName} must remain internal`);
+  }
 }
 
 function testFfiLayoutPackingAndBounds(): void {
@@ -118,6 +126,7 @@ function testFfiLayoutPackingAndBounds(): void {
     {
       pgdata: '/tmp/pgdata',
       runtimeDirectory: '/tmp/runtime',
+      moduleDirectory: '/tmp/modules',
       username: 'postgres',
       database: 'app',
       extensions: [],
@@ -128,22 +137,25 @@ function testFfiLayoutPackingAndBounds(): void {
   assert.equal(packed.config.byteLength, OLIPHAUNT_CONFIG_SIZE);
   assert.ok(seenStrings.includes('/tmp/pgdata'));
   assert.ok(seenStrings.includes('/tmp/runtime'));
-  assert.ok(seenStrings.includes('work_mem=8MB'));
-  assert.equal(packed.keepAlive.length, 7);
-
-  const initOptions = packInitOptionsPointers('/tmp/modules', pointerOf);
-  assert.equal(initOptions.options.byteLength, OLIPHAUNT_INIT_OPTIONS_SIZE);
-  const initOptionsView = new DataView(initOptions.options.buffer);
-  assert.equal(initOptionsView.getUint32(0, true), 1);
-  assert.notEqual(initOptionsView.getBigUint64(8, true), 0n);
-  assert.equal(initOptionsView.getBigUint64(16, true), 0n);
-  assert.equal(initOptions.keepAlive.length, 1);
   assert.ok(seenStrings.includes('/tmp/modules'));
-  assert.throws(() => packInitOptionsPointers('', pointerOf), /must not be empty/);
+  assert.ok(seenStrings.includes('work_mem=8MB'));
+  assert.equal(packed.keepAlive.length, 8);
+  const configView = new DataView(packed.config.buffer);
+  assert.equal(configView.getUint32(0, true), 7);
+  assert.notEqual(configView.getBigUint64(24, true), 0n);
+
+  const backup = packBackupOptions('physicalArchive');
+  assert.equal(backup.byteLength, OLIPHAUNT_BACKUP_OPTIONS_SIZE);
+  const backupView = new DataView(backup.buffer);
+  assert.equal(backupView.getUint32(0, true), 7);
+  assert.equal(backupView.getUint32(4, true), 2);
+  assert.equal(backupView.getBigUint64(8, true), 0n);
+  assert.equal(backupView.getBigUint64(16, true), 0n);
+  assert.equal(backupView.getBigUint64(24, true), 0n);
 
   const restore = packRestoreOptionsPointers(
     {
-      root: '/tmp/root',
+      destination: '/tmp/root',
       format: 'physicalArchive',
       bytes: new Uint8Array([1, 2, 3]),
       replaceExisting: true,
@@ -162,94 +174,6 @@ function testFfiLayoutPackingAndBounds(): void {
   assert.equal(readResponseLength(response), 3);
   writePointer(responseView, 8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
   assert.throws(() => readResponseLength(response), /safe integer/);
-}
-
-function testBunNativeInitUsesPerHandleModuleDirectory(): void {
-  const calls: string[] = [];
-  const symbols = {
-    oliphaunt_init() {
-      calls.push('init');
-      return 0;
-    },
-    oliphaunt_init_ex(
-      _config: Uint8Array,
-      options: Uint8Array,
-      _out: Uint8Array,
-    ) {
-      calls.push('init-ex');
-      const view = new DataView(options.buffer, options.byteOffset, options.byteLength);
-      assert.equal(view.getUint32(0, true), 1);
-      assert.equal(view.getBigUint64(8, true), 0x1234n);
-      assert.equal(view.getBigUint64(16, true), 0n);
-      return 0;
-    },
-  };
-  const config = new Uint8Array(OLIPHAUNT_CONFIG_SIZE);
-  const out = new Uint8Array(8);
-  const explicit = invokeBunInit({
-    symbols,
-    config,
-    moduleDirectory: '/tmp/package-managed-modules',
-    out,
-    pointerOf: () => 0x1234n,
-  });
-  assert.equal(explicit.status, 0);
-  assert.equal(explicit.keepAlive.length, 1);
-  assert.deepEqual(calls, ['init-ex']);
-
-  const legacy = invokeBunInit({
-    symbols,
-    config,
-    out,
-    pointerOf: () => 0x1234n,
-  });
-  assert.equal(legacy.status, 0);
-  assert.deepEqual(legacy.keepAlive, []);
-  assert.deepEqual(calls, ['init-ex', 'init']);
-}
-
-function testDenoNativeInitUsesPerHandleModuleDirectory(): void {
-  const calls: string[] = [];
-  const symbols = {
-    oliphaunt_init() {
-      calls.push('init');
-      return 0;
-    },
-    oliphaunt_init_ex(
-      _config: Uint8Array,
-      options: Uint8Array,
-      _out: Uint8Array,
-    ) {
-      calls.push('init-ex');
-      const view = new DataView(options.buffer, options.byteOffset, options.byteLength);
-      assert.equal(view.getUint32(0, true), 1);
-      assert.equal(view.getBigUint64(8, true), 0x5678n);
-      assert.equal(view.getBigUint64(16, true), 0n);
-      return 0;
-    },
-  };
-  const config = new Uint8Array(OLIPHAUNT_CONFIG_SIZE);
-  const out = new Uint8Array(8);
-  const explicit = invokeDenoInit({
-    symbols,
-    config,
-    moduleDirectory: '/tmp/deno-prepared-runtime/lib/modules',
-    out,
-    pointerOf: () => 0x5678n,
-  });
-  assert.equal(explicit.status, 0);
-  assert.equal(explicit.keepAlive.length, 1);
-  assert.deepEqual(calls, ['init-ex']);
-
-  const legacy = invokeDenoInit({
-    symbols,
-    config,
-    out,
-    pointerOf: () => 0x5678n,
-  });
-  assert.equal(legacy.status, 0);
-  assert.deepEqual(legacy.keepAlive, []);
-  assert.deepEqual(calls, ['init-ex', 'init']);
 }
 
 async function testNodeNativeBindingUsesExplicitAssetsAndAddon(): Promise<void> {
@@ -331,7 +255,7 @@ module.exports = {
     });
     assert.equal(binding.runtime, 'node');
     assert.equal(binding.rawProtocolTransport, 'node-addon');
-    assert.equal(binding.protocolStream, true);
+    assert.equal(binding.protocolStream, false);
     assert.equal(binding.defaultRuntimeDirectory, runtimeDirectory);
     assert.equal(binding.version(), '18.4-test');
     assert.equal(binding.capabilities(), 195n);
@@ -354,15 +278,11 @@ module.exports = {
     const execSimpleQuery = binding.execSimpleQuery;
     assert.ok(execSimpleQuery !== undefined);
     assert.deepEqual([...(await execSimpleQuery(handle, 'SELECT 1'))], [90, 0, 0, 0, 5, 73]);
-    const chunks: number[][] = [];
-    const execProtocolStream = binding.execProtocolStream;
-    assert.ok(execProtocolStream !== undefined);
-    execProtocolStream(handle, new Uint8Array([9]), (chunk) => chunks.push([...chunk]));
-    assert.deepEqual(chunks, [[1, 2], [3]]);
+    assert.equal(binding.execProtocolStream, undefined);
     assert.deepEqual([...(await binding.backup(handle, 'physicalArchive'))], [4, 5, 6]);
     assert.throws(() => binding.backup(handle, 'sql'), /not supported by nativeDirect/);
     binding.restore({
-      root: join(root, 'restore'),
+      destination: join(root, 'restore'),
       format: 'physicalArchive',
       bytes: new Uint8Array([1]),
       replaceExisting: false,
@@ -370,7 +290,7 @@ module.exports = {
     assert.throws(
       () =>
         binding.restore({
-          root: join(root, 'restore'),
+          destination: join(root, 'restore'),
           format: 'sql',
           bytes: new Uint8Array(),
           replaceExisting: false,
@@ -387,7 +307,6 @@ module.exports = {
         'open',
         'execProtocolRaw',
         'execSimpleQuery',
-        'execProtocolStream',
         'backup',
         'restore',
         'cancel',
@@ -472,18 +391,10 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
           parameters: ['buffer', 'buffer'],
           result: 'i32',
         });
-        assert.deepEqual(definitions.oliphaunt_init_ex, {
-          parameters: ['buffer', 'buffer', 'buffer'],
-          result: 'i32',
-        });
         return {
           symbols: {
             oliphaunt_init() {
               calls.push('init');
-              return 0;
-            },
-            oliphaunt_init_ex() {
-              calls.push('init-ex');
               return 0;
             },
             oliphaunt_exec_protocol() {
@@ -586,7 +497,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
   const previousLibrarySearchPath = process.env.LD_LIBRARY_PATH;
-  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-init-ex-'));
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-config-'));
   const runtime = join(root, 'runtime');
   const embeddedModules = join(runtime, 'lib/modules');
   const pointerStrings = new Map<bigint, string>();
@@ -612,27 +523,18 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     (globalThis as { Deno?: unknown }).Deno = {
       ...deno,
       dlopen(_path: string, definitions: Record<string, unknown>) {
-        assert.deepEqual(definitions.oliphaunt_init_ex, {
-          parameters: ['buffer', 'buffer', 'buffer'],
+        assert.deepEqual(definitions.oliphaunt_init, {
+          parameters: ['buffer', 'buffer'],
           result: 'i32',
         });
         return {
           symbols: {
-            oliphaunt_init() {
+            oliphaunt_init(config: Uint8Array, out: Uint8Array) {
               calls.push('init');
-              return 0;
-            },
-            oliphaunt_init_ex(
-              _config: Uint8Array,
-              options: Uint8Array,
-              out: Uint8Array,
-            ) {
-              calls.push('init-ex');
               assert.equal(process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR, undefined);
-              const view = new DataView(options.buffer, options.byteOffset, options.byteLength);
-              assert.equal(view.getUint32(0, true), 1);
-              assert.equal(pointerStrings.get(view.getBigUint64(8, true)), embeddedModules);
-              assert.equal(view.getBigUint64(16, true), 0n);
+              const view = new DataView(config.buffer, config.byteOffset, config.byteLength);
+              assert.equal(view.getUint32(0, true), 7);
+              assert.equal(pointerStrings.get(view.getBigUint64(24, true)), embeddedModules);
               new DataView(out.buffer, out.byteOffset, out.byteLength).setBigUint64(0, 0x99n, true);
               return 0;
             },
@@ -696,7 +598,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
       startupArgs: [],
     });
     assert.deepEqual(handle, { address: 0x99n });
-    assert.deepEqual(calls, ['init-ex']);
+    assert.deepEqual(calls, ['init']);
   } finally {
     if (previousDeno === undefined) {
       delete (globalThis as { Deno?: unknown }).Deno;

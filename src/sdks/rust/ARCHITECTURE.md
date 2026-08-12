@@ -1,4 +1,4 @@
-# Native Rust SDK Architecture
+# Rust SDK Architecture
 
 `oliphaunt` is the clean native path for the Rust SDK. It is not a
 compatibility layer over the current WASIX runtime and it should not grow
@@ -10,7 +10,7 @@ WASIX-specific fallback policy.
   backend session and serializes all work through an owner executor. Handles are
   cloneable, but they share the same physical session.
 - `NativeBroker` is the robust desktop shape. A helper process owns database
-  roots, workers, root locks, recovery, upgrades, and extension loading.
+  instances, workers, filesystem locks, recovery, upgrades, and extension loading.
 - `NativeServer` is the true multi-client mode. It is the only mode that should
   advertise independent PostgreSQL client sessions or support general-purpose
   pools.
@@ -29,10 +29,10 @@ the runtime owns PostgreSQL lifecycle and protocol execution.
 `NativeDirect`.
 
 `NativeBrokerRuntime` supervises `oliphaunt-broker` worker processes. Each
-worker owns one root and one direct backend, and the shared Rust runtime admits
-up to `.broker_max_roots(n)` active roots. This keeps broker crash/process
+worker owns one instance and one direct backend, and the shared Rust runtime admits
+up to `.broker_max_instances(n)` active instances. This keeps broker crash/process
 isolation real instead of simulating it inside the client process, while still
-supporting multi-root desktop apps without violating the native direct
+supporting multiple-instance desktop apps without violating the native direct
 process-global backend constraint. On Unix platforms the SDK uses a
 Unix-domain socket by default to keep broker traffic off the TCP stack; set
 `OLIPHAUNT_BROKER_TRANSPORT=tcp` only when debugging or forcing the
@@ -40,10 +40,10 @@ portable fallback path. The SDK generates a per-session authentication token,
 passes it to the helper through the child environment, and sends it as the first
 IPC frame before protocol or control messages are accepted. Cancellation uses a
 separate authenticated IPC endpoint, so a cancel request is not blocked behind
-the query response stream. The parent bootstrap policy is passed to the helper,
-so `ExistingOnly` and tooling-only `initdb` behave the same way in broker mode
+the query response stream. The parent initialization policy is passed to the
+helper, so `ExistingOnly` and packaged `FreshInitdb` behave the same way in broker mode
 as they do in direct mode. If the helper exits between operations, the session
-relaunches a fresh helper against the same root before the next operation. If a
+relaunches a fresh helper against the same instance before the next operation. If a
 helper dies while a request is in flight, that request returns an error rather
 than being replayed with unknown commit state; later operations can relaunch and
 recover through PostgreSQL WAL recovery.
@@ -100,17 +100,29 @@ through `Oliphaunt::cancel()`; idle close does not send a spurious cancel.
 
 ## Storage
 
-The live database is a root directory. The SDK models root locking, bootstrap
-strategy, and backup formats explicitly.
+The public storage model is `DatabaseStorage::{TemporaryDirectory,
+Directory(PathBuf)}`. `TemporaryDirectory` is the builder default, while
+`Directory` is caller-owned persistence. Database initialization remains a
+separate `DatabaseInitialization`; filesystem locking is derived internally from the
+selected engine and is not a consumer policy switch.
 
-`BootstrapStrategy::PackagedTemplate` is the production first-open path. New
-roots are hydrated from a content-keyed base PGDATA template before the engine is
+Internally, both variants materialize a filesystem root containing PGDATA and
+runtime metadata. The native C ABI and broker CLI retain their established
+root vocabulary and layout, but neither is a second public storage model.
+Failed setup cleans SDK-owned temporary state. Broker and server clean it after
+terminal engine shutdown. Direct close is only a logical detach from a resident
+backend, so direct temporary storage cannot be removed safely at close and is
+reused by later temporary opens, then left to host temporary-file cleanup after
+process exit.
+
+`DatabaseInitialization::PackagedTemplate` is the production first-open path. New
+storage directories are hydrated from a content-keyed base PGDATA template before the engine is
 entered, which avoids paying `initdb` on every fresh open. The template is built
-with the standalone PostgreSQL server runtime, then copied into roots with
+with the standalone PostgreSQL server runtime, then copied into storage directories with
 copy-on-write cloning on macOS when the filesystem supports it. The diagnostic
 environment variable `OLIPHAUNT_PGDATA_COPY_MODE=copy` forces physical
 byte copies when investigating first-write copy-on-write effects. Direct and
-broker execution still use the liboliphaunt-embedded runtime profile after the root
+broker execution still use the liboliphaunt-embedded runtime profile after the directory
 exists.
 
 Runtime resources are also content-keyed. Direct/broker runtimes use
@@ -127,9 +139,10 @@ needed to recover a same-version clone. Broker mode delegates to the direct
 runtime inside the helper process. Logical SQL backup is server-only and uses
 packaged `pg_dump`.
 
-`initdb` remains an explicit tooling fallback through
-`BootstrapStrategy::InitdbToolingOnly`. `ExistingOnly` refuses to open an empty
-or partial root in direct, broker, and server mode.
+`DatabaseInitialization::FreshInitdb` runs the `initdb` executable from the
+selected packaged runtime; callers never provide a tooling path. `ExistingOnly`
+refuses to open an empty or partial storage directory in direct, broker, and
+server mode.
 
 ## Extensions
 

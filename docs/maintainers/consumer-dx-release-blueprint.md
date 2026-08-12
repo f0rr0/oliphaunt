@@ -166,7 +166,7 @@ import { Oliphaunt } from '@oliphaunt/ts';
 import { vector } from '@oliphaunt/extension-vector';
 
 const db = await Oliphaunt.open({
-  root: '.oliphaunt',
+  storage: { kind: 'directory', path: '.oliphaunt' },
   extensions: [vector],
 });
 ```
@@ -184,8 +184,15 @@ import { pgTrgm } from '@oliphaunt/extension-pg-trgm';
 Package layout:
 
 - `@oliphaunt/extension-<name>` is a descriptor package.
-- Descriptor packages declare platform artifact packages.
-- npm byte packages cover native desktop, WASIX, Android ABI, and iOS
+- Descriptor packages declare native platform artifact packages.
+- `@oliphaunt/extension-<name>-wasix` is the separately imported portable
+  WASIX descriptor and byte carrier shared by browser and Node hosts. It shares
+  the unsuffixed product's version and does not introduce a `-native` alias.
+- `@oliphaunt/liboliphaunt-wasix` is the generated, internal runtime carrier
+  selected by the WASIX binding. Applications do not supply ordinary asset
+  URLs. Its manifest is the exact core-only projection; extension leaves carry
+  their own frozen install contracts and remain independently versioned.
+- Other npm byte packages cover native desktop, Android ABI, and iOS
   XCFramework target classes.
 - Maven byte packages use
   `dev.oliphaunt.extensions:<name>-android-arm64-v8a` and
@@ -195,6 +202,20 @@ Package layout:
 - Descriptor exports include SQL name, product version, runtime compatibility,
   target package names, checksums, byte sizes, dependencies, and required
   preload libraries.
+
+The intended WASIX consumer surface stays selective and does not expose the
+runtime carrier's package-relative assets:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix';
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const db = await Oliphaunt.open({ extensions: [pgtap] });
+```
+
+Node and browser WASIX hosts share the same `-wasix` extension
+descriptor and bytes. Host selection belongs to `@oliphaunt/wasix`; native
+JavaScript remains on the established unsuffixed surface.
 
 ### JavaScript: Deno And JSR
 
@@ -304,7 +325,7 @@ Consumer code uses the SDK without environment variables:
 
 ```rust
 let db = oliphaunt::Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .extension(oliphaunt::Extension::Vector)
     .open()
@@ -501,8 +522,8 @@ Add release surfaces, not aggregate products:
 - `oliphaunt-node-direct` keeps the existing npm addon platform packages and
   drops runtime download code.
 - each existing `oliphaunt-extension-*` product owns generated npm descriptor
-  packages, npm platform byte packages, Cargo descriptor and artifact crates,
-  and Maven payload packages.
+  packages, native npm platform byte packages, one host-neutral portable WASIX
+  npm leaf, Cargo descriptor and artifact crates, and Maven payload packages.
 - `oliphaunt-swift` generates SwiftPM extension products from exact extension
   product metadata.
 - `oliphaunt-rust` owns the derived `crates:oliphaunt-build` crate, SDK crate,

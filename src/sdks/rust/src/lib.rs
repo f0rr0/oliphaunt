@@ -80,6 +80,6 @@ pub use runtime_resources::{
 };
 pub use server::NativeServerRuntime;
 pub use storage::{
-    BackupArtifact, BackupFormat, BackupRequest, BootstrapStrategy, DatabaseRoot, RestoreRequest,
-    RestoreTargetPolicy, RootLockPolicy, StorageConfig,
+    BackupArtifact, BackupFormat, BackupRequest, DatabaseInitialization, DatabaseStorage,
+    RestoreDestinationPolicy, RestoreRequest,
 };

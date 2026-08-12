@@ -328,7 +328,7 @@ fn run_buffer_cache_diagnostic_case(
         .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
     let target = &cases[target_index];
 
-    let mut builder = Oliphaunt::builder().temporary();
+    let mut builder = Oliphaunt::builder().storage(DatabaseStorage::TemporaryDirectory);
     if let Some(config) = perf_postgres_config_from_env()? {
         builder = builder.postgres_configs(config);
     }
@@ -500,7 +500,7 @@ fn run_wasix_speed_hotspot_diagnostic_case(
 ) -> Result<SpeedHotspotDiagnosticCase> {
     let target = &cases[target_index];
     let mut db = Oliphaunt::builder()
-        .temporary()
+        .storage(DatabaseStorage::TemporaryDirectory)
         .open()
         .with_context(|| format!("open speed hotspot diagnostic database for {}", target.id))?;
 
@@ -741,7 +741,7 @@ fn run_indexed_update_diagnostic_case(
     operation_count: usize,
 ) -> Result<IndexedUpdateDiagnosticCase> {
     let mut db = Oliphaunt::builder()
-        .temporary()
+        .storage(DatabaseStorage::TemporaryDirectory)
         .open()
         .with_context(|| format!("open diagnostic database for {name}"))?;
 

@@ -43,7 +43,7 @@ fn single_column_strings(result: &oliphaunt_wasix::Results, column: &str) -> Res
 }
 
 fn open_regression_db() -> Result<Oliphaunt> {
-    Oliphaunt::builder().temporary().open()
+    Oliphaunt::builder().open()
 }
 
 #[test]
@@ -299,7 +299,7 @@ fn ddl_schema_view_trigger_and_rollback_behave_like_postgres() -> Result<()> {
     let pg_error = constraint_error
         .downcast_ref::<oliphaunt_wasix::OliphauntError>()
         .context("constraint error should preserve PostgreSQL fields")?;
-    assert_eq!(pg_error.database_error().code.as_deref(), Some("23514"));
+    assert_eq!(pg_error.postgres_error().sqlstate.as_deref(), Some("23514"));
 
     db.exec(
         "BEGIN;
@@ -378,7 +378,7 @@ fn transactions_savepoints_and_error_recovery_match_postgres() -> Result<()> {
     let pg_error = duplicate
         .downcast_ref::<oliphaunt_wasix::OliphauntError>()
         .context("duplicate error should preserve PostgreSQL fields")?;
-    assert_eq!(pg_error.database_error().code.as_deref(), Some("23505"));
+    assert_eq!(pg_error.postgres_error().sqlstate.as_deref(), Some("23505"));
     db.exec("ROLLBACK TO SAVEPOINT duplicate_guard", None)?;
     db.exec(
         "INSERT INTO tx_items VALUES (4, 'recovered-after-savepoint-error')",
@@ -432,7 +432,7 @@ fn expected_sql_error_recovery_stays_inside_protocol_loop() -> Result<()> {
         let pg_error = err
             .downcast_ref::<oliphaunt_wasix::OliphauntError>()
             .with_context(|| format!("{label} should preserve PostgreSQL fields"))?;
-        assert_eq!(pg_error.database_error().code.as_deref(), Some(code));
+        assert_eq!(pg_error.postgres_error().sqlstate.as_deref(), Some(code));
         let recovered = db.query(
             "SELECT count(*)::int AS rows FROM error_recovery",
             &[],
@@ -469,7 +469,7 @@ fn pg18_uuidv4_alias_is_available_and_session_recovers() -> Result<()> {
     let pg_error = err
         .downcast_ref::<oliphaunt_wasix::OliphauntError>()
         .context("uuidv4 arity error should preserve PostgreSQL fields")?;
-    assert_eq!(pg_error.database_error().code.as_deref(), Some("42883"));
+    assert_eq!(pg_error.postgres_error().sqlstate.as_deref(), Some("42883"));
 
     let recovered = db.query("SELECT 7::int AS recovered", &[], None)?;
     assert_eq!(first_row(&recovered)?.get("recovered"), Some(&json!(7)));

@@ -174,7 +174,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
 
 fn write_source_only_aot(out: &Path, target: &str) {
     let manifest = format!(
-        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.0\",\"wasmer-wasix-version\":\"0.702.0\",\"artifacts\":[]}}"
+        "{{\"format-version\":1,\"target-triple\":{target:?},\"engine\":\"llvm-opta\",\"wasmer-version\":\"7.2.1\",\"wasmer-wasix-version\":\"0.702.1\",\"artifacts\":[]}}"
     );
     let text = format!(
         "pub const TARGET_TRIPLE: &str = {target:?};\n\

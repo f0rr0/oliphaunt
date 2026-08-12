@@ -18,7 +18,7 @@ typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
 + (void)supportedModesWithCompletion:(OliphauntArrayCompletion)completion;
 + (void)packageSizeReportWithConfig:(NSDictionary *)config completion:(OliphauntDictionaryCompletion)completion;
 + (void)processMemoryWithCompletion:(OliphauntDictionaryCompletion)completion;
-+ (void)restoreWithRoot:(NSString *)root
++ (void)restoreWithDestination:(NSString *)destination
                  format:(NSString *)format
             artifactData:(NSData *)artifactData
         replaceExisting:(BOOL)replaceExisting

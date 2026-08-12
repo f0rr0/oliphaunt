@@ -191,7 +191,7 @@ foreground_android_app() {
 
 android_runner_url() {
   local selected_runner="$1"
-  local root_arg="${2:-}"
+  local storage_directory_arg="${2:-}"
   local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
   if [ "$selected_runner" = "benchmark" ]; then
     url="$url&liboliphauntBenchmarkPreset=$(urlencode "$benchmark_preset")"
@@ -200,8 +200,8 @@ android_runner_url() {
     url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
   fi
   url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
-  if [ -n "$root_arg" ]; then
-    url="$url&liboliphauntRoot=$(urlencode "$root_arg")"
+  if [ -n "$storage_directory_arg" ]; then
+    url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_directory_arg")"
   fi
   if [ "$build_type" = "debug" ]; then
     local metro_url
@@ -214,8 +214,8 @@ android_runner_url() {
       url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
     fi
     url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
-    if [ -n "$root_arg" ]; then
-      url="$url&liboliphauntRoot=$(urlencode "$root_arg")"
+    if [ -n "$storage_directory_arg" ]; then
+      url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_directory_arg")"
     fi
   fi
   printf '%s' "$url"
@@ -262,14 +262,14 @@ wake_android_device() {
 exercise_android_crash_recovery() {
   local adb="$1"
   local write_url verify_url write_line pass
-  if [ -z "$crash_root_override" ]; then
-    run "$adb" shell rm -rf "$crash_root" || true
+  if [ -z "$crash_storage_override" ]; then
+    run "$adb" shell rm -rf "$crash_storage" || true
   fi
-  start_metro_if_needed crash-write "$crash_root"
+  start_metro_if_needed crash-write "$crash_storage"
   if [ "$build_type" = "debug" ]; then
     run "$adb" reverse "tcp:$metro_port" "tcp:$metro_port"
   fi
-  write_url="$(android_runner_url crash-write "$crash_root")"
+  write_url="$(android_runner_url crash-write "$crash_storage")"
 
   echo
   echo "==> Android crash recovery: write phase"
@@ -288,11 +288,11 @@ exercise_android_crash_recovery() {
   run "$adb" shell am force-stop "$app_id"
   stop_owned_metro
   run "$adb" logcat -c
-  start_metro_if_needed crash-verify "$crash_root"
+  start_metro_if_needed crash-verify "$crash_storage"
   if [ "$build_type" = "debug" ]; then
     run "$adb" reverse "tcp:$metro_port" "tcp:$metro_port"
   fi
-  verify_url="$(android_runner_url crash-verify "$crash_root")"
+  verify_url="$(android_runner_url crash-verify "$crash_storage")"
   run "$adb" shell am start -a android.intent.action.VIEW -d "'$verify_url'" "$app_id"
   if [ "$build_type" = "debug" ]; then
     dismiss_expo_dev_menu_onboarding "$adb"
