@@ -1,15 +1,16 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { appName, gitConfig } from './shared';
+import { OliphauntWordmark } from '@/components/brand';
+import { gitConfig } from './shared';
 
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: appName,
+      title: <OliphauntWordmark />,
       url: '/',
     },
     links: [
       {
-        text: 'Start',
+        text: 'Get started',
         url: '/docs/start',
       },
       {
@@ -30,6 +31,5 @@ export function baseOptions(): BaseLayoutProps {
         external: true,
       },
     ],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }

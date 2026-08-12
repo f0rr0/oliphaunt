@@ -1,0 +1,249 @@
+/* Deconstructed embedded-engine hero */
+
+.home-pg-sculpture__assembly {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 2.75rem 4.5rem rgb(0 0 0 / 18%));
+}
+
+.home-pg-sculpture__boundary-line,
+.home-pg-sculpture__flow-line,
+.home-pg-sculpture__elephant-outline,
+.home-pg-sculpture__elephant-fragment {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.home-pg-sculpture__boundary-line {
+  stroke: rgb(181 217 198 / 15%);
+  stroke-width: 1;
+}
+
+.home-pg-sculpture__boundary-line--inner {
+  stroke: rgb(122 172 146 / 11%);
+  stroke-dasharray: 0.012 0.026;
+}
+
+.home-pg-sculpture__stratum {
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  vector-effect: non-scaling-stroke;
+}
+
+.home-pg-sculpture__stratum--one {
+  fill: url('#home-pg-stratum-blue');
+  stroke: rgb(122 175 211 / 16%);
+}
+
+.home-pg-sculpture__stratum--two {
+  fill: url('#home-pg-stratum-mint');
+  stroke: rgb(94 204 150 / 19%);
+}
+
+.home-pg-sculpture__stratum--three {
+  fill: rgb(238 245 240 / 1.8%);
+  stroke: rgb(205 229 216 / 11%);
+}
+
+.home-pg-sculpture__flow-line {
+  stroke-width: 1;
+}
+
+.home-pg-sculpture__flow-line--quiet {
+  stroke: rgb(186 216 200 / 9%);
+}
+
+.home-pg-sculpture__flow-line--active {
+  stroke: rgb(91 210 151 / 26%);
+  stroke-dasharray: 0.005 0.018;
+}
+
+.home-pg-sculpture__flow-line--return {
+  stroke: rgb(122 174 211 / 13%);
+  stroke-dasharray: 0.09 0.02 0.015 0.02;
+}
+
+.home-pg-sculpture__elephant-ghost {
+  fill: rgb(127 176 207 / 4.5%);
+  stroke: none;
+}
+
+.home-pg-sculpture__elephant-outline {
+  stroke: rgb(196 222 209 / 15%);
+  stroke-width: 1;
+}
+
+.home-pg-sculpture__elephant-fragment {
+  stroke-width: 2;
+}
+
+.home-pg-sculpture__elephant-fragment--top {
+  stroke: rgb(126 180 216 / 68%);
+}
+
+.home-pg-sculpture__elephant-fragment--middle {
+  stroke: rgb(189 225 207 / 76%);
+}
+
+.home-pg-sculpture__elephant-fragment--bottom {
+  stroke: rgb(89 211 150 / 72%);
+}
+
+.home-pg-sculpture__core-halo {
+  fill: url('#home-pg-core-glow');
+}
+
+.home-pg-sculpture__core-ring {
+  fill: rgb(7 19 14 / 68%);
+  stroke: rgb(90 211 150 / 24%);
+  stroke-width: 1;
+}
+
+.home-pg-sculpture__node {
+  fill: #07120e;
+  stroke: rgb(116 191 153 / 38%);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.home-pg-sculpture__node--one,
+.home-pg-sculpture__node--four {
+  fill: #74afd4;
+  stroke: #07120e;
+  stroke-width: 3;
+}
+
+.home-pg-sculpture__node--two,
+.home-pg-sculpture__node--three {
+  fill: #5fd498;
+  stroke: #07120e;
+  stroke-width: 3;
+}
+
+.home-pg-sculpture__node--core {
+  fill: #65d69b;
+  stroke: #d2f4e2;
+  stroke-width: 2;
+}
+
+@media (max-width: 640px) {
+  .home-pg-sculpture__stage {
+    width: 97%;
+  }
+
+  .home-pg-sculpture__assembly {
+    filter: drop-shadow(0 2rem 3.2rem rgb(0 0 0 / 16%));
+  }
+
+  .home-pg-sculpture__elephant-fragment {
+    stroke-width: 1.65;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__boundary-line {
+    animation: home-pg-boundary-draw 1.15s 80ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__boundary-line--inner {
+    animation-delay: 170ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__stratum {
+    animation: home-pg-stratum-enter 850ms 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__stratum--two {
+    animation-delay: 230ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__stratum--three {
+    animation-delay: 300ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__elephant-outline,
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__elephant-fragment {
+    animation: home-pg-contour-draw 1.1s 230ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__elephant-fragment--middle {
+    animation-delay: 310ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__elephant-fragment--bottom {
+    animation-delay: 390ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__flow-line--active {
+    animation: home-pg-flow-travel 8s 900ms linear infinite;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__node {
+    animation: home-pg-node-enter 620ms 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__node--two {
+    animation-delay: 690ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__node--core {
+    animation-delay: 760ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__node--three {
+    animation-delay: 830ms;
+  }
+
+  .home-pg-sculpture[data-motion-state='entered'] .home-pg-sculpture__node--four {
+    animation-delay: 900ms;
+  }
+}
+
+@keyframes home-pg-boundary-draw {
+  from {
+    opacity: 0.15;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  to {
+    opacity: 1;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes home-pg-stratum-enter {
+  from {
+    opacity: 0;
+    scale: 0.94;
+    translate: 0 1.2rem;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes home-pg-flow-travel {
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+
+@keyframes home-pg-node-enter {
+  from {
+    opacity: 0;
+    scale: 0;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}

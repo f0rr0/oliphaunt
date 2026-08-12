@@ -1,231 +1,306 @@
-import {
-  ArrowRight,
-  Database,
-  ListChecks,
-  PackageCheck,
-  PlayCircle,
-  Route,
-  SearchCheck,
-} from 'lucide-react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
-import { runtimeModes, sdkSurfaces } from '@/lib/docs-data';
+import { OliphauntMark, OliphauntWordmark } from '@/components/brand';
+import { HomeHeroFlow } from '@/components/home-hero-flow';
+import { BrandIcon, MotionArticle, SdkCodeExplorer } from '@/components/home-interactive';
+import {
+  ExtensionEcosystemVisual,
+  PostgresEngineVisual,
+  RuntimeFamilyVisual,
+  type UseCaseKind,
+  UseCaseVisual,
+} from '@/components/home-visuals';
+import { gitConfig } from '@/lib/shared';
 
-const maintainerPaths = [
+export const metadata: Metadata = {
+  title: {
+    absolute: 'Oliphaunt — PostgreSQL 18, built into your app',
+  },
+  description:
+    'Run PostgreSQL 18 inside desktop and mobile apps or WASIX hosts, with app-owned storage, language SDKs, and target-specific extensions.',
+};
+
+const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
+const githubRoot = `${githubUrl}/tree/${gitConfig.branch}`;
+const githubBlob = `${githubUrl}/blob/${gitConfig.branch}`;
+
+const sdkMarks = [
+  { id: 'rust', label: 'Rust' },
+  { id: 'swift', label: 'Swift' },
+  { id: 'kotlin', label: 'Kotlin' },
+  { id: 'react', label: 'React Native' },
+  { id: 'typescript', label: 'TypeScript' },
+] as const;
+
+const useCases: readonly {
+  title: string;
+  description: string;
+  capability: string;
+  kind: UseCaseKind;
+}[] = [
   {
-    title: 'Releases',
-    description: 'Version matrix, release notes, and artifact compatibility.',
-    href: '/docs/reference/releases',
-    icon: ListChecks,
+    title: 'Knowledge and creative tools',
+    description: 'Relate documents, projects, revision history, metadata, and search in one model.',
+    capability: 'relations · JSONB · full-text search',
+    kind: 'knowledge',
   },
   {
-    title: 'Extensions',
-    description: 'SQL extension names, dependencies, targets, and packaging policy.',
-    href: '/docs/reference/extensions',
-    icon: SearchCheck,
+    title: 'Field and mobile software',
+    description: 'Keep records with the app and run spatial queries where the target ships PostGIS.',
+    capability: 'transactions · geography · recovery',
+    kind: 'field',
   },
   {
-    title: 'API surfaces',
-    description: 'Language API maps plus the C ABI route for SDK bindings.',
-    href: '/docs/reference/api-reference',
-    icon: Route,
+    title: 'Local retrieval',
+    description: 'Store vectors beside source data and combine similarity with relational filters.',
+    capability: 'pgvector · indexes · structured filters',
+    kind: 'retrieval',
   },
   {
-    title: 'Performance',
-    description: 'Workload results, footprint notes, and claim evidence.',
-    href: '/docs/reference/performance',
-    icon: Database,
+    title: 'Local data workbenches',
+    description: 'Import, inspect, transform, and query complex datasets with PostgreSQL behavior.',
+    capability: 'SQL · types · extensions',
+    kind: 'data',
   },
 ];
 
-const productSignals = [
-  { label: 'SDK surfaces', value: '7' },
-  { label: 'Runtime families', value: '4' },
-  { label: 'First query', value: '1' },
-];
+const examples = [
+  {
+    platform: 'Tauri / Native',
+    proof: 'Rust owns the Oliphaunt handle in application state.',
+    stack: 'Rust SDK · app-owned root',
+    href: `${githubRoot}/examples/tauri`,
+  },
+  {
+    platform: 'Tauri / WASIX',
+    proof: 'OliphauntServer exposes a local PostgreSQL URL to SQLx.',
+    stack: 'WASIX sidecar · SQLx',
+    href: `${githubRoot}/examples/tauri-wasix`,
+  },
+  {
+    platform: 'Electron / Native',
+    proof: 'The TypeScript SDK runs native server mode in the main process.',
+    stack: 'TypeScript SDK · native server',
+    href: `${githubRoot}/examples/electron`,
+  },
+  {
+    platform: 'Electron / WASIX',
+    proof: 'A Rust sidecar supplies a local PostgreSQL URL to the main process.',
+    stack: 'WASIX sidecar · local endpoint',
+    href: `${githubRoot}/examples/electron-wasix`,
+  },
+] as const;
 
-function ArrowLink({ href, children }: { href: string; children: ReactNode }) {
+function SectionHeading({
+  id,
+  title,
+  description,
+}: {
+  id: string;
+  title: string;
+  description?: string;
+}) {
   return (
-    <Link href={href} className="oliphaunt-arrow-link">
-      {children}
-      <ArrowRight className="size-4" />
-    </Link>
+    <header className="home-section-heading">
+      <h2 id={id}>{title}</h2>
+      {description ? <p>{description}</p> : null}
+    </header>
   );
 }
 
 export default function HomePage() {
   return (
-    <main className="flex flex-1 flex-col overflow-x-clip">
-      <section className="oliphaunt-home-hero border-b">
-        <div className="mx-auto grid w-full max-w-7xl gap-10 px-5 pb-12 pt-10 sm:px-6 md:pt-16 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center lg:pb-16">
-          <div className="min-w-0">
-            <div className="oliphaunt-rail-label">
-              <span>Oliphaunt</span>
-              <span>Docs</span>
-              <span>PostgreSQL in app storage</span>
-            </div>
-            <h1 className="mt-6 max-w-3xl text-6xl font-semibold leading-none text-fd-foreground sm:text-7xl lg:text-8xl">
-              Oliphaunt
+    <div className="home-page home-page--v2">
+      <section className="home-hero" aria-labelledby="home-hero-title">
+        <div className="home-shell home-hero__grid">
+          <div className="home-hero__copy">
+            <h1 id="home-hero-title" aria-label="PostgreSQL 18, built into your app.">
+              <span className="home-hero__product" aria-hidden="true">
+                PostgreSQL <em>18</em>
+              </span>
+              <span aria-hidden="true">built into your app.</span>
             </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-fd-muted-foreground sm:text-xl sm:leading-9">
-              Polyglot docs for embedded PostgreSQL SDKs, runtime modes, exact
-              extension packaging, and app-owned data movement.
+            <p>
+              Ship a complete PostgreSQL database inside desktop and mobile software or a WASIX
+              host. Keep data in an app-owned root and use it through a language SDK or, where
+              supported, a local PostgreSQL endpoint.
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/docs/start" className="oliphaunt-primary-action">
-                <PlayCircle className="size-4" />
-                Start with the docs
+            <div className="home-actions">
+              <Link href="/docs/start" className="home-button home-button--primary">
+                Get started
+                <ArrowRight aria-hidden="true" />
               </Link>
-              <Link href="/docs/sdk" className="oliphaunt-secondary-action">
-                <PackageCheck className="size-4" />
-                Choose an SDK
+              <Link href={githubUrl} className="home-button home-button--secondary">
+                View source
+                <ArrowUpRight aria-hidden="true" />
               </Link>
-            </div>
-            <div className="mt-8 grid max-w-xl grid-cols-3 border-y border-fd-border/70">
-              {productSignals.map((signal) => (
-                <div key={signal.label} className="min-w-0 border-e py-4 pe-4 last:border-e-0">
-                  <p className="text-2xl font-semibold leading-none text-fd-foreground">
-                    {signal.value}
-                  </p>
-                  <p className="mt-2 text-xs font-medium uppercase text-fd-muted-foreground">
-                    {signal.label}
-                  </p>
-                </div>
-              ))}
             </div>
           </div>
+          <HomeHeroFlow />
+        </div>
+      </section>
 
-          <div className="oliphaunt-product-visual" aria-label="Oliphaunt docs product map">
-            <div className="oliphaunt-product-visual__bar oliphaunt-product-visual__bar--desktop">
-              <span>Start path</span>
-              <span>SDK to runtime to verify</span>
-            </div>
-            <div className="oliphaunt-product-visual__body">
-              <div className="oliphaunt-runtime-stack">
-                {runtimeModes.map((mode, index) => {
-                  const Icon = mode.icon;
+      <section className="home-sdk-rail" aria-label="Oliphaunt language SDKs">
+        <div className="home-shell">
+          <p>Language SDKs</p>
+          <ul>
+            {sdkMarks.map((sdk) => (
+              <li key={sdk.id}>
+                <BrandIcon id={sdk.id} />
+                <span>{sdk.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
-                  return (
-                    <Link key={mode.name} href={mode.href} className="oliphaunt-runtime-chip">
-                      <span className="oliphaunt-runtime-chip__index">
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <Icon className="size-4" />
-                      <code className="min-w-0 truncate">{mode.name}</code>
-                    </Link>
-                  );
-                })}
-              </div>
-
-              <div className="oliphaunt-visual-footer">
-                <div>
-                  <p>Choose</p>
-                  <span>SDK</span>
+      <section className="home-section home-use-cases" aria-labelledby="use-cases-title">
+        <div className="home-shell">
+          <SectionHeading
+            id="use-cases-title"
+            title="Keep product data in one PostgreSQL model."
+            description="Relations, JSONB, geospatial queries, full-text search, and vectors can live in the same app-owned root."
+          />
+          <div className="home-use-grid">
+            {useCases.map((useCase) => (
+              <MotionArticle className="home-use-card" key={useCase.kind}>
+                <div className="home-use-card__copy">
+                  <h3>{useCase.title}</h3>
+                  <p>{useCase.description}</p>
+                  <code>{useCase.capability}</code>
                 </div>
-                <div>
-                  <p>Configure</p>
-                  <span>Runtime</span>
-                </div>
-                <div>
-                  <p>Verify</p>
-                  <span>Query</span>
-                </div>
-              </div>
-            </div>
+                <UseCaseVisual kind={useCase.kind} />
+              </MotionArticle>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 py-14 sm:px-6 lg:py-18">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start">
-          <div>
-            <p className="oliphaunt-section-kicker">SDK surfaces</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight md:text-5xl">
-              Choose by package and target.
-            </h2>
-            <p className="mt-4 max-w-xl text-sm leading-7 text-fd-muted-foreground">
-              Every SDK keeps the same database intent while matching its
-              platform package manager, lifecycle, concurrency model, and build
-              artifacts.
-            </p>
-          </div>
-          <div className="divide-y border-y">
-            {sdkSurfaces.map((sdk) => {
-              const Icon = sdk.icon;
+      <section className="home-section home-foundation" aria-labelledby="foundation-title">
+        <div className="home-shell">
+          <SectionHeading
+            id="foundation-title"
+            title="What ships with the app."
+            description="Oliphaunt packages PostgreSQL, its runtime, and verified extension builds for the target."
+          />
 
-              return (
-                <Link
-                  key={sdk.id}
-                  href={sdk.href}
-                  className="group grid min-w-0 gap-3 py-4 transition-colors hover:bg-fd-muted/35 sm:grid-cols-[auto_minmax(0,150px)_minmax(0,1fr)_minmax(0,160px)_24px] sm:items-start"
-                >
-                  <span className="oliphaunt-icon-tile">
-                    <Icon className="size-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-semibold">{sdk.title}</h3>
-                    <div className="mt-1">
-                      <code className="oliphaunt-inline-code">
-                        {sdk.packageName}
-                      </code>
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm leading-6 text-fd-muted-foreground">
-                      {sdk.target}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                    {sdk.modes.map((mode) => (
-                      <span key={mode} className="oliphaunt-mode-pill">
-                        {mode}
-                      </span>
-                    ))}
-                  </div>
-                  <ArrowRight className="hidden size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground sm:mt-1 sm:block" />
+          <div className="home-bento-grid home-bento-grid--v2">
+            <MotionArticle className="home-card home-card--engine">
+              <div className="home-card__copy">
+                <h3>PostgreSQL 18 is the engine.</h3>
+                <p>
+                  Ship PostgreSQL storage, SQL, types, transactions, indexes, WAL, and recovery
+                  inside an application-owned database root.
+                </p>
+              </div>
+              <PostgresEngineVisual />
+            </MotionArticle>
+
+            <MotionArticle className="home-card home-card--runtime-family">
+              <div className="home-card__copy">
+                <h3>Native or WASIX.</h3>
+                <p>
+                  Use native direct, broker, or server modes on supported platforms. For WASIX
+                  hosts, ship portable runtime assets with target-specific carriers.
+                </p>
+              </div>
+              <RuntimeFamilyVisual />
+              <Link href="/docs/reference/releases" className="home-card-link">
+                Compare target support
+                <ArrowUpRight aria-hidden="true" />
+              </Link>
+            </MotionArticle>
+
+            <MotionArticle className="home-card home-card--extension-ecosystem">
+              <div className="home-card__copy">
+                <h3>PostGIS and pgvector, in the app.</h3>
+                <p>
+                  Add spatial data, vector search, full-text search, trigram indexes, crypto,
+                  UUIDv7, and more across native and WASIX targets.
+                </p>
+              </div>
+              <ExtensionEcosystemVisual />
+              <Link href="/docs/reference/extensions" className="home-card-link">
+                Browse verified extensions
+                <ArrowUpRight aria-hidden="true" />
+              </Link>
+            </MotionArticle>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-section home-sdk-section" aria-labelledby="sdk-title">
+        <div className="home-shell">
+          <SectionHeading
+            id="sdk-title"
+            title="Use PostgreSQL from your stack."
+            description="Open the root, create a schema, bind values, and read typed rows from Rust, Swift, Kotlin, React Native, or TypeScript."
+          />
+          <SdkCodeExplorer />
+        </div>
+      </section>
+
+      <section className="home-section home-examples" aria-labelledby="examples-title">
+        <div className="home-shell">
+          <SectionHeading
+            id="examples-title"
+            title="See the integration boundaries in code."
+            description="Four committed apps exercise native and WASIX paths through Tauri and Electron."
+          />
+          <div className="home-example-list">
+            {examples.map((example, index) => (
+              <article className="home-example-row" key={example.platform}>
+                <span className="home-example-row__number" aria-hidden="true">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <div className="home-example-row__name">
+                  <h3>{example.platform}</h3>
+                  <code>{example.stack}</code>
+                </div>
+                <p>{example.proof}</p>
+                <Link href={example.href} aria-label={`Inspect ${example.platform} source`}>
+                  Source
+                  <ArrowUpRight aria-hidden="true" />
                 </Link>
-              );
-            })}
+              </article>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="border-t bg-fd-card/35">
-        <div className="mx-auto w-full max-w-7xl px-5 py-12 sm:px-6">
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <div>
-              <p className="oliphaunt-section-kicker">Reference paths</p>
-              <h2 className="mt-3 text-3xl font-semibold leading-tight md:text-5xl">
-                Keep release and tooling details close.
-              </h2>
-              <p className="mt-4 max-w-lg text-sm leading-7 text-fd-muted-foreground">
-                Maintainers and SDK authors can jump straight to compatibility,
-                extension packaging, API surfaces, and performance evidence.
-              </p>
-            </div>
-            <div className="divide-y border-y">
-              {maintainerPaths.map((path) => {
-                const Icon = path.icon;
-
-                return (
-                  <Link key={path.title} href={path.href} className="oliphaunt-maintainer-row group">
-                    <span className="oliphaunt-icon-tile">
-                      <Icon className="size-4" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold">{path.title}</p>
-                      <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-                        {path.description}
-                      </p>
-                    </div>
-                    <ArrowRight className="size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-                  </Link>
-                );
-              })}
+      <section className="home-close">
+        <div className="home-shell home-close__inner">
+          <div className="home-close__mark" aria-hidden="true">
+            <OliphauntMark />
+          </div>
+          <div>
+            <h2>Open an app-owned PostgreSQL root. Run the first product query.</h2>
+            <div className="home-actions">
+              <Link href="/docs/start" className="home-button home-button--light">
+                Get started
+                <ArrowRight aria-hidden="true" />
+              </Link>
+              <Link href="/docs/learn/native-runtime" className="home-button home-button--dark-quiet">
+                Read the runtime guide
+              </Link>
             </div>
           </div>
         </div>
       </section>
-    </main>
+
+      <footer className="home-footer">
+        <div className="home-shell home-footer__inner">
+          <OliphauntWordmark />
+          <nav aria-label="Oliphaunt footer">
+            <Link href="/docs/start">Get started</Link>
+            <Link href="/docs/sdk">SDKs</Link>
+            <Link href="/docs/reference/extensions">Extensions</Link>
+            <Link href="/docs/reference/releases">Target support</Link>
+            <Link href={`${githubBlob}/LICENSE`}>MIT license</Link>
+          </nav>
+        </div>
+      </footer>
+    </div>
   );
 }

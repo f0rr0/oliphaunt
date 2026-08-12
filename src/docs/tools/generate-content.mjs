@@ -181,13 +181,17 @@ function assertInsideRepo(relativePath, label) {
 function replaceSnippetDirectives(markdown, context) {
   return markdown.replace(
     /<!--\s*oliphaunt-snippet:\s*([a-z0-9_-]+)\s*-->/giu,
-    (match, routeId) => {
+    (_match, routeId) => {
       if (!context.sdkRoutesById.has(routeId)) {
         throw new Error(`unknown docs snippet route id: ${routeId}`);
       }
       return '';
     },
   );
+}
+
+function normalizeMdxComments(markdown) {
+  return markdown.replace(/<!--([\s\S]*?)-->/gu, (_match, comment) => `{/*${comment}*/}`);
 }
 
 function yamlString(value) {
@@ -255,7 +259,7 @@ function copyDir(source, destination, context) {
     } else if (entry.isFile()) {
       if (/\.mdx?$/u.test(entry.name)) {
         const markdown = normalizeCodeFenceInfoStrings(
-          replaceSnippetDirectives(readText(from), context),
+          normalizeMdxComments(replaceSnippetDirectives(readText(from), context)),
         );
         const fallbackTitle = path.basename(entry.name, path.extname(entry.name));
         fs.writeFileSync(to, normalizePageMarkdown(markdown, fallbackTitle));
@@ -277,7 +281,9 @@ function routeSourcePagePath(source, page) {
 }
 
 function copyMarkdownPage(from, to, context) {
-  const markdown = normalizeCodeFenceInfoStrings(replaceSnippetDirectives(readText(from), context));
+  const markdown = normalizeCodeFenceInfoStrings(
+    normalizeMdxComments(replaceSnippetDirectives(readText(from), context)),
+  );
   const fallbackTitle = path.basename(from, path.extname(from));
   ensureDir(path.dirname(to));
   fs.writeFileSync(to, normalizePageMarkdown(markdown, fallbackTitle));

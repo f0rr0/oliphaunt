@@ -10,6 +10,9 @@ const config = {
   images: {
     unoptimized: true,
   },
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'simple-icons'],
+  },
   basePath: process.env.OLIPHAUNT_DOCS_BASE_PATH || undefined,
 };
 
