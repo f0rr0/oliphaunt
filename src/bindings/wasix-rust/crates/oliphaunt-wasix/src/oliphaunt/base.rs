@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use directories::ProjectDirs;
+#[cfg(any(feature = "extensions", test))]
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,17 +23,21 @@ use crate::oliphaunt::assets;
 use crate::oliphaunt::client::Oliphaunt;
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
-use crate::oliphaunt::data_dir::unpack_pgdata_archive;
+use crate::oliphaunt::data_dir::{unpack_pgdata_archive, unpack_virtual_pgdata_archive};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
+use crate::oliphaunt::storage::{
+    DatabaseInitialization, DatabaseStorage, PgDataStorage, vfs_create_dir_all, vfs_file_exists,
+    vfs_read, vfs_remove_file_if_exists, vfs_write,
+};
 use tempfile::TempDir;
+use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
 mod template_clone;
 
 use template_clone::clone_pgdata_template_dir;
 
 const RUNTIME_ARCHIVE_NAME: &str = "oliphaunt.wasix.tar.zst";
-const PGDATA_TEMPLATE_ARCHIVE_NAME: &str = "pgdata-template.tar.zst";
 const MOUNTFS_RUNTIME_MARKER: &str = ".oliphaunt-wasix-mountfs-runtime";
 const RUNTIME_LAYOUT_MANIFEST_NAME: &str = ".oliphaunt-wasix-runtime-layout.json";
 const PGDATA_OVERLAY_MANIFEST_NAME: &str = ".oliphaunt-wasix-pgdata-overlay.json";
@@ -79,13 +84,13 @@ struct CachedExtensionPgDataTemplate {
 }
 
 #[derive(Debug, Clone)]
-pub struct OliphauntPaths {
-    pub pgroot: PathBuf,
-    pub pgdata: PathBuf,
+pub(crate) struct OliphauntPaths {
+    pub(crate) pgroot: PathBuf,
+    pub(crate) pgdata: PathBuf,
 }
 
 #[derive(Debug)]
-pub(crate) struct RootLock {
+pub(crate) struct DirectoryLock {
     path: PathBuf,
     _file: File,
 }
@@ -96,10 +101,9 @@ struct CacheLock {
 }
 
 #[derive(Debug)]
-pub(crate) struct PreparedRoot {
-    pub(crate) root: PathBuf,
-    pub(crate) temp_dir: Option<TempDir>,
-    pub(crate) root_lock: Option<RootLock>,
+pub(crate) struct PreparedDatabase {
+    pub(crate) workspace: Option<TempDir>,
+    pub(crate) directory_lock: Option<DirectoryLock>,
     pub(crate) outcome: InstallOutcome,
 }
 
@@ -152,45 +156,34 @@ pub(crate) enum ClusterPolicy {
     ExistingOrFreshInitdb,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncompleteClusterPolicy {
+    RecoverSdkOwned,
+    FailIfNonEmpty,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RootPrepareOptions {
     pub(crate) runtime: RuntimeLayoutPolicy,
     pub(crate) cluster: ClusterPolicy,
+    pub(crate) incomplete_cluster: IncompleteClusterPolicy,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct RootPlan {
-    pub(crate) target: RootTarget,
-    pub(crate) source: RootSource,
+pub(crate) struct DatabasePlan {
+    pub(crate) storage: DatabaseStorage,
+    pub(crate) initialization: DatabaseInitialization,
     #[cfg(feature = "extensions")]
     pub(crate) extensions: Vec<Extension>,
     #[cfg(feature = "extensions")]
     pub(crate) postgres_config: PostgresConfig,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum RootTarget {
-    Path(PathBuf),
-    AppId {
-        qualifier: String,
-        organization: String,
-        application: String,
-    },
-    Temporary,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum RootSource {
-    Template,
-    FreshInitdb,
-    DataDirArchive(Vec<u8>),
-}
-
-impl RootPlan {
-    pub(crate) fn new(target: RootTarget, source: RootSource) -> Self {
+impl DatabasePlan {
+    pub(crate) fn new(storage: DatabaseStorage, initialization: DatabaseInitialization) -> Self {
         Self {
-            target,
-            source,
+            storage,
+            initialization,
             #[cfg(feature = "extensions")]
             extensions: Vec::new(),
             #[cfg(feature = "extensions")]
@@ -215,6 +208,7 @@ impl RootPrepareOptions {
         Self {
             runtime: RuntimeLayoutPolicy::Auto,
             cluster: ClusterPolicy::ExistingOrTemplate,
+            incomplete_cluster: IncompleteClusterPolicy::RecoverSdkOwned,
         }
     }
 
@@ -222,7 +216,13 @@ impl RootPrepareOptions {
         Self {
             runtime: RuntimeLayoutPolicy::Auto,
             cluster: ClusterPolicy::ExistingOrFreshInitdb,
+            incomplete_cluster: IncompleteClusterPolicy::RecoverSdkOwned,
         }
+    }
+
+    pub(crate) fn fail_if_incomplete(mut self) -> Self {
+        self.incomplete_cluster = IncompleteClusterPolicy::FailIfNonEmpty;
+        self
     }
 }
 
@@ -236,27 +236,20 @@ impl RuntimeLayout {
     }
 }
 
-/// Files exported by [`build_pgdata_template`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PgDataTemplate {
-    pub archive_path: PathBuf,
-    pub manifest_path: PathBuf,
-}
-
 /// Manifest that binds a PGDATA template to the Oliphaunt WASIX runtime it was
 /// created with.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct PgDataTemplateManifest {
-    pub postgres_version: String,
+struct PgDataTemplateManifest {
+    postgres_version: String,
     #[serde(default)]
-    pub source_lane: Option<String>,
+    source_lane: Option<String>,
     #[serde(default)]
-    pub source_fingerprint: Option<String>,
-    pub wasm_sha256: String,
-    pub archive_sha256: String,
+    source_fingerprint: Option<String>,
+    wasm_sha256: String,
+    archive_sha256: String,
     #[serde(default)]
-    pub architecture_independent: bool,
+    architecture_independent: bool,
 }
 
 #[cfg(feature = "extensions")]
@@ -278,29 +271,18 @@ struct ExtensionPgDataTemplateManifest {
 }
 
 impl OliphauntPaths {
-    pub fn new(app_qual: (&str, &str, &str)) -> Result<Self> {
+    pub(crate) fn new(app_qual: (&str, &str, &str)) -> Result<Self> {
         let pd = ProjectDirs::from(app_qual.0, app_qual.1, app_qual.2)
             .context("could not resolve app data dir")?;
         let app_dir = pd.data_dir().to_path_buf();
         Ok(Self::with_root(app_dir))
     }
 
-    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+    pub(crate) fn with_root(root: impl Into<PathBuf>) -> Self {
         let base = root.into();
         let pgroot = base.join("tmp");
         let pgdata = pgroot.join("oliphaunt").join("base");
         Self { pgroot, pgdata }
-    }
-
-    pub fn with_paths(pgroot: impl Into<PathBuf>, pgdata: impl Into<PathBuf>) -> Self {
-        Self {
-            pgroot: pgroot.into(),
-            pgdata: pgdata.into(),
-        }
-    }
-
-    pub fn mount_root(&self) -> &Path {
-        &self.pgroot
     }
 
     pub(crate) fn install_root(&self) -> &Path {
@@ -311,7 +293,7 @@ impl OliphauntPaths {
         self.pgroot.join("oliphaunt")
     }
 
-    pub fn with_temp_dir() -> Result<(TempDir, Self)> {
+    pub(crate) fn with_temp_dir() -> Result<(TempDir, Self)> {
         let tmp = TempDir::new().context("create temporary directory")?;
         let paths = Self::with_root(tmp.path());
         Ok((tmp, paths))
@@ -325,44 +307,51 @@ impl OliphauntPaths {
         self.pgdata.join("global").join("pg_control")
     }
 
-    pub fn is_cluster_initialized(&self) -> bool {
+    pub(crate) fn is_cluster_initialized(&self) -> bool {
         cluster_is_complete(self)
     }
 }
 
-impl RootLock {
-    pub(crate) fn acquire(root: &Path) -> Result<Self> {
-        fs::create_dir_all(root)
-            .with_context(|| format!("create Oliphaunt root {}", root.display()))?;
-        let canonical_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+impl DirectoryLock {
+    pub(crate) fn acquire(directory: &Path) -> Result<Self> {
+        fs::create_dir_all(directory)
+            .with_context(|| format!("create database directory {}", directory.display()))?;
+        let canonical_root =
+            dunce::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
         {
             let mut locked = ROOT_LOCKED_PATHS
                 .get_or_init(|| Mutex::new(BTreeSet::new()))
                 .lock()
-                .expect("root lock path set poisoned");
+                .expect("database directory lock set poisoned");
             ensure!(
                 locked.insert(canonical_root.clone()),
-                "Oliphaunt root is already in use: {}",
-                root.display()
+                "database directory is already in use: {}",
+                directory.display()
             );
         }
-        let path = root.join(".oliphaunt-wasix.lock");
+        // Keep the established filename so old and new processes still
+        // coordinate on the same safety lock. It is not part of the public API.
+        let path = directory.join(".oliphaunt-wasix.lock");
         let file = match open_root_lock_file(&path) {
             Ok(file) => file,
             Err(err) => {
                 release_root_lock_path(&canonical_root);
                 return Err(err).with_context(|| {
                     format!(
-                        "Oliphaunt root is already in use or unavailable: {}",
-                        root.display()
+                        "database directory is already in use or unavailable: {}",
+                        directory.display()
                     )
                 });
             }
         };
         if let Err(err) = file.try_lock() {
             release_root_lock_path(&canonical_root);
-            return Err(err)
-                .with_context(|| format!("Oliphaunt root is already in use: {}", root.display()));
+            return Err(err).with_context(|| {
+                format!(
+                    "database directory is already in use: {}",
+                    directory.display()
+                )
+            });
         }
         Ok(Self {
             path: canonical_root,
@@ -375,7 +364,7 @@ impl RootLock {
     }
 }
 
-impl Drop for RootLock {
+impl Drop for DirectoryLock {
     fn drop(&mut self) {
         let _ = self._file.unlock();
         release_root_lock_path(&self.path);
@@ -396,7 +385,7 @@ fn release_root_lock_path(path: &Path) {
     if let Some(locked) = ROOT_LOCKED_PATHS.get() {
         locked
             .lock()
-            .expect("root lock path set poisoned")
+            .expect("database directory lock set poisoned")
             .remove(path);
     }
 }
@@ -710,6 +699,7 @@ fn archive_destination(root: &Path, archive_path: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
+#[cfg(any(feature = "extensions", test))]
 fn install_extension_reader<R: Read>(paths: &OliphauntPaths, mut reader: R) -> Result<()> {
     let _phase = timing::phase("extension.archive_install");
     let mut bytes = Vec::new();
@@ -732,13 +722,8 @@ fn install_extension_reader<R: Read>(paths: &OliphauntPaths, mut reader: R) -> R
     Ok(())
 }
 
-pub fn install_extension_archive(paths: &OliphauntPaths, archive_path: &Path) -> Result<()> {
-    let file = std::fs::File::open(archive_path)
-        .with_context(|| format!("open extension archive {}", archive_path.display()))?;
-    install_extension_reader(paths, file)
-}
-
-pub fn install_extension_bytes(paths: &OliphauntPaths, bytes: &[u8]) -> Result<()> {
+#[cfg(any(feature = "extensions", test))]
+pub(crate) fn install_extension_bytes(paths: &OliphauntPaths, bytes: &[u8]) -> Result<()> {
     install_extension_reader(paths, std::io::Cursor::new(bytes))
 }
 
@@ -773,34 +758,6 @@ fn validate_embedded_runtime_archive_strict(bytes: &[u8]) -> Result<()> {
         "embedded runtime archive hash mismatch: manifest={expected} actual={actual}"
     );
     Ok(())
-}
-
-pub fn build_pgdata_template(output_dir: impl AsRef<Path>) -> Result<PgDataTemplate> {
-    let output_dir = output_dir.as_ref();
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("create template output dir {}", output_dir.display()))?;
-
-    let archive_path = output_dir.join(PGDATA_TEMPLATE_ARCHIVE_NAME);
-    let manifest_path = output_dir.join("pgdata-template.json");
-
-    let Some(archive) = assets::pgdata_template_archive() else {
-        bail!("bundled PGDATA template archive is unavailable");
-    };
-    let Some(manifest) = assets::pgdata_template_manifest() else {
-        bail!("bundled PGDATA template manifest is unavailable");
-    };
-    validated_embedded_pgdata_template_manifest()?
-        .context("bundled PGDATA template manifest is unavailable")?;
-
-    fs::write(&archive_path, archive)
-        .with_context(|| format!("write template archive {}", archive_path.display()))?;
-    fs::write(&manifest_path, manifest)
-        .with_context(|| format!("write template manifest {}", manifest_path.display()))?;
-
-    Ok(PgDataTemplate {
-        archive_path,
-        manifest_path,
-    })
 }
 
 fn try_install_embedded_pgdata_template(
@@ -850,7 +807,7 @@ fn try_prepare_pgdata_template_overlay(
     if let Some(existing) = read_pgdata_overlay_manifest(paths)? {
         ensure!(
             existing.template_archive_sha256 == manifest.archive_sha256,
-            "PGDATA overlay at {} was created for template {}, but this runtime provides {}; delete the root/cache and recreate it",
+            "PGDATA overlay at {} was created for template {}, but this runtime provides {}; delete the database storage/runtime cache and recreate it",
             paths.pgdata.display(),
             existing.template_archive_sha256,
             manifest.archive_sha256
@@ -1312,16 +1269,15 @@ fn build_extension_pgdata_template_staging(
         .with_context(|| format!("create build dir {}", staging_root.display()))?;
 
     let paths = OliphauntPaths::with_root(staging_root);
-    let (runtime_layout, unpacked_runtime) =
-        prepare_runtime_layout(&paths, RuntimeLayoutPolicy::FullLocal)?;
+    let runtime_layout = prepare_runtime_layout(&paths, RuntimeLayoutPolicy::FullLocal)?;
     let base_template = pgdata_template_cache()?;
     clone_pgdata_template_dir(&base_template.pgdata, &paths.pgdata)?;
     remove_template_runtime_state(&paths.pgdata)?;
 
     let outcome = InstallOutcome {
         paths,
-        unpacked_runtime,
         runtime_layout,
+        pgdata_storage: PgDataStorage::HostDirectory,
         preinstalled_extensions: Vec::new(),
     };
     install_missing_extension_archives(&outcome, extensions)?;
@@ -1458,6 +1414,48 @@ fn unpack_pgdata_template_archive(bytes: &[u8], destination: &Path) -> Result<()
     unpack_archive_entries(&mut archive, destination)
 }
 
+fn unpack_pgdata_template_archive_virtual(
+    bytes: &[u8],
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+) -> Result<()> {
+    let decoder = ZstdDecoder::new(Cursor::new(bytes)).context("decode PGDATA template archive")?;
+    let mut archive = Archive::new(decoder);
+    unpack_archive_entries_virtual(&mut archive, filesystem)
+        .context("unpack packaged PGDATA template into memory")
+}
+
+fn unpack_archive_entries_virtual<R: Read>(
+    archive: &mut Archive<R>,
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+) -> Result<()> {
+    for entry in archive.entries().context("read archive entries")? {
+        let mut entry = entry.context("read archive entry")?;
+        let path = entry
+            .path()
+            .context("read archive entry path")?
+            .into_owned();
+        let destination = archive_destination(Path::new("/"), &path)?;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            vfs_create_dir_all(filesystem, &destination)?;
+            continue;
+        }
+        if !entry_type.is_file() {
+            bail!(
+                "unsafe PGDATA archive entry {} has unsupported type {:?}",
+                path.display(),
+                entry_type
+            );
+        }
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("read archive entry {}", path.display()))?;
+        vfs_write(filesystem, &destination, &bytes)?;
+    }
+    Ok(())
+}
+
 fn unpack_archive_entries<R: Read>(archive: &mut Archive<R>, destination: &Path) -> Result<()> {
     unpack_archive_entries_with_path_map(archive, destination, |path| path)
 }
@@ -1511,9 +1509,39 @@ fn remove_template_runtime_state(pgdata: &Path) -> Result<()> {
     Ok(())
 }
 
+fn remove_virtual_runtime_state(filesystem: &(dyn VirtualFileSystem + Send + Sync)) -> Result<()> {
+    for name in TEMPLATE_RUNTIME_STATE_FILES {
+        vfs_remove_file_if_exists(filesystem, &Path::new("/").join(name))?;
+    }
+    Ok(())
+}
+
 fn cluster_is_complete(paths: &OliphauntPaths) -> bool {
     (paths.marker_cluster().is_file() && paths.marker_control_file().is_file())
         || pgdata_overlay_is_installed(paths)
+}
+
+pub(crate) fn virtual_cluster_is_complete(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+) -> bool {
+    vfs_file_exists(filesystem, Path::new("/PG_VERSION"))
+        && vfs_file_exists(filesystem, Path::new("/global/pg_control"))
+}
+
+fn ensure_virtual_pgdata_matches_runtime(
+    filesystem: &(dyn VirtualFileSystem + Send + Sync),
+) -> Result<()> {
+    let Some(expected_major) = runtime_postgres_major()? else {
+        return Ok(());
+    };
+    let pg_version = vfs_read(filesystem, Path::new("/PG_VERSION"))?;
+    let pg_version = std::str::from_utf8(&pg_version).context("PG_VERSION is not UTF-8")?;
+    let actual_major = postgres_major_from_version(pg_version);
+    ensure!(
+        actual_major == expected_major,
+        "database archive is PostgreSQL {actual_major}, but this Oliphaunt runtime is PostgreSQL {expected_major}"
+    );
+    Ok(())
 }
 
 fn ensure_existing_pgdata_matches_runtime(paths: &OliphauntPaths) -> Result<()> {
@@ -1521,6 +1549,22 @@ fn ensure_existing_pgdata_matches_runtime(paths: &OliphauntPaths) -> Result<()> 
         return Ok(());
     };
     ensure_pgdata_postgres_major_matches(paths, &expected_major)
+}
+
+fn ensure_pgdata_empty_or_absent(pgdata: &Path) -> Result<()> {
+    let mut entries = match fs::read_dir(pgdata) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("read PGDATA {}", pgdata.display()));
+        }
+    };
+    ensure!(
+        entries.next().transpose()?.is_none(),
+        "persistent database storage contains a non-empty incomplete PGDATA at {}; refusing to delete or reinitialize caller-owned data",
+        pgdata.display()
+    );
+    Ok(())
 }
 
 fn runtime_postgres_major() -> Result<Option<String>> {
@@ -1556,7 +1600,7 @@ fn ensure_pgdata_postgres_major_matches(
         let actual_major = postgres_major_from_version(&overlay.postgres_version);
         ensure!(
             actual_major == expected_major,
-            "existing PGDATA overlay at {} is PostgreSQL {}, but current Oliphaunt runtime is PostgreSQL {}; use a separate root or migrate the database before reusing this root",
+            "existing PGDATA overlay at {} is PostgreSQL {}, but current Oliphaunt runtime is PostgreSQL {}; use a separate database directory or migrate the database before reusing it",
             paths.pgdata.display(),
             actual_major,
             expected_major
@@ -1573,7 +1617,7 @@ fn ensure_pgdata_postgres_major_matches(
     let actual_major = postgres_major_from_version(&pg_version);
     ensure!(
         actual_major == expected_major,
-        "existing PGDATA at {} is PostgreSQL {}, but current Oliphaunt runtime is PostgreSQL {}; use a separate root or migrate the database before reusing this root",
+        "existing PGDATA at {} is PostgreSQL {}, but current Oliphaunt runtime is PostgreSQL {}; use a separate database directory or migrate the database before reusing it",
         paths.pgdata.display(),
         actual_major,
         expected_major
@@ -1623,17 +1667,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub fn ensure_cluster(paths: &OliphauntPaths) -> Result<()> {
-    ensure_cluster_with_template(paths, true)
-}
-
-fn ensure_cluster_with_template(paths: &OliphauntPaths, use_template: bool) -> Result<()> {
-    let outcome = prepare_database_root(paths.clone(), prepare_options_for_template(use_template))?;
-    let mut pg = PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?;
-    pg.ensure_cluster()
-}
-
-pub fn preload_runtime_module(paths: &OliphauntPaths) -> Result<()> {
+pub(crate) fn preload_runtime_module(paths: &OliphauntPaths) -> Result<()> {
     let _ = paths;
     let cached_runtime = runtime_cache()?;
     let module_path = cached_runtime.runtime_root.join("bin/oliphaunt");
@@ -1641,10 +1675,10 @@ pub fn preload_runtime_module(paths: &OliphauntPaths) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
-pub struct InstallOutcome {
-    pub paths: OliphauntPaths,
-    pub unpacked_runtime: bool,
+pub(crate) struct InstallOutcome {
+    pub(crate) paths: OliphauntPaths,
     pub(crate) runtime_layout: RuntimeLayout,
+    pub(crate) pgdata_storage: PgDataStorage,
     #[cfg_attr(not(feature = "extensions"), allow(dead_code))]
     pub(crate) preinstalled_extensions: Vec<String>,
 }
@@ -1658,91 +1692,158 @@ impl InstallOutcome {
     }
 }
 
-fn prepare_root_from_paths(
+fn prepare_host_database(
     paths: OliphauntPaths,
-    root: PathBuf,
-    temp_dir: Option<TempDir>,
-    root_lock: Option<RootLock>,
-    use_template: bool,
-) -> Result<PreparedRoot> {
-    let outcome = prepare_database_root(paths, prepare_options_for_template(use_template))?;
-    Ok(PreparedRoot {
-        root,
-        temp_dir,
-        root_lock,
+    workspace: Option<TempDir>,
+    directory_lock: Option<DirectoryLock>,
+    initialization: DatabaseInitialization,
+    caller_owned: bool,
+) -> Result<PreparedDatabase> {
+    if let DatabaseInitialization::PhysicalArchive(archive) = initialization {
+        return prepare_host_database_from_archive(
+            paths,
+            workspace,
+            directory_lock,
+            &archive,
+            caller_owned,
+        );
+    }
+    let use_template = matches!(initialization, DatabaseInitialization::PackagedTemplate);
+    let outcome = prepare_database_root(
+        paths,
+        prepare_options_for_template(use_template, caller_owned),
+    )?;
+    Ok(PreparedDatabase {
+        workspace,
+        directory_lock,
         outcome,
     })
 }
 
-pub(crate) fn prepare_root(plan: RootPlan) -> Result<PreparedRoot> {
-    let (paths, root, temp_dir, root_lock, temporary) = match plan.target {
-        RootTarget::Path(root) => {
-            let paths = OliphauntPaths::with_root(&root);
-            let root_lock = RootLock::acquire(&root)?;
-            (paths, root, None, Some(root_lock), false)
+pub(crate) fn prepare_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
+    if matches!(plan.storage, DatabaseStorage::Memory) {
+        return prepare_memory_database(plan);
+    }
+
+    let temporary_directory = matches!(plan.storage, DatabaseStorage::TemporaryDirectory);
+    let caller_owned = matches!(
+        plan.storage,
+        DatabaseStorage::Directory(_) | DatabaseStorage::ApplicationData(_)
+    );
+    let (paths, workspace, directory_lock) = match &plan.storage {
+        DatabaseStorage::Memory => unreachable!("memory storage handled above"),
+        DatabaseStorage::Directory(directory) => {
+            let paths = OliphauntPaths::with_root(directory);
+            let directory_lock = DirectoryLock::acquire(directory)?;
+            (paths, None, Some(directory_lock))
         }
-        RootTarget::AppId {
-            qualifier,
-            organization,
-            application,
-        } => {
+        DatabaseStorage::ApplicationData(application) => {
             let paths = OliphauntPaths::new((
-                qualifier.as_str(),
-                organization.as_str(),
-                application.as_str(),
+                application.qualifier(),
+                application.organization(),
+                application.application(),
             ))?;
-            let root = paths.install_root().to_path_buf();
-            let root_lock = RootLock::acquire_for_paths(&paths)?;
-            (paths, root, None, Some(root_lock), false)
+            let directory_lock = DirectoryLock::acquire_for_paths(&paths)?;
+            (paths, None, Some(directory_lock))
         }
-        RootTarget::Temporary => {
-            let temp_dir = TempDir::new().context("create temporary oliphaunt directory")?;
-            let root = temp_dir.path().to_path_buf();
-            let paths = OliphauntPaths::with_root(&root);
-            (paths, root, Some(temp_dir), None, true)
+        DatabaseStorage::TemporaryDirectory => {
+            let workspace = TempDir::new().context("create temporary database directory")?;
+            let paths = OliphauntPaths::with_root(workspace.path());
+            (paths, Some(workspace), None)
         }
     };
 
-    match plan.source {
-        RootSource::DataDirArchive(archive) => {
-            prepare_root_from_data_dir_archive(paths, root, temp_dir, root_lock, &archive)
-        }
-        source @ (RootSource::Template | RootSource::FreshInitdb) => {
-            let use_template = matches!(source, RootSource::Template);
-            let prepared = prepare_root_from_paths(paths, root, temp_dir, root_lock, use_template)?;
-            #[cfg(feature = "extensions")]
-            {
-                let mut prepared = prepared;
-                if temporary && use_template && extension_template_cache_enabled() {
-                    install_extension_template_into_outcome(
-                        &mut prepared.outcome,
-                        &plan.extensions,
-                        &plan.postgres_config,
-                    )?;
-                }
-                Ok(prepared)
-            }
-            #[cfg(not(feature = "extensions"))]
-            {
-                let _ = temporary;
-                Ok(prepared)
-            }
-        }
+    let use_template = matches!(
+        plan.initialization,
+        DatabaseInitialization::PackagedTemplate
+    );
+    let prepared = prepare_host_database(
+        paths,
+        workspace,
+        directory_lock,
+        plan.initialization,
+        caller_owned,
+    )?;
+    #[cfg(feature = "extensions")]
+    let mut prepared = prepared;
+    #[cfg(feature = "extensions")]
+    if temporary_directory && use_template && extension_template_cache_enabled() {
+        install_extension_template_into_outcome(
+            &mut prepared.outcome,
+            &plan.extensions,
+            &plan.postgres_config,
+        )?;
     }
+    #[cfg(not(feature = "extensions"))]
+    {
+        let _ = (temporary_directory, use_template);
+    }
+    Ok(prepared)
 }
 
-fn prepare_root_from_data_dir_archive(
+fn prepare_memory_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
+    let workspace = TempDir::new().context("create WASIX runtime workspace")?;
+    let paths = OliphauntPaths::with_root(workspace.path());
+    let mut runtime_layout = prepare_runtime_layout(&paths, RuntimeLayoutPolicy::Auto)?;
+    runtime_layout.pgdata_template_root = None;
+    let pgdata_storage = PgDataStorage::memory();
+    let filesystem = pgdata_storage
+        .memory_filesystem()
+        .expect("memory storage has a virtual filesystem");
+
+    match plan.initialization {
+        DatabaseInitialization::PackagedTemplate => {
+            let manifest = validated_embedded_pgdata_template_manifest()?
+                .context("packaged PGDATA template is unavailable")?;
+            ensure_module_matches_template(&runtime_layout.module_path(), &manifest)?;
+            let archive = assets::pgdata_template_archive()
+                .context("packaged PGDATA template archive is unavailable")?;
+            unpack_pgdata_template_archive_virtual(archive, filesystem.as_ref())?;
+        }
+        DatabaseInitialization::FreshInitdb => {
+            PostgresMod::run_split_initdb(&paths, &runtime_layout, &pgdata_storage)?;
+        }
+        DatabaseInitialization::PhysicalArchive(archive) => {
+            unpack_virtual_pgdata_archive(&archive, filesystem.as_ref())?;
+        }
+    }
+
+    remove_virtual_runtime_state(filesystem.as_ref())?;
+    ensure!(
+        virtual_cluster_is_complete(filesystem.as_ref()),
+        "database initialization did not produce PG_VERSION and global/pg_control"
+    );
+    ensure_virtual_pgdata_matches_runtime(filesystem.as_ref())?;
+
+    Ok(PreparedDatabase {
+        workspace: Some(workspace),
+        directory_lock: None,
+        outcome: InstallOutcome {
+            paths,
+            runtime_layout,
+            pgdata_storage,
+            preinstalled_extensions: Vec::new(),
+        },
+    })
+}
+
+fn prepare_host_database_from_archive(
     paths: OliphauntPaths,
-    root: PathBuf,
-    temp_dir: Option<TempDir>,
-    root_lock: Option<RootLock>,
+    workspace: Option<TempDir>,
+    directory_lock: Option<DirectoryLock>,
     archive: &[u8],
-) -> Result<PreparedRoot> {
-    let (runtime_layout, unpacked_runtime) =
-        prepare_runtime_layout(&paths, RuntimeLayoutPolicy::Auto)?;
-    if paths.pgdata.exists() {
+    caller_owned: bool,
+) -> Result<PreparedDatabase> {
+    let runtime_layout = prepare_runtime_layout(&paths, RuntimeLayoutPolicy::Auto)?;
+    ensure!(
+        !cluster_is_complete(&paths),
+        "archive initialization cannot replace an existing database directory"
+    );
+    if caller_owned {
+        ensure_pgdata_empty_or_absent(&paths.pgdata)?;
+    } else if paths.pgdata.exists() {
         fs::remove_dir_all(&paths.pgdata)
-            .with_context(|| format!("remove existing PGDATA {}", paths.pgdata.display()))?;
+            .with_context(|| format!("remove interrupted PGDATA {}", paths.pgdata.display()))?;
     }
     fs::create_dir_all(&paths.pgdata)
         .with_context(|| format!("create PGDATA {}", paths.pgdata.display()))?;
@@ -1754,14 +1855,13 @@ fn prepare_root_from_data_dir_archive(
         "loaded PGDATA archive did not contain PG_VERSION and global/pg_control"
     );
     ensure_existing_pgdata_matches_runtime(&paths)?;
-    Ok(PreparedRoot {
-        root,
-        temp_dir,
-        root_lock,
+    Ok(PreparedDatabase {
+        workspace,
+        directory_lock,
         outcome: InstallOutcome {
             paths,
-            unpacked_runtime,
             runtime_layout,
+            pgdata_storage: PgDataStorage::HostDirectory,
             preinstalled_extensions: Vec::new(),
         },
     })
@@ -1787,64 +1887,21 @@ pub(crate) fn install_missing_extension_archives(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct InstallOptions {
-    pub ensure_cluster: bool,
-}
-
-impl Default for InstallOptions {
-    fn default() -> Self {
-        Self {
-            ensure_cluster: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct MountInfo {
-    mount: PathBuf,
-    paths: OliphauntPaths,
-    reused_existing: bool,
-}
-
-impl MountInfo {
-    pub fn into_paths(self) -> OliphauntPaths {
-        self.paths
-    }
-
-    pub fn mount(&self) -> &Path {
-        &self.mount
-    }
-
-    pub fn paths(&self) -> &OliphauntPaths {
-        &self.paths
-    }
-
-    pub fn reused_existing(&self) -> bool {
-        self.reused_existing
-    }
-}
-
-pub fn install_default(app_id: (&str, &str, &str)) -> Result<InstallOutcome> {
-    let paths = OliphauntPaths::new(app_id)?;
-    prepare_database_root(paths, RootPrepareOptions::template())
-}
-
-pub fn install_into(root: &Path) -> Result<InstallOutcome> {
-    let paths = OliphauntPaths::with_root(root);
-    prepare_database_root(paths, RootPrepareOptions::template())
-}
-
 pub(crate) fn prepare_database_root(
     paths: OliphauntPaths,
     options: RootPrepareOptions,
 ) -> Result<InstallOutcome> {
-    let (mut runtime_layout, unpacked_runtime) = prepare_runtime_layout(&paths, options.runtime)?;
-    prepare_pgdata(&paths, options.cluster, &mut runtime_layout)?;
+    let mut runtime_layout = prepare_runtime_layout(&paths, options.runtime)?;
+    prepare_pgdata(
+        &paths,
+        options.cluster,
+        options.incomplete_cluster,
+        &mut runtime_layout,
+    )?;
     Ok(InstallOutcome {
         paths,
-        unpacked_runtime,
         runtime_layout,
+        pgdata_storage: PgDataStorage::HostDirectory,
         preinstalled_extensions: Vec::new(),
     })
 }
@@ -1852,13 +1909,14 @@ pub(crate) fn prepare_database_root(
 fn prepare_pgdata(
     paths: &OliphauntPaths,
     cluster_policy: ClusterPolicy,
+    incomplete_cluster: IncompleteClusterPolicy,
     runtime_layout: &mut RuntimeLayout,
 ) -> Result<()> {
     let _phase = timing::phase("pgdata.initialize");
     if pgdata_overlay_is_installed(paths) {
         ensure!(
             runtime_layout.uses_shared_overlay(),
-            "PGDATA at {} uses the template overlay; delete the root/cache and recreate it with the shared runtime layout",
+            "PGDATA at {} uses the template overlay; delete the database storage/runtime cache and recreate it with the shared runtime layout",
             paths.pgdata.display()
         );
         if try_prepare_pgdata_template_overlay(
@@ -1873,6 +1931,9 @@ fn prepare_pgdata(
         ensure_existing_pgdata_matches_runtime(paths)?;
         remove_template_runtime_state(&paths.pgdata)?;
         return Ok(());
+    }
+    if incomplete_cluster == IncompleteClusterPolicy::FailIfNonEmpty {
+        ensure_pgdata_empty_or_absent(&paths.pgdata)?;
     }
     if cluster_policy == ClusterPolicy::ExistingOrTemplate
         && pgdata_overlay_enabled()
@@ -1893,7 +1954,7 @@ fn prepare_pgdata(
     remove_interrupted_pgdata(paths)?;
     {
         let _phase = timing::phase("pgdata.fresh_initdb");
-        PostgresMod::run_split_initdb(paths, runtime_layout)?;
+        PostgresMod::run_split_initdb(paths, runtime_layout, &PgDataStorage::HostDirectory)?;
     }
     ensure!(
         cluster_is_complete(paths),
@@ -1903,54 +1964,17 @@ fn prepare_pgdata(
     remove_template_runtime_state(&paths.pgdata)
 }
 
-fn prepare_options_for_template(use_template: bool) -> RootPrepareOptions {
-    if use_template {
+fn prepare_options_for_template(use_template: bool, caller_owned: bool) -> RootPrepareOptions {
+    let options = if use_template {
         RootPrepareOptions::template()
     } else {
         RootPrepareOptions::fresh()
+    };
+    if caller_owned {
+        options.fail_if_incomplete()
+    } else {
+        options
     }
-}
-
-pub fn install_and_init(app_id: (&str, &str, &str)) -> Result<MountInfo> {
-    let outcome = install_default(app_id)?;
-    if !cluster_is_complete(&outcome.paths) {
-        let mut pg =
-            PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?;
-        pg.ensure_cluster()?;
-    }
-    Ok(MountInfo {
-        mount: outcome.paths.pgroot.clone(),
-        paths: outcome.paths,
-        reused_existing: !outcome.unpacked_runtime,
-    })
-}
-
-pub fn install_and_init_in<P: AsRef<Path>>(root: P) -> Result<MountInfo> {
-    let outcome = install_into(root.as_ref())?;
-    if !cluster_is_complete(&outcome.paths) {
-        let mut pg =
-            PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?;
-        pg.ensure_cluster()?;
-    }
-    Ok(MountInfo {
-        mount: outcome.paths.pgroot.clone(),
-        paths: outcome.paths,
-        reused_existing: !outcome.unpacked_runtime,
-    })
-}
-
-pub fn install_with_options(paths: OliphauntPaths, options: InstallOptions) -> Result<MountInfo> {
-    let outcome = prepare_database_root(paths, RootPrepareOptions::template())?;
-    if options.ensure_cluster && !cluster_is_complete(&outcome.paths) {
-        let mut pg =
-            PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?;
-        pg.ensure_cluster()?;
-    }
-    Ok(MountInfo {
-        mount: outcome.paths.pgroot.clone(),
-        paths: outcome.paths,
-        reused_existing: !outcome.unpacked_runtime,
-    })
 }
 
 fn runtime_cache() -> Result<Arc<CachedRuntime>> {
@@ -1975,10 +1999,10 @@ pub(crate) fn pgdata_overlay_enabled() -> bool {
 fn prepare_runtime_layout(
     paths: &OliphauntPaths,
     policy: RuntimeLayoutPolicy,
-) -> Result<(RuntimeLayout, bool)> {
+) -> Result<RuntimeLayout> {
     match resolve_runtime_layout_kind(paths, policy)? {
         RuntimeLayoutKind::FullLocal => {
-            let unpacked_runtime = ensure_full_runtime(paths)?;
+            ensure_full_runtime(paths)?;
             let (module_path, _) = locate_runtime_module(paths).ok_or_else(|| {
                 anyhow!(
                     "runtime missing: could not locate module under {} after install",
@@ -1990,30 +2014,24 @@ fn prepare_runtime_layout(
                 .and_then(Path::parent)
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| paths.runtime_root());
-            Ok((
-                RuntimeLayout {
-                    kind: RuntimeLayoutKind::FullLocal,
-                    #[cfg(feature = "extensions")]
-                    local_root: module_root.clone(),
-                    module_root,
-                    pgdata_template_root: None,
-                },
-                unpacked_runtime,
-            ))
+            Ok(RuntimeLayout {
+                kind: RuntimeLayoutKind::FullLocal,
+                #[cfg(feature = "extensions")]
+                local_root: module_root.clone(),
+                module_root,
+                pgdata_template_root: None,
+            })
         }
         RuntimeLayoutKind::SharedRuntimeOverlay => {
             let cached_runtime = runtime_cache()?;
             prepare_shared_runtime_upper_root(&cached_runtime.runtime_root, paths)?;
-            Ok((
-                RuntimeLayout {
-                    kind: RuntimeLayoutKind::SharedRuntimeOverlay,
-                    #[cfg(feature = "extensions")]
-                    local_root: paths.runtime_root(),
-                    module_root: cached_runtime.runtime_root.clone(),
-                    pgdata_template_root: None,
-                },
-                false,
-            ))
+            Ok(RuntimeLayout {
+                kind: RuntimeLayoutKind::SharedRuntimeOverlay,
+                #[cfg(feature = "extensions")]
+                local_root: paths.runtime_root(),
+                module_root: cached_runtime.runtime_root.clone(),
+                pgdata_template_root: None,
+            })
         }
     }
 }
@@ -2244,6 +2262,40 @@ fn copy_runtime_file_if_exists(src: PathBuf, dest: PathBuf) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn memory_storage_keeps_pgdata_out_of_the_host_workspace() -> Result<()> {
+        if assets::pgdata_template_archive().is_none()
+            || assets::pgdata_template_manifest().is_none()
+        {
+            return Ok(());
+        }
+
+        let prepared = prepare_database(DatabasePlan::new(
+            DatabaseStorage::Memory,
+            DatabaseInitialization::PackagedTemplate,
+        ))?;
+        let host_pgdata = prepared.outcome.paths.pgdata.clone();
+        assert!(
+            !host_pgdata.exists(),
+            "memory storage must not materialize host PGDATA at {}",
+            host_pgdata.display()
+        );
+        let filesystem = prepared
+            .outcome
+            .pgdata_storage
+            .memory_filesystem()
+            .expect("memory database owns a virtual PGDATA filesystem");
+        assert!(vfs_file_exists(
+            filesystem.as_ref(),
+            Path::new("/PG_VERSION")
+        ));
+        assert!(vfs_file_exists(
+            filesystem.as_ref(),
+            Path::new("/global/pg_control")
+        ));
+        Ok(())
+    }
+
     #[cfg(feature = "extensions")]
     #[test]
     fn embedded_pgdata_template_installs_valid_cluster() -> Result<()> {
@@ -2346,17 +2398,17 @@ mod tests {
     }
 
     #[test]
-    fn root_lock_is_exclusive_until_dropped() -> Result<()> {
+    fn directory_lock_is_exclusive_until_dropped() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let first = RootLock::acquire(temp_dir.path())?;
+        let first = DirectoryLock::acquire(temp_dir.path())?;
         assert!(temp_dir.path().join(".oliphaunt-wasix.lock").exists());
 
-        let err =
-            RootLock::acquire(temp_dir.path()).expect_err("second root lock should be rejected");
-        assert!(format!("{err:#}").contains("Oliphaunt root is already in use"));
+        let err = DirectoryLock::acquire(temp_dir.path())
+            .expect_err("second directory lock should be rejected");
+        assert!(format!("{err:#}").contains("database directory is already in use"));
 
         drop(first);
-        let _second = RootLock::acquire(temp_dir.path())?;
+        let _second = DirectoryLock::acquire(temp_dir.path())?;
         Ok(())
     }
 

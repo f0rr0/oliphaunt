@@ -225,37 +225,40 @@ process.stdin.on('end', () => {
   fi
   if [ "$mode" != "package-shape" ]; then
     cat >"$package_dir/.oliphaunt-bun-smoke.ts" <<'TS'
-import { Oliphaunt, createBunNativeBinding, simpleQuery } from './lib/index.js';
+import * as sdk from './lib/index.js';
+import type { OliphauntDatabase } from './lib/index.js';
 
-const bytes: Uint8Array = simpleQuery('SELECT 1');
+const bytes: Uint8Array = sdk.simpleQuery('SELECT 1');
 if (bytes.byteLength === 0) {
   throw new Error('empty protocol frame');
 }
-if (typeof Oliphaunt.supportedModes !== 'function') {
+if (typeof sdk.Oliphaunt.supportedModes !== 'function') {
   throw new Error('missing Oliphaunt.supportedModes');
 }
-if (typeof createBunNativeBinding !== 'function') {
-  throw new Error('missing Bun native binding export');
-}
+const acceptsDatabase = (_database: OliphauntDatabase): void => {};
+void acceptsDatabase;
 TS
     run "$root/tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"
     rm -f "$package_dir/.oliphaunt-bun-smoke.ts"
     cat >"$package_dir/.oliphaunt-deno-smoke.ts" <<'TS'
-import { Oliphaunt, createDenoNativeBinding, simpleQuery } from './lib/index.js';
+import * as sdk from './lib/index.js';
+import type { OliphauntDatabase } from './lib/index.js';
 
-const bytes: Uint8Array = simpleQuery('SELECT 1');
+const bytes: Uint8Array = sdk.simpleQuery('SELECT 1');
 if (bytes.byteLength === 0) {
   throw new Error('empty protocol frame');
 }
-if (typeof Oliphaunt.supportedModes !== 'function') {
+if (typeof sdk.Oliphaunt.supportedModes !== 'function') {
   throw new Error('missing Oliphaunt.supportedModes');
 }
-if (typeof createDenoNativeBinding !== 'function') {
-  throw new Error('missing Deno native binding export');
+if ('createDenoNativeBinding' in sdk) {
+  throw new Error('Deno native binding factory must remain internal');
 }
 if (typeof Deno.version.deno !== 'string') {
   throw new Error('Deno runtime metadata missing');
 }
+const acceptsDatabase = (_database: OliphauntDatabase): void => {};
+void acceptsDatabase;
 TS
     run "$root/tools/dev/deno.sh" run --allow-read --allow-env "$package_dir/.oliphaunt-deno-smoke.ts"
     rm -f "$package_dir/.oliphaunt-deno-smoke.ts"
@@ -303,12 +306,12 @@ if [ -n "$runtime_download_hits" ]; then
   exit 1
 fi
 
-require_source_text "$package_dir/package.json" '"./node"' \
-  "TypeScript SDK package exports must include an explicit Node entrypoint"
-require_source_text "$package_dir/package.json" '"./bun"' \
-  "TypeScript SDK package exports must include an explicit Bun entrypoint"
-require_source_text "$package_dir/package.json" '"./deno"' \
-  "TypeScript SDK package exports must include an explicit Deno entrypoint"
+reject_source_text "$package_dir/package.json" '"./node"' \
+  "TypeScript SDK package must use runtime detection instead of a Node binding subpath"
+reject_source_text "$package_dir/package.json" '"./bun"' \
+  "TypeScript SDK package must use runtime detection instead of a Bun binding subpath"
+reject_source_text "$package_dir/package.json" '"./deno"' \
+  "TypeScript SDK package must use runtime detection instead of a Deno binding subpath"
 require_source_text "$package_dir/package.json" '"liboliphauntVersion"' \
   "TypeScript SDK package metadata must pin the compatible liboliphaunt release"
 require_source_text "$package_dir/package.json" '"brokerVersion"' \
@@ -337,13 +340,39 @@ const expectedOptional = [
   '@oliphaunt/tools-win32-x64-msvc',
 ];
 const optional = Object.keys(pkg.optionalDependencies || {}).sort();
+const expectedExports = ['.', './package.json', './protocol', './query'];
+const actualExports = Object.keys(pkg.exports || {}).sort();
 if (
   JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies) ||
   JSON.stringify(optional) !== JSON.stringify(expectedOptional.sort())
 ) {
   throw new Error('TypeScript SDK installs must declare only platform-selected runtime packages');
 }
+if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports.sort())) {
+  throw new Error('TypeScript SDK must expose one detected runtime entrypoint plus protocol/query helpers');
+}
 " "$package_dir/package.json"
+for internal_export in \
+  createOliphauntClient \
+  nativeDirectCapabilities \
+  createDefaultNativeBinding \
+  createNodeNativeBinding \
+  createDenoNativeBinding \
+  MaybePromise \
+  NativeBinding \
+  NativeBindingFactory \
+  NativeBindingOptions \
+  NativeOpenConfig \
+  NativeRestoreOptions \
+  NativeHandle \
+  RuntimeBinding \
+  RuntimeHandle
+do
+  reject_source_text "$package_dir/lib/index.d.ts" "$internal_export" \
+    "TypeScript SDK root declarations must not expose internal runtime plumbing"
+done
+require_source_text "$package_dir/lib/index.d.ts" "OliphauntDatabase" \
+  "TypeScript SDK root declarations must expose the structural database type"
 require_source_text "$package_dir/jsr.json" '".": "./src/jsr.ts"' \
   "TypeScript SDK must publish a protocol-only JSR root entrypoint"
 reject_source_text "$package_dir/jsr.json" '"./deno"' \
@@ -356,8 +385,10 @@ require_source_text "$package_dir/src/client.ts" "case 'node':" \
   "TypeScript SDK must treat Node.js consistently in default engine selection"
 require_source_text "$package_dir/src/client.ts" "return 'nativeDirect'" \
   "TypeScript SDK must default Node.js, Bun, and Deno to nativeDirect"
-require_source_text "$package_dir/src/client.ts" "restorePhysicalArchiveWithBroker" \
-  "TypeScript SDK must keep explicit broker restore support separate from nativeDirect defaults"
+reject_source_text "$package_dir/src/client.ts" "restorePhysicalArchiveWithBroker" \
+  "TypeScript SDK public restore must not expose a broker-specific path"
+require_source_text "$package_dir/src/client.ts" "await binding.restore({" \
+  "TypeScript SDK public restore must use the runtime-detected native binding"
 require_source_text "$package_dir/src/native/common.ts" "liboliphauntPackageTarget" \
   "TypeScript SDK must select the compatible liboliphaunt platform package"
 require_source_text "$package_dir/src/native/assets-node.ts" "runtimeRelativePath" \
@@ -416,8 +447,34 @@ require_source_text "$package_dir/src/client.ts" "async transaction<T>" \
   "TypeScript SDK must expose the transaction helper"
 require_source_text "$package_dir/src/client.ts" "async checkpoint(): Promise<void>" \
   "TypeScript SDK must expose checkpoint"
-require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedRoot, 'pgdata')" \
-  "TypeScript SDK roots must use the shared Oliphaunt root/pgdata layout"
+require_source_text "$package_dir/src/types.ts" "storage?: DatabaseStorage" \
+  "TypeScript SDK open config must expose the structured native storage model"
+require_source_text "$package_dir/src/types.ts" "kind: 'temporaryDirectory'" \
+  "TypeScript SDK native storage must expose temporaryDirectory"
+require_source_text "$package_dir/src/types.ts" "kind: 'directory'" \
+  "TypeScript SDK native storage must expose caller-owned directories"
+reject_source_text "$package_dir/src/types.ts" "root?: string" \
+  "TypeScript SDK must not expose the internal database root"
+reject_source_text "$package_dir/src/types.ts" "temporary?: boolean" \
+  "TypeScript SDK must not expose ambiguous boolean temporary storage"
+require_source_text "$package_dir/src/types.ts" "destination: string" \
+  "TypeScript SDK restore must name its external filesystem destination"
+node -e "
+const fs = require('node:fs');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const match = source.match(/export type RestoreOptions = \{([\s\S]*?)\n\};/);
+if (!match) throw new Error('TypeScript SDK must declare RestoreOptions');
+if (/\b(?:engine|brokerExecutable)\??:/.test(match[1])) {
+  throw new Error('TypeScript SDK restore must stay mode-independent');
+}
+if (!/\blibraryPath\?: string;/.test(match[1])) {
+  throw new Error('TypeScript SDK restore must retain the optional native library override');
+}
+" "$package_dir/src/types.ts"
+require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedStorage.instanceDirectory, 'pgdata')" \
+  "TypeScript SDK must derive the internal PGDATA layout from resolved storage"
+require_source_text "$package_dir/src/client.ts" "createdTemporaryDirectory" \
+  "TypeScript SDK must track cleanup ownership for materialized temporary directories"
 require_source_text "$package_dir/src/config.ts" "generatedExtensionBySqlName(trimmed)" \
   "TypeScript SDK must validate selected extensions against the generated extension catalog"
 require_source_text "$package_dir/src/config.ts" "unknown Oliphaunt extension id" \
@@ -428,6 +485,12 @@ require_source_text "$package_dir/src/types.ts" "backupFormats: BackupFormat[]" 
   "TypeScript SDK capabilities must expose backup formats"
 require_source_text "$package_dir/src/types.ts" "restoreFormats: BackupFormat[]" \
   "TypeScript SDK capabilities must expose restore formats"
+require_source_text "$package_dir/src/types.ts" "multipleInstances: boolean" \
+  "TypeScript SDK capabilities must use database-instance vocabulary"
+require_source_text "$package_dir/src/types.ts" "sameInstanceLogicalReopen: boolean" \
+  "TypeScript SDK capabilities must describe resident instance reopen behavior"
+require_source_text "$package_dir/src/types.ts" "instanceSwitchable: boolean" \
+  "TypeScript SDK capabilities must describe instance switching"
 require_source_text "$package_dir/src/query.ts" "function validateUtf8(bytes: Uint8Array, label: string): void" \
   "TypeScript SDK query parser must reject malformed backend UTF-8"
 require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "query-response-cases.json" \
@@ -447,7 +510,7 @@ require_source_text "$package_dir/src/__tests__/native-smoke.ts" "smokeMode('nat
 require_source_text "$package_dir/src/__tests__/native-smoke.ts" "smokeMode('nativeServer'" \
   "TypeScript SDK smoke must execute native server mode when OLIPHAUNT_POSTGRES is set"
 require_source_text "$package_dir/src/__tests__/native-smoke.ts" "restoreSmokeBackup" \
-  "TypeScript SDK smoke must restore physical backup artifacts and reopen restored roots"
+  "TypeScript SDK smoke must restore physical backup artifacts and reopen restored instances"
 require_source_text "$package_dir/src/runtime/broker.ts" "resolveBrokerNativeInstall" \
   "TypeScript broker mode must resolve the same liboliphaunt native install that direct mode uses"
 require_source_text "$package_dir/src/runtime/broker.ts" "OLIPHAUNT_INSTALL_DIR" \

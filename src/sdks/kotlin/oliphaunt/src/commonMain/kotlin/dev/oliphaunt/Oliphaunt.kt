@@ -31,10 +31,9 @@ public data class EngineCapabilities(
     val processIsolated: Boolean,
     val independentSessions: Boolean,
     val maxClientSessions: Int,
-    val multiRoot: Boolean = false,
-    val reopenable: Boolean = processIsolated,
-    val sameRootLogicalReopen: Boolean = !processIsolated && reopenable,
-    val rootSwitchable: Boolean = processIsolated,
+    val multipleInstances: Boolean = false,
+    val sameInstanceLogicalReopen: Boolean = false,
+    val instanceSwitchable: Boolean = false,
     val crashRestartable: Boolean = false,
     val protocolRaw: Boolean = true,
     val protocolStream: Boolean = true,
@@ -71,21 +70,19 @@ public object OliphauntRuntimeSupport {
             processIsolated = false,
             independentSessions = false,
             maxClientSessions = 1,
-            reopenable = true,
-            sameRootLogicalReopen = true,
-            rootSwitchable = false,
+            sameInstanceLogicalReopen = true,
+            instanceSwitchable = false,
             crashRestartable = false,
         )
 
         EngineMode.NativeBroker -> EngineCapabilities(
             mode = mode,
             processIsolated = true,
-            multiRoot = true,
+            multipleInstances = true,
             independentSessions = false,
             maxClientSessions = 1,
-            reopenable = true,
-            sameRootLogicalReopen = false,
-            rootSwitchable = true,
+            sameInstanceLogicalReopen = false,
+            instanceSwitchable = true,
             crashRestartable = true,
         )
 
@@ -94,9 +91,8 @@ public object OliphauntRuntimeSupport {
             processIsolated = true,
             independentSessions = true,
             maxClientSessions = 32,
-            reopenable = true,
-            sameRootLogicalReopen = false,
-            rootSwitchable = true,
+            sameInstanceLogicalReopen = false,
+            instanceSwitchable = true,
             crashRestartable = false,
             backupFormats = listOf(BackupFormat.Sql, BackupFormat.PhysicalArchive),
         )
@@ -135,9 +131,15 @@ public object OliphauntRuntimeSupport {
     }
 }
 
+public sealed interface DatabaseStorage {
+    public data object TemporaryDirectory : DatabaseStorage
+
+    public data class Directory(val path: String) : DatabaseStorage
+}
+
 public data class OliphauntConfig(
     val mode: EngineMode = EngineMode.NativeDirect,
-    val root: String? = null,
+    val storage: DatabaseStorage = DatabaseStorage.TemporaryDirectory,
     val durability: DurabilityProfile = DurabilityProfile.Balanced,
     val runtimeFootprint: RuntimeFootprintProfile = RuntimeFootprintProfile.BalancedMobile,
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
@@ -277,14 +279,17 @@ private fun DurabilityProfile.postgresStartupArgs(): List<String> = when (this) 
     )
 }
 
-internal fun validateRootPath(root: String?, label: String) {
-    if (root == null) {
-        return
+internal fun validateDatabaseStorage(storage: DatabaseStorage) {
+    if (storage is DatabaseStorage.Directory) {
+        validateDirectoryPath(storage.path, "database storage directory")
     }
-    if (root.isBlank()) {
+}
+
+internal fun validateDirectoryPath(path: String, label: String) {
+    if (path.isBlank()) {
         throw OliphauntException("$label must not be empty")
     }
-    if (root.any { it.code == 0 }) {
+    if (path.any { it.code == 0 }) {
         throw OliphauntException("$label must not contain NUL bytes")
     }
 }
@@ -312,18 +317,18 @@ public data class BackupArtifact(
     override fun hashCode(): Int = 31 * format.hashCode() + bytes.contentHashCode()
 }
 
-public enum class RestoreTargetPolicy {
+public enum class RestoreDestinationPolicy {
     FailIfExists,
     ReplaceExisting,
 }
 
 public data class RestoreRequest(
     val artifact: BackupArtifact,
-    val root: String,
-    val targetPolicy: RestoreTargetPolicy = RestoreTargetPolicy.FailIfExists,
+    val destination: String,
+    val destinationPolicy: RestoreDestinationPolicy = RestoreDestinationPolicy.FailIfExists,
 ) {
     public fun replaceExisting(): RestoreRequest = copy(
-        targetPolicy = RestoreTargetPolicy.ReplaceExisting,
+        destinationPolicy = RestoreDestinationPolicy.ReplaceExisting,
     )
 }
 
@@ -407,6 +412,7 @@ public class OliphauntDatabase private constructor(
 ) {
     private val executionMutex = Mutex()
     private val stateMutex = Mutex()
+    private var closing = false
     private var closed = false
     private var activeTransactionToken: Long? = null
     private var nextTransactionToken = 1L
@@ -431,7 +437,11 @@ public class OliphauntDatabase private constructor(
         }
     }
 
-    public suspend fun execute(sql: String): ProtocolResponse = execProtocolRaw(ProtocolRequest.simpleQuery(sql))
+    public suspend fun execute(sql: String): ProtocolResponse {
+        val response = execProtocolRaw(ProtocolRequest.simpleQuery(sql))
+        assertSuccessfulQueryResponse(response.bytes)
+        return response
+    }
 
     public suspend fun execProtocolStream(
         request: ProtocolRequest,
@@ -459,14 +469,14 @@ public class OliphauntDatabase private constructor(
     }
 
     public suspend fun checkpoint() {
-        execProtocolRaw(ProtocolRequest.simpleQuery("CHECKPOINT"))
+        execute("CHECKPOINT")
     }
 
     public suspend fun prepareForBackground(
         options: BackgroundPreparationOptions = BackgroundPreparationOptions(),
     ): BackgroundPreparationResult {
         val snapshot = stateMutex.withLock {
-            if (closed) {
+            if (closed || closing) {
                 throw OliphauntException("database is closed")
             }
             activeOperationCount to activeTransactionToken
@@ -512,7 +522,7 @@ public class OliphauntDatabase private constructor(
 
     public suspend fun <T> transaction(block: suspend (OliphauntTransaction) -> T): T {
         val token = stateMutex.withLock {
-            if (closed) {
+            if (closed || closing) {
                 throw OliphauntException("database is closed")
             }
             if (activeTransactionToken != null) {
@@ -525,13 +535,13 @@ public class OliphauntDatabase private constructor(
         }
         val transaction = OliphauntTransaction(this, token)
         try {
-            execProtocolRaw(request = ProtocolRequest.simpleQuery("BEGIN"), transactionToken = token)
+            transaction.execute("BEGIN")
             val result = block(transaction)
-            execProtocolRaw(request = ProtocolRequest.simpleQuery("COMMIT"), transactionToken = token)
+            transaction.execute("COMMIT")
             return result
         } catch (error: Throwable) {
             runCatching {
-                execProtocolRaw(request = ProtocolRequest.simpleQuery("ROLLBACK"), transactionToken = token)
+                transaction.execute("ROLLBACK")
             }
             throw error
         } finally {
@@ -545,7 +555,7 @@ public class OliphauntDatabase private constructor(
 
     public suspend fun cancel() {
         stateMutex.withLock {
-            if (closed) {
+            if (closed || closing) {
                 throw OliphauntException("database is closed")
             }
         }
@@ -556,22 +566,35 @@ public class OliphauntDatabase private constructor(
         val shouldClose = stateMutex.withLock {
             if (closed) {
                 false
+            } else if (closing) {
+                throw OliphauntException("database close is already in progress")
             } else {
-                closed = true
-                activeTransactionToken = null
+                closing = true
                 true
             }
         }
         if (!shouldClose) {
             return
         }
-        executionMutex.withLock {
-            session.close()
+        try {
+            executionMutex.withLock {
+                session.close()
+            }
+            stateMutex.withLock {
+                closing = false
+                closed = true
+                activeTransactionToken = null
+            }
+        } catch (error: Throwable) {
+            stateMutex.withLock {
+                closing = false
+            }
+            throw error
         }
     }
 
     private suspend fun ensureOpen() {
-        val isClosed = stateMutex.withLock { closed }
+        val isClosed = stateMutex.withLock { closed || closing }
         if (isClosed) {
             throw OliphauntException("database is closed")
         }
@@ -629,10 +652,10 @@ public class OliphauntDatabase private constructor(
 
     public companion object {
         public suspend fun open(
-            config: OliphauntConfig,
+            config: OliphauntConfig = OliphauntConfig(),
             engine: OliphauntEngine = defaultOliphauntEngine(config.mode),
         ): OliphauntDatabase {
-            validateRootPath(config.root, "database root")
+            validateDatabaseStorage(config.storage)
             validateStartupIdentity(config.username, "username")
             validateStartupIdentity(config.database, "database")
             validateStartupGucs(config.startupGucs)
@@ -646,7 +669,7 @@ public class OliphauntDatabase private constructor(
             request: RestoreRequest,
             engine: OliphauntEngine = defaultOliphauntEngine(EngineMode.NativeDirect),
         ): String {
-            validateRootPath(request.root, "restore root")
+            validateDirectoryPath(request.destination, "restore destination")
             if (request.artifact.format != BackupFormat.PhysicalArchive) {
                 throw OliphauntException(
                     "restore currently requires a PhysicalArchive artifact, got ${request.artifact.format}",
@@ -677,5 +700,9 @@ public class OliphauntTransaction internal constructor(
         database.execProtocolStream(request, transactionToken = token, onChunk = onChunk)
     }
 
-    public suspend fun execute(sql: String): ProtocolResponse = execProtocolRaw(ProtocolRequest.simpleQuery(sql))
+    public suspend fun execute(sql: String): ProtocolResponse {
+        val response = execProtocolRaw(ProtocolRequest.simpleQuery(sql))
+        assertSuccessfulQueryResponse(response.bytes)
+        return response
+    }
 }

@@ -73,7 +73,7 @@ icu = ["dep:oliphaunt-icu"]
 postgres-version = "18.4"
 postgres-source-url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
 postgres-source-sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
-postgres-patch-count = "38"
+postgres-patch-count = "39"
 oliphaunt-npm-version-checked = "0.4.5"
 runtime-archive-sha256 = "7dccedb08fdc32b0092ff92a0882d911230e0361d0f4fdf228d6a6cb7d981178"
 oliphaunt-wasix-sha256 = "da58c392818149789b8ca9824952abf20ed1a084e7b580369a5478e6db280b05"
@@ -100,7 +100,7 @@ liboliphaunt-wasix-portable = { version = "=0.1.1", path = "../../../../runtimes
 oliphaunt-wasix-tools = { version = "=0.1.1", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
 oliphaunt-icu = { version = "=0.1.1", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
-wasmer = { version = "=7.2.0", default-features = false, features = [
+wasmer = { version = "=7.2.1", default-features = false, features = [
   "sys",
   "headless",
   "compiler",
@@ -110,20 +110,20 @@ wasmer = { version = "=7.2.0", default-features = false, features = [
 # release family. Keep the complete family constrained here so a fresh
 # consumer cannot silently mix a later patch generation with the runtime and
 # AOT artifacts built against this exact toolchain.
-wasmer-config = { version = "=0.702.0", default-features = false }
-wasmer-journal = { version = "=0.702.0", default-features = false }
-wasmer-package = { version = "=0.702.0", default-features = false }
-wasmer-types = "=7.2.0"
-wasmer-wasix = { version = "=0.702.0", default-features = false, features = [
+wasmer-config = { version = "=0.702.1", default-features = false }
+wasmer-journal = { version = "=0.702.1", default-features = false }
+wasmer-package = { version = "=0.702.1", default-features = false }
+wasmer-types = "=7.2.1"
+wasmer-wasix = { version = "=0.702.1", default-features = false, features = [
   "sys-minimal",
   "sys-poll",
   "host-vnet",
   "time",
 ] }
-wasmer-wasix-types = { version = "=0.702.0", default-features = false }
-virtual-fs = { version = "=0.702.0", default-features = false }
-virtual-mio = { version = "=0.702.0", default-features = false }
-virtual-net = { version = "=0.702.0", default-features = false }
+wasmer-wasix-types = { version = "=0.702.1", default-features = false }
+virtual-fs = { version = "=0.702.1", default-features = false }
+virtual-mio = { version = "=0.702.1", default-features = false }
+virtual-net = { version = "=0.702.1", default-features = false }
 webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]

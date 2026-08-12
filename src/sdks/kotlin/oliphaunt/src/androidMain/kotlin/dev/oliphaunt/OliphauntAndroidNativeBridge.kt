@@ -31,7 +31,7 @@ internal object OliphauntAndroidNativeBridge {
     ): ByteArray
 
     external fun restoreNative(
-        root: String,
+        destination: String,
         format: String,
         artifact: ByteArray,
         replaceExisting: Boolean,

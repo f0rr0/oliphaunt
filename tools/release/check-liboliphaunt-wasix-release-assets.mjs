@@ -30,12 +30,13 @@ import {
   CORE_RUNTIME_ARCHIVE_FILES,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
+import { WASIX_PORTABLE_RELEASE_MEMBERS } from "./wasix-runtime-npm-contract.mjs";
 
 const TOOL = "check-liboliphaunt-wasix-release-assets.mjs";
 const PRODUCT = "liboliphaunt-wasix";
 const DEFAULT_ASSET_DIR = "target/oliphaunt-wasix/release-assets";
-const PORTABLE_RUNTIME_ARCHIVE_MEMBER = "target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst";
-const PORTABLE_MANIFEST_MEMBER = "target/oliphaunt-wasix/assets/manifest.json";
+const PORTABLE_RUNTIME_ARCHIVE_MEMBER = WASIX_PORTABLE_RELEASE_MEMBERS.runtimeArchive;
+const PORTABLE_MANIFEST_MEMBER = WASIX_PORTABLE_RELEASE_MEMBERS.manifest;
 const SPLIT_TOOL_PAYLOAD_MEMBERS = new Set([
   "target/oliphaunt-wasix/assets/bin/pg_dump.wasix.wasm",
   "target/oliphaunt-wasix/assets/bin/psql.wasix.wasm",

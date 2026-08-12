@@ -36,8 +36,8 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
   Tauri apps currently expose narrow app-owned commands from the Rust SDK; a
   direct JavaScript/webview adapter is planned. `nativeDirect` is the default across supported JavaScript
-  runtimes; Node.js uses the package-owned prebuilt Node direct adapter, and Bun
-  and Deno use their runtime FFI surfaces. TypeScript broker mode consumes the
+  runtimes; Node.js and Bun use the package-owned prebuilt Node direct adapter,
+  while Deno uses nonblocking runtime FFI. TypeScript broker mode consumes the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol
   instead of inventing another broker runtime; app developers get verified
   release assets by default instead of building Rust locally. The npm package

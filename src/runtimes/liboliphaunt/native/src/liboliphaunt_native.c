@@ -64,19 +64,14 @@ static bool startup_args_match(OliphauntHandle *handle, const OliphauntConfig *c
     return true;
 }
 
-static const char *init_options_module_dir(const OliphauntInitOptions *options) {
-    return options != NULL ? options->module_dir : NULL;
-}
-
 static bool config_matches_resident_runtime(
     OliphauntHandle *handle,
-    const OliphauntConfig *config,
-    const OliphauntInitOptions *options) {
+    const OliphauntConfig *config) {
     bool external_root_lock = (config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0;
     return handle != NULL &&
            config_string_matches(handle->pgdata, config->pgdata, "") &&
            config_string_matches(handle->runtime_dir, config->runtime_dir, "") &&
-           config_string_matches(handle->module_dir, init_options_module_dir(options), "") &&
+           config_string_matches(handle->module_dir, config->module_dir, "") &&
            config_string_matches(handle->username, config->username, "postgres") &&
            config_string_matches(handle->database, config->database, "postgres") &&
            handle->external_root_lock == external_root_lock &&
@@ -100,7 +95,6 @@ static int advance_logical_generation_locked(OliphauntHandle *handle) {
 static int reopen_resident_runtime_locked(
     OliphauntHandle *handle,
     const OliphauntConfig *config,
-    const OliphauntInitOptions *options,
     OliphauntHandle **out) {
     if (handle == NULL) {
         set_error(NULL, "native liboliphaunt process-wide runtime is unavailable");
@@ -116,7 +110,7 @@ static int reopen_resident_runtime_locked(
         set_error(NULL, "native liboliphaunt resident runtime has already shut down");
         return -1;
     }
-    if (!config_matches_resident_runtime(handle, config, options)) {
+    if (!config_matches_resident_runtime(handle, config)) {
         pthread_mutex_unlock(&handle->mutex);
         set_error(NULL, "native liboliphaunt resident runtime is bound to a different root, identity, runtime, or extension startup configuration");
         return -1;
@@ -411,13 +405,6 @@ static int start_backend(OliphauntHandle *handle) {
 }
 
 int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
-    return oliphaunt_init_ex(config, NULL, out);
-}
-
-int32_t oliphaunt_init_ex(
-    const OliphauntConfig *config,
-    const OliphauntInitOptions *options,
-    OliphauntHandle **out) {
     if (out == NULL) {
         set_error(NULL, "oliphaunt_init out parameter is null");
         return -1;
@@ -427,13 +414,9 @@ int32_t oliphaunt_init_ex(
         set_error(NULL, "invalid oliphaunt_init config");
         return -1;
     }
-    if (options != NULL &&
-        (options->abi_version != OLIPHAUNT_INIT_OPTIONS_ABI_VERSION ||
-         options->reserved_flags != 0 ||
-         options->module_dir == NULL ||
-         options->module_dir[0] == '\0' ||
-         !oliphaunt_path_is_directory(options->module_dir))) {
-        set_error(NULL, "invalid oliphaunt_init options");
+    if (config->module_dir != NULL &&
+        (config->module_dir[0] == '\0' || !oliphaunt_path_is_directory(config->module_dir))) {
+        set_error(NULL, "invalid oliphaunt_init module_dir");
         return -1;
     }
     if ((config->reserved_flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
@@ -453,7 +436,7 @@ int32_t oliphaunt_init_ex(
         return -1;
     }
     if (acquire_rc > 0) {
-        return reopen_resident_runtime_locked(existing, config, options, out);
+        return reopen_resident_runtime_locked(existing, config, out);
     }
 
     OliphauntHandle *handle = (OliphauntHandle *)calloc(1, sizeof(OliphauntHandle));
@@ -470,7 +453,7 @@ int32_t oliphaunt_init_ex(
 
     handle->pgdata = oliphaunt_dup_config_string(config->pgdata, "");
     handle->runtime_dir = oliphaunt_dup_config_string(config->runtime_dir, "");
-    handle->module_dir = oliphaunt_dup_config_string(init_options_module_dir(options), "");
+    handle->module_dir = oliphaunt_dup_config_string(config->module_dir, "");
     handle->username = oliphaunt_dup_config_string(config->username, "postgres");
     handle->database = oliphaunt_dup_config_string(config->database, "postgres");
     if (handle->pgdata == NULL || handle->runtime_dir == NULL || handle->module_dir == NULL ||

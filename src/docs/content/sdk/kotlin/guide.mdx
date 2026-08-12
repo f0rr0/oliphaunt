@@ -6,7 +6,7 @@ description: Add Oliphaunt to an Android app with Gradle, coroutines, app-privat
 # Build With Kotlin
 
 Use the Kotlin SDK in Android apps. It provides coroutine-friendly APIs over the
-native runtime and owns Android resource hydration, root validation, and
+native runtime and owns Android resource hydration, storage validation, and
 extension materialization.
 
 <Callout type="info" title="Android packaging stays in the Android SDK">
@@ -28,19 +28,20 @@ packages native runtime artifacts, Android ABIs, and exact extension files.
 ```kotlin
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.0"
+    id("dev.oliphaunt.android") version "0.1.1"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.1.0")
+    implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
 }
 
 oliphaunt {
-    extensions.add("vector")
+    selectedExtensions.add("vector")
 }
 ```
 
-Use app-private storage for persistent roots and temporary roots for tests.
+Storage defaults to an SDK-owned temporary directory. Choose an app-private
+directory when data must persist.
 
 </Step>
 <Step>
@@ -54,10 +55,13 @@ coroutines.
 
 ```kotlin
 val database =
-    OliphauntDatabase.open(
-        OliphauntConfig(
-            root = context.filesDir.resolve("main.oliphaunt").absolutePath,
+    OliphauntAndroid.open(
+        context = context,
+        config = OliphauntConfig(
             mode = EngineMode.NativeDirect,
+            storage = DatabaseStorage.Directory(
+                context.filesDir.resolve("main.oliphaunt").absolutePath,
+            ),
             extensions = listOf("vector"),
         ),
     )
@@ -95,7 +99,7 @@ database.query(
     "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
     listOf(
         QueryParam.text("First note"),
-        QueryParam.text("Stored in an embedded PostgreSQL root"),
+        QueryParam.text("Stored by embedded PostgreSQL"),
     ),
 )
 
@@ -111,9 +115,9 @@ native session underneath those calls.
 
 ### Configure
 
-Configure root, mode, selected exact extensions, startup identity, Android asset
-root, and durability through `OliphauntConfig` and the Android facade. Keep SQL
-root selection separate from extension artifact selection.
+Configure storage, mode, selected exact extensions, startup identity, and
+durability through `OliphauntConfig` and the Android facade. Normal apps use
+packaged runtime assets; explicit asset locations remain advanced overrides.
 
 </Step>
 <Step>
@@ -147,7 +151,9 @@ contain only those selected extensions and mandatory dependencies.
 ### Back up and restore
 
 Use SDK backup and restore APIs with Android file/document APIs. The SDK
-validates roots, formats, and archive metadata before materialization.
+validates destinations, formats, and archive metadata before materialization.
+`RestoreRequest` defaults to `RestoreDestinationPolicy.FailIfExists`; call
+`.replaceExisting()` only when replacement is deliberate.
 
 </Step>
 </Steps>
@@ -156,6 +162,6 @@ validates roots, formats, and archive metadata before materialization.
 
 ## Troubleshooting
 
-Check app storage permissions, root locks, missing native libraries, missing
+Check app storage permissions, storage ownership, missing native libraries, missing
 runtime resources, mode capability errors, selected-extension artifacts, and
 SQLSTATE-bearing PostgreSQL errors.

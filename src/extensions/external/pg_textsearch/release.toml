@@ -22,6 +22,7 @@ registry_packages = [
   "npm:@oliphaunt/extension-pg-textsearch-linux-arm64-gnu",
   "npm:@oliphaunt/extension-pg-textsearch-linux-x64-gnu",
   "npm:@oliphaunt/extension-pg-textsearch-macos-arm64",
+  "npm:@oliphaunt/extension-pg-textsearch-wasix",
   "npm:@oliphaunt/extension-pg-textsearch-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-textsearch-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-pg-textsearch-android-x86_64",

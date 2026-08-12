@@ -16,7 +16,7 @@ use oliphaunt::{
 #[cfg(unix)]
 const DIRECT_CRASH_ACTION_ENV: &str = "OLIPHAUNT_DIRECT_CRASH_ACTION";
 #[cfg(unix)]
-const DIRECT_CRASH_ROOT_ENV: &str = "OLIPHAUNT_DIRECT_CRASH_ROOT";
+const DIRECT_CRASH_STORAGE_ENV: &str = "OLIPHAUNT_DIRECT_CRASH_STORAGE";
 #[cfg(unix)]
 const DIRECT_CRASH_MARKER_ENV: &str = "OLIPHAUNT_DIRECT_CRASH_MARKER";
 
@@ -30,7 +30,7 @@ fn native_liboliphaunt_runtime_select_one_when_env_is_available() {
     let root = unique_temp_root("oliphaunt-native-direct");
     let db = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .extension(Extension::Vector)
             .runtime(OliphauntRuntime::from_env())
             .open(),
@@ -144,7 +144,7 @@ fn native_liboliphaunt_runtime_select_one_when_env_is_available() {
 
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .extension(Extension::Vector)
             .runtime(OliphauntRuntime::from_env())
             .open(),
@@ -173,20 +173,24 @@ fn native_direct_crash_consistency_survives_process_death_when_env_is_available(
         return;
     }
 
-    let root = unique_temp_root("oliphaunt-direct-crash-consistency");
-    let committed_marker = root.with_extension("committed-ready");
-    let uncommitted_marker = root.with_extension("uncommitted-ready");
+    let storage = unique_temp_root("oliphaunt-direct-crash-consistency");
+    let committed_marker = storage.with_extension("committed-ready");
+    let uncommitted_marker = storage.with_extension("uncommitted-ready");
 
-    run_direct_crash_child_until_marker(DirectCrashAction::CommittedWait, &root, &committed_marker);
-    run_direct_crash_child(DirectCrashAction::VerifyCommitted, &root);
+    run_direct_crash_child_until_marker(
+        DirectCrashAction::CommittedWait,
+        &storage,
+        &committed_marker,
+    );
+    run_direct_crash_child(DirectCrashAction::VerifyCommitted, &storage);
     run_direct_crash_child_until_marker(
         DirectCrashAction::UncommittedWait,
-        &root,
+        &storage,
         &uncommitted_marker,
     );
-    run_direct_crash_child(DirectCrashAction::VerifyUncommitted, &root);
+    run_direct_crash_child(DirectCrashAction::VerifyUncommitted, &storage);
 
-    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(storage);
     let _ = std::fs::remove_file(committed_marker);
     let _ = std::fs::remove_file(uncommitted_marker);
 }
@@ -359,7 +363,7 @@ fn native_broker_runtime_select_one_when_env_is_available() {
 
     let db = block_on(
         Oliphaunt::builder()
-            .temporary()
+            .temporary_directory()
             .native_broker()
             .extension(Extension::Vector)
             .broker_executable(broker)
@@ -437,7 +441,7 @@ fn native_broker_existing_only_rejects_unbootstrapped_roots_when_env_is_availabl
     let root = unique_temp_root("oliphaunt-broker-existing-only");
     let error = expect_open_error(block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -466,7 +470,7 @@ fn native_broker_rejects_incompatible_root_manifest_when_env_is_available() {
     let root = unique_temp_root("oliphaunt-broker-root-manifest");
     let db = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .open(),
@@ -481,7 +485,7 @@ fn native_broker_rejects_incompatible_root_manifest_when_env_is_available() {
     .unwrap();
     let error = expect_open_error(block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -514,7 +518,7 @@ fn native_broker_rejects_pgdata_version_manifest_mismatch_and_recovers_when_env_
     let root = unique_temp_root("oliphaunt-broker-pgdata-version-manifest");
     let db = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .open(),
@@ -544,7 +548,7 @@ fn native_broker_rejects_pgdata_version_manifest_mismatch_and_recovers_when_env_
 
     let error = expect_open_error(block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -561,7 +565,7 @@ fn native_broker_rejects_pgdata_version_manifest_mismatch_and_recovers_when_env_
     std::fs::write(&manifest_path, valid_manifest).unwrap();
     let recovered = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -591,7 +595,7 @@ fn native_broker_reopens_persistent_root_when_env_is_available() {
     let root = unique_temp_root("oliphaunt-broker-restart");
     let db = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .open(),
@@ -610,7 +614,7 @@ fn native_broker_reopens_persistent_root_when_env_is_available() {
 
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -643,7 +647,7 @@ fn native_broker_relaunches_helper_after_crash_when_env_is_available() {
     let root = unique_temp_root("oliphaunt-broker-crash-recovery");
     let db = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .open(),
@@ -745,43 +749,45 @@ fn native_broker_relaunches_helper_after_crash_when_env_is_available() {
 #[test]
 fn native_broker_shared_runtime_admits_multiple_roots_when_env_is_available() {
     if native_runtime_env_is_unavailable() {
-        eprintln!("skipping native broker multi-root smoke: no native library env var is set");
+        eprintln!(
+            "skipping native broker multiple-instance smoke: no native library env var is set"
+        );
         return;
     }
     let Some(broker) = native_broker_executable() else {
         eprintln!(
-            "skipping native broker multi-root smoke: cargo did not provide broker binary path"
+            "skipping native broker multiple-instance smoke: cargo did not provide broker binary path"
         );
         return;
     };
 
     let runtime: Arc<dyn NativeRuntime> =
-        Arc::new(NativeBrokerRuntime::from_executable(broker).with_max_roots(2));
+        Arc::new(NativeBrokerRuntime::from_executable(broker).with_max_instances(2));
     let root_a = unique_temp_root("oliphaunt-broker-multi-a");
     let root_b = unique_temp_root("oliphaunt-broker-multi-b");
     let root_c = unique_temp_root("oliphaunt-broker-multi-c");
 
     let db_a = block_on(
         Oliphaunt::builder()
-            .path(&root_a)
+            .directory(&root_a)
             .native_broker()
-            .broker_max_roots(2)
+            .broker_max_instances(2)
             .runtime_arc(Arc::clone(&runtime))
             .open(),
     )
     .unwrap();
     let db_b = block_on(
         Oliphaunt::builder()
-            .path(&root_b)
+            .directory(&root_b)
             .native_broker()
-            .broker_max_roots(2)
+            .broker_max_instances(2)
             .runtime_arc(Arc::clone(&runtime))
             .open(),
     )
     .unwrap();
 
-    assert!(db_a.capabilities().multi_root);
-    assert!(db_b.capabilities().multi_root);
+    assert!(db_a.capabilities().multiple_instances);
+    assert!(db_b.capabilities().multiple_instances);
     assert_eq!(
         first_data_row_text_values(
             block_on(db_a.exec_protocol_raw(raw_query_message("SELECT 21::text")))
@@ -801,9 +807,9 @@ fn native_broker_shared_runtime_admits_multiple_roots_when_env_is_available() {
 
     let capacity_error = expect_open_error(block_on(
         Oliphaunt::builder()
-            .path(&root_c)
+            .directory(&root_c)
             .native_broker()
-            .broker_max_roots(2)
+            .broker_max_instances(2)
             .runtime_arc(Arc::clone(&runtime))
             .open(),
     ));
@@ -815,9 +821,9 @@ fn native_broker_shared_runtime_admits_multiple_roots_when_env_is_available() {
     block_on(db_a.close()).unwrap();
     let db_c = block_on(
         Oliphaunt::builder()
-            .path(&root_c)
+            .directory(&root_c)
             .native_broker()
-            .broker_max_roots(2)
+            .broker_max_instances(2)
             .runtime_arc(runtime)
             .open(),
     )
@@ -847,7 +853,7 @@ fn native_server_runtime_select_one_when_env_is_available() {
 
     let db = block_on(
         Oliphaunt::builder()
-            .temporary()
+            .temporary_directory()
             .native_server()
             .extension(Extension::Vector)
             .open(),
@@ -957,7 +963,7 @@ fn native_server_runtime_select_one_when_env_is_available() {
 
     let restored = block_on(
         Oliphaunt::builder()
-            .path(&restored_root)
+            .directory(&restored_root)
             .native_server()
             .extension(Extension::Vector)
             .existing_only()
@@ -998,7 +1004,7 @@ fn native_server_reopens_persistent_root_when_env_is_available() {
     }
 
     let root = unique_temp_root("oliphaunt-server-restart");
-    let db = block_on(Oliphaunt::builder().path(&root).native_server().open()).unwrap();
+    let db = block_on(Oliphaunt::builder().directory(&root).native_server().open()).unwrap();
     let seed = block_on(db.exec_protocol_raw(raw_query_message(
         "CREATE TABLE restart_smoke(value integer); INSERT INTO restart_smoke VALUES (92)",
     )))
@@ -1012,7 +1018,7 @@ fn native_server_reopens_persistent_root_when_env_is_available() {
 
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_server()
             .existing_only()
             .open(),
@@ -1036,7 +1042,7 @@ fn native_server_accepts_independent_tokio_postgres_clients_when_env_is_availabl
 
     let db = block_on(
         Oliphaunt::builder()
-            .temporary()
+            .temporary_directory()
             .native_server()
             .max_client_sessions(4)
             .open(),
@@ -1122,7 +1128,13 @@ fn native_server_close_stops_active_external_clients_when_env_is_available() {
         return;
     }
 
-    let db = block_on(Oliphaunt::builder().temporary().native_server().open()).unwrap();
+    let db = block_on(
+        Oliphaunt::builder()
+            .temporary_directory()
+            .native_server()
+            .open(),
+    )
+    .unwrap();
     let connection_string = db.connection_string().unwrap();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1170,7 +1182,7 @@ fn native_server_accepts_sqlx_pool_when_env_is_available() {
 
     let db = block_on(
         Oliphaunt::builder()
-            .temporary()
+            .temporary_directory()
             .native_server()
             .max_client_sessions(4)
             .open(),
@@ -1224,7 +1236,7 @@ fn native_server_accepts_tokio_postgres_prepared_and_pipelined_clients_when_env_
 
     let db = block_on(
         Oliphaunt::builder()
-            .temporary()
+            .temporary_directory()
             .native_server()
             .max_client_sessions(4)
             .open(),
@@ -1290,7 +1302,13 @@ fn native_server_accepts_psql_when_env_is_available() {
         return;
     };
 
-    let db = block_on(Oliphaunt::builder().temporary().native_server().open()).unwrap();
+    let db = block_on(
+        Oliphaunt::builder()
+            .temporary_directory()
+            .native_server()
+            .open(),
+    )
+    .unwrap();
     let connection_string = db.connection_string().unwrap();
     let output = Command::new(&psql)
         .arg(&connection_string)
@@ -1326,7 +1344,13 @@ fn native_server_accepts_pg_dump_when_env_is_available() {
         return;
     };
 
-    let db = block_on(Oliphaunt::builder().temporary().native_server().open()).unwrap();
+    let db = block_on(
+        Oliphaunt::builder()
+            .temporary_directory()
+            .native_server()
+            .open(),
+    )
+    .unwrap();
     let connection_string = db.connection_string().unwrap();
     block_on(db.execute(
         "CREATE TABLE dump_client_smoke(id integer PRIMARY KEY, value text); \
@@ -1546,20 +1570,20 @@ fn run_direct_crash_child_from_env() -> Option<std::result::Result<(), String>> 
     let action = std::env::var(DIRECT_CRASH_ACTION_ENV).ok()?;
     let action = DirectCrashAction::from_env(&action)
         .ok_or_else(|| format!("unknown direct crash action '{action}'"));
-    let root = std::env::var_os(DIRECT_CRASH_ROOT_ENV)
+    let storage = std::env::var_os(DIRECT_CRASH_STORAGE_ENV)
         .map(PathBuf::from)
-        .ok_or_else(|| format!("{DIRECT_CRASH_ROOT_ENV} is required"));
+        .ok_or_else(|| format!("{DIRECT_CRASH_STORAGE_ENV} is required"));
     let marker = std::env::var_os(DIRECT_CRASH_MARKER_ENV).map(PathBuf::from);
     Some((|| {
-        run_direct_crash_child_action(action?, &root?, marker.as_deref())
+        run_direct_crash_child_action(action?, &storage?, marker.as_deref())
             .map_err(|error| error.to_string())?;
         Ok(())
     })())
 }
 
 #[cfg(unix)]
-fn run_direct_crash_child_until_marker(action: DirectCrashAction, root: &Path, marker: &Path) {
-    let mut child = spawn_direct_crash_child(action, root, Some(marker));
+fn run_direct_crash_child_until_marker(action: DirectCrashAction, storage: &Path, marker: &Path) {
+    let mut child = spawn_direct_crash_child(action, storage, Some(marker));
     let deadline = Instant::now() + Duration::from_secs(15);
     while !marker.exists() {
         if let Some(status) = child.try_wait().unwrap() {
@@ -1588,8 +1612,8 @@ fn run_direct_crash_child_until_marker(action: DirectCrashAction, root: &Path, m
 }
 
 #[cfg(unix)]
-fn run_direct_crash_child(action: DirectCrashAction, root: &Path) {
-    let output = spawn_direct_crash_child(action, root, None)
+fn run_direct_crash_child(action: DirectCrashAction, storage: &Path) {
+    let output = spawn_direct_crash_child(action, storage, None)
         .wait_with_output()
         .unwrap();
     assert!(
@@ -1604,7 +1628,7 @@ fn run_direct_crash_child(action: DirectCrashAction, root: &Path) {
 #[cfg(unix)]
 fn spawn_direct_crash_child(
     action: DirectCrashAction,
-    root: &Path,
+    storage: &Path,
     marker: Option<&Path>,
 ) -> std::process::Child {
     let mut command = Command::new(std::env::current_exe().unwrap());
@@ -1613,7 +1637,7 @@ fn spawn_direct_crash_child(
         .arg("--exact")
         .arg("--nocapture")
         .env(DIRECT_CRASH_ACTION_ENV, action.as_env())
-        .env(DIRECT_CRASH_ROOT_ENV, root)
+        .env(DIRECT_CRASH_STORAGE_ENV, storage)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(marker) = marker {
@@ -1625,14 +1649,14 @@ fn spawn_direct_crash_child(
 #[cfg(unix)]
 fn run_direct_crash_child_action(
     action: DirectCrashAction,
-    root: &Path,
+    storage: &Path,
     marker: Option<&Path>,
 ) -> Result<()> {
     match action {
         DirectCrashAction::CommittedWait => {
             let db = block_on(
                 Oliphaunt::builder()
-                    .path(root)
+                    .directory(storage)
                     .native_direct()
                     .runtime(OliphauntRuntime::from_env())
                     .open(),
@@ -1647,13 +1671,13 @@ fn run_direct_crash_child_action(
             }
         }
         DirectCrashAction::VerifyCommitted => {
-            assert_direct_crash_values(root, &["1", "1"])?;
+            assert_direct_crash_values(storage, &["1", "1"])?;
             Ok(())
         }
         DirectCrashAction::UncommittedWait => {
             let db = block_on(
                 Oliphaunt::builder()
-                    .path(root)
+                    .directory(storage)
                     .native_direct()
                     .runtime(OliphauntRuntime::from_env())
                     .existing_only()
@@ -1668,7 +1692,7 @@ fn run_direct_crash_child_action(
             }
         }
         DirectCrashAction::VerifyUncommitted => {
-            assert_direct_crash_values(root, &["1", "1"])?;
+            assert_direct_crash_values(storage, &["1", "1"])?;
             Ok(())
         }
     }
@@ -1682,10 +1706,10 @@ fn write_direct_crash_marker(marker: Option<&Path>) {
 }
 
 #[cfg(unix)]
-fn assert_direct_crash_values(root: &Path, expected: &[&str]) -> Result<()> {
+fn assert_direct_crash_values(storage: &Path, expected: &[&str]) -> Result<()> {
     let db = block_on(
         Oliphaunt::builder()
-            .path(root)
+            .directory(storage)
             .native_direct()
             .runtime(OliphauntRuntime::from_env())
             .existing_only()

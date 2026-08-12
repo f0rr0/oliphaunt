@@ -656,12 +656,10 @@ liboliphaunt_artifact_ready() {
   local symbol
   for symbol in \
     _oliphaunt_init \
-    _oliphaunt_init_ex \
     _oliphaunt_exec_protocol \
     _oliphaunt_exec_simple_query \
     _oliphaunt_exec_protocol_stream \
     _oliphaunt_backup \
-    _oliphaunt_backup_ex \
     _oliphaunt_restore \
     _oliphaunt_cancel \
     _oliphaunt_detach \

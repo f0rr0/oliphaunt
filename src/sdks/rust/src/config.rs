@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::extension::{Extension, resolve_extensions};
-use crate::storage::{
-    BootstrapStrategy, DatabaseRoot, RootLockPolicy, StorageConfig, path_contains_nul,
-};
+use crate::storage::{DatabaseInitialization, DatabaseStorage, path_contains_nul};
 
 /// Default PostgreSQL role used by SDK-managed native sessions.
 pub const DEFAULT_USERNAME: &str = "postgres";
@@ -190,18 +188,18 @@ impl Default for NativeDirectConfig {
 pub struct NativeBrokerConfig {
     /// Optional broker executable path. None means resolve from package assets.
     pub executable: Option<PathBuf>,
-    /// Maximum logical client sessions allowed through each broker-owned root.
+    /// Maximum logical client sessions allowed through each broker-owned instance.
     ///
-    /// Broker mode may supervise multiple roots, but each root still has one
+    /// Broker mode may supervise multiple instances, but each instance still has one
     /// physical PostgreSQL backend session. Values other than `1` are rejected
     /// before the helper process is started.
     pub max_client_sessions: usize,
-    /// Maximum roots this broker may own for the application.
+    /// Maximum database instances this broker may own for the application.
     ///
-    /// The Rust SDK broker supervisor admits up to this many active roots and
-    /// starts one isolated helper process per root. A single helper still owns
+    /// The Rust SDK broker supervisor admits up to this many active instances and
+    /// starts one isolated helper process per instance. A single helper still owns
     /// one physical PostgreSQL backend session.
-    pub max_roots: usize,
+    pub max_instances: usize,
 }
 
 impl Default for NativeBrokerConfig {
@@ -209,7 +207,7 @@ impl Default for NativeBrokerConfig {
         Self {
             executable: None,
             max_client_sessions: 1,
-            max_roots: 1,
+            max_instances: 1,
         }
     }
 }
@@ -218,7 +216,7 @@ impl Default for NativeBrokerConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeServerConfig {
     /// Optional PostgreSQL server executable. None means use the packaged
-    /// runtime tree selected for the database root.
+    /// runtime tree selected for the database instance.
     pub executable: Option<PathBuf>,
     /// Maximum independent PostgreSQL client sessions.
     pub max_client_sessions: usize,
@@ -241,8 +239,10 @@ impl Default for NativeServerConfig {
 pub struct OpenConfig {
     /// Runtime mode.
     pub mode: EngineMode,
-    /// Storage and bootstrap policy.
-    pub storage: StorageConfig,
+    /// Storage used by the database instance.
+    pub storage: DatabaseStorage,
+    /// Initialization policy for an empty storage directory.
+    pub initialization: DatabaseInitialization,
     /// Direct-mode settings.
     pub direct: NativeDirectConfig,
     /// Broker-mode settings.
@@ -264,15 +264,12 @@ pub struct OpenConfig {
 }
 
 impl OpenConfig {
-    /// Build a direct-mode config for a persistent root.
-    pub fn native_direct(root: impl Into<PathBuf>) -> Self {
+    /// Build a direct-mode config for a persistent directory.
+    pub fn native_direct(directory: impl Into<PathBuf>) -> Self {
         Self {
             mode: EngineMode::NativeDirect,
-            storage: StorageConfig {
-                root: DatabaseRoot::Path(root.into()),
-                bootstrap: BootstrapStrategy::PackagedTemplate,
-                lock_policy: RootLockPolicy::ExclusiveProcess,
-            },
+            storage: DatabaseStorage::Directory(directory.into()),
+            initialization: DatabaseInitialization::PackagedTemplate,
             direct: NativeDirectConfig::default(),
             broker: NativeBrokerConfig::default(),
             server: NativeServerConfig::default(),
@@ -290,20 +287,17 @@ impl OpenConfig {
         for guc in &self.startup_gucs {
             validate_postgres_startup_guc(guc)?;
         }
-        if let DatabaseRoot::Path(root) = &self.storage.root {
-            if root.as_os_str().is_empty() {
+        if let DatabaseStorage::Directory(directory) = &self.storage {
+            if directory.as_os_str().is_empty() {
                 return Err(Error::InvalidConfig(
-                    "database root must not be empty".to_owned(),
+                    "database storage directory must not be empty".to_owned(),
                 ));
             }
-            if path_contains_nul(root) {
+            if path_contains_nul(directory) {
                 return Err(Error::InvalidConfig(
-                    "database root must not contain NUL bytes".to_owned(),
+                    "database storage directory must not contain NUL bytes".to_owned(),
                 ));
             }
-        }
-        if let BootstrapStrategy::InitdbToolingOnly { initdb } = &self.storage.bootstrap {
-            validate_config_path("initdb path", initdb)?;
         }
         validate_startup_identity("username", &self.username)?;
         validate_startup_identity("database", &self.database)?;
@@ -333,9 +327,11 @@ impl OpenConfig {
                     supported: 1,
                 })
             }
-            EngineMode::NativeBroker if self.broker.max_roots == 0 => Err(Error::InvalidConfig(
-                "native broker max_roots must be greater than zero".to_owned(),
-            )),
+            EngineMode::NativeBroker if self.broker.max_instances == 0 => {
+                Err(Error::InvalidConfig(
+                    "native broker max_instances must be greater than zero".to_owned(),
+                ))
+            }
             EngineMode::NativeBroker => {
                 if let Some(executable) = &self.broker.executable {
                     validate_config_path("native broker executable path", executable)?;

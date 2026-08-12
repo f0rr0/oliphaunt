@@ -345,7 +345,7 @@ fn run_oliphaunt_direct_raw_prepared_update_case(
 ) -> Result<PreparedUpdateTest> {
     let open_started = Instant::now();
     let mut db = Oliphaunt::builder()
-        .temporary()
+        .storage(DatabaseStorage::TemporaryDirectory)
         .open()
         .context("open direct raw prepared-update database")?;
     let open_micros = open_started.elapsed().as_micros();
@@ -499,9 +499,9 @@ fn run_oliphaunt_sqlx_prepared_update_case(
     values: PreparedUpdateValues<'_>,
 ) -> Result<PreparedUpdateTest> {
     let open_started = Instant::now();
-    let server = OliphauntServer::temporary_tcp()?;
+    let server = temporary_wasix_server()?;
     let open_micros = open_started.elapsed().as_micros();
-    let uri = server.database_url();
+    let uri = server.connection_uri();
     let operation_count = values.len();
 
     let test = runtime.block_on(async {
@@ -697,7 +697,7 @@ fn start_prepared_update_oliphaunt_server(
     endpoint: OliphauntPreparedEndpoint,
 ) -> Result<OliphauntServer> {
     match endpoint {
-        OliphauntPreparedEndpoint::Tcp => OliphauntServer::temporary_tcp(),
+        OliphauntPreparedEndpoint::Tcp => temporary_wasix_server(),
         #[cfg(unix)]
         OliphauntPreparedEndpoint::Unix => {
             let socket_dir = env::current_dir()
@@ -711,7 +711,7 @@ fn start_prepared_update_oliphaunt_server(
             let port = 5432;
             let socket_path = socket_dir.join(format!(".s.PGSQL.{port}"));
             OliphauntServer::builder()
-                .temporary()
+                .storage(DatabaseStorage::TemporaryDirectory)
                 .unix(socket_path)
                 .start()
         }

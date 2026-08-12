@@ -133,19 +133,19 @@ impl From<sqlx::Error> for CommandError {
     }
 }
 
-fn open_database(root: PathBuf) -> Result<TodoDatabase> {
+fn open_database(directory: PathBuf) -> Result<TodoDatabase> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("build WASIX example Tokio runtime")?;
     let _runtime_context = runtime.enter();
-    let server = start_database_server(root)?;
+    let server = start_database_server(directory)?;
     runtime.block_on(connect_database(server))
 }
 
-fn start_database_server(root: PathBuf) -> Result<OliphauntServer> {
+fn start_database_server(directory: PathBuf) -> Result<OliphauntServer> {
     let server = OliphauntServer::builder()
-        .path(root)
+        .storage(oliphaunt_wasix::DatabaseStorage::Directory(directory))
         .extensions([
             extensions::HSTORE,
             extensions::PG_TRGM,
@@ -274,8 +274,8 @@ fn todo_from_row(row: &sqlx::postgres::PgRow) -> Result<Todo> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let root = app.path().app_data_dir()?.join("oliphaunt-wasix-todos");
-            let db = open_database(root)?;
+            let directory = app.path().app_data_dir()?.join("oliphaunt-wasix-todos");
+            let db = open_database(directory)?;
             app.manage(TodoStore {
                 inner: Mutex::new(db),
             });
@@ -297,14 +297,14 @@ mod tests {
 
     #[test]
     fn startup_smoke_runs_split_wasix_tools() {
-        let root = std::env::temp_dir().join(format!(
+        let directory = std::env::temp_dir().join(format!(
             "oliphaunt-example-tauri-wasix-smoke-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
-        let db = open_database(root.clone())
+        let _ = std::fs::remove_dir_all(&directory);
+        let db = open_database(directory.clone())
             .expect("start oliphaunt-wasix example database and run pg_dump smoke");
         drop(db);
-        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

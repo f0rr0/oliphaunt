@@ -1,6 +1,6 @@
 ---
 title: Build With Rust
-description: Use the Rust SDK in Tauri or native Rust apps with direct, broker, server, app-owned roots, exact extensions, lifecycle, and backup APIs.
+description: Use the Rust SDK in Tauri or native Rust apps with direct, broker, server, explicit storage, exact extensions, lifecycle, and backup APIs.
 ---
 
 # Build With Rust
@@ -45,7 +45,7 @@ use oliphaunt::{Extension, Oliphaunt};
 
 async fn open_database() -> oliphaunt::Result<()> {
     let db = Oliphaunt::builder()
-        .path(".oliphaunt")
+        .directory(".oliphaunt")
         .native_direct()
         .extension(Extension::Vector)
         .open()
@@ -86,7 +86,7 @@ db.execute(
 
 db.query_params(
     "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
-    ["First note", "Stored in an embedded PostgreSQL root"],
+    ["First note", "Stored by embedded PostgreSQL"],
 )
 .await?;
 
@@ -103,10 +103,12 @@ handles directly to frontend code.
 
 ### Configure
 
-Configure engine mode, root, durability, startup identity, selected extensions,
-runtime assets, broker executable, and server executable through the builder.
-Use a persistent app-owned directory for user data. Temporary roots are useful
-for tests and short-lived tools.
+Configure storage, empty-store initialization, engine mode, durability, startup identity, selected
+extensions, runtime assets, broker executable, and server executable through
+the builder. `Oliphaunt::builder()` defaults to an SDK-owned temporary
+directory initialized from the packaged template; call `.directory(path)` when
+data must persist. `DatabaseInitialization` remains independent from the
+storage owner and lifetime.
 
 </Step>
 <Step>
@@ -117,7 +119,7 @@ for tests and short-lived tools.
 lowest round-trip latency and rejects pool sizes above one.
 
 `NativeBroker` talks to a local helper process. Use it for desktop apps that need
-process isolation, crash recovery, or several roots managed by one application.
+process isolation, crash recovery, or several instances managed by one application.
 
 `NativeServer` starts a PostgreSQL-compatible server process. Use it when `psql`,
 `pg_dump`, ORMs, or true independent client sessions matter.
@@ -147,8 +149,8 @@ implicit selectors. If you select `vector`, the generated artifacts include
 ### Back up and restore
 
 Use SDK backup and restore APIs instead of copying PostgreSQL directories from
-application code. The SDK validates formats, target roots, locks, and restore
-options before materializing data.
+application code. The SDK validates formats, destination directories, locks,
+and restore options before materializing data.
 
 </Step>
 </Steps>
@@ -157,7 +159,7 @@ options before materializing data.
 
 ## Troubleshooting
 
-Check root locks, missing runtime assets, mode capability errors, extension
+Check storage ownership errors, missing runtime assets, mode capability errors, extension
 selection errors, and SQLSTATE-bearing PostgreSQL errors. If concurrency looks
 surprising, confirm the selected mode first: direct mode serializes work by
 design, while independent sessions require server mode.

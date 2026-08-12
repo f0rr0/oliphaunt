@@ -654,7 +654,7 @@ fn parser_parses_notice_and_error_messages() -> Result<()> {
         BackendMessage::Error(msg) => {
             assert_eq!(msg.length, detailed_error.len() - 1);
             assert_eq!(msg.severity.as_deref(), Some("ERROR"));
-            assert_eq!(msg.code.as_deref(), Some("code"));
+            assert_eq!(msg.sqlstate.as_deref(), Some("code"));
             assert_eq!(msg.message, "message");
             assert_eq!(msg.detail.as_deref(), Some("details"));
             assert_eq!(msg.hint.as_deref(), Some("hint"));

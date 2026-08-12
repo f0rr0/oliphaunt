@@ -77,6 +77,16 @@ and participates in the same carrier checks as other public products.
   packaging SemVer. Their upstream version/commit and compatible runtime
   versions are separate metadata. A publication-deferred external extension
   has no packaging version until it is promoted into the active product graph.
+- Native/default extension npm identities stay unsuffixed. A portable WASIX npm
+  carrier adds only the `-wasix` suffix and uses the same exact packaging
+  SemVer, release tag, and changelog as every other carrier owned by that
+  extension product; it never creates a second release version line.
+- `@oliphaunt/liboliphaunt-wasix` is the host-neutral npm carrier of the
+  existing `liboliphaunt-wasix` product. It shares that product's SemVer, tag,
+  and changelog; it is not a browser SDK or another runtime product. The
+  carrier preserves the qualified portable runtime, PGDATA, and core-only
+  manifest bytes, while independently versioned extension products retain
+  their own WASIX install metadata and payloads.
 - `feat`, `fix`, `perf`, `refactor`, and `revert` are release-impacting types because the Release Please `changelog-sections` catalog says so. A Conventional Commit `!` is breaking. Release-intent checks derive this set from config.
 - Product source PRs never edit versions. The generated release PR owns all version, compatibility, lockfile, and changelog changes.
 - While every product is still `0.0.0`, top-level `bootstrap-sha` is the full

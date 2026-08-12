@@ -80,7 +80,7 @@ This track pass addressed concrete gaps:
   before falling back to kill.
 - Broker capabilities now stay honest: direct mode remains one process-global
   backend, while broker mode supervises one isolated helper per active root.
-  A shared broker runtime enforces `.broker_max_roots(n)`, rejects duplicate
+  A shared broker runtime enforces `.broker_max_instances(n)`, rejects duplicate
   active roots, and reports multi-root capability only when the configured root
   budget is greater than one.
 - Broker sessions now retain their helper launch plan and relaunch a fresh
@@ -219,7 +219,7 @@ This track pass addressed concrete gaps:
   duplicate extension names, empty or non-portable IDs, unsupported extension
   source/loading combinations, and source/loading mismatches.
   This keeps extension packaging mistakes out of runtime materialization.
-- `BootstrapStrategy::PackagedTemplate` now materializes a content-keyed base
+- `DatabaseInitialization::PackagedTemplate` now materializes a content-keyed base
   PGDATA template and hydrates new roots before entering the engine. Template
   hydration now defaults to physical byte-copy because paired local evidence
   showed better p90 stability than APFS copy-on-write cloning; clone mode
@@ -253,7 +253,7 @@ This track pass addressed concrete gaps:
   diagnostics reproduce `1`, `2.1`, `3`, `4`, `10`, and `13`. A focused
   current-source backup diagnostic at
   `target/perf/native-liboliphaunt-20260524Tbackup-final-direct/report.md`
-  verifies `oliphaunt_backup_ex` and the current C tar writer, improving direct
+  verifies the options-based `oliphaunt_backup` and the current C tar writer, improving direct
   physical backup/restore p90 to `0.534 s` while still missing native
   PostgreSQL physical p90 at `0.324 s`. Against SQLite, direct wins total
   speed-suite p90 but still loses open p90 and RSS by large margins. The streaming section

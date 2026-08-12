@@ -150,6 +150,7 @@ impl WasixBackendSession {
             PostgresMod::new_prepared_with_config(
                 outcome.paths,
                 outcome.runtime_layout,
+                outcome.pgdata_storage,
                 postgres_config,
                 startup_config,
             )?
@@ -181,6 +182,10 @@ impl WasixBackendSession {
 
     pub(crate) fn pgdata_template_root(&self) -> Option<&std::path::Path> {
         self.pg.pgdata_template_root()
+    }
+
+    pub(crate) fn pgdata_storage(&self) -> &crate::oliphaunt::storage::PgDataStorage {
+        &self.outcome.pgdata_storage
     }
 
     pub(crate) fn startup_config(&self) -> &StartupConfig {
@@ -360,7 +365,7 @@ impl BackendSession {
     }
 
     pub(crate) fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities::wasix_legacy(self.0.supports_protocol_pump())
+        EngineCapabilities::wasix(self.0.supports_protocol_pump())
     }
 
     pub(crate) fn paths(&self) -> &crate::oliphaunt::base::OliphauntPaths {
@@ -369,6 +374,10 @@ impl BackendSession {
 
     pub(crate) fn pgdata_template_root(&self) -> Option<&std::path::Path> {
         self.0.pgdata_template_root()
+    }
+
+    pub(crate) fn pgdata_storage(&self) -> &crate::oliphaunt::storage::PgDataStorage {
+        self.0.pgdata_storage()
     }
 
     pub(crate) fn startup_config(&self) -> &StartupConfig {

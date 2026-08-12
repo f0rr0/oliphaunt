@@ -14,8 +14,7 @@ use crate::liboliphaunt::{
 };
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::storage::{
-    BackupArtifact, BackupFormat, DatabaseRoot, RestoreRequest, RestoreTargetPolicy,
-    path_contains_nul,
+    BackupArtifact, BackupFormat, RestoreDestinationPolicy, RestoreRequest, path_contains_nul,
 };
 
 const BACKUP_LABEL: &str = "oliphaunt physical archive";
@@ -332,24 +331,22 @@ pub(crate) fn restore_backup(request: RestoreRequest) -> Result<PathBuf> {
         )));
     }
 
-    let DatabaseRoot::Path(target_root) = request.target else {
-        return Err(Error::Engine(
-            "restore requires an explicit persistent target root".to_owned(),
-        ));
-    };
-
-    restore_physical_archive(&target_root, &request.artifact, request.target_policy)
+    restore_physical_archive(
+        &request.destination,
+        &request.artifact,
+        request.destination_policy,
+    )
 }
 
 fn restore_physical_archive(
     target_root: &Path,
     artifact: &BackupArtifact,
-    target_policy: RestoreTargetPolicy,
+    destination_policy: RestoreDestinationPolicy,
 ) -> Result<PathBuf> {
     let target_root = normalize_restore_target(target_root)?;
     let parent = target_root.parent().ok_or_else(|| {
         Error::Engine(format!(
-            "restore target {} has no parent directory",
+            "restore destination {} has no parent directory",
             target_root.display()
         ))
     })?;
@@ -360,6 +357,9 @@ fn restore_physical_archive(
         ))
     })?;
     let _target_lock = acquire_restore_target_lock(&target_root)?;
+    if destination_policy == RestoreDestinationPolicy::FailIfExists {
+        ensure_restore_destination_absent(&target_root)?;
+    }
 
     let staging_root = unique_sibling_path(&target_root, "restore-staging");
     let cleanup_staging = CleanupDir::new(staging_root.clone());
@@ -372,18 +372,18 @@ fn restore_physical_archive(
 
     unpack_physical_archive(artifact, &staging_root)?;
     validate_restored_pgdata(&staging_root)?;
-    publish_restored_root(&staging_root, &target_root, target_policy)?;
+    publish_restored_root(&staging_root, &target_root, destination_policy)?;
     cleanup_staging.disarm();
     Ok(target_root)
 }
 
 fn normalize_restore_target(target_root: &Path) -> Result<PathBuf> {
     if target_root.as_os_str().is_empty() {
-        return Err(Error::Engine("restore target root is empty".to_owned()));
+        return Err(Error::Engine("restore destination is empty".to_owned()));
     }
     if path_contains_nul(target_root) {
         return Err(Error::Engine(
-            "restore target root must not contain NUL bytes".to_owned(),
+            "restore destination must not contain NUL bytes".to_owned(),
         ));
     }
     if target_root == Path::new("/") {
@@ -396,7 +396,7 @@ fn normalize_restore_target(target_root: &Path) -> Result<PathBuf> {
         .unwrap_or(false)
     {
         return Err(Error::Engine(format!(
-            "refusing to restore over symlink target {}; choose the real database root path",
+            "refusing to restore over symlink destination {}; choose the real storage directory",
             target_root.display()
         )));
     }
@@ -1216,40 +1216,35 @@ fn validate_restored_pgdata(root: &Path) -> Result<()> {
 fn publish_restored_root(
     staging_root: &Path,
     target_root: &Path,
-    target_policy: RestoreTargetPolicy,
+    destination_policy: RestoreDestinationPolicy,
 ) -> Result<()> {
-    match target_policy {
-        RestoreTargetPolicy::FailIfExists => {
+    match destination_policy {
+        RestoreDestinationPolicy::FailIfExists => {
             publish_restore_without_replacement(staging_root, target_root)
         }
-        RestoreTargetPolicy::ReplaceExisting => {
+        RestoreDestinationPolicy::ReplaceExisting => {
             publish_restore_with_replacement(staging_root, target_root)
         }
     }
 }
 
 fn publish_restore_without_replacement(staging_root: &Path, target_root: &Path) -> Result<()> {
-    if target_root.exists() {
-        if !target_root.is_dir() {
-            return Err(Error::Engine(format!(
-                "refusing to restore over non-directory target {}",
-                target_root.display()
-            )));
-        }
-        if !directory_is_empty(target_root)? {
-            return Err(Error::Engine(format!(
-                "refusing to restore into non-empty target {}; use replace_existing() to replace it",
-                target_root.display()
-            )));
-        }
-        fs::remove_dir(target_root).map_err(|err| {
-            Error::Engine(format!(
-                "remove empty restore target {} before publish: {err}",
-                target_root.display()
-            ))
-        })?;
-    }
+    ensure_restore_destination_absent(target_root)?;
     rename_dir(staging_root, target_root, "publish restored root")
+}
+
+fn ensure_restore_destination_absent(target_root: &Path) -> Result<()> {
+    match fs::symlink_metadata(target_root) {
+        Ok(_) => Err(Error::Engine(format!(
+            "restore destination {} already exists; use replace_existing() to replace it",
+            target_root.display()
+        ))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(Error::Engine(format!(
+            "inspect restore destination {}: {error}",
+            target_root.display()
+        ))),
+    }
 }
 
 fn publish_restore_with_replacement(staging_root: &Path, target_root: &Path) -> Result<()> {
@@ -1258,7 +1253,7 @@ fn publish_restore_with_replacement(staging_root: &Path, target_root: &Path) -> 
     }
     if !target_root.is_dir() {
         return Err(Error::Engine(format!(
-            "refusing to replace non-directory restore target {}",
+            "refusing to replace non-directory restore destination {}",
             target_root.display()
         )));
     }
@@ -1269,30 +1264,44 @@ fn publish_restore_with_replacement(staging_root: &Path, target_root: &Path) -> 
         &displaced_root,
         "move existing root aside for restore",
     )?;
-    if let Err(error) = rename_dir(staging_root, target_root, "publish restored root") {
-        let _ = rename_dir(
-            &displaced_root,
-            target_root,
-            "restore previous root after failure",
-        );
+    finish_restore_replacement(
+        rename_dir(staging_root, target_root, "publish restored root"),
+        &displaced_root,
+        || {
+            rename_dir(
+                &displaced_root,
+                target_root,
+                "restore previous root after failure",
+            )
+        },
+        || fs::remove_dir_all(&displaced_root),
+    )
+}
+
+fn finish_restore_replacement(
+    publish_result: Result<()>,
+    displaced_root: &Path,
+    rollback: impl FnOnce() -> Result<()>,
+    cleanup: impl FnOnce() -> io::Result<()>,
+) -> Result<()> {
+    if let Err(error) = publish_result {
+        if let Err(rollback_error) = rollback() {
+            return Err(Error::Engine(format!(
+                "{error}; {rollback_error}; previous root is preserved at {}",
+                displaced_root.display()
+            )));
+        }
         return Err(error);
     }
-    fs::remove_dir_all(&displaced_root).map_err(|err| {
-        Error::Engine(format!(
-            "remove replaced restore target {}: {err}",
-            displaced_root.display()
-        ))
-    })
+    // Publishing the staging root is the restore commit point. A leftover
+    // prior generation is safe to remove later; surfacing cleanup failure as
+    // restore failure would invite a destructive retry over the new data.
+    let _ = cleanup();
+    Ok(())
 }
 
 fn acquire_restore_target_lock(target_root: &Path) -> Result<NativeRootLock> {
-    NativeRootLock::reserve_path(target_root, "restore target")
-}
-
-fn directory_is_empty(path: &Path) -> Result<bool> {
-    let mut entries = fs::read_dir(path)
-        .map_err(|err| Error::Engine(format!("read directory {}: {err}", path.display())))?;
-    Ok(entries.next().is_none())
+    NativeRootLock::reserve_path(target_root, "restore destination")
 }
 
 fn rename_dir(source: &Path, destination: &Path, context: &str) -> Result<()> {
@@ -1632,6 +1641,54 @@ struct BackupStopFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_replacement_reports_precommit_failure_after_successful_rollback() {
+        let publish_error = Error::Engine("publish failed".to_owned());
+        let error = finish_restore_replacement(
+            Err(publish_error.clone()),
+            Path::new("/preserved/old-root"),
+            || Ok(()),
+            || panic!("cleanup must not run before commit"),
+        )
+        .unwrap_err();
+        assert_eq!(error, publish_error);
+    }
+
+    #[test]
+    fn restore_replacement_retains_both_errors_and_preserved_path_when_rollback_fails() {
+        let error = finish_restore_replacement(
+            Err(Error::Engine("publish failed".to_owned())),
+            Path::new("/preserved/old-root"),
+            || Err(Error::Engine("rollback failed".to_owned())),
+            || panic!("cleanup must not run before commit"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("publish failed"),
+            "missing publish failure: {error}"
+        );
+        assert!(
+            error.contains("rollback failed"),
+            "missing rollback failure: {error}"
+        );
+        assert!(
+            error.contains("/preserved/old-root"),
+            "missing preserved-root recovery path: {error}"
+        );
+    }
+
+    #[test]
+    fn restore_replacement_is_successful_after_commit_even_when_cleanup_fails() {
+        finish_restore_replacement(
+            Ok(()),
+            Path::new("/displaced/old-root"),
+            || panic!("rollback must not run after commit"),
+            || Err(io::Error::other("cleanup failed")),
+        )
+        .expect("committed restore must not become an ambiguous failure");
+    }
 
     #[test]
     fn restore_rejects_symlink_archive_entries() {

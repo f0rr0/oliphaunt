@@ -250,15 +250,15 @@ moon run :coverage --affected
 `oliphaunt-wasix` is intended for tests that need real Postgres semantics without
 Docker.
 
-Use `Oliphaunt::temporary()` when the code under test can call the direct Rust
-API:
+Use the default memory database when the code under test can call the direct
+Rust API:
 
 ```rust,no_run
 use oliphaunt_wasix::Oliphaunt;
 
 #[test]
 fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::temporary()?;
+    let mut db = Oliphaunt::open()?;
 
     db.exec("CREATE TABLE items (id int primary key, name text)", None)?;
     db.exec("INSERT INTO items VALUES (1, 'alpha')", None)?;
@@ -271,15 +271,17 @@ fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Use `fresh_temporary()` only when the test must validate fresh-cluster
-initialization behavior:
+Select `DatabaseInitialization::FreshInitdb` only when the test must validate
+fresh-cluster initialization behavior:
 
 ```rust,no_run
-use oliphaunt_wasix::Oliphaunt;
+use oliphaunt_wasix::{DatabaseInitialization, Oliphaunt};
 
 #[test]
 fn fresh_cluster_path() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::builder().fresh_temporary().open()?;
+    let mut db = Oliphaunt::builder()
+        .initialization(DatabaseInitialization::FreshInitdb)
+        .open()?;
     db.close()?;
     Ok(())
 }
@@ -296,8 +298,8 @@ use sqlx::{Connection, Row};
 
 #[tokio::test]
 async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::temporary_tcp()?;
-    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+    let server = OliphauntServer::builder().start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS n")
         .bind(41_i32)
@@ -323,7 +325,6 @@ use oliphaunt_wasix::{Oliphaunt, extensions};
 #[test]
 fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = Oliphaunt::builder()
-        .temporary()
         .extension(extensions::VECTOR)
         .open()?;
 
@@ -352,7 +353,7 @@ use oliphaunt_wasix::Oliphaunt;
 
 #[test]
 fn clone_fixture() -> Result<(), Box<dyn std::error::Error>> {
-    let mut seed = Oliphaunt::temporary()?;
+    let mut seed = Oliphaunt::open()?;
     seed.exec("CREATE TABLE items(value TEXT)", None)?;
     seed.exec("INSERT INTO items VALUES ('alpha')", None)?;
 
@@ -372,7 +373,7 @@ Use logical dumps, not physical archives, when you need a portable export.
 Use `oliphaunt-wasix-proxy` when the test process lives outside Rust:
 
 ```sh
-oliphaunt-wasix-proxy --temporary --tcp 127.0.0.1:0 --print-uri
+oliphaunt-wasix-proxy --temporary-directory --tcp 127.0.0.1:0 --print-uri
 ```
 
 Pass the printed URI to Python `psycopg`, Go `pgx`, Node `pg`, or another

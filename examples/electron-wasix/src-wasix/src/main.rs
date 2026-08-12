@@ -4,17 +4,17 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use oliphaunt_wasix::{extensions, OliphauntServer, PgDumpOptions, PsqlOptions};
+use oliphaunt_wasix::{extensions, DatabaseStorage, OliphauntServer, PgDumpOptions, PsqlOptions};
 use serde_json::json;
 
 fn main() -> Result<()> {
-    let root = parse_root()?;
+    let directory = parse_directory()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("build WASIX sidecar Tokio runtime")?;
     let _runtime_context = runtime.enter();
-    let server = start_server(root)?;
+    let server = start_server(directory)?;
     println!("{}", json!({ "databaseUrl": server.connection_uri() }));
     io::stdout().flush()?;
     let _server = server;
@@ -23,9 +23,9 @@ fn main() -> Result<()> {
     }
 }
 
-fn start_server(root: PathBuf) -> Result<OliphauntServer> {
+fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
     let server = OliphauntServer::builder()
-        .path(root)
+        .storage(DatabaseStorage::Directory(directory))
         .extensions([
             extensions::HSTORE,
             extensions::PG_TRGM,
@@ -54,15 +54,15 @@ fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
     Ok(())
 }
 
-fn parse_root() -> Result<PathBuf> {
+fn parse_directory() -> Result<PathBuf> {
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--root" {
-            let value = args.next().context("--root requires a path")?;
+        if arg == "--directory" {
+            let value = args.next().context("--directory requires a path")?;
             return Ok(PathBuf::from(value));
         }
     }
-    bail!("usage: oliphaunt-electron-wasix-sidecar --root <path>")
+    bail!("usage: oliphaunt-electron-wasix-sidecar --directory <path>")
 }
 
 #[cfg(test)]
@@ -71,19 +71,19 @@ mod tests {
 
     #[test]
     fn startup_smoke_runs_split_wasix_tools() {
-        let root = std::env::temp_dir().join(format!(
+        let directory = std::env::temp_dir().join(format!(
             "oliphaunt-electron-wasix-sidecar-smoke-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&directory);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("build WASIX sidecar smoke runtime");
         let _runtime_context = runtime.enter();
-        let server = start_server(root.clone())
+        let server = start_server(directory.clone())
             .expect("start sidecar server and run split WASIX pg_dump tool");
         drop(server);
-        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

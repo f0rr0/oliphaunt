@@ -7,7 +7,7 @@ description: Map SQLite storage, SQL, backup, and extension assumptions to embed
 # Moving From SQLite
 
 Oliphaunt is embedded PostgreSQL, so migration from SQLite starts by mapping a
-single-file database model to PostgreSQL roots, WAL, extensions, and PostgreSQL
+single-file database model to PostgreSQL directory storage, WAL, extensions, and PostgreSQL
 SQL semantics.
 
 Use this guide when an app already uses SQLite and you are evaluating whether a
@@ -19,7 +19,7 @@ PostgreSQL-compatible embedded runtime is worth the extra footprint.
 
 | SQLite concept | Oliphaunt concept |
 | --- | --- |
-| One database file | One PostgreSQL root directory |
+| One database file | One PostgreSQL storage directory |
 | Pragmas | PostgreSQL settings and SDK durability profiles |
 | SQLite transaction | PostgreSQL transaction |
 | SQLite extension loading | Exact PostgreSQL extension selection before open |
@@ -43,18 +43,18 @@ path at a time so type and constraint differences are visible early.
 ## Storage And Backup
 
 SQLite apps often back up by copying one file. Oliphaunt live storage is a
-PostgreSQL root directory, so data movement goes through SDK backup and restore
+PostgreSQL directory, so data movement goes through SDK backup and restore
 APIs. That keeps locks, WAL, selected extensions, archive format, and restore
 target checks together.
 
-For mobile apps, keep the root in app-private storage and use the platform's
+For mobile apps, keep persistent database storage app-private and use the platform's
 normal user-data protection choices. For desktop apps, choose direct, broker, or
 server mode based on the concurrency and process-isolation model your app needs.
 
 ## Migration Path
 
 1. Choose the SDK for the app target.
-2. Open a temporary Oliphaunt root and port the schema.
+2. Open an Oliphaunt database with temporary storage and port the schema.
 3. Port read paths before write-heavy sync/import paths.
 4. Add selected extensions explicitly.
 5. Add backup/restore and package-size checks before shipping.

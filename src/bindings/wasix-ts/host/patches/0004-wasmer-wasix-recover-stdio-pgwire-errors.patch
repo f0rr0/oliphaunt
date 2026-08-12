@@ -1,0 +1,90 @@
+diff --git a/src/bin_factory/exec.rs b/src/bin_factory/exec.rs
+index 5ae3f53..1c67bd0 100644
+--- a/src/bin_factory/exec.rs
++++ b/src/bin_factory/exec.rs
+@@ -239,6 +239,74 @@ fn get_start(ctx: &WasiFunctionEnv, store: &Store) -> Option<Function> {
+         .ok()
+ }
+ 
++const OLIPHAUNT_STDIO_PGWIRE_ENV: &[u8] = b"OLIPHAUNT_WASIX_STDIO_PGWIRE=1";
++const WEBASSEMBLY_EXCEPTION_MESSAGE: &str = "[object WebAssembly.Exception]";
++
++fn oliphaunt_stdio_pgwire_requested(ctx: &WasiFunctionEnv, store: &Store) -> bool {
++    ctx.data(store)
++        .state
++        .envs
++        .lock()
++        .map(|envs| {
++            envs.iter()
++                .any(|entry| entry.as_slice() == OLIPHAUNT_STDIO_PGWIRE_ENV)
++        })
++        .unwrap_or(false)
++}
++
++fn is_webassembly_exception(error: &RuntimeError) -> bool {
++    error.message().contains(WEBASSEMBLY_EXCEPTION_MESSAGE)
++}
++
++fn continue_oliphaunt_stdio_pgwire_after_error(
++    ctx: &WasiFunctionEnv,
++    store: &mut Store,
++    error: RuntimeError,
++) -> Result<Box<[Value]>, RuntimeError> {
++    if !oliphaunt_stdio_pgwire_requested(ctx, store) || !is_webassembly_exception(&error) {
++        return Err(error);
++    }
++
++    let inner = ctx.data(store).inner();
++    let exports = &inner
++        .main_module_instance_handles()
++        .instance
++        .exports;
++    let (Ok(main_loop), Ok(recover), Ok(send_ready), Ok(flush)) = (
++        exports.get_function("PostgresMainLoopOnce").cloned(),
++        exports.get_function("PostgresMainLongJmp").cloned(),
++        exports
++            .get_function("PostgresSendReadyForQueryIfNecessary")
++            .cloned(),
++        exports.get_function("oliphaunt_wasix_pq_flush").cloned(),
++    ) else {
++        return Err(error);
++    };
++
++    debug!(
++        "Oliphaunt stdio pgwire escaped PostgreSQL ERROR recovery; switching to the export pump"
++    );
++    let mut pending_error = Some(error);
++    loop {
++        if let Some(error) = pending_error.take() {
++            if !is_webassembly_exception(&error) {
++                return Err(error);
++            }
++            recover.call(store, &[])?;
++            send_ready.call(store, &[])?;
++            flush.call(store, &[])?;
++        }
++
++        match main_loop.call(store, &[]) {
++            Ok(_) => {
++                send_ready.call(store, &[])?;
++                flush.call(store, &[])?;
++            }
++            Err(error) => pending_error = Some(error),
++        }
++    }
++}
++
+ /// Calls the module
+ fn call_module(
+     ctx: WasiFunctionEnv,
+@@ -308,6 +376,10 @@ fn call_module(
+             }
+         }
+ 
++        if let Err(error) = call_ret {
++            call_ret = continue_oliphaunt_stdio_pgwire_after_error(&ctx, &mut store, error);
++        }
++
+         if let Err(err) = call_ret {
+             match err.downcast::<WasiError>() {
+                 Ok(WasiError::Exit(code)) if code.is_success() => Ok(Errno::Success),

@@ -73,10 +73,9 @@ export function nativeDirectCapabilities(
   return {
     engine: 'nativeDirect',
     processIsolated: false,
-    multiRoot: hasFlag(flags, CAP_MULTI_INSTANCE),
-    reopenable: hasFlag(flags, CAP_LOGICAL_REOPEN),
-    sameRootLogicalReopen: hasFlag(flags, CAP_LOGICAL_REOPEN),
-    rootSwitchable: false,
+    multipleInstances: hasFlag(flags, CAP_MULTI_INSTANCE),
+    sameInstanceLogicalReopen: hasFlag(flags, CAP_LOGICAL_REOPEN),
+    instanceSwitchable: false,
     crashRestartable: false,
     independentSessions: false,
     maxClientSessions: 1,

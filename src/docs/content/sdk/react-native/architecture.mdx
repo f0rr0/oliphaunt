@@ -29,7 +29,7 @@ Swift SDK. Android apps use the Kotlin SDK.
 | macOS (planned) | Swift SDK | No first-release React Native adapter; a future target must reuse the Swift boundary |
 | Android | Kotlin SDK | TypeScript API, config plugin, TurboModule, JSI byte transport |
 
-That keeps platform behavior consistent. Root validation, extension selection,
+That keeps platform behavior consistent. Storage validation, extension selection,
 backup and restore, lifecycle, cancellation, and capability reporting live in
 the same SDKs used by native Swift and Kotlin app developers.
 
@@ -46,7 +46,6 @@ import { Oliphaunt } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
   engine: 'nativeDirect',
-  temporary: true,
   runtimeFootprint: 'balancedMobile',
 });
 
@@ -90,9 +89,13 @@ An app that selects only `vector` ships `vector` and its declared dependencies.
 ## Lifecycle
 
 Mobile direct mode uses one resident backend per app process and one physical
-session. It is same-root logically reopenable inside that process. Broker and
+session. It can logically reopen the same instance inside that process. Broker and
 server entries can appear in `supportedModes()` on targets that advertise those
 capabilities, but `OpenConfig.engine` currently accepts `nativeDirect` only.
+The bridge owns at most one native direct open. It rejects another open while
+the current one is pending, active, or closing, then permits logical reopen
+after `close()` completes; it never aliases two JavaScript database objects to
+one native handle.
 
 Use the React Native lifecycle helpers around background and foreground
 transitions. They delegate to Swift or Kotlin so platform storage and lifecycle
@@ -112,7 +115,7 @@ Capabilities report:
 - streaming support;
 - backup and restore formats;
 - selected extension support;
-- process and root behavior;
+- process and instance behavior;
 - whether broker or server mode is available.
 
 Mode requests outside the React Native bridge's open surface fail with clear

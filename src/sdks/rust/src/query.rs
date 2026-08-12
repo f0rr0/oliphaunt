@@ -226,6 +226,41 @@ pub fn parse_query_response(response: &ProtocolResponse) -> Result<QueryResult> 
     parse_query_response_bytes(response.as_bytes())
 }
 
+pub(crate) fn ensure_successful_query_response(response: &ProtocolResponse) -> Result<()> {
+    let mut input = response.as_bytes();
+    let mut saw_ready = false;
+
+    while !input.is_empty() {
+        let (tag, body, rest) = read_backend_message(input)?;
+        input = rest;
+        match tag {
+            b'E' => {
+                return Err(Error::Postgres(Box::new(parse_postgres_error_response(
+                    body,
+                ))));
+            }
+            b'Z' => {
+                validate_ready_for_query(body)?;
+                saw_ready = true;
+                if !input.is_empty() {
+                    return Err(Error::Engine(
+                        "backend returned bytes after ReadyForQuery".to_owned(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !saw_ready {
+        return Err(Error::Engine(
+            "query response ended before ReadyForQuery".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn extended_query_request<I, P>(sql: &str, params: I) -> Result<ProtocolRequest>
 where
     I: IntoIterator<Item = P>,
@@ -644,6 +679,34 @@ mod tests {
         assert_eq!(postgres.severity.as_deref(), Some("ERROR"));
         assert_eq!(postgres.sqlstate.as_deref(), Some("42P01"));
         assert_eq!(postgres.message, "relation does not exist");
+    }
+
+    #[test]
+    fn validates_execute_responses_without_restricting_result_shape() {
+        let mut bytes = Vec::new();
+        push_row_description(&mut bytes, &[("one", 23)]);
+        push_data_row(&mut bytes, &[Some("1")]);
+        push_command_complete(&mut bytes, "SELECT 1");
+        push_row_description(&mut bytes, &[("two", 23)]);
+        push_data_row(&mut bytes, &[Some("2")]);
+        push_command_complete(&mut bytes, "SELECT 1");
+        push_ready_for_query(&mut bytes);
+
+        ensure_successful_query_response(&ProtocolResponse::new(bytes)).unwrap();
+    }
+
+    #[test]
+    fn execute_validation_returns_structured_postgres_errors() {
+        let mut bytes = Vec::new();
+        push_error_response(&mut bytes, "ERROR", "23505", "duplicate key value");
+        push_ready_for_query(&mut bytes);
+
+        let error = ensure_successful_query_response(&ProtocolResponse::new(bytes)).unwrap_err();
+        let Error::Postgres(postgres) = error else {
+            panic!("expected structured PostgreSQL error, got {error:?}");
+        };
+        assert_eq!(postgres.sqlstate.as_deref(), Some("23505"));
+        assert_eq!(postgres.message, "duplicate key value");
     }
 
     #[test]

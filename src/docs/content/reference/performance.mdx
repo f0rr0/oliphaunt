@@ -28,7 +28,7 @@ Use performance numbers in context:
 | RSS and package size | Mobile distribution and desktop app footprint |
 
 Native direct mode is the lowest-latency embedded path. Broker mode adds
-an IPC boundary in exchange for process isolation and multi-root management.
+an IPC boundary in exchange for process isolation and multi-instance management.
 Server mode is the right choice when an app needs real PostgreSQL client
 connections, tools, pools, or ORMs.
 
@@ -38,7 +38,7 @@ Compare each mode against the problem it solves:
 
 - Use direct mode when one embedded database session is enough and latency is
   the primary concern.
-- Use broker mode when crash isolation, recovery, upgrades, or multiple roots
+- Use broker mode when crash isolation, recovery, upgrades, or multiple instances
   are more important than the last microseconds of latency.
 - Use server mode when independent PostgreSQL clients are part of the product.
 

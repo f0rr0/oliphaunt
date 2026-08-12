@@ -17,6 +17,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     "schema" to "oliphaunt-runtime-resources-v1",
                     "layout" to "postgres-runtime-files-v1",
                     "cacheKey" to "runtime-smoke",
+                    "selectedExtensions" to "pg_trgm,vector",
                     "extensions" to "pg_trgm,vector",
                     "runtimeFeatures" to "icu",
                     "sharedPreloadLibraries" to "auto_explain",
@@ -119,6 +120,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                 schema=oliphaunt-runtime-resources-v1
                 layout=postgres-runtime-files-v1
                 cacheKey=runtime-smoke
+                selectedExtensions=hstore,vector
                 extensions=hstore,vector
                 runtimeFeatures=icu
                 sharedPreloadLibraries=
@@ -485,6 +487,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "vector",
                         "extensions" to "vector",
                         "sharedPreloadLibraries" to "pg search",
                         "mobileStaticRegistryState" to "complete",
@@ -496,6 +499,28 @@ class OliphauntAndroidRuntimeAssetsTest {
             }
 
         assertTrue(error.message.orEmpty().contains("shared preload library"))
+    }
+
+    @Test
+    fun rejectsRuntimeManifestWithoutSelectedExtensions() {
+        val error =
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.parseManifestProperties(
+                    "oliphaunt/runtime",
+                    manifestProperties(
+                        "schema" to "oliphaunt-runtime-resources-v1",
+                        "layout" to "postgres-runtime-files-v1",
+                        "cacheKey" to "runtime-smoke",
+                        "extensions" to "vector",
+                        "mobileStaticRegistryState" to "complete",
+                        "mobileStaticRegistryRegistered" to "vector",
+                        "mobileStaticRegistryPending" to "",
+                        "nativeModuleStems" to "vector",
+                    ),
+                )
+            }
+
+        assertTrue(error.message.orEmpty().contains("missing selectedExtensions"))
     }
 
     @Test
@@ -540,6 +565,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "vector",
                         "extensions" to "vector",
                         "runtimeFeatures" to "jit",
                         "mobileStaticRegistryState" to "complete",
@@ -631,6 +657,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "",
                         "mobileStaticRegistryState" to "almost",
                     ),
                 )
@@ -649,6 +676,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "",
                     ),
                 )
             }
@@ -666,6 +694,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "vector",
                         "extensions" to "vector",
                         "mobileStaticRegistryState" to "complete",
                         "mobileStaticRegistryRegistered" to "vector",
@@ -688,6 +717,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "",
                         "mobileStaticRegistryState" to "pending",
                     ),
                 )
@@ -706,6 +736,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "vector",
                         "mobileStaticRegistryState" to "complete",
                         "mobileStaticRegistryRegistered" to "vector",
                     ),
@@ -725,6 +756,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
                         "cacheKey" to "runtime-smoke",
+                        "selectedExtensions" to "vector",
                         "mobileStaticRegistryState" to "not-required",
                         "nativeModuleStems" to "vector",
                     ),

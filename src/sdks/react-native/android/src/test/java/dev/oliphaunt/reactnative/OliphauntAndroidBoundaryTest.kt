@@ -9,6 +9,71 @@ import org.junit.Test
 
 class OliphauntAndroidBoundaryTest {
   @Test
+  fun turboModuleHandlesRequireFinitePositiveSafeIntegers() {
+    assertEquals(1L, requireReactNativeHandle(1.0))
+    assertEquals(
+      REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE,
+      requireReactNativeHandle(REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE.toDouble()),
+    )
+
+    listOf(
+      Double.NaN,
+      Double.POSITIVE_INFINITY,
+      Double.NEGATIVE_INFINITY,
+      -1.0,
+      0.0,
+      1.5,
+      REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE.toDouble() + 1.0,
+    ).forEach(::assertInvalidReactNativeHandle)
+    listOf(
+      Long.MIN_VALUE,
+      -1L,
+      0L,
+      REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE + 1L,
+      Long.MAX_VALUE,
+    ).forEach(::assertInvalidReactNativeHandle)
+  }
+
+  @Test
+  fun iosTurboModuleValidatesHandlesBeforeEveryLookupAndRemoval() {
+    val iosSource = File(System.getProperty("user.dir"), "../ios/Oliphaunt.mm").readText()
+
+    assertTrue(
+      "React Native iOS must reject non-finite, fractional, and unsafe numeric handles",
+      iosSource.contains("std::isfinite(handle)") &&
+        iosSource.contains("std::trunc(handle) == handle") &&
+        iosSource.contains("handle <= kOliphauntMaxSafeIntegerHandle"),
+    )
+    assertTrue(
+      "React Native iOS must canonicalize validated handles through one checked helper",
+      iosSource.contains("static NSNumber *_Nullable OliphauntHandleKey(double handle)") &&
+        iosSource.contains("NSNumber *key = OliphauntHandleKey(handle);"),
+    )
+    assertFalse(
+      "React Native iOS must not cast unchecked TurboModule doubles into dictionary keys",
+      iosSource.contains("@(static_cast<uint64_t>(handle))") &&
+        !iosSource.substringAfter("static NSNumber *_Nullable OliphauntHandleKey(double handle)")
+          .substringBefore("#ifdef RCT_NEW_ARCH_ENABLED")
+          .contains("OliphauntIsValidHandle(handle)"),
+    )
+  }
+
+  @Test
+  fun iosRetainsNativeDirectOwnershipAcrossModuleInvalidation() {
+    val iosSource = File(System.getProperty("user.dir"), "../ios/Oliphaunt.mm").readText()
+
+    assertTrue(iosSource.contains("static void OliphauntAcquireNativeDirect"))
+    assertTrue(iosSource.contains("OliphauntRetainedNativeDirectDatabase = database"))
+    assertTrue(iosSource.contains("static void OliphauntFinishNativeDirectCleanup"))
+    assertTrue(iosSource.contains("BOOL retainOnFailure"))
+    assertTrue(iosSource.contains("OliphauntNativeDirectCleanupAlreadyInFlight"))
+    assertFalse(
+      "iOS invalidation must not abandon an in-flight owner after an arbitrary timeout",
+      iosSource.contains("dispatch_group_wait"),
+    )
+  }
+
+  @Test
   fun reactNativeAndroidDelegatesRuntimeToKotlinSdk() {
     assertEquals("dev.oliphaunt.OliphauntAndroid", OliphauntAndroid::class.java.name)
 
@@ -61,8 +126,8 @@ class OliphauntAndroidBoundaryTest {
         moduleSource.contains("libraryPath must not be empty"),
     )
     assertTrue(
-      "React Native Android must reject NUL-containing roots before Kotlin SDK open/restore",
-      moduleSource.contains("validateRootPath") &&
+      "React Native Android must reject NUL-containing storage and restore paths before crossing the Kotlin SDK boundary",
+      moduleSource.contains("validatePath") &&
         moduleSource.contains("must not contain NUL bytes"),
     )
     assertTrue(
@@ -111,5 +176,23 @@ class OliphauntAndroidBoundaryTest {
         jsiSource.contains("OliphauntJsiStreamCallback") &&
         jsiSource.contains("nativeEmitChunk"),
     )
+  }
+
+  private fun assertInvalidReactNativeHandle(handle: Double) {
+    try {
+      requireReactNativeHandle(handle)
+      throw AssertionError("expected invalid React Native handle: $handle")
+    } catch (error: IllegalArgumentException) {
+      assertTrue(error.message.orEmpty().contains("positive safe integer"))
+    }
+  }
+
+  private fun assertInvalidReactNativeHandle(handle: Long) {
+    try {
+      requireReactNativeHandle(handle)
+      throw AssertionError("expected invalid React Native handle: $handle")
+    } catch (error: IllegalArgumentException) {
+      assertTrue(error.message.orEmpty().contains("positive safe integer"))
+    }
   }
 }

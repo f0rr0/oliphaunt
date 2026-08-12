@@ -1,48 +1,59 @@
 ---
 title: SDKs And Platforms
-description: Compare Oliphaunt SDK package names, target apps, runtime ownership, and platform responsibilities.
+description: Compare native SDKs, Rust WASIX, and WASIX TypeScript by package, host, storage, and responsibility.
 ---
 
-Oliphaunt ships as peer SDKs for the platforms where developers build apps.
-Each SDK uses the conventions of its ecosystem while keeping the same database
-concepts: open a root, run SQL, manage lifecycle, select exact extensions, and
-back up or restore data.
+# SDKs And Platforms
 
-Rust is the SDK for Tauri and Rust desktop apps.
-React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin SDKs.
-TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps currently keep
-Oliphaunt in Rust state behind narrow app-owned commands; a direct JavaScript adapter is planned.
+Oliphaunt ships peer SDK products for the environments where developers build
+apps. The products share PostgreSQL semantics and exact release inputs while
+keeping public APIs native to each language and host.
 
 ## Choose an SDK
 
 <SdkChooser />
 
-React Native delegates database execution to the platform SDKs: Apple calls flow
-through the Swift SDK, and Android calls flow through the Kotlin SDK. That keeps
-resource packaging, lifecycle, and native crash behavior predictable for mobile
-apps.
+| Product | Public package | Runtime boundary | Default storage |
+| --- | --- | --- | --- |
+| Rust | `oliphaunt` | Native direct, broker, or server | Temporary directory |
+| Swift | `Oliphaunt` | Native runtime through Swift concurrency | Temporary directory |
+| Kotlin | `dev.oliphaunt:oliphaunt-android` | Native runtime through coroutines | Temporary directory |
+| React Native | `@oliphaunt/react-native` | Swift/Kotlin native runtime through TurboModule/JSI | Platform SDK default |
+| TypeScript | `@oliphaunt/ts` | Native runtime or native helper process | Temporary directory |
+| Rust WASIX | `oliphaunt-wasix` | Rust-owned portable WASIX host | Memory filesystem |
+| WASIX TypeScript | `@oliphaunt/wasix` | Browser module Worker or Node worker thread | Memory filesystem |
 
-TypeScript broker mode uses a published broker helper, so JavaScript desktop apps
-resolve the helper through package configuration. Native Node.js, Bun, and Deno
-installs use the npm package; the JSR distribution is deliberately limited to
-portable protocol/query helpers.
+The existing native package and extension identifiers remain unchanged. WASIX
+is the explicit special-case identifier: for example,
+`@oliphaunt/extension-pgtap-wasix` is portable while
+`@oliphaunt/extension-pgtap` remains the native/default carrier.
 
-## Shared Concepts
+## Product Boundaries
 
-The SDKs intentionally use matching names for the concepts developers need to
-move between platforms:
+React Native delegates execution to the Swift and Kotlin SDKs. Native
+TypeScript owns Node.js, Bun, and Deno integration over native runtimes and
+helpers. WASIX TypeScript never imports that native package and does not silently
+change runtime families; its conditional export only selects the portable host.
 
-- `nativeDirect` for the lowest-latency embedded session.
-- `nativeBroker` for helper-process isolation and multi-root desktop apps.
-- `nativeServer` when real PostgreSQL clients, pools, or tools need independent
-  sessions.
-- `capabilities()` to check what a selected runtime can do.
-- `backup` and `restore` for app-friendly data movement.
-- structured PostgreSQL errors with SQLSTATE and backend fields where available.
+The npm package carries the TypeScript SDK's native runtime integration.
+The JSR distribution is deliberately limited to portable protocol and query
+helpers; it does not resolve either a native or WASIX runtime.
 
-SDK capability reports describe which modes are available on the selected
-platform. Mobile SDKs expose direct mode first; broker and server support appear
-when the platform SDK advertises those runtimes.
+Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX
+runtime assets. Rust owns direct/server hosting, physical archives, optional
+logical dump tooling, transaction helpers, and protocol streaming. The
+TypeScript binding owns browser and Node worker adapters, pgwire error recovery,
+optional browser IndexedDB snapshots, and a narrow asynchronous API. Carrier
+reuse is not API parity.
+
+## Cohesive Concepts
+
+- Use `storage` for database lifetime and persistence choices.
+- Keep initialization separate from storage when the SDK exposes both.
+- Select only exact extensions before opening a database.
+- Handle PostgreSQL failures through structured errors and SQLSTATE.
+- Close the owning handle explicitly; use the product's documented persistence
+  or backup mechanism instead of copying live database files.
 
 <ModeMatrix />
 
@@ -50,9 +61,8 @@ when the platform SDK advertises those runtimes.
 
 <ExactExtensionRule />
 
-Extension selection is exact-name only: app configuration names PostgreSQL
-extensions such as `vector` directly.
-
-That model matters for mobile and desktop distribution: app developers decide
-which PostgreSQL extensions their app uses, and Oliphaunt packaging makes that
-choice auditable before release.
+Native SDKs select exact SQL extension names in ecosystem-native configuration.
+WASIX TypeScript imports only the `-wasix` descriptor packages it uses
+and passes those descriptors to `open()`. Rust WASIX uses exact Cargo features
+and typed extension values. These forms express the same packaging principle
+without forcing one language's API shape onto another.

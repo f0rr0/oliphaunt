@@ -1,0 +1,171 @@
+---
+title: WASIX TypeScript
+description: Run portable Oliphaunt in a browser Worker or Node worker thread with memory by default and selective extensions.
+---
+
+# WASIX TypeScript
+
+`@oliphaunt/wasix` runs the portable WASIX runtime in a browser module Worker or
+a Node.js worker thread. The same import and API work on both hosts; package
+exports select the adapter. It is separate from native `@oliphaunt/ts`: neither
+package imports, falls back to, or chooses the other at runtime. Applications do
+not configure runtime archive, PGDATA template, manifest, or host URLs.
+
+<SdkGuideSummary id="wasix-typescript" />
+
+## Browser requirements
+
+Serve the application with cross-origin isolation and let the bundler preserve
+the package's module-Worker edge:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+The package checks `crossOriginIsolated` before opening. Worker and runtime
+subresources must also satisfy the page's COEP policy.
+
+## Node.js
+
+Node.js uses the same consumer code and defaults to memory. No browser headers,
+host option, or Node-specific subpath is required:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix';
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const database = await Oliphaunt.open({ extensions: [pgtap] });
+const result = await database.query('select 40 + 2 as answer');
+console.log(result.getText(0, 'answer'));
+await database.close();
+```
+
+Node currently has memory storage only. Importing the IndexedDB adapter is
+valid package resolution, but passing it to `open()` fails before a worker starts.
+
+## Open with memory and one extension
+
+Memory is the default, so an ordinary application supplies only the extensions
+it uses:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix';
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const database = await Oliphaunt.open({
+  extensions: [pgtap],
+});
+
+const result = await database.query('select pgtap_version() as version');
+console.log(result.getText(0, 'version'));
+
+await database.close();
+```
+
+Each `open()` without `storage` creates an independent database that disappears
+on close. The extension is present because its WASIX descriptor was imported
+and selected; the core runtime does not include every extension.
+
+## Opt into IndexedDB
+
+Import persistence separately when checkpoint and clean-close snapshots match
+the application's durability needs:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix';
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+import { indexedDB } from '@oliphaunt/wasix/storage/indexed-db';
+
+const storage = indexedDB('notes');
+
+let database = await Oliphaunt.open({ storage, extensions: [pgtap] });
+await database.query(
+  'create table if not exists note (id bigint generated always as identity, title text not null)',
+);
+await database.query('insert into note (title) values ($1)', ['Write the docs']);
+
+await database.checkpoint();
+await database.close();
+
+database = await Oliphaunt.open({ storage, extensions: [pgtap] });
+const notes = await database.query('select id, title from note order by id');
+console.log(notes.rows.length);
+await database.close();
+```
+
+`checkpoint()` first reaches PostgreSQL `ReadyForQuery`, then atomically
+publishes a complete PGDATA generation. A successful `close()` publishes once
+more. Browser or Worker termination can lose changes after the last published
+generation; this is snapshot persistence, not per-transaction crash durability.
+Only one Worker may own a named IndexedDB database at a time.
+
+Reopen with the same runtime and exact extension selection. A missing, added,
+or changed carrier fails closed until an explicit extension-migration contract
+exists.
+
+## Recover from errors
+
+SQL errors are ordinary `PostgresError` values with PostgreSQL fields such as
+`sqlstate`. The Worker consumes the response through `ReadyForQuery`, so the
+same database remains usable:
+
+```ts
+import { PostgresError } from '@oliphaunt/wasix';
+
+try {
+  await database.query('select 1 / 0');
+} catch (error) {
+  if (!(error instanceof PostgresError)) throw error;
+  console.error(error.sqlstate); // 22012
+}
+
+const recovered = await database.query('select 40 + 2 as answer');
+console.log(recovered.getText(0, 'answer')); // 42
+```
+
+PostgreSQL startup rejections from `Oliphaunt.open()`, such as SQLSTATE `3D000`
+for a missing database, use the same `PostgresError` type and fields. A startup
+error does not return a database handle to recover; correct the option and open
+again.
+
+Persistence and ownership failures are separate `WasixStorageError` values.
+Inspect `code` and `durability`; after a checkpoint publication failure, close
+the poisoned handle and reopen the last complete generation before deciding how
+to reconcile application work. A Worker crash or transport failure is not a SQL
+error and also requires a new handle.
+
+## Public API boundary
+
+The binding intentionally exposes one small asynchronous surface on both hosts:
+
+| API | Purpose |
+| --- | --- |
+| `Oliphaunt.open(options?)` | Start one host worker and one database |
+| `database.query(sql, parameters?)` | Run a typed row query |
+| `database.execute(sql)` | Execute SQL and return raw response bytes |
+| `database.execProtocolRaw(bytes)` | Drive advanced PostgreSQL protocol traffic |
+| `database.checkpoint()` | Publish the selected persistent storage generation |
+| `database.close()` | Terminate PostgreSQL and release the Worker/storage lease |
+
+It does not expose the Rust binding's transaction helper, `engine_capabilities()`,
+server/proxy, protocol streaming, physical archive, logical dump/restore, or
+host-directory APIs. Transactions can still be expressed with SQL, but the
+binding does not add a transaction callback abstraction.
+
+Lifecycle semantics are fixed rather than dynamically reported:
+`multipleInstances = true` for separate workers using memory or different
+persistent store names, `sameInstanceLogicalReopen = false`,
+`instanceSwitchable = true`, and `crashRestartable = false`. A given IndexedDB
+name remains exclusively leased despite support for separate instances.
+
+## Current host boundary
+
+IndexedDB is the only persistent browser adapter. OPFS is intentionally absent,
+and omitted storage already covers temporary in-memory use. Node owns its
+`worker_threads` adapter and currently accepts memory storage only. Neither host
+routes through native `@oliphaunt/ts`.
+
+Use [Rust WASIX](./index) when Rust owns the portable host. Use
+[TypeScript](/docs/sdk/typescript) for Node.js, Bun, or Deno applications that
+use the native runtime family instead.

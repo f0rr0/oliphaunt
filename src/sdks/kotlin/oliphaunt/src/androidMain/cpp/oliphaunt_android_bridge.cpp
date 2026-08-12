@@ -31,7 +31,8 @@ using OliphauntSelectedStaticExtensionsFn = const OliphauntStaticExtension *(*)(
 using OliphauntLastErrorFn = const char *(*)(OliphauntHandle *);
 using OliphauntCapabilitiesFn = uint64_t (*)(void);
 using OliphauntFreeResponseFn = void (*)(OliphauntResponse *);
-using OliphauntBackupFn = int32_t (*)(OliphauntHandle *, uint32_t, OliphauntResponse *);
+using OliphauntBackupFn = int32_t (*)(
+    OliphauntHandle *, const OliphauntBackupOptions *, OliphauntResponse *);
 using OliphauntRestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 
 struct Symbols {
@@ -353,6 +354,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_openNative(
       .abi_version = OLIPHAUNT_ABI_VERSION,
       .pgdata = pgdataPath.c_str(),
       .runtime_dir = runtimePath.c_str(),
+      .module_dir = nullptr,
       .username = usernameString.c_str(),
       .database = databaseString.c_str(),
       .reserved_flags = 0,
@@ -509,7 +511,14 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_backupNative(
   }
 
   OliphauntResponse response = {nullptr, 0};
-  int32_t rc = session->symbols.backup(session->handle, formatId, &response);
+  const OliphauntBackupOptions options = {
+      .abi_version = OLIPHAUNT_ABI_VERSION,
+      .format = formatId,
+      .generated_files = nullptr,
+      .generated_file_count = 0,
+      .reserved_flags = 0,
+  };
+  int32_t rc = session->symbols.backup(session->handle, &options, &response);
   if (rc != 0) {
     std::string error = lastError(session);
     if (session->symbols.freeResponse != nullptr) {
@@ -535,7 +544,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
     JNIEnv *env,
     jobject,
-    jstring root,
+    jstring destination,
     jstring format,
     jbyteArray artifact,
     jboolean replaceExisting,
@@ -557,7 +566,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
     return;
   }
 
-  std::string rootPath = jniString(env, root);
+  std::string destinationPath = jniString(env, destination);
   const jsize artifactLength = env->GetArrayLength(artifact);
   std::vector<uint8_t> artifactBytes(static_cast<size_t>(artifactLength));
   if (artifactLength > 0) {
@@ -574,7 +583,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
 
   OliphauntRestoreOptions options = {
       .abi_version = OLIPHAUNT_ABI_VERSION,
-      .root = rootPath.c_str(),
+      .destination = destinationPath.c_str(),
       .format = formatId,
       .data = artifactBytes.empty() ? nullptr : artifactBytes.data(),
       .len = artifactBytes.size(),
@@ -622,14 +631,13 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_closeNative(
     rc = session->symbols.detach(session->handle);
     if (rc != 0) {
       error = lastError(session);
+      throwRuntime(env, error.empty() ? "liboliphaunt close failed" : error);
+      return;
     }
     session->handle = nullptr;
   }
   unloadSymbols(&session->symbols);
   delete session;
-  if (rc != 0) {
-    throwRuntime(env, error.empty() ? "liboliphaunt close failed" : error);
-  }
 }
 
 extern "C" JNIEXPORT jlong JNICALL

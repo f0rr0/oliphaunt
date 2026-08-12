@@ -385,7 +385,7 @@ mod candidate_tests {
     use super::*;
     #[cfg(feature = "tools")]
     use crate::PgDumpOptions;
-    use crate::{Oliphaunt, OliphauntServer};
+    use crate::{DatabaseStorage, Oliphaunt, OliphauntServer};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
     use std::collections::BTreeSet;
@@ -503,7 +503,6 @@ mod candidate_tests {
         let name = extension.sql_name();
         {
             let mut db = Oliphaunt::builder()
-                .temporary()
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open temporary database with extension {name}"))?;
@@ -516,7 +515,7 @@ mod candidate_tests {
             .with_context(|| format!("create restart root for extension {name}"))?;
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| {
@@ -529,7 +528,7 @@ mod candidate_tests {
         }
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| {
@@ -561,11 +560,10 @@ mod candidate_tests {
     async fn run_one_server_smoke(extension: Extension) -> Result<()> {
         let name = extension.sql_name();
         let server = OliphauntServer::builder()
-            .temporary()
             .extension(extension)
             .start()
             .with_context(|| format!("start server with extension {name}"))?;
-        let mut conn = PgConnection::connect(&server.database_url())
+        let mut conn = PgConnection::connect(&server.connection_uri())
             .await
             .with_context(|| format!("connect server with extension {name}"))?;
         run_server_smoke(&mut conn, extension).await?;
@@ -598,7 +596,7 @@ mod candidate_tests {
             .with_context(|| format!("create lifecycle root for extension {name}"))?;
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open lifecycle database with extension {name}"))?;
@@ -630,7 +628,6 @@ mod candidate_tests {
         let name = extension.sql_name();
         let dump = {
             let mut db = Oliphaunt::builder()
-                .temporary()
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open dump source database with extension {name}"))?;
@@ -667,7 +664,6 @@ mod candidate_tests {
         }
 
         let mut restored = Oliphaunt::builder()
-            .temporary()
             .extension(extension)
             .open()
             .with_context(|| format!("open dump restore database with extension {name}"))?;

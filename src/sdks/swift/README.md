@@ -6,14 +6,14 @@ Add Oliphaunt from Swift Package Manager:
 
 ```text
 dependencies: [
-    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "0.6.0")
+    .package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "0.6.1")
 ]
 ```
 
 Then add the `Oliphaunt` product to the iOS or macOS app target. Release tags
 are source tags for the Swift API and are paired with compatible
 `liboliphaunt-native-v<version>` GitHub release assets, for example
-`liboliphaunt-native-v0.1.0`. Those assets contain the base Apple XCFramework,
+`liboliphaunt-native-v0.1.1`. Those assets contain the base Apple XCFramework,
 portable runtime resources, and checksum manifest.
 CocoaPods trunk is not a release path for Oliphaunt. The SwiftPM release tag
 resolves a generated manifest with a checksum-pinned `liboliphaunt` binary
@@ -119,12 +119,10 @@ missing or version-skewed dependency, duplicate SQL row, unused carrier file,
 or conflicting native dependency asset stops generation before output.
 
 Normal use accepts HTTPS assets only. `--offline` requires a complete verified
-cache; `--allow-file-urls` exists only for local CI fixtures. The older
-`--input oliphaunt-swiftpm-extension-input-v1` form remains available for
-advanced tooling, but consumers do not need to hand-author that intermediate
-schema. That input explicitly pins `nativeRuntime.product` and
-`nativeRuntime.version`; generation requires every extracted resource manifest
-to carry the same stable `liboliphaunt-native` identity. Native carrier rows
+cache; `--allow-file-urls` exists only for local CI fixtures. Carrier resolution
+pins `nativeRuntime.product` and `nativeRuntime.version`; generation requires
+every extracted resource manifest to carry the same stable
+`liboliphaunt-native` identity. Native carrier rows
 include an extension XCFramework plus exact dependency XCFramework roles and
 build-derived registration symbols. SQL-only rows such as `pgtap` carry runtime
 resources without a fake binary target.
@@ -153,7 +151,7 @@ plugin. It does not carry a second native database runtime.
 
 | SDK | Native core | Apple distribution |
 | --- | --- | --- |
-| `Oliphaunt` `0.6.0` | `liboliphaunt` `0.1.0` | SwiftPM source tag plus checksum-covered GitHub release assets |
+| `Oliphaunt` `0.6.1` | `liboliphaunt` `0.1.1` | SwiftPM source tag plus checksum-covered GitHub release assets |
 
 Exact extensions are selected by PostgreSQL SQL extension name and released as
 separate exact-extension artifacts. Selecting `vector` must only fetch/link
@@ -184,7 +182,7 @@ Swift package for iOS and macOS apps on the native `liboliphaunt` product line.
 The public API is actor-based and mirrors the Rust SDK shape: open a database,
 execute raw PostgreSQL protocol bytes, inspect capabilities, create SQL or
 physical backup artifacts, restore same-version physical archives into an
-explicit root, run transaction closures on the active physical session, request
+explicit destination, run transaction closures on the active physical session, request
 PostgreSQL checkpoints, configure startup `username`/`database` identity,
 cancel active work, and close. The package includes
 `OliphauntNativeDirectEngine`, a C-ABI-backed native direct runtime that loads
@@ -196,16 +194,18 @@ database; the returned entries include canonical direct/broker/server
 capabilities and the reason unavailable modes are not currently openable.
 Capabilities report the same product contract as Rust: raw and streaming
 protocol support, cancellation, backup/restore, simple-query execution,
-extensions, session semantics, multi-root support, and the concrete backup/restore formats
+extensions, session semantics, multiple-instance support, and the concrete backup/restore formats
 the opened mode accepts. Use `supportsBackupFormat(_:)` and
 `supportsRestoreFormat(_:)` on either `OliphauntCapabilities` or `OliphauntDatabase`
 for UI/action gating instead of manually matching arrays. `backup(_:)` enforces
 those capabilities before it calls the native session, and
 `OliphauntDatabase.restore` rejects unsupported restore artifact formats before it
-calls the engine. Lifecycle capability fields follow the Rust contract:
-`sameRootLogicalReopen`, `rootSwitchable`, and `crashRestartable` distinguish
-direct's same-root resident reopen from broker/server process-managed behavior.
-Native direct is not root-switchable or crash-restartable. Mobile direct mode
+calls the engine. `OliphauntRestoreRequest` fails when its destination exists by
+default; replacement requires an explicit `.replaceExisting()`. Lifecycle
+capability fields follow the Rust contract:
+`sameInstanceLogicalReopen`, `instanceSwitchable`, and `crashRestartable` distinguish
+direct's resident-instance reopen from broker/server process-managed behavior.
+Native direct is not instance-switchable or crash-restartable. Mobile direct mode
 has one resident backend per app process and one physical session. Use server
 mode only where the SDK reports true server support; it is not a
 crash-isolated server and it does not provide independent concurrent client
@@ -218,6 +218,14 @@ diagnostics, or `.smallMobile` for memory-pressure experiments. `startupGUCs`
 are validated and appended after the footprint and durability defaults so
 profiling builds can override specific PostgreSQL GUCs without changing the
 public ABI.
+
+Database storage is optional in the common case. The default,
+`.temporaryDirectory`, uses an SDK-owned directory below the operating system's
+temporary location. Native direct keeps that directory for its process-resident
+database so a logical close can be reopened safely; it is not durable storage
+and may be reclaimed after the process exits. Select persistence explicitly
+with `storage: .directory(applicationDatabaseURL)`. `close()` never deletes a
+directory supplied by the application.
 
 For large responses or COPY-style traffic, stream backend protocol bytes through
 the C ABI instead of materializing one owned response first:
@@ -238,10 +246,11 @@ let value = try result.getText(row: 0, column: "value")
 ```
 
 `query(_:)` parses normal PostgreSQL backend protocol frames into field
-metadata, rows, command tags, nulls, and structured PostgreSQL errors through
+metadata, rows, command tags, and nulls. `query`, `execute`, transaction
+statements, and `checkpoint` surface PostgreSQL failures through
 `OliphauntError.postgres(OliphauntPostgresError)`, preserving SQLSTATE and raw
-`ErrorResponse` fields. Multi-result-set and COPY traffic stay on
-`execProtocolRaw`.
+`ErrorResponse` fields. Multi-result-set, COPY, and custom recovery traffic
+stay on the byte-preserving `execProtocolRaw`.
 Pass `parameters:` for PostgreSQL extended-protocol parameters:
 
 Use `transaction {}` for multi-step work that must stay on the same physical
@@ -275,10 +284,10 @@ OLIPHAUNT_INSTALL_DIR=/path/to/postgres/install \
 swift test
 ```
 
-The native-direct env-backed test opens a temporary root, executes `SELECT 1`
+The native-direct env-backed test opens temporary storage, executes `SELECT 1`
 through raw and streaming PostgreSQL protocol bytes, cancels an active
 `pg_sleep`, creates a
-same-version physical backup through the C ABI, restores it into a new root, and
+same-version physical backup through the C ABI, restores it into a new destination, and
 closes the runtime. Exact extensions are accepted when
 `OliphauntNativeDirectEngine` is constructed with a `runtimeDirectory` built with
 those extensions, or with `OliphauntRuntimeResources` pointing at packaged runtime
@@ -315,10 +324,9 @@ products such as `auto_explain`. `extensions` is exactly the subset whose
 catalog rows support `CREATE EXTENSION`; it must be a subset of
 `selectedExtensions`. Runtime availability and requested-extension checks use
 `selectedExtensions`, while control/install-SQL checks apply only to requested
-members of `extensions`. New producers must always write both fields. The SDK
-reads `extensions` as the full selection only for a legacy manifest in which
-`selectedExtensions` is absent; an explicitly empty `selectedExtensions` never
-falls back.
+members of `extensions`. Producers must always write both fields. The SDK
+rejects a missing `selectedExtensions`; an explicitly empty value means that
+no extensions were selected.
 
 `template-pgdata` manifests must use
 `layout=postgres-template-pgdata-v1`. Current packages also record
@@ -331,8 +339,8 @@ identity. iOS-family targets reject selected extensions while the registry
 state is `pending`. The Swift SDK rejects unknown package layouts, materializes
 runtime files into Application Support using the cache key, and hydrates new
 PGDATA roots from `template-pgdata/files`.
-Apple mobile platforms require either a packaged template PGDATA or an existing
-root with `PG_VERSION`; they do not rely on executing `initdb` from app storage.
+Apple mobile platforms require either a packaged template PGDATA or existing
+storage whose `pgdata` child contains `PG_VERSION`; they do not rely on executing `initdb` from app storage.
 When a selected extension contains native modules, the Swift package must
 link those modules with the generated static-registry source. Complete Rust
 runtime-resource generator output includes

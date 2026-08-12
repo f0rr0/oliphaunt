@@ -1468,7 +1468,6 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     ["extension-resource-inventory.mjs", "swiftpm-extension-resource-inventory"],
     ["render-extension-products.mjs", "swiftpm-extension-generator"],
     ["swift-carrier-resolver.mjs", "swiftpm-carrier-resolver"],
-    ["swiftpm-extension-input.schema.json", "swiftpm-extension-input-schema"],
   ];
   const artifacts = expectedFiles.map(([name, kind]) => {
     const generatorInput = !["Oliphaunt-source.zip", "Package.swift.release"].includes(name);
@@ -2059,7 +2058,6 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
       "release-input:oliphaunt-react-native-ios-carriers.json",
       "release-input:render-extension-products.mjs",
       "release-input:swift-carrier-resolver.mjs",
-      "release-input:swiftpm-extension-input.schema.json",
       "release-input:swiftpm-release-tree",
     );
     if (hasSelectedExtensionProducts) {

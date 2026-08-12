@@ -17,8 +17,8 @@ Rust is the parity source:
 - `NativeDirect` is in-process and serialized over one physical PostgreSQL
   backend session.
 - `NativeBroker` supervises one `oliphaunt-broker` helper process per active
-  root, uses the authenticated `PGOB` frame protocol, supports multiple roots
-  up to `broker_max_roots`, and restarts a helper only after a failed or exited
+  database instance, uses the authenticated `PGOB` frame protocol, supports
+  multiple instances up to `brokerMaxInstances`, and restarts a helper only after a failed or exited
   request boundary.
 - `NativeServer` starts a real local PostgreSQL server process, exposes a
   PostgreSQL connection string, owns one SDK connection for SDK calls, and is
@@ -78,18 +78,19 @@ Primary external references used for this architecture:
   Oliphaunt-owned prebuilt Node-API adapter artifacts rather than a
   consumer-installed third-party FFI package.
 
-## Public API Target
+## Public API
 
-`OpenConfig` should grow only the Rust-parity knobs that affect mode semantics:
+`OpenConfig` exposes only the Rust-parity knobs that affect mode semantics:
 
 ```ts
 type OpenConfig = {
   engine?: 'nativeDirect' | 'nativeBroker' | 'nativeServer';
-  root?: string;
-  temporary?: boolean;
+  storage?:
+    | { readonly kind: 'temporaryDirectory' }
+    | { readonly kind: 'directory'; readonly path: string };
   maxClientSessions?: number;
   brokerExecutable?: string;
-  brokerMaxRoots?: number;
+  brokerMaxInstances?: number;
   brokerTransport?: 'auto' | 'unix' | 'tcp';
   serverExecutable?: string;
   serverPort?: number;
@@ -107,15 +108,28 @@ type OpenConfig = {
 
 Validation must match Rust:
 
-- `root` is the Oliphaunt root directory; native PGDATA is always
-  `<root>/pgdata`, including direct, broker, server, backup, and restore paths;
+- omitted storage means an SDK-owned temporary host directory;
+- `directory` is caller-owned persistence and `temporaryDirectory` is
+  SDK-owned ephemeral filesystem storage;
 - direct and broker accept only `maxClientSessions === 1`;
 - server accepts `maxClientSessions > 0` and defaults to `32`;
-- broker requires `brokerMaxRoots > 0` and defaults to `1`;
+- broker requires `brokerMaxInstances > 0` and defaults to `1`;
 - server rejects `serverPort === 0`; omitting it means allocate an ephemeral
   localhost port;
-- executable, tool directory, root, identity, extension, and GUC validation
+- executable, tool directory, storage directory, identity, extension, and GUC validation
   remain pre-spawn checks.
+
+The implementation resolves either storage variant to a private
+`instanceDirectory` and derives PGDATA beneath it. The native C ABI and the
+Rust broker executable still use their established `root`/`--root` vocabulary;
+that is an internal transport detail, not a second consumer storage API.
+
+Temporary-directory ownership follows the earliest safe terminal lifecycle.
+Failed opens are removed immediately. Broker and server instances remove their
+temporary directories after the child engine has stopped. Native direct is a
+documented divergence: ordinary close only detaches from a process-resident
+backend, so its temporary directory must remain for that process lifetime and
+is reused by later temporary opens through the same client.
 
 When `engine` is omitted, the default is consistent:
 
@@ -126,12 +140,13 @@ When `engine` is omitted, the default is consistent:
 `supportedModes()` reports availability per configured runtime:
 
 - `nativeDirect`: available when `liboliphaunt` loads and the runtime has a
-  direct adapter. Bun and Deno use built-in FFI. Node resolves the verified
+  direct adapter. Node and Bun resolve the verified
   `@oliphaunt/node-direct-*` Node-API adapter optional package, built from the
   `oliphaunt-node-direct-*` release assets, and loads it without `postinstall`,
-  node-gyp, Rust, Cargo, or third-party FFI packages;
+  node-gyp, Rust, Cargo, or third-party FFI packages. Deno uses nonblocking
+  built-in FFI so its JavaScript event loop remains available for cancellation;
 - the split `@oliphaunt/tools-*` package is resolved for Node, Bun, and Deno
-  package-managed native installs and merged with the root `liboliphaunt`
+  package-managed native installs and merged with the base `liboliphaunt`
   runtime package before startup;
 - native direct extension package materialization is shared by Node and Bun.
   Deno direct mode may use extensions only with an explicit prepared
@@ -149,9 +164,11 @@ When `engine` is omitted, the default is consistent:
 
 Broker/server availability remains conditional on executable/toolchain
 discovery and smoke coverage. Missing helpers must stay explicit unavailable
-entries rather than aliases to direct mode. Node.js physical-archive restore
-uses the same Node direct adapter by default; broker restore is used only when
-the caller explicitly selects `engine: 'nativeBroker'`.
+entries rather than aliases to direct mode. Physical-archive restore is an
+offline, mode-independent operation: the public client always uses the
+runtime-detected native binding and accepts only an optional `libraryPath`
+override. Broker restore support remains internal runtime machinery, not a
+second public restore path.
 
 ## Runtime Adapter Boundary
 
@@ -192,9 +209,10 @@ the existing `PGOB` frame protocol.
 ### Open Flow
 
 1. Normalize and validate config.
-2. Materialize `temporary` roots in the host runtime temp directory.
-3. Acquire an in-process broker root lease keyed by canonical or normalized
-   absolute path. This mirrors Rust's duplicate-root and capacity guard.
+2. Materialize `temporaryDirectory` storage in the host runtime temp directory.
+3. Acquire an in-process broker instance lease keyed by the canonical or
+   normalized internal directory path. This mirrors Rust's duplicate-instance
+   and capacity guard.
 4. Resolve the broker executable from `brokerExecutable`, `OLIPHAUNT_BROKER`,
    package-adjacent executable names, or the checksum-verified Rust SDK
    `oliphaunt-broker` release asset pinned by package metadata.
@@ -209,15 +227,15 @@ the existing `PGOB` frame protocol.
 7. Generate a 32-byte random auth token and pass it only through the child
    environment.
 8. Spawn `oliphaunt-broker` with the same argument set Rust uses:
-   `--root`, `--bootstrap`, `--durability`, `--runtime-footprint`, optional
-   `--initdb`, `--username`, `--database`, endpoint flags, repeated
+   `--root`, `--bootstrap`, `--durability`, `--runtime-footprint`,
+   `--username`, `--database`, endpoint flags, repeated
    `--extension`, and repeated `--startup-guc`.
 9. Read exactly one bounded stdout readiness line:
    `OLIPHAUNT_BROKER_READY <primary> cancel=<cancel>`.
 10. Connect to the primary endpoint and authenticate with the token before any
    protocol frame.
 11. Create a `BrokerSession` with the child, primary stream, cancel endpoint,
-    root lease, IPC cleanup path, and temporary root cleanup ownership.
+    instance lease, IPC cleanup path, and temporary-directory cleanup ownership.
 
 ### Frame Protocol
 
@@ -244,10 +262,10 @@ responses and are parsed by the existing query parser.
 - If the helper exits between operations, relaunch before the next operation.
 - If a request fails mid-flight, return an error and mark the helper failed. Do
   not replay the request because commit state is unknown.
-- Subsequent operations may relaunch the helper against the same root and rely
+- Subsequent operations may relaunch the helper against the same instance and rely
   on PostgreSQL WAL recovery.
 - Close sends a best-effort close frame, waits for bounded exit, kills on
-  timeout, and then releases root/temp/socket resources.
+  timeout, and then releases instance/temp/socket resources.
 
 ### Capabilities
 
@@ -255,9 +273,9 @@ Broker capabilities must match Rust:
 
 - process isolated;
 - serialized single session;
-- `multiRoot` true only when `brokerMaxRoots > 1`;
+- `multipleInstances` true only when `brokerMaxInstances > 1`;
 - crash restartable at request boundaries;
-- root switchable;
+- instance switchable;
 - no connection string;
 - physical archive backup/restore only.
 
@@ -271,12 +289,12 @@ server.
 ### Open Flow
 
 1. Normalize and validate config.
-2. Prepare or validate `<root>/pgdata`. Empty roots are initialized with
-   matching `initdb`; initialized roots are reused after `PG_VERSION`
+2. Prepare or validate the internal PGDATA directory. Empty storage directories
+   are initialized with matching `initdb`; initialized instances are reused after `PG_VERSION`
    validation by PostgreSQL startup.
 3. Resolve `postgres`, `pg_ctl`, and `initdb` from `serverToolDirectory`,
-   `serverExecutable`, or the prepared root runtime. Package-managed installs
-   materialize the root runtime together with the `@oliphaunt/tools-*`
+   `serverExecutable`, or the prepared runtime. Package-managed installs
+   materialize the base runtime together with the `@oliphaunt/tools-*`
    `pg_dump`/`psql` payload into one runtime directory before server startup.
 4. Allocate a fixed or ephemeral loopback port. Retry ephemeral bind conflicts a
    bounded number of times, matching Rust's behavior.
@@ -386,7 +404,7 @@ Close must:
 3. Implement broker session open/execute/stream/cancel/backup/close against a
    fake helper fixture, then the Rust `oliphaunt-broker` binary.
 4. Add config fields and validation for `maxClientSessions`, broker executable,
-   broker max roots, broker transport, server executable, server port, and
+   broker max instances, broker transport, server executable, server port, and
    server tool directory.
 5. Implement a minimal PostgreSQL wire client for server startup, raw protocol,
    streaming, terminate, and cancel.
@@ -405,7 +423,7 @@ Unit tests:
 - ready-line parser;
 - endpoint parser;
 - `PGOB` frame codec, max frame rejection, and UTF-8 error frames;
-- root lease duplicate/capacity behavior;
+- instance lease duplicate/capacity behavior;
 - server connection string percent encoding;
 - server startup args and port conflict retry classification.
 

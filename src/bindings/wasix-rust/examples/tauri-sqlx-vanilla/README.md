@@ -28,7 +28,8 @@ measure a warm start with an existing cluster.
 
 ## What it demonstrates
 
-- storing the database in managed Rust state;
+- selecting persistent storage explicitly with `DatabaseStorage::Directory`;
+- storing the database server in managed Rust state;
 - using `OliphauntServer` to hand SQLx a PostgreSQL URI;
 - configuring the SQLx pool with `max_connections(1)`;
 - creating schema, seeding rows, and profiling real SQL queries;

@@ -431,16 +431,12 @@ static int32_t oliphaunt_backup_impl(
     return 0;
 }
 
-int32_t oliphaunt_backup(OliphauntHandle *handle, uint32_t format, OliphauntResponse *out) {
-    return oliphaunt_backup_impl(handle, format, NULL, 0, out);
-}
-
-int32_t oliphaunt_backup_ex(
+int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     const OliphauntBackupOptions *options,
     OliphauntResponse *out) {
     if (options == NULL || options->abi_version != OLIPHAUNT_ABI_VERSION || options->reserved_flags != 0) {
-        set_error(handle, "invalid oliphaunt_backup_ex options");
+        set_error(handle, "invalid oliphaunt_backup options");
         return -1;
     }
     return oliphaunt_backup_impl(
@@ -518,31 +514,10 @@ static char *unique_sibling_path_c(const char *target_root, const char *suffix) 
 static int publish_restore_without_replacement(OliphauntHandle *handle, const char *staging_root, const char *target_root) {
     struct stat st;
     if (lstat(target_root, &st) == 0) {
-        if (!S_ISDIR(st.st_mode)) {
-            char message[1024];
-            snprintf(message, sizeof(message), "refusing to restore over non-directory target %s", target_root);
-            set_error(handle, message);
-            return -1;
-        }
-        int empty = oliphaunt_directory_is_empty(target_root);
-        if (empty < 0) {
-            char message[1024];
-            snprintf(message, sizeof(message), "read restore target %s: %s", target_root, strerror(errno));
-            set_error(handle, message);
-            return -1;
-        }
-        if (!empty) {
-            char message[1024];
-            snprintf(message, sizeof(message), "refusing to restore into non-empty target %s; use replaceExisting to replace it", target_root);
-            set_error(handle, message);
-            return -1;
-        }
-        if (rmdir(target_root) != 0) {
-            char message[1024];
-            snprintf(message, sizeof(message), "remove empty restore target %s: %s", target_root, strerror(errno));
-            set_error(handle, message);
-            return -1;
-        }
+        char message[1024];
+        snprintf(message, sizeof(message), "restore target %s already exists; use replaceExisting to replace it", target_root);
+        set_error(handle, message);
+        return -1;
     } else if (errno != ENOENT) {
         char message[1024];
         snprintf(message, sizeof(message), "stat restore target %s: %s", target_root, strerror(errno));
@@ -620,37 +595,46 @@ static int publish_restore_with_replacement(OliphauntHandle *handle, const char 
         return -1;
     }
     if (rename(staging_root, target_root) != 0) {
+        int publish_errno = errno;
         char message[1024];
-        snprintf(message, sizeof(message), "publish restored root %s: %s", target_root, strerror(errno));
+        if (rename(displaced, target_root) != 0) {
+            int rollback_errno = errno;
+            snprintf(
+                message,
+                sizeof(message),
+                "publish restored root %s: %s; restore previous root failed: %s; previous root is preserved at %s",
+                target_root,
+                strerror(publish_errno),
+                strerror(rollback_errno),
+                displaced);
+        } else {
+            snprintf(message, sizeof(message), "publish restored root %s: %s", target_root, strerror(publish_errno));
+        }
         set_error(handle, message);
-        (void)rename(displaced, target_root);
         free(displaced);
         close(lock_fd);
         return -1;
     }
     close(lock_fd);
-    int rc = oliphaunt_remove_tree(displaced);
+    // Publishing staging_root is the restore commit point. Cleanup of the
+    // displaced prior generation must never turn that committed success into
+    // an ambiguous failure that a caller may retry over the new database.
+    (void)oliphaunt_remove_tree(displaced);
     free(displaced);
-    if (rc != 0) {
-        char message[1024];
-        snprintf(message, sizeof(message), "remove replaced restore target: %s", strerror(errno));
-        set_error(handle, message);
-        return -1;
-    }
     return 0;
 }
 
 int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
     if (options == NULL ||
         options->abi_version != OLIPHAUNT_ABI_VERSION ||
-        options->root == NULL ||
-        options->root[0] == '\0' ||
+        options->destination == NULL ||
+        options->destination[0] == '\0' ||
         options->data == NULL ||
         options->len == 0) {
         set_error(NULL, "invalid oliphaunt_restore options");
         return -1;
     }
-    if (strcmp(options->root, "/") == 0) {
+    if (strcmp(options->destination, "/") == 0) {
         set_error(NULL, "refusing to restore over filesystem root");
         return -1;
     }
@@ -665,11 +649,28 @@ int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
 
     int stable_lock_fd = -1;
     char *stable_lock_path = NULL;
-    if (oliphaunt_acquire_stable_root_lock(NULL, options->root, &stable_lock_fd, &stable_lock_path) != 0) {
+    if (oliphaunt_acquire_stable_root_lock(NULL, options->destination, &stable_lock_fd, &stable_lock_path) != 0) {
         return -1;
     }
+    if ((options->flags & OLIPHAUNT_RESTORE_REPLACE_EXISTING) == 0) {
+        struct stat destination_stat;
+        if (lstat(options->destination, &destination_stat) == 0) {
+            char message[1024];
+            snprintf(message, sizeof(message), "restore target %s already exists; use replaceExisting to replace it", options->destination);
+            set_error(NULL, message);
+            oliphaunt_release_file_lock(&stable_lock_fd, &stable_lock_path);
+            return -1;
+        }
+        if (errno != ENOENT) {
+            char message[1024];
+            snprintf(message, sizeof(message), "stat restore target %s: %s", options->destination, strerror(errno));
+            set_error(NULL, message);
+            oliphaunt_release_file_lock(&stable_lock_fd, &stable_lock_path);
+            return -1;
+        }
+    }
 
-    char *parent = oliphaunt_path_parent_dup(options->root);
+    char *parent = oliphaunt_path_parent_dup(options->destination);
     if (parent == NULL) {
         set_error(NULL, "out of memory resolving restore parent");
         oliphaunt_release_file_lock(&stable_lock_fd, &stable_lock_path);
@@ -685,7 +686,7 @@ int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
     }
     free(parent);
 
-    char *staging_root = unique_sibling_path_c(options->root, "restore-staging");
+    char *staging_root = unique_sibling_path_c(options->destination, "restore-staging");
     if (staging_root == NULL) {
         set_error(NULL, "out of memory resolving restore staging path");
         oliphaunt_release_file_lock(&stable_lock_fd, &stable_lock_path);
@@ -706,9 +707,9 @@ int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
     }
     if (rc == 0) {
         if ((options->flags & OLIPHAUNT_RESTORE_REPLACE_EXISTING) != 0) {
-            rc = publish_restore_with_replacement(NULL, staging_root, options->root);
+            rc = publish_restore_with_replacement(NULL, staging_root, options->destination);
         } else {
-            rc = publish_restore_without_replacement(NULL, staging_root, options->root);
+            rc = publish_restore_without_replacement(NULL, staging_root, options->destination);
         }
     }
     if (rc != 0) {

@@ -60,6 +60,7 @@ export const BUILDER_JOBS = new Set([
   "rust-sdk-package",
   "swift-sdk-package",
   "wasix-rust-package",
+  "wasix-ts-sdk-package",
 ]);
 const NATIVE_RUNTIME_JOBS = new Set([
   "liboliphaunt-native-android",
@@ -351,6 +352,7 @@ export function addImpliedJobs(jobs, tasks) {
     jobs.add("extension-artifacts-wasix");
     jobs.add("liboliphaunt-wasix-runtime");
     jobs.add("liboliphaunt-wasix-aot");
+    jobs.add("liboliphaunt-wasix-release-assets");
   }
 
   if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
@@ -375,6 +377,12 @@ export function planJobsForAffected(directProjects, tasks) {
   const jobs = new Set(ALWAYS_JOBS);
   for (const job of jobsForTargets(tasks, { allowedJobs: ALL_BUILDER_JOBS })) {
     jobs.add(job);
+  }
+  // The WASIX TypeScript package runs its packed Node consumer against the
+  // same-run portable runtime rather than silently falling back to workspace
+  // or registry assets.
+  if (jobs.has("wasix-ts-sdk-package")) {
+    jobs.add("liboliphaunt-wasix-runtime");
   }
   if (intersects(directProjects, new Set(exactExtensionProducts()))) {
     jobs.add("extension-artifacts-native");

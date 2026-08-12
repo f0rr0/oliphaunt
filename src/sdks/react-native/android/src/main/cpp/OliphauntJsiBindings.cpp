@@ -665,10 +665,10 @@ class OliphauntModuleJSIBindings
                     if (count != 5 || !args[3].isBool()) {
                       throw jsi::JSError(
                           runtime,
-                          "liboliphaunt JSI restore expects root, format, artifact, replaceExisting, and libraryPath");
+                          "liboliphaunt JSI restore expects destination, format, artifact, replaceExisting, and libraryPath");
                     }
 
-                    std::string root = copyStringArgument(runtime, args[0], "restore root");
+                    std::string destination = copyStringArgument(runtime, args[0], "restore destination");
                     std::string format = copyStringArgument(runtime, args[1], "restore format");
                     std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[2]);
                     bool replaceExisting = args[3].getBool();
@@ -680,7 +680,7 @@ class OliphauntModuleJSIBindings
                         2,
                         [moduleGlobal,
                          callInvoker,
-                         root = std::move(root),
+                         destination = std::move(destination),
                          format = std::move(format),
                          artifact = std::move(artifact),
                          replaceExisting,
@@ -714,7 +714,7 @@ class OliphauntModuleJSIBindings
                           storePendingPromise(token, std::move(pending));
 
                           try {
-                            auto rootString = jni::make_jstring(root);
+                            auto destinationString = jni::make_jstring(destination);
                             auto formatString = jni::make_jstring(format);
                             auto artifactArray = makeByteArray(artifact);
                             jni::local_ref<jni::JString> libraryPathString;
@@ -740,7 +740,7 @@ class OliphauntModuleJSIBindings
                                         OliphauntJsiPromiseCallback::javaobject)>("restoreBytes");
                             restoreBytes(
                                 moduleGlobal,
-                                rootString.get(),
+                                destinationString.get(),
                                 formatString.get(),
                                 artifactArray.get(),
                                 static_cast<jboolean>(replaceExisting),

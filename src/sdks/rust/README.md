@@ -58,7 +58,7 @@ use oliphaunt::Oliphaunt;
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .extension(oliphaunt::Extension::Vector)
     .open()
@@ -72,6 +72,11 @@ db.close().await?;
 # }
 ```
 
+`execute`, transaction statements, and `checkpoint` inspect PostgreSQL
+`ErrorResponse` frames and return `Error::Postgres(PostgresError)` with the
+SQLSTATE and raw fields intact. `exec_protocol_raw` remains byte-preserving for
+custom protocol and recovery work.
+
 This crate is the native-first Rust SDK path for Oliphaunt. Rust is a product SDK
 surface for Tauri and Rust desktop apps, not an internal implementation detail.
 It is intentionally separate from the existing WASIX-oriented `oliphaunt-wasix`
@@ -82,19 +87,18 @@ The public model is:
 
 - `NativeDirect`: in-process, one physical PostgreSQL session, serialized by an
   owner executor.
-- `NativeBroker`: helper-process mode that isolates roots from the application
-  process. A shared broker runtime supervises one worker process per root and
-  admits up to `.broker_max_roots(n)` active roots.
+- `NativeBroker`: helper-process mode that isolates database instances from the
+  application process. A shared broker runtime supervises one worker process
+  per instance and admits up to `.broker_max_instances(n)` active instances.
 - `NativeServer`: PostgreSQL-compatible local server mode for true independent
   client sessions.
 
-`EngineCapabilities::reopenable` is true for all modes, but the semantics are
-mode-specific and exposed explicitly. `NativeDirect` sets
-`same_root_logical_reopen=true`, `root_switchable=false`, and
+Lifecycle is exposed only through precise capabilities. `NativeDirect` sets
+`same_instance_logical_reopen=true`, `instance_switchable=false`, and
 `crash_restartable=false`: it can logically close and reopen the same resident
-root in the same process, but it remains single-root and process-global.
-`NativeBroker` is process-isolated, root-switchable, and crash-restartable for
-its helper process. `NativeServer` is root-switchable and exposes independent
+instance in the same process, but it remains single-instance and process-global.
+`NativeBroker` is process-isolated, instance-switchable, and crash-restartable for
+its helper process. `NativeServer` is instance-switchable and exposes independent
 client sessions, but the current SDK-owned server handle does not restart a
 crashed server process in place.
 
@@ -102,6 +106,29 @@ The crate defines the SDK contract, configuration model, exact-extension model,
 typed query helpers, structured PostgreSQL errors, startup user/database
 identity, capabilities, and owner-thread execution boundary. Concrete
 PostgreSQL 18 bindings plug in through `NativeRuntime`.
+
+## Storage
+
+`OpenConfig::storage` and `OliphauntBuilder::storage(...)` accept the native-only
+`DatabaseStorage` variants:
+
+- `TemporaryDirectory`: an SDK-owned host directory and the builder default;
+- `Directory(path)`: a caller-owned persistent directory.
+
+The convenience methods are `.temporary_directory()` and `.directory(path)`.
+There is no public lock-policy switch: direct, broker, and server modes choose
+their safe ownership and locking policy internally. The physical child layout
+and the native C ABI's historical `root` vocabulary remain implementation
+details rather than additional storage variants.
+
+Failed setup drops an SDK-owned temporary directory. Broker and server modes
+also remove it after their engine process stops. Native direct is the explicit
+divergence: `close()` logically detaches from a process-resident backend, so its
+temporary directory cannot be removed safely at close and remains subject to
+the host operating system's temporary-file cleanup after process exit. Later
+temporary opens reuse that resident instance. Use
+`Directory` for durable data or broker/server mode when close-time cleanup is
+required.
 
 ## Runtime Footprint
 
@@ -145,10 +172,10 @@ The default builder runtime matches the selected mode:
   to it over local IPC. Unix platforms use Unix-domain sockets by default;
   `OLIPHAUNT_BROKER_TRANSPORT=tcp` forces the portable TCP fallback. The
   helper requires a generated per-session authentication frame before accepting
-  protocol, backup, checkpoint, or close requests. Builder bootstrap policy is
+  protocol, backup, checkpoint, or close requests. Builder initialization policy is
   passed through to the helper, so `.existing_only()` remains strict in broker
-  mode. Multi-root broker apps use one isolated helper per active root, bounded
-  by `.broker_max_roots(n)`.
+  mode. Multiple-instance broker apps use one isolated helper per active instance, bounded
+  by `.broker_max_instances(n)`.
 - `NativeServer` starts a real local PostgreSQL server process and exposes a
   connection string.
 
@@ -253,7 +280,7 @@ server, restart, backup, restore, and mobile static-registry evidence.
 ## Backup
 
 `BackupRequest::physical_archive()` is the same-version clone/export path for
-native roots. Direct and server mode enter PostgreSQL backup mode with
+native database instances. Direct and server mode enter PostgreSQL backup mode with
 `pg_backup_start`, archive the `pgdata` tree, then write PostgreSQL's generated
 `backup_label` and `tablespace_map` from `pg_backup_stop` into the archive. WAL
 is collected after `pg_backup_stop`, making the archive self-contained for
@@ -265,10 +292,10 @@ physical archives through the SDK instead of exposing tar layout details to
 applications. Restore is staged in a sibling directory, rejects path traversal
 and unsafe archive entries, extracts only through validated canonical archive
 paths, validates archive tree shape before writing staging files, validates the
-required `pgdata` recovery files, and refuses to overwrite an existing root
+required `pgdata` recovery files, and refuses to overwrite an existing destination
 unless the request uses `replace_existing()`. Physical
 archives are deliberately concrete and
-single-root: they contain only regular files and directories under `pgdata`, so
+single-instance: they contain only regular files and directories under `pgdata`, so
 links, device nodes, FIFOs, sockets, sparse/special tar records, and external
 tablespace indirection fail instead of producing a non-portable mobile/Desktop
 artifact.
@@ -284,7 +311,7 @@ use oliphaunt::{BackupRequest, Oliphaunt, RestoreRequest};
 
 # async fn backup_restore() -> oliphaunt::Result<()> {
 let source = Oliphaunt::builder()
-    .path(".liboliphaunt-source")
+    .directory(".liboliphaunt-source")
     .native_direct()
     .open()
     .await?;
@@ -305,7 +332,7 @@ Oliphaunt::restore(RestoreRequest::physical_archive(
 
 Direct mode is a serialized single physical PostgreSQL session. Broker mode is
 process-isolated but still serializes one physical backend session per opened
-root. Server mode is the only mode that advertises independent sessions.
+instance. Server mode is the only mode that advertises independent sessions.
 `Oliphaunt` is cloneable as an SDK handle, but every clone shares the same owner
 executor, session pin, cancellation handle, and close state. Cloning a handle
 never creates an independent PostgreSQL connection; in `NativeServer`, true
@@ -326,7 +353,7 @@ native CancelRequest packet.
 
 `Oliphaunt::close()` rejects queued work with `EngineStopped`. For native direct it
 logically detaches the SDK handle and keeps the resident PostgreSQL backend
-alive for same-root reopen; terminal PostgreSQL shutdown is not part of ordinary
+alive for same-instance reopen; terminal PostgreSQL shutdown is not part of ordinary
 SDK close.
 
 <!-- liboliphaunt-doc-example:rust-basic-query -->
@@ -335,7 +362,7 @@ use oliphaunt::Oliphaunt;
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .open()
     .await?;
