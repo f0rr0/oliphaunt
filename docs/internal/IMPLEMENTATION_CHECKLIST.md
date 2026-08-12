@@ -324,9 +324,9 @@ intentionally not maintained here.
   changelogs, and tags. Evidence: `release-please-config.json` and
   `.release-please-manifest.json`.
 - [x] Product-local `release.toml` files own registry/package metadata.
-  Evidence: `tools/release/release_graph_query.mjs product-configs` and
-  `registry-packages` expose product-local package metadata from the canonical
-  Bun release graph.
+  Release code imports it directly from `release-graph.mjs` and
+  `release-artifact-targets.mjs`; the workflow query wrapper exposes only the
+  four projections consumed across process boundaries.
 - [x] There is no active `release-graph.toml`, `release-inputs.toml`, or
   `tools/graph/jobs.toml` release brain.
 - [x] `tools/dev/bun.sh tools/release/release_plan.mjs` uses Moon project ownership and dependency

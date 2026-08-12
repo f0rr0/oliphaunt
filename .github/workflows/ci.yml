@@ -1114,7 +1114,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-native-extension-proof-linux-x64-gnu
-          path: target/native-extension-proof/oliphaunt-native-extension-proof
+          path: |
+            target/native-extension-proof/oliphaunt-native-extension-proof
+            target/native-extension-proof/oliphaunt-rust-release-consumer
           if-no-files-found: error
 
   broker-runtime:
@@ -1849,6 +1851,15 @@ jobs:
         with:
           name: oliphaunt-native-extension-proof-linux-x64-gnu
           path: target/native-extension-lifecycle/input/proof-runner
+
+      - name: Run packed Rust release consumer
+        if: ${{ matrix.shard == 0 }}
+        run: |
+          chmod 0755 \
+            target/native-extension-lifecycle/input/proof-runner/oliphaunt-rust-release-consumer
+          src/sdks/rust/tools/check-release-consumer.sh run \
+            target/native-extension-lifecycle/input/proof-runner/oliphaunt-rust-release-consumer \
+            target/native-extension-lifecycle/input/runtime
 
       - name: Run planned native extension lifecycle proof
         id: native_extension_lifecycle

@@ -624,7 +624,7 @@ jobs:
             --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Download WASIX runtime build artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
@@ -632,7 +632,7 @@ jobs:
         run: bun .github/scripts/download-wasix-runtime-build-artifacts.mjs
 
       - name: Download WASIX release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -691,7 +691,7 @@ jobs:
           done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
 
       - name: Download liboliphaunt release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -707,28 +707,28 @@ jobs:
             --artifact liboliphaunt-native-release-assets
 
       - name: Set up Deno for TypeScript JSR consumer checks
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         uses: ./.github/actions/setup-deno
         with:
           deno-version: ${{ env.DENO_VERSION }}
 
       - name: Set up Bun for TypeScript npm consumer checks
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install TypeScript release tooling
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         run: pnpm install --frozen-lockfile
 
       - name: Download native helper release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.release_plan.outputs.product_oliphaunt_broker == 'true' || steps.release_plan.outputs.product_oliphaunt_node_direct == 'true') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PRODUCT_OLIPHAUNT_BROKER: ${{ steps.release_plan.outputs.product_oliphaunt_broker }}
-          PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ steps.release_plan.outputs.product_oliphaunt_node_direct }}
+          PRODUCT_OLIPHAUNT_BROKER: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
+          PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
@@ -762,7 +762,7 @@ jobs:
           fi
 
       - name: Download Node direct optional npm packages
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -782,7 +782,7 @@ jobs:
             "${artifact_args[@]}"
 
       - name: Freeze canonical Apple extension carrier input
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.release_plan.outputs.product_oliphaunt_swift == 'true' || steps.release_plan.outputs.product_oliphaunt_react_native == 'true') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native')) }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
@@ -968,7 +968,7 @@ jobs:
 
       - name: Prove the exact SwiftPM source tag is remotely collision-free
         id: preflight_swift_source_tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_swift == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
         timeout-minutes: 2
         run: |
           tools/dev/bun.sh tools/release/preflight-swiftpm-source-tag.mjs \
@@ -1149,14 +1149,14 @@ jobs:
           subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_2 }}
 
       - name: Reserve liboliphaunt attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "liboliphaunt native attestation"
           tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "liboliphaunt native attestation API attempt"
 
       - name: Attest liboliphaunt release assets
         id: attest_liboliphaunt_native
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
         timeout-minutes: 5
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
@@ -1170,21 +1170,21 @@ jobs:
 
       - name: Publish Swift SDK GitHub release and SwiftPM tags
         id: publish_swift_source_tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_swift == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') }}
         timeout-minutes: 6
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-swift --step github-release --head-ref "$RELEASE_HEAD_SHA" --publication-lock "$PUBLICATION_LOCK_PATH"
 
       - name: Reserve broker attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "broker attestation"
           tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "broker attestation API attempt"
 
       - name: Attest broker release assets
         id: attest_broker
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
         timeout-minutes: 5
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
@@ -1194,14 +1194,14 @@ jobs:
             target/oliphaunt-broker/release-assets/*.sha256
 
       - name: Reserve Node direct attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "Node direct attestation"
           tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "Node direct attestation API attempt"
 
       - name: Attest Node direct release assets
         id: attest_node_direct
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
         timeout-minutes: 5
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
@@ -1211,14 +1211,14 @@ jobs:
             target/oliphaunt-node-direct/release-assets/*.sha256
 
       - name: Reserve WASIX attestation content write
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX attestation"
           tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX attestation API attempt"
 
       - name: Attest WASIX release assets
         id: attest_wasix
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         timeout-minutes: 5
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:

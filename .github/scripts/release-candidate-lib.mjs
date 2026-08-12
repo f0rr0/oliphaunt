@@ -179,7 +179,7 @@ export function wasixEvidenceBinding(
 ) {
   const expectedRunId = Number.parseInt(String(runId), 10);
   positiveInteger(expectedRunId, "expected evidence runId");
-  positiveInteger(runAttempt, "expected evidence runAttempt");
+  positiveInteger(runAttempt, "candidate runAttempt");
   const root = path.resolve(evidenceRoot);
   const { file, value: evidence, bytes } = findEvidenceRun(root);
   same(evidence.status, "passed", "WASIX evidence status");
@@ -190,7 +190,13 @@ export function wasixEvidenceBinding(
   same(evidence.github?.repository, repository, "WASIX evidence GitHub repository");
   same(evidence.github?.workflow, workflow, "WASIX evidence GitHub workflow");
   same(evidence.github?.runId, expectedRunId, "WASIX evidence GitHub runId");
-  same(evidence.github?.runAttempt, runAttempt, "WASIX evidence GitHub runAttempt");
+  positiveInteger(evidence.github?.runAttempt, "WASIX evidence GitHub runAttempt");
+  // A failed-job rerun preserves successful run-level artifacts from an
+  // earlier attempt. Accept that immutable evidence, but never future evidence.
+  assert(
+    evidence.github.runAttempt <= runAttempt,
+    `WASIX evidence GitHub runAttempt must not be newer than the candidate attempt: expected at most ${runAttempt}, got ${evidence.github.runAttempt}`,
+  );
   same(evidence.github?.job, "wasix-release-regression", "WASIX evidence GitHub job");
 
   assert(Array.isArray(evidence.results) && evidence.results.length > 0, "WASIX evidence results must be non-empty");

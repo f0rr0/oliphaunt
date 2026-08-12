@@ -965,6 +965,11 @@ function parseArgs(argv) {
   return args;
 }
 
+export function sharedContribBootstrapRequired(transitions, discoverCandidates) {
+  if (transitions.length > 0) return false;
+  return discoverCandidates().length > 0;
+}
+
 async function main(argv) {
   const args = parseArgs(argv);
   const changes = [];
@@ -974,19 +979,25 @@ async function main(argv) {
   if (args.bootstrapSharedContrib && transitions.length > 0) {
     fail("--bootstrap-shared-contrib requires main release state with no existing manifest transition");
   }
+  if (args.sharedContribStatus) {
+    const required = sharedContribBootstrapRequired(
+      transitions,
+      () => sharedContribReleaseCandidates(ROOT, graph, [], {
+        headRef: "HEAD",
+        prefix: PREFIX,
+      }),
+    );
+    console.log(`required=${String(required)}`);
+    return;
+  }
   const bridgeSharedContrib = transitions.length > 0
-    || args.bootstrapSharedContrib
-    || args.sharedContribStatus;
+    || args.bootstrapSharedContrib;
   const sharedContribCandidates = bridgeSharedContrib
     ? sharedContribReleaseCandidates(ROOT, graph, transitions, {
       headRef: transitions.length > 0 ? "HEAD^" : "HEAD",
       prefix: PREFIX,
     })
     : [];
-  if (args.sharedContribStatus) {
-    console.log(`required=${String(sharedContribCandidates.length > 0)}`);
-    return;
-  }
   if (args.bootstrapSharedContrib && sharedContribCandidates.length === 0) {
     fail("--bootstrap-shared-contrib found no unreleased shared contrib source change");
   }

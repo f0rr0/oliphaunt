@@ -94,9 +94,10 @@ function commitsAffecting(root, baseRef, headRef, inputs, prefix) {
 
 /**
  * Bridge the one shared source tree that Release Please cannot assign to two
- * package paths. Existing runtime candidates keep their Release Please bump;
- * missing owners receive the conventional-commit bump inferred from the
- * shared byte inputs.
+ * package paths. Existing runtime candidates merge the shared-source reasons
+ * into their Release Please entry and are promoted when that bump is too
+ * small; missing owners receive the conventional-commit bump inferred from
+ * the shared byte inputs.
  */
 export function sharedContribReleaseCandidates(
   root,
@@ -132,28 +133,31 @@ export function sharedContribReleaseCandidates(
     const requiredIntent = reasons
       .map(({ intent }) => intent)
       .sort((left, right) => INTENT_RANK[right] - INTENT_RANK[left])[0];
+    const changelogSection = reasons.some(({ type, intent }) => type === "feat" || intent !== "patch")
+      ? "Features"
+      : "Bug Fixes";
+    const requiredAfter = bumpVersion(before, requiredIntent, `${owner} current version`, prefix);
 
     if (transition !== undefined) {
       const actualIntent = transitionIntent(transition.before, transition.after, owner, prefix);
-      if (INTENT_RANK[actualIntent] < INTENT_RANK[requiredIntent]) {
-        throw transitionError(
-          prefix,
-          `${owner} Release Please candidate ${transition.before} -> ${transition.after} is smaller than the ` +
-            `${requiredIntent} bump required by shared contrib source commits`,
-        );
-      }
+      candidates.push({
+        product: owner,
+        packagePath: product.path,
+        before: transition.after,
+        after: INTENT_RANK[actualIntent] < INTENT_RANK[requiredIntent] ? requiredAfter : transition.after,
+        changelogMode: "merge-existing",
+        changelogSection,
+        reasons,
+      });
       continue;
     }
 
-    const after = bumpVersion(before, requiredIntent, `${owner} current version`, prefix);
     candidates.push({
       product: owner,
       packagePath: product.path,
       before,
-      after,
-      changelogSection: reasons.some(({ type, intent }) => type === "feat" || intent !== "patch")
-        ? "Features"
-        : "Bug Fixes",
+      after: requiredAfter,
+      changelogSection,
       reasons,
     });
   }

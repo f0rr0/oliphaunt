@@ -278,7 +278,7 @@ test("a pre-1.0 breaking contrib commit requires a minor runtime bump", (t) => {
   );
 });
 
-test("an existing sufficient native bump is preserved while WASIX is bridged", (t) => {
+test("an existing sufficient runtime bump is preserved and receives the shared reasons", (t) => {
   const root = fixture(t, V1);
   writeCarrierDescriptor(root);
   commit(root, "refactor(release): define runtime-owned contrib carriers");
@@ -299,8 +299,68 @@ test("an existing sufficient native bump is preserved while WASIX is bridged", (
         after: "1.1.0",
       }],
       { prefix: "transition-test" },
-    ).map(({ product, before, after }) => ({ product, before, after })),
-    [{ product: "liboliphaunt-wasix", before: "1.0.0", after: "1.1.0" }],
+    ).map(({ product, before, after, changelogMode, reasons }) => ({
+      product,
+      before,
+      after,
+      changelogMode,
+      reasonSummaries: reasons.map(({ summary }) => summary),
+    })),
+    [
+      {
+        product: "liboliphaunt-native",
+        before: "1.1.0",
+        after: "1.1.0",
+        changelogMode: "merge-existing",
+        reasonSummaries: ["add a bundled SQL capability"],
+      },
+      {
+        product: "liboliphaunt-wasix",
+        before: "1.0.0",
+        after: "1.1.0",
+        changelogMode: undefined,
+        reasonSummaries: ["add a bundled SQL capability"],
+      },
+    ],
+  );
+});
+
+test("an insufficient runtime candidate is promoted to the shared-source intent", (t) => {
+  const root = fixture(t, V1);
+  writeCarrierDescriptor(root);
+  commit(root, "refactor(release): define runtime-owned contrib carriers");
+  git(root, "tag", "liboliphaunt-native-v1.0.0");
+  git(root, "tag", "liboliphaunt-wasix-v1.0.0");
+  writeFileSync(path.join(root, "src/extensions/contrib/postgres18.toml"), contribManifest("18.5"));
+  commit(root, "feat(contrib): add a bundled SQL capability");
+  const versions = { ...V1, "liboliphaunt-native": "1.0.1" };
+
+  assert.deepEqual(
+    sharedContribReleaseCandidates(
+      root,
+      runtimeGraph(versions),
+      [{
+        product: "liboliphaunt-native",
+        packagePath: PRODUCT_PATHS["liboliphaunt-native"],
+        before: "1.0.0",
+        after: "1.0.1",
+      }],
+      { prefix: "transition-test" },
+    ).map(({ product, before, after, changelogMode }) => ({ product, before, after, changelogMode })),
+    [
+      {
+        product: "liboliphaunt-native",
+        before: "1.0.1",
+        after: "1.1.0",
+        changelogMode: "merge-existing",
+      },
+      {
+        product: "liboliphaunt-wasix",
+        before: "1.0.0",
+        after: "1.1.0",
+        changelogMode: undefined,
+      },
+    ],
   );
 });
 

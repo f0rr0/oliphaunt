@@ -178,6 +178,26 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  release-consumer-build:
+    tags: ["release", "runtime", "ci-rust-sdk-package"]
+    command: >-
+      src/sdks/rust/tools/check-release-consumer.sh build
+      target/sdk-artifacts/oliphaunt-rust
+      target/native-extension-proof/oliphaunt-rust-release-consumer
+    deps:
+      - "oliphaunt-rust:package-artifacts"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-consumer-build"
+    inputs:
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/tests/release-consumer/**/*"
+      - "/src/sdks/rust/tools/check-release-consumer.sh"
+      - "/tools/dev/bun.sh"
+    outputs:
+      - "/target/native-extension-proof/oliphaunt-rust-release-consumer"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
     command: "bash src/sdks/rust/tools/check-sdk.sh release-check"

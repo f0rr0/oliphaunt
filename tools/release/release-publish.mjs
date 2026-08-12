@@ -79,7 +79,7 @@ import {
   githubReleaseAssetUploadChildEnvironment,
   writeConcurrentGithubReleaseAssetUploadReport,
 } from "./concurrent-github-release-asset-upload.mjs";
-import { loadGraph } from "./release-graph.mjs";
+import { loadGraph, releaseOrder } from "./release-graph.mjs";
 import { readSelectedRemoteTagMapSync } from "../../.github/scripts/manage-release-drafts.mjs";
 
 const TOOL = "release-publish.mjs";
@@ -305,16 +305,8 @@ function parseProductsJson(args) {
 }
 
 function releaseOrderedProducts(requested) {
-  const ordered = jsonOutput([
-    "tools/release/release_graph_query.mjs",
-    "release-order",
-    "--products-json",
-    JSON.stringify(requested),
-  ]);
-  if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
-    fail("release graph could not resolve the selected publish products");
-  }
-  return ordered;
+  const graph = loadGraph(TOOL);
+  return releaseOrder(graph.products, graph.moon_projects, requested, TOOL);
 }
 
 function publishProductStepPlan(args) {

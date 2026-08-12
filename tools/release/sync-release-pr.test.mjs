@@ -10,6 +10,7 @@ import {
   cargoManifestPaths,
   extensionEvidenceSummaryCommand,
   releaseDerivedPathInventory,
+  sharedContribBootstrapRequired,
   syncExampleCargoManifestText,
   syncLockfile,
   syncTypescriptOptionalRuntimeDependencies,
@@ -19,6 +20,27 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const SUMMARY_PATH = "src/extensions/generated/docs/extension-evidence.json";
 const CHECKER_PATH = "src/extensions/tools/check-extension-model.mjs";
 const EVIDENCE_SELF_TEST_PROCESS_TIMEOUT_MS = 15_000;
+
+test("shared contrib bootstrap is allowed only from unreleased main state", () => {
+  assert.equal(
+    sharedContribBootstrapRequired([], () => [{ product: "liboliphaunt-native" }]),
+    true,
+  );
+  assert.equal(sharedContribBootstrapRequired([], () => []), false);
+  let discoveries = 0;
+  assert.equal(
+    sharedContribBootstrapRequired(
+      [{ product: "liboliphaunt-native", before: "0.1.0", after: "0.1.1" }],
+      () => {
+        discoveries += 1;
+        throw new Error("released main must not run shared candidate discovery");
+      },
+    ),
+    false,
+    "a released or pending main transition must not seed another release PR",
+  );
+  assert.equal(discoveries, 0);
+});
 
 test("release sync selects the narrow evidence-summary mutation", () => {
   assert.deepEqual(extensionEvidenceSummaryCommand({ write: true }), [

@@ -512,6 +512,14 @@ function reasonText(reason) {
   throw error("release-dependent-candidates", `unsupported dependent release reason ${reason.kind}`);
 }
 
+function changelogContent(candidate) {
+  const sharedSource = candidate.reasons.every((reason) => reason.kind === "shared-source");
+  const section = sharedSource ? (candidate.changelogSection ?? "Bug Fixes") : "Dependencies";
+  const label = sharedSource ? "contrib" : "dependencies";
+  const bullets = candidate.reasons.map((reason) => `* **${label}:** ${reasonText(reason)}`);
+  return { bullets, section };
+}
+
 function updateChangelog(text, candidate, context, prefix) {
   const lines = text.split(/\r?\n/u);
   if (lines.some((line) => changelogHeadingVersion(line) === candidate.after)) {
@@ -524,13 +532,8 @@ function updateChangelog(text, candidate, context, prefix) {
     );
   }
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
-  const sharedSource = candidate.reasons.every((reason) => reason.kind === "shared-source");
-  const section = sharedSource ? (candidate.changelogSection ?? "Bug Fixes") : "Dependencies";
-  const label = sharedSource ? "contrib" : "dependencies";
-  const bullets = candidate.reasons
-    .map((reason) => `* **${label}:** ${reasonText(reason)}`)
-    .join(newline);
-  const entry = [`## ${candidate.after}`, "", `### ${section}`, "", bullets].join(newline);
+  const { bullets, section } = changelogContent(candidate);
+  const entry = [`## ${candidate.after}`, "", `### ${section}`, "", ...bullets].join(newline);
   const heading = /^# [^\r\n]+(?:\r?\n|$)/u.exec(text);
   if (heading === null) {
     return `${entry}${newline}${newline}${text}`;
@@ -539,7 +542,56 @@ function updateChangelog(text, candidate, context, prefix) {
   return `${heading[0]}${newline}${entry}${newline}${newline}${remainder}`;
 }
 
-function stageFile(root, relativePath, updated, detail, changes, prefix) {
+function mergeExistingChangelog(text, candidate, context, prefix) {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/u);
+  const releaseHeadings = lines
+    .map((line, index) => ({ index, version: changelogHeadingVersion(line) }))
+    .filter(({ version }) => version !== undefined);
+  const matches = releaseHeadings.filter(({ version }) => version === candidate.before);
+  if (matches.length !== 1) {
+    throw error(prefix, `${context} must contain exactly one release heading for ${candidate.before}`);
+  }
+  if (
+    candidate.before !== candidate.after
+    && releaseHeadings.some(({ version }) => version === candidate.after)
+  ) {
+    throw error(prefix, `${context} already contains release heading ${candidate.after}`);
+  }
+
+  const releaseStart = matches[0].index;
+  const releaseEnd = releaseHeadings.find(({ index }) => index > releaseStart)?.index ?? lines.length;
+  if (candidate.before !== candidate.after) {
+    lines[releaseStart] = lines[releaseStart].replaceAll(candidate.before, candidate.after);
+  }
+
+  const { bullets, section } = changelogContent(candidate);
+  const releaseLines = lines.slice(releaseStart, releaseEnd);
+  const missingBullets = bullets.filter((bullet) => !releaseLines.includes(bullet));
+  if (missingBullets.length === 0) return lines.join(newline);
+
+  const sectionHeading = `### ${section}`;
+  const sectionMatches = lines
+    .slice(releaseStart + 1, releaseEnd)
+    .map((line, index) => ({ index: releaseStart + index + 1, line }))
+    .filter(({ line }) => line === sectionHeading);
+  if (sectionMatches.length > 1) {
+    throw error(prefix, `${context} release ${candidate.before} contains duplicate ${sectionHeading} sections`);
+  }
+  if (sectionMatches.length === 1) {
+    let insertAt = sectionMatches[0].index + 1;
+    while (insertAt < releaseEnd && lines[insertAt] === "") insertAt += 1;
+    lines.splice(insertAt, 0, ...missingBullets);
+    return lines.join(newline);
+  }
+
+  let insertAt = releaseEnd;
+  while (insertAt > releaseStart + 1 && lines[insertAt - 1] === "") insertAt -= 1;
+  lines.splice(insertAt, 0, "", sectionHeading, "", ...missingBullets);
+  return lines.join(newline);
+}
+
+function stageFileIfChanged(root, relativePath, updated, detail, changes, prefix) {
   const absoluteRoot = path.resolve(root);
   const absolute = path.resolve(root, relativePath);
   if (absolute !== absoluteRoot && !absolute.startsWith(`${absoluteRoot}${path.sep}`)) {
@@ -548,8 +600,15 @@ function stageFile(root, relativePath, updated, detail, changes, prefix) {
   if (!existsSync(absolute)) throw error(prefix, `missing ${relativePath}`);
   const before = readFileSync(absolute, "utf8");
   const next = updated(before);
-  if (next === before) throw error(prefix, `${relativePath} did not change while applying ${detail}`);
+  if (next === before) return false;
   changes.push({ path: absolute, detail, text: next });
+  return true;
+}
+
+function stageFile(root, relativePath, updated, detail, changes, prefix) {
+  if (!stageFileIfChanged(root, relativePath, updated, detail, changes, prefix)) {
+    throw error(prefix, `${relativePath} did not change while applying ${detail}`);
+  }
 }
 
 function packagesByProduct(releasePleaseConfig, prefix) {
@@ -589,6 +648,16 @@ export function synchronizeReleaseCandidates({
   const nextManifest = { ...manifestObject };
   const manifestDetails = [];
   for (const candidate of candidates) {
+    const mergeExisting = candidate.changelogMode === "merge-existing";
+    if (candidate.changelogMode !== undefined && !mergeExisting) {
+      throw error(
+        prefix,
+        `${candidate.product} has unsupported changelog mode ${JSON.stringify(candidate.changelogMode)}`,
+      );
+    }
+    if (candidate.before === candidate.after && !mergeExisting) {
+      throw error(prefix, `${candidate.product} release candidate does not advance from ${candidate.before}`);
+    }
     const packageInfo = packages.get(candidate.product);
     if (packageInfo === undefined) {
       throw error(prefix, `${candidate.product} is missing from release-please-config.json`);
@@ -607,37 +676,39 @@ export function synchronizeReleaseCandidates({
         `${candidate.product} manifest contains ${JSON.stringify(nextManifest[packagePath])}, expected ${candidate.before}`,
       );
     }
-    nextManifest[packagePath] = candidate.after;
-    manifestDetails.push(`${candidate.product} ${candidate.before} -> ${candidate.after}`);
+    if (candidate.before !== candidate.after) {
+      nextManifest[packagePath] = candidate.after;
+      manifestDetails.push(`${candidate.product} ${candidate.before} -> ${candidate.after}`);
 
-    const descriptors = packageDescriptors(
-      candidate.product,
-      graph.products[candidate.product],
-      packagePath,
-      packageConfig,
-      prefix,
-    );
-    for (const descriptor of descriptors) {
-      const detail = `${candidate.product} dependent candidate ${candidate.before} -> ${candidate.after}`;
-      stageFile(
-        root,
-        descriptor.path,
-        (text) => {
-          if (descriptor.type === "raw") {
-            return replaceRaw(text, candidate.before, candidate.after, descriptor.path, prefix);
-          }
-          if (descriptor.type === "json") {
-            return replaceJson(text, descriptor.parts, candidate.before, candidate.after, descriptor.path, prefix);
-          }
-          if (descriptor.type === "toml") {
-            return replaceToml(text, descriptor.parts, candidate.before, candidate.after, descriptor.path, prefix);
-          }
-          return replaceGeneric(text, candidate.before, candidate.after, descriptor.path, prefix);
-        },
-        detail,
-        changes,
+      const descriptors = packageDescriptors(
+        candidate.product,
+        graph.products[candidate.product],
+        packagePath,
+        packageConfig,
         prefix,
       );
+      for (const descriptor of descriptors) {
+        const detail = `${candidate.product} dependent candidate ${candidate.before} -> ${candidate.after}`;
+        stageFile(
+          root,
+          descriptor.path,
+          (text) => {
+            if (descriptor.type === "raw") {
+              return replaceRaw(text, candidate.before, candidate.after, descriptor.path, prefix);
+            }
+            if (descriptor.type === "json") {
+              return replaceJson(text, descriptor.parts, candidate.before, candidate.after, descriptor.path, prefix);
+            }
+            if (descriptor.type === "toml") {
+              return replaceToml(text, descriptor.parts, candidate.before, candidate.after, descriptor.path, prefix);
+            }
+            return replaceGeneric(text, candidate.before, candidate.after, descriptor.path, prefix);
+          },
+          detail,
+          changes,
+          prefix,
+        );
+      }
     }
 
     const changelog = packageRelative(
@@ -653,24 +724,28 @@ export function synchronizeReleaseCandidates({
           `does not match release-please changelog ${JSON.stringify(changelog)}`,
       );
     }
+    const update = mergeExisting
+      ? (text) => mergeExistingChangelog(text, candidate, changelog, prefix)
+      : (text) => updateChangelog(text, candidate, changelog, prefix);
+    const detail = `${candidate.product} ${mergeExisting ? "shared-source" : "dependency-only"} changelog ` +
+      `for ${candidate.after}`;
+    if (mergeExisting) {
+      stageFileIfChanged(root, changelog, update, detail, changes, prefix);
+    } else {
+      stageFile(root, changelog, update, detail, changes, prefix);
+    }
+  }
+
+  if (manifestDetails.length > 0) {
     stageFile(
       root,
-      changelog,
-      (text) => updateChangelog(text, candidate, changelog, prefix),
-      `${candidate.product} dependency-only changelog for ${candidate.after}`,
+      ".release-please-manifest.json",
+      () => `${JSON.stringify(nextManifest, null, 2)}\n`,
+      manifestDetails.join("; "),
       changes,
       prefix,
     );
   }
-
-  stageFile(
-    root,
-    ".release-please-manifest.json",
-    () => `${JSON.stringify(nextManifest, null, 2)}\n`,
-    manifestDetails.join("; "),
-    changes,
-    prefix,
-  );
   const duplicatePaths = changes
     .map(({ path: file }) => file)
     .filter((file, index, files) => files.indexOf(file) !== index);

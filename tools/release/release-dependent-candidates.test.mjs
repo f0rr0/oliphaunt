@@ -253,6 +253,51 @@ function read(root, relative) {
   return readFileSync(path.join(root, relative), "utf8");
 }
 
+function singleProductRelease(root, version, changelog) {
+  const packagePath = "packages/native";
+  const graph = {
+    products: {
+      [NATIVE]: {
+        path: packagePath,
+        version,
+        version_files: [`${packagePath}/VERSION`],
+        changelog_path: `${packagePath}/CHANGELOG.md`,
+      },
+    },
+  };
+  const releasePleaseConfig = {
+    packages: {
+      [packagePath]: {
+        component: NATIVE,
+        "release-type": "simple",
+        "version-file": "VERSION",
+        "changelog-path": "CHANGELOG.md",
+      },
+    },
+  };
+  const manifest = { [packagePath]: version };
+  write(root, `${packagePath}/VERSION`, `${version}\n`);
+  write(root, `${packagePath}/CHANGELOG.md`, changelog);
+  write(root, ".release-please-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+  return { graph, manifest, packagePath, releasePleaseConfig };
+}
+
+function sharedSourceCandidate(packagePath, before, after) {
+  return {
+    product: NATIVE,
+    packagePath,
+    before,
+    after,
+    changelogMode: "merge-existing",
+    changelogSection: "Features",
+    reasons: [{
+      kind: "shared-source",
+      commit: "1234567890abcdef",
+      summary: "add a bundled SQL capability",
+    }],
+  };
+}
+
 test("shared-source candidates reuse the release writer with an outcome-specific changelog", (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-shared-contrib-candidate-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -307,6 +352,118 @@ test("shared-source candidates reuse the release writer with an outcome-specific
   assert.match(
     read(root, `${packagePath}/CHANGELOG.md`),
     /### Bug Fixes[\s\S]*\* \*\*contrib:\*\* shared contrib carrier source: update PostgreSQL source baseline \(12345678\)/u,
+  );
+});
+
+test("shared-source reasons merge into an existing sufficient release without changing its version", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-shared-contrib-merge-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const state = singleProductRelease(
+    root,
+    "1.1.0",
+    [
+      "# Changelog",
+      "",
+      "## [1.1.0](https://example.test/compare/v1.0.0...v1.1.0) (2026-08-12)",
+      "",
+      "### Features",
+      "",
+      "* **native:** preserve the existing runtime fix",
+      "",
+      "## 1.0.0",
+      "",
+    ].join("\n"),
+  );
+  const candidate = sharedSourceCandidate(state.packagePath, "1.1.0", "1.1.0");
+  const synchronize = (writeChanges) => synchronizeReleaseCandidates({
+    root,
+    graph: state.graph,
+    candidates: [candidate],
+    releasePleaseConfig: state.releasePleaseConfig,
+    manifest: state.manifest,
+    write: writeChanges,
+    prefix: "shared-source-merge-test",
+  });
+
+  assert.deepEqual(
+    synchronize(false).map(({ path: file }) => path.relative(root, file)),
+    [`${state.packagePath}/CHANGELOG.md`],
+  );
+  synchronize(true);
+
+  assert.equal(read(root, `${state.packagePath}/VERSION`), "1.1.0\n");
+  assert.deepEqual(JSON.parse(read(root, ".release-please-manifest.json")), state.manifest);
+  assert.match(
+    read(root, `${state.packagePath}/CHANGELOG.md`),
+    /## \[1\.1\.0\][\s\S]*### Features[\s\S]*\* \*\*contrib:\*\* shared contrib carrier source: add a bundled SQL capability \(12345678\)/u,
+  );
+  assert.match(
+    read(root, `${state.packagePath}/CHANGELOG.md`),
+    /\* \*\*native:\*\* preserve the existing runtime fix/u,
+  );
+  assert.deepEqual(synchronize(false), [], "re-running the merge is idempotent");
+});
+
+test("shared-source promotion retitles an existing release and preserves its changelog", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-shared-contrib-promote-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const state = singleProductRelease(
+    root,
+    "1.0.1",
+    [
+      "# Changelog",
+      "",
+      "## [1.0.1](https://example.test/compare/v1.0.0...v1.0.1) (2026-08-12)",
+      "",
+      "### Bug Fixes",
+      "",
+      "* **native:** preserve the existing runtime fix",
+      "",
+      "## 1.0.0",
+      "",
+    ].join("\n"),
+  );
+  const candidate = sharedSourceCandidate(state.packagePath, "1.0.1", "1.1.0");
+
+  synchronizeReleaseCandidates({
+    root,
+    graph: state.graph,
+    candidates: [candidate],
+    releasePleaseConfig: state.releasePleaseConfig,
+    manifest: state.manifest,
+    write: true,
+    prefix: "shared-source-promotion-test",
+  });
+
+  assert.equal(read(root, `${state.packagePath}/VERSION`), "1.1.0\n");
+  assert.deepEqual(JSON.parse(read(root, ".release-please-manifest.json")), {
+    [state.packagePath]: "1.1.0",
+  });
+  const changelog = read(root, `${state.packagePath}/CHANGELOG.md`);
+  assert.match(
+    changelog,
+    /## \[1\.1\.0\]\(https:\/\/example\.test\/compare\/v1\.0\.0\.\.\.v1\.1\.0\) \(2026-08-12\)/u,
+  );
+  assert.doesNotMatch(changelog, /^## \[1\.0\.1\]/mu);
+  assert.match(changelog, /\* \*\*native:\*\* preserve the existing runtime fix/u);
+  assert.match(
+    changelog,
+    /### Features[\s\S]*\* \*\*contrib:\*\* shared contrib carrier source: add a bundled SQL capability \(12345678\)/u,
+  );
+
+  state.graph.products[NATIVE].version = "1.1.0";
+  state.manifest[state.packagePath] = "1.1.0";
+  assert.deepEqual(
+    synchronizeReleaseCandidates({
+      root,
+      graph: state.graph,
+      candidates: [sharedSourceCandidate(state.packagePath, "1.1.0", "1.1.0")],
+      releasePleaseConfig: state.releasePleaseConfig,
+      manifest: state.manifest,
+      prefix: "shared-source-promotion-test",
+    }),
+    [],
+    "the recomputed promoted candidate is idempotent",
   );
 });
 

@@ -57,23 +57,9 @@ function printGithubOutput(plan) {
   console.log(`has_release_changes=${String(plan.hasReleaseChanges).toLowerCase()}`);
   console.log(`has_extension_products=${String(extensionProducts.length > 0).toLowerCase()}`);
   console.log(`has_extension_artifacts=${String(extensionArtifactProducts.length > 0).toLowerCase()}`);
-  console.log(`docs_only=${String(plan.docsOnly).toLowerCase()}`);
-  console.log(`products_csv=${products.join(",")}`);
   console.log(`products_json=${JSON.stringify(products)}`);
   console.log(`extension_products_json=${JSON.stringify(extensionProducts)}`);
   console.log(`requires_wasix_release_regression_evidence=${String(wasixEvidenceProducts.length > 0).toLowerCase()}`);
-  console.log(`wasix_evidence_products_json=${JSON.stringify(wasixEvidenceProducts)}`);
-  console.log(`plan_hash=${plan.planHash}`);
-  console.log(`release_branch=${plan.releaseBranch}`);
-  for (const product of plan.productIds ?? []) {
-    const key = `product_${product.replaceAll("-", "_")}`;
-    console.log(`${key}=${String(products.includes(product)).toLowerCase()}`);
-  }
-  console.log(`direct_products_json=${JSON.stringify(plan.directProducts)}`);
-  console.log(`build_impact_products_json=${JSON.stringify(plan.buildImpactProducts ?? products)}`);
-  console.log(`required_release_products_json=${JSON.stringify(plan.requiredReleaseProducts ?? products)}`);
-  console.log(`dependency_closed=${String(plan.dependencyClosed ?? true).toLowerCase()}`);
-  console.log(`product_base_refs_json=${JSON.stringify(plan.productBaseRefs ?? {})}`);
 }
 
 function printText(plan) {

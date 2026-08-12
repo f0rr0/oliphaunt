@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import { loadPublicationCatalog, resolveActualCarrier } from "./publication-catalog.mjs";
 import {
@@ -139,28 +138,6 @@ describe("WASIX extension AOT publication carriers", () => {
       expect(actualTargets, `${product} AOT members: ${aotMembers.join(", ") || "none"}`).toEqual(
         aotMembers.length === 0 ? [] : expectedTargets,
       );
-    }
-  });
-
-  test("keeps the bulk package-name query aligned with the publication catalog", () => {
-    const result = spawnSync(
-      process.execPath,
-      ["tools/release/release_graph_query.mjs", "wasix-extension-package-names"],
-      { cwd: import.meta.dir.replace(/\/tools\/release$/u, ""), encoding: "utf8" },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const rows = JSON.parse(result.stdout);
-    const products = exactExtensionProducts("publication-catalog.test");
-    const catalog = catalogForArtifactProducts(products);
-    for (const row of rows) {
-      const expectedNames = catalog.carriers
-        .filter((carrier) =>
-          carrier.ecosystem === "cargo"
-          && carrier.role === "aot-leaf"
-          && carrier.name.startsWith(`${row.product}-aot-`))
-        .map((carrier) => carrier.name)
-        .sort();
-      expect(row.aotPackages.map(({ packageName }) => packageName).sort(), row.product).toEqual(expectedNames);
     }
   });
 
