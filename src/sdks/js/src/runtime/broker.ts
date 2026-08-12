@@ -49,11 +49,11 @@ const require = createRequire(import.meta.url);
 
 export type BrokerRuntimeBindingOptions = {
   executable?: string;
-  maxRoots?: number;
+  maxInstances?: number;
 };
 
 export type BrokerRestoreOptions = {
-  root: string;
+  destination: string;
   bytes: Uint8Array;
   replaceExisting?: boolean;
   brokerExecutable?: string;
@@ -64,22 +64,22 @@ export type BrokerRestoreOptions = {
 export function createBrokerRuntimeBinding(
   options: BrokerRuntimeBindingOptions = {},
 ): RuntimeBinding {
-  const supervisor = new BrokerRootSupervisor(options.maxRoots ?? 1);
+  const supervisor = new BrokerRootSupervisor(options.maxInstances ?? 1);
   return {
     runtime: runtimeName(),
     rawProtocolTransport: 'broker-ipc',
     protocolStream: true,
     capabilities(handle: RuntimeHandle): EngineCapabilities {
-      return brokerCapabilities(asBrokerHandle(handle).maxRoots);
+      return brokerCapabilities(asBrokerHandle(handle).maxInstances);
     },
     async open(config: NormalizedOpenConfig): Promise<BrokerHandle> {
       const executable = await resolveBrokerExecutable(
         config.brokerExecutable ?? options.executable,
       );
-      const rootLease = await supervisor.acquire(config.root);
+      const rootLease = await supervisor.acquire(config.instanceDirectory);
       let handle: BrokerHandle | undefined;
       try {
-        handle = new BrokerHandle(executable, config, rootLease, supervisor.maxRoots);
+        handle = new BrokerHandle(executable, config, rootLease, supervisor.maxInstances);
         await handle.start();
         return handle;
       } catch (error) {
@@ -117,9 +117,9 @@ export async function brokerModeSupport(options: {
   libraryPath?: string;
   runtimeDirectory?: string;
   brokerExecutable?: string;
-  brokerMaxRoots?: number;
+  brokerMaxInstances?: number;
 }): Promise<EngineModeSupport> {
-  const capabilities = brokerCapabilities(options.brokerMaxRoots ?? 1);
+  const capabilities = brokerCapabilities(options.brokerMaxInstances ?? 1);
   try {
     await resolveBrokerExecutable(options.brokerExecutable);
     await resolveBrokerNativeInstall({
@@ -149,7 +149,7 @@ export async function restorePhysicalArchiveWithBroker(
   const artifactPath = join(tempDir, 'physical-archive.tar');
   try {
     await writeFile(artifactPath, options.bytes);
-    const args = ['restore', '--root', options.root, '--artifact', artifactPath];
+    const args = ['restore', '--destination', options.destination, '--artifact', artifactPath];
     if (options.replaceExisting === true) {
       args.push('--replace-existing');
     }
@@ -160,20 +160,19 @@ export async function restorePhysicalArchiveWithBroker(
       'native broker restore',
       brokerNativeInstallEnv(nativeInstall),
     );
-    return options.root;
+    return options.destination;
   } finally {
     await removeTree(tempDir);
   }
 }
 
-export function brokerCapabilities(maxRoots: number): EngineCapabilities {
+export function brokerCapabilities(maxInstances: number): EngineCapabilities {
   return {
     engine: 'nativeBroker',
     processIsolated: true,
-    multiRoot: maxRoots > 1,
-    reopenable: true,
-    sameRootLogicalReopen: false,
-    rootSwitchable: true,
+    multipleInstances: maxInstances > 1,
+    sameInstanceLogicalReopen: false,
+    instanceSwitchable: true,
     crashRestartable: true,
     independentSessions: false,
     maxClientSessions: 1,
@@ -201,7 +200,7 @@ class BrokerHandle {
     readonly executable: string,
     readonly config: NormalizedOpenConfig,
     readonly rootLease: BrokerRootLease,
-    readonly maxRoots: number,
+    readonly maxInstances: number,
   ) {}
 
   async start(): Promise<void> {
@@ -301,8 +300,8 @@ class BrokerHandle {
     }
     await removeTree(this.#ipcDir);
     this.#ipcDir = undefined;
-    if (this.config.temporary) {
-      await removeTree(this.config.root);
+    if (this.config.temporaryDirectory) {
+      await removeTree(this.config.instanceDirectory);
     }
     this.rootLease.release();
   }
@@ -533,7 +532,7 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
 function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointPlan): string[] {
   const args = [
     '--root',
-    config.root,
+    config.instanceDirectory,
     '--bootstrap',
     'packaged-template',
     '--durability',
@@ -840,30 +839,30 @@ async function waitForChild(child: ManagedChild, timeoutMs: number): Promise<boo
 }
 
 class BrokerRootSupervisor {
-  readonly #roots = new Set<string>();
+  readonly #instances = new Set<string>();
 
-  constructor(readonly maxRoots: number) {}
+  constructor(readonly maxInstances: number) {}
 
-  async acquire(root: string): Promise<BrokerRootLease> {
-    if (this.maxRoots <= 0) {
-      throw new Error('native broker max_roots must be greater than zero');
+  async acquire(instanceDirectory: string): Promise<BrokerRootLease> {
+    if (this.maxInstances <= 0) {
+      throw new Error('native broker maxInstances must be greater than zero');
     }
-    await mkdir(root, { recursive: true });
-    const key = await canonicalPath(root);
-    if (this.#roots.has(key)) {
-      throw new Error(`native broker root ${key} is already open in this broker runtime`);
+    await mkdir(instanceDirectory, { recursive: true });
+    const key = await canonicalPath(instanceDirectory);
+    if (this.#instances.has(key)) {
+      throw new Error(`native broker instance ${key} is already open in this broker runtime`);
     }
-    if (this.#roots.size >= this.maxRoots) {
+    if (this.#instances.size >= this.maxInstances) {
       throw new Error(
-        `native broker runtime already owns ${this.#roots.size} root(s), at configured capacity ${this.maxRoots}`,
+        `native broker runtime already owns ${this.#instances.size} instance(s), at configured capacity ${this.maxInstances}`,
       );
     }
-    this.#roots.add(key);
+    this.#instances.add(key);
     return new BrokerRootLease(this, key);
   }
 
   release(key: string): void {
-    this.#roots.delete(key);
+    this.#instances.delete(key);
   }
 }
 

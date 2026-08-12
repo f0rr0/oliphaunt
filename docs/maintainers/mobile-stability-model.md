@@ -22,23 +22,23 @@ error. A native crash such as memory corruption, abort, or unhandled signal is a
 host-process crash in direct mode.
 
 Direct mode's reliability claim is crash consistency, not crash isolation. If
-the host process dies, the next app launch must reopen the same root and let
+the host process dies, the next app launch must reopen the same persistent storage and let
 PostgreSQL perform WAL recovery. Direct mode must not be documented or surfaced
 as host-app-survivable after native PostgreSQL crashes.
 
 `close()` is a logical detach in mobile direct mode. It releases the SDK handle,
 rolls back any active transaction, runs `DISCARD ALL`, and keeps the resident
-backend alive so the same root can be reopened in the same process. It is not a
-full PostgreSQL shutdown. Direct mode cannot switch to a different root after
+backend alive so the same instance can be reopened in the same process. It is not a
+full PostgreSQL shutdown. Direct mode cannot switch to a different instance after
 that resident backend exists.
 
 The SDK should make this resident-runtime model explicit with an app-scope
 manager/container. Developers should not need to discover by accident that
-`close()` does not make the process reusable for another root.
+`close()` does not make the process reusable for another instance.
 
-Temporary direct roots are therefore process-resident too. The SDKs now reuse one
-process-lifetime temporary root so `open(temporary)`, `close()`, and
-`open(temporary)` do not accidentally ask the C ABI to switch roots.
+Temporary direct storage is therefore process-resident too. The SDKs reuse one
+process-lifetime temporary directory so a default `open()`, `close()`, and
+default `open()` do not accidentally ask the C ABI to switch instances.
 
 React Native `protocolStream` means true chunked native streaming through JSI.
 If the installed JSI transport only has owned-response `execProtocolRaw`,
@@ -63,7 +63,7 @@ only a short background window before suspension. App extensions do run in
 separate processes, and ExtensionFoundation exposes host-launched app-extension
 processes with XPC connections on iOS 26+, but this is not the same thing as a
 macOS helper service or Android service process. It likely starts as a
-single-root broker because one app-extension identity maps to one running
+single-instance broker because one app-extension identity maps to one running
 process and the embedded PostgreSQL runtime is still process-wide. Until that
 feasibility track passes on real devices, iOS direct mode must be honest: fast
 and ergonomic, not crash isolated.
@@ -84,7 +84,7 @@ explicit:
 - one resident backend per app process;
 - one physical session;
 - serialized requests;
-- same-root logical reopen only;
+- same-instance logical reopen only;
 - no true independent concurrent sessions;
 - no crash isolation;
 - backgrounding is handled by checkpoint/cancel/close guidance, not by keeping
@@ -95,7 +95,7 @@ ExtensionFoundation/AppExtensionProcess only if device/App Store testing proves
 the extension lifecycle, crash/reconnect behavior, memory ceiling, background
 behavior, App Group storage model, and XPC throughput are acceptable. If that
 feasibility fails, iOS remains direct plus server unavailable. Even if it
-succeeds, it must not advertise desktop-style multi-root broker semantics until
+succeeds, it must not advertise desktop-style multi-instance broker semantics until
 worker multiplicity is proven.
 
 The product must fail closed here: if the iOS broker extension target, App Group,
@@ -106,17 +106,17 @@ unavailable. It must not silently alias to direct mode.
 
 Add `NativeBroker` as the recommended robust Android mode:
 
-- a bound service in `:liboliphaunt` owns roots and direct C ABI handles;
+- a bound service in `:liboliphaunt` owns database instances and direct C ABI handles;
 - app/RN process talks to it over Binder;
-- one worker per root, serialized per root;
+- one worker per instance, serialized per instance;
 - service crash is observed through binder death, then the SDK reconnects and
-  reopens the root after WAL recovery;
+  reopens the instance after WAL recovery;
 - in-flight requests fail with unknown commit state unless the SDK has an
   explicit idempotent replay envelope;
 - `NativeServer` is separate and only for true PostgreSQL client sessions.
 
-The direct Android mode remains the fastest single-session path and the fallback
-where apps do not want a service process.
+The direct Android mode remains the fastest single-session path for apps that
+do not want a service process.
 
 ### React Native
 
@@ -139,7 +139,7 @@ it through Swift.
 1. Add Android `NativeBroker` with a remote-process bound service and binder
    death/reconnect tests.
 2. Run an iOS 26+ ExtensionFoundation broker feasibility spike on real devices
-   and document whether App Store-safe single-root process isolation is viable.
+   and document whether App Store-safe single-instance process isolation is viable.
 3. Add mobile crash drills: direct-mode controlled backend exit, Android broker
    service kill/reconnect, app background/foreground with long query
    cancellation, and WAL recovery after process death.

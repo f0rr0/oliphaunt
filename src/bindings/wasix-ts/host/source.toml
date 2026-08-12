@@ -1,0 +1,24 @@
+[wasmer-js]
+name = "@wasmer/sdk"
+version = "0.10.0"
+url = "https://github.com/wasmerio/wasmer-js.git"
+commit = "93b8b738ebd3ee57e118da0f0eb795b97d5b999e"
+
+[wasmer-wasix]
+# @wasmer/sdk 0.10.0's exact source commit is a coherent Wasmer 6.1 /
+# wasmer-wasix 0.601 dependency family. wasmer-wasix 0.702.1 requires Wasmer
+# 7.2.1 plus matching virtual-fs/net, config, package, backend, WebC, and
+# wasm-bindgen APIs; it is not a single-crate update for this upstream JS host.
+name = "wasmer-wasix"
+version = "0.601.0"
+url = "https://static.crates.io/crates/wasmer-wasix/wasmer-wasix-0.601.0.crate"
+sha256 = "a9a804fcfbdbbfe5b2d6fb30e741e22a21e88e964dedfea9e609f13a52823bfe"
+
+[patches]
+series = [
+  "0001-wasmer-js-run-configured-wasix-process.patch",
+  "0002-wasmer-wasix-add-0702-compatibility-imports.patch",
+  "0003-wasmer-js-install-browser-runtime-devices.patch",
+  "0004-wasmer-wasix-recover-stdio-pgwire-errors.patch",
+  "0005-wasmer-js-use-object-wasm-init.patch",
+]

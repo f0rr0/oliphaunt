@@ -56,7 +56,7 @@ provider that matches your navigation lifetime:
 import { Oliphaunt } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
-  root: 'main.oliphaunt',
+  storage: { kind: 'applicationData', name: 'main' },
   engine: 'nativeDirect',
   extensions: ['vector'],
 });
@@ -83,6 +83,8 @@ discovery signals until the React Native bridge exposes those open paths.
 ## App Responsibilities
 
 - Build with a native app binary or development client.
+- Omit `storage` for temporary work, or select `applicationData` for persistent
+  app data without constructing platform-specific paths.
 - Select exact SQL extension names so only selected extension artifacts and
   declared dependencies enter the iOS or Android app artifact.
 - Call lifecycle hooks around background and foreground transitions.

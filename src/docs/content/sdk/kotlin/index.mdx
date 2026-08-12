@@ -20,15 +20,15 @@ Add the Android package to your app:
 ```kotlin
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.0"
+    id("dev.oliphaunt.android") version "0.1.1"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.1.0")
+    implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
 }
 
 oliphaunt {
-    extensions.add("vector")
+    selectedExtensions.add("vector")
 }
 ```
 
@@ -42,14 +42,17 @@ Open a database from a coroutine:
 
 ```kotlin
 import dev.oliphaunt.EngineMode
+import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.OliphauntAndroid
 import dev.oliphaunt.OliphauntConfig
 
 val database = OliphauntAndroid.open(
     context = applicationContext,
     config = OliphauntConfig(
-        root = applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
         mode = EngineMode.NativeDirect,
+        storage = DatabaseStorage.Directory(
+            applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
+        ),
         extensions = listOf("vector"),
     ),
 )
@@ -76,7 +79,7 @@ first open.
 - Select exact SQL extension names at build/configuration time so the APK or AAB
   contains only selected extension artifacts and declared dependencies.
 - Use lifecycle hooks around background and foreground transitions.
-- Use SDK backup and restore APIs for archive validation and root
+- Use SDK backup and restore APIs for archive validation and destination
   materialization.
 - Check `capabilities()` before showing optional UI for streaming, backup
   formats, or additional runtime modes.

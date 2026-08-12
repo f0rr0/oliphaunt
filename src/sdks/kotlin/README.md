@@ -8,11 +8,11 @@ Central:
 ```gradle
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.0"
+    id("dev.oliphaunt.android") version "0.1.1"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.1.0")
+    implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
 }
 
 oliphaunt {
@@ -48,7 +48,7 @@ ICU collations.
 
 | SDK | Native core | Android distribution |
 | --- | --- | --- |
-| `dev.oliphaunt:oliphaunt-android` `0.1.0` | `liboliphaunt` `0.1.0` | Android AAR, Android plugin, and Maven runtime artifact packages |
+| `dev.oliphaunt:oliphaunt-android` `0.1.1` | `liboliphaunt` `0.1.1` | Android AAR, Android plugin, and Maven runtime artifact packages |
 
 The Android release lane publishes `arm64-v8a` and `x86_64` artifacts. Apps may
 restrict ABI packaging with `-PoliphauntAndroidAbiFilters=arm64-v8a` or another
@@ -77,7 +77,7 @@ db.close()
 Android SDK for the native `liboliphaunt` product line. The repository uses a
 Kotlin Multiplatform build to share API code and run host-native conformance
 tests, but the released consumer package is Android-only: the AAR, Gradle
-plugin/marker, and declared Android ABI carriers. No JVM root or Kotlin/Native
+plugin/marker, and declared Android ABI carriers. No JVM artifact or Kotlin/Native
 Maven package is published.
 
 The common API mirrors the Rust SDK shape and uses suspend functions plus a
@@ -93,20 +93,31 @@ support entries still carry canonical direct/broker/server capability semantics
 so unavailable modes are explicit and not confused with direct-mode aliases.
 Capabilities report the same product contract as Rust: raw and streaming
 protocol support, cancellation, backup/restore, simple-query execution,
-extensions, session semantics, multi-root support, and the concrete backup/restore formats
+extensions, session semantics, multiple-instance support, and the concrete backup/restore formats
 the opened mode accepts. Use `supportsBackupFormat(...)` and
 `supportsRestoreFormat(...)` on either `EngineCapabilities` or `OliphauntDatabase`
 for UI/action gating instead of manually matching lists. `backup(...)` enforces
 those capabilities before it calls the platform session, and
 `OliphauntDatabase.restore(...)` rejects unsupported restore artifact formats
-before it calls the platform engine. Lifecycle capability fields follow the Rust
-contract: `sameRootLogicalReopen`, `rootSwitchable`, and `crashRestartable`
-distinguish direct's same-root resident reopen from broker/server
-process-managed behavior. Native direct is not root-switchable or
+before it calls the platform engine. `RestoreRequest` fails when its destination
+exists by default; replacement requires an explicit `.replaceExisting()`.
+Lifecycle capability fields follow the Rust contract: `sameInstanceLogicalReopen`,
+`instanceSwitchable`, and `crashRestartable`
+distinguish direct's resident-instance reopen from broker/server
+process-managed behavior. Native direct is not instance-switchable or
 crash-restartable. Mobile direct mode has one resident backend per app process
 and one physical session. Use server mode only where the SDK reports true
 server support; it is not a crash-isolated server and it does not provide
 independent concurrent client sessions.
+
+`OliphauntConfig` defaults to `DatabaseStorage.TemporaryDirectory`, so the
+quickstart does not require a filesystem path. Android places that process-owned
+database below the application's cache directory; Kotlin/Native uses the host
+temporary directory. Native direct retains it while the process-resident
+database can be logically reopened. It is not durable storage and the operating
+system may reclaim it after process exit. Use
+`DatabaseStorage.Directory(path)` for persistence. `close()` never deletes an
+application-supplied directory.
 
 The development build uses a Kotlin Multiplatform structure: common API in
 `commonMain`, Kotlin/Native cinterop metadata under `src/nativeInterop`, Android
@@ -120,7 +131,7 @@ opens one embedded PostgreSQL backend on a dedicated owner thread, serializes
 handle-bound native work on that queue, and keeps `cancel()` outside that queue
 so long-running SQL can be interrupted. `close()` marks the handle closed, waits
 for the execution queue, and detaches the logical native session while keeping
-the resident backend alive for same-root reopen.
+the resident backend alive for same-instance reopen.
 
 Android includes a native-direct runtime over JNI with the same owner-thread
 session model.
@@ -167,9 +178,11 @@ val value = result.getText(0, "value")
 ```
 
 `query(sql)` parses normal PostgreSQL backend protocol frames into field
-metadata, rows, command tags, nulls, and structured PostgreSQL errors through
+metadata, rows, command tags, and nulls. `query`, `execute`, transaction
+statements, and `checkpoint` surface PostgreSQL failures through
 `PostgresException(PostgresError)`, preserving SQLSTATE and raw `ErrorResponse`
-fields. Multi-result-set and COPY traffic stay on `execProtocolRaw`.
+fields. Multi-result-set, COPY, and custom recovery traffic stay on the
+byte-preserving `execProtocolRaw`.
 Pass a `List<QueryParam>` for PostgreSQL extended-protocol parameters:
 
 <!-- liboliphaunt-doc-example:kotlin-parameterized-query -->
@@ -227,16 +240,16 @@ receive the base runtime and only the exact SQL extensions the app selected.
 Android app builds package runtime/template assets from Maven-resolved artifacts
 through the `dev.oliphaunt.android` plugin. Selected extensions resolve from
 exact ABI packages such as
-`dev.oliphaunt.extensions:oliphaunt-extension-vector-android-arm64-v8a:0.1.0`;
+`dev.oliphaunt.extensions:oliphaunt-extension-vector-android-arm64-v8a:0.1.1`;
 each extension package provides its own runtime artifact, Android static archive,
 and declared static dependency archives. External extensions move independently
 from the base runtime by setting their version in the plugin extension:
 
 ```gradle
 oliphaunt {
-    liboliphauntVersion.set("0.1.0")
+    liboliphauntVersion.set("0.1.1")
     selectedExtensions.add("vector")
-    extensionVersions.put("vector", "0.1.0")
+    extensionVersions.put("vector", "0.1.1")
 }
 ```
 
@@ -250,10 +263,7 @@ must exactly match the selected native-module subset. Runtime availability is
 checked against `selectedExtensions`, so module-only entries are not mistaken
 for missing resources. It rejects a selected extension when the package does
 not advertise that exact selection or reports pending mobile static-registry
-rows. Split-resource Android builds are development-only for
-module-backed extensions: they can record selected extensions and pending native
-module stems, but they cannot mark the package mobile-complete because they do
-not generate the C static-registry source. Release mobile extension artifacts include
+rows. Release mobile extension artifacts include
 `static-registry/oliphaunt_static_registry.c` when complete. The Android native
 bridge first looks for the registry in `liboliphaunt.so`, then in an optional
 `liboliphaunt_extensions.so`, and registers those rows through the loaded
@@ -293,16 +303,9 @@ library to the app's generated `jniLibs`. Configure a normal `android.ndkVersion
 extensions, or only SQL-only extensions, do not resolve or require an NDK for this
 link step. Missing, extra, cross-ABI, or undeclared archives fail before packaging.
 
-You can still pass the split directories directly:
-
-```bash
-./gradlew :oliphaunt:assembleDebug \
-  -PoliphauntRuntimeDir=/path/to/postgres-install-root \
-  -PoliphauntTemplatePgdataDir=/path/to/template-pgdata \
-  -PoliphauntExtensions=vector
-```
-
-The AAR stores them under `assets/oliphaunt/` with content-keyed manifests. At
-runtime the SDK materializes the selected runtime once under `noBackupFilesDir`
-and hydrates new PGDATA roots from the packaged template. Empty Android roots
-require a packaged template PGDATA or an existing root with `PG_VERSION`.
+The AAR stores the unified runtime resources under `assets/oliphaunt/` with
+content-keyed manifests. At runtime the SDK materializes the selected runtime
+once under `noBackupFilesDir`
+and hydrates new PGDATA directories from the packaged template. Empty Android
+storage requires a packaged template PGDATA or an existing storage directory
+whose `pgdata` child contains `PG_VERSION`.

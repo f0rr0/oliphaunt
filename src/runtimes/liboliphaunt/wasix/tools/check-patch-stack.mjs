@@ -148,6 +148,16 @@ const REQUIRED_AUDIT_CHECKS = [
     evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
     posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
   },
+  {
+    requirement: 'Browser hosts can own one blocking stdio pgwire lifecycle',
+    patches: ['0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch'],
+    evidence: [
+      'OLIPHAUNT_WASIX_STDIO_PGWIRE',
+      'oliphaunt_wasix_set_protocol_stdio(1)',
+      'ProcessStartupPacket(MyProcPort, true, true)',
+    ],
+    posture: 'Only the explicit browser host contract enters the blocking stdio path; export-pumped hosts keep their existing lifecycle.',
+  },
 ];
 
 if (!['--check', '--write'].includes(mode)) {

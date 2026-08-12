@@ -30,7 +30,7 @@ public class AndroidNativeDirectEngine(
         if (config.mode != EngineMode.NativeDirect) {
             throw OliphauntException("AndroidNativeDirectEngine supports NativeDirect, got ${config.mode}")
         }
-        validateRootPath(config.root, "database root")
+        validateDatabaseStorage(config.storage)
         validateStartupIdentity(config.username ?: username, "username")
         validateStartupIdentity(config.database ?: database, "database")
         validateStartupGucs(config.startupGucs)
@@ -39,19 +39,19 @@ public class AndroidNativeDirectEngine(
                 context = appContext,
                 explicitRuntimeDirectory =
                 runtimeDirectory
-                    ?: env("OLIPHAUNT_KOTLIN_ANDROID_RUNTIME_DIR")
                     ?: env("OLIPHAUNT_INSTALL_DIR")
                     ?: env("OLIPHAUNT_RUNTIME_DIR"),
                 requestedExtensions = config.extensions,
                 resourceRoot = resourceRoot,
             )
-        val root =
-            config.root?.let(::File)
-                ?: AndroidDirectTemporaryRoot.resolve(appContext)
-        if (!root.mkdirs() && !root.isDirectory) {
-            throw OliphauntException("failed to create database root at ${root.absolutePath}")
+        val storageDirectory = when (val storage = config.storage) {
+            DatabaseStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
+            is DatabaseStorage.Directory -> File(storage.path)
         }
-        val pgdata = File(root, "pgdata")
+        if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
+            throw OliphauntException("failed to create database storage directory at ${storageDirectory.absolutePath}")
+        }
+        val pgdata = File(storageDirectory, "pgdata")
         val executionDispatcher =
             Executors
                 .newSingleThreadExecutor { runnable ->
@@ -59,6 +59,7 @@ public class AndroidNativeDirectEngine(
                         isDaemon = true
                     }
                 }.asCoroutineDispatcher()
+        var nativeOpenAttempted = false
         try {
             OliphauntAndroidRuntimeAssets.preparePgdata(
                 assetManager = appContext.assets,
@@ -76,6 +77,7 @@ public class AndroidNativeDirectEngine(
                 )
             val nativeHandle =
                 withContext(executionDispatcher) {
+                    nativeOpenAttempted = true
                     OliphauntAndroidNativeBridge.openNative(
                         effectiveLibraryPath,
                         pgdata.absolutePath,
@@ -91,23 +93,26 @@ public class AndroidNativeDirectEngine(
             )
         } catch (error: Throwable) {
             executionDispatcher.close()
-            if (config.root == null) {
-                root.deleteRecursively()
+            // Preparation failures are safe to clean. Once control reaches the
+            // process-resident runtime, a rejected logical reopen may leave it
+            // owning the same directory.
+            if (config.storage == DatabaseStorage.TemporaryDirectory && !nativeOpenAttempted) {
+                storageDirectory.deleteRecursively()
             }
             throw error
         }
     }
 
     override suspend fun restore(request: RestoreRequest): String {
-        validateRootPath(request.root, "restore root")
+        validateDirectoryPath(request.destination, "restore destination")
         if (request.artifact.format != BackupFormat.PhysicalArchive) {
             throw OliphauntException("Kotlin Android restore currently requires PhysicalArchive, got ${request.artifact.format}")
         }
         OliphauntAndroidNativeBridge.restoreNative(
-            root = request.root,
+            destination = request.destination,
             format = request.artifact.format.wireName(),
             artifact = request.artifact.bytes,
-            replaceExisting = request.targetPolicy == RestoreTargetPolicy.ReplaceExisting,
+            replaceExisting = request.destinationPolicy == RestoreDestinationPolicy.ReplaceExisting,
             libraryPath =
             resolveAndroidLiboliphauntLibraryPath(
                 explicitLibraryPath = libraryPath,
@@ -116,17 +121,17 @@ public class AndroidNativeDirectEngine(
                 supportedAbis = Build.SUPPORTED_ABIS.asList(),
             ),
         )
-        return request.root
+        return request.destination
     }
 }
 
-private object AndroidDirectTemporaryRoot {
+private object AndroidDirectTemporaryStorage {
     @Volatile
     private var root: File? = null
 
     fun resolve(context: Context): File = synchronized(this) {
         root ?: File(
-            context.noBackupFilesDir,
+            context.cacheDir,
             "oliphaunt-direct-${Process.myPid()}-${UUID.randomUUID()}",
         ).also { root = it }
     }
@@ -139,6 +144,7 @@ private class AndroidNativeDirectSession(
     private val lock = ReentrantLock()
     private val noActiveCalls = lock.newCondition()
     private var handle: Long = nativeHandle
+    private var closing = false
     private var closed = false
     private var activeCalls = 0
 
@@ -155,10 +161,9 @@ private class AndroidNativeDirectSession(
             processIsolated = false,
             independentSessions = false,
             maxClientSessions = 1,
-            multiRoot = flags and CAP_MULTI_INSTANCE != 0L,
-            reopenable = flags and CAP_LOGICAL_REOPEN != 0L,
-            sameRootLogicalReopen = flags and CAP_LOGICAL_REOPEN != 0L,
-            rootSwitchable = false,
+            multipleInstances = flags and CAP_MULTI_INSTANCE != 0L,
+            sameInstanceLogicalReopen = flags and CAP_LOGICAL_REOPEN != 0L,
+            instanceSwitchable = false,
             crashRestartable = false,
             protocolRaw = flags and CAP_PROTOCOL_RAW != 0L,
             protocolStream = flags and CAP_PROTOCOL_STREAM != 0L,
@@ -230,13 +235,16 @@ private class AndroidNativeDirectSession(
     }
 
     override suspend fun close() {
-        val current = prepareClose() ?: return
+        val current = beginClose() ?: return
         try {
             withContext(executionDispatcher) {
                 OliphauntAndroidNativeBridge.closeNative(current)
             }
-        } finally {
+            finishClose(detached = true)
             executionDispatcher.close()
+        } catch (error: Throwable) {
+            finishClose(detached = false)
+            throw error
         }
     }
 
@@ -261,31 +269,49 @@ private class AndroidNativeDirectSession(
         }
     }
 
-    private fun prepareClose(): Long? {
+    private fun beginClose(): Long? {
         lock.lock()
         try {
             if (closed) {
                 return null
             }
-            closed = true
+            if (closing) {
+                throw OliphauntException("database close is already in progress")
+            }
+            closing = true
             val current = handle.takeIf { it != 0L }
             while (activeCalls > 0) {
                 try {
                     noActiveCalls.await()
                 } catch (error: InterruptedException) {
+                    closing = false
+                    noActiveCalls.signalAll()
                     Thread.currentThread().interrupt()
                     throw OliphauntException("interrupted while closing database")
                 }
             }
-            handle = 0
             return current
         } finally {
             lock.unlock()
         }
     }
 
+    private fun finishClose(detached: Boolean) {
+        lock.lock()
+        try {
+            if (detached) {
+                handle = 0
+                closed = true
+            }
+            closing = false
+            noActiveCalls.signalAll()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     private fun checkOpen() {
-        if (closed || handle == 0L) {
+        if (closing || closed || handle == 0L) {
             throw OliphauntException("database is closed")
         }
     }

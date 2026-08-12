@@ -1,0 +1,148 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-wasix-ts"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "sdk", "release-product"]
+dependsOn:
+  - "liboliphaunt-wasix"
+  - "shared-js-core"
+
+project:
+  title: "Oliphaunt WASIX TypeScript binding"
+  description: "Portable TypeScript WASIX binding for browser and Node workers."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-wasix-ts"
+    packagePath: "src/bindings/wasix-ts"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+  paths:
+    "**/*.ts": ["@oliphaunt/sdk-js"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "pnpm --dir src/bindings/wasix-ts typecheck"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/shared/js-core/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    command: "pnpm --dir src/bindings/wasix-ts test"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/shared/js-core/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/tools/test/run-js-tests.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package:
+    tags: ["package"]
+    command: "pnpm --dir src/bindings/wasix-ts package:check"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke-node:
+    tags: ["quality", "smoke", "node"]
+    script: |
+      pnpm --dir src/bindings/wasix-ts package:build
+      node src/bindings/wasix-ts/tools/smoke-node.mjs
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts"
+    deps:
+      - "oliphaunt-wasix-ts:smoke-node"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/sdk-artifacts/wasix-ts.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["quality", "smoke", "local-only"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  smoke-pg-uuidv7:
+    tags: ["quality", "smoke", "extension", "local-only"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser:pg-uuidv7"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

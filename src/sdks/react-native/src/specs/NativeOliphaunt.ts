@@ -3,8 +3,9 @@ import { TurboModuleRegistry } from 'react-native';
 
 export type NativeOpenConfig = {
   engine?: string;
-  root?: string;
-  temporary?: boolean;
+  storageKind: string;
+  storagePath?: string;
+  storageName?: string;
   durability?: string;
   runtimeFootprint?: string;
   startupGUCs?: Array<string>;
@@ -23,10 +24,9 @@ export type NativeResourceConfig = {
 export type NativeCapabilities = {
   engine: string;
   processIsolated: boolean;
-  multiRoot: boolean;
-  reopenable: boolean;
-  sameRootLogicalReopen: boolean;
-  rootSwitchable: boolean;
+  multipleInstances: boolean;
+  sameInstanceLogicalReopen: boolean;
+  instanceSwitchable: boolean;
   crashRestartable: boolean;
   independentSessions: boolean;
   maxClientSessions: number;

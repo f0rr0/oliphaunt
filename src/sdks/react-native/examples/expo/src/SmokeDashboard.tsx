@@ -5,6 +5,7 @@ import {
   runOliphauntReactNativeBenchmark,
   type EngineCapabilities,
   type EngineModeSupport,
+  type DatabaseStorage,
   type PackageSizeReport,
   type OliphauntDatabase,
   type ReactNativeBenchmarkOptions,
@@ -63,7 +64,7 @@ type AppReport = {
   sqliteBenchmark?: ExpoSQLiteBenchmarkReport;
   crashRecovery?: {
     phase: 'write' | 'verify';
-    root: string;
+    storageLabel: string;
     value: string;
     openMs: number;
     elapsedMs: number;
@@ -90,7 +91,8 @@ type OpenTuning = {
   runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile';
   startupGUCs?: string[];
   walSegmentSizeMB: string;
-  root?: string;
+  storage?: DatabaseStorage;
+  storageLabel?: string;
 };
 
 type BenchmarkTuning = Pick<
@@ -655,10 +657,10 @@ async function runCrashRecoveryPhase(
   setState: (state: RunState) => void,
 ) {
   const openTuning = await resolveOpenTuning();
-  if (!openTuning.root) {
-    throw new Error('crash recovery runner requires liboliphauntRoot');
+  if (!openTuning.storage || !openTuning.storageLabel) {
+    throw new Error('crash recovery runner requires explicit persistent storage');
   }
-  stage('crash:open:start', { phase: runner, root: openTuning.root });
+  stage('crash:open:start', { phase: runner, storage: openTuning.storageLabel });
   const databaseOpen = await openDatabase(stage, []);
   const db = databaseOpen.database;
   const capabilities = await db.capabilities();
@@ -686,7 +688,7 @@ async function runCrashRecoveryPhase(
     liveness.stop();
     const payload = {
       phase: 'write' as const,
-      root: openTuning.root,
+      storageLabel: openTuning.storageLabel,
       value,
       openMs: databaseOpen.openMs,
       elapsedMs: now() - started,
@@ -716,7 +718,7 @@ async function runCrashRecoveryPhase(
   liveness.stop();
   const payload = {
     phase: 'verify' as const,
-    root: openTuning.root,
+    storageLabel: openTuning.storageLabel,
     value,
     openMs: databaseOpen.openMs,
     elapsedMs: now() - started,
@@ -759,10 +761,10 @@ async function openDatabase(
     stage?.('open:start');
     const openTuning = await resolveOpenTuning();
     const started = now();
-    const { root, ...tuning } = openTuning;
+    const { storage, storageLabel: _storageLabel, ...tuning } = openTuning;
     const config = {
       engine: 'nativeDirect',
-      ...(root ? { root } : { temporary: true }),
+      ...(storage ? { storage } : {}),
       ...tuning,
       extensions,
       username: 'postgres',
@@ -816,12 +818,30 @@ async function resolveOpenTuning(): Promise<OpenTuning> {
       extractQueryParam(url, 'liboliphauntWalSegsizeMB') ??
       '16',
     ),
-    root: optionalNonBlankString(
-      process.env.EXPO_PUBLIC_OLIPHAUNT_ROOT ??
-      extractQueryParam(url, 'liboliphauntRoot'),
-      'liboliphauntRoot',
-    ),
+    ...resolveHarnessStorage(url),
   };
+}
+
+function resolveHarnessStorage(url: string | null): Pick<OpenTuning, 'storage' | 'storageLabel'> {
+  const applicationData = optionalNonBlankString(
+    process.env.EXPO_PUBLIC_OLIPHAUNT_APPLICATION_DATA ??
+      extractQueryParam(url, 'liboliphauntApplicationData'),
+    'liboliphauntApplicationData',
+  );
+  if (applicationData) {
+    return {
+      storage: { kind: 'applicationData', name: applicationData },
+      storageLabel: `applicationData:${applicationData}`,
+    };
+  }
+  const directory = optionalNonBlankString(
+    process.env.EXPO_PUBLIC_OLIPHAUNT_STORAGE_DIRECTORY ??
+      extractQueryParam(url, 'liboliphauntStorageDirectory'),
+    'liboliphauntStorageDirectory',
+  );
+  return directory
+    ? { storage: { kind: 'directory', path: directory }, storageLabel: directory }
+    : {};
 }
 
 async function resolveBenchmarkPreset(): Promise<BenchmarkPreset> {
@@ -974,7 +994,7 @@ function formatResult(report: AppReport): string {
   if (report.crashRecovery) {
     return [
       `crash phase = ${report.crashRecovery.phase}`,
-      `root = ${report.crashRecovery.root}`,
+      `storage = ${report.crashRecovery.storageLabel}`,
       `value = ${report.crashRecovery.value}`,
       `open = ${report.crashRecovery.openMs.toFixed(2)} ms`,
       `elapsed = ${report.crashRecovery.elapsedMs.toFixed(2)} ms`,

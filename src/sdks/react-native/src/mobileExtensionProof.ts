@@ -188,7 +188,9 @@ export function mobileReleaseExtensionProofPlan(
   for (const extension of packageSize.extensions) {
     const row = rowsBySqlName.get(extension.name);
     if (row === undefined) {
-      throw new Error(`${platform} packaged extension ${extension.name} is absent from generated metadata`);
+      throw new Error(
+        `${platform} packaged extension ${extension.name} is absent from generated metadata`,
+      );
     }
     const isFullyRegisteredStaticModuleOnly =
       !row.createsExtension &&

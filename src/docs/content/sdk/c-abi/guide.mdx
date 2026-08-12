@@ -6,7 +6,7 @@ description: Build a language binding over opaque C handles, raw protocol bytes,
 # Build A Binding
 
 Use the C ABI when building language bindings or platform SDKs. App developers
-usually choose Rust, Swift, Kotlin, React Native, TypeScript, or WASM instead.
+usually choose a native SDK, Rust WASIX, or WASIX TypeScript instead.
 
 <Callout type="info" title="The C ABI is a binding boundary">
 Use this surface when you need opaque handles, explicit response ownership, and
@@ -30,7 +30,7 @@ developers install one SDK surface.
 
 ### Open and query
 
-Open a root, send raw protocol bytes, read backend messages, and close the
+Open a PGDATA directory, send raw protocol bytes, read backend messages, and close the
 handle.
 
 <!-- oliphaunt-snippet: liboliphaunt-native -->
@@ -67,17 +67,20 @@ selection, and lifecycle integration.
 
 ### Configure
 
-Configure root, mode, selected extensions, runtime resource paths, startup
-identity, durability, and owner identity through the ABI config surface.
+`OliphauntConfig` contains the PGDATA path, optional runtime and module
+directories, username, database, PostgreSQL startup arguments, and reserved
+flags. Higher-level SDKs translate their storage, durability, and engine-mode
+settings into this direct-runtime record.
 
 </Step>
 <Step>
 
 ### Choose a mode
 
-The ABI exposes capabilities for the selected target. Direct mode owns one
-serialized embedded session. Broker and server support appear only when the
-target runtime advertises those modes.
+`oliphaunt_capabilities()` returns `OLIPHAUNT_CAP_*` bits for the loaded
+artifact. The C ABI itself is the native-direct boundary and owns one serialized
+embedded session; choose broker or server through a language SDK when process
+isolation or independent client sessions are required.
 
 </Step>
 <Step>
@@ -100,8 +103,10 @@ active work according to the SDK's platform contract.
 
 ### Select extensions
 
-Pass exact SQL extension names and resource paths. The ABI loads selected
-extension artifacts and their declared dependencies.
+Place dynamic extension files under the configured runtime/module directories,
+or call `oliphaunt_register_static_extensions` before `oliphaunt_init` for
+statically linked modules. The application still enables an installed
+extension with PostgreSQL SQL such as `CREATE EXTENSION`.
 
 </Step>
 <Step>
@@ -118,6 +123,6 @@ Bindings validate user input before crossing the ABI boundary.
 
 ## Troubleshooting
 
-Inspect ABI error codes, `oliphaunt_last_error`/Oliphaunt error fields, missing
-runtime resources, root locks, mode capability errors, and PostgreSQL SQLSTATE
-data.
+Inspect return codes and `oliphaunt_last_error`, then check missing runtime
+resources, PGDATA locks, and PostgreSQL errors. Language bindings may parse
+protocol errors into richer ecosystem-native types.

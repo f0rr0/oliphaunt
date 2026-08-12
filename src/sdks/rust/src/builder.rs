@@ -9,19 +9,18 @@ use crate::config::{
 };
 use crate::database::Oliphaunt;
 use crate::engine::NativeRuntime;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::executor::EngineExecutor;
 use crate::extension::Extension;
 use crate::liboliphaunt::OliphauntRuntime;
 use crate::server::NativeServerRuntime;
-use crate::storage::{BootstrapStrategy, DatabaseRoot, RootLockPolicy, StorageConfig};
+use crate::storage::{DatabaseInitialization, DatabaseStorage};
 
 /// Builder for opening native Oliphaunt databases.
 pub struct OliphauntBuilder {
     mode: EngineMode,
-    root: Option<DatabaseRoot>,
-    bootstrap: BootstrapStrategy,
-    lock_policy: RootLockPolicy,
+    storage: DatabaseStorage,
+    initialization: DatabaseInitialization,
     direct: NativeDirectConfig,
     broker: NativeBrokerConfig,
     server: NativeServerConfig,
@@ -38,9 +37,8 @@ impl Default for OliphauntBuilder {
     fn default() -> Self {
         Self {
             mode: EngineMode::NativeDirect,
-            root: None,
-            bootstrap: BootstrapStrategy::PackagedTemplate,
-            lock_policy: RootLockPolicy::ExclusiveProcess,
+            storage: DatabaseStorage::TemporaryDirectory,
+            initialization: DatabaseInitialization::PackagedTemplate,
             direct: NativeDirectConfig::default(),
             broker: NativeBrokerConfig::default(),
             server: NativeServerConfig::default(),
@@ -64,63 +62,64 @@ impl OliphauntBuilder {
     /// Select native direct mode.
     pub fn native_direct(mut self) -> Self {
         self.mode = EngineMode::NativeDirect;
-        self.lock_policy = RootLockPolicy::ExclusiveProcess;
         self
     }
 
     /// Select native broker mode.
     pub fn native_broker(mut self) -> Self {
         self.mode = EngineMode::NativeBroker;
-        self.lock_policy = RootLockPolicy::BrokerOwned;
         self
     }
 
     /// Select native server mode.
     pub fn native_server(mut self) -> Self {
         self.mode = EngineMode::NativeServer;
-        self.lock_policy = RootLockPolicy::BrokerOwned;
         self
     }
 
     /// Select a native engine mode.
     pub fn engine(mut self, mode: EngineMode) -> Self {
         self.mode = mode;
-        self.lock_policy = match mode {
-            EngineMode::NativeDirect => RootLockPolicy::ExclusiveProcess,
-            EngineMode::NativeBroker | EngineMode::NativeServer => RootLockPolicy::BrokerOwned,
-        };
         self
     }
 
-    /// Open a persistent database root directory.
-    pub fn path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.root = Some(DatabaseRoot::Path(path.into()));
+    /// Select the storage used by this database instance.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.storage = storage;
         self
     }
 
-    /// Open a temporary database root owned by the SDK.
-    pub fn temporary(mut self) -> Self {
-        self.root = Some(DatabaseRoot::Temporary);
+    /// Open a caller-owned persistent directory.
+    pub fn directory(self, path: impl Into<PathBuf>) -> Self {
+        self.storage(DatabaseStorage::Directory(path.into()))
+    }
+
+    /// Open an SDK-owned temporary directory.
+    pub fn temporary_directory(self) -> Self {
+        self.storage(DatabaseStorage::TemporaryDirectory)
+    }
+
+    /// Select how an empty storage directory is initialized.
+    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
+        self.initialization = initialization;
         self
     }
 
-    /// Use a packaged template cluster for first-open bootstrap.
+    /// Initialize empty storage from the packaged template cluster.
     pub fn packaged_template(mut self) -> Self {
-        self.bootstrap = BootstrapStrategy::PackagedTemplate;
+        self.initialization = DatabaseInitialization::PackagedTemplate;
         self
     }
 
-    /// Require an existing already-bootstrapped root.
+    /// Require an existing already-initialized storage directory.
     pub fn existing_only(mut self) -> Self {
-        self.bootstrap = BootstrapStrategy::ExistingOnly;
+        self.initialization = DatabaseInitialization::ExistingOnly;
         self
     }
 
-    /// Use initdb only for development/tooling flows.
-    pub fn initdb_tooling_only(mut self, initdb: impl Into<PathBuf>) -> Self {
-        self.bootstrap = BootstrapStrategy::InitdbToolingOnly {
-            initdb: initdb.into(),
-        };
+    /// Initialize empty storage with the packaged `initdb` executable.
+    pub fn fresh_initdb(mut self) -> Self {
+        self.initialization = DatabaseInitialization::FreshInitdb;
         self
     }
 
@@ -135,13 +134,13 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Configure broker maximum roots.
+    /// Configure the maximum database instances supervised by one broker.
     ///
-    /// Broker mode supervises one isolated helper process per active root while
+    /// Broker mode supervises one isolated helper process per active instance while
     /// each helper owns one physical PostgreSQL backend session. Use this to
-    /// bound how many roots one shared broker runtime may own at once.
-    pub fn broker_max_roots(mut self, roots: usize) -> Self {
-        self.broker.max_roots = roots;
+    /// bound how many instances one shared broker runtime may own at once.
+    pub fn broker_max_instances(mut self, instances: usize) -> Self {
+        self.broker.max_instances = instances;
         self
     }
 
@@ -229,14 +228,10 @@ impl OliphauntBuilder {
 
     /// Build and validate the open configuration without opening the engine.
     pub fn build_config(&self) -> Result<OpenConfig> {
-        let root = self.root.clone().ok_or(Error::MissingDatabaseRoot)?;
         let config = OpenConfig {
             mode: self.mode,
-            storage: StorageConfig {
-                root,
-                bootstrap: self.bootstrap.clone(),
-                lock_policy: self.lock_policy,
-            },
+            storage: self.storage.clone(),
+            initialization: self.initialization.clone(),
             direct: self.direct.clone(),
             broker: self.broker.clone(),
             server: self.server.clone(),

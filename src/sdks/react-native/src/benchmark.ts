@@ -139,7 +139,6 @@ export async function runOliphauntReactNativeBenchmark(
   const openStart = monotonicNow();
   const db = await client.open({
     engine: 'nativeDirect',
-    temporary: true,
     durability: 'balanced',
     username: 'postgres',
     database: 'postgres',

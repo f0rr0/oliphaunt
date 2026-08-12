@@ -59,6 +59,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | 36 | `0036-oliphaunt-wasix-skip-activity-id-reporting.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: skip activity id reporting |
 | 37 | `0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: treat directory fsync EISDIR as unsupported |
 | 38 | `0038-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: skip ICU collation setup without ICU data |
+| 39 | `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: add stdio pgwire lifecycle |
 
 ## Changed Upstream Files
 
@@ -84,7 +85,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/backend/replication/walsender.c` | `0006-oliphaunt-wasix-report-copy-protocol-state.patch` | Suppresses activity identifier reporting in embedded WASIX. |
 | `src/backend/storage/file/fd.c` | `0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch` | Treats data-directory ownership and directory sync as WASIX platform boundaries. |
 | `src/backend/tcop/backend_startup.c` | `0003-oliphaunt-wasix-export-startup-packet-parser.patch` | Exports the startup packet parser for host-driven startup. |
-| `src/backend/tcop/postgres.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0020-oliphaunt-wasix-rearm-exception-stack-after-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0034-oliphaunt-wasix-set-embedded-postmaster-environment.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch` | Owns embedded lifecycle, protocol loop, error recovery, and timing hooks. |
+| `src/backend/tcop/postgres.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0020-oliphaunt-wasix-rearm-exception-stack-after-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0034-oliphaunt-wasix-set-embedded-postmaster-environment.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch` | Owns embedded lifecycle, protocol loop, error recovery, and timing hooks. |
 | `src/backend/utils/adt/like.c` | `0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch` | Adds guarded LIKE literal fast path for embedded WASIX. |
 | `src/backend/utils/adt/like_match.c` | `0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch` | Adds guarded LIKE literal fast path for embedded WASIX. |
 | `src/backend/utils/init/miscinit.c` | `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch` | Routes process identity through the WASIX port layer. |
@@ -99,7 +100,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/common/file_utils.c` | `0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch` | Treats EISDIR directory fsync as unsupported on WASIX. |
 | `src/common/hashfn.c` | `0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch` | Uses defined unaligned load fast path under WASIX. |
 | `src/include/libpq/libpq-be.h` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Adds the host I/O callback table to Port only for embedded WASIX. |
-| `src/include/port/wasix-dl.h` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0009-oliphaunt-wasix-route-process-identity-through-port.patch`, `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch`, `0027-oliphaunt-wasix-add-btree-insert-backend-timing-probes.patch`, `0028-oliphaunt-wasix-add-btree-search-compare-timing-probes.patch`, `0031-oliphaunt-wasix-add-heap-update-backend-timing-probes.patch` | Defines the embedded WASIX port header and ABI redirects. |
+| `src/include/port/wasix-dl.h` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0009-oliphaunt-wasix-route-process-identity-through-port.patch`, `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch`, `0027-oliphaunt-wasix-add-btree-insert-backend-timing-probes.patch`, `0028-oliphaunt-wasix-add-btree-search-compare-timing-probes.patch`, `0031-oliphaunt-wasix-add-heap-update-backend-timing-probes.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch` | Defines the embedded WASIX port header and ABI redirects. |
 | `src/include/port/wasix-dl/sys/ipc.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV IPC shim surface. |
 | `src/include/port/wasix-dl/sys/shm.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV shared-memory shim surface. |
 | `src/makefiles/Makefile.wasix-dl` | `0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch` | Builds side modules and PGXS artifacts for WASIX dynamic linking. |
@@ -120,15 +121,16 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | Process identity and shared memory stay behind the port header | `0009-oliphaunt-wasix-route-process-identity-through-port.patch`, `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`, `0011-oliphaunt-wasix-prefer-posix-semaphores.patch` | `oliphaunt_wasix_geteuid`, `oliphaunt_wasix_shmget`, `PREFERRED_SEMAPHORES=UNNAMED_POSIX` | WASIX platform gaps are explicit port-layer dependencies, not scattered runtime guesses. |
 | Tool/runtime platform stubs fail closed | `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch` | `fork_process`, `oliphaunt_wasix_pgdump_fork`, `errno == EISDIR` | Unavailable WASIX behavior is explicit and narrow instead of silently emulated. |
 | Optional ICU data stays optional during initdb | `0038-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch` | `getenv("ICU_DATA")`, `pg_collation_actual_version`, `pg_import_system_collations` | WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present. |
+| Browser hosts can own one blocking stdio pgwire lifecycle | `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch` | `OLIPHAUNT_WASIX_STDIO_PGWIRE`, `oliphaunt_wasix_set_protocol_stdio(1)`, `ProcessStartupPacket(MyProcPort, true, true)` | Only the explicit browser host contract enters the blocking stdio path; export-pumped hosts keep their existing lifecycle. |
 
 ## PostgreSQL Patch Symbols
 
 - `OLIPHAUNT_WASM_EXIT_ALIVE` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `OLIPHAUNT_WASM_HOST_EXPORT` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch`, `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch`, `0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch`, `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`)
+- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch`, `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch`, `0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch`, `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 - `PostgresMainLongJmp` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `PostgresMainLoopOnce` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `ProcessStartupPacket` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`)
+- `ProcessStartupPacket` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 - `oliphaunt_wasix_backend_timing_end` (`0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`)
 - `oliphaunt_wasix_backend_timing_start` (`0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`)
 - `oliphaunt_wasix_begin_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
@@ -146,18 +148,21 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 - `oliphaunt_wasix_init_protocol_port` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`)
 - `oliphaunt_wasix_io` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_pgdump_fork` (`0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`)
-- `oliphaunt_wasix_pq_flush` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
+- `oliphaunt_wasix_pq_flush` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 - `oliphaunt_wasix_process_startup_options` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_protocol_io` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_protocol_report_copy_response` (`0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`)
-- `oliphaunt_wasix_send_conn_data` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
+- `oliphaunt_wasix_send_conn_data` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
+- `oliphaunt_wasix_set_protocol_stdio` (`0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 - `oliphaunt_wasix_shmat` (`0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`)
 - `oliphaunt_wasix_shmctl` (`0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`)
 - `oliphaunt_wasix_shmdt` (`0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`)
 - `oliphaunt_wasix_shmget` (`0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`)
-- `oliphaunt_wasix_start` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
+- `oliphaunt_wasix_start` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
+- `oliphaunt_wasix_start_stdio_pgwire` (`0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 - `oliphaunt_wasix_startup_error_capture_active` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
 - `oliphaunt_wasix_startup_error_saved_dest` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
+- `oliphaunt_wasix_stdio_pgwire_requested` (`0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch`)
 
 ## Experiment Patch Disposition
 

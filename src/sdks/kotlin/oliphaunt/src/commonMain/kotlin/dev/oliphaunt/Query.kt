@@ -156,14 +156,14 @@ public data class PostgresError(
     }
 }
 
-public suspend fun OliphauntDatabase.query(sql: String): QueryResult = parseQueryResponse(execProtocolRaw(ProtocolRequest.simpleQuery(sql)).bytes)
+public suspend fun OliphauntDatabase.query(sql: String): QueryResult = parseQueryResponse(execute(sql).bytes)
 
 public suspend fun OliphauntDatabase.query(
     sql: String,
     parameters: List<QueryParam>,
 ): QueryResult = parseQueryResponse(execProtocolRaw(ProtocolRequest.extendedQuery(sql, parameters)).bytes)
 
-public suspend fun OliphauntTransaction.query(sql: String): QueryResult = parseQueryResponse(execProtocolRaw(ProtocolRequest.simpleQuery(sql)).bytes)
+public suspend fun OliphauntTransaction.query(sql: String): QueryResult = parseQueryResponse(execute(sql).bytes)
 
 public suspend fun OliphauntTransaction.query(
     sql: String,
@@ -188,6 +188,36 @@ public fun ProtocolRequest.Companion.extendedQuery(
     packet.addExecute()
     packet.addFrontendMessage('S'.code, ByteArray(0))
     return ProtocolRequest(packet.toByteArray())
+}
+
+internal fun assertSuccessfulQueryResponse(bytes: ByteArray) {
+    val cursor = ByteCursor(bytes)
+    var sawReady = false
+
+    while (!cursor.isAtEnd) {
+        val tag = cursor.readUByte("backend message tag").toInt()
+        val length = cursor.readInt("backend message length")
+        if (length < 4) {
+            throw OliphauntException("invalid backend message length $length")
+        }
+        val body = ByteCursor(cursor.readBytes(length - 4, "backend message body"))
+
+        when (tag) {
+            0x45 -> throw PostgresException(parseErrorResponse(body))
+
+            0x5a -> {
+                validateReadyForQuery(body)
+                sawReady = true
+                if (!cursor.isAtEnd) {
+                    throw OliphauntException("backend returned bytes after ReadyForQuery")
+                }
+            }
+        }
+    }
+
+    if (!sawReady) {
+        throw OliphauntException("query response ended before ReadyForQuery")
+    }
 }
 
 public fun parseQueryResponse(bytes: ByteArray): QueryResult {

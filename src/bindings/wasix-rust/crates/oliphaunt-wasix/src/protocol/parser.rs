@@ -5,9 +5,9 @@ use crate::protocol::messages::{
     AuthenticationCleartextPassword, AuthenticationMD5Password, AuthenticationMessage,
     AuthenticationOk, AuthenticationSasl, AuthenticationSaslContinue, AuthenticationSaslFinal,
     BackendKeyDataMessage, BackendMessage, CommandCompleteMessage, CopyDataMessage, CopyResponse,
-    DataRowMessage, DatabaseError, Field, MessageName, NoticeMessage, NoticeOrErrorFields,
+    DataRowMessage, Field, MessageName, NoticeMessage, NoticeOrErrorFields,
     NotificationResponseMessage, ParameterDescriptionMessage, ParameterStatusMessage,
-    ReadyForQueryMessage, RowDescriptionMessage, collect_fields,
+    PostgresError, ReadyForQueryMessage, RowDescriptionMessage, collect_fields,
 };
 use crate::protocol::types::{BufferParameter, Mode, Modes};
 
@@ -335,7 +335,7 @@ impl Parser {
     ) -> Result<BackendMessage> {
         let fields = collect_fields(reader)?;
         let message = fields.get("M").cloned().unwrap_or_default();
-        let mut error = DatabaseError::new(length, message);
+        let mut error = PostgresError::new(length, message);
         error.apply_fields(&fields);
         Ok(BackendMessage::Error(error))
     }

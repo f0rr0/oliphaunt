@@ -1281,7 +1281,7 @@ export async function resolveSwiftCarrierSelection({
   try { packageUrl = new URL(basePackageUrl); } catch { fail("basePackageUrl must be an HTTPS Git URL"); }
   if (packageUrl.protocol !== "https:" || !packageUrl.pathname.endsWith(".git")) fail("basePackageUrl must be an HTTPS Git URL ending in .git");
   return {
-    schema: "oliphaunt-swiftpm-extension-input-v1",
+    schema: "oliphaunt-swiftpm-extension-selection-v1",
     basePackage: { name: "Oliphaunt", url: packageUrl.href, version: basePackageVersion },
     nativeRuntime: { product: base.product, version: base.version },
     extensions: output,

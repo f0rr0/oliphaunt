@@ -9,15 +9,15 @@ The iOS product should not depend on a speculative broker to feel reliable.
 The reliable, shippable baseline is:
 
 - crash-consistent storage through PostgreSQL WAL;
-- a resident in-process engine with one root and one physical session;
+- a resident in-process engine with one database instance and one physical session;
 - explicit lifecycle APIs for backgrounding, cancellation, checkpoint, backup,
   and logical detach;
-- test evidence that app relaunch after process death reopens the same root
+- test evidence that app relaunch after process death reopens the same persistent storage
   cleanly.
 
 That is not crash isolation. It is crash consistency. If native PostgreSQL
 crashes in direct mode, the host app process dies. The next app launch should
-recover the database by WAL replay and reopen the same root. That is the honest
+recover the database by WAL replay and reopen the same persistent storage. That is the honest
 guarantee we can make on every supported iOS version.
 
 Crash isolation is a different product capability. On iOS it requires a proven
@@ -89,7 +89,7 @@ The direct path can recover from PostgreSQL `ERROR`, protocol errors,
 cancellation, and many controlled `proc_exit` paths. It cannot recover from a
 native crash, abort, memory corruption, or process-wide PostgreSQL global state
 poisoning without taking down the app process. Full in-process close/reopen
-across arbitrary roots is not a sound product promise until PostgreSQL can be
+across arbitrary database instances is not a sound product promise until PostgreSQL can be
 proven re-entrant under our patches.
 
 Implication: direct mode can be SQLite-like in latency and embedding, but not in
@@ -102,8 +102,8 @@ The architecture should explicitly reject these assumptions:
 
 - `close()` means full PostgreSQL shutdown. In mobile direct mode it does not;
   it is logical detach from a resident process-wide runtime.
-- `reopenable` is a single capability. Same-root logical reopen, root switching,
-  and crash restart are separate properties.
+- Lifecycle recovery is not one capability. Same-instance logical reopen,
+  instance switching, and crash restart are separate properties.
 - iOS broker means desktop broker. iOS process isolation is extension-process
   isolation with lifecycle and OS-version limits.
 - iOS server mode can be emulated with a loopback listener. That gives a
@@ -121,14 +121,14 @@ defensible.
 
 | Candidate | Strengths | Failure Modes | Verdict |
 | --- | --- | --- | --- |
-| In-process `NativeDirect` | Lowest latency, App Store viable on all supported iOS versions, simplest Swift/RN DX, static extensions work | App crashes if native PostgreSQL crashes; one resident root/session; logical close only | Ship as universal fast path, with honest capabilities |
+| In-process `NativeDirect` | Lowest latency, App Store viable on all supported iOS versions, simplest Swift/RN DX, static extensions work | App crashes if native PostgreSQL crashes; one resident instance/session; logical close only | Ship as universal fast path, with honest capabilities |
 | In-process multi-session | Looks like server semantics without IPC | PostgreSQL globals, shared memory, signals, session state, temp objects, GUCs, transactions; no crash isolation | Reject unless upstream PostgreSQL grows a real embeddable multi-session runtime |
 | In-process loopback server | Familiar connection string shape | No process isolation; true multi-client sessions still require PostgreSQL's process model; background behavior is misleading | Do not ship on iOS |
 | Spawned helper/XPC service | Would solve crash isolation and restart | Not generally available to iOS apps | Reject for App Store iOS |
 | ExtensionFoundation broker | Separate process, XPC, interruption handling, App Store-shaped packaging path on iOS 26+ | New OS floor, extension lifecycle limits, likely one process per extension identity, App Group storage, unknown memory/throughput ceilings | Best robust iOS direction; spike and gate before promising |
 | System extension / Network Extension / File Provider abuse | Separate process in some cases | Wrong extension point, entitlement/review risk, user-visible policy mismatch | Reject |
 | BackgroundTasks broker | System-supported background launch | Scheduled, finite, non-interactive; not request/response | Use only for maintenance |
-| WASIX/Wasm engine | Sandboxed memory model and legacy portability | Same host process, likely lower perf, no native extension story, does not create iOS process isolation | Keep as legacy/compatibility, not best iOS default |
+| Separate WASIX product | Portable runtime and sandboxed memory model | Not a native engine mode and does not create iOS process isolation | Keep outside the native iOS product architecture |
 | Remote/cloud broker | Strong isolation | Not embedded/offline, not SQLite competitor | Out of scope for the embedded product |
 
 ## Recommended iOS Product Shape
@@ -146,22 +146,22 @@ Contract:
 
 - one resident PostgreSQL backend per app process;
 - one physical session;
-- one database root per process lifetime;
+- one database instance per process lifetime;
 - many Swift/RN callers may enqueue work, but execution is serialized;
 - transaction APIs pin the physical session and reject unpinned work;
 - `close()` is logical detach, not full PostgreSQL shutdown;
-- same-root logical reopen is supported;
-- root switching requires a fresh process;
+- same-instance logical reopen is supported;
+- instance switching requires a fresh process;
 - native crashes terminate the host app;
-- WAL recovery happens after the app relaunches and opens the same root.
+- WAL recovery happens after the app relaunches and opens the same persistent storage.
 
 DX requirements:
 
 - provide an app-scope `OliphauntContainer` or `OliphauntResidentDatabase` manager;
 - open once per app process and reuse stable handles;
 - make `close()`/`detach()` release the logical SDK handle only;
-- provide `destroyRoot(...)` only when the root is not resident in the current
-  process;
+- provide explicit persistent-storage removal only when its database is not
+  resident in the current process;
 - provide `fullShutdown` as unsupported in iOS direct mode rather than a best
   effort;
 - serialize all work through a fair owner queue;
@@ -188,20 +188,20 @@ Target contract:
   objects;
 - PGDATA and runtime resources live in an App Group container;
 - XPC messages carry control requests and raw protocol chunks;
-- the broker serializes one physical PostgreSQL session per opened root;
+- the broker serializes one physical PostgreSQL session per opened instance;
 - host observes `onInterruption`/XPC invalidation and marks in-flight requests
   as failed with unknown transaction outcome;
-- reconnect starts a fresh extension process and reopens the same root after
+- reconnect starts a fresh extension process and reopens the same persistent storage after
   WAL recovery;
 - no automatic replay of writes unless the user opts into an idempotent request
   envelope;
 - capability reporting says `processIsolated=true`,
   `crashRestartable=true`, and `independentSessions=false`.
 
-Important limit: this should not advertise `multiRoot=true` until proven. If
+Important limit: this should not advertise `multipleInstances=true` until proven. If
 one extension identity maps to one running process, and `liboliphaunt` embeds one
-process-wide PostgreSQL runtime, then iOS broker v1 is still a single-root
-process-isolated runtime. A future multi-root design would need either a
+process-wide PostgreSQL runtime, then iOS broker v1 is still a single-instance
+process-isolated runtime. A future multiple-instance design would need either a
 defensible worker-slot model with multiple bundled extension identities, or a
 much deeper PostgreSQL re-entrancy breakthrough.
 
@@ -211,7 +211,7 @@ This mode should fail closed:
 - unavailable without the broker extension target;
 - unavailable without the required App Group;
 - unavailable when extension lifecycle or XPC throughput evidence is missing;
-- unavailable for multi-root unless worker multiplicity is proven.
+- unavailable for multiple-instance unless worker multiplicity is proven.
 
 It should be named and documented as iOS process-isolated mode, not as generic
 desktop broker parity.
@@ -238,7 +238,7 @@ guess correctly:
   PostgreSQL cancellation error when possible.
 - `checkpoint()`: explicit durability boundary for apps about to background.
 - crash drill helpers for tests: kill broker extension, kill host process, and
-  reopen root to prove WAL recovery.
+  reopen persistent storage to prove WAL recovery.
 
 For direct mode, background handling improves data durability and UX but cannot
 make native PostgreSQL crash-isolated. For broker mode, background handling must
@@ -273,16 +273,16 @@ predictable crash/debug symbols.
 
 ## Capability Vocabulary Needed
 
-The current broad `reopenable` bit is too coarse. iOS needs these distinct
-capability fields across Swift, Kotlin, Rust, and React Native:
+iOS needs distinct lifecycle capability fields across Swift, Kotlin, Rust, and
+React Native:
 
-- `sameRootLogicalReopen`
-- `rootSwitchable`
+- `sameInstanceLogicalReopen`
+- `instanceSwitchable`
 - `crashRestartable`
 - `processIsolated`
 - `independentSessions`
 - `maxClientSessions`
-- `multiRoot`
+- `multipleInstances`
 - `backgroundContinuable`
 - `requiresAppGroup`
 - `minimumOS`
@@ -297,8 +297,8 @@ Example direct-mode capabilities:
 {
   "engine": "nativeDirect",
   "processIsolated": false,
-  "sameRootLogicalReopen": true,
-  "rootSwitchable": false,
+  "sameInstanceLogicalReopen": true,
+  "instanceSwitchable": false,
   "crashRestartable": false,
   "independentSessions": false,
   "maxClientSessions": 1,
@@ -312,8 +312,8 @@ Example extension-broker capabilities after the feasibility gate passes:
 {
   "engine": "nativeExtensionBroker",
   "processIsolated": true,
-  "sameRootLogicalReopen": true,
-  "rootSwitchable": false,
+  "sameInstanceLogicalReopen": true,
+  "instanceSwitchable": false,
   "crashRestartable": true,
   "independentSessions": false,
   "maxClientSessions": 1,
@@ -323,7 +323,7 @@ Example extension-broker capabilities after the feasibility gate passes:
 }
 ```
 
-The broker should not report `rootSwitchable=true` or `multiRoot=true` until a
+The broker should not report `instanceSwitchable=true` or `multipleInstances=true` until a
 real multi-worker model is proven.
 
 ## Direct-Mode Confidence Gate
@@ -331,9 +331,9 @@ real multi-worker model is proven.
 Direct mode is shippable on iOS only when these tests pass on simulator and real
 devices:
 
-1. Open the same persistent root repeatedly through the app-scope manager and
+1. Open the same persistent storage repeatedly through the app-scope manager and
    prove all logical handles share the resident runtime.
-2. Reject opening a different root in the same process with a precise error.
+2. Reject opening a different database instance in the same process with a precise error.
 3. Run concurrent Swift tasks/RN promises and prove fair serialization,
    transaction pinning, cancellation, and close/detach behavior.
 4. Enter background during idle, during a read, during a write transaction, and
@@ -346,7 +346,7 @@ devices:
    `proc_exit`; prove the host surfaces errors without corrupting the session
    when PostgreSQL allows recovery.
 7. Inject an actual native crash in the backend thread; document that direct
-   mode crashes the host app, then prove app relaunch recovers the root.
+   mode crashes the host app, then prove app relaunch recovers the database.
 8. Verify selected static extensions, backup/restore, memory warning
    handling, and package-size reporting.
 
@@ -361,7 +361,7 @@ Do not productize `NativeExtensionBroker` until these pass on real devices:
    point and a broker extension target.
 2. Start the extension, establish XPCSession or NSXPCConnection, and roundtrip a
    1 MB binary payload without JS/UI blocking.
-3. Link `liboliphaunt` into the extension, open a packaged-template PGDATA root in
+3. Link `liboliphaunt` into the extension, open a packaged-template PGDATA directory in
    an App Group container, run `SELECT 1`, close, and reopen.
 4. Kill the extension process during idle and during a transaction; host app
    must stay alive, report unknown transaction state, reconnect, and pass WAL
@@ -380,17 +380,16 @@ Do not productize `NativeExtensionBroker` until these pass on real devices:
 The strongest iOS architecture is a two-tier product:
 
 - `NativeDirect` is the universal, fastest, SQLite-competitive embedded mode.
-  It must be honest about single-root, single-session, logical close, and lack
+  It must be honest about single-instance, single-session, logical close, and lack
   of crash isolation.
 - `NativeExtensionBroker` is the best robust iOS mode for iOS 26+ if the
   feasibility gate passes. It gives the host app a recoverable process boundary,
-  but should start as single-root and single-session rather than pretending to
+  but should start as single-instance and single-session rather than pretending to
   be a desktop broker.
 
-WASIX does not solve the iOS stability problem unless it runs out of process,
-and it is unlikely to be the performance-default path for competing with SQLite.
-It remains useful as compatibility and cross-platform fallback, not as the ideal
-iOS architecture.
+The separate WASIX product does not solve native iOS stability unless it runs
+out of process. It is not a fallback mode inside this native product and is
+outside this architecture decision.
 
 ## References
 

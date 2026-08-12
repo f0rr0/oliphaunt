@@ -25,24 +25,21 @@ class OliphauntAndroidDefaultEngineTest {
         assertTrue(support[0].available)
         assertEquals(1, support[0].capabilities.maxClientSessions)
         assertFalse(support[0].capabilities.independentSessions)
-        assertFalse(support[0].capabilities.multiRoot)
-        assertTrue(support[0].capabilities.reopenable)
-        assertTrue(support[0].capabilities.sameRootLogicalReopen)
-        assertFalse(support[0].capabilities.rootSwitchable)
+        assertFalse(support[0].capabilities.multipleInstances)
+        assertTrue(support[0].capabilities.sameInstanceLogicalReopen)
+        assertFalse(support[0].capabilities.instanceSwitchable)
         assertFalse(support[0].capabilities.crashRestartable)
         assertFalse(support[1].available)
-        assertTrue(support[1].capabilities.multiRoot)
-        assertTrue(support[1].capabilities.reopenable)
-        assertFalse(support[1].capabilities.sameRootLogicalReopen)
-        assertTrue(support[1].capabilities.rootSwitchable)
+        assertTrue(support[1].capabilities.multipleInstances)
+        assertFalse(support[1].capabilities.sameInstanceLogicalReopen)
+        assertTrue(support[1].capabilities.instanceSwitchable)
         assertTrue(support[1].capabilities.crashRestartable)
         assertTrue(support[1].unavailableReason.orEmpty().contains("broker"))
         assertFalse(support[2].available)
         assertTrue(support[2].capabilities.independentSessions)
-        assertFalse(support[2].capabilities.multiRoot)
-        assertTrue(support[2].capabilities.reopenable)
-        assertFalse(support[2].capabilities.sameRootLogicalReopen)
-        assertTrue(support[2].capabilities.rootSwitchable)
+        assertFalse(support[2].capabilities.multipleInstances)
+        assertFalse(support[2].capabilities.sameInstanceLogicalReopen)
+        assertTrue(support[2].capabilities.instanceSwitchable)
         assertFalse(support[2].capabilities.crashRestartable)
         assertTrue(support[2].unavailableReason.orEmpty().contains("server"))
     }
@@ -79,7 +76,7 @@ class OliphauntAndroidDefaultEngineTest {
                 OliphauntDatabase.restore(
                     RestoreRequest(
                         artifact = BackupArtifact(BackupFormat.PhysicalArchive, ByteArray(0)),
-                        root = "/tmp/oliphaunt-android-restore-default",
+                        destination = "/tmp/oliphaunt-android-restore-default",
                     ),
                 )
             }

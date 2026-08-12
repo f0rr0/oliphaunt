@@ -1,5 +1,5 @@
 {
-  "schema": "oliphaunt-swiftpm-extension-input-v1",
+  "schema": "oliphaunt-swiftpm-extension-selection-v1",
   "basePackage": {
     "name": "Oliphaunt",
     "url": "https://github.com/f0rr0/oliphaunt.git",

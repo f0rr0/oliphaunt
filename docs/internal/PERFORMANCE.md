@@ -12,7 +12,7 @@ artifacts and reuse cached runtime files.
 
 For test suites:
 
-- use `Oliphaunt::temporary()` or `OliphauntServer::temporary_tcp()`;
+- use the default memory storage on `Oliphaunt` or `OliphauntServer`;
 - reuse the process when possible so the template and module caches stay warm;
 - keep Postgres client pools at one connection;
 - call `Oliphaunt::preload()` once before a visible UI path or a large test group;
@@ -28,7 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Oliphaunt::preload_extensions([extensions::VECTOR])?;
 
     let mut db = Oliphaunt::builder()
-        .temporary()
         .extension(extensions::VECTOR)
         .open()?;
 

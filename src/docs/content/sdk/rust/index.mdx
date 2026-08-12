@@ -24,14 +24,14 @@ oliphaunt = "0.1"
 
 ## Open And Query
 
-Then open a root in app-owned storage:
+Then open a database in app-owned storage:
 
 ```rust
 use oliphaunt::{Extension, Oliphaunt};
 
 async fn open_database() -> oliphaunt::Result<()> {
     let db = Oliphaunt::builder()
-        .path("./app-data/main.oliphaunt")
+        .directory("./app-data/main.oliphaunt")
         .native_direct()
         .extension(Extension::Vector)
         .open()
@@ -50,7 +50,7 @@ Rust exposes the complete native mode model:
 | Mode | Use it for |
 | --- | --- |
 | Native direct | Lowest-latency embedded PostgreSQL session |
-| Native broker | Helper-process isolation and multi-root desktop apps |
+| Native broker | Helper-process isolation and multi-instance desktop apps |
 | Native server | `psql`, `pg_dump`, ORMs, pools, and independent clients |
 
 Direct and broker mode serialize work through one physical PostgreSQL session.
@@ -61,8 +61,8 @@ as streaming, backup formats, server compatibility, or exact extensions.
 
 ## App Responsibilities
 
-- Store persistent roots in an app-owned directory and use temporary roots for
-  tests.
+- Use an app-owned directory for persistence. Omit storage configuration for an
+  SDK-owned temporary directory.
 - Select exact SQL extension names before opening the database.
 - Use SDK backup and restore APIs for data movement instead of copying a live
   PostgreSQL directory.

@@ -15,6 +15,7 @@ import android.os.Debug
 import dev.oliphaunt.BackupArtifact
 import dev.oliphaunt.BackupFormat
 import dev.oliphaunt.BackupRequest
+import dev.oliphaunt.DatabaseStorage
 import dev.oliphaunt.DurabilityProfile
 import dev.oliphaunt.EngineCapabilities
 import dev.oliphaunt.EngineMode
@@ -27,13 +28,17 @@ import dev.oliphaunt.OliphauntPackageSizeReport
 import dev.oliphaunt.PostgresStartupGuc
 import dev.oliphaunt.ProtocolRequest
 import dev.oliphaunt.RestoreRequest
-import dev.oliphaunt.RestoreTargetPolicy
+import dev.oliphaunt.RestoreDestinationPolicy
 import dev.oliphaunt.RuntimeFootprintProfile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -41,14 +46,41 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/** Process-wide nativeDirect ownership, including a failed close retained for recovery. */
+private val nativeDirectProcessOwner = NativeDirectProcessOwner<OliphauntDatabase>()
+
+internal const val REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE: Long = 9_007_199_254_740_991L
+
+internal fun requireReactNativeHandle(handle: Double): Long {
+  if (
+    !handle.isFinite() ||
+    handle <= 0.0 ||
+    handle % 1.0 != 0.0 ||
+    handle > REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE.toDouble()
+  ) {
+    throw IllegalArgumentException("Oliphaunt handle must be a finite positive safe integer")
+  }
+  return handle.toLong()
+}
+
+internal fun requireReactNativeHandle(handle: Long): Long {
+  if (handle !in 1..REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE) {
+    throw IllegalArgumentException("Oliphaunt handle must be a finite positive safe integer")
+  }
+  return handle
+}
+
 class OliphauntModule(
   private val reactContext: ReactApplicationContext,
 ) : NativeOliphauntSpec(reactContext), TurboModuleWithJSIBindings {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val nextHandle = AtomicLong(1)
   private val sessions = ConcurrentHashMap<Long, OliphauntDatabase>()
-  private val sessionKeys = ConcurrentHashMap<Long, String>()
   private val sessionMutex = Mutex()
+  private val invalidated = AtomicBoolean(false)
+  private val pendingOpen = AtomicReference<Job?>(null)
+  private val lifecycleLock = Any()
+  private var nativeDirectClaim: NativeDirectProcessOwner.Claim? = null
 
   override fun getName(): String = NAME
 
@@ -83,34 +115,73 @@ class OliphauntModule(
   }
 
   override fun open(config: ReadableMap, promise: Promise) {
-    scope.launch {
+    val job = scope.launch(start = CoroutineStart.LAZY) {
       runCatching {
         val openConfig = parseOpenConfig(config)
         sessionMutex.withLock {
-          existingHandleFor(openConfig)?.let { return@withLock it.toDouble() }
+          check(!invalidated.get()) { "React Native Oliphaunt module has been invalidated" }
           if (sessions.isNotEmpty()) {
             throw IllegalStateException(
-              "React Native nativeDirect already has an active database; close it before opening another root",
+              "React Native nativeDirect already has an active instance",
             )
           }
-          val session = OliphauntAndroid.open(
-            context = reactContext,
-            config = openConfig.config,
-            libraryPath = openConfig.libraryPath,
-            runtimeDirectory = openConfig.runtimeDirectory,
-            resourceRoot = openConfig.resourceRoot?.let(::File),
-            username = openConfig.username,
-            database = openConfig.database,
-          )
-          val handle = nextHandle.getAndIncrement()
+          val handle = requireReactNativeHandle(nextHandle.getAndIncrement())
+          val claim = nativeDirectProcessOwner.acquire { retained -> retained.close() }
+          val session = try {
+            OliphauntAndroid.open(
+              context = reactContext,
+              config = openConfig.config,
+              libraryPath = openConfig.libraryPath,
+              runtimeDirectory = openConfig.runtimeDirectory,
+              resourceRoot = openConfig.resourceRoot?.let(::File),
+              username = openConfig.username,
+              database = openConfig.database,
+            )
+          } catch (error: Throwable) {
+            nativeDirectProcessOwner.release(claim)
+            throw error
+          }
+          if (invalidated.get()) {
+            try {
+              session.close()
+              nativeDirectProcessOwner.release(claim)
+            } catch (closeError: Throwable) {
+              nativeDirectProcessOwner.retain(claim, session)
+              throw IllegalStateException(
+                "React Native Oliphaunt module was invalidated while opening nativeDirect; cleanup failed and is retained for the next open",
+                closeError,
+              )
+            }
+            throw IllegalStateException(
+              "React Native Oliphaunt module was invalidated while opening nativeDirect",
+            )
+          }
+          nativeDirectClaim = claim
           sessions[handle] = session
-          sessionKeys[handle] = openConfig.sessionKey
           handle.toDouble()
         }
       }.fold(
         onSuccess = promise::resolve,
         onFailure = { error -> promise.reject("liboliphaunt_open_failed", error.message, error) },
       )
+    }
+    synchronized(lifecycleLock) {
+      if (invalidated.get()) {
+        job.cancel()
+        val error = IllegalStateException("React Native Oliphaunt module has been invalidated")
+        promise.reject("liboliphaunt_invalidated", error.message, error)
+        return
+      }
+      if (!pendingOpen.compareAndSet(null, job)) {
+        job.cancel()
+        val error = IllegalStateException(
+          "React Native nativeDirect already has an active or pending open; close the active instance before opening another",
+        )
+        promise.reject("liboliphaunt_open_failed", error.message, error)
+        return
+      }
+      job.invokeOnCompletion { pendingOpen.compareAndSet(job, null) }
+      job.start()
     }
   }
 
@@ -120,7 +191,13 @@ class OliphauntModule(
     request: ByteArray,
     callback: OliphauntJsiPromiseCallback,
   ) {
-    val session = sessions[handle]
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
     if (session == null) {
       callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
       return
@@ -141,7 +218,13 @@ class OliphauntModule(
     request: ByteArray,
     callback: OliphauntJsiStreamCallback,
   ) {
-    val session = sessions[handle]
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
     if (session == null) {
       callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
       return
@@ -164,7 +247,13 @@ class OliphauntModule(
     format: String,
     callback: OliphauntJsiPromiseCallback,
   ) {
-    val session = sessions[handle]
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
     if (session == null) {
       callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
       return
@@ -180,13 +269,23 @@ class OliphauntModule(
   }
 
   override fun close(handle: Double, promise: Promise) {
-    val key = handle.toLong()
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("liboliphaunt_invalid_handle", error.message, error)
+      return
+    }
     scope.launch {
       runCatching {
         sessionMutex.withLock {
-          val session = sessions.remove(key)
-          sessionKeys.remove(key)
-          session?.close()
+          val session = sessions[key]
+          if (session != null) {
+            session.close()
+            if (sessions.remove(key, session)) {
+              nativeDirectClaim?.let { claim -> nativeDirectProcessOwner.release(claim) }
+              nativeDirectClaim = null
+            }
+          }
         }
       }.fold(
         onSuccess = { promise.resolve(null) },
@@ -196,15 +295,30 @@ class OliphauntModule(
   }
 
   override fun invalidate() {
+    val openToJoin = synchronized(lifecycleLock) {
+      invalidated.set(true)
+      pendingOpen.get()
+    }
     runBlocking(Dispatchers.IO) {
-      val sessionsToClose = sessionMutex.withLock {
-        val active = sessions.values.toList()
-        sessions.clear()
-        sessionKeys.clear()
-        active
-      }
-      if (sessionsToClose.isNotEmpty()) {
-        sessionsToClose.forEach { session -> runCatching { session.close() } }
+      openToJoin?.join()
+      val sessionsToClose = sessionMutex.withLock { sessions.entries.map { it.key to it.value } }
+      sessionsToClose.forEach { (key, session) ->
+        sessionMutex.withLock {
+          val claim = nativeDirectClaim
+          try {
+            session.close()
+            sessions.remove(key, session)
+            if (claim != null) {
+              nativeDirectProcessOwner.release(claim)
+            }
+          } catch (_: Throwable) {
+            sessions.remove(key, session)
+            if (claim != null) {
+              nativeDirectProcessOwner.retain(claim, session)
+            }
+          }
+          nativeDirectClaim = null
+        }
       }
     }
     scope.cancel()
@@ -213,7 +327,7 @@ class OliphauntModule(
 
   @DoNotStrip
   fun restoreBytes(
-    root: String,
+    destination: String,
     format: String,
     artifact: ByteArray,
     replaceExisting: Boolean,
@@ -222,14 +336,14 @@ class OliphauntModule(
   ) {
     scope.launch {
       runCatching {
-        validateRootPath(root, "restore root")
+        validatePath(destination, "restore destination")
         val request = RestoreRequest(
           artifact = BackupArtifact(parseBackupFormat(format), artifact),
-          root = root,
-          targetPolicy = if (replaceExisting) {
-            RestoreTargetPolicy.ReplaceExisting
+          destination = destination,
+          destinationPolicy = if (replaceExisting) {
+            RestoreDestinationPolicy.ReplaceExisting
           } else {
-            RestoreTargetPolicy.FailIfExists
+            RestoreDestinationPolicy.FailIfExists
           },
         )
         OliphauntAndroid.restore(
@@ -269,7 +383,13 @@ class OliphauntModule(
   }
 
   private fun sessionFor(handle: Double, promise: Promise): OliphauntDatabase? {
-    val session = sessions[handle.toLong()]
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      promise.reject("liboliphaunt_invalid_handle", error.message, error)
+      return null
+    }
+    val session = sessions[key]
     if (session == null) {
       promise.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
     }
@@ -281,8 +401,16 @@ class OliphauntModule(
     if (mode != EngineMode.NativeDirect) {
       throw IllegalArgumentException("React Native Android currently supports NativeDirect, got $mode")
     }
-    val root = config.string("root")?.let {
-      resolveRootSpecifier(validateRootPath(it, "database root"), reactContext.filesDir)
+    val storage = when (val kind = config.string("storageKind") ?: "temporaryDirectory") {
+      "temporaryDirectory" -> DatabaseStorage.TemporaryDirectory
+      "directory" -> DatabaseStorage.Directory(
+        validatePath(config.string("storagePath"), "database storage directory"),
+      )
+      "applicationData" -> {
+        val name = validateApplicationDataName(config.string("storageName"))
+        DatabaseStorage.Directory(File(File(reactContext.filesDir, "Oliphaunt"), name).absolutePath)
+      }
+      else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
     val runtimeDirectory = reactNativeRuntimeDirectory(config.pathOverride("runtimeDirectory"))
     val libraryPath = reactNativeLibraryPath(config.pathOverride("libraryPath"))
@@ -293,7 +421,7 @@ class OliphauntModule(
     return ReactNativeAndroidOpenConfig(
       config = OliphauntConfig(
         mode = mode,
-        root = root,
+        storage = storage,
         durability = parseDurability(config.string("durability") ?: "balanced"),
         runtimeFootprint = parseRuntimeFootprint(config.string("runtimeFootprint") ?: "balancedMobile"),
         startupGucs = config.startupGucs("startupGUCs"),
@@ -316,27 +444,7 @@ class OliphauntModule(
     val resourceRoot: String?,
     val username: String,
     val database: String,
-  ) {
-    val sessionKey: String =
-      listOf(
-        config.mode.name,
-        config.root.orEmpty(),
-        config.durability.name,
-        config.runtimeFootprint.name,
-        config.startupGucs.joinToString(",") { "${it.name}=${it.value}" },
-        username,
-        database,
-        config.extensions.joinToString(","),
-        libraryPath.orEmpty(),
-        runtimeDirectory.orEmpty(),
-        resourceRoot.orEmpty(),
-      ).joinToString(separator = "\u001f")
-  }
-
-  private fun existingHandleFor(openConfig: ReactNativeAndroidOpenConfig): Long? =
-    sessionKeys.entries.firstOrNull { (handle, sessionKey) ->
-      sessionKey == openConfig.sessionKey && sessions.containsKey(handle)
-    }?.key
+  )
 
   companion object {
     const val NAME = "Oliphaunt"
@@ -394,44 +502,27 @@ class OliphauntModule(
         )
       }
 
-    private fun validateRootPath(value: String, name: String): String {
-      if (value.isBlank()) {
-        throw IllegalArgumentException("$name must not be empty")
+    private fun validatePath(value: String?, label: String): String {
+      if (value.isNullOrBlank()) {
+        throw IllegalArgumentException("$label must not be empty")
       }
       if (value.any { it.code == 0 }) {
-        throw IllegalArgumentException("$name must not contain NUL bytes")
+        throw IllegalArgumentException("$label must not contain NUL bytes")
       }
       return value
     }
 
-    private fun resolveRootSpecifier(value: String, filesDir: File): String {
-      value.removePrefixOrNull("app-support://")?.let { suffix ->
-        return sandboxRoot(suffix, filesDir).absolutePath
+    private fun validateApplicationDataName(value: String?): String {
+      val name = value?.trim().orEmpty()
+      if (name == "." || name == ".." || !PORTABLE_STORAGE_NAME.matches(name)) {
+        throw IllegalArgumentException(
+          "applicationData storage name must contain 1 to 128 ASCII letters, digits, dot, underscore or hyphen",
+        )
       }
-      value.removePrefixOrNull("documents://")?.let { suffix ->
-        return sandboxRoot(suffix, filesDir).absolutePath
-      }
-      return value
+      return name
     }
 
-    private fun sandboxRoot(suffix: String, filesDir: File): File {
-      val components = validatedSandboxRootComponents(suffix)
-      return components.fold(File(filesDir, "Oliphaunt")) { root, component ->
-        File(root, component)
-      }
-    }
-
-    private fun validatedSandboxRootComponents(suffix: String): List<String> {
-      val trimmed = suffix.trim('/')
-      if (trimmed.isEmpty()) {
-        throw IllegalArgumentException("database root sandbox specifier must include a relative path")
-      }
-      val components = trimmed.split('/')
-      if (components.any { it == "." || it == ".." }) {
-        throw IllegalArgumentException("database root sandbox specifier must not contain '.' or '..'")
-      }
-      return components
-    }
+    private val PORTABLE_STORAGE_NAME = Regex("[A-Za-z0-9._-]{1,128}")
 
     private fun ReadableMap.pathOverride(name: String): String? =
       validatePathOverride(string(name), name)
@@ -495,9 +586,6 @@ class OliphauntModule(
     private fun environment(name: String): String? =
       System.getenv(name)?.takeIf(String::isNotEmpty)
 
-    private fun String.removePrefixOrNull(prefix: String): String? =
-      if (startsWith(prefix)) substring(prefix.length) else null
-
     private fun reactNativeLibraryPath(configured: String?): String? =
       configured
         ?: environment("OLIPHAUNT_REACT_NATIVE_ANDROID_LIBRARY")
@@ -550,10 +638,9 @@ class OliphauntModule(
       WritableNativeMap().apply {
         putString("engine", mode.wireName())
         putBoolean("processIsolated", processIsolated)
-        putBoolean("multiRoot", multiRoot)
-        putBoolean("reopenable", reopenable)
-        putBoolean("sameRootLogicalReopen", sameRootLogicalReopen)
-        putBoolean("rootSwitchable", rootSwitchable)
+        putBoolean("multipleInstances", multipleInstances)
+        putBoolean("sameInstanceLogicalReopen", sameInstanceLogicalReopen)
+        putBoolean("instanceSwitchable", instanceSwitchable)
         putBoolean("crashRestartable", crashRestartable)
         putBoolean("independentSessions", independentSessions)
         putInt("maxClientSessions", maxClientSessions)

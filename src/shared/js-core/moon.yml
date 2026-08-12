@@ -27,6 +27,8 @@ tasks:
       - "/src/sdks/js/src/query.ts"
       - "/src/sdks/react-native/src/protocol.ts"
       - "/src/sdks/react-native/src/query.ts"
+      - "/src/bindings/wasix-ts/src/protocol.ts"
+      - "/src/bindings/wasix-ts/src/query.ts"
     options:
       cache: true
       runFromWorkspaceRoot: true

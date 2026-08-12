@@ -44,7 +44,7 @@ stop_owned_metro() {
   fi
   metro_pid=""
   metro_bundle_runner=""
-  metro_bundle_root=""
+  metro_bundle_storage=""
 }
 
 cleanup() {

@@ -80,6 +80,12 @@ The validation entrypoint is split by maintainer workflow:
   behavior tests for helpers invoked by Actions;
 - `moon run liboliphaunt-wasix:smoke`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
+- `moon run oliphaunt-wasix-ts:smoke`: local-only browser proof. It builds the
+  canonical portable runtime and PGDATA, rebuilds the source-pinned browser
+  host, serves COOP/COEP headers, and requires Chrome/Chromium to exercise
+  `pgtap`, recover two PostgreSQL error paths, return `42`, and exit cleanly;
+  `moon run oliphaunt-wasix-ts:smoke-pg-uuidv7` adds the private native-module
+  canary. Neither is a CI or release task yet;
 - `moon run integration-examples:check`: Tauri/Rust/frontend example checks;
 - `moon run liboliphaunt-native:smoke`: native-only C ABI smoke and
   Rust native SDK tests. This delegates to the same fast product-track harness

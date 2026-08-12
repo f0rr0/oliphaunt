@@ -36,3 +36,4 @@
 0036-oliphaunt-wasix-skip-activity-id-reporting.patch
 0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch
 0038-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch
+0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch

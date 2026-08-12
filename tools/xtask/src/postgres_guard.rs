@@ -641,8 +641,8 @@ fn collect_pg18_legacy_symbol_leaks(
 
 fn check_postgres_patch_series_hygiene(patches: &[(String, String)]) -> Result<()> {
     ensure!(
-        patches.len() == 38,
-        "PG18 WASIX patch series should stay reviewable at exactly 38 audited patches; got {}",
+        patches.len() == 39,
+        "PG18 WASIX patch series should stay reviewable at exactly 39 audited patches; got {}",
         patches.len()
     );
     for (index, (patch_name, patch_text)) in patches.iter().enumerate() {
@@ -1173,7 +1173,7 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
     ensure_file_contains_all(
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base.rs",
         &[
-            "pub source_fingerprint: Option<String>",
+            "source_fingerprint: Option<String>",
             "embedded PGDATA template source fingerprint mismatch",
             "full_runtime_layout_matches_current",
             "ensure_existing_pgdata_matches_runtime",

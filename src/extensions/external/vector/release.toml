@@ -22,6 +22,7 @@ registry_packages = [
   "npm:@oliphaunt/extension-vector-linux-arm64-gnu",
   "npm:@oliphaunt/extension-vector-linux-x64-gnu",
   "npm:@oliphaunt/extension-vector-macos-arm64",
+  "npm:@oliphaunt/extension-vector-wasix",
   "npm:@oliphaunt/extension-vector-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-vector-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-vector-android-x86_64",

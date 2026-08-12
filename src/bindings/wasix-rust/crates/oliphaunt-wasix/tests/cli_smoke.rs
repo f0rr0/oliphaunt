@@ -11,13 +11,13 @@ mod support;
 use support::{ChildGuard, TestTrace, trace_step};
 
 fn direct_open_diagnostic() -> String {
-    let (result, phases) = capture_phase_timings(|| Oliphaunt::builder().temporary().open());
+    let (result, phases) = capture_phase_timings(|| Oliphaunt::builder().open());
     let outcome = match result {
         Ok(mut pg) => match pg.close() {
-            Ok(()) => "direct temporary Oliphaunt open succeeded".to_owned(),
-            Err(err) => format!("direct temporary Oliphaunt open succeeded, close failed: {err:#}"),
+            Ok(()) => "direct memory Oliphaunt open succeeded".to_owned(),
+            Err(err) => format!("direct memory Oliphaunt open succeeded, close failed: {err:#}"),
         },
-        Err(err) => format!("direct temporary Oliphaunt open failed: {err:#}"),
+        Err(err) => format!("direct memory Oliphaunt open failed: {err:#}"),
     };
     format!("{outcome}\nphases:\n{phases:#?}")
 }
@@ -26,7 +26,7 @@ fn direct_open_diagnostic() -> String {
 async fn oliphaunt_proxy_print_uri_accepts_sqlx_connection() -> Result<()> {
     let _trace = TestTrace::new("oliphaunt_proxy_print_uri_accepts_sqlx_connection");
     let process = Command::new(env!("CARGO_BIN_EXE_oliphaunt-wasix-proxy"))
-        .args(["--temporary", "--tcp", "127.0.0.1:0", "--print-uri"])
+        .args(["--memory", "--tcp", "127.0.0.1:0", "--print-uri"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

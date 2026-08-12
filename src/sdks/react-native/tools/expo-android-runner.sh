@@ -42,8 +42,8 @@ fi
 scratch_root="${OLIPHAUNT_EXPO_ANDROID_SCRATCH:-$root/target/oliphaunt-expo-android-$runner}"
 example_dir="${OLIPHAUNT_EXPO_ANDROID_EXAMPLE_DIR:-$scratch_root/src/sdks/react-native/examples/expo}"
 package_work="$scratch_root/src/sdks/react-native"
-crash_root_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
-[ -n "$crash_root_suffix" ] || crash_root_suffix="run"
+crash_storage_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
+[ -n "$crash_storage_suffix" ] || crash_storage_suffix="run"
 pack_dir="$root/target/oliphaunt-rn-expo-pack/android"
 tarball="$pack_dir/$(react_native_package_tarball_name "$rn_dir")"
 local_maven_repo="$scratch_root/maven-local"
@@ -108,8 +108,8 @@ durability_profile="${OLIPHAUNT_EXPO_ANDROID_DURABILITY:-${OLIPHAUNT_EXPO_MOBILE
 startup_gucs="${OLIPHAUNT_EXPO_ANDROID_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
 wal_segsize_mb="${OLIPHAUNT_EXPO_ANDROID_WAL_SEGSIZE_MB:-${OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB:-16}}"
 benchmark_preset="${OLIPHAUNT_EXPO_ANDROID_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
-crash_root_override="${OLIPHAUNT_EXPO_ANDROID_CRASH_ROOT:-}"
-crash_root="${crash_root_override:-/data/data/$app_id/files/oliphaunt-crash-recovery-root-$crash_root_suffix}"
+crash_storage_override="${OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE:-}"
+crash_storage="${crash_storage_override:-/data/data/$app_id/files/oliphaunt-crash-recovery-storage-$crash_storage_suffix}"
 mobile_template_initdb="${OLIPHAUNT_EXPO_ANDROID_INITDB:-}"
 case "${OLIPHAUNT_EXPO_ANDROID_ICU:-0}" in
   1|true|TRUE|yes|YES|on|ON) android_icu_enabled=1 ;;
@@ -120,7 +120,7 @@ android_icu_data_dir="${OLIPHAUNT_EXPO_ANDROID_ICU_DATA_DIR:-}"
 react_native_package_extra_excludes=(--exclude ios/vendor)
 metro_pid=""
 metro_bundle_runner=""
-metro_bundle_root=""
+metro_bundle_storage=""
 
 android_ndk_root() {
   local configured="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
@@ -175,7 +175,6 @@ android_liboliphaunt_has_current_abi() {
   symbols="$("$toolchain_bin/llvm-nm" -D --defined-only "$library" 2>/dev/null || true)"
   for symbol in \
     oliphaunt_init \
-    oliphaunt_init_ex \
     oliphaunt_exec_protocol \
     oliphaunt_exec_protocol_stream \
     oliphaunt_backup \
@@ -701,14 +700,14 @@ build_apk() {
 
 start_metro_if_needed() {
   local bundle_runner="${1:-$runner}"
-  local bundle_root="${2:-}"
+  local bundle_storage="${2:-}"
   if [ "$build_type" = "release" ]; then
     return
   fi
 
   mkdir -p "$scratch_root"
   if [ -n "${metro_pid:-}" ] && kill -0 "$metro_pid" >/dev/null 2>&1; then
-    if [ "$metro_bundle_runner" = "$bundle_runner" ] && [ "$metro_bundle_root" = "$bundle_root" ]; then
+    if [ "$metro_bundle_runner" = "$bundle_runner" ] && [ "$metro_bundle_storage" = "$bundle_storage" ]; then
       return 0
     fi
     stop_owned_metro
@@ -733,13 +732,13 @@ start_metro_if_needed() {
       EXPO_PUBLIC_OLIPHAUNT_BENCHMARK_PRESET="$benchmark_preset" \
       EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS="$startup_gucs" \
       EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB="$wal_segsize_mb" \
-      EXPO_PUBLIC_OLIPHAUNT_ROOT="$bundle_root" \
+      EXPO_PUBLIC_OLIPHAUNT_STORAGE_DIRECTORY="$bundle_storage" \
       pnpm exec expo start --dev-client --port "$metro_port" --clear \
       >"$scratch_root/metro.log" 2>&1
   ) &
   metro_pid="$!"
   metro_bundle_runner="$bundle_runner"
-  metro_bundle_root="$bundle_root"
+  metro_bundle_storage="$bundle_storage"
 
   for _ in $(seq 1 60); do
     if port_is_listening; then

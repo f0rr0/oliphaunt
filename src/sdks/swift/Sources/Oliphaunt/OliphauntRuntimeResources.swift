@@ -439,13 +439,13 @@ public struct OliphauntRuntimeResources: Sendable {
         let extensions = try Self.validateExtensionIds(
             manifest["extensions"]?.split(separator: ",").map(String.init) ?? []
         )
-        // `extensions` historically represented every packaged SQL identity.
-        // New manifests separate the complete selection from the subset that
-        // supports CREATE EXTENSION. Preserve old packages only when the new
-        // field is absent, not when it is explicitly empty.
+        guard let selectedExtensionsValue = manifest["selectedExtensions"] else {
+            throw OliphauntError.engine(
+                "liboliphaunt \(kind.label) manifest is missing selectedExtensions"
+            )
+        }
         let selectedExtensions = try Self.validateExtensionIds(
-            manifest["selectedExtensions"]?.split(separator: ",").map(String.init)
-                ?? Array(extensions)
+            selectedExtensionsValue.split(separator: ",").map(String.init)
         )
         guard extensions.isSubset(of: selectedExtensions) else {
             let unselected = extensions.subtracting(selectedExtensions).sorted()

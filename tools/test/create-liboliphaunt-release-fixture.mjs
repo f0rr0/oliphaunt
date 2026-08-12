@@ -87,8 +87,7 @@ function nativeRuntimeEntries(target) {
     'release-shaped native runtime fixture\n';
   entries[`runtime/lib/postgresql/dict_snowball${moduleSuffix}`] = nativeBinary(target);
   entries[`runtime/lib/postgresql/plpgsql${moduleSuffix}`] = nativeBinary(target);
-  entries['runtime/share/postgresql/extension/plpgsql.control'] =
-    "default_version = '1.0'\n";
+  entries['runtime/share/postgresql/extension/plpgsql.control'] = "default_version = '1.0'\n";
   entries['runtime/share/postgresql/extension/plpgsql--1.0.sql'] =
     '-- release-shaped PL/pgSQL fixture\n';
   entries['runtime/share/postgresql/snowball_create.sql'] =
@@ -183,8 +182,7 @@ function runtimeResourceEntries() {
   entries['oliphaunt/runtime/files/share/postgresql/snowball_create.sql'] =
     '-- release-shaped Snowball dictionary fixture\n';
   for (const stopword of SNOWBALL_STOPWORDS) {
-    entries[`oliphaunt/runtime/files/share/postgresql/tsearch_data/${stopword}`] =
-      `${stopword}\n`;
+    entries[`oliphaunt/runtime/files/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
   }
   entries['oliphaunt/package-size.tsv'] = runtimeResourcePackageSizeReport(entries);
   return entries;
@@ -304,13 +302,7 @@ function xcframeworkModes() {
   };
 }
 
-async function writeProfiledArchive(
-  output,
-  entries,
-  profile,
-  modes = {},
-  noticePrefix = '',
-) {
+async function writeProfiledArchive(output, entries, profile, modes = {}, noticePrefix = '') {
   const notices = {};
   for (const row of releaseNoticeRows({ profile })) {
     const member = noticePrefix ? `${noticePrefix}/${row.member}` : row.member;

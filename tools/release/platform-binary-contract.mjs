@@ -40,7 +40,6 @@ const WINDOWS_RUNTIME_IMPORT_LIBRARY_PATH = "lib/oliphaunt.lib";
 const WINDOWS_RUNTIME_IMPORT_DLL = "oliphaunt.dll";
 const WINDOWS_RUNTIME_IMPORT_SYMBOLS = Object.freeze([
   "oliphaunt_init",
-  "oliphaunt_init_ex",
   "oliphaunt_logical_generation",
   "oliphaunt_close_if_generation",
 ]);

@@ -11,8 +11,8 @@ export type NodeDirectAddon = {
   version(libraryPath: string): string;
   capabilities(libraryPath: string): bigint | number;
   open(config: NodeDirectOpenConfig): NativeHandle;
-  execProtocolRaw(handle: NativeHandle, request: Uint8Array): Uint8Array | ArrayBuffer;
-  execSimpleQuery(handle: NativeHandle, sql: string): Uint8Array | ArrayBuffer;
+  execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array | ArrayBuffer>;
+  execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
   execProtocolStream(
     handle: NativeHandle,
     request: Uint8Array,
@@ -31,7 +31,7 @@ export type NodeDirectOpenConfig = NativeOpenConfig & {
 
 export type NodeDirectRestoreOptions = {
   libraryPath: string;
-  root: string;
+  destination: string;
   format: number;
   bytes: Uint8Array;
   replaceExisting: boolean;

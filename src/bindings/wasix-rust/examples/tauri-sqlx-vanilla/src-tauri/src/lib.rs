@@ -43,11 +43,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let root = app
+            let database_directory = app
                 .path()
                 .app_data_dir()
                 .map(|dir| dir.join("oliphaunt-sqlx-profile"))?;
-            app.manage(BenchState::new(root));
+            app.manage(BenchState::new(database_directory));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![profile_queries])

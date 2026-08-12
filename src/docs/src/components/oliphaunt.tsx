@@ -216,7 +216,9 @@ export function LearnRouteMap() {
           </div>
           <div>
             <p className="font-medium">Runtime</p>
-            <p className="mt-1 text-fd-muted-foreground">Direct, broker, server, WASM.</p>
+            <p className="mt-1 text-fd-muted-foreground">
+              Native modes, Rust WASIX, TypeScript WASIX.
+            </p>
           </div>
           <div>
             <p className="font-medium">App fit</p>
@@ -253,8 +255,8 @@ export function LearnRouteMap() {
 
 const embeddedModelRows = [
   {
-    title: 'Root directory',
-    description: 'Live data is PostgreSQL storage and WAL inside an app-owned root directory.',
+    title: 'Database storage',
+    description: 'Temporary storage is the default; applications opt into persistent storage.',
     icon: HardDriveDownload,
   },
   {
@@ -269,7 +271,8 @@ const embeddedModelRows = [
   },
   {
     title: 'Runtime family',
-    description: 'Native SDKs and WASM share concepts while advertising their own capabilities.',
+    description:
+      'Native, Rust WASIX, and TypeScript WASIX products share concepts without claiming API parity.',
     icon: Database,
   },
 ];
@@ -292,9 +295,9 @@ export function EmbeddedPostgresModel() {
             </p>
           </div>
           <div className="rounded-md border bg-fd-background p-3">
-            <p className="font-medium">WASM family</p>
+            <p className="font-medium">WASIX family</p>
             <p className="mt-1 text-fd-muted-foreground">
-              First-class WASM/WASIX runtime family with separate assets and capabilities.
+              First-class WASIX runtime family with separate assets and capabilities.
             </p>
           </div>
         </div>
@@ -329,7 +332,7 @@ const mobileContractRows = [
   },
   {
     title: 'WAL recovery',
-    description: 'After process exit, the next launch reopens the root and PostgreSQL recovers storage.',
+    description: 'After process exit, the next launch reopens persistent storage and PostgreSQL recovers it.',
   },
   {
     title: 'Platform lifecycle',
@@ -363,7 +366,7 @@ export function MobileStabilityContract() {
 const sqliteMigrationRows = [
   {
     sqlite: 'One database file',
-    oliphaunt: 'PostgreSQL root directory',
+    oliphaunt: 'SDK-managed PostgreSQL storage',
     action: 'Move data movement to SDK backup and restore APIs.',
   },
   {
@@ -615,32 +618,27 @@ export function ReleaseLookup() {
 
 const capabilityCards = [
   {
-    title: 'Direct mode',
-    value: 'one serialized session',
-    description: 'Use it when app code owns one embedded PostgreSQL root and latency matters.',
+    title: 'Native runtime modes',
+    value: 'direct / broker / server',
+    description: 'Native SDKs advertise which native engines and workflows the target supports.',
     icon: Database,
   },
   {
-    title: 'Broker mode',
-    value: 'helper-owned roots',
-    description: 'Use it when a desktop app wants process ownership, recovery, or multiple roots.',
+    title: 'Rust WASIX',
+    value: 'Rust host API',
+    description: 'The Rust binding owns WASIX direct/server hosting, archives, and optional tools.',
     icon: GitBranch,
   },
   {
-    title: 'Server mode',
-    value: 'independent clients',
-    description: (
-      <>
-        Use it for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and PostgreSQL
-        connection strings.
-      </>
-    ),
+    title: 'WASIX TypeScript',
+    value: 'one host Worker',
+    description: 'The browser/Node binding has a fixed narrow API and optional browser IndexedDB snapshots.',
     icon: ListChecks,
   },
   {
     title: 'Extension artifacts',
     value: 'exact selection',
-    description: 'Use selected SQL extension names to decide what enters the app artifact.',
+    description: 'Each SDK uses its native selector shape while packaging only requested payloads.',
     icon: ShieldCheck,
   },
 ];
@@ -654,9 +652,10 @@ export function CapabilitySnapshot() {
             <FileSearch className="size-4" />
           </SurfaceIcon>
           <div>
-            <p className="text-sm font-semibold">Read capabilities before enabling a workflow</p>
+            <p className="text-sm font-semibold">Match features to the selected product</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              Capabilities describe what the installed SDK and runtime advertise on this target.
+              Capability reports exist where support varies. The TypeScript WASIX surface is explicit
+              instead of pretending to match richer native or Rust APIs.
             </p>
           </div>
         </div>
@@ -689,10 +688,11 @@ export function CapabilitySnapshot() {
 
 const extensionFlow = [
   {
-    title: 'Select SQL names',
+    title: 'Select exact extensions',
     description: (
       <>
-        Choose extension names such as <code>vector</code> in SDK configuration before opening.
+        Use the native SDK's SQL-name form, Rust WASIX typed values, or imported TypeScript WASIX
+        descriptors.
       </>
     ),
   },
@@ -702,7 +702,8 @@ const extensionFlow = [
   },
   {
     title: 'Package artifacts',
-    description: 'Swift, Kotlin, React Native, desktop, and WASM tooling package target artifacts.',
+    description:
+      'Swift, Kotlin, React Native, desktop, and WASIX tooling package target artifacts.',
   },
   {
     title: 'Verify the app',
@@ -716,8 +717,8 @@ export function ExtensionArtifactFlow() {
       <div className="border-y py-4">
         <p className="text-sm font-semibold">Extension packaging flow</p>
         <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-          The selector is the SQL extension name. Build tooling handles target artifacts and
-          dependency metadata.
+          Each product uses an ecosystem-native selector. Build tooling handles exact target
+          carriers and dependency metadata.
         </p>
       </div>
       <ol className="grid gap-5 border-b py-4 md:grid-cols-4">
@@ -812,9 +813,9 @@ const tauriModeCards = [
     icon: Database,
   },
   {
-    title: 'Helper owns roots',
+    title: 'Helper owns instances',
     value: 'NativeBroker',
-    description: 'Use a broker when a desktop app wants process ownership or multiple roots.',
+    description: 'Use a broker when a desktop app wants process ownership or multiple instances.',
     icon: GitBranch,
   },
   {
@@ -841,7 +842,7 @@ export function TauriAppPattern() {
           <div>
             <p className="text-sm font-semibold">Keep PostgreSQL ownership in Rust state</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              The webview calls app commands. Rust owns the database handle, root directory,
+              The webview calls app commands. Rust owns the database handle, storage,
               lifecycle, extension selection, and backup APIs.
             </p>
           </div>
@@ -965,7 +966,7 @@ const wasmRuntimeCards = [
   {
     title: 'Direct Rust API',
     value: 'Oliphaunt',
-    description: 'Use direct calls when Rust code owns SQL work inside the WASM host.',
+    description: 'Use direct calls when Rust code owns SQL work inside the WASIX host.',
     icon: Database,
   },
   {
@@ -997,10 +998,10 @@ export function WasmRuntimeMap() {
             <PackageCheck className="size-4" />
           </SurfaceIcon>
           <div>
-            <p className="text-sm font-semibold">Use WASM as its own runtime family</p>
+            <p className="text-sm font-semibold">Use WASIX as its own runtime family</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              WASM shares Oliphaunt concepts with native SDKs, while packaging its own WASIX
-              runtime assets, host targets, persistence behavior, and extension artifacts.
+              The Rust WASIX binding packages its own runtime assets, host targets, storage
+              behavior, and extension artifacts. These are not native SDK modes.
             </p>
           </div>
         </div>
@@ -1037,8 +1038,8 @@ const wasmDataMovementRows = [
   },
   {
     format: 'Physical archive',
-    use: 'Same-version clone or restore into another WASM root.',
-    api: 'dump_data_dir, load_data_dir_archive, try_clone',
+    use: 'Same-version clone or restore into another Rust WASIX store.',
+    api: 'backup, DatabaseInitialization::PhysicalArchive, try_clone',
   },
   {
     format: 'Server dump',
@@ -1174,7 +1175,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
   rust: [
     {
       title: 'First query',
-      description: 'A Rust or Tauri app opens an app-owned root and runs a query through the chosen mode.',
+      description: 'A Rust or Tauri app opens app-owned storage and runs a query through the chosen mode.',
     },
     {
       title: 'Mode choice',
@@ -1186,7 +1187,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'App boundary',
-      description: 'Tauri webviews call narrow Rust commands instead of owning database roots or raw handles.',
+      description: 'Tauri webviews call narrow Rust commands instead of owning database storage or raw handles.',
     },
   ],
   swift: [
@@ -1261,22 +1262,22 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
       description: 'The app packages helper executables, selected extensions, and backup/restore flows together.',
     },
   ],
-  wasm: [
+  'wasix-rust': [
     {
       title: 'Runtime assets',
-      description: 'A WASM/WASIX host loads the WASM runtime assets before opening a root.',
+      description: 'A WASIX host loads runtime assets before opening database storage.',
     },
     {
       title: 'First query',
-      description: 'The app opens a WASM root and runs SQL through the WASM runtime.',
+      description: 'The app opens WASIX storage and runs SQL through the portable runtime.',
     },
     {
       title: 'Data movement',
-      description: 'Dump, restore, and upgrade flows use the WASM runtime tooling documented for that runtime.',
+      description: 'Dump, restore, and upgrade flows use the WASIX tooling documented for that runtime.',
     },
     {
       title: 'Runtime family',
-      description: 'The app treats WASM as its own runtime family with separate assets and build rules.',
+      description: 'The app treats WASIX as its own runtime family with separate assets and build rules.',
     },
   ],
 };
@@ -1415,15 +1416,16 @@ export function QuickstartPath() {
   const steps = [
     {
       title: 'Pick the SDK',
-      description: 'Choose the package for the app users install: Rust, Swift, Kotlin, React Native, TypeScript, WASM, or C ABI.',
+      description:
+        'Choose a native SDK, Rust WASIX, TypeScript WASIX, or the C ABI.',
     },
     {
       title: 'Install through the platform tool',
       description: 'Use Cargo, SwiftPM/Xcode, Gradle, npm, Expo, or the released C artifacts. Native apps rebuild when runtime assets or selected extensions change.',
     },
     {
-      title: 'Open an app-owned root',
-      description: 'Use persistent app storage for user data and a temporary root for tests. A root is a PostgreSQL directory managed through SDK APIs.',
+      title: 'Choose database storage',
+      description: 'Use the zero-configuration temporary default or select persistent app storage for user data.',
     },
     {
       title: 'Run SQL and verify capabilities',
@@ -1476,8 +1478,8 @@ export function StartOutcome() {
       icon: PackageCheck,
     },
     {
-      title: 'One root opened',
-      description: 'The database lives in app-owned storage and uses SDK lifecycle APIs.',
+      title: 'One database opened',
+      description: 'The database uses the selected storage and SDK lifecycle APIs.',
       icon: HardDriveDownload,
     },
     {
@@ -1538,7 +1540,7 @@ const firstQueryExamples = [
     language: 'TypeScript',
     packageName: '@oliphaunt/ts',
     code: `const db = await Oliphaunt.open({
-  root: 'main.oliphaunt',
+  storage: { kind: 'directory', path: 'main.oliphaunt' },
   engine: 'nativeDirect',
   extensions: ['vector'],
 });
@@ -1550,9 +1552,9 @@ await db.close();`,
     language: 'Rust',
     packageName: 'oliphaunt',
     code: `let db = Oliphaunt::builder()
-    .root("main.oliphaunt")
-    .mode(RuntimeMode::NativeDirect)
-    .extension("vector")
+    .directory("main.oliphaunt")
+    .native_direct()
+    .extension(Extension::Vector)
     .open()
     .await?;
 
@@ -1562,10 +1564,12 @@ db.close().await?;`,
   {
     language: 'Swift',
     packageName: 'Oliphaunt',
-    code: `let db = try await Oliphaunt.open(
-  root: .appStorage("main.oliphaunt"),
-  mode: .nativeDirect,
-  extensions: ["vector"]
+    code: `let db = try await OliphauntDatabase.open(
+  configuration: OliphauntConfiguration(
+    mode: .nativeDirect,
+    storage: .directory(appStorage.appending(path: "main.oliphaunt")),
+    extensions: ["vector"]
+  )
 )
 
 try await db.query("select 1 as ready")
@@ -1628,9 +1632,10 @@ const startNextSteps = [
   },
   {
     title: 'Understand runtime modes',
-    description: 'Direct, broker, server, WASM, root ownership, sessions, and process boundaries.',
-    href: '/docs/learn/native-runtime',
-    label: 'Native Runtime',
+    description:
+      'Compare native direct/broker/server with the separate Rust and TypeScript WASIX hosts.',
+    href: '/docs/reference/capabilities',
+    label: 'Capabilities',
     icon: GitBranch,
   },
   {
@@ -1642,7 +1647,7 @@ const startNextSteps = [
   },
   {
     title: 'Plan storage and backup',
-    description: 'Use app-owned PostgreSQL roots, lifecycle APIs, backup, restore, and recovery behavior.',
+    description: 'Use explicit persistent storage, lifecycle APIs, backup, restore, and recovery behavior.',
     href: '/docs/learn/embedded-postgres',
     label: 'Embedded PostgreSQL',
     icon: HardDriveDownload,
@@ -1688,7 +1693,7 @@ export function VerifyChecklist() {
     },
     {
       title: 'Configure',
-      description: 'Runtime mode, root, selected extensions, and platform assets are explicit.',
+      description: 'Storage, runtime mode, selected extensions, and platform assets are explicit.',
       icon: Settings2,
     },
     {
@@ -1809,11 +1814,11 @@ export function ExactExtensionRule() {
       <div className="flex items-start gap-3">
         <CheckCircle2 className="mt-1 size-5 text-fd-primary" />
         <div>
-          <p className="text-sm font-semibold">Extension selection is exact SQL extension name only.</p>
+          <p className="text-sm font-semibold">Extension selection is exact and product-native.</p>
           <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-            If an app selects <code>vector</code>, the app artifact contains <code>vector</code>{' '}
-            and its declared dependencies. Unrelated search, geo, graph, or development-only
-            extension files stay out of that app artifact.
+            Native SDKs select exact SQL names, Rust WASIX uses exact Cargo features and typed
+            values, and TypeScript WASIX imports exact <code>-wasix</code> descriptors. Every form
+            includes only the selected carrier closure.
           </p>
         </div>
       </div>

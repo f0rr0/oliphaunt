@@ -47,8 +47,12 @@ function sorted(values) {
   return Array.from(new Set(values)).sort();
 }
 
-function extractRustSurface() {
-  const lines = readRelative('src/sdks/rust/src/lib.rs').split('\n');
+function extractRustSurface(
+  indexFile = 'src/sdks/rust/src/lib.rs',
+  sourceDir = 'src/sdks/rust/src',
+  crateName = 'oliphaunt',
+) {
+  const lines = readRelative(indexFile).split('\n');
   const symbols = [];
   let skipDocHidden = false;
 
@@ -83,23 +87,23 @@ function extractRustSurface() {
     const grouped = spec.match(/^(.*)::\{(.*)\}$/u);
     if (grouped) {
       for (const name of splitNames(grouped[2])) {
-        symbols.push(`oliphaunt::${name}`);
+        symbols.push(`${crateName}::${name}`);
       }
     } else {
       const name = spec.split('::').pop();
       if (name) {
-        symbols.push(`oliphaunt::${name}`);
+        symbols.push(`${crateName}::${name}`);
       }
     }
     skipDocHidden = false;
   }
 
-  for (const file of listFiles('src/sdks/rust/src', '.rs')) {
+  for (const file of listFiles(sourceDir, '.rs')) {
     const source = readRelative(file);
     const macroPattern =
       /#\[\s*macro_export\s*\]\s*(?:#\[[^\]]+\]\s*)*macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)/gu;
     for (const match of source.matchAll(macroPattern)) {
-      symbols.push(`oliphaunt::${match[1]}!`);
+      symbols.push(`${crateName}::${match[1]}!`);
     }
   }
 
@@ -117,7 +121,10 @@ function countBraces(line) {
 }
 
 function multilineDeclarationStillOpen(line) {
-  return !line.includes('{') && !line.includes(')') && !line.includes('=');
+  return (
+    !line.includes('{') &&
+    ((line.includes('(') && !line.includes(')')) || line.endsWith(':'))
+  );
 }
 
 function swiftMemberName(line) {
@@ -302,7 +309,8 @@ function extractKotlinSurface() {
 }
 
 function extractTypeScriptSurface(indexFile, memberFiles) {
-  const text = readRelative(indexFile);
+  const indexFiles = Array.isArray(indexFile) ? indexFile : [indexFile];
+  const text = indexFiles.map(readRelative).join('\n');
   const types = [];
   const values = [];
 
@@ -310,10 +318,20 @@ function extractTypeScriptSurface(indexFile, memberFiles) {
     types.push(...splitNames(match[1]));
   }
   for (const match of text.matchAll(/export\s+\{([\s\S]*?)\}\s+from/gu)) {
-    values.push(...splitNames(match[1]));
+    for (const entry of splitTypeScriptExportNames(match[1])) {
+      (entry.typeOnly ? types : values).push(entry.name);
+    }
   }
   for (const match of text.matchAll(/export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)/gu)) {
     values.push(match[1]);
+  }
+  for (const match of text.matchAll(
+    /export\s+(?:class|function)\s+([A-Za-z_][A-Za-z0-9_]*)/gu,
+  )) {
+    values.push(match[1]);
+  }
+  for (const match of text.matchAll(/export\s+type\s+([A-Za-z_][A-Za-z0-9_]*)/gu)) {
+    types.push(match[1]);
   }
 
   const exportedTypes = new Set(types);
@@ -325,6 +343,24 @@ function extractTypeScriptSurface(indexFile, memberFiles) {
     values: sorted(values),
     members,
   };
+}
+
+function splitTypeScriptExportNames(raw) {
+  return raw
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean)
+    .map(name => {
+      const typeOnly = name.startsWith('type ');
+      return {
+        typeOnly,
+        name: name
+          .replace(/^type\s+/u, '')
+          .replace(/\s+as\s+.*/u, '')
+          .trim(),
+      };
+    })
+    .filter(entry => entry.name.length > 0);
 }
 
 function extractReactNativeSurface() {
@@ -344,17 +380,40 @@ function extractOliphauntTsSurface() {
   ]);
 }
 
+function extractOliphauntWasixTsSurface() {
+  return extractTypeScriptSurface([
+    'src/bindings/wasix-ts/src/index.ts',
+    'src/bindings/wasix-ts/src/public.ts',
+  ], [
+    'src/bindings/wasix-ts/src/client.ts',
+    'src/bindings/wasix-ts/src/errors.ts',
+    'src/bindings/wasix-ts/src/extension-descriptor.ts',
+    'src/bindings/wasix-ts/src/protocol.ts',
+    'src/bindings/wasix-ts/src/query.ts',
+    'src/bindings/wasix-ts/src/storage.ts',
+    'src/bindings/wasix-ts/src/types.ts',
+  ]);
+}
+
 function typeScriptMemberName(line) {
   const getterMatch = line.match(/^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/u);
   if (getterMatch) {
     return getterMatch[1];
   }
-  const methodMatch = line.match(/^(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/u);
+  const computedMethodMatch = line.match(
+    /^\[Symbol\.([A-Za-z_][A-Za-z0-9_]*)\]\s*\(/u,
+  );
+  if (computedMethodMatch) {
+    return `[Symbol.${computedMethodMatch[1]}]()`;
+  }
+  const methodMatch = line.match(
+    /^(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:<[^>]+>)?\s*\(/u,
+  );
   if (methodMatch) {
     return `${methodMatch[1]}()`;
   }
   const propertyMatch = line.includes(';')
-    ? line.match(/^([A-Za-z_][A-Za-z0-9_]*)\??:/u)
+    ? line.match(/^(?:readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)\??:/u)
     : null;
   if (propertyMatch) {
     return propertyMatch[1];
@@ -443,6 +502,11 @@ function render() {
   const kotlin = extractKotlinSurface();
   const rn = extractReactNativeSurface();
   const ts = extractOliphauntTsSurface();
+  const wasixTs = extractOliphauntWasixTsSurface();
+  const wasixIndexedDb = extractTypeScriptSurface(
+    'src/bindings/wasix-ts/src/storage/indexed-db.ts',
+    ['src/bindings/wasix-ts/src/storage/indexed-db.ts'],
+  );
   let output = `<!-- Generated by tools/policy/generate-sdk-api-surface.mjs; do not edit by hand. -->\n`;
   output += `# SDK API Surface Inventory\n\n`;
   output += `This no-build inventory makes public SDK drift visible in review. It is a symbol-level guard, not a replacement for full language reference documentation.\n\n`;
@@ -452,6 +516,14 @@ function render() {
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
   output += markdownList(extractRustSurface());
+  output += `\n## Rust WASIX: oliphaunt-wasix\n\n`;
+  output += markdownList(
+    extractRustSurface(
+      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
+      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
+      'oliphaunt_wasix',
+    ),
+  );
   output += `\n## Swift: Oliphaunt\n\n`;
   output += markdownList(extractSwiftSurface());
   output += `\n## Kotlin: oliphaunt\n\n`;
@@ -474,6 +546,15 @@ function render() {
   output += markdownList(ts.values);
   output += `\n### Members\n\n`;
   output += markdownList(ts.members);
+  output += `\n## TypeScript WASIX: @oliphaunt/wasix\n\n`;
+  output += `### Types\n\n`;
+  output += markdownList(wasixTs.types);
+  output += `\n### Values\n\n`;
+  output += markdownList(wasixTs.values);
+  output += `\n### Members\n\n`;
+  output += markdownList(wasixTs.members);
+  output += `\n### Storage subpath: @oliphaunt/wasix/storage/indexed-db\n\n`;
+  output += markdownList([...wasixIndexedDb.types, ...wasixIndexedDb.values]);
   return output;
 }
 

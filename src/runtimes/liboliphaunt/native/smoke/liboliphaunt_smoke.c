@@ -168,35 +168,30 @@ static int verify_global_contract(void) {
     if (expect_error_contains(NULL, "oliphaunt_init invalid flags", "invalid oliphaunt_init config flags") != 0) {
         return 1;
     }
-    OliphauntConfig init_ex_config = {
+    OliphauntConfig invalid_module_config = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .pgdata = "/tmp/oliphaunt-invalid-init-options-pgdata",
+        .pgdata = "/tmp/oliphaunt-invalid-module-pgdata",
+        .module_dir = "/tmp/oliphaunt-missing-module-directory/not-a-directory",
     };
-    OliphauntInitOptions invalid_init_options = {
-        .abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION + 1,
-        .module_dir = ".",
-        .reserved_flags = 0,
-    };
-    if (oliphaunt_init_ex(&init_ex_config, &invalid_init_options, &invalid) == 0 || invalid != NULL) {
-        fprintf(stderr, "oliphaunt_init_ex accepted an invalid options ABI version\n");
+    if (oliphaunt_init(&invalid_module_config, &invalid) == 0 || invalid != NULL) {
+        fprintf(stderr, "oliphaunt_init accepted a missing module directory\n");
         if (invalid != NULL) {
             oliphaunt_close(invalid);
         }
         return 1;
     }
-    if (expect_error_contains(NULL, "oliphaunt_init_ex invalid options ABI", "invalid oliphaunt_init options") != 0) {
+    if (expect_error_contains(NULL, "oliphaunt_init missing module directory", "invalid oliphaunt_init module_dir") != 0) {
         return 1;
     }
-    invalid_init_options.abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION;
-    invalid_init_options.module_dir = "";
-    if (oliphaunt_init_ex(&init_ex_config, &invalid_init_options, &invalid) == 0 || invalid != NULL) {
-        fprintf(stderr, "oliphaunt_init_ex accepted an empty module directory\n");
+    invalid_module_config.module_dir = "";
+    if (oliphaunt_init(&invalid_module_config, &invalid) == 0 || invalid != NULL) {
+        fprintf(stderr, "oliphaunt_init accepted an empty module directory\n");
         if (invalid != NULL) {
             oliphaunt_close(invalid);
         }
         return 1;
     }
-    if (expect_error_contains(NULL, "oliphaunt_init_ex empty module directory", "invalid oliphaunt_init options") != 0) {
+    if (expect_error_contains(NULL, "oliphaunt_init empty module directory", "invalid oliphaunt_init module_dir") != 0) {
         return 1;
     }
     return 0;
@@ -511,39 +506,6 @@ static int exec_simple_query_expect_bytes(OliphauntHandle *db, const char *sql, 
     }
     oliphaunt_free_response(&response);
     return 0;
-}
-
-static int exec_query_ignores_legacy_wait_timeout_env(OliphauntHandle *db) {
-    const char *previous_timeout = getenv("OLIPHAUNT_TIMEOUT_MS");
-    char *saved_timeout = previous_timeout != NULL ? strdup(previous_timeout) : NULL;
-    if (previous_timeout != NULL && saved_timeout == NULL) {
-        fprintf(stderr, "failed to save OLIPHAUNT_TIMEOUT_MS\n");
-        return 1;
-    }
-    if (setenv("OLIPHAUNT_TIMEOUT_MS", "1", 1) != 0) {
-        fprintf(stderr, "failed to set OLIPHAUNT_TIMEOUT_MS\n");
-        free(saved_timeout);
-        return 1;
-    }
-
-    const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
-    int status = exec_query_expect_tags(
-        db,
-        "SELECT pg_sleep(0.02) AS no_synthetic_query_timeout",
-        select_tags,
-        sizeof(select_tags));
-
-    if (saved_timeout != NULL) {
-        if (setenv("OLIPHAUNT_TIMEOUT_MS", saved_timeout, 1) != 0) {
-            fprintf(stderr, "failed to restore OLIPHAUNT_TIMEOUT_MS\n");
-            status = 1;
-        }
-    } else if (unsetenv("OLIPHAUNT_TIMEOUT_MS") != 0) {
-        fprintf(stderr, "failed to unset OLIPHAUNT_TIMEOUT_MS\n");
-        status = 1;
-    }
-    free(saved_timeout);
-    return status;
 }
 
 static int exec_invalid_argument_checks(OliphauntHandle *db) {
@@ -1151,7 +1113,7 @@ static int verify_restore_rejects_special_archive_entry(const char *pgdata, char
     snprintf(restore_root, sizeof(restore_root), "%s.reject-%c.%ld", pgdata, typeflag, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1178,7 +1140,7 @@ static int verify_restore_rejects_directory_entry_with_payload(const char *pgdat
     snprintf(restore_root, sizeof(restore_root), "%s.reject-nonzero-dir.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1205,7 +1167,7 @@ static int verify_restore_rejects_bad_tar_checksum(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1232,7 +1194,7 @@ static int verify_restore_rejects_bad_tar_checksum_field(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum-field.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1260,7 +1222,7 @@ static int verify_restore_rejects_bad_tar_magic(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.reject-magic.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1288,7 +1250,7 @@ static int verify_restore_rejects_bad_tar_numeric_field(const char *pgdata, size
     snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1318,7 +1280,7 @@ static int verify_restore_rejects_bad_tar_string_field(const char *pgdata, size_
     snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1346,7 +1308,7 @@ static int verify_restore_rejects_truncated_tar_terminator(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.reject-short-terminator.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1374,7 +1336,7 @@ static int verify_restore_rejects_trailing_tar_data(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.reject-trailing.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1401,7 +1363,7 @@ static int verify_restore_rejects_duplicate_tar_entry(const char *pgdata, const 
     snprintf(restore_root, sizeof(restore_root), "%s.reject-duplicate.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1438,7 +1400,7 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
     snprintf(restore_root, sizeof(restore_root), "%s.reject-file-tree.%ld.%d", pgdata, (long)getpid(), parent_first);
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1473,7 +1435,7 @@ static int verify_restore_rejects_regular_tar_link_metadata(const char *pgdata) 
     snprintf(restore_root, sizeof(restore_root), "%s.reject-link-metadata.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1501,7 +1463,7 @@ static int verify_restore_accepts_canonicalized_tar_paths(const char *pgdata) {
     snprintf(restore_root, sizeof(restore_root), "%s.restore-canonical.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1536,7 +1498,11 @@ static int verify_backup_rejects_symlinked_pgdata_entry(OliphauntHandle *db, con
         return 1;
     }
     OliphauntResponse archive = {0};
-    int rc = oliphaunt_backup(db, OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE, &archive);
+    const OliphauntBackupOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
+    };
+    int rc = oliphaunt_backup(db, &options, &archive);
     (void)unlink(link_path);
     if (rc == 0) {
         fprintf(stderr, "oliphaunt_backup accepted symlinked PGDATA entry\n");
@@ -1549,7 +1515,29 @@ static int verify_backup_rejects_symlinked_pgdata_entry(OliphauntHandle *db, con
 
 static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdata) {
     OliphauntResponse invalid = {0};
-    if (oliphaunt_backup(NULL, OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE, &invalid) == 0) {
+    OliphauntBackupOptions backup_options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
+    };
+    if (oliphaunt_backup(db, NULL, &invalid) == 0) {
+        fprintf(stderr, "oliphaunt_backup accepted null options\n");
+        oliphaunt_free_response(&invalid);
+        return 1;
+    }
+    if (expect_error_contains(db, "oliphaunt_backup null options", "invalid oliphaunt_backup options") != 0) {
+        return 1;
+    }
+    backup_options.abi_version = OLIPHAUNT_ABI_VERSION + 1;
+    if (oliphaunt_backup(db, &backup_options, &invalid) == 0) {
+        fprintf(stderr, "oliphaunt_backup accepted an invalid options ABI version\n");
+        oliphaunt_free_response(&invalid);
+        return 1;
+    }
+    if (expect_error_contains(db, "oliphaunt_backup invalid options ABI", "invalid oliphaunt_backup options") != 0) {
+        return 1;
+    }
+    backup_options.abi_version = OLIPHAUNT_ABI_VERSION;
+    if (oliphaunt_backup(NULL, &backup_options, &invalid) == 0) {
         fprintf(stderr, "oliphaunt_backup accepted a null handle\n");
         oliphaunt_free_response(&invalid);
         return 1;
@@ -1557,7 +1545,8 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     if (expect_error_contains(NULL, "oliphaunt_backup null handle", "invalid oliphaunt_backup arguments") != 0) {
         return 1;
     }
-    if (oliphaunt_backup(db, OLIPHAUNT_BACKUP_FORMAT_SQL, &invalid) == 0) {
+    backup_options.format = OLIPHAUNT_BACKUP_FORMAT_SQL;
+    if (oliphaunt_backup(db, &backup_options, &invalid) == 0) {
         fprintf(stderr, "oliphaunt_backup accepted SQL format in direct mode\n");
         oliphaunt_free_response(&invalid);
         return 1;
@@ -1610,7 +1599,8 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
 
     OliphauntResponse archive = {0};
     fprintf(stderr, "creating physical backup through C ABI\n");
-    if (oliphaunt_backup(db, OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE, &archive) != 0) {
+    backup_options.format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE;
+    if (oliphaunt_backup(db, &backup_options, &archive) != 0) {
         fprintf(stderr, "oliphaunt_backup failed: %s\n", oliphaunt_last_error(db));
         return 1;
     }
@@ -1629,7 +1619,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     snprintf(restore_root, sizeof(restore_root), "%s.restore.%ld", pgdata, (long)getpid());
     OliphauntRestoreOptions invalid_options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1645,6 +1635,45 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
         return 1;
     }
 
+    char empty_restore_root[4096];
+    snprintf(empty_restore_root, sizeof(empty_restore_root), "%s.restore-empty.%ld", pgdata, (long)getpid());
+#ifdef _WIN32
+    int create_empty_restore_root = _mkdir(empty_restore_root);
+#else
+    int create_empty_restore_root = mkdir(empty_restore_root, 0700);
+#endif
+    if (create_empty_restore_root != 0) {
+        fprintf(stderr, "failed to create empty restore target %s\n", empty_restore_root);
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+    OliphauntRestoreOptions empty_root_options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = empty_restore_root,
+        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
+        .data = archive.data,
+        .len = archive.len,
+        .flags = 0,
+    };
+    if (oliphaunt_restore(&empty_root_options) == 0) {
+        fprintf(stderr, "oliphaunt_restore replaced an existing empty target by default\n");
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+    if (expect_error_contains(NULL, "oliphaunt_restore empty existing target", "already exists") != 0) {
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+#ifdef _WIN32
+    if (_rmdir(empty_restore_root) != 0) {
+#else
+    if (rmdir(empty_restore_root) != 0) {
+#endif
+        fprintf(stderr, "default restore modified existing empty target %s\n", empty_restore_root);
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+
     char live_root[4096];
     if (parent_path(pgdata, live_root, sizeof(live_root)) != 0) {
         fprintf(stderr, "failed to resolve live native root from PGDATA\n");
@@ -1653,7 +1682,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     }
     OliphauntRestoreOptions live_root_options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = live_root,
+        .destination = live_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1671,7 +1700,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
 
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
-        .root = restore_root,
+        .destination = restore_root,
         .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
@@ -1784,10 +1813,6 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
-    if (exec_query_ignores_legacy_wait_timeout_env(db) != 0) {
-        oliphaunt_close(db);
-        return 1;
-    }
 
     const unsigned char error_tags[] = {'E', 'Z'};
     if (exec_query_expect_tags(db, "SELECT * FROM liboliphaunt_missing_table", error_tags, sizeof(error_tags)) != 0) {

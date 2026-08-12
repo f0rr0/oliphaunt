@@ -34,6 +34,7 @@ docs_entry = "target/docs/generated/api/typescript/html/index.html"
 package_path = "src/sdks/react-native"
 docs_entry = "target/docs/generated/api/react-native/html/index.html"
 
+# Internal rustdoc artifact key. Public routes and labels use WASIX.
 [api_reference.wasm]
 package = "oliphaunt-wasix"
 docs_entry = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
@@ -263,9 +264,9 @@ snippet_language = "typescript"
 [[routes]]
 id = "oliphaunt-wasix"
 product_id = "oliphaunt-wasix-rust"
-title = "WASM SDK"
+title = "Rust WASIX SDK"
 kind = "sdk"
-route = "sdk/wasm"
+route = "sdk/wasix"
 source = "src/docs/content/sdk/wasm"
 public = true
 version_source = "src/bindings/wasix-rust/crates/oliphaunt-wasix/release.toml:id"
@@ -279,6 +280,7 @@ required_pages = [
 ]
 page_order = [
   "index",
+  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",
@@ -286,6 +288,7 @@ page_order = [
 ]
 sidebar_pages = [
   "index",
+  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",

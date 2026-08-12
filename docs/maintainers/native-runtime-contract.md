@@ -2,7 +2,8 @@
 
 This guide describes the native `oliphaunt` Rust SDK and `liboliphaunt`
 runtime. WASIX runtime behavior is documented separately in
-[`WASM runtime`](/sdk/wasm/runtime).
+[`Rust WASIX runtime`](/sdk/wasix/runtime), with WASIX TypeScript documented
+on its own page.
 
 ## Choose A Mode
 
@@ -18,7 +19,7 @@ use oliphaunt::Oliphaunt;
 
 # async fn open_direct() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .open()
     .await?;
@@ -32,11 +33,11 @@ db.close().await?;
 ```
 
 `NativeBroker` runs the same direct engine in a helper process. It is the robust
-desktop/app mode for process isolation and multiple roots managed by one Rust
-SDK runtime. Each broker-owned root still has one serialized physical
+desktop/app mode for process isolation and multiple instances managed by one Rust
+SDK runtime. Each broker-owned instance still has one serialized physical
 PostgreSQL backend session.
 
-Use it when process isolation and multi-root ownership matter more than absolute
+Use it when process isolation and multi-instance ownership matter more than absolute
 minimum call overhead:
 
 ```rust,no_run
@@ -44,9 +45,9 @@ use oliphaunt::Oliphaunt;
 
 # async fn open_broker() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_broker()
-    .broker_max_roots(4)
+    .broker_max_instances(4)
     .open()
     .await?;
 
@@ -65,7 +66,7 @@ use oliphaunt::Oliphaunt;
 
 # async fn open_server() -> oliphaunt::Result<String> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_server()
     .max_client_sessions(8)
     .open()
@@ -80,11 +81,11 @@ Ok(db.connection_string().expect("server mode exposes a URL").to_owned())
 The three modes are intentionally different. The SDK must not fake server
 semantics in direct or broker mode.
 
-| Mode | Process model | Session model | Root model | Reopen/crash behavior |
+| Mode | Process model | Session model | Instance model | Reopen/crash behavior |
 | --- | --- | --- | --- | --- |
-| `NativeDirect` | in-process | one serialized physical session | one resident root per process | same-root logical reopen only; no crash isolation |
-| `NativeBroker` | helper process per active root | one serialized physical session per root | multiple roots bounded by `broker_max_roots` | helper crash can be restarted; app process remains alive |
-| `NativeServer` | PostgreSQL server process | independent PostgreSQL client sessions | one server root per opened handle | use normal server restart/recovery flows |
+| `NativeDirect` | in-process | one serialized physical session | one resident instance per process | same-instance logical reopen only; no crash isolation |
+| `NativeBroker` | helper process per active instance | one serialized physical session per instance | multiple instances bounded by `broker_max_instances` | helper crash can be restarted; app process remains alive |
+| `NativeServer` | PostgreSQL server process | independent PostgreSQL client sessions | one server instance per opened handle | use normal server restart/recovery flows |
 
 `Oliphaunt` is cloneable as an SDK handle. Clones share the same owner executor,
 FIFO queue, session pin, cancellation handle, and close state. Cloning is not a connection pool.
@@ -103,9 +104,9 @@ Direct mode is process-resident:
 - one resident backend per process;
 - one physical session;
 - serialized requests through the SDK owner executor;
-- one root per process after the resident backend exists;
+- one instance per process after the resident backend exists;
 - `close()` is a logical detach, not full PostgreSQL shutdown;
-- reopening is same-root only inside the same process;
+- reopening is limited to the same instance inside the same process;
 - native PostgreSQL crashes terminate the host process.
 
 On desktop Unix, `oliphaunt_init` promotes the loaded `liboliphaunt` image to
@@ -119,18 +120,18 @@ Use broker or server mode when isolation from another PostgreSQL image is
 required.
 
 The reliability contract is crash consistency, not crash isolation. If the host
-process dies, the next launch reopens the same root and PostgreSQL performs WAL
+process dies, the next launch reopens the same persistent storage and PostgreSQL performs WAL
 recovery. Applications that need app-process survival after database-process
 death should use broker/server modes where the target platform supports them.
 
 ## Storage
 
-Native live storage is a PostgreSQL root directory, not a single file. A root
+Native live storage is a PostgreSQL directory, not a single file. It
 contains PGDATA, Oliphaunt metadata, lock metadata, extension metadata, and
 recovery state.
 
-Persistent roots use exclusive locking in direct mode. Broker and server modes
-own their roots through the helper/server process. A second unsafe owner fails
+Persistent directories use exclusive locking in direct mode. Broker and server modes
+own their storage through the helper/server process. A second unsafe owner fails
 instead of sharing a data directory.
 
 Use SDK backup/restore APIs for ergonomic export/import:
@@ -166,7 +167,7 @@ use oliphaunt::{Extension, Oliphaunt};
 
 # async fn open_with_vector() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .extension(Extension::Vector)
     .open()
@@ -190,8 +191,8 @@ Use capabilities instead of assuming a mode can do everything:
 
 - `session_concurrency` distinguishes serialized SDK sessions from independent
   server sessions;
-- `multi_root` is broker-only today;
-- `same_root_logical_reopen`, `root_switchable`, and `crash_restartable`
+- `multiple_instances` is broker-only today;
+- `same_instance_logical_reopen`, `instance_switchable`, and `crash_restartable`
   describe lifecycle semantics explicitly;
 - `backup_formats` and `restore_formats` gate backup/restore UI before work is
   queued.

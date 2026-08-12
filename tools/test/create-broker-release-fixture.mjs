@@ -30,7 +30,9 @@ function brokerBinary(target) {
 }
 
 async function carrierLegalEntries(target) {
-  const stage = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'oliphaunt-broker-fixture-legal-')));
+  const stage = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'oliphaunt-broker-fixture-legal-')),
+  );
   await fs.chmod(stage, 0o755);
   try {
     stageReleaseNotices(stage, { profile: 'broker' });
@@ -58,7 +60,7 @@ async function carrierLegalEntries(target) {
 
 async function brokerEntries(target, executable) {
   return {
-    ...await carrierLegalEntries(target),
+    ...(await carrierLegalEntries(target)),
     [executable]: brokerBinary(target),
     'manifest.properties': [
       'schema=oliphaunt-broker-release-assets-v1',
@@ -76,7 +78,7 @@ async function windowsBrokerEntries() {
   const runtime = windowsPeFixture({ imports: ['KERNEL32.dll'] });
   const digest = createHash('sha256').update(runtime).digest('hex');
   return {
-    ...await carrierLegalEntries('windows-x64-msvc'),
+    ...(await carrierLegalEntries('windows-x64-msvc')),
     'bin/oliphaunt-broker.exe': executable,
     [`bin/${runtimeName}`]: runtime,
     'bin/windows-vc-runtime.sha256': `${digest}  ${runtimeName}\n`,

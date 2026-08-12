@@ -6,7 +6,10 @@ use crate::error::Result;
 use crate::executor::EngineExecutor;
 use crate::lifecycle::{BackgroundPreparationOptions, BackgroundPreparationResult};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::query::{QueryParam, QueryResult, extended_query_request, parse_query_response};
+use crate::query::{
+    QueryParam, QueryResult, ensure_successful_query_response, extended_query_request,
+    parse_query_response,
+};
 use crate::storage::{BackupArtifact, BackupFormat, BackupRequest, RestoreRequest};
 
 /// Open native Oliphaunt database handle.
@@ -21,12 +24,12 @@ impl Oliphaunt {
         OliphauntBuilder::new()
     }
 
-    /// Restore a backup artifact into a database root.
+    /// Restore a backup artifact into a filesystem destination.
     pub async fn restore(request: RestoreRequest) -> Result<std::path::PathBuf> {
         Self::restore_blocking(request)
     }
 
-    /// Restore a backup artifact into a database root from synchronous host
+    /// Restore a backup artifact into a filesystem destination from synchronous host
     /// tooling.
     pub fn restore_blocking(request: RestoreRequest) -> Result<std::path::PathBuf> {
         crate::backup::restore_backup(request)
@@ -76,7 +79,9 @@ impl Oliphaunt {
 
     /// Execute SQL through PostgreSQL's simple-query protocol.
     pub async fn execute(&self, sql: &str) -> Result<ProtocolResponse> {
-        self.executor.exec_simple_query(sql.to_owned()).await
+        let response = self.executor.exec_simple_query(sql.to_owned()).await?;
+        ensure_successful_query_response(&response)?;
+        Ok(response)
     }
 
     /// Execute SQL through PostgreSQL's simple-query protocol and parse one
@@ -129,8 +134,11 @@ impl Oliphaunt {
     /// Start an explicit SQL transaction pinned to the physical session.
     pub async fn transaction(&self) -> Result<Transaction> {
         let pin = self.pin_session().await?;
-        pin.exec_protocol_raw(ProtocolRequest::simple_query("BEGIN")?)
-            .await?;
+        if let Err(error) = pin.execute_sql("BEGIN").await {
+            let _ = pin.execute_sql("ROLLBACK").await;
+            let _ = pin.release().await;
+            return Err(error);
+        }
         Ok(Transaction {
             pin: Some(pin),
             finished: false,
@@ -164,7 +172,7 @@ impl Oliphaunt {
 
     /// Force a checkpoint.
     pub async fn checkpoint(&self) -> Result<()> {
-        self.executor.checkpoint().await
+        self.execute("CHECKPOINT").await.map(|_| ())
     }
 
     /// Prepare the database for mobile or desktop app suspension.
@@ -212,6 +220,14 @@ pub struct SessionPin {
 }
 
 impl SessionPin {
+    async fn execute_sql(&self, sql: &str) -> Result<ProtocolResponse> {
+        let response = self
+            .exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
+            .await?;
+        ensure_successful_query_response(&response)?;
+        Ok(response)
+    }
+
     /// Execute raw protocol bytes while holding the physical-session pin.
     pub async fn exec_protocol_raw(
         &self,
@@ -252,9 +268,7 @@ impl SessionPin {
     /// Execute SQL through PostgreSQL's simple-query protocol while holding the
     /// physical-session pin.
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
-        let response = self
-            .exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
-            .await?;
+        let response = self.execute_sql(sql).await?;
         parse_query_response(&response)
     }
 
@@ -290,7 +304,7 @@ impl Transaction {
         self.pin
             .as_ref()
             .expect("transaction pin is present until commit or rollback")
-            .exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
+            .execute_sql(sql)
             .await
     }
 
@@ -352,7 +366,7 @@ impl Transaction {
         self.pin
             .as_ref()
             .expect("transaction pin is present until commit or rollback")
-            .exec_protocol_raw(ProtocolRequest::simple_query("COMMIT")?)
+            .execute_sql("COMMIT")
             .await?;
         self.finished = true;
         self.pin
@@ -367,7 +381,7 @@ impl Transaction {
         self.pin
             .as_ref()
             .expect("transaction pin is present until commit or rollback")
-            .exec_protocol_raw(ProtocolRequest::simple_query("ROLLBACK")?)
+            .execute_sql("ROLLBACK")
             .await?;
         self.finished = true;
         self.pin

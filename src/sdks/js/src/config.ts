@@ -18,9 +18,9 @@ export const DEFAULT_DATABASE = 'postgres';
 
 export type NormalizedOpenConfig = {
   engine: EngineMode;
-  root: string;
+  instanceDirectory: string;
   pgdata: string;
-  temporary: boolean;
+  temporaryDirectory: boolean;
   durability: DurabilityProfile;
   runtimeFootprint: RuntimeFootprintProfile;
   startupArgs: string[];
@@ -31,7 +31,7 @@ export type NormalizedOpenConfig = {
   runtimeDirectory?: string;
   maxClientSessions: number;
   brokerExecutable?: string;
-  brokerMaxRoots: number;
+  brokerMaxInstances: number;
   brokerTransport: BrokerTransport;
   serverExecutable?: string;
   serverPort?: number;
@@ -40,12 +40,12 @@ export type NormalizedOpenConfig = {
 
 export function normalizeOpenConfig(
   config: OpenConfig,
-  resolvedRoot: string,
+  resolvedStorage: {
+    instanceDirectory: string;
+    temporaryDirectory: boolean;
+  },
 ): NormalizedOpenConfig {
-  if (config.root !== undefined && config.temporary === true) {
-    throw new Error('root and temporary are mutually exclusive');
-  }
-  validateRootPath(resolvedRoot, 'database root');
+  validateDirectoryPath(resolvedStorage.instanceDirectory, 'database storage directory');
   validateStartupIdentity(config.username ?? DEFAULT_USERNAME, 'username');
   validateStartupIdentity(config.database ?? DEFAULT_DATABASE, 'database');
   const runtimeFootprint = normalizeRuntimeFootprint(config.runtimeFootprint ?? 'throughput');
@@ -76,15 +76,15 @@ export function normalizeOpenConfig(
   );
   const engine = config.engine ?? 'nativeDirect';
   const maxClientSessions = validateMaxClientSessions(config.maxClientSessions, engine);
-  const brokerMaxRoots = validateBrokerMaxRoots(config.brokerMaxRoots);
+  const brokerMaxInstances = validateBrokerMaxInstances(config.brokerMaxInstances);
   const brokerTransport = validateBrokerTransport(config.brokerTransport ?? 'auto');
   const serverPort = validateServerPort(config.serverPort);
 
   return {
     engine,
-    root: resolvedRoot,
-    pgdata: join(resolvedRoot, 'pgdata'),
-    temporary: config.temporary === true,
+    instanceDirectory: resolvedStorage.instanceDirectory,
+    pgdata: join(resolvedStorage.instanceDirectory, 'pgdata'),
+    temporaryDirectory: resolvedStorage.temporaryDirectory,
     durability,
     runtimeFootprint,
     startupArgs,
@@ -95,7 +95,7 @@ export function normalizeOpenConfig(
     runtimeDirectory,
     maxClientSessions,
     brokerExecutable,
-    brokerMaxRoots,
+    brokerMaxInstances,
     brokerTransport,
     serverExecutable,
     serverPort,
@@ -123,15 +123,15 @@ export function buildStartupArgs(options: {
   return assignments.flatMap((assignment) => ['-c', assignment]);
 }
 
-export function validateRootPath(value: string | undefined, label: string): void {
+export function validateDirectoryPath(value: string | undefined, label: string): void {
   if (value === undefined) {
     return;
   }
   if (value.trim().length === 0) {
-    throw new Error(rootPathMessage(label, 'empty'));
+    throw new Error(directoryPathMessage(label, 'empty'));
   }
   if (value.includes('\0')) {
-    throw new Error(rootPathMessage(label, 'nul'));
+    throw new Error(directoryPathMessage(label, 'nul'));
   }
 }
 
@@ -181,15 +181,15 @@ export function validateMaxClientSessions(value: number | undefined, engine: Eng
   return sessions;
 }
 
-export function validateBrokerMaxRoots(value: number | undefined): number {
-  const roots = value ?? 1;
-  if (!Number.isInteger(roots)) {
-    throw new Error('brokerMaxRoots must be an integer');
+export function validateBrokerMaxInstances(value: number | undefined): number {
+  const instances = value ?? 1;
+  if (!Number.isInteger(instances)) {
+    throw new Error('brokerMaxInstances must be an integer');
   }
-  if (roots <= 0) {
-    throw new Error('native broker max_roots must be greater than zero');
+  if (instances <= 0) {
+    throw new Error('native broker maxInstances must be greater than zero');
   }
-  return roots;
+  return instances;
 }
 
 export function validateServerPort(value: number | undefined): number | undefined {
@@ -333,16 +333,16 @@ function splitStartupGUCAssignment(assignment: string): [string, string] {
   return [assignment.slice(0, index), assignment.slice(index + 1)];
 }
 
-function rootPathMessage(label: string, reason: 'empty' | 'nul'): string {
+function directoryPathMessage(label: string, reason: 'empty' | 'nul'): string {
   switch (`${label}:${reason}`) {
-    case 'database root:empty':
-      return 'database root must not be empty';
-    case 'database root:nul':
-      return 'database root must not contain NUL bytes';
-    case 'restore root:empty':
-      return 'restore root must not be empty';
-    case 'restore root:nul':
-      return 'restore root must not contain NUL bytes';
+    case 'database storage directory:empty':
+      return 'database storage directory must not be empty';
+    case 'database storage directory:nul':
+      return 'database storage directory must not contain NUL bytes';
+    case 'restore destination:empty':
+      return 'restore destination must not be empty';
+    case 'restore destination:nul':
+      return 'restore destination must not contain NUL bytes';
     default:
       return reason === 'empty'
         ? `${label} must not be empty`

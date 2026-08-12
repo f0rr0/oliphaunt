@@ -9,9 +9,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oliphaunt::{
     BackgroundCheckpointSkipReason, BackgroundPreparationOptions, BackgroundPreparationResult,
-    BackupArtifact, BackupFormat, BackupRequest, DatabaseRoot, EngineCancel, EngineCapabilities,
-    EngineMode, EngineSession, Error, NativeRuntime, Oliphaunt, ProtocolRequest, ProtocolResponse,
-    RestoreRequest, RestoreTargetPolicy, Result,
+    BackupArtifact, BackupFormat, BackupRequest, EngineCancel, EngineCapabilities, EngineMode,
+    EngineSession, Error, NativeRuntime, Oliphaunt, ProtocolRequest, ProtocolResponse,
+    RestoreDestinationPolicy, RestoreRequest, Result,
 };
 
 #[test]
@@ -32,25 +32,29 @@ fn restore_physical_archive_materializes_pgdata_layout() {
 }
 
 #[test]
-fn restore_physical_archive_can_publish_into_empty_existing_directory() {
+fn restore_physical_archive_rejects_empty_existing_directory_by_default() {
     let root = unique_temp_root("oliphaunt-restore-empty-existing");
     std::fs::create_dir_all(&root).unwrap();
 
-    let restored = block_on(Oliphaunt::restore(RestoreRequest::physical_archive(
+    let error = block_on(Oliphaunt::restore(RestoreRequest::physical_archive(
         &root,
         minimal_physical_archive(),
     )))
-    .unwrap();
+    .unwrap_err();
 
-    assert_eq!(restored, root);
-    assert!(root.join("pgdata/PG_VERSION").is_file());
+    assert!(
+        error.to_string().contains("already exists"),
+        "unexpected restore error: {error}"
+    );
+    assert!(root.is_dir());
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
     assert!(!root.join(".oliphaunt.lock").exists());
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[cfg(unix)]
 #[test]
-fn restore_physical_archive_rejects_symlink_targets() {
+fn restore_physical_archive_rejects_symlink_destinations() {
     let parent = unique_temp_root("oliphaunt-restore-symlink");
     let real = parent.join("real-root");
     let link = parent.join("link-root");
@@ -63,19 +67,19 @@ fn restore_physical_archive_rejects_symlink_targets() {
     )))
     .unwrap_err();
     assert!(
-        error.to_string().contains("symlink target"),
+        error.to_string().contains("symlink destination"),
         "unexpected restore symlink error: {error}"
     );
     assert!(
         link.symlink_metadata().unwrap().file_type().is_symlink(),
-        "restore modified the symlink target"
+        "restore modified the symlink destination"
     );
     assert!(std::fs::read_dir(&real).unwrap().next().is_none());
     let _ = std::fs::remove_dir_all(parent);
 }
 
 #[test]
-fn restore_physical_archive_rejects_non_empty_targets_by_default() {
+fn restore_physical_archive_rejects_non_empty_destinations_by_default() {
     let root = unique_temp_root("oliphaunt-restore-non-empty");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("sentinel"), b"existing").unwrap();
@@ -86,9 +90,7 @@ fn restore_physical_archive_rejects_non_empty_targets_by_default() {
     )))
     .unwrap_err();
     assert!(
-        error
-            .to_string()
-            .contains("refusing to restore into non-empty target"),
+        error.to_string().contains("already exists"),
         "unexpected restore error: {error}"
     );
     assert_eq!(std::fs::read(root.join("sentinel")).unwrap(), b"existing");
@@ -96,7 +98,7 @@ fn restore_physical_archive_rejects_non_empty_targets_by_default() {
 }
 
 #[test]
-fn restore_physical_archive_can_replace_existing_roots() {
+fn restore_physical_archive_can_replace_existing_destinations() {
     let root = unique_temp_root("oliphaunt-restore-replace");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("sentinel"), b"existing").unwrap();
@@ -113,15 +115,15 @@ fn restore_physical_archive_can_replace_existing_roots() {
 }
 
 #[test]
-fn restore_rejects_unsupported_formats_before_materializing_target() {
+fn restore_rejects_unsupported_formats_before_materializing_destination() {
     let root = unique_temp_root("oliphaunt-restore-sql-reject");
     let error = block_on(Oliphaunt::restore(RestoreRequest {
         artifact: BackupArtifact {
             format: BackupFormat::Sql,
             bytes: b"sql-backup".to_vec(),
         },
-        target: DatabaseRoot::Path(root.clone()),
-        target_policy: RestoreTargetPolicy::FailIfExists,
+        destination: root.clone(),
+        destination_policy: RestoreDestinationPolicy::FailIfExists,
     }))
     .unwrap_err();
 
@@ -133,7 +135,7 @@ fn restore_rejects_unsupported_formats_before_materializing_target() {
     );
     assert!(
         !root.exists(),
-        "unsupported restore format should not materialize the target root"
+        "unsupported restore format should not materialize the destination"
     );
 }
 
@@ -141,7 +143,7 @@ fn restore_rejects_unsupported_formats_before_materializing_target() {
 fn opened_handle_exposes_backup_restore_format_helpers() {
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-format-helper")
+            .directory("target/test-roots/native-format-helper")
             .native_server()
             .runtime(MockRuntime {
                 calls: Arc::new(Mutex::new(Vec::new())),
@@ -165,7 +167,7 @@ fn opened_handle_rejects_unsupported_backup_formats_before_engine_call() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-format-helper-reject")
+            .directory("target/test-roots/native-format-helper-reject")
             .runtime(MockRuntime {
                 calls: Arc::clone(&calls),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -195,7 +197,7 @@ fn cloned_handles_share_one_serial_owner_executor() {
     let cancels = Arc::new(AtomicUsize::new(0));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::clone(&calls),
                 cancels: Arc::clone(&cancels),
@@ -340,7 +342,7 @@ fn cloned_handles_queue_fifo_on_one_owner_executor_for_every_sdk_mode() {
 fn raw_streaming_uses_the_same_owner_executor() {
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -369,7 +371,7 @@ fn streaming_cancel_uses_out_of_band_cancel_and_releases_owner() {
     let cancels = Arc::new(AtomicUsize::new(0));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(StreamingCancelRuntime {
                 state: Arc::clone(&state),
                 cancels: Arc::clone(&cancels),
@@ -418,7 +420,7 @@ fn execute_uses_the_engine_simple_query_path() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::clone(&calls),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -429,16 +431,54 @@ fn execute_uses_the_engine_simple_query_path() {
 
     // OLIPHAUNT_DOCS_SNIPPET rust-quickstart
     let response = block_on(db.execute("SELECT simple_query_path")).unwrap();
-    let expected = b"\x01SSELECT simple_query_path".to_vec();
-    assert_eq!(response.into_bytes(), expected);
-    assert_eq!(*calls.lock().unwrap(), vec![expected]);
+    assert_eq!(response.into_bytes(), backend_command_response("SELECT 1"));
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![b"\x01SSELECT simple_query_path".to_vec()]
+    );
+}
+
+#[test]
+fn high_level_sql_surfaces_postgres_errors_while_raw_protocol_preserves_bytes() {
+    let db = open_postgres_error_db(b"FAIL");
+    let request = ProtocolRequest::simple_query("SELECT FAIL").unwrap();
+    let raw = block_on(db.exec_protocol_raw(request)).unwrap();
+    assert_eq!(raw.into_bytes(), backend_error_response());
+
+    assert_postgres_error(block_on(db.execute("SELECT FAIL")).unwrap_err(), "23505");
+
+    let tx = block_on(db.transaction()).unwrap();
+    assert_postgres_error(block_on(tx.execute("SELECT FAIL")).unwrap_err(), "23505");
+    block_on(tx.rollback()).unwrap();
+}
+
+#[test]
+fn transaction_control_and_checkpoint_surface_postgres_errors() {
+    let db = open_postgres_error_db(b"BEGIN");
+    assert_postgres_error(
+        block_on(db.transaction())
+            .err()
+            .expect("BEGIN should return a PostgreSQL error"),
+        "23505",
+    );
+    block_on(db.execute("SELECT recovered")).unwrap();
+
+    let db = open_postgres_error_db(b"COMMIT");
+    let tx = block_on(db.transaction()).unwrap();
+    assert_postgres_error(block_on(tx.commit()).unwrap_err(), "23505");
+    block_on(db.execute("SELECT recovered")).unwrap();
+
+    assert_postgres_error(
+        block_on(open_postgres_error_db(b"CHECKPOINT").checkpoint()).unwrap_err(),
+        "23505",
+    );
 }
 
 #[test]
 fn session_pin_prevents_unpinned_interleaving() {
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -480,7 +520,7 @@ fn lifecycle_prepare_for_background_checkpoints_when_idle_and_resume_probes_sess
     let calls = Arc::new(Mutex::new(Vec::new()));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct-lifecycle-idle")
+            .directory("target/test-roots/native-direct-lifecycle-idle")
             .runtime(MockRuntime {
                 calls: Arc::clone(&calls),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -521,7 +561,7 @@ fn lifecycle_prepare_for_background_cancels_active_work_without_checkpointing() 
     let state = Arc::new(BlockingState::default());
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct-lifecycle-active")
+            .directory("target/test-roots/native-direct-lifecycle-active")
             .runtime(BlockingRuntime {
                 state: Arc::clone(&state),
             })
@@ -551,7 +591,7 @@ fn lifecycle_prepare_for_background_cancels_active_work_without_checkpointing() 
 fn lifecycle_prepare_for_background_skips_checkpoint_when_session_is_pinned() {
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct-lifecycle-pinned")
+            .directory("target/test-roots/native-direct-lifecycle-pinned")
             .runtime(MockRuntime {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -579,7 +619,7 @@ fn transaction_pins_and_releases_the_direct_session() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::clone(&calls),
                 cancels: Arc::new(AtomicUsize::new(0)),
@@ -781,7 +821,7 @@ fn close_waits_for_active_owner_work_before_shutdown() {
     let state = Arc::new(BlockingState::default());
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(BlockingRuntime {
                 state: Arc::clone(&state),
             })
@@ -804,7 +844,7 @@ fn close_waits_for_active_owner_work_before_shutdown() {
     close_worker.join().unwrap().unwrap();
     assert_eq!(
         worker.join().unwrap().unwrap().into_bytes(),
-        b"finished".to_vec()
+        backend_command_response("SELECT 1")
     );
     assert!(state.was_closed());
     assert!(
@@ -822,7 +862,7 @@ fn close_rejects_work_already_queued_behind_active_query() {
     let state = Arc::new(BlockingState::default());
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(BlockingRuntime {
                 state: Arc::clone(&state),
             })
@@ -845,7 +885,7 @@ fn close_rejects_work_already_queued_behind_active_query() {
     close_worker.join().unwrap().unwrap();
     assert_eq!(
         active_worker.join().unwrap().unwrap().into_bytes(),
-        b"finished".to_vec()
+        backend_command_response("SELECT 1")
     );
     assert_eq!(
         queued_worker.join().unwrap().unwrap_err(),
@@ -863,7 +903,7 @@ fn idle_close_does_not_issue_spurious_cancel() {
     let cancels = Arc::new(AtomicUsize::new(0));
     let db = block_on(
         Oliphaunt::builder()
-            .path("target/test-roots/native-direct")
+            .directory("target/test-roots/native-direct")
             .runtime(MockRuntime {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::clone(&cancels),
@@ -927,7 +967,11 @@ impl EngineSession for MockSession {
         let mut response = vec![self.count];
         response.extend_from_slice(request.as_bytes());
         self.calls.lock().unwrap().push(response.clone());
-        Ok(ProtocolResponse::new(response))
+        if request.as_bytes().first() == Some(&b'Q') {
+            Ok(ProtocolResponse::new(backend_command_response("SELECT 1")))
+        } else {
+            Ok(ProtocolResponse::new(response))
+        }
     }
 
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
@@ -935,7 +979,7 @@ impl EngineSession for MockSession {
         let mut response = vec![self.count, b'S'];
         response.extend_from_slice(sql.as_bytes());
         self.calls.lock().unwrap().push(response.clone());
-        Ok(ProtocolResponse::new(response))
+        Ok(ProtocolResponse::new(backend_command_response("SELECT 1")))
     }
 
     fn checkpoint(&mut self) -> Result<()> {
@@ -989,8 +1033,44 @@ impl EngineSession for ScriptedTransactionSession {
             ScriptedTransactionFailure::Rollback if raw_message_contains(&bytes, b"ROLLBACK") => {
                 Err(Error::Engine("scripted ROLLBACK failure".to_owned()))
             }
+            _ if bytes.first() == Some(&b'Q') => {
+                Ok(ProtocolResponse::new(backend_command_response("OK")))
+            }
             _ => Ok(ProtocolResponse::new(bytes)),
         }
+    }
+}
+
+struct PostgresErrorRuntime {
+    failure_sql: &'static [u8],
+}
+
+impl NativeRuntime for PostgresErrorRuntime {
+    fn open(&self, config: oliphaunt::OpenConfig) -> Result<Box<dyn EngineSession>> {
+        Ok(Box::new(PostgresErrorSession {
+            mode: config.mode,
+            failure_sql: self.failure_sql,
+        }))
+    }
+}
+
+struct PostgresErrorSession {
+    mode: EngineMode,
+    failure_sql: &'static [u8],
+}
+
+impl EngineSession for PostgresErrorSession {
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities::for_mode(self.mode)
+    }
+
+    fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+        let response = if raw_message_contains(request.as_bytes(), self.failure_sql) {
+            backend_error_response()
+        } else {
+            backend_command_response("OK")
+        };
+        Ok(ProtocolResponse::new(response))
     }
 }
 
@@ -1085,6 +1165,7 @@ impl EngineSession for BlockingSession {
     }
 
     fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+        let simple_query = request.as_bytes().first() == Some(&b'Q');
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut guard = self.state.inner.lock().unwrap();
         guard.calls.push(request.as_bytes().to_vec());
@@ -1101,7 +1182,9 @@ impl EngineSession for BlockingSession {
             let (next_guard, _) = self.state.condvar.wait_timeout(guard, timeout).unwrap();
             guard = next_guard;
         }
-        if guard.cancelled {
+        if simple_query && !guard.cancelled {
+            Ok(ProtocolResponse::new(backend_command_response("SELECT 1")))
+        } else if guard.cancelled {
             Ok(ProtocolResponse::new(b"cancelled".to_vec()))
         } else {
             Ok(ProtocolResponse::new(b"finished".to_vec()))
@@ -1236,12 +1319,34 @@ impl EngineSession for StreamingCancelSession {
 }
 
 fn builder_for_mode(mode: EngineMode, path: impl Into<PathBuf>) -> oliphaunt::OliphauntBuilder {
-    let builder = Oliphaunt::builder().path(path);
+    let builder = Oliphaunt::builder().directory(path);
     match mode {
         EngineMode::NativeDirect => builder.native_direct(),
         EngineMode::NativeBroker => builder.native_broker(),
         EngineMode::NativeServer => builder.native_server(),
     }
+}
+
+fn open_postgres_error_db(failure_sql: &'static [u8]) -> Oliphaunt {
+    block_on(
+        Oliphaunt::builder()
+            .directory(format!(
+                "target/test-roots/postgres-error-{}",
+                String::from_utf8_lossy(failure_sql).to_ascii_lowercase()
+            ))
+            .runtime(PostgresErrorRuntime { failure_sql })
+            .open(),
+    )
+    .unwrap()
+}
+
+fn assert_postgres_error(error: Error, expected_sqlstate: &str) {
+    let Error::Postgres(postgres) = error else {
+        panic!("expected structured PostgreSQL error, got {error:?}");
+    };
+    assert_eq!(postgres.severity.as_deref(), Some("ERROR"));
+    assert_eq!(postgres.sqlstate.as_deref(), Some(expected_sqlstate));
+    assert_eq!(postgres.message, "duplicate key value");
 }
 
 fn open_scripted_transaction_db(
@@ -1416,6 +1521,39 @@ fn append_test_archive_file(
 
 fn raw_message_contains(bytes: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+fn backend_command_response(command_tag: &str) -> Vec<u8> {
+    let mut response = Vec::new();
+    let mut command = command_tag.as_bytes().to_vec();
+    command.push(0);
+    push_backend_message(&mut response, b'C', &command);
+    push_backend_message(&mut response, b'Z', b"I");
+    response
+}
+
+fn backend_error_response() -> Vec<u8> {
+    let mut response = Vec::new();
+    let mut error = Vec::new();
+    for (code, value) in [
+        (b'S', "ERROR"),
+        (b'C', "23505"),
+        (b'M', "duplicate key value"),
+    ] {
+        error.push(code);
+        error.extend_from_slice(value.as_bytes());
+        error.push(0);
+    }
+    error.push(0);
+    push_backend_message(&mut response, b'E', &error);
+    push_backend_message(&mut response, b'Z', b"I");
+    response
+}
+
+fn push_backend_message(response: &mut Vec<u8>, tag: u8, body: &[u8]) {
+    response.push(tag);
+    response.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
+    response.extend_from_slice(body);
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {
