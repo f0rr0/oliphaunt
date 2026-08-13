@@ -93,9 +93,10 @@ function writeCarrierPackage(
   const [firstExtension] = extensions;
   writeCarrier(carrier, extensions, {
     baseVersion: nativeVersion,
-    ownerVersions: firstExtension === undefined
-      ? {}
-      : { [releaseOwnerForSqlName(firstExtension.sqlName).releaseProduct]: packageVersion },
+    ownerVersions:
+      firstExtension === undefined
+        ? {}
+        : { [releaseOwnerForSqlName(firstExtension.sqlName).releaseProduct]: packageVersion },
   });
   writeJson(path.join(packageRoot, 'package.json'), {
     name: packageName,

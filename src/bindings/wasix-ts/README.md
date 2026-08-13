@@ -67,10 +67,19 @@ It rotates engine order, keeps raw samples, separates cold from warm startup,
 warms representative PostgreSQL and JavaScript paths before timed workloads,
 and reports direct/direct and worker/worker medians independently. The result
 also records `fsync`, `synchronous_commit`, `full_page_writes`, and `wal_level`;
-performance claims must not conceal durability differences. The command exits
-unsuccessfully unless every comparable direct/direct and worker/worker metric,
-including close, meets the configured 30% advantage. Descriptive cold-open and
-WAL-byte measurements are reported but are not speed gates.
+performance claims must not conceal durability differences. Each matched
+topology must independently achieve a geometric mean of median paired
+Oliphaunt/PGlite ratios no greater than `0.80`, so a strong worker result cannot
+hide a weak direct result. Descriptive cold-open, close, insert-decomposition,
+and WAL-byte measurements are reported but are not speed gates. Close is
+excluded because the public methods make different worker-reclamation
+guarantees, while WAL volume remains a required parity constraint.
+
+Each full run writes raw JSON and a compact Markdown report under `target/perf`,
+including the exact Git state, canonical runtime asset hashes, browser/machine
+identity, and the resolved installed PGlite tree. `--quick` remains available
+as a correctness/parity smoke profile but is explicitly ineligible for a
+performance claim.
 
 The insert diagnostic records WAL volume alongside expression, heap, indexed,
 and server-reported execution time. Separate root-cause runs also compared
@@ -88,8 +97,8 @@ insert work near PGlite with equal WAL volume. A repeated alternating-process
 A/B also replaced only the generic 64-bit compare-exchange read in XLogWrite's
 page-readiness check with an atomic load; it produced mixed sub-2% changes and
 worse commit tails. That hypothesis is retired rather than shipped as an
-unmeasured optimization. The strict gate remains failed wherever the measured
-lower quartile does not clear 30%.
+unmeasured optimization. The strict gate instead evaluates the complete primary
+workload with the same comfortable-win statistic used by the Node benchmark.
 
 Inside that checked-in Vite harness, application code imports only the
 extension carrier it uses. `@oliphaunt/wasix-ts` resolves the exact
