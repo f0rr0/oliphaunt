@@ -1551,7 +1551,9 @@ async function resolveExtensionTargetPackageJson(
     throw new Error(`${packageName} package metadata does not declare ${expectedKind}`);
   }
   if (packageJson.oliphaunt?.product !== extension.artifactProduct) {
-    throw new Error(`${packageName} package metadata does not declare ${extension.artifactProduct}`);
+    throw new Error(
+      `${packageName} package metadata does not declare ${extension.artifactProduct}`,
+    );
   }
   requireExtensionPackageMembers(packageJson, expectedMembers, packageName);
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {
