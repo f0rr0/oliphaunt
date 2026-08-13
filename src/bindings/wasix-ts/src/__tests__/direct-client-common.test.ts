@@ -41,7 +41,10 @@ describe('direct WASIX session lifecycle', () => {
     );
 
     expect(failure).toBeInstanceOf(PostgresError);
-    expect(failure).toMatchObject({ sqlstate: '3D000', postgresMessage: 'database does not exist' });
+    expect(failure).toMatchObject({
+      sqlstate: '3D000',
+      postgresMessage: 'database does not exist',
+    });
     expect(failure.message).toContain('direct WASIX instance cleanup also failed');
     expect(failure.message).toContain('storage release also failed');
     expect(failure.message).toContain('direct WASIX allocation release also failed');
@@ -110,9 +113,7 @@ describe('direct WASIX session lifecycle', () => {
     await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
       'protocol pump trapped; this database can no longer be used',
     );
-    expect(() => session.exec(Uint8Array.of(2))).toThrow(
-      'Oliphaunt WASIX direct database failed',
-    );
+    expect(() => session.exec(Uint8Array.of(2))).toThrow('Oliphaunt WASIX direct database failed');
     await session.close();
 
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
@@ -240,6 +241,15 @@ describe('direct WASIX session lifecycle', () => {
       DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
     ).rejects.toThrow(/use execution: "worker" for postgis/);
     expect(prepared).toBe(false);
+
+    const nodeSession = await DirectWasixSession.open(
+      options,
+      fakeHost({}),
+      guardedDependencies,
+      'node',
+    );
+    expect(prepared).toBe(true);
+    await nodeSession.close();
   });
 });
 

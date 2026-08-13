@@ -50,6 +50,8 @@ export type DirectWasixDependencies = Readonly<{
   compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
 
+export type DirectWasixEnvironment = 'browser' | 'node';
+
 const preparedRuntimes = new Map<string, Promise<PreparedBrowserRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
 const initializedHosts = new WeakMap<object, Promise<void>>();
@@ -94,8 +96,9 @@ export class DirectWasixSession implements WasixDatabaseSession {
     options: SerializedOpenOptions,
     host: DirectWasixHost,
     dependencies: DirectWasixDependencies = defaultDependencies,
+    environment: DirectWasixEnvironment = 'browser',
   ): Promise<DirectWasixSession> {
-    assertDirectExtensionCompatibility(options);
+    if (environment === 'browser') assertDirectExtensionCompatibility(options);
     const prepared = await dependencies.prepareRuntime(options);
     const pgdataTemplate = prepared.layout.mounts['/base'];
     if (pgdataTemplate === undefined) {

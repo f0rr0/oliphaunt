@@ -148,8 +148,10 @@ is explicitly unsupported in both browser placements today. Oversized carriers
 without that additional requirement can use worker execution; smaller
 qualified extension carriers remain available in direct mode.
 
-The same code runs on Node.js. Package exports select `worker_threads`
-automatically; consumers do not import a Node-specific subpath:
+The same code runs on Node.js. Package exports select one package-owned
+`worker_threads` worker automatically, and that worker uses the synchronous
+guest driver without a redundant inner worker or stream pump. Consumers do not
+import a Node-specific subpath:
 
 ```sh
 pnpm add @oliphaunt/wasix-ts @oliphaunt/extension-pgtap-wasix

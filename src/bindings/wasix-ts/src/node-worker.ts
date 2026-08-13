@@ -2,12 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { parentPort } from 'node:worker_threads';
 import * as zlib from 'node:zlib';
 import { installPackageAssetReader } from './asset-source.js';
+import { DirectWasixSession, type DirectWasixHost } from './direct-client-common.js';
 import * as host from './node-host.js';
 import { nodeZstdDecompressor } from './node-zstd.js';
 import type { WorkerRequest, WorkerResponse } from './rpc.js';
 import { acquireNodeDirectoryStorage } from './storage/node-directory-provider.js';
 import { installNodeDirectoryStorageProvider } from './storage-provider.js';
-import { createWorkerDispatcher } from './worker-dispatch.js';
+import { createWorkerSessionDispatcher } from './worker-dispatch.js';
 import { installZstdDecompressor } from './zstd.js';
 
 if (parentPort === null) {
@@ -20,7 +21,15 @@ const nativeZstd = nodeZstdDecompressor(Reflect.get(zlib, 'zstdDecompressSync'),
 if (nativeZstd !== undefined) installZstdDecompressor(nativeZstd);
 
 const port = parentPort;
-const dispatch = createWorkerDispatcher(host, respond);
+const directHost: DirectWasixHost = {
+  Directory: host.Directory,
+  init: host.initDirect,
+  instantiateOliphauntDirect: host.instantiateOliphauntDirect,
+};
+const dispatch = createWorkerSessionDispatcher(
+  (options) => DirectWasixSession.open(options, directHost, undefined, 'node'),
+  respond,
+);
 port.on('message', (request: WorkerRequest) => {
   void dispatch(request);
 });
