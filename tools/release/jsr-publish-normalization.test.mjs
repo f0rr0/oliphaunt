@@ -20,6 +20,13 @@ import { verifyLockedCarrierIntegrity } from "./registry-integrity.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const SOURCE = path.join(ROOT, "src/sdks/js");
+const EXACT_NORMALIZED_SOURCE = path.join(
+  import.meta.dir,
+  "fixtures/jsr-publish-normalization/oliphaunt-ts-0.1.1",
+);
+// These bytes are immutable publication evidence; staging live SDK source would
+// silently retarget the 0.1.1 proof whenever a rewrite-prone file evolves.
+const EXACT_NORMALIZED_FILES = new Set(["src/jsr.ts", "src/query.ts"]);
 const EXACT_SOURCE = Object.freeze({
   commit: "ae3d29ba16245e9345a8d337cd17c53f9bf2e853",
   tree: "673e8f249d2f51d10997f0036a7e471bf35a388e",
@@ -47,6 +54,8 @@ function stageExactSource() {
     const sdkSource = path.join(SOURCE, ...relative.split("/"));
     const source = relative === "LICENSE" || relative === "THIRD_PARTY_NOTICES.md"
       ? path.join(ROOT, relative)
+      : EXACT_NORMALIZED_FILES.has(relative)
+      ? path.join(EXACT_NORMALIZED_SOURCE, ...`${relative}.raw`.split("/"))
       : sdkSource;
     writeFileSync(target, readFileSync(source));
   }
