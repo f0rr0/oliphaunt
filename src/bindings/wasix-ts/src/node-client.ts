@@ -1,10 +1,12 @@
-import { Worker } from 'node:worker_threads';
+import { randomUUID } from 'node:crypto';
+import { isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isMainThread, Worker } from 'node:worker_threads';
 
-import {
-  openWasixWithWorker,
-  serializeOpenConfig,
-  type WasixWorkerPort,
-} from './client-common.js';
+import { openWasixWithWorker, serializeOpenConfig, type WasixWorkerPort } from './client-common.js';
+import { releaseNodeDirectoryLockSync } from './node-directory-lock.js';
+import { nodeWorkerExecArgv } from './node-worker-options.js';
+import { nodeWorkerPort } from './node-worker-port.js';
 import { resolveExecutionMode } from './open-options.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
@@ -12,12 +14,11 @@ import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js'
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
   if (resolveExecutionMode(config) === 'direct') {
     throw new TypeError(
-      '@oliphaunt/wasix direct execution is browser-only; use execution: "worker" in Node.js',
+      '@oliphaunt/wasix-ts direct execution is browser-only; use execution: "worker" in Node.js',
     );
   }
   const openOptions = serializeOpenConfig(config);
-  requireNodeStorage(openOptions);
-  return openWasixWithWorker(createNodeWorker, openOptions);
+  return openWasixWithWorker(createNodeWorker, openOptions, requireNodeStorage);
 }
 
 export const Oliphaunt: OliphauntClient = {
@@ -25,41 +26,48 @@ export const Oliphaunt: OliphauntClient = {
 };
 
 function requireNodeStorage(options: SerializedOpenOptions): void {
-  if (options.storage.kind !== 'memory') {
+  if (options.storage.kind === 'indexed-db') {
     throw new TypeError(
-      '@oliphaunt/wasix IndexedDB storage is browser-only; omit storage to use Node memory storage',
+      '@oliphaunt/wasix-ts IndexedDB storage is browser-only; use memory or the storage/node adapter',
     );
+  }
+  if (options.storage.kind === 'node-directory') {
+    if (!isMainThread) {
+      throw new TypeError(
+        '@oliphaunt/wasix-ts Node directory storage must be opened from the main thread',
+      );
+    }
+    options.storage = {
+      ...options.storage,
+      path: resolveNodeDirectoryPath(options.storage.path),
+      ownerToken: randomUUID(),
+    };
   }
 }
 
-function createNodeWorker(): WasixWorkerPort {
-  const worker = new Worker(new URL('./node-worker.js', import.meta.url), {
-    name: 'oliphaunt-wasix',
-  });
-  return {
-    postMessage: (message, transfer) => {
-      worker.postMessage(message, transfer as readonly ArrayBuffer[]);
-    },
-    terminate: () => {
-      void worker.terminate();
-    },
-    onMessage: (listener) => {
-      worker.on('message', listener);
-    },
-    onFatal: (listener) => {
-      worker.on('error', listener);
-      worker.on('messageerror', (error) => {
-        listener(
-          error instanceof Error
-            ? error
-            : new Error('Oliphaunt WASIX Node worker returned an unreadable message'),
-        );
-      });
-      worker.on('exit', (code) => {
-        if (code !== 0) {
-          listener(new Error(`Oliphaunt WASIX Node worker exited with code ${code}`));
-        }
-      });
-    },
-  };
+function createNodeWorker(options: SerializedOpenOptions): WasixWorkerPort {
+  const storage = options.storage;
+  const ownerToken = storage.kind === 'node-directory' ? storage.ownerToken : undefined;
+  const recoverLease =
+    storage.kind === 'node-directory' && ownerToken !== undefined
+      ? () => releaseAbandonedDirectoryLock(storage.path, ownerToken)
+      : undefined;
+  return nodeWorkerPort(
+    new Worker(new URL('./node-worker.js', import.meta.url), {
+      execArgv: nodeWorkerExecArgv(),
+      name: 'oliphaunt-wasix',
+    }),
+    recoverLease,
+  );
+}
+
+/** Last-resort cleanup when a worker dies before its storage lease can close. */
+function releaseAbandonedDirectoryLock(input: string, ownerToken: string): void {
+  const root = resolveNodeDirectoryPath(input);
+  releaseNodeDirectoryLockSync(join(root, '.oliphaunt-wasix-ts'), ownerToken);
+}
+
+function resolveNodeDirectoryPath(input: string): string {
+  const requested = input.startsWith('file:') ? fileURLToPath(input) : input;
+  return isAbsolute(requested) ? requested : resolve(requested);
 }

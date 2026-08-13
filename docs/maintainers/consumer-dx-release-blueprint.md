@@ -207,14 +207,14 @@ The intended WASIX consumer surface stays selective and does not expose the
 runtime carrier's package-relative assets:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const db = await Oliphaunt.open({ extensions: [pgtap] });
 ```
 
 Node and browser WASIX hosts share the same `-wasix` extension
-descriptor and bytes. Host selection belongs to `@oliphaunt/wasix`; native
+descriptor and bytes. Host selection belongs to `@oliphaunt/wasix-ts`; native
 JavaScript remains on the established unsuffixed surface.
 
 ### JavaScript: Deno And JSR

@@ -1,5 +1,6 @@
 import { serializeWorkerError, type WorkerRequest, type WorkerResponse } from './rpc.js';
-import { WasixProcess, type WasixHost } from './wasix-process.js';
+import { type WasixHost, WasixProcess } from './wasix-process.js';
+import { prepareTransferableBytes } from './worker-transfer.js';
 
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
@@ -18,9 +19,10 @@ export function createWorkerDispatcher(host: WasixHost, respond: WorkerResponder
           respond({ id: request.id, ok: true });
           return;
         case 'exec': {
-          const value = await requireProcess(process).exec(request.input);
-          const transfer = value.buffer instanceof ArrayBuffer ? [value.buffer] : [];
-          respond({ id: request.id, ok: true, value }, transfer);
+          const response = prepareTransferableBytes(
+            await requireProcess(process).exec(request.input),
+          );
+          respond({ id: request.id, ok: true, value: response.value }, response.transfer);
           return;
         }
         case 'checkpoint':

@@ -5,16 +5,7 @@ host_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 binding_dir="$(cd "$host_dir/.." && pwd)"
 repo_root="$(cd "$binding_dir/../../.." && pwd)"
 source_manifest="$host_dir/source.toml"
-wasmer_js_patch="$host_dir/patches/0001-wasmer-js-run-configured-wasix-process.patch"
-wasmer_wasix_patch="$host_dir/patches/0002-wasmer-wasix-add-0702-compatibility-imports.patch"
-wasmer_js_filesystem_patch="$host_dir/patches/0003-wasmer-js-install-browser-runtime-devices.patch"
-wasmer_wasix_recovery_patch="$host_dir/patches/0004-wasmer-wasix-recover-stdio-pgwire-errors.patch"
-wasmer_js_init_patch="$host_dir/patches/0005-wasmer-js-use-object-wasm-init.patch"
-wasmer_js_precompiled_module_patch="$host_dir/patches/0006-wasmer-js-reuse-precompiled-wasix-module.patch"
-wasmer_js_direct_patch="$host_dir/patches/0007-wasmer-js-run-oliphaunt-direct.patch"
-wasmer_async_instance_patch="$host_dir/patches/0008-wasmer-instantiate-js-modules-async.patch"
-wasmer_wasix_async_instance_patch="$host_dir/patches/0009-wasmer-wasix-instantiate-main-module-async.patch"
-wasmer_js_lock_patch="$host_dir/patches/0010-wasmer-js-refresh-npm-lock.patch"
+provenance_script="$host_dir/build-provenance.mjs"
 target_parent="$repo_root/target/oliphaunt-wasix-ts/host"
 target_dir="$target_parent/wasmer-sdk"
 cargo_target_dir="$target_parent/cargo"
@@ -54,11 +45,12 @@ for value in "$wasmer_js_url" "$wasmer_js_version" "$wasmer_js_commit" "$wasmer_
   fi
 done
 
-input_hash="$({
-  for input in "$source_manifest" "$wasmer_js_patch" "$wasmer_wasix_patch" "$wasmer_js_filesystem_patch" "$wasmer_wasix_recovery_patch" "$wasmer_js_init_patch" "$wasmer_js_precompiled_module_patch" "$wasmer_js_direct_patch" "$wasmer_async_instance_patch" "$wasmer_wasix_async_instance_patch" "$wasmer_js_lock_patch" "${BASH_SOURCE[0]}"; do
-    sha256sum "$input" | cut -d ' ' -f 1
-  done
-} | sha256sum | cut -d ' ' -f 1)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "wasix-ts host build: required command not found: node" >&2
+  exit 1
+fi
+mapfile -t patch_series < <(node "$provenance_script" --patch-series)
+input_hash="$(node "$provenance_script" --inputs-sha256)"
 
 if [[ -f "$target_dir/.oliphaunt-input-sha256" ]] \
     && [[ "$(<"$target_dir/.oliphaunt-input-sha256")" == "$input_hash" ]] \
@@ -116,21 +108,47 @@ curl --fail --location --silent --show-error \
 echo "$wasmer_sha256  $wasmer_archive" | sha256sum --check --status
 tar -xzf "$wasmer_archive" -C "$build_root"
 
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_patch"
-patch --batch --forward -d "$wasmer_wasix_dir" -p1 < "$wasmer_wasix_patch"
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_filesystem_patch"
-patch --batch --forward -d "$wasmer_wasix_dir" -p1 < "$wasmer_wasix_recovery_patch"
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_init_patch"
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_precompiled_module_patch"
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_direct_patch"
-patch --batch --forward -d "$wasmer_dir" -p1 < "$wasmer_async_instance_patch"
-patch --batch --forward -d "$wasmer_wasix_dir" -p1 < "$wasmer_wasix_async_instance_patch"
-patch --batch --forward -d "$wasmer_js_dir" -p1 < "$wasmer_js_lock_patch"
+for patch_name in "${patch_series[@]}"; do
+  patch_file="$host_dir/patches/$patch_name"
+  case "$patch_name" in
+    ????-wasmer-js-*.patch)
+      patch_dir="$wasmer_js_dir"
+      ;;
+    ????-wasmer-wasix-*.patch)
+      patch_dir="$wasmer_wasix_dir"
+      ;;
+    ????-wasmer-*.patch)
+      patch_dir="$wasmer_dir"
+      ;;
+    *)
+      echo "wasix-ts host build: patch target is not declared by its canonical name: $patch_name" >&2
+      exit 1
+      ;;
+  esac
+  patch --batch --forward -d "$patch_dir" -p1 < "$patch_file"
+done
+
+# The browser host runs every WASIX syscall and virtual-filesystem operation.
+# Fail closed if the pinned speed profile ever drifts back to the upstream
+# size-first release settings recorded in the source patch.
+grep -Fqx "lto = true" "$wasmer_js_dir/Cargo.toml"
+grep -Fqx "opt-level = 3" "$wasmer_js_dir/Cargo.toml"
+grep -Fqx 'wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-O3"]' \
+  "$wasmer_js_dir/Cargo.toml"
+for policy_source in \
+  "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/thread_spawn.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/proc_spawn.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/proc_spawn2.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/proc_exec3.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/proc_fork.rs"; do
+  grep -Fq 'oliphaunt_single_backend_requested' "$policy_source"
+done
+grep -Fq '.unwrap_or(true)' "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs"
 
 # The pinned source commit's npm lock predates its package metadata. Patch only
 # the missing root metadata and dependencies, then install the integrity-pinned
 # graph without allowing the package manager to rewrite it.
-package_lock_sha256="$(sha256sum "$wasmer_js_dir/package-lock.json" | cut -d ' ' -f 1)"
 npm --prefix "$wasmer_js_dir" ci --ignore-scripts --no-audit --no-fund
 
 (
@@ -154,8 +172,7 @@ mkdir -p "$staging_dir"
 cp -R "$wasmer_js_dir/dist" "$staging_dir/dist"
 cp "$wasmer_js_dir/LICENSE" "$staging_dir/LICENSE"
 printf '%s\n' "$input_hash" > "$staging_dir/.oliphaunt-input-sha256"
-printf '{\n  "wasmerJsVersion": "%s",\n  "wasmerJsCommit": "%s",\n  "wasmerVersion": "%s",\n  "wasmerWasixVersion": "%s",\n  "packageLockSha256": "%s",\n  "inputsSha256": "%s"\n}\n' \
-  "$wasmer_js_version" "$wasmer_js_commit" "$wasmer_version" "$wasmer_wasix_version" "$package_lock_sha256" "$input_hash" > "$staging_dir/provenance.json"
+node "$provenance_script" --json > "$staging_dir/provenance.json"
 chmod -R u+rwX,go+rX "$staging_dir"
 
 previous_dir="$target_parent/.wasmer-sdk-previous"

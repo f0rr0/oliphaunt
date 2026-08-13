@@ -70,6 +70,40 @@ describe('browser pgwire stream', () => {
     expect(result.buffer).toBe(response.buffer);
   });
 
+  it('retains a coalesced following response without slicing the unread tail', async () => {
+    const first = backendResponse('CZ');
+    const second = backendResponse('CZ');
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(concatenate(first, second));
+      },
+    });
+    const wire = new PgwireStream(readable, new WritableStream<Uint8Array>());
+
+    await expect(wire.exchange(Uint8Array.of(1))).resolves.toEqual(first);
+    await expect(wire.exchange(Uint8Array.of(2))).resolves.toEqual(second);
+  });
+
+  it('collects a multi-message response across geometric buffer growth', async () => {
+    const messages = [
+      backendMessage('N', new Uint8Array(3 * 1024).fill(1)),
+      backendMessage('N', new Uint8Array(5 * 1024).fill(2)),
+      backendMessage('C', new Uint8Array(9 * 1024).fill(3)),
+      backendResponse('Z'),
+    ];
+    const response = messages.reduce(concatenate, new Uint8Array());
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const message of messages) {
+          controller.enqueue(message);
+        }
+      },
+    });
+    const wire = new PgwireStream(readable, new WritableStream<Uint8Array>());
+
+    await expect(wire.exchange(Uint8Array.of(1))).resolves.toEqual(response);
+  });
+
   it('uses the PostgreSQL Terminate message', () => {
     expect(terminatePacket()).toEqual(Uint8Array.of(0x58, 0, 0, 0, 4));
   });
@@ -150,8 +184,12 @@ function backendError(sqlstate: string, message: string): Uint8Array {
     0,
     0,
   ]);
+  return backendMessage('E', body);
+}
+
+function backendMessage(tag: string, body: Uint8Array): Uint8Array {
   const result = new Uint8Array(body.length + 5);
-  result[0] = 0x45;
+  result[0] = tag.charCodeAt(0);
   new DataView(result.buffer).setUint32(1, body.length + 4);
   result.set(body, 5);
   return result;

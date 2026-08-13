@@ -5,7 +5,7 @@ description: Run portable Oliphaunt with direct or worker-isolated browser execu
 
 # WASIX TypeScript
 
-`@oliphaunt/wasix` runs the portable WASIX runtime with worker-isolated browser
+`@oliphaunt/wasix-ts` runs the portable WASIX runtime with worker-isolated browser
 execution by default or direct browser execution on request. Node.js uses a
 worker thread. The same import and database API work in every placement;
 package exports select the host adapter. It is separate from native
@@ -60,7 +60,7 @@ Node.js uses the same consumer code and defaults to memory. No browser headers,
 host option, or Node-specific subpath is required:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({ extensions: [pgtap] });
@@ -69,8 +69,34 @@ console.log(result.getText(0, 'answer'));
 await database.close();
 ```
 
-Node currently has memory storage only. Importing the IndexedDB adapter is
-valid package resolution, but passing it to `open()` fails before a worker starts.
+Importing the IndexedDB adapter is valid package resolution on Node, but passing
+it to `open()` fails before a worker starts. Use the Node-only directory adapter
+when checkpoint/clean-close snapshot persistence fits the application.
+
+Persistent Node storage is a selective import:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+
+const storage = directory('./data/notes');
+let database = await Oliphaunt.open({ storage });
+await database.query('create table if not exists note (title text not null)');
+await database.query('insert into note values ($1)', ['Persist this']);
+await database.close();
+
+database = await Oliphaunt.open({ storage });
+console.log((await database.query('select * from note')).rows.length);
+await database.close();
+```
+
+The adapter hydrates PGDATA into Wasmer memory and atomically publishes a whole
+directory generation on `checkpoint()` and clean `close()`. It validates the
+exact runtime and extension identity on reopen and locks one path to one worker
+or process. Linux lease identity includes the host, boot, and PID namespace;
+only locally proven-dead owners are reaped, while foreign/shared scopes fail
+closed as `busy`. It is not a direct mount: termination can lose work since the
+last checkpoint.
 
 ## Open with memory and one extension
 
@@ -78,7 +104,7 @@ Memory is the default, so an ordinary application supplies only the extensions
 it uses:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({
@@ -95,15 +121,35 @@ Each `open()` without `storage` creates an independent database that disappears
 on close. The extension is present because its WASIX descriptor was imported
 and selected; the core runtime does not include every extension.
 
+## Run an atomic transaction
+
+The callback transaction reserves the database's PostgreSQL session from
+`BEGIN` through `COMMIT`, so concurrent database calls cannot interleave:
+
+```ts
+const count = await database.transaction(async (tx) => {
+  await tx.query('insert into note (title) values ($1)', ['Atomic work']);
+  return tx.query('select count(*)::int4 as count from note');
+});
+```
+
+Concurrent calls queued outside the callback wait behind the transaction. Use
+the provided `tx` handle inside the callback; database-level calls reject there
+instead of deadlocking. A rejected callback or failed `COMMIT` automatically
+attempts `ROLLBACK` without masking the original failure. The handle rejects
+further work after the callback finishes. `OliphauntDatabase` also implements
+`AsyncDisposable`, enabling `await using` in TypeScript projects that use
+explicit resource management.
+
 ## Opt into IndexedDB
 
 Import persistence separately when checkpoint and clean-close snapshots match
 the application's durability needs:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
-import { indexedDB } from '@oliphaunt/wasix/storage/indexed-db';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 const storage = indexedDB('notes');
 
@@ -139,7 +185,7 @@ SQL errors are ordinary `PostgresError` values with PostgreSQL fields such as
 same database remains usable:
 
 ```ts
-import { PostgresError } from '@oliphaunt/wasix';
+import { PostgresError } from '@oliphaunt/wasix-ts';
 
 try {
   await database.query('select 1 / 0');
@@ -179,20 +225,21 @@ The binding intentionally exposes one small asynchronous surface on both hosts:
 | `await using database = …` | Close through `Symbol.asyncDispose` at scope exit |
 
 It does not expose `engine_capabilities()`, server/proxy, protocol streaming,
-physical archive, logical dump/restore, or host-directory APIs.
+physical archive, logical dump/restore, or direct host-directory APIs.
 
 Lifecycle semantics are fixed rather than dynamically reported:
-`multipleInstances = true` in both placements for databases using memory or
-different persistent store names, `sameInstanceLogicalReopen = false`,
-`instanceSwitchable = true`, and `crashRestartable = false`. A given IndexedDB
-name remains exclusively leased despite support for separate instances.
+`multipleInstances = true` for databases using memory or distinct persistent
+store identities in every supported placement,
+`sameInstanceLogicalReopen = false`, `instanceSwitchable = true`, and
+`crashRestartable = false`. A given IndexedDB name or Node directory remains
+exclusively leased despite support for separate instances.
 
 ## Current host boundary
 
 IndexedDB is the only persistent browser adapter. OPFS is intentionally absent,
 and omitted storage already covers temporary in-memory use. Node owns its
-`worker_threads` adapter and currently accepts memory storage only. Neither host
-routes through native `@oliphaunt/ts`.
+`worker_threads` adapter and offers memory plus explicit snapshot directory
+storage. Neither host routes through native `@oliphaunt/ts`.
 
 Use [Rust WASIX](./index) when Rust owns the portable host. Use
 [TypeScript](/docs/sdk/typescript) for Node.js, Bun, or Deno applications that

@@ -850,7 +850,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `supportsRestoreFormat()`
 - `toUint8Array()`
 
-## TypeScript WASIX: @oliphaunt/wasix
+## TypeScript WASIX: @oliphaunt/wasix-ts
 
 ### Types
 
@@ -859,6 +859,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntClient`
 - `OliphauntDatabase`
 - `OliphauntTransaction`
+- `OliphauntWasixClient`
 - `OpenConfig`
 - `PostgresErrorField`
 - `QueryBinaryInput`
@@ -867,7 +868,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryParam`
 - `QueryResult`
 - `QueryRow`
+- `WasixAdvancedOpenOptions`
 - `WasixAssetSource`
+- `WasixDatabase`
 - `WasixExtensionCarrier`
 - `WasixExtensionCompatibility`
 - `WasixExtensionDescriptor`
@@ -875,12 +878,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `WasixExtensionInstall`
 - `WasixExtensionLifecycle`
 - `WasixExtensionNativeModule`
+- `WasixOpenOptions`
 - `WasixRuntimeArchive`
 - `WasixRuntimeDescriptor`
 - `WasixRuntimeManifest`
 - `WasixStorage`
 - `WasixStorageDurability`
 - `WasixStorageErrorCode`
+- `WasixTransaction`
 
 ### Values
 
@@ -1006,6 +1011,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `simpleQuery()`
 - `toUint8Array()`
 
-### Storage subpath: @oliphaunt/wasix/storage/indexed-db
+### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db
 
 - `indexedDB`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/node
+
+- `directory`

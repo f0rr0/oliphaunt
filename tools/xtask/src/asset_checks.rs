@@ -1062,7 +1062,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh",
         &[
             "release)",
-            "-O2 -g0",
+            "-O2 -g0 -flto=thin",
             "release-o3)",
             "-O3 -g0 -flto=thin",
             "-flto=thin",
@@ -1086,6 +1086,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "--with-icu",
             "ICU_CFLAGS",
             "ICU_LIBS",
+            "OLIPHAUNT_WASM_SHIM_OBJECT",
             "oliphaunt_wasix_icu_cflags",
             "oliphaunt_wasix_icu_libs",
         ],
@@ -1227,6 +1228,12 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "oliphaunt_wasix_icu_libs",
             "ICU_CFLAGS",
             "ICU_LIBS",
+            "icu-native-tools",
+            "OLIPHAUNT_WASM_BUILD_PROFILE=release-os",
+            "OLIPHAUNT_WASM_WASIX_COPT=\"-O2 -g0\"",
+            "OLIPHAUNT_WASM_WASIX_LOPT=\"-Wl,--threads=1\"",
+            "OLIPHAUNT_WASM_SHIM_OBJECT=\"$tool_shim\"",
+            "wasixnm -u",
         ],
     )?;
     for path in [
@@ -1249,6 +1256,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "oliphaunt_wasix_extension_build_outputs_exist",
             "required_build_files",
             "required_build_globs",
+            "OLIPHAUNT_WASM_POSTGIS_DEPENDENCY_COPT:--O2 -g0",
         ],
     )?;
     ensure_file_contains_all(
@@ -1256,6 +1264,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         &[
             "oliphaunt_wasix_run_extension_build_in_docker_if_needed",
             "oliphaunt_wasix_extension_build_outputs_exist",
+            "ac_cv_lib_xml2_xmlInitParser=yes",
         ],
     )?;
     ensure_file_contains_all(

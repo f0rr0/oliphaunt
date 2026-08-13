@@ -356,7 +356,7 @@
     "src/bindings/wasix-ts": {
       "release-type": "node",
       "component": "oliphaunt-wasix-ts",
-      "package-name": "@oliphaunt/wasix",
+      "package-name": "@oliphaunt/wasix-ts",
       "changelog-path": "CHANGELOG.md"
     }
   }

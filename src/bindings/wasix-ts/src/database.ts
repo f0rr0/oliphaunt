@@ -12,12 +12,15 @@ import type { BinaryInput, OliphauntDatabase, OliphauntTransaction } from './typ
 
 const transactionPinnedMessage =
   'Oliphaunt WASIX database is pinned to an active transaction; use the callback transaction handle';
+const CLOSE_DEADLINE_MS = 120_000;
 
 /** @internal Execution seam shared by direct and worker-backed database handles. */
 export type WasixDatabaseSession = {
   exec(input: Uint8Array): Promise<Uint8Array>;
   checkpoint(): Promise<void>;
   close(): Promise<void>;
+  /** Force-stop an isolated execution placement when orderly shutdown stalls. */
+  abort?(): void | Promise<void>;
 };
 
 /** @internal Public database state machine; construction stays behind Oliphaunt.open(). */
@@ -125,7 +128,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       );
     }
     this.#closed = true;
-    this.#closeAttempt = this.#serialize(() => this.#session.close());
+    const orderlyClose = this.#serialize(() => this.#session.close());
+    this.#closeAttempt =
+      this.#session.abort === undefined
+        ? orderlyClose
+        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () => this.#session.abort?.());
     return this.#closeAttempt;
   }
 
@@ -168,6 +175,35 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     );
     return result;
   }
+}
+
+function withDeadline<T>(
+  operation: Promise<T>,
+  milliseconds: number,
+  expire: () => void | Promise<void>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void Promise.resolve()
+        .then(expire)
+        .catch(() => undefined);
+      reject(
+        new Error(
+          `Oliphaunt WASIX close exceeded ${milliseconds}ms; worker termination was requested`,
+        ),
+      );
+    }, milliseconds);
+    void operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 class WasixTransactionImpl implements OliphauntTransaction {
@@ -219,10 +255,7 @@ class WasixTransactionImpl implements OliphauntTransaction {
     });
   }
 
-  #execOwned<Result>(
-    input: Uint8Array,
-    decode: (response: Uint8Array) => Result,
-  ): Promise<Result> {
+  #execOwned<Result>(input: Uint8Array, decode: (response: Uint8Array) => Result): Promise<Result> {
     if (!this.#active) {
       return Promise.reject(new Error('Oliphaunt WASIX transaction is no longer active'));
     }

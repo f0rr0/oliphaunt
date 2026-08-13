@@ -6,8 +6,8 @@
     "noEmit": true,
     "paths": {
       "@oliphaunt/liboliphaunt-wasix": ["../../src/runtime-carrier-shim.d.ts"],
-      "@oliphaunt/wasix": ["../../src/index.ts"],
-      "@oliphaunt/wasix/*": ["../../src/*"]
+      "@oliphaunt/wasix-ts": ["../../src/index.ts"],
+      "@oliphaunt/wasix-ts/*": ["../../src/*"]
     },
     "rootDir": "../..",
     "types": ["node", "vite/client"]

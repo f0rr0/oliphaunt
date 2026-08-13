@@ -183,6 +183,7 @@ EOF
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
   export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lcharset -lsqlite3 -lc++ -lc++abi -lunwind"
   export ac_cv_lib_pq_PQserverVersion=yes
+  export ac_cv_lib_xml2_xmlInitParser=yes
   oliphaunt_postgis_enable_reproducible_time "$REPO_ROOT"
   [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] || {
     echo "PostGIS WASIX build epoch changed after fingerprinting" >&2

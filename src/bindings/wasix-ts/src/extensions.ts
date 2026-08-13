@@ -594,7 +594,10 @@ async function assertSha256(bytes: Uint8Array, expected: string, label: string):
   if (globalThis.crypto?.subtle === undefined) {
     throw new Error(`Web Crypto is required to verify ${label}`);
   }
-  const source = bytes.slice().buffer;
+  const source =
+    bytes.buffer instanceof ArrayBuffer
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : bytes.slice().buffer;
   const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', source));
   const actual = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   if (actual !== expected) {

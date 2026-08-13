@@ -26,4 +26,4 @@ not consumer APIs.
 
 React Native apps use `@oliphaunt/react-native`. This package is for desktop
 JavaScript runtimes over the native runtime family. Browser applications use
-[`@oliphaunt/wasix`](/docs/sdk/wasix/browser-typescript).
+[`@oliphaunt/wasix-ts`](/docs/sdk/wasix/browser-typescript).

@@ -126,18 +126,14 @@ export class DirectWasixSession implements WasixDatabaseSession {
       );
       baseDirectory = materialized.baseDirectory;
       const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
-      instance = await host.instantiateOliphauntDirect(
-        module,
-        prepared.layout.module,
-        {
-          program: '/bin/oliphaunt',
-          moduleBytes: prepared.layout.module,
-          args: wasixPostgresArgs(runtimeOptions),
-          cwd: '/',
-          env: wasixPostgresEnvironment(runtimeOptions),
-          mount: materialized.mounts,
-        },
-      );
+      instance = await host.instantiateOliphauntDirect(module, prepared.layout.module, {
+        program: '/bin/oliphaunt',
+        moduleBytes: prepared.layout.module,
+        args: wasixPostgresArgs(runtimeOptions),
+        cwd: '/',
+        env: wasixPostgresEnvironment(runtimeOptions),
+        mount: materialized.mounts,
+      });
       const session = new DirectWasixSession(instance, storage, baseDirectory);
       opened = session;
       assertSuccessfulStartupResponse(
@@ -255,11 +251,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
           ? new Error(`direct WASIX allocation release failed: ${describeError(error)}`, {
               cause: error,
             })
-          : composeLifecycleFailure(
-              failure,
-              'direct WASIX allocation release also failed',
-              error,
-            );
+          : composeLifecycleFailure(failure, 'direct WASIX allocation release also failed', error);
     }
     if (failure !== undefined) {
       throw failure;
@@ -328,11 +320,11 @@ function assertDirectExtensionCompatibility(options: SerializedOpenOptions): voi
     .join(', ');
   if (unsupported.some(({ requiresLoadOrder }) => requiresLoadOrder)) {
     throw new TypeError(
-      `@oliphaunt/wasix browser execution cannot currently load ${detail}: direct execution exceeds Chromium's 8 MiB synchronous side-module limit, and worker execution does not yet implement the carrier's native load order`,
+      `@oliphaunt/wasix-ts browser execution cannot currently load ${detail}: direct execution exceeds Chromium's 8 MiB synchronous side-module limit, and worker execution does not yet implement the carrier's native load order`,
     );
   }
   throw new TypeError(
-    `@oliphaunt/wasix direct execution cannot load native extension modules larger than 8 MiB in Chromium; use execution: "worker" for ${detail}`,
+    `@oliphaunt/wasix-ts direct execution cannot load native extension modules larger than 8 MiB in Chromium; use execution: "worker" for ${detail}`,
   );
 }
 

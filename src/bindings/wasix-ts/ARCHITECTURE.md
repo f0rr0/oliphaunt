@@ -140,8 +140,9 @@ forked by host.
 IndexedDB remains browser-only and is rejected before a Node worker starts.
 Direct Node execution is rejected because the current Wasmer bridge would need
 to replace application-global `Worker` and `URL.createObjectURL` values.
-Node directory persistence, server mode, OPFS, and any fallback to native
-`@oliphaunt/ts` are intentionally absent.
+Node directory persistence is a selectively imported, snapshot-backed provider
+with exclusive path ownership. Direct host filesystem mounts, server mode,
+OPFS, and any fallback to native `@oliphaunt/ts` are intentionally absent.
 
 ## Browser storage boundary
 
@@ -436,7 +437,7 @@ bundle.
 
 ## Public package and qualification
 
-`@oliphaunt/wasix` is a separately versioned public SDK product. It has its own
+`@oliphaunt/wasix-ts` is a separately versioned public SDK product. It has its own
 release metadata and changelog, declares an exact dependency on the published
 `@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
 under `lib/host`. Conditional package exports choose the browser adapter, which
