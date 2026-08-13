@@ -1,11 +1,33 @@
-import { serializeWorkerError, type WorkerRequest, type WorkerResponse } from './rpc.js';
-import { WasixProcess, type WasixHost } from './wasix-process.js';
+import {
+  type SerializedOpenOptions,
+  serializeWorkerError,
+  type WorkerRequest,
+  type WorkerResponse,
+} from './rpc.js';
+import { type WasixHost, WasixProcess } from './wasix-process.js';
+import { prepareTransferableBytes } from './worker-transfer.js';
 
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
+type WorkerSession = Readonly<{
+  exec(input: Uint8Array): Promise<Uint8Array>;
+  checkpoint(): Promise<void>;
+  close(): Promise<void>;
+}>;
+
+export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WorkerSession>;
+
 /** One RPC dispatcher shared by browser Workers and Node worker_threads. */
 export function createWorkerDispatcher(host: WasixHost, respond: WorkerResponder) {
-  let process: WasixProcess | undefined;
+  return createWorkerSessionDispatcher((options) => WasixProcess.open(options, host), respond);
+}
+
+/** @internal One request state machine shared by stream and in-realm worker hosts. */
+export function createWorkerSessionDispatcher(
+  openSession: WorkerSessionOpener,
+  respond: WorkerResponder,
+) {
+  let process: WorkerSession | undefined;
 
   return async (request: WorkerRequest): Promise<void> => {
     try {
@@ -14,13 +36,14 @@ export function createWorkerDispatcher(host: WasixHost, respond: WorkerResponder
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');
           }
-          process = await WasixProcess.open(request.options, host);
+          process = await openSession(request.options);
           respond({ id: request.id, ok: true });
           return;
         case 'exec': {
-          const value = await requireProcess(process).exec(request.input);
-          const transfer = value.buffer instanceof ArrayBuffer ? [value.buffer] : [];
-          respond({ id: request.id, ok: true, value }, transfer);
+          const response = prepareTransferableBytes(
+            await requireProcess(process).exec(request.input),
+          );
+          respond({ id: request.id, ok: true, value: response.value }, response.transfer);
           return;
         }
         case 'checkpoint':
@@ -39,7 +62,7 @@ export function createWorkerDispatcher(host: WasixHost, respond: WorkerResponder
   };
 }
 
-function requireProcess(process: WasixProcess | undefined): WasixProcess {
+function requireProcess(process: WorkerSession | undefined): WorkerSession {
   if (process === undefined) {
     throw new Error('Oliphaunt WASIX process is not open');
   }

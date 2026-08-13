@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -11,9 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { afterEach, test } from "node:test";
 
+import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { extensionSqlNames } from "./release-artifact-targets.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -150,16 +153,63 @@ test("WASIX release staging resolves runtime-owned contrib through its logical a
   const assetRoot = path.join(fixture, "assets");
   const extensionRoot = path.join(assetRoot, "extensions");
   const metadataPath = path.join(fixture, "extensions.json");
+  const manifestPath = path.join(fixture, "manifest.json");
   const outDir = path.join(fixture, "out");
   mkdirSync(extensionRoot, { recursive: true });
 
   const sqlNames = extensionSqlNames(CONTRIB_PRODUCT, "extension-package-assembly.test");
+  const builtExtensions = [];
   const extensions = sqlNames.map((sqlName) => {
     const archive = `extensions/${sqlName}.tar.zst`;
-    writeFileSync(path.join(assetRoot, archive), `archive:${sqlName}\n`);
-    return { "sql-name": sqlName, archive };
+    const archiveRoot = path.join(fixture, "archive-input", sqlName);
+    const controlPath = `share/postgresql/extension/${sqlName}.control`;
+    const controlFile = path.join(archiveRoot, ...controlPath.split("/"));
+    mkdirSync(path.dirname(controlFile), { recursive: true });
+    writeFileSync(controlFile, `default_version = '1.0'\n`);
+    const archiveBytes = zstdCompressSync(createDeterministicTar(archiveRoot, ".", {
+      fail(message) {
+        throw new Error(message);
+      },
+      fixedFileMode: 0o644,
+    }));
+    writeFileSync(path.join(assetRoot, archive), archiveBytes);
+    const lifecycle = {
+      "create-extension": true,
+      "create-schema": null,
+      "load-sql": [],
+      "post-create-sql": [],
+      "startup-config": [],
+      "preload-required": false,
+      "restart-required": false,
+      "shared-memory-required": false,
+    };
+    builtExtensions.push({
+      name: sqlName,
+      "sql-name": sqlName,
+      archive,
+      sha256: createHash("sha256").update(archiveBytes).digest("hex"),
+      size: archiveBytes.length,
+      "native-module": null,
+      "native-modules": [],
+      "core-exports-required": [],
+      dependencies: [],
+      "load-order": [],
+      lifecycle,
+      "installed-files": [controlPath],
+      "unresolved-imports": [],
+    });
+    return {
+      "sql-name": sqlName,
+      archive,
+      dependencies: [],
+      "load-order": [],
+      lifecycle,
+      "native-module-file": null,
+      "native-support-modules": [],
+    };
   });
   writeFileSync(metadataPath, `${JSON.stringify({ extensions }, null, 2)}\n`);
+  writeFileSync(manifestPath, `${JSON.stringify({ extensions: builtExtensions }, null, 2)}\n`);
 
   const execution = spawnSync(
     TEST_BASH,
@@ -172,6 +222,8 @@ test("WASIX release staging resolves runtime-owned contrib through its logical a
       assetRoot,
       "--metadata",
       metadataPath,
+      "--manifest",
+      manifestPath,
       "--out-dir",
       outDir,
       "--target",
@@ -185,7 +237,7 @@ test("WASIX release staging resolves runtime-owned contrib through its logical a
   assert.equal(execution.status, 0, execution.stderr);
   assert.match(execution.stdout, new RegExp(`staged ${sqlNames.length} WASIX exact-extension artifact`));
   const staged = readdirSync(outDir).sort();
-  assert.equal(staged.length, sqlNames.length + 1);
+  assert.equal(staged.length, sqlNames.length * 2 + 1);
   const index = staged.find((entry) => entry.endsWith("-wasix-extension-assets.tsv"));
   assert.ok(index);
   const indexedSqlNames = readFileSync(path.join(outDir, index), "utf8")

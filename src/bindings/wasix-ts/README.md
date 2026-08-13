@@ -1,4 +1,4 @@
-# `@oliphaunt/wasix`
+# `@oliphaunt/wasix-ts`
 
 TypeScript binding that runs the portable Oliphaunt WASIX runtime with direct
 or worker-isolated browser execution, and a Node worker thread. This is a
@@ -92,11 +92,11 @@ unmeasured optimization. The strict gate remains failed wherever the measured
 lower quartile does not clear 30%.
 
 Inside that checked-in Vite harness, application code imports only the
-extension carrier it uses. `@oliphaunt/wasix` resolves the exact
+extension carrier it uses. `@oliphaunt/wasix-ts` resolves the exact
 `@oliphaunt/liboliphaunt-wasix` runtime carrier internally:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({
@@ -148,15 +148,17 @@ is explicitly unsupported in both browser placements today. Oversized carriers
 without that additional requirement can use worker execution; smaller
 qualified extension carriers remain available in direct mode.
 
-The same code runs on Node.js. Package exports select `worker_threads`
-automatically; consumers do not import a Node-specific subpath:
+The same code runs on Node.js. Package exports select one package-owned
+`worker_threads` worker automatically, and that worker uses the synchronous
+guest driver without a redundant inner worker or stream pump. Consumers do not
+import a Node-specific subpath:
 
 ```sh
-pnpm add @oliphaunt/wasix @oliphaunt/extension-pgtap-wasix
+pnpm add @oliphaunt/wasix-ts @oliphaunt/extension-pgtap-wasix
 ```
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({ extensions: [pgtap] });
@@ -169,10 +171,83 @@ independent, and closing it discards its PGDATA. The explicit spelling is
 available from the main package when it helps communicate intent:
 
 ```ts
-import Oliphaunt, { memory } from '@oliphaunt/wasix';
+import Oliphaunt, { memory } from '@oliphaunt/wasix-ts';
 
 const scratch = await Oliphaunt.open({ storage: memory() });
 ```
+
+## Transactions and cleanup
+
+Use the callback transaction handle for every operation that must share one
+atomic PostgreSQL transaction:
+
+```ts
+const inserted = await database.transaction(async (tx) => {
+  await tx.query('insert into todo (title) values ($1)', ['ship WASIX support']);
+  return tx.query('select count(*)::int4 as count from todo');
+});
+```
+
+The callback owns the database's FIFO queue from `BEGIN` through `COMMIT`.
+Concurrent calls queued outside the callback wait until it finishes. Inside the
+callback, use only `tx`; database-level work rejects instead of deadlocking. If
+the callback or `COMMIT` fails, the binding attempts `ROLLBACK` and preserves
+the original failure. The transaction handle becomes inactive when the callback
+finishes.
+
+`WasixDatabase` also implements `AsyncDisposable`, so TypeScript projects with
+explicit resource management enabled can bind worker and storage cleanup to a
+scope:
+
+```ts
+await using database = await Oliphaunt.open();
+await database.query('select 42 as answer');
+```
+
+## Persistent Node storage
+
+Node applications may selectively import the directory adapter. Relative paths
+are resolved when `open()` is called; `file:` URL objects and strings are
+accepted as well:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+
+const storage = directory('./data/todos');
+let database = await Oliphaunt.open({ storage });
+await database.query('create table if not exists todo (title text not null)');
+await database.query('insert into todo values ($1)', ['ship Node support']);
+await database.close();
+
+database = await Oliphaunt.open({ storage });
+console.log((await database.query('select * from todo')).rows.length);
+await database.close();
+```
+
+The adapter keeps PostgreSQL in Wasmer memory while it is open, then publishes
+a complete PGDATA directory generation after `checkpoint()` and clean `close()`.
+Publication swaps whole directories and keeps the prior complete generation
+recoverable across an interrupted swap. On a local filesystem, an exclusive
+lock prevents two workers or processes on the same host from opening one path.
+One fixed atomic lock slot publishes a complete unique owner identity including
+the Linux host, boot, and PID namespace. Proven-dead same-boot owners and leases
+from an earlier boot of the same host are reaped by exact-owner removal; other
+hosts and live or foreign same-boot namespaces fail closed as `busy`. On
+non-Linux hosts, local PID liveness provides conservative crash recovery (PID
+reuse can only delay it). Network and cross-host shared filesystems are
+unsupported: directory-entry caching cannot provide the required ownership
+guarantee. Persistent directory storage must be opened from Node's main thread so
+the caller can clean up its child database worker after an unexpected exit.
+Runtime, PostgreSQL, template, and extension identities must match on reopen;
+symbolic links, partial generations, and unsafe paths fail closed.
+
+This is intentionally not a direct host mount or per-transaction durability.
+Process termination can lose changes since the last explicit checkpoint. The
+adapter touches only its `.oliphaunt-wasix-ts` state directory and retains at
+most one prior complete generation for rollback. That prior generation is
+removed after the replacement validates or when a later publish begins;
+unrelated application files are never treated as adapter state.
 
 ## Persistent browser storage
 
@@ -182,8 +257,8 @@ template URLs, filesystem mount paths, or a generic `temporary` boolean:
 
 ```ts
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
-import Oliphaunt from '@oliphaunt/wasix';
-import { indexedDB } from '@oliphaunt/wasix/storage/indexed-db';
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 const storage = indexedDB('todos');
 
@@ -254,9 +329,10 @@ already means anonymous in-memory lifetime. Rust WASIX
 `DatabaseStorage::TemporaryDirectory` is a different, disk-backed lifetime
 policy, and must not be projected into this API
 as if it meant memory. This clean-break API accepts no `root`, `temporary`, or
-generic persistence compatibility aliases. Node uses the same memory default
-and rejects the browser-only IndexedDB adapter. No Node directory persistence
-is claimed yet, and neither host routes through the native public product.
+generic persistence compatibility aliases. Node uses the same memory default,
+rejects the browser-only IndexedDB adapter, and exposes its snapshot directory
+provider only through `@oliphaunt/wasix-ts/storage/node`. Neither host routes
+through the native public product.
 
 The default runtime descriptor keeps the runtime archive, PGDATA template, and
 manifest as one product/version identity. The binding validates the descriptor,

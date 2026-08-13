@@ -7,7 +7,7 @@ description: Rust WASIX API map for protocol types, storage, extensions, and dum
 
 Use the `oliphaunt-wasix` rustdoc reference for exact declarations. This page
 maps the Rust binding by task; it does not describe the separate
-[`@oliphaunt/wasix` TypeScript API](./browser-typescript).
+[`@oliphaunt/wasix-ts` TypeScript API](./browser-typescript).
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |

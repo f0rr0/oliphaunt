@@ -33,4 +33,5 @@ series = [
   "0008-wasmer-instantiate-js-modules-async.patch",
   "0009-wasmer-wasix-instantiate-main-module-async.patch",
   "0010-wasmer-js-refresh-npm-lock.patch",
+  "0011-wasmer-wasix-deny-pgwire-guest-thread-spawn.patch",
 ]

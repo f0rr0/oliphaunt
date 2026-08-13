@@ -5,8 +5,8 @@ import Oliphaunt, {
   type OliphauntDatabase,
   type WasixExtensionDescriptor,
   WasixStorageError,
-} from '@oliphaunt/wasix';
-import { indexedDB } from '@oliphaunt/wasix/storage/indexed-db';
+} from '@oliphaunt/wasix-ts';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');

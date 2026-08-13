@@ -275,7 +275,7 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Append an advanced PostgreSQL startup argument for server backends.
+    /// Append an advanced PostgreSQL startup option for server backends.
     pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
         self.startup_config.extra_args.push(arg.into());
         self

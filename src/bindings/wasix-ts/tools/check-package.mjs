@@ -1,16 +1,21 @@
 import { execFile } from 'node:child_process';
-import { cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
+import { loadHostBuildContract } from '../host/build-provenance.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(await readFile(resolve(packageDir, 'package.json'), 'utf8'));
 const runtimePackage = '@oliphaunt/liboliphaunt-wasix';
+const benchmarkComparisonPackage = '@electric-sql/pglite';
+const fzstdPackage = 'fzstd';
+const fzstdVersion = '0.1.1';
+const expectedHostBuild = (await loadHostBuildContract()).provenance;
 
 await execFileAsync('pnpm', ['run', 'package:build'], {
   cwd: packageDir,
@@ -46,7 +51,11 @@ try {
     'lib/index.d.ts',
     'lib/index.node.js',
     'lib/node-client.js',
+    'lib/node-directory-lock.js',
+    'lib/node-lock-identity.js',
     'lib/node-worker.js',
+    'lib/node-worker-options.js',
+    'lib/node-zstd.js',
     'lib/node-web-worker.js',
     'lib/node-web-worker-thread.js',
     'lib/worker.js',
@@ -58,20 +67,26 @@ try {
     'lib/host/LICENSE',
     'lib/storage/indexed-db.js',
     'lib/storage/indexed-db.d.ts',
+    'lib/storage/node.js',
+    'lib/storage/node.d.ts',
+    'lib/storage/node-directory-provider.js',
+    'lib/zstd.js',
   ]) {
     if (!paths.has(path)) {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
     }
   }
 
+  // New products intentionally remain at 0.0.0 until Release Please creates
+  // the first release candidate; publication still requires that transition.
   if (
+    packageJson.name !== '@oliphaunt/wasix-ts' ||
     packageJson.private === true ||
     !/^\d+\.\d+\.\d+$/.test(packageJson.version) ||
-    packageJson.version === '0.0.0' ||
     packageJson.publishConfig?.access !== 'public' ||
     packageJson.publishConfig?.provenance !== true
   ) {
-    throw new Error('WASIX TypeScript package-shape must be a versioned public npm package');
+    throw new Error('WASIX TypeScript package-shape must be a stable-version public npm package');
   }
   for (const lifecycle of ['preinstall', 'install', 'postinstall', 'prepare']) {
     if (Object.hasOwn(packageJson.scripts ?? {}, lifecycle)) {
@@ -80,14 +95,29 @@ try {
   }
 
   const exports = packageJson.exports ?? {};
-  const expectedExports = ['.', './package.json', './protocol', './query', './storage/indexed-db'];
+  const expectedExports = [
+    '.',
+    './package.json',
+    './protocol',
+    './query',
+    './storage/indexed-db',
+    './storage/node',
+  ];
   if (JSON.stringify(Object.keys(exports).sort()) !== JSON.stringify(expectedExports.sort())) {
     throw new Error('WASIX TypeScript package exports do not match its clean public surface');
   }
   if (exports['./storage/indexed-db'] === undefined) {
     throw new Error('WASIX TypeScript package omitted the selective IndexedDB entrypoint');
   }
-  if (exports['./storage/opfs'] !== undefined || exports['./storage/node'] !== undefined) {
+  if (
+    exports['./storage/node']?.types !== './lib/storage/node.d.ts' ||
+    exports['./storage/node']?.node !== './lib/storage/node.js' ||
+    exports['./storage/node']?.browser !== undefined ||
+    exports['./storage/node']?.default !== undefined
+  ) {
+    throw new Error('WASIX TypeScript package omitted its Node-only directory adapter');
+  }
+  if (exports['./storage/opfs'] !== undefined) {
     throw new Error('WASIX TypeScript package exposes an unimplemented storage adapter');
   }
   const rootExport = exports['.'];
@@ -102,6 +132,8 @@ try {
 
   if (
     packageJson.dependencies?.[runtimePackage] !== undefined ||
+    packageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
+    packageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     packageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
     packageJson.dependencies?.['@oliphaunt/ts'] !== undefined
   ) {
@@ -111,6 +143,8 @@ try {
   }
   if (
     stagedPackageJson.dependencies?.[runtimePackage] !== packageJson.oliphaunt?.runtimeVersion ||
+    stagedPackageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
+    stagedPackageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     stagedPackageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
     stagedPackageJson.dependencies?.['@oliphaunt/ts'] !== undefined
   ) {
@@ -120,12 +154,7 @@ try {
   const provenance = JSON.parse(
     await readFile(resolve(packageDir, 'lib/host/provenance.json'), 'utf8'),
   );
-  if (
-    typeof provenance.wasmerJsVersion !== 'string' ||
-    typeof provenance.wasmerJsCommit !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(provenance.packageLockSha256 ?? '') ||
-    typeof provenance.inputsSha256 !== 'string'
-  ) {
+  if (!isDeepStrictEqual(provenance, expectedHostBuild)) {
     throw new Error('WASIX TypeScript package omitted patched-host provenance');
   }
 

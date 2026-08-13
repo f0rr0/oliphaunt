@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { WasixDatabaseImpl, type WasixDatabaseSession } from '../database.js';
 import { WasixStorageError } from '../errors.js';
@@ -163,9 +163,7 @@ describe('WASIX database recovery state', () => {
       transactionHandle = handle;
     });
     await started;
-    await expect(transactionHandle!.query('SELECT after_body')).rejects.toThrow(
-      /no longer active/,
-    );
+    await expect(transactionHandle!.query('SELECT after_body')).rejects.toThrow(/no longer active/);
     releaseCommit?.();
     await transaction;
 
@@ -316,6 +314,63 @@ describe('WASIX database recovery state', () => {
     await expect(second).rejects.toBe(failure);
     await expect(database.close()).rejects.toBe(failure);
     expect(closes).toBe(1);
+  });
+
+  it('aborts isolated execution when queued work prevents bounded shutdown', async () => {
+    vi.useFakeTimers();
+    try {
+      let aborts = 0;
+      const database = new WasixDatabaseImpl({
+        exec() {
+          return new Promise(() => undefined);
+        },
+        async checkpoint() {},
+        async close() {},
+        abort() {
+          aborts += 1;
+        },
+      });
+      void database.execProtocolRaw(Uint8Array.of(1));
+      await Promise.resolve();
+
+      const close = expect(database.close()).rejects.toThrow(
+        'close exceeded 120000ms; worker termination was requested',
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      await close;
+      expect(aborts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the close deadline bounded when forced termination stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      let aborts = 0;
+      const database = new WasixDatabaseImpl({
+        exec() {
+          return new Promise(() => undefined);
+        },
+        async checkpoint() {},
+        async close() {},
+        abort() {
+          aborts += 1;
+          return new Promise(() => undefined);
+        },
+      });
+      void database.execProtocolRaw(Uint8Array.of(1));
+      await Promise.resolve();
+
+      const close = expect(database.close()).rejects.toThrow(
+        'close exceeded 120000ms; worker termination was requested',
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      await close;
+      expect(aborts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('poisons queued and later work after persistent snapshot publication fails', async () => {

@@ -80,6 +80,9 @@ export type SerializedOpenOptions = {
   storage: SerializedWasixStorage;
 };
 
+/** @internal Compatibility name for the serialized options sent to a worker. */
+export type WorkerOpenOptions = SerializedOpenOptions;
+
 export type WorkerRequest =
   | { id: number; method: 'open'; options: SerializedOpenOptions }
   | { id: number; method: 'exec'; input: Uint8Array }

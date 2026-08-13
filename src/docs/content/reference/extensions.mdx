@@ -63,7 +63,7 @@ let database = Oliphaunt::builder().extension(PGTAP).open()?;
 Import only the portable carrier descriptors the browser or Node application uses:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({ extensions: [pgtap] });

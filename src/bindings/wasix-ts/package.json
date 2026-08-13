@@ -1,5 +1,5 @@
 {
-  "name": "@oliphaunt/wasix",
+  "name": "@oliphaunt/wasix-ts",
   "version": "0.0.0",
   "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers and Node.js.",
   "license": "MIT",
@@ -42,6 +42,10 @@
       "types": "./lib/storage/indexed-db.d.ts",
       "default": "./lib/storage/indexed-db.js"
     },
+    "./storage/node": {
+      "types": "./lib/storage/node.d.ts",
+      "node": "./lib/storage/node.js"
+    },
     "./package.json": {
       "default": "./package.json"
     }
@@ -70,7 +74,7 @@
     "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json"
   },
   "dependencies": {
-    "fzstd": "^0.1.1"
+    "fzstd": "0.1.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.4",

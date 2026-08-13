@@ -110,12 +110,13 @@ UI. A host target needs matching shipped runtime assets for the WASIX runtime
 to open.
 
 `oliphaunt-wasix` is the Rust host package. The separate
-[`@oliphaunt/wasix` TypeScript binding](./browser-typescript) runs the portable
+[`@oliphaunt/wasix-ts` TypeScript binding](./browser-typescript) runs the portable
 guest with direct or worker-isolated browser execution, or a Node worker
-thread, and defaults to memory. IndexedDB is a selective browser-only adapter;
-Node directory persistence is not exposed. Shared runtime carriers do not
-imply API parity, and the package does not route through the TypeScript
-product's native runtime.
+thread, and defaults to memory. IndexedDB is a selective browser adapter. Node
+selectively exposes
+snapshot-backed directory persistence through `@oliphaunt/wasix-ts/storage/node`.
+Shared runtime carriers do not imply API parity, and the package
+does not route through the TypeScript product's native runtime.
 
 ## Server-Compatible Access
 

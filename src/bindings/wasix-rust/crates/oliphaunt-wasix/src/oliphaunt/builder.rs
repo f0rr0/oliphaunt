@@ -100,8 +100,9 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Append an advanced PostgreSQL startup argument. Prefer
-    /// [`postgres_config`](Self::postgres_config) for GUCs.
+    /// Append an advanced PostgreSQL startup option. Prefer
+    /// [`postgres_config`](Self::postgres_config) for GUCs and
+    /// [`database`](Self::database) for the positional database name.
     pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
         self.startup_config.extra_args.push(arg.into());
         self

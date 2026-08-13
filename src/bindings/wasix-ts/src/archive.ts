@@ -1,7 +1,6 @@
-import { decompress } from 'fzstd';
-
 import { readPackageAsset } from './asset-source.js';
 import type { SerializedAssetSource } from './rpc.js';
+import { decompressZstd } from './zstd.js';
 
 export type DirectoryFiles = Record<string, Uint8Array>;
 
@@ -10,15 +9,20 @@ export type ExtractedArchive = {
   directories: Set<string>;
 };
 
-export type BrowserDirectoryMount = {
+export type WasixDirectoryMount = {
   files: DirectoryFiles;
   directories: string[];
 };
 
-export type BrowserRuntimeLayout = {
+export type WasixRuntimeLayout = {
   module: Uint8Array;
-  mounts: Record<string, BrowserDirectoryMount>;
+  mounts: Record<string, WasixDirectoryMount>;
 };
+
+/** @deprecated Internal compatibility aliases; the layout is shared by browser and Node. */
+export type BrowserDirectoryMount = WasixDirectoryMount;
+/** @deprecated Internal compatibility aliases; the layout is shared by browser and Node. */
+export type BrowserRuntimeLayout = WasixRuntimeLayout;
 
 const BLOCK_SIZE = 512;
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd] as const;
@@ -189,7 +193,7 @@ export async function loadAsset(source: SerializedAssetSource, label: string): P
 
 export function decompressIfNeeded(bytes: Uint8Array): Uint8Array {
   const isZstd = ZSTD_MAGIC.every((byte, index) => bytes[index] === byte);
-  return isZstd ? decompress(bytes) : bytes;
+  return isZstd ? decompressZstd(bytes) : bytes;
 }
 
 function mapToDirectory(files: ReadonlyMap<string, Uint8Array>): DirectoryFiles {

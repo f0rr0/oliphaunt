@@ -28,6 +28,7 @@ function compareText(left, right) {
 const EXPECTED_TOUCHPOINTS = new Map([
   ['src/Makefile.shlib', 'Defines the WASIX dynamic-link shared-library shape.'],
   ['src/backend/Makefile', 'Builds the dynamic-main backend module without changing other ports.'],
+  ['src/backend/common.mk', 'Scopes scalar atomics to PostgreSQL backend objects instead of PGXS side modules.'],
   ['src/backend/access/heap/heapam.c', 'Adds embedded timing probes and heap fast-path scope.'],
   ['src/backend/access/heap/heapam_handler.c', 'Keeps embedded heap update timing observable.'],
   ['src/backend/access/nbtree/nbtdedup.c', 'Keeps btree delete scratch storage on stack under embedded WASIX.'],
@@ -39,6 +40,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/commands/copyto.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/libpq/be-secure.c', 'Routes embedded protocol reads and writes through host-owned callbacks.'],
   ['src/backend/libpq/pqcomm.c', 'Skips unavailable postmaster-death wait handles in embedded WASIX.'],
+  ['src/backend/main/main.c', 'Rejects concurrent postmaster and fork-child dispatch in the scalar-atomic runtime.'],
   ['src/backend/optimizer/plan/planner.c', 'Suppresses activity identifier reporting in embedded WASIX.'],
   ['src/backend/port/posix_sema.c', 'Uses POSIX semaphore behavior selected by the WASIX template.'],
   ['src/backend/postmaster/checkpointer.c', 'Keeps checkpoint requests local to embedded WASIX.'],
@@ -61,9 +63,12 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/common/file_utils.c', 'Treats EISDIR directory fsync as unsupported on WASIX.'],
   ['src/common/hashfn.c', 'Uses defined unaligned load fast path under WASIX.'],
   ['src/include/libpq/libpq-be.h', 'Adds the host I/O callback table to Port only for embedded WASIX.'],
+  ['src/include/port/atomics.h', 'Selects scalar atomics only for the explicitly single-backend WASIX build.'],
+  ['src/include/port/atomics/arch-wasix-single.h', 'Preserves PostgreSQL atomic layouts and contracts without guest atomic instructions.'],
   ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header and ABI redirects.'],
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
+  ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
   ['src/template/wasix-dl', 'Keeps the WASIX template and atomics invariants source-controlled.'],
@@ -157,6 +162,29 @@ const REQUIRED_AUDIT_CHECKS = [
       'ProcessStartupPacket(MyProcPort, true, true)',
     ],
     posture: 'Only the explicit browser host contract enters the blocking stdio path; export-pumped hosts keep their existing lifecycle.',
+  },
+  {
+    requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',
+    patches: ['0040-oliphaunt-wasix-use-single-backend-spinlocks.patch'],
+    evidence: [
+      'defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)',
+      'OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
+      'typedef int slock_t;',
+      'oliphaunt_wasix_single_user_tas',
+    ],
+    posture: 'Only the enforced one-backend-per-instance lane replaces atomic exchange; all concurrent PostgreSQL builds retain upstream spinlocks.',
+  },
+  {
+    requirement: 'Single-backend WASIX atomics preserve ABI and operation contracts',
+    patches: ['0041-oliphaunt-wasix-specialize-single-backend-atomics.patch'],
+    evidence: [
+      'override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
+      'postmaster mode is unavailable in the single-backend WASIX runtime',
+      'PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY',
+      'volatile uint64 value pg_attribute_aligned(8)',
+      '*expected = current',
+    ],
+    posture: 'Only backend objects use scalar operations; frontends, extensions, and every concurrent PostgreSQL build retain normal atomics.',
   },
 ];
 

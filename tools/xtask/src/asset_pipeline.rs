@@ -691,6 +691,19 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
 
     match module.kind.as_str() {
         "runtime" => {
+            let thread_spawn_imports = module
+                .link
+                .imports
+                .iter()
+                .filter(|import| is_thread_spawn_import(import))
+                .map(|import| format!("{}.{}", import.module, import.name))
+                .collect::<Vec<_>>();
+            ensure!(
+                thread_spawn_imports.is_empty(),
+                "{} violates the single-backend contract with thread-spawn imports: {}",
+                module.name,
+                thread_spawn_imports.join(", ")
+            );
             let missing = required_runtime_abi_exports()
                 .iter()
                 .copied()
@@ -734,6 +747,18 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
     Ok(())
 }
 
+fn is_thread_spawn_import(import: &WasmImportOut) -> bool {
+    matches!(
+        import.name.trim_start_matches('_'),
+        "thread-spawn"
+            | "thread_spawn"
+            | "thread_spawn_v2"
+            | "wasi_thread_spawn"
+            | "wasi_thread_spawn_v2"
+            | "pthread_create"
+    )
+}
+
 fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
     let runtime = outputs
         .modules
@@ -741,15 +766,7 @@ fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
         .find(|module| module.kind == "runtime")
         .ok_or_else(|| anyhow!("build outputs are missing runtime module"))?;
     let runtime_link = read_wasm_link_metadata(&runtime.path)?;
-    let runtime_exports = runtime_link
-        .exports
-        .iter()
-        .flat_map(|export| {
-            let name = export.name.trim_start_matches('_').to_owned();
-            [export.name.clone(), name]
-        })
-        .collect::<HashSet<_>>();
-
+    validate_sealed_runtime_exports(&runtime_link)?;
     let side_modules = outputs
         .modules
         .iter()
@@ -761,28 +778,27 @@ fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
             Ok::<_, anyhow::Error>((module.name.clone(), read_wasm_link_metadata(&module.path)?))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let side_module_exports = side_module_links
-        .iter()
-        .map(|(name, link)| (name.clone(), wasm_export_name_set(link)))
-        .collect::<BTreeMap<_, _>>();
+    let side_module_basenames = side_module_basename_index(
+        side_modules
+            .iter()
+            .map(|module| (module.name.as_str(), module.path.as_path())),
+    )?;
 
     let mut failures = Vec::new();
     for module in side_modules {
         let link = side_module_links
             .get(&module.name)
             .ok_or_else(|| anyhow!("missing link metadata for {}", module.name))?;
-        let provider_exports = side_module_provider_exports(&module.name, &side_module_exports);
+        let provider_exports =
+            side_module_provider_exports(&module.name, &side_module_links, &side_module_basenames)?;
         for import in &link.imports {
             if !import_should_resolve_from_runtime(import) {
                 continue;
             }
-            if import_resolves_from_linked_module_exports(import, &provider_exports) {
+            if import_resolves_from_wasm_exports(import, &provider_exports, &module.name)? {
                 continue;
             }
-            let normalized = import.name.trim_start_matches('_');
-            if !runtime_exports.contains(import.name.as_str())
-                && !runtime_exports.contains(normalized)
-            {
+            if !import_resolves_from_wasm_exports(import, &runtime_link.exports, "runtime")? {
                 failures.push(format!(
                     "{} imports {}.{}",
                     module.name, import.module, import.name
@@ -800,23 +816,87 @@ fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
     Ok(())
 }
 
+fn validate_sealed_runtime_exports(runtime: &WasmLinkMetadataOut) -> Result<()> {
+    let policy_path =
+        repo_relative_path("src/runtimes/liboliphaunt/wasix/assets/generated/wasix-dl.exports");
+    let policy = fs::read_to_string(&policy_path)
+        .with_context(|| format!("read {}", policy_path.display()))?;
+    let mut expected = policy
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    expected.extend(
+        WASIX_LINKER_RUNTIME_EXPORTS
+            .iter()
+            .map(|name| (*name).to_owned()),
+    );
+    let actual = runtime
+        .exports
+        .iter()
+        .map(|export| export.name.clone())
+        .collect::<BTreeSet<_>>();
+    ensure_exact_runtime_export_surface(&actual, &expected)
+}
+
+fn ensure_exact_runtime_export_surface(
+    actual: &BTreeSet<String>,
+    expected: &BTreeSet<String>,
+) -> Result<()> {
+    let missing = expected.difference(actual).cloned().collect::<Vec<_>>();
+    let unexpected = actual.difference(expected).cloned().collect::<Vec<_>>();
+    ensure!(
+        missing.is_empty() && unexpected.is_empty(),
+        "sealed WASIX runtime export surface differs: missing={missing:?} unexpected={unexpected:?}"
+    );
+    Ok(())
+}
+
 fn side_module_provider_exports(
     module_name: &str,
-    exports_by_name: &BTreeMap<String, HashSet<String>>,
-) -> HashSet<String> {
-    let mut exports = exports_by_name
-        .get(module_name)
-        .cloned()
-        .unwrap_or_default();
-    if let Some(sql_name) = extension_module_sql_name(module_name) {
-        let support_prefix = format!("extension:{sql_name}:");
-        for (name, module_exports) in exports_by_name {
-            if name.starts_with(&support_prefix) {
-                exports.extend(module_exports.iter().cloned());
+    links_by_name: &BTreeMap<String, WasmLinkMetadataOut>,
+    names_by_basename: &BTreeMap<String, String>,
+) -> Result<Vec<WasmExportOut>> {
+    let mut provider_names = BTreeSet::from([module_name.to_owned()]);
+    let mut pending = vec![module_name.to_owned()];
+    while let Some(name) = pending.pop() {
+        let link = links_by_name
+            .get(&name)
+            .ok_or_else(|| anyhow!("missing side-module link metadata for {name}"))?;
+        for needed in &link.dylink_needed {
+            let dependency = names_by_basename.get(needed).ok_or_else(|| {
+                anyhow!("{name} declares missing WASIX dynamic dependency {needed}")
+            })?;
+            if provider_names.insert(dependency.clone()) {
+                pending.push(dependency.clone());
             }
         }
     }
-    exports
+    Ok(provider_names
+        .into_iter()
+        .flat_map(|name| {
+            links_by_name
+                .get(&name)
+                .into_iter()
+                .flat_map(|link| link.exports.iter().cloned())
+        })
+        .collect())
+}
+
+fn side_module_basename_index<'a>(
+    modules: impl IntoIterator<Item = (&'a str, &'a Path)>,
+) -> Result<BTreeMap<String, String>> {
+    let mut names_by_basename = BTreeMap::new();
+    for (name, path) in modules {
+        let basename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| anyhow!("side-module {name} path has no UTF-8 basename"))?;
+        if let Some(previous) = names_by_basename.insert(basename.to_owned(), name.to_owned()) {
+            bail!("WASIX side modules {previous} and {name} share dynamic basename {basename}");
+        }
+    }
+    Ok(names_by_basename)
 }
 
 fn extension_module_sql_name(module_name: &str) -> Option<&str> {
@@ -1077,61 +1157,44 @@ fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<
         validate_module_link_metadata(module)?;
     }
 
-    let runtime = modules
+    let _runtime = modules
         .iter()
         .find(|module| module.kind == "runtime")
         .ok_or_else(|| anyhow!("build outputs are missing runtime module"))?;
-    let runtime_exports = wasm_export_name_set(&runtime.link);
-    let side_module_exports = modules
+    let side_modules = modules
         .iter()
         .filter(|module| matches!(module.kind.as_str(), "runtime-support" | "extension"))
-        .map(|module| (module.name.clone(), wasm_export_name_set(&module.link)))
+        .collect::<Vec<_>>();
+    let side_module_links = side_modules
+        .iter()
+        .map(|module| (module.name.clone(), module.link.clone()))
         .collect::<BTreeMap<_, _>>();
+    let side_module_basenames = side_module_basename_index(
+        side_modules
+            .iter()
+            .map(|module| (module.name.as_str(), Path::new(&module.path))),
+    )?;
     let mut required_exports = BTreeSet::<String>::new();
-    let mut unresolved = Vec::new();
 
     for abi_export in required_runtime_abi_exports().iter().copied() {
-        let normalized = abi_export.trim_start_matches('_');
-        if runtime_exports.contains(abi_export) {
-            required_exports.insert(abi_export.to_owned());
-        } else if runtime_exports.contains(normalized) {
-            required_exports.insert(normalized.to_owned());
-        } else {
-            unresolved.push(format!("runtime ABI export {abi_export}"));
-        }
+        required_exports.insert(abi_export.to_owned());
     }
 
-    for module in modules
-        .iter()
-        .filter(|module| matches!(module.kind.as_str(), "runtime-support" | "extension"))
-    {
-        let module_exports = side_module_provider_exports(&module.name, &side_module_exports);
+    for module in side_modules {
+        let module_exports =
+            side_module_provider_exports(&module.name, &side_module_links, &side_module_basenames)?;
         for import in &module.link.imports {
             if !import_should_resolve_from_runtime(import) {
                 continue;
             }
-            if import_resolves_from_linked_module_exports(import, &module_exports) {
+            if import_resolves_from_wasm_exports(import, &module_exports, &module.name)? {
                 continue;
             }
-            let normalized = import.name.trim_start_matches('_');
-            if runtime_exports.contains(import.name.as_str()) {
-                required_exports.insert(import.name.clone());
-            } else if runtime_exports.contains(normalized) {
-                required_exports.insert(normalized.to_owned());
-            } else {
-                unresolved.push(format!(
-                    "{} imports {}.{}",
-                    module.name, import.module, import.name
-                ));
-            }
+            // The strict final link proves that the runtime defines every policy symbol. Do not
+            // consult the previously sealed runtime here: doing so would make adding a new side
+            // module import impossible without first restoring an ambient export surface.
+            required_exports.insert(runtime_export_name_for_side_import(import));
         }
-    }
-
-    if !unresolved.is_empty() {
-        bail!(
-            "cannot generate WASIX dynamic-link export list with unresolved imports: {}",
-            unresolved.join(", ")
-        );
     }
 
     Ok(required_exports.into_iter().collect::<Vec<_>>().join("\n") + "\n")
@@ -1163,6 +1226,19 @@ pub(crate) fn required_runtime_abi_exports() -> &'static [&'static str] {
     ]
 }
 
+const WASIX_LINKER_RUNTIME_EXPORTS: &[&str] = &[
+    "__data_end",
+    "__tls_align",
+    "__tls_base",
+    "__tls_size",
+    "__wasm_apply_data_relocs",
+    "__wasm_call_ctors",
+    "__wasm_init_tls",
+    "__wasm_sigaction",
+    "__wasm_signal",
+    "wasi_thread_start",
+];
+
 fn import_should_resolve_from_runtime(import: &WasmImportOut) -> bool {
     if import_is_wasix_linker_provided(import) {
         return false;
@@ -1186,37 +1262,87 @@ fn import_is_wasix_linker_provided(import: &WasmImportOut) -> bool {
     )
 }
 
-fn import_resolves_from_linked_module_exports(
+fn import_resolves_from_wasm_exports(
     import: &WasmImportOut,
-    module_exports: &HashSet<String>,
-) -> bool {
-    module_exports.contains(import.name.as_str())
-        || module_exports.contains(import.name.trim_start_matches('_'))
+    exports: &[WasmExportOut],
+    provider: &str,
+) -> Result<bool> {
+    Ok(resolved_wasm_export_name(import, exports, provider)?.is_some())
+}
+
+fn resolved_wasm_export_name(
+    import: &WasmImportOut,
+    exports: &[WasmExportOut],
+    provider: &str,
+) -> Result<Option<String>> {
+    let mut candidates = exports
+        .iter()
+        .filter(|export| export.name == import.name)
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        let normalized = import.name.trim_start_matches('_');
+        candidates = exports
+            .iter()
+            .filter(|export| export.name.trim_start_matches('_') == normalized)
+            .collect();
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let expected_kind = match import.module.as_str() {
+        "GOT.func" => "func",
+        "GOT.mem" => "global",
+        _ => import.kind.as_str(),
+    };
+    ensure!(
+        candidates.iter().any(|export| export.kind == expected_kind),
+        "{provider} provides {}.{} as {:?}, expected {expected_kind}",
+        import.module,
+        import.name,
+        candidates
+            .iter()
+            .map(|export| export.kind.as_str())
+            .collect::<BTreeSet<_>>()
+    );
+    Ok(candidates
+        .into_iter()
+        .find(|export| export.kind == expected_kind)
+        .map(|export| export.name.clone()))
+}
+
+fn runtime_export_name_for_side_import(import: &WasmImportOut) -> String {
+    import.name.clone()
 }
 
 fn extension_asset_provider_exports(
     primary_link: &WasmLinkMetadataOut,
+    primary_path: &Path,
     sql_name: &str,
+    native_modules: &[OwnedExtensionNativeModule],
     native_module_links: &BTreeMap<String, WasmLinkMetadataOut>,
-) -> HashSet<String> {
-    let mut exports = wasm_export_name_set(primary_link);
-    for (name, link) in native_module_links {
-        if name == sql_name {
+) -> Result<Vec<WasmExportOut>> {
+    let root_name = format!("extension:{sql_name}");
+    let mut links = BTreeMap::from([(root_name.clone(), primary_link.clone())]);
+    let mut paths = vec![(root_name.as_str(), primary_path)];
+    let mut dependency_names = Vec::new();
+    for module in native_modules {
+        if module.name == sql_name {
             continue;
         }
-        exports.extend(wasm_export_name_set(link));
+        let name = format!("extension:{sql_name}:{}", module.name);
+        let link = native_module_links
+            .get(&module.name)
+            .ok_or_else(|| anyhow!("missing link metadata for {name}"))?;
+        links.insert(name.clone(), link.clone());
+        dependency_names.push((name, module.path.as_path()));
     }
-    exports
-}
-
-fn wasm_export_name_set(link: &WasmLinkMetadataOut) -> HashSet<String> {
-    link.exports
-        .iter()
-        .flat_map(|export| {
-            let normalized = export.name.trim_start_matches('_').to_owned();
-            [export.name.clone(), normalized]
-        })
-        .collect()
+    paths.extend(
+        dependency_names
+            .iter()
+            .map(|(name, path)| (name.as_str(), *path)),
+    );
+    let basenames = side_module_basename_index(paths)?;
+    side_module_provider_exports(&root_name, &links, &basenames)
 }
 
 fn has_wasm_export(link: &WasmLinkMetadataOut, name: &str) -> bool {
@@ -2552,7 +2678,6 @@ fn write_asset_manifest(
     extensions: &[ExtensionArtifact<'_>],
 ) -> Result<()> {
     let runtime_link = read_wasm_link_metadata(runtime_module)?;
-    let runtime_exports = wasm_export_name_set(&runtime_link);
     let extension_metadata = extension_catalog::manifest_metadata_by_sql_name()?;
     let effective_sources = effective_source_pins(sources, outputs)?;
     let manifest = AssetManifestOut {
@@ -2654,23 +2779,33 @@ fn write_asset_manifest(
                 let mut core_exports_required = Vec::new();
                 let mut unresolved_imports = Vec::new();
                 if let Some(link) = &link {
+                    let primary_path = extension.module_path.ok_or_else(|| {
+                        anyhow!("extension {} has link metadata without a module", extension.sql_name)
+                    })?;
                     let module_exports = extension_asset_provider_exports(
                         link,
+                        primary_path,
                         extension.sql_name,
+                        extension.native_modules,
                         &native_module_links,
-                    );
+                    )?;
                     for import in &link.imports {
                         if !import_should_resolve_from_runtime(import) {
                             continue;
                         }
-                        if import_resolves_from_linked_module_exports(import, &module_exports) {
+                        if import_resolves_from_wasm_exports(
+                            import,
+                            &module_exports,
+                            extension.sql_name,
+                        )? {
                             continue;
                         }
-                        let normalized = import.name.trim_start_matches('_');
-                        if runtime_exports.contains(import.name.as_str()) {
-                            core_exports_required.push(import.name.clone());
-                        } else if runtime_exports.contains(normalized) {
-                            core_exports_required.push(normalized.to_owned());
+                        if let Some(name) = resolved_wasm_export_name(
+                            import,
+                            &runtime_link.exports,
+                            "runtime",
+                        )? {
+                            core_exports_required.push(name);
                         } else {
                             unresolved_imports.push(import.clone());
                         }
@@ -3055,6 +3190,13 @@ mod tests {
         }
     }
 
+    fn wasm_export(name: &str, kind: &str) -> WasmExportOut {
+        WasmExportOut {
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+        }
+    }
+
     #[test]
     fn wasix_linker_provided_imports_do_not_require_runtime_exports() {
         for import in [
@@ -3077,12 +3219,31 @@ mod tests {
     }
 
     #[test]
+    fn single_backend_runtime_rejects_thread_creation_imports() {
+        for import in [
+            wasm_import("wasi", "thread-spawn", "func"),
+            wasm_import("wasix_32v1", "thread_spawn_v2", "func"),
+            wasm_import("env", "__pthread_create", "func"),
+        ] {
+            assert!(is_thread_spawn_import(&import), "{import:?}");
+        }
+
+        for import in [
+            wasm_import("wasix_32v1", "thread_exit", "func"),
+            wasm_import("wasix_32v1", "thread_signal", "func"),
+            wasm_import("wasix_32v1", "thread_parallelism", "func"),
+        ] {
+            assert!(!is_thread_spawn_import(&import), "{import:?}");
+        }
+    }
+
+    #[test]
     fn side_module_exports_satisfy_their_own_dynamic_symbol_imports() {
-        let module_exports = HashSet::from([
-            "GEOSArea_r".to_owned(),
-            "_ZN10FlatGeobuf11PackedRTree4initEt".to_owned(),
-            "ZN10FlatGeobuf11PackedRTree4initEt".to_owned(),
-        ]);
+        let module_exports = vec![
+            wasm_export("GEOSArea_r", "func"),
+            wasm_export("_ZN10FlatGeobuf11PackedRTree4initEt", "func"),
+            wasm_export("ZN10FlatGeobuf11PackedRTree4initEt", "func"),
+        ];
 
         for import in [
             wasm_import("env", "GEOSArea_r", "func"),
@@ -3091,22 +3252,99 @@ mod tests {
         ] {
             assert!(import_should_resolve_from_runtime(&import));
             assert!(
-                import_resolves_from_linked_module_exports(&import, &module_exports),
+                import_resolves_from_wasm_exports(&import, &module_exports, "test module")
+                    .expect("valid typed provider"),
                 "{import:?} should be self-resolved by the linked side module"
             );
         }
     }
 
     #[test]
-    fn unresolved_extension_imports_still_require_runtime_exports() {
+    fn new_extension_imports_extend_the_sealed_runtime_policy() {
         let runtime_import = wasm_import("env", "SearchSysCache1", "func");
-        let module_exports = HashSet::from(["GEOSArea_r".to_owned()]);
+        let module_exports = vec![wasm_export("GEOSArea_r", "func")];
 
         assert!(import_should_resolve_from_runtime(&runtime_import));
-        assert!(!import_resolves_from_linked_module_exports(
-            &runtime_import,
-            &module_exports
-        ));
+        assert!(
+            !import_resolves_from_wasm_exports(&runtime_import, &module_exports, "test module")
+                .expect("absent export")
+        );
+        assert_eq!(
+            runtime_export_name_for_side_import(&runtime_import),
+            "SearchSysCache1"
+        );
+    }
+
+    #[test]
+    fn side_module_provider_kinds_must_match_dynamic_imports() {
+        let error = import_resolves_from_wasm_exports(
+            &wasm_import("GOT.func", "SearchSysCache1", "global"),
+            &[wasm_export("SearchSysCache1", "global")],
+            "test module",
+        )
+        .expect_err("function-address imports must resolve to functions");
+        assert!(error.to_string().contains("expected func"));
+    }
+
+    #[test]
+    fn side_module_providers_follow_declared_dynamic_dependencies() {
+        let mut root = WasmLinkMetadataOut::default();
+        root.dylink_needed = vec!["declared.so".to_owned()];
+        root.exports = vec![wasm_export("root_symbol", "func")];
+        let mut declared = WasmLinkMetadataOut::default();
+        declared.exports = vec![wasm_export("declared_symbol", "func")];
+        let mut undeclared = WasmLinkMetadataOut::default();
+        undeclared.exports = vec![wasm_export("undeclared_symbol", "func")];
+        let links = BTreeMap::from([
+            ("extension:test".to_owned(), root),
+            ("extension:test:declared".to_owned(), declared),
+            ("extension:test:undeclared".to_owned(), undeclared),
+        ]);
+        let basenames = BTreeMap::from([
+            ("root.so".to_owned(), "extension:test".to_owned()),
+            (
+                "declared.so".to_owned(),
+                "extension:test:declared".to_owned(),
+            ),
+            (
+                "undeclared.so".to_owned(),
+                "extension:test:undeclared".to_owned(),
+            ),
+        ]);
+
+        let exports = side_module_provider_exports("extension:test", &links, &basenames)
+            .expect("declared provider graph");
+        assert!(
+            import_resolves_from_wasm_exports(
+                &wasm_import("env", "declared_symbol", "func"),
+                &exports,
+                "test graph",
+            )
+            .expect("declared provider")
+        );
+        assert!(
+            !import_resolves_from_wasm_exports(
+                &wasm_import("env", "undeclared_symbol", "func"),
+                &exports,
+                "test graph",
+            )
+            .expect("undeclared provider")
+        );
+    }
+
+    #[test]
+    fn sealed_runtime_export_policy_requires_exact_surface() {
+        let expected = BTreeSet::from(["_start".to_owned(), "runtime_abi".to_owned()]);
+        ensure_exact_runtime_export_surface(&expected, &expected).expect("exact export surface");
+
+        let error = ensure_exact_runtime_export_surface(
+            &BTreeSet::from(["_start".to_owned(), "ambient".to_owned()]),
+            &expected,
+        )
+        .expect_err("ambient export must fail");
+        let message = error.to_string();
+        assert!(message.contains("runtime_abi"));
+        assert!(message.contains("ambient"));
     }
 }
 

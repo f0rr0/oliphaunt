@@ -6,19 +6,17 @@ import {
   type StorageDirectory,
   type WasixStorageCompatibility,
 } from '../storage-provider.js';
+import {
+  requireRecord,
+  type StoredSnapshot,
+  snapshotStorageDirectory,
+  snapshotToMount,
+  validateStoredSnapshot,
+} from '../storage-snapshot.js';
 
-const DATABASE_NAME = '@oliphaunt/wasix:indexed-db:v1';
+const DATABASE_NAME = '@oliphaunt/wasix-ts:indexed-db:v1';
 const DATABASE_VERSION = 1;
 const DATABASE_STORE = 'databases';
-const VOLATILE_DATABASE_FILES = new Set(['postmaster.opts', 'postmaster.pid']);
-const utf8 = new TextDecoder('utf-8', { fatal: true });
-
-type StoredSnapshot = {
-  schema: 'oliphaunt-wasix-directory-snapshot-v1';
-  directories: string[];
-  files: { path: string; bytes: Uint8Array }[];
-};
-
 export type StoredDatabase = {
   schema: 'oliphaunt-wasix-indexed-db-database-v1';
   name: string;
@@ -199,42 +197,7 @@ function browserBackend(): IndexedDbStorageBackend {
 }
 
 /** @internal Exported for deterministic unit coverage of the Wasmer directory boundary. */
-export async function snapshotStorageDirectory(
-  directory: StorageDirectory,
-): Promise<StoredSnapshot> {
-  const directories: string[] = [];
-  const files: { path: string; bytes: Uint8Array }[] = [];
-
-  const walk = async (parent: string): Promise<void> => {
-    const entries = [...(await directory.readDir(parent))].sort((left, right) =>
-      left.name.localeCompare(right.name),
-    );
-    for (const entry of entries) {
-      validateEntryName(entry.name);
-      const path = parent.length === 0 ? entry.name : `${parent}/${entry.name}`;
-      if (parent.length === 0 && VOLATILE_DATABASE_FILES.has(entry.name)) {
-        continue;
-      }
-      if (entry.type === 'dir') {
-        directories.push(path);
-        await walk(path);
-      } else if (entry.type === 'file') {
-        files.push({ path, bytes: (await directory.readFile(path)).slice() });
-      } else {
-        throw new Error(
-          `Wasmer cannot snapshot PGDATA entry ${JSON.stringify(path)} of unknown type`,
-        );
-      }
-    }
-  };
-
-  await walk('');
-  return {
-    schema: 'oliphaunt-wasix-directory-snapshot-v1',
-    directories,
-    files,
-  };
-}
+export { snapshotStorageDirectory } from '../storage-snapshot.js';
 
 /** @internal Validate an IndexedDB value before any bytes reach Wasmer. */
 export function validateStoredDatabase(
@@ -286,139 +249,14 @@ export function validateStoredDatabase(
       { code: 'incompatible', durability: 'unchanged' },
     );
   }
-  return validateSnapshot(
+  return validateStoredSnapshot(
     storedDatabase.snapshot,
-    name,
     compatibility.runtime.postgresVersion.split('.')[0] ?? '',
+    {
+      label: `IndexedDB storage ${JSON.stringify(name)}`,
+      corrupt: (detail, cause) => corrupt(name, detail, cause),
+    },
   );
-}
-
-function validateSnapshot(
-  value: unknown,
-  name: string,
-  expectedPostgresMajor: string,
-): StoredSnapshot {
-  let snapshot: Record<string, unknown>;
-  try {
-    snapshot = requireRecord(value, `IndexedDB storage ${JSON.stringify(name)} snapshot`);
-  } catch (error) {
-    throw corrupt(name, `has a malformed directory snapshot: ${describeError(error)}`, error);
-  }
-  if (snapshot.schema !== 'oliphaunt-wasix-directory-snapshot-v1') {
-    throw corrupt(name, 'has an unsupported directory snapshot');
-  }
-  if (!Array.isArray(snapshot.directories) || !Array.isArray(snapshot.files)) {
-    throw corrupt(name, 'has malformed directory or file rows');
-  }
-  const directories: string[] = [];
-  const files: { path: string; bytes: Uint8Array }[] = [];
-  const paths = new Set<string>();
-  for (const path of snapshot.directories) {
-    validateStoredPath(path, name);
-    if (paths.has(path)) {
-      throw corrupt(name, `repeats snapshot path ${JSON.stringify(path)}`);
-    }
-    paths.add(path);
-    directories.push(path);
-  }
-  for (const value of snapshot.files) {
-    let file: Record<string, unknown>;
-    try {
-      file = requireRecord(value, `IndexedDB storage ${JSON.stringify(name)} file row`);
-    } catch (error) {
-      throw corrupt(name, `has a malformed file row: ${describeError(error)}`, error);
-    }
-    validateStoredPath(file.path, name);
-    if (!(file.bytes instanceof Uint8Array)) {
-      throw corrupt(name, `has non-binary contents for ${JSON.stringify(file.path)}`);
-    }
-    if (paths.has(file.path)) {
-      throw corrupt(name, `repeats snapshot path ${JSON.stringify(file.path)}`);
-    }
-    paths.add(file.path);
-    files.push({ path: file.path, bytes: file.bytes.slice() });
-  }
-  validateSnapshotSemantics(directories, files, paths, name, expectedPostgresMajor);
-  return {
-    schema: 'oliphaunt-wasix-directory-snapshot-v1',
-    directories: directories.sort(compareDirectoryDepth),
-    files: files.sort((left, right) => left.path.localeCompare(right.path)),
-  };
-}
-
-function validateSnapshotSemantics(
-  directories: readonly string[],
-  files: readonly { path: string; bytes: Uint8Array }[],
-  paths: ReadonlySet<string>,
-  name: string,
-  expectedPostgresMajor: string,
-): void {
-  for (const volatile of VOLATILE_DATABASE_FILES) {
-    if (paths.has(volatile)) {
-      throw corrupt(
-        name,
-        `contains transient PostgreSQL process state ${JSON.stringify(volatile)}`,
-      );
-    }
-  }
-
-  const directoryPaths = new Set(directories);
-  const fileByPath = new Map(files.map((file) => [file.path, file.bytes]));
-  for (const path of paths) {
-    for (const parent of parentPaths(path)) {
-      if (fileByPath.has(parent)) {
-        throw corrupt(
-          name,
-          `contains path ${JSON.stringify(path)} below file ${JSON.stringify(parent)}`,
-        );
-      }
-      if (!directoryPaths.has(parent)) {
-        throw corrupt(
-          name,
-          `contains path ${JSON.stringify(path)} without parent directory ${JSON.stringify(parent)}`,
-        );
-      }
-    }
-  }
-
-  const pgVersion = fileByPath.get('PG_VERSION');
-  const pgControl = fileByPath.get('global/pg_control');
-  if (pgVersion === undefined || pgControl === undefined) {
-    throw corrupt(name, 'is missing PG_VERSION or global/pg_control');
-  }
-  if (pgControl.length === 0) {
-    throw corrupt(name, 'contains an empty global/pg_control');
-  }
-
-  let actualPostgresMajor: string;
-  try {
-    actualPostgresMajor = utf8.decode(pgVersion).trim();
-  } catch (error) {
-    throw corrupt(name, `contains a non-UTF-8 PG_VERSION: ${describeError(error)}`, error);
-  }
-  if (actualPostgresMajor !== expectedPostgresMajor) {
-    throw corrupt(
-      name,
-      `contains PG_VERSION ${JSON.stringify(actualPostgresMajor)}, expected ${JSON.stringify(expectedPostgresMajor)}`,
-    );
-  }
-}
-
-function parentPaths(path: string): string[] {
-  const segments = path.split('/');
-  const parents: string[] = [];
-  for (let length = 1; length < segments.length; length += 1) {
-    parents.push(segments.slice(0, length).join('/'));
-  }
-  return parents;
-}
-
-function snapshotToMount(snapshot: StoredSnapshot): BrowserDirectoryMount {
-  // Wasmer's wasm-bindgen `DirectoryInit` currently recognizes ordinary JS
-  // objects, not null-prototype dictionaries. `Object.fromEntries` creates
-  // own data properties even for names such as `__proto__`.
-  const files = Object.fromEntries(snapshot.files.map((file) => [file.path, file.bytes]));
-  return { files, directories: [...snapshot.directories] };
 }
 
 async function acquireExclusiveLock(name: string): Promise<HeldLock> {
@@ -453,7 +291,7 @@ async function acquireExclusiveLock(name: string): Promise<HeldLock> {
   });
   const request = locks
     .request(
-      `@oliphaunt/wasix:indexed-db:${name}`,
+      `@oliphaunt/wasix-ts:indexed-db:${name}`,
       { mode: 'exclusive', ifAvailable: true },
       async (lock) => {
         acquisitionSettled = true;
@@ -570,40 +408,6 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function validateEntryName(name: string): void {
-  if (
-    name.length === 0 ||
-    name === '.' ||
-    name === '..' ||
-    name.includes('/') ||
-    name.includes('\\') ||
-    name.includes('\0')
-  ) {
-    throw new Error(`Wasmer returned an unsafe PGDATA entry name ${JSON.stringify(name)}`);
-  }
-}
-
-function validateStoredPath(value: unknown, name: string): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0 || value.startsWith('/')) {
-    throw corrupt(name, `contains invalid snapshot path ${JSON.stringify(value)}`);
-  }
-  const segments = value.split('/');
-  if (
-    value.includes('\\') ||
-    value.includes('\0') ||
-    segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
-  ) {
-    throw corrupt(name, `contains unsafe snapshot path ${JSON.stringify(value)}`);
-  }
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
 function extensionNames(value: unknown): string {
   if (!Array.isArray(value)) {
     return '[invalid metadata]';
@@ -618,10 +422,6 @@ function extensionNames(value: unknown): string {
     return '[invalid]';
   });
   return `[${names.join(', ')}]`;
-}
-
-function compareDirectoryDepth(left: string, right: string): number {
-  return left.split('/').length - right.split('/').length || left.localeCompare(right);
 }
 
 function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {

@@ -87,7 +87,6 @@ EncodeDateOnly
 EncodeDateTime
 EncodeSpecialDate
 EncodeSpecialTimestamp
-EncodeTimeOnly
 EndCopyFrom
 EnsurePortalSnapshotExists
 EnterParallelMode
