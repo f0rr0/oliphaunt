@@ -1,10 +1,10 @@
-import type { BrowserDirectoryMount } from '../archive.js';
-import { WasixStorageError } from '../errors.js';
+import type { WasixDirectoryMount } from '../archive.js';
+import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
 import {
-  type BrowserStorageLease,
   canonicalStorageContract,
   type StorageDirectory,
   type WasixStorageCompatibility,
+  type WasixStorageLease,
 } from '../storage-provider.js';
 import {
   requireRecord,
@@ -39,19 +39,19 @@ export type IndexedDbStorageBackend = {
 
 export async function acquireIndexedDbStorage(
   name: string,
-  template: BrowserDirectoryMount,
+  template: WasixDirectoryMount,
   compatibility: WasixStorageCompatibility,
-): Promise<BrowserStorageLease> {
+): Promise<WasixStorageLease> {
   return acquireIndexedDbStorageWithBackend(name, template, compatibility, browserBackend());
 }
 
 /** @internal Narrow dependency seam for deterministic provider failure tests. */
 export async function acquireIndexedDbStorageWithBackend(
   name: string,
-  template: BrowserDirectoryMount,
+  template: WasixDirectoryMount,
   compatibility: WasixStorageCompatibility,
   backend: IndexedDbStorageBackend,
-): Promise<BrowserStorageLease> {
+): Promise<WasixStorageLease> {
   const lock = await backend.acquireLock(name);
   let database: StoredDatabaseStore | undefined;
   try {
@@ -70,21 +70,34 @@ export async function acquireIndexedDbStorageWithBackend(
       snapshotToMount(snapshot),
     );
   } catch (error) {
-    database?.close();
-    await lock.release().catch(() => undefined);
-    if (error instanceof WasixStorageError) {
-      throw error;
+    let primary: Error =
+      error instanceof WasixStorageError
+        ? error
+        : new WasixStorageError(
+            `could not open IndexedDB storage ${JSON.stringify(name)}: ${describeError(error)}`,
+            { code: 'unavailable', durability: 'unchanged', cause: error },
+          );
+    try {
+      database?.close();
+    } catch (closeError) {
+      primary = composeWasixStorageFailure(
+        primary,
+        'database connection cleanup also failed',
+        closeError,
+      );
     }
-    throw new WasixStorageError(
-      `could not open IndexedDB storage ${JSON.stringify(name)}: ${describeError(error)}`,
-      { code: 'unavailable', durability: 'unchanged', cause: error },
-    );
+    try {
+      await lock.release();
+    } catch (releaseError) {
+      throw composeWasixStorageFailure(primary, 'ownership release also failed', releaseError);
+    }
+    throw primary;
   }
 }
 
-class IndexedDbStorageLease implements BrowserStorageLease {
+class IndexedDbStorageLease implements WasixStorageLease {
   readonly state: 'new' | 'existing';
-  readonly mount: BrowserDirectoryMount;
+  readonly mount: WasixDirectoryMount;
   readonly #name: string;
   readonly #database: StoredDatabaseStore;
   readonly #lock: HeldLock;
@@ -98,7 +111,7 @@ class IndexedDbStorageLease implements BrowserStorageLease {
     lock: HeldLock,
     compatibility: WasixStorageCompatibility,
     state: 'new' | 'existing',
-    mount: BrowserDirectoryMount,
+    mount: WasixDirectoryMount,
   ) {
     this.#name = name;
     this.#database = database;
@@ -155,11 +168,30 @@ class IndexedDbStorageLease implements BrowserStorageLease {
       failure = error;
     } finally {
       this.#closed = true;
-      this.#database.close();
+      try {
+        this.#database.close();
+      } catch (error) {
+        const closeFailure = new WasixStorageError(
+          `IndexedDB storage ${JSON.stringify(this.#name)} could not close its database connection`,
+          {
+            code: 'unavailable',
+            durability: this.#hasStoredGeneration ? 'persisted' : 'unchanged',
+            cause: error,
+          },
+        );
+        failure =
+          failure instanceof Error
+            ? composeWasixStorageFailure(
+                failure,
+                'database connection cleanup also failed',
+                closeFailure,
+              )
+            : closeFailure;
+      }
       try {
         await this.#lock.release();
       } catch (error) {
-        failure ??= new WasixStorageError(
+        const releaseFailure = new WasixStorageError(
           `IndexedDB storage ${JSON.stringify(this.#name)} closed but its ownership lock could not be released`,
           {
             code: 'unavailable',
@@ -167,6 +199,10 @@ class IndexedDbStorageLease implements BrowserStorageLease {
             cause: error,
           },
         );
+        failure =
+          failure instanceof Error
+            ? composeWasixStorageFailure(failure, 'ownership release also failed', releaseFailure)
+            : releaseFailure;
       }
     }
     if (failure !== undefined) {
@@ -181,7 +217,7 @@ function browserBackend(): IndexedDbStorageBackend {
     async openDatabase() {
       const factory = globalThis.indexedDB;
       if (factory === undefined) {
-        throw new WasixStorageError('IndexedDB is unavailable in this browser worker', {
+        throw new WasixStorageError('IndexedDB is unavailable in this @oliphaunt/wasix-ts host', {
           code: 'unavailable',
           durability: 'unchanged',
         });

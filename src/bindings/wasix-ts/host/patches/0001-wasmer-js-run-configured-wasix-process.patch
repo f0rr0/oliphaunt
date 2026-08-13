@@ -3,21 +3,21 @@ index b21b6eb..4a26370 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -126,7 +126,7 @@ wasmer-types = { version = "4.2.5", default-features = false }
- 
+
  [profile.release]
  lto = true
 -opt-level = 'z'
 +opt-level = 3
- 
+
  [package.metadata.wasm-pack.profile.release.wasm-bindgen]
  debug-js-glue = false
 @@ -135,9 +135,11 @@ demangle-name-section = false
  dwarf-debug-info = false
- 
+
  [package.metadata.wasm-pack.profile.release]
 -wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-Oz"]
 +wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-O3"]
- 
+
  [patch.crates-io]
 +wasmer = { path = "../wasmer-6.1.0" }
 +wasmer-wasix = { path = "../wasmer-wasix-0.601.0" }
@@ -40,18 +40,18 @@ index 6e25018..99ee44e 100644
 -use wasmer_wasix::runners::wasi::{WasiRunner, RuntimeOrEngine};
 +use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
 +use wasmer_wasix::{WasiEnvBuilder, WasiError, WasiRuntimeError};
- 
+
  use crate::{instance::ExitCondition, utils::Error, Instance, RunOptions};
- 
+
 @@ -43,9 +42,9 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
      let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
- 
+
      let (exit_code_tx, exit_code_rx) = oneshot::channel();
 -    let mut runner = WasiRunner::new();
- 
+
      let module: wasmer::Module = wasm_module.to_module(&*runtime).await?;
 +    let module_bytes = module.serialize().unwrap();
- 
+
      // Note: The WasiEnvBuilder::run() method blocks, so we need to run it on
      // the thread pool.
 @@ -54,8 +53,26 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<

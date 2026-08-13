@@ -246,10 +246,16 @@ class WasixTransactionImpl implements OliphauntTransaction {
       // error may have been recovered with ROLLBACK TO SAVEPOINT and should be
       // allowed to commit. Only propagate the first queued failure when the
       // server confirms that COMMIT actually rolled the transaction back.
-      if (sql === 'COMMIT' && this.#failed) {
+      if (sql === 'COMMIT') {
         const commandTag = parseQueryResponse(response).commandTag;
         if (commandTag !== 'COMMIT') {
-          throw this.#firstFailure;
+          if (this.#failed) {
+            throw this.#firstFailure;
+          }
+          // Raw protocol callers own response decoding, so an ErrorResponse
+          // can abort the server transaction without rejecting its JS promise.
+          // Never report success when PostgreSQL answers COMMIT with ROLLBACK.
+          throw new Error('PostgreSQL rolled back the transaction instead of committing');
         }
       }
     });

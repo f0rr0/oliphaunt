@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { WasixDirectoryMount } from '../archive.js';
-import { WasixStorageError } from '../errors.js';
+import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
 import { acquireNodeDirectoryLock, type HeldNodeDirectoryLock } from '../node-directory-lock.js';
 import {
   NODE_DIRECTORY_LOCK_SLOT,
@@ -65,7 +65,7 @@ export async function acquireNodeDirectoryStorage(
     try {
       await lock.release();
     } catch (releaseError) {
-      throw composeStorageFailure(primary, 'ownership release also failed', releaseError);
+      throw composeWasixStorageFailure(primary, 'ownership release also failed', releaseError);
     }
     throw primary;
   }
@@ -152,7 +152,7 @@ class NodeDirectoryStorageLease implements WasixStorageLease {
         );
         failure =
           failure instanceof Error
-            ? composeStorageFailure(failure, 'ownership release also failed', releaseFailure)
+            ? composeWasixStorageFailure(failure, 'ownership release also failed', releaseFailure)
             : releaseFailure;
       }
     }
@@ -583,19 +583,6 @@ function unavailable(root: string, detail: string, cause?: unknown): WasixStorag
     durability: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
   });
-}
-
-function composeStorageFailure(primary: Error, label: string, secondary: unknown): Error {
-  const message = `${primary.message}; ${label}: ${describeError(secondary)}`;
-  const cause = new AggregateError([primary, secondary], label);
-  if (primary instanceof WasixStorageError) {
-    return new WasixStorageError(message, {
-      code: primary.code,
-      durability: primary.durability,
-      cause,
-    });
-  }
-  return new Error(message, { cause });
 }
 
 function isNodeError(error: unknown, code: string): boolean {

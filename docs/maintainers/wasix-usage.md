@@ -181,6 +181,24 @@ identifiers remain unsuffixed. Browser and Node WASIX hosts consume the
 same host-neutral descriptor and bytes. A WASIX leaf shares the version and
 release line of its owning extension product.
 
+## Guest and host patch ownership
+
+Optimize at the narrowest shared layer that owns the invariant. PostgreSQL
+patches 0040 and 0041 specialize backend spinlocks and atomics because every
+released WASIX database uses one PostgreSQL backend per WebAssembly instance.
+They are compiled into the canonical guest once, so the Rust binding's AOT
+artifacts and the portable module used by browser direct, browser worker, and
+Node worker execution all benefit. They are not Node-specific patches.
+
+Transport remains host-specific. PostgreSQL patch 0039 adds an opt-in stdio
+pgwire entry point to the shared guest, but only browser-worker execution sets
+`OLIPHAUNT_WASIX_STDIO_PGWIRE=1`. Rust, browser-direct, and Node hosts pump the
+existing lifecycle exports instead. The patches under
+`src/bindings/wasix-ts/host` adapt the pinned Wasmer JS 6.1/WASIX 0.601 host;
+they do not belong in the Rust host, which uses the coherent Wasmer
+7.2.1/WASIX 0.702.1 family. Native runtimes keep PostgreSQL's normal concurrent
+atomics and their own transport rather than inheriting either WASIX contract.
+
 ## Wasmer compatibility
 
 The Rust binding and canonical runtime use Wasmer `7.2.1` and the matching

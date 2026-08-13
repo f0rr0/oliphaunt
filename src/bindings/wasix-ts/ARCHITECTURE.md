@@ -47,6 +47,19 @@ PGDATA, and the canonical runtime manifest remain owned by
 `liboliphaunt-wasix`; each extension product owns its separately versioned
 carrier envelope and portable extension bytes.
 
+The canonical guest also owns the backend-only single-backend spinlock and
+scalar-atomic specializations carried by PostgreSQL patches 0040 and 0041.
+They follow the guest into the Rust binding's AOT artifacts and the portable
+module used by browser direct, browser worker, and Node worker execution; they
+are not a TypeScript or Node host optimization. Frontends, PGXS side modules,
+and concurrent PostgreSQL builds retain the normal atomic implementation. Host
+lifecycle stays separate. All TypeScript placements assert the shared
+`OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
+denies guest process and thread creation under it. Only browser worker placement
+also uses `OLIPHAUNT_WASIX_STDIO_PGWIRE=1` for the patched stdio-pgwire pump;
+browser direct and Node worker placement remove that transport marker and use
+the Oliphaunt export driver that mirrors the Rust host.
+
 ## Browser lifecycle
 
 `Oliphaunt.open()` returns one database contract for both placements. The
@@ -283,7 +296,7 @@ into `lib/host`; direct browser execution imports the host in the caller realm,
 while browser and Node direct/worker placements import the same
 package-relative module.
 
-This is not a general backport of WASIX 0.702 to Wasmer 0.601. The ten patches:
+This is not a general backport of WASIX 0.702 to Wasmer 0.601. The eleven patches:
 
 1. compile the large module asynchronously, preserve raw module bytes across
    the blocking worker, and launch the configured `WasiEnvBuilder` rather than
@@ -311,7 +324,10 @@ This is not a general backport of WASIX 0.702 to Wasmer 0.601. The ten patches:
    synchronous, and oversized dynamic side modules are rejected before open;
    and
 10. repair the pinned source commit's stale npm-lock root metadata, then install
-    that integrity-pinned dependency graph without lockfile mutation.
+    that integrity-pinned dependency graph without lockfile mutation; and
+11. deny guest process replacement, process creation, and thread creation in
+    every TypeScript placement while the explicit single-backend contract is
+    active; the separate stdio-pgwire marker remains transport-only.
 
 The exact pairing is qualified for the single-process stdio-pgwire and direct
 Oliphaunt export paths, including repeated PostgreSQL `ERROR` recovery. The
@@ -319,10 +335,10 @@ direct driver treats every `PostgresMainLoopOnce` trap as the guest's exported
 top-level recovery boundary and also cleans up non-trapping ErrorResponses.
 This remains an integration contract with the pinned Oliphaunt runtime rather
 than a generic Wasmer guarantee.
-Missing WASIX context switching is still a broader compatibility gap, but is
-not part of this PostgreSQL recovery path. Ordinary package resolution never
-selects stock `@wasmer/sdk`; the published binding owns the source-pinned host.
-Completing the larger current-Wasmer JS port remains future host work.
+Missing WASIX context switching is a broader compatibility gap, but is not part
+of this PostgreSQL recovery path. Ordinary package resolution never selects
+stock `@wasmer/sdk`; the published binding owns the source-pinned host. A larger
+current-Wasmer JS port is outside this host's compatibility contract.
 
 The version skew is upstream-owned rather than a loose Oliphaunt dependency.
 The commit referenced by the latest npm `@wasmer/sdk` 0.10.0 release identifies
@@ -380,11 +396,11 @@ This binding keeps the following deliberate divergences:
   `CREATE EXTENSION`; and
 - IndexedDB uses a full checkpoint/clean-close snapshot rather than PGlite's
   Emscripten dirty-file synchronization. OPFS, per-query flush, and multi-tab
-  leadership still need Wasmer/WASIX host contracts and are not inherited from
-  PGlite's browser filesystem.
+  leadership are unsupported without corresponding Wasmer/WASIX host contracts
+  and are not inherited from PGlite's browser filesystem.
 
-The manifest's native `load-order` metadata is retained but not yet explicitly
-driven by this host. Selection therefore rejects nonempty `load-order` and
+The manifest's native `load-order` metadata is retained but is not driven by
+this host. Selection therefore rejects nonempty `load-order` and
 `shared-memory-required` contracts. `pgtap` and the `pg_uuidv7` canary declare
 neither; affected extensions remain outside the qualified TypeScript host slice.
 

@@ -119,7 +119,7 @@ export type WasixExtensionLifecycle = {
   sharedMemoryRequired: boolean;
 };
 
-/** Browser-relevant subset of the generated liboliphaunt WASIX asset manifest. */
+/** Host-relevant subset of the generated liboliphaunt WASIX asset manifest. */
 export type WasixAssetManifest = {
   'format-version': 1;
   'source-fingerprint': string;
@@ -169,7 +169,7 @@ export type OpenConfig = {
   startupGUCs?: Readonly<Record<string, string>>;
   /** Selectively imported WASIX carriers. SQL strings are intentionally not accepted. */
   extensions?: readonly WasixExtensionDescriptor[];
-  /** Fresh memory by default, or an explicitly imported browser storage adapter. */
+  /** Fresh memory by default, or an explicitly imported host storage adapter. */
   storage?: WasixStorage;
 };
 
@@ -194,10 +194,3 @@ export type OliphauntTransaction = {
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
 };
-
-/** Descriptive aliases retained for consumers that prefer runtime-qualified names. */
-export type WasixOpenOptions = OpenConfig;
-export type WasixAdvancedOpenOptions = NonNullable<OpenConfig['advanced']>;
-export type WasixDatabase = OliphauntDatabase;
-export type WasixTransaction = OliphauntTransaction;
-export type OliphauntWasixClient = OliphauntClient;

@@ -26,6 +26,89 @@ const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
 const COMPARISON_TREE_SHA256 =
   'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
 const ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
+const PROFILE_FIELDS = [
+  'startupRuns',
+  'workloadRuns',
+  'insertDiagnosticRuns',
+  'pointSamples',
+  'rangeSamples',
+  'aggregateSamples',
+  'transactionInserts',
+  'qualificationEligible',
+];
+const QUICK_PROFILE = {
+  startupRuns: 2,
+  workloadRuns: 1,
+  insertDiagnosticRuns: 1,
+  pointSamples: 20,
+  rangeSamples: 10,
+  aggregateSamples: 5,
+  transactionInserts: 20,
+  qualificationEligible: false,
+};
+const FULL_PROFILE = {
+  startupRuns: 5,
+  insertDiagnosticRuns: 5,
+  pointSamples: 200,
+  rangeSamples: 50,
+  aggregateSamples: 30,
+  transactionInserts: 100,
+  qualificationEligible: true,
+};
+const MEASUREMENT = {
+  rows: 10_000,
+  storage: 'ephemeral-memory',
+  order: 'rotating-engines-with-same-run-pairing',
+  warmup: 'one-untimed-representative-workload-per-fresh-database',
+  timingBoundary: 'browser-caller-end-to-end-around-public-api',
+  pairing: 'same-run-oliphaunt-over-pglite',
+  percentileMethod: 'nearest-rank',
+};
+const GATE_METRICS = [
+  'startup.warmReadyMs',
+  'workload.createTableMs',
+  'workload.insert10kMs',
+  'workload.pointMedianMs',
+  'workload.pointP95Ms',
+  'workload.range100MedianMs',
+  'workload.range100P95Ms',
+  'workload.aggregateMedianMs',
+  'workload.aggregateP95Ms',
+  'workload.scanAndDecode10kMs',
+  'workload.transactionInsertBatchMs',
+  'workload.update1kMs',
+  'workload.delete1kMs',
+];
+const GATE_EXCLUSIONS = {
+  'startup.firstReadyMs':
+    'descriptive because the implementations use different compilation caches',
+  'workload.readyMs': 'duplicates the independently sampled warm-start metric',
+  'workload.closeMs':
+    'descriptive because the public close methods make different worker-reclamation guarantees',
+  'insertDiagnostic.*Ms':
+    'diagnostic decomposition would otherwise overweight the primary insert workload',
+  'insertDiagnostic.indexedInsertWalBytes':
+    'semantic parity constraint rather than a speed metric',
+};
+const POSTGRES_SETTINGS = {
+  fsync: 'off',
+  synchronousCommit: 'on',
+  fullPageWrites: 'on',
+  walLevel: 'replica',
+};
+const RUNTIME_BUILD = {
+  profile: 'release',
+  cflags: '-O2 -g0 -flto=thin',
+  ldflags: '-flto=thin',
+  configureWasmOpt: 'no',
+  buildWasmOpt: 'yes',
+  wasmOptFlags: '--converge:--strip-debug:--strip-producers',
+  wasmOptSuppressDefault: '',
+  wasmOptPreserveUnoptimized: '',
+  compilerFlags: '',
+  linkerFlags: '',
+  backendTiming: '0',
+};
 const TOPOLOGIES = {
   direct: ['wasixDirect', 'pgliteDirect'],
   worker: ['wasixWorker', 'pgliteWorker'],
@@ -45,69 +128,131 @@ export async function loadBrowserPlan(file = defaultBrowserPlanFile) {
 
 export function validateBrowserPlan(plan) {
   requireRecord(plan, 'plan');
+  requireExactKeys(
+    plan,
+    ['schema', 'id', 'description', 'engines', 'profiles', 'measurement', 'gate', 'postgres'],
+    'plan',
+  );
   requireEqual(plan.schema, PLAN_SCHEMA, 'plan.schema');
   requireEqual(plan.id, 'browser-pglite-memory-v1', 'plan.id');
+  requireNonEmptyString(plan.description, 'plan.description');
   const engines = requireRecord(plan.engines, 'plan.engines');
+  requireExactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
   const candidate = requireRecord(engines.candidate, 'plan.engines.candidate');
   const comparison = requireRecord(engines.comparison, 'plan.engines.comparison');
-  requireEqual(candidate.package, CANDIDATE_PACKAGE, 'candidate package');
-  requireEqual(candidate.storage, 'memory', 'candidate storage');
-  requireEqual(comparison.package, COMPARISON_PACKAGE, 'comparison package');
-  requireEqual(comparison.version, COMPARISON_VERSION, 'comparison version');
-  requireEqual(comparison.integrity, COMPARISON_INTEGRITY, 'comparison integrity');
-  requireEqual(comparison.sourceCommit, COMPARISON_COMMIT, 'comparison source commit');
-  requireEqual(
-    comparison.installedTreeSha256,
-    COMPARISON_TREE_SHA256,
-    'comparison installed tree',
+  requireExactKeys(
+    candidate,
+    ['package', 'storage', 'directBoundary', 'workerBoundary', 'dependencies', 'runtimeBuild'],
+    'plan.engines.candidate',
   );
-  requireEqual(comparison.storage, 'memory', 'comparison storage');
+  requireEqual(candidate.package, CANDIDATE_PACKAGE, 'plan.engines.candidate.package');
+  requireEqual(candidate.storage, 'memory', 'plan.engines.candidate.storage');
+  requireEqual(
+    candidate.directBoundary,
+    'browser-caller-realm',
+    'plan.engines.candidate.directBoundary',
+  );
+  requireEqual(
+    candidate.workerBoundary,
+    'package-owned-web-worker',
+    'plan.engines.candidate.workerBoundary',
+  );
+  requireExactRecord(
+    candidate.dependencies,
+    { fzstd: '0.1.1' },
+    'plan.engines.candidate.dependencies',
+  );
+  requireExactRecord(
+    candidate.runtimeBuild,
+    RUNTIME_BUILD,
+    'plan.engines.candidate.runtimeBuild',
+  );
+  requireExactRecord(
+    comparison,
+    {
+      package: COMPARISON_PACKAGE,
+      version: COMPARISON_VERSION,
+      integrity: COMPARISON_INTEGRITY,
+      homepage: 'https://pglite.dev',
+      sourceRepository: 'https://github.com/electric-sql/pglite',
+      sourceCommit: COMPARISON_COMMIT,
+      installedTreeHashSchema: 'oliphaunt-path-size-content-sha256-v1',
+      installedTreeSha256: COMPARISON_TREE_SHA256,
+      storage: 'memory',
+      directBoundary: 'browser-caller-realm',
+      workerBoundary: 'official-pglite-web-worker',
+    },
+    'plan.engines.comparison',
+  );
 
   const profiles = requireRecord(plan.profiles, 'plan.profiles');
-  for (const name of ['quick', 'full']) {
-    const profile = requireRecord(profiles[name], `plan.profiles.${name}`);
-    for (const field of [
-      'startupRuns',
-      'workloadRuns',
-      'insertDiagnosticRuns',
-      'pointSamples',
-      'rangeSamples',
-      'aggregateSamples',
-      'transactionInserts',
-    ]) {
-      requirePositiveInteger(profile[field], `plan.profiles.${name}.${field}`);
-    }
-    requireEqual(
-      profile.qualificationEligible,
-      name === 'full',
-      `plan.profiles.${name}.qualificationEligible`,
-    );
+  requireExactKeys(profiles, ['quick', 'full'], 'plan.profiles');
+  requireExactRecord(profiles.quick, QUICK_PROFILE, 'plan.profiles.quick');
+  const full = requireRecord(profiles.full, 'plan.profiles.full');
+  requireExactKeys(full, PROFILE_FIELDS, 'plan.profiles.full');
+  for (const [field, expected] of Object.entries(FULL_PROFILE)) {
+    requireEqual(full[field], expected, `plan.profiles.full.${field}`);
+  }
+  requirePositiveInteger(full.workloadRuns, 'plan.profiles.full.workloadRuns');
+  if (full.workloadRuns < ENGINE_NAMES.length * 2 || full.workloadRuns % ENGINE_NAMES.length !== 0) {
+    throw new Error('plan.profiles.full.workloadRuns must be a multiple of 4 and at least 8');
   }
 
-  const measurement = requireRecord(plan.measurement, 'plan.measurement');
-  requireEqual(measurement.rows, 10_000, 'plan.measurement.rows');
-  requireEqual(measurement.storage, 'ephemeral-memory', 'plan.measurement.storage');
+  requireExactRecord(plan.measurement, MEASUREMENT, 'plan.measurement');
   const gate = requireRecord(plan.gate, 'plan.gate');
+  requireExactKeys(
+    gate,
+    [
+      'maxGeomeanRatio',
+      'requiresCorrectness',
+      'requiresBothTopologies',
+      'metric',
+      'metrics',
+      'excluded',
+    ],
+    'plan.gate',
+  );
   requireEqual(gate.maxGeomeanRatio, 0.8, 'plan.gate.maxGeomeanRatio');
   requireEqual(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
   requireEqual(gate.requiresBothTopologies, true, 'plan.gate.requiresBothTopologies');
-  if (!Array.isArray(gate.metrics) || gate.metrics.length === 0) {
-    throw new Error('plan.gate.metrics must be a non-empty array');
-  }
-  const uniqueMetrics = new Set(gate.metrics);
-  if (uniqueMetrics.size !== gate.metrics.length) {
-    throw new Error('plan.gate.metrics must not contain duplicates');
-  }
+  requireEqual(
+    gate.metric,
+    'geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better',
+    'plan.gate.metric',
+  );
+  requireExactStringList(gate.metrics, GATE_METRICS, 'plan.gate.metrics');
   for (const metric of gate.metrics) validateMetricId(metric);
+  requireExactRecord(gate.excluded, GATE_EXCLUSIONS, 'plan.gate.excluded');
 
   const postgres = requireRecord(plan.postgres, 'plan.postgres');
+  requireExactKeys(
+    postgres,
+    ['major', 'settings', 'indexedInsertWalTolerancePercent'],
+    'plan.postgres',
+  );
   requireEqual(postgres.major, 18, 'plan.postgres.major');
-  requireRecord(postgres.settings, 'plan.postgres.settings');
+  requireExactRecord(postgres.settings, POSTGRES_SETTINGS, 'plan.postgres.settings');
   requireEqual(
     postgres.indexedInsertWalTolerancePercent,
     0.1,
     'plan.postgres.indexedInsertWalTolerancePercent',
   );
+}
+
+export function qualifyingGitProvenance({ commit, tree, status }) {
+  if (!/^[0-9a-f]{40}$/u.test(commit)) {
+    throw new Error('browser benchmark qualification requires an exact Git commit');
+  }
+  if (!/^[0-9a-f]{40}$/u.test(tree)) {
+    throw new Error('browser benchmark qualification requires an exact Git tree');
+  }
+  if (typeof status !== 'string') {
+    throw new Error('browser benchmark qualification requires Git porcelain status text');
+  }
+  if (status !== '') {
+    throw new Error('browser benchmark qualification requires a clean Git worktree');
+  }
+  return { commit, tree, dirty: false };
 }
 
 export function summarizeBrowserResult(planSource, result) {
@@ -167,7 +312,7 @@ export function browserPlanSummary(source) {
     sha256: source.sha256,
     size: source.size,
     engines: source.plan.engines,
-    profile: source.plan.profiles,
+    profiles: source.plan.profiles,
     measurement: source.plan.measurement,
     gate: source.plan.gate,
     postgres: source.plan.postgres,
@@ -342,6 +487,38 @@ function requireRecord(value, label) {
     throw new Error(`${label} must be an object`);
   }
   return value;
+}
+
+function requireExactRecord(value, expected, label) {
+  const record = requireRecord(value, label);
+  requireExactKeys(record, Object.keys(expected), label);
+  for (const [field, expectedValue] of Object.entries(expected)) {
+    requireEqual(record[field], expectedValue, `${label}.${field}`);
+  }
+  return record;
+}
+
+function requireExactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(required)) {
+    throw new Error(`${label} must contain exactly ${JSON.stringify(required)}`);
+  }
+}
+
+function requireExactStringList(value, expected, label) {
+  if (!Array.isArray(value) || value.length !== expected.length) {
+    throw new Error(`${label} must contain exactly ${expected.length} entries`);
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    requireEqual(value[index], expected[index], `${label}[${index}]`);
+  }
+}
+
+function requireNonEmptyString(value, label) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${label} must be a non-empty string`);
+  }
 }
 
 function requirePositiveInteger(value, label) {

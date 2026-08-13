@@ -4,12 +4,12 @@ index 0ec461d..74c1c61 100644
 +++ b/src/syscalls/wasix/mod.rs
 @@ -173,3 +173,18 @@ pub use tty_get::*;
  pub use tty_set::*;
- 
+
  use tracing::{debug_span, field, instrument, trace_span, Span};
 +
 +use crate::WasiEnv;
 +
-+const OLIPHAUNT_STDIO_PGWIRE_ENV: &[u8] = b"OLIPHAUNT_WASIX_STDIO_PGWIRE=1";
++const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] = b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
 +
 +fn oliphaunt_single_backend_requested(env: &WasiEnv) -> bool {
 +    env.state
@@ -17,7 +17,7 @@ index 0ec461d..74c1c61 100644
 +        .lock()
 +        .map(|envs| {
 +            envs.iter()
-+                .any(|entry| entry.as_slice() == OLIPHAUNT_STDIO_PGWIRE_ENV)
++                .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
 +        })
 +        .unwrap_or(true)
 +}
@@ -28,7 +28,7 @@ index e72cdd7..b6c29b7 100644
 @@ -34,6 +34,11 @@ pub fn proc_exec3<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
- 
+
 +    if oliphaunt_single_backend_requested(ctx.data()) {
 +        warn!("guest process replacement denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
@@ -44,7 +44,7 @@ index f2b17e5..f7fead0 100644
 @@ -27,6 +27,11 @@ pub fn proc_fork<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
- 
+
 +    if oliphaunt_single_backend_requested(ctx.data()) {
 +        warn!("guest process fork denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
@@ -60,7 +60,7 @@ index 958b9b0..fff03a8 100644
 @@ -42,6 +42,11 @@ pub fn proc_spawn<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
- 
+
 +    if oliphaunt_single_backend_requested(ctx.data()) {
 +        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);
@@ -76,7 +76,7 @@ index b907118..2922514 100644
 @@ -44,6 +44,11 @@ pub fn proc_spawn2<M: MemorySize>(
  ) -> Result<Errno, WasiError> {
      WasiEnv::do_pending_operations(&mut ctx)?;
- 
+
 +    if oliphaunt_single_backend_requested(ctx.data()) {
 +        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
 +        return Ok(Errno::Notcapable);

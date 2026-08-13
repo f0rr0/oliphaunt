@@ -3,9 +3,9 @@ index e0c303f..8da1d59 100644
 --- a/src-js/index.ts
 +++ b/src-js/index.ts
 @@ -57,7 +57,10 @@ export const init = async (
- 
+
    setRegistry(initValue);
- 
+
 -  let output = await load(initValue.module, initValue.memory);
 +  let output = await load({
 +    module_or_path: initValue.module,

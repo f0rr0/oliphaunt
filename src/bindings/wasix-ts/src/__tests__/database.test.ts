@@ -10,8 +10,9 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
-        statements.push(simpleQuerySql(input));
-        return ready();
+        const statement = simpleQuerySql(input);
+        statements.push(statement);
+        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
       async checkpoint() {},
       async close() {},
@@ -29,7 +30,8 @@ describe('WASIX database recovery state', () => {
 
     expect(value).toBe(42);
     expect(statements).toEqual(['BEGIN', 'SELECT inside', 'COMMIT']);
-    await expect(expired!.query('SELECT too_late')).rejects.toThrow(/no longer active/);
+    if (expired === undefined) throw new Error('transaction test handle was not captured');
+    await expect(expired.query('SELECT too_late')).rejects.toThrow(/no longer active/);
     await database.close();
   });
 
@@ -72,7 +74,7 @@ describe('WASIX database recovery state', () => {
         if (statement === 'COMMIT' && transactionAborted) {
           return concatenate(commandComplete('ROLLBACK'), ready());
         }
-        return ready();
+        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
       async checkpoint() {},
       async close() {},
@@ -134,6 +136,38 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
+  it('does not report a commit after raw protocol traffic aborts the server transaction', async () => {
+    const statements: string[] = [];
+    let transactionAborted = false;
+    const session: WasixDatabaseSession = {
+      async exec(input) {
+        if (input[0] !== 'Q'.charCodeAt(0)) {
+          statements.push('RAW');
+          transactionAborted = true;
+          return concatenate(backendError('XX000', 'raw operation failed'), ready());
+        }
+        const statement = simpleQuerySql(input);
+        statements.push(statement);
+        if (statement === 'COMMIT' && transactionAborted) {
+          return concatenate(commandComplete('ROLLBACK'), ready());
+        }
+        return ready();
+      },
+      async checkpoint() {},
+      async close() {},
+    };
+    const database = new WasixDatabaseImpl(session);
+
+    await expect(
+      database.transaction(async (transaction) => {
+        await transaction.execProtocolRaw(Uint8Array.of(1));
+      }),
+    ).rejects.toThrow('rolled back the transaction instead of committing');
+
+    expect(statements).toEqual(['BEGIN', 'RAW', 'COMMIT', 'ROLLBACK']);
+    await database.close();
+  });
+
   it('seals the callback handle before commit begins', async () => {
     const statements: string[] = [];
     let releaseCommit: (() => void) | undefined;
@@ -151,7 +185,7 @@ describe('WASIX database recovery state', () => {
             releaseCommit = resolve;
           });
         }
-        return ready();
+        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
       async checkpoint() {},
       async close() {},
@@ -163,7 +197,9 @@ describe('WASIX database recovery state', () => {
       transactionHandle = handle;
     });
     await started;
-    await expect(transactionHandle!.query('SELECT after_body')).rejects.toThrow(/no longer active/);
+    if (transactionHandle === undefined)
+      throw new Error('transaction test handle was not captured');
+    await expect(transactionHandle.query('SELECT after_body')).rejects.toThrow(/no longer active/);
     releaseCommit?.();
     await transaction;
 

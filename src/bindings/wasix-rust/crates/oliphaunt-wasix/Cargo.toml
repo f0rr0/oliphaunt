@@ -73,7 +73,7 @@ icu = ["dep:oliphaunt-icu"]
 postgres-version = "18.4"
 postgres-source-url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
 postgres-source-sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
-postgres-patch-count = "39"
+postgres-patch-count = "41"
 oliphaunt-npm-version-checked = "0.4.5"
 runtime-archive-sha256 = "7dccedb08fdc32b0092ff92a0882d911230e0361d0f4fdf228d6a6cb7d981178"
 oliphaunt-wasix-sha256 = "da58c392818149789b8ca9824952abf20ed1a084e7b580369a5478e6db280b05"
@@ -83,6 +83,8 @@ initdb-wasix-sha256 = "8c2b936abfd01ba7d7272897a1719ce2a0e2bfaa4835bea3458f462af
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
+cap-fs-ext = "4"
+cap-std = "4"
 tar = "0.4"
 zstd = { version = "0.13", default-features = false }
 directories = "6"

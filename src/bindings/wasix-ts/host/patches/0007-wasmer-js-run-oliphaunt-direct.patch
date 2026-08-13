@@ -24,7 +24,7 @@ index 967ac16..7b93ca4 100644
 +++ b/src/options.rs
 @@ -186,6 +186,23 @@ extern "C" {
  }
- 
+
  impl RunOptions {
 +    pub(crate) fn configure_direct_builder(
 +        &self,
@@ -58,13 +58,13 @@ index 967ac16..7b93ca4 100644
 -            builder.add_env(key, value);
 -        }
 +        self.configure_common_builder(builder, |_| true)?;
- 
+
          let stdin = match self.read_stdin() {
              Some(stdin) => {
 @@ -226,11 +237,32 @@ impl RunOptions {
          let (stderr_file, stderr) = crate::streams::output_pipe();
          builder.set_stderr(Box::new(stderr_file));
- 
+
 +        Ok((stdin, stdout, stderr))
 +    }
 +
@@ -89,11 +89,11 @@ index 967ac16..7b93ca4 100644
          let fs = self.filesystem()?;
          builder.set_fs(Box::new(fs));
          builder.add_preopen_dir("/")?;
- 
+
 -        Ok((stdin, stdout, stderr))
 +        Ok(())
      }
- 
+
      pub(crate) fn filesystem(&self) -> Result<TmpFileSystem, Error> {
 diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
 new file mode 100644
@@ -675,7 +675,7 @@ index d71638f..cb106d7 100644
 @@ -83,7 +83,7 @@ impl Runtime {
          Ok(rt)
      }
- 
+
 -    pub(crate) fn with_task_manager(&self, task_manager: Arc<ThreadPool>) -> Self {
 +    pub(crate) fn with_task_manager(&self, task_manager: Arc<dyn VirtualTaskManager>) -> Self {
          let mut runtime = self.clone();
@@ -744,14 +744,14 @@ index 2e9b0ee..76f8695 100644
 @@ -31,6 +31,7 @@
  //! [`Worker`]: thread_pool_worker::ThreadPoolWorker
  //! [`Scheduler`]: scheduler::Scheduler
- 
+
 +mod caller_realm;
  mod interop;
  mod post_message_payload;
  mod scheduler;
 @@ -42,6 +43,7 @@ mod worker_handle;
  mod worker_message;
- 
+
  pub(crate) use self::{
 +    caller_realm::CallerRealmTaskManager,
      post_message_payload::{AsyncJob, BlockingJob, Notification, PostMessagePayload},

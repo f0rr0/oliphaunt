@@ -19,7 +19,15 @@ import { expectedJsrPublishedManifest } from "./jsr-publish-normalization.mjs";
 import { verifyLockedCarrierIntegrity } from "./registry-integrity.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
-const SOURCE = path.join(ROOT, "src/sdks/js");
+const CURRENT_SOURCE = path.join(ROOT, "src/sdks/js");
+const FROZEN_RAW_SOURCE = path.join(
+  import.meta.dir,
+  "fixtures/jsr-publish-normalization/oliphaunt-ts-0.1.1",
+);
+// These are immutable publication-evidence bytes. Reading them from the
+// current SDK or spawning Git would respectively retarget the proof or make
+// the release gate depend on repository history and subprocess behavior.
+const FROZEN_RAW_FILES = new Set(["src/jsr.ts", "src/query.ts"]);
 const EXACT_SOURCE = Object.freeze({
   commit: "ae3d29ba16245e9345a8d337cd17c53f9bf2e853",
   tree: "673e8f249d2f51d10997f0036a7e471bf35a388e",
@@ -38,15 +46,17 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function stageExactSource() {
+function stageNormalizationFixture() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-jsr-normalization-"));
-  const config = JSON.parse(readFileSync(path.join(SOURCE, "jsr.json"), "utf8"));
+  const config = JSON.parse(readFileSync(path.join(CURRENT_SOURCE, "jsr.json"), "utf8"));
   for (const relative of config.publish.include) {
     const target = path.join(directory, ...relative.split("/"));
     mkdirSync(path.dirname(target), { recursive: true });
-    const sdkSource = path.join(SOURCE, ...relative.split("/"));
+    const sdkSource = path.join(CURRENT_SOURCE, ...relative.split("/"));
     const source = relative === "LICENSE" || relative === "THIRD_PARTY_NOTICES.md"
       ? path.join(ROOT, relative)
+      : FROZEN_RAW_FILES.has(relative)
+      ? path.join(FROZEN_RAW_SOURCE, ...`${relative}.raw`.split("/"))
       : sdkSource;
     writeFileSync(target, readFileSync(source));
   }
@@ -88,7 +98,7 @@ function exactLock(directory) {
 }
 
 test("admits only the exact immutable 0.1.1 raw-to-published JSR proofs", async () => {
-  const directory = stageExactSource();
+  const directory = stageNormalizationFixture();
   try {
     const lock = exactLock(directory);
     const carrier = lock.carriers[0];
@@ -125,7 +135,7 @@ test("admits only the exact immutable 0.1.1 raw-to-published JSR proofs", async 
 });
 
 test("rejects wrong immutable identity fields and wrong frozen raw bytes", () => {
-  const directory = stageExactSource();
+  const directory = stageNormalizationFixture();
   try {
     const exact = exactLock(directory);
     for (const [label, lock, carrier] of [
@@ -148,7 +158,7 @@ test("rejects wrong immutable identity fields and wrong frozen raw bytes", () =>
       }),
       /identity does not match/u,
     );
-    const wrongVersionDirectory = stageExactSource();
+    const wrongVersionDirectory = stageNormalizationFixture();
     try {
       const config = JSON.parse(readFileSync(path.join(wrongVersionDirectory, "jsr.json"), "utf8"));
       config.version = "0.1.2";
@@ -268,7 +278,7 @@ test("import scanning ignores data strings, honors exact JavaScript targets, and
 });
 
 test("an exact normalization record must cover all and only rewrite-prone files", () => {
-  const directory = stageExactSource();
+  const directory = stageNormalizationFixture();
   try {
     const query = path.join(directory, "src/query.ts");
     writeFileSync(query, readFileSync(query, "utf8").replace("'./protocol.js'", "'./protocol.ts'"));

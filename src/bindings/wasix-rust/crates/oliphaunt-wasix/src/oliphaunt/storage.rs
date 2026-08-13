@@ -12,9 +12,10 @@ use wasmer_wasix::virtual_fs::{self, FileSystem};
 /// Storage and initialization are deliberately independent. For example, a
 /// memory database can be initialized from the packaged template or from an
 /// archive, while a directory can be initialized with `initdb`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DatabaseStorage {
     /// A true in-memory WASIX filesystem. No host PGDATA directory is created.
+    #[default]
     Memory,
     /// A host directory allocated for this database and removed with it.
     TemporaryDirectory,
@@ -22,12 +23,6 @@ pub enum DatabaseStorage {
     Directory(PathBuf),
     /// A retained directory resolved from the platform application-data path.
     ApplicationData(ApplicationData),
-}
-
-impl Default for DatabaseStorage {
-    fn default() -> Self {
-        Self::Memory
-    }
 }
 
 /// A platform application-data identity.
@@ -65,21 +60,16 @@ impl ApplicationData {
 }
 
 /// How a database is initialized when its storage does not contain a cluster.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DatabaseInitialization {
     /// Install the PostgreSQL cluster template packaged with this runtime.
+    #[default]
     PackagedTemplate,
     /// Run the packaged WASIX `initdb` tool.
     FreshInitdb,
     /// Initialize from a same-version physical backup produced by
     /// [`Oliphaunt::backup`](crate::Oliphaunt::backup).
     PhysicalArchive(Vec<u8>),
-}
-
-impl Default for DatabaseInitialization {
-    fn default() -> Self {
-        Self::PackagedTemplate
-    }
 }
 
 #[derive(Debug, Clone)]

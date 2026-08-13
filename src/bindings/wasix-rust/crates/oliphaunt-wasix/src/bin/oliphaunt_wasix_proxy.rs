@@ -179,7 +179,7 @@ fn print_usage() {
     eprintln!("  --physical-archive PATH  Initialize empty storage from a physical backup");
     eprintln!("  --tcp ADDR        Listen on TCP. Use 127.0.0.1:0 for a random port");
     #[cfg(unix)]
-    eprintln!("  --unix PATH       Listen on a Unix socket path");
+    eprintln!("  --unix PATH       Listen on a PostgreSQL .s.PGSQL.<port> socket path");
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
     eprintln!("  --postgres-config NAME=VALUE");
     eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");

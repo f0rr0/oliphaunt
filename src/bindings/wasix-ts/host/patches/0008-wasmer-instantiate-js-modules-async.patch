@@ -4,19 +4,19 @@ diff --git a/Cargo.toml b/Cargo.toml
 @@ -363,6 +363,9 @@
  [target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen]
  version = "0.2.100"
- 
+
 +[target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen-futures]
 +version = "0.4"
 +
  [target.'cfg(target_arch = "wasm32")'.dependencies.wasmer-compiler]
  version = "=6.1.0"
- 
+
 diff --git a/src/backend/js/entities/instance.rs b/src/backend/js/entities/instance.rs
 --- a/src/backend/js/entities/instance.rs
 +++ b/src/backend/js/entities/instance.rs
 @@ -19,6 +19,21 @@ pub struct Instance {
  // unsafe impl Send for Instance {}
- 
+
  impl Instance {
 +    #[cfg(target_arch = "wasm32")]
 +    pub(crate) async fn new_async(
@@ -39,11 +39,11 @@ diff --git a/src/backend/js/entities/instance.rs b/src/backend/js/entities/insta
 @@ -29,7 +44,7 @@ impl Instance {
              .instantiate(&mut store, imports)
              .map_err(|e| InstantiationError::Start(e))?;
- 
+
 -        Self::from_module_and_instance(store, &module, instance)
 +        Self::from_module_and_instance(store, module, instance)
      }
- 
+
      pub(crate) fn new_by_index(
 diff --git a/src/backend/js/entities/module.rs b/src/backend/js/entities/module.rs
 --- a/src/backend/js/entities/module.rs
@@ -102,14 +102,14 @@ diff --git a/src/backend/js/entities/module.rs b/src/backend/js/entities/module.
 -            .map_err(|e: JsValue| -> RuntimeError { e.into() })?)
 +        Ok((imports_object, import_externs))
      }
- 
+
      pub fn name(&self) -> Option<&str> {
 diff --git a/src/entities/instance.rs b/src/entities/instance.rs
 --- a/src/entities/instance.rs
 +++ b/src/entities/instance.rs
 @@ -20,6 +20,59 @@ pub struct Instance {
  }
- 
+
  impl Instance {
 +    /// Asynchronously creates a new JavaScript-backed WebAssembly instance.
 +    ///

@@ -859,7 +859,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntClient`
 - `OliphauntDatabase`
 - `OliphauntTransaction`
-- `OliphauntWasixClient`
 - `OpenConfig`
 - `PostgresErrorField`
 - `QueryBinaryInput`
@@ -868,9 +867,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryParam`
 - `QueryResult`
 - `QueryRow`
-- `WasixAdvancedOpenOptions`
 - `WasixAssetSource`
-- `WasixDatabase`
 - `WasixExtensionCarrier`
 - `WasixExtensionCompatibility`
 - `WasixExtensionDescriptor`
@@ -878,14 +875,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `WasixExtensionInstall`
 - `WasixExtensionLifecycle`
 - `WasixExtensionNativeModule`
-- `WasixOpenOptions`
 - `WasixRuntimeArchive`
 - `WasixRuntimeDescriptor`
 - `WasixRuntimeManifest`
 - `WasixStorage`
 - `WasixStorageDurability`
 - `WasixStorageErrorCode`
-- `WasixTransaction`
 
 ### Values
 

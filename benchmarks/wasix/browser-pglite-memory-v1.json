@@ -7,7 +7,23 @@
       "package": "@oliphaunt/wasix-ts",
       "storage": "memory",
       "directBoundary": "browser-caller-realm",
-      "workerBoundary": "package-owned-web-worker"
+      "workerBoundary": "package-owned-web-worker",
+      "dependencies": {
+        "fzstd": "0.1.1"
+      },
+      "runtimeBuild": {
+        "profile": "release",
+        "cflags": "-O2 -g0 -flto=thin",
+        "ldflags": "-flto=thin",
+        "configureWasmOpt": "no",
+        "buildWasmOpt": "yes",
+        "wasmOptFlags": "--converge:--strip-debug:--strip-producers",
+        "wasmOptSuppressDefault": "",
+        "wasmOptPreserveUnoptimized": "",
+        "compilerFlags": "",
+        "linkerFlags": "",
+        "backendTiming": "0"
+      }
     },
     "comparison": {
       "package": "@electric-sql/pglite",
@@ -36,7 +52,7 @@
     },
     "full": {
       "startupRuns": 5,
-      "workloadRuns": 7,
+      "workloadRuns": 8,
       "insertDiagnosticRuns": 5,
       "pointSamples": 200,
       "rangeSamples": 50,

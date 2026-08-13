@@ -19,27 +19,9 @@ export type WasixRuntimeLayout = {
   mounts: Record<string, WasixDirectoryMount>;
 };
 
-/** @deprecated Internal compatibility aliases; the layout is shared by browser and Node. */
-export type BrowserDirectoryMount = WasixDirectoryMount;
-/** @deprecated Internal compatibility aliases; the layout is shared by browser and Node. */
-export type BrowserRuntimeLayout = WasixRuntimeLayout;
-
 const BLOCK_SIZE = 512;
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd] as const;
 const decoder = new TextDecoder();
-
-export async function loadBrowserRuntime(
-  runtimeSource: SerializedAssetSource,
-  pgdataSource: SerializedAssetSource,
-): Promise<BrowserRuntimeLayout> {
-  const [runtimeBytes, pgdataBytes] = await Promise.all([
-    loadAsset(runtimeSource, 'WASIX runtime archive'),
-    loadAsset(pgdataSource, 'WASIX PGDATA template'),
-  ]);
-  const runtime = extractTar(decompressIfNeeded(runtimeBytes));
-  const pgdata = extractTar(decompressIfNeeded(pgdataBytes));
-  return layoutRuntime(runtime, pgdata);
-}
 
 export function extractTar(archive: Uint8Array): ExtractedArchive {
   const files = new Map<string, Uint8Array>();
@@ -107,7 +89,7 @@ export function extractTar(archive: Uint8Array): ExtractedArchive {
 export function layoutRuntime(
   runtime: ExtractedArchive,
   pgdata: ExtractedArchive,
-): BrowserRuntimeLayout {
+): WasixRuntimeLayout {
   const runtimeFiles = runtime.files;
   const pgdataFiles = pgdata.files;
   const module = runtimeFiles.get('oliphaunt/bin/oliphaunt');
@@ -118,7 +100,7 @@ export function layoutRuntime(
     throw new Error('PGDATA template is missing PG_VERSION or global/pg_control');
   }
 
-  const mounts: Record<string, BrowserDirectoryMount> = {
+  const mounts: Record<string, WasixDirectoryMount> = {
     '/base': {
       files: mapToDirectory(pgdataFiles),
       directories: [...pgdata.directories],

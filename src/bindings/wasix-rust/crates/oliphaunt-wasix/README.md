@@ -161,6 +161,13 @@ Postgres should be as easy to add to a Rust project as SQLite.
 
 ## Near-Native Performance 🚀
 
+The canonical guest specializes backend spinlocks and scalar atomics for the
+enforced one-backend-per-WebAssembly-instance runtime. Rust AOT artifacts are
+built from that same guest, so this binding receives the optimization alongside
+the portable module used by browser and Node hosts; it is not Node-specific.
+Frontend tools, PGXS side modules, and PostgreSQL builds that permit concurrent
+backends retain the normal atomic implementation.
+
 Current local snapshot on `Apple M1 Pro`, `16 GB RAM`, and `macOS 26.4.1`.
 Full numbers and reproduction steps live in the
 [performance guide](https://github.com/f0rr0/oliphaunt/blob/main/src/docs/content/reference/performance.mdx). Lower is better.

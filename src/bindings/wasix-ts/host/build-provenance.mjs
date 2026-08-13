@@ -38,7 +38,7 @@ export async function loadHostBuildContract() {
     wasmerJsCommit: tomlString(source, 'wasmer-js', 'commit'),
     wasmerWasixVersion: tomlString(source, 'wasmer-wasix', 'version'),
     inputsSha256: sha256(digests.join('')),
-    guestConcurrency: 'denied-for-oliphaunt-stdio-pgwire',
+    guestConcurrency: 'denied-for-oliphaunt-single-backend',
     optimization: {
       cargoProfile: 'release',
       rustOptLevel: 3,

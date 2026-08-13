@@ -4,7 +4,7 @@ diff --git a/src/state/builder.rs b/src/state/builder.rs
 @@ -6,6 +6,7 @@ use std::{
      sync::Arc,
  };
- 
+
 +use futures::FutureExt;
  use rand::Rng;
  use thiserror::Error;
@@ -71,14 +71,14 @@ diff --git a/src/state/builder.rs b/src/state/builder.rs
 +            .await?)
      }
  }
- 
+
 diff --git a/src/state/env.rs b/src/state/env.rs
 --- a/src/state/env.rs
 +++ b/src/state/env.rs
 @@ -7,7 +7,7 @@ use std::{
      time::Duration,
  };
- 
+
 -use futures::future::BoxFuture;
 +use futures::{future::BoxFuture, FutureExt};
  use rand::Rng;
@@ -137,10 +137,10 @@ diff --git a/src/state/env.rs b/src/state/env.rs
 +        async_instantiation: bool,
      ) -> Result<(Instance, WasiFunctionEnv), WasiThreadError> {
          let pid = self.process.pid();
- 
+
 @@ -451,7 +496,7 @@ impl WasiEnv {
                      };
- 
+
                      // TODO: make stack size configurable
 -                    Linker::new(
 +                    Linker::new_inner(
@@ -156,10 +156,10 @@ diff --git a/src/state/env.rs b/src/state/env.rs
 +                    .await
                  }
              };
- 
+
 @@ -493,7 +540,19 @@ impl WasiEnv {
          };
- 
+
          // Construct the instance.
 -        let instance = match Instance::new(&mut store, &module, &import_object) {
 +        let instance_result = if async_instantiation {
@@ -182,7 +182,7 @@ diff --git a/src/state/linker.rs b/src/state/linker.rs
 --- a/src/state/linker.rs
 +++ b/src/state/linker.rs
 @@ -272,6 +272,7 @@ use std::{
- 
+
  use bus::Bus;
  use derive_more::Debug;
 +use futures::FutureExt;
@@ -241,7 +241,7 @@ diff --git a/src/state/linker.rs b/src/state/linker.rs
 +        async_instantiation: bool,
 +    ) -> Result<(Self, LinkedMainModule), LinkError> {
          let dylink_section = parse_dylink0_section(main_module)?;
- 
+
          trace!(?dylink_section, "Loading main module");
 @@ -1136,7 +1184,18 @@ impl Linker {
          // use that ordering. My *guess* is that, since main exports all the libc
@@ -261,5 +261,5 @@ diff --git a/src/state/linker.rs b/src/state/linker.rs
 +            Instance::new(store, main_module, &imports)?
 +        };
          instance_group.main_instance = Some(main_instance.clone());
- 
+
          let runtime_path = linker_state.main_module_dylink_info.runtime_path.clone();

@@ -32,3 +32,22 @@ export class WasixStorageError extends Error {
     this.durability = options.durability;
   }
 }
+
+/** @internal Preserve storage classification while retaining cleanup diagnostics. */
+export function composeWasixStorageFailure(
+  primary: Error,
+  label: string,
+  secondary: unknown,
+): Error {
+  const detail = secondary instanceof Error ? secondary.message : String(secondary);
+  const message = `${primary.message}; ${label}: ${detail}`;
+  const cause = new AggregateError([primary, secondary], label);
+  if (primary instanceof WasixStorageError) {
+    return new WasixStorageError(message, {
+      code: primary.code,
+      durability: primary.durability,
+      cause,
+    });
+  }
+  return new Error(message, { cause });
+}

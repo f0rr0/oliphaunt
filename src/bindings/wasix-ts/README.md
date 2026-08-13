@@ -75,11 +75,12 @@ and WAL-byte measurements are reported but are not speed gates. Close is
 excluded because the public methods make different worker-reclamation
 guarantees, while WAL volume remains a required parity constraint.
 
-Each full run writes raw JSON and a compact Markdown report under `target/perf`,
-including the exact Git state, canonical runtime asset hashes, browser/machine
-identity, and the resolved installed PGlite tree. `--quick` remains available
-as a correctness/parity smoke profile but is explicitly ineligible for a
-performance claim.
+Each benchmark run requires a clean worktree and writes raw JSON plus a compact
+Markdown report under `target/perf`, including the exact Git commit and tree,
+canonical runtime and staged host build identities, the built SDK tree, harness
+source hashes, browser/machine identity, and the resolved installed PGlite
+closure. `--quick` remains available as a correctness/parity smoke profile but
+is explicitly ineligible for a performance claim.
 
 The insert diagnostic records WAL volume alongside expression, heap, indexed,
 and server-reported execution time. Separate root-cause runs also compared
@@ -89,6 +90,19 @@ bytes on every open. Oliphaunt now caches verified preparation and guest
 compilation by runtime identity. That removes repeated compilation; it is not
 treated as a blanket explanation for bulk-insert differences. No WAL, SQL, or
 durability behavior is weakened to improve a score.
+
+The canonical PostgreSQL guest also specializes spinlocks and scalar atomics
+for its enforced one-backend-per-WebAssembly-instance model. Those backend-only
+changes are part of `liboliphaunt-wasix`, not the Node adapter: the Rust
+binding's AOT artifacts and the portable module used by browser direct,
+browser worker, and Node worker execution all receive them. Frontend tools,
+PGXS side modules, and PostgreSQL builds that permit concurrent backends retain
+the normal atomic implementation. Every TypeScript placement passes
+`OLIPHAUNT_WASIX_SINGLE_BACKEND=1`, and the source-pinned host denies guest
+process replacement, process creation, and thread creation under that contract.
+This concurrency marker is independent from `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`,
+which browser-worker execution alone uses for its stream transport and recovery
+pump.
 
 The same decomposition separates transport from PostgreSQL execution. Worker
 placement can lose insert wall time to its outer request boundary, while the
@@ -210,7 +224,7 @@ the callback or `COMMIT` fails, the binding attempts `ROLLBACK` and preserves
 the original failure. The transaction handle becomes inactive when the callback
 finishes.
 
-`WasixDatabase` also implements `AsyncDisposable`, so TypeScript projects with
+`OliphauntDatabase` also implements `AsyncDisposable`, so TypeScript projects with
 explicit resource management enabled can bind worker and storage cleanup to a
 scope:
 
@@ -306,8 +320,8 @@ PostgreSQL, template, manifest, and extension-carrier identities that created
 its current generation. Reopen fails closed with `WasixStorageError` code
 `incompatible` if any of those identities change or a previously selected
 extension import is missing. Adding, upgrading, or removing extensions from an
-existing database needs a future explicit migration contract; omission never
-silently uninstalls one.
+existing database is unsupported and fails closed; omission never silently
+uninstalls one.
 
 One open database owns a persistent store at a time. A second open for the same
 store fails immediately with `WasixStorageError` code `busy`; it does not run a
@@ -461,22 +475,25 @@ runtime artifact URL bookkeeping.
   support claim. The current development bytes are produced by the canonical
   `liboliphaunt-wasix` asset pipeline, outside this binding; the generated WASIX
   package places that exact carrier in the owning extension product's existing
-  version stream. Selected rows that require an explicit native
-  `load-order` or shared-memory behavior fail closed until the browser host
-  implements and qualifies those contracts.
+  version stream. Selected rows that require an explicit native `load-order` or
+  shared-memory behavior are outside this binding's qualified contract and fail
+  closed.
 - Optional ICU data, tools, backup/restore, server mode, query cancellation,
-  and COPY streaming are not exposed yet.
-- PostgreSQL `ERROR` recovery is scoped to the explicit stdio-pgwire contract.
+  and COPY streaming are outside this binding's public surface.
+- Browser worker execution alone uses the explicit stdio-pgwire recovery pump.
   Wasmer JS's WASIX 0.601 runner lets the guest's wasm-EH `longjmp` escape the
   asynchronous `_start` call as a `WebAssembly.Exception`. Before Wasmer closes
   stdio or marks the process finished, the source-patched host recognizes that
   exception only when `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`, calls the existing
   `PostgresMainLongJmp` cleanup export, and continues through the existing loop
-  exports. Later errors use the same pump. This Wasmer version erases the wasm
-  exception tag at the Rust boundary, so the pinned source pairing assumes the
-  only escaping `WebAssembly.Exception` on this explicit transport is
-  PostgreSQL's top-level jump. Non-exception runtime errors and traps still
-  fail closed.
+  exports. Later errors use the same pump. Browser direct and Node worker
+  execution instead use the direct Oliphaunt export driver, matching the Rust
+  host lifecycle: it treats `PostgresMainLoopOnce` traps as the exported
+  recovery boundary and also cleans up non-trapping `ErrorResponse`s. This
+  Wasmer version erases the wasm exception tag at the Rust boundary, so the
+  stdio pairing assumes the only escaping `WebAssembly.Exception` on that
+  explicit transport is PostgreSQL's top-level jump. Non-exception runtime
+  errors and traps still fail closed.
 - PostgreSQL errors retain `PostgresError`, SQLSTATE, and backend fields across
   the worker boundary, including startup database rejection and failures in
   selected-extension lifecycle SQL during `open()`. Storage ownership and
@@ -500,11 +517,13 @@ runtime artifact URL bookkeeping.
   binary is checked in. The patches compile and instantiate the large main
   module asynchronously, preserve module bytes across the blocking worker, and
   run the configured builder so args, environment, mounts, and stdio survive process launch. The
-  host also owns the transport-scoped PostgreSQL recovery pump described above.
+  host also owns the two narrow PostgreSQL recovery paths described above.
   The resulting JS, worker, Wasm, license, and provenance files are published
   package-relative so ordinary browser and Node resolution selects the same
   qualified host without an application alias.
-- That host is qualified only for the single-process stdio-pgwire path.
+- That host is qualified only for Oliphaunt's single-process stdio-pgwire path
+  in a browser worker and its direct export path in browser direct or a Node
+  worker.
   `proc_exit2` maps to the older normal-exit implementation, while
   `proc_fork_env` and context create/switch/destroy fail with `ENOTSUP`.
   Those shims are installed for both WASIX memory widths. The host also creates
@@ -514,8 +533,8 @@ runtime artifact URL bookkeeping.
   used for the qualified PostgreSQL error-recovery path. Generic WASIX 0.702
   compatibility, broader filesystem behavior, and general native
   dynamic-extension support are not claimed.
-- The stdio lifecycle attaches the existing protocol Port before standalone
-  initialization can report a PostgreSQL startup failure. An `ErrorResponse`
+- The browser-worker stdio lifecycle attaches the existing protocol Port before
+  standalone initialization can report a PostgreSQL startup failure. An `ErrorResponse`
   can therefore end startup without `ReadyForQuery` and still retain its
   SQLSTATE. Successful startup has a nonstandard two-part boundary: the first
   response ends after authentication/connection data; the standalone main loop
@@ -551,8 +570,8 @@ runtime artifact URL bookkeeping.
   extension promotion remains blocked on a safer host boundary and broader
   qualification.
 - Malformed startup packets can exit before PostgreSQL installs its normal
-  top-level query recovery boundary. The binding only emits a fixed valid
-  startup packet; hardening arbitrary startup traffic is deferred.
+  top-level query recovery boundary. Arbitrary startup traffic is outside this
+  binding's contract; it emits only a fixed valid startup packet.
 - The package is a separately versioned public SDK product. It declares an
   exact-version dependency on `@oliphaunt/liboliphaunt-wasix`; that runtime
   remains its own product and the native `@oliphaunt/ts` graph stays separate.

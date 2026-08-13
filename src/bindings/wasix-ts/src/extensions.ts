@@ -1,10 +1,10 @@
 import {
-  type BrowserRuntimeLayout,
   decompressIfNeeded,
   type ExtractedArchive,
   extractTar,
   layoutRuntime,
   loadAsset,
+  type WasixRuntimeLayout,
 } from './archive.js';
 import type { SerializedOpenOptions, SerializedRuntimeDescriptor } from './rpc.js';
 import { canonicalStorageContract, type WasixStorageCompatibility } from './storage-provider.js';
@@ -43,13 +43,13 @@ type ProjectedExtensionInstall = {
   'unresolved-imports': readonly unknown[];
 };
 
-export type ResolvedBrowserExtensions = {
+export type ResolvedWasixExtensions = {
   extensions: ProjectedExtensionInstall[];
   runtimeDependencies: string[];
 };
 
-export type PreparedBrowserRuntime = {
-  layout: BrowserRuntimeLayout;
+export type PreparedWasixRuntime = {
+  layout: WasixRuntimeLayout;
   startupGUCs: Record<string, string>;
   setupSql: string[];
   storageCompatibility: WasixStorageCompatibility;
@@ -60,9 +60,9 @@ export type PreparedBrowserRuntime = {
  * bytes are overlaid before Wasmer sees the mounts, while lifecycle SQL stays
  * separate for execution after PostgreSQL reaches ReadyForQuery.
  */
-export async function prepareBrowserRuntime(
+export async function prepareWasixRuntime(
   options: SerializedOpenOptions,
-): Promise<PreparedBrowserRuntime> {
+): Promise<PreparedWasixRuntime> {
   const descriptor = options.runtime;
   const [manifestBytes, runtimeBytes, pgdataBytes] = await Promise.all([
     loadAsset(descriptor.manifest.source, 'WASIX asset manifest'),
@@ -81,11 +81,7 @@ export async function prepareBrowserRuntime(
   verifyPostgresIdentity(manifest, pgdata.files.get('PG_VERSION'));
   assertExtensionCarriersCompatible(descriptor, manifest, options.extensionCarriers);
 
-  const resolved = resolveBrowserExtensions(
-    manifest,
-    options.extensionCarriers,
-    options.extensions,
-  );
+  const resolved = resolveWasixExtensions(manifest, options.extensionCarriers, options.extensions);
   assertExactCarrierClosure(resolved.extensions, options.extensionCarriers);
   const loaded = await Promise.all(
     resolved.extensions.map(async (extension) => {
@@ -252,11 +248,11 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
   return parsed as WasixAssetManifest;
 }
 
-export function resolveBrowserExtensions(
+export function resolveWasixExtensions(
   manifest: WasixAssetManifest,
   carriers: SerializedOpenOptions['extensionCarriers'],
   requested: readonly string[],
-): ResolvedBrowserExtensions {
+): ResolvedWasixExtensions {
   const runtimeSupport = new Set(manifest['runtime-support'].map((entry) => entry.name));
   const bySqlName = new Map(
     Object.entries(carriers).map(([sqlName, carrier]) => {
@@ -285,12 +281,12 @@ export function resolveBrowserExtensions(
     }
     if (extension['load-order'].length > 0) {
       throw new Error(
-        `selected WASIX extension '${sqlName}' requires native load-order handling that the browser host does not implement`,
+        `selected WASIX extension '${sqlName}' requires native load-order handling that the @oliphaunt/wasix-ts host does not implement`,
       );
     }
     if (extension.lifecycle['shared-memory-required']) {
       throw new Error(
-        `selected WASIX extension '${sqlName}' requires shared-memory behavior that the browser host has not qualified`,
+        `selected WASIX extension '${sqlName}' requires shared-memory behavior that the @oliphaunt/wasix-ts host has not qualified`,
       );
     }
     if (visiting.has(sqlName)) {
@@ -399,7 +395,7 @@ export function assertExtensionCarriersCompatible(
 }
 
 export function overlayExtensionArchive(
-  layout: BrowserRuntimeLayout,
+  layout: WasixRuntimeLayout,
   archive: ExtractedArchive,
   extension: ProjectedExtensionInstall,
 ): void {
@@ -483,7 +479,7 @@ export function mergeExtensionStartupGUCs(
   return merged;
 }
 
-export function extensionSetupSql(resolved: ResolvedBrowserExtensions): string[] {
+export function extensionSetupSql(resolved: ResolvedWasixExtensions): string[] {
   const statements = resolved.runtimeDependencies.map(
     (dependency) => `CREATE EXTENSION IF NOT EXISTS ${quoteIdentifier(dependency)};`,
   );

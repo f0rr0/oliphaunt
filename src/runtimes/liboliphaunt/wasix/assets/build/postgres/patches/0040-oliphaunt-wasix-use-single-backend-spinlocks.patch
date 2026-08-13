@@ -24,7 +24,7 @@ diff --git a/src/include/storage/s_lock.h b/src/include/storage/s_lock.h
 @@ -93,7 +93,40 @@
  #error "s_lock.h may not be included from frontend code"
  #endif
- 
+
 +#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)
 +/*
 + * The embedded WASIX lane has one PostgreSQL execution thread per Wasm
