@@ -125,13 +125,13 @@ export class PgwireStream {
         throw new Error(`PostgreSQL backend message exceeds 64 MiB: ${messageLength} bytes`);
       }
       await this.#fill(messageLength);
-      const message = this.#buffer.slice(0, messageLength);
-      this.#buffer = this.#buffer.slice(messageLength);
+      const message = this.#buffer.subarray(0, messageLength);
+      this.#buffer = this.#buffer.subarray(messageLength);
       messages.push(message);
       totalLength += message.length;
 
       if (tag === 'Z'.charCodeAt(0) || (stopAtError && tag === 'E'.charCodeAt(0))) {
-        return concatenate(messages, totalLength);
+        return contiguousView(messages, totalLength) ?? concatenate(messages, totalLength);
       }
     }
   }
@@ -142,10 +142,10 @@ export class PgwireStream {
       if (next.done) {
         throw new Error('Oliphaunt WASIX process closed stdout before ReadyForQuery');
       }
-      this.#buffer = concatenate(
-        [this.#buffer, next.value],
-        this.#buffer.length + next.value.length,
-      );
+      this.#buffer =
+        this.#buffer.length === 0
+          ? next.value
+          : concatenate([this.#buffer, next.value], this.#buffer.length + next.value.length);
     }
   }
 }
@@ -246,4 +246,22 @@ function concatenate(chunks: ReadonlyArray<Uint8Array>, totalLength: number): Ui
     offset += chunk.length;
   }
   return result;
+}
+
+function contiguousView(
+  chunks: ReadonlyArray<Uint8Array>,
+  totalLength: number,
+): Uint8Array | undefined {
+  const first = chunks[0];
+  if (first === undefined) {
+    return new Uint8Array();
+  }
+  let offset = first.byteOffset;
+  for (const chunk of chunks) {
+    if (chunk.buffer !== first.buffer || chunk.byteOffset !== offset) {
+      return undefined;
+    }
+    offset += chunk.byteLength;
+  }
+  return new Uint8Array(first.buffer, first.byteOffset, totalLength);
 }

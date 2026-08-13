@@ -1,19 +1,33 @@
-import { openWasixWithWorker, type WasixWorkerPort } from './client-common.js';
-import type { OliphauntWasixClient, WasixDatabase, WasixOpenOptions } from './types.js';
+import {
+  openWasixWithWorker,
+  serializeOpenConfig,
+  type WasixWorkerPort,
+} from './client-common.js';
+import { resolveExecutionMode } from './open-options.js';
+import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
 
-export async function openWasix(options: WasixOpenOptions = {}): Promise<WasixDatabase> {
-  if (typeof Worker === 'undefined') {
-    throw new Error('@oliphaunt/wasix requires a browser with module Web Workers');
-  }
+export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
+  const execution = resolveExecutionMode(config);
   if (globalThis.crossOriginIsolated !== true) {
     throw new Error(
       '@oliphaunt/wasix requires COOP: same-origin and COEP: require-corp response headers',
     );
   }
-  return openWasixWithWorker(createBrowserWorker, options);
+  const openOptions = serializeOpenConfig(config);
+  if (execution === 'direct') {
+    const [{ openWasixDirect }, host] = await Promise.all([
+      import('./direct-client-common.js'),
+      import('./host/index.mjs'),
+    ]);
+    return openWasixDirect(openOptions, host);
+  }
+  if (typeof Worker === 'undefined') {
+    throw new Error('@oliphaunt/wasix worker execution requires a browser with Web Workers');
+  }
+  return openWasixWithWorker(createBrowserWorker, openOptions);
 }
 
-export const Oliphaunt: OliphauntWasixClient = {
+export const Oliphaunt: OliphauntClient = {
   open: openWasix,
 };
 

@@ -1,15 +1,17 @@
 ---
 title: WASIX TypeScript
-description: Run portable Oliphaunt in a browser Worker or Node worker thread with memory by default and selective extensions.
+description: Run portable Oliphaunt with direct or worker-isolated browser execution, or a Node worker thread.
 ---
 
 # WASIX TypeScript
 
-`@oliphaunt/wasix` runs the portable WASIX runtime in a browser module Worker or
-a Node.js worker thread. The same import and API work on both hosts; package
-exports select the adapter. It is separate from native `@oliphaunt/ts`: neither
-package imports, falls back to, or chooses the other at runtime. Applications do
-not configure runtime archive, PGDATA template, manifest, or host URLs.
+`@oliphaunt/wasix` runs the portable WASIX runtime with worker-isolated browser
+execution by default or direct browser execution on request. Node.js uses a
+worker thread. The same import and database API work in every placement;
+package exports select the host adapter. It is separate from native
+`@oliphaunt/ts`: neither package imports, falls back to, or chooses the other at
+runtime. Applications do not configure runtime archive, PGDATA template,
+manifest, or host URLs.
 
 <SdkGuideSummary id="wasix-typescript" />
 
@@ -25,6 +27,32 @@ Cross-Origin-Embedder-Policy: require-corp
 
 The package checks `crossOriginIsolated` before opening. Worker and runtime
 subresources must also satisfy the page's COEP policy.
+
+## Browser execution placement
+
+Worker isolation is the default because runtime preparation, PostgreSQL work,
+extension setup, and persistent snapshots stay outside the caller's JavaScript
+agent. Select direct placement through the same `open()` API when latency
+matters more than event-loop responsiveness:
+
+```ts
+await using database = await Oliphaunt.open({ execution: 'direct' });
+const result = await database.query('select $1::int + 1 as answer', [41]);
+console.log(result.getText(0, 'answer'));
+```
+
+`execution` describes host placement, not a second PostgreSQL engine. Both
+values return `OliphauntDatabase`. Direct placement constructs PostgreSQL
+asynchronously in the calling realm, then invokes it on the calling stack and
+creates no Web Worker. Each database call
+blocks that JavaScript agent until PostgreSQL returns, and cross-origin
+isolation remains required. Separate memory or persistent-store identities can
+remain open in either browser placement, although direct calls share one event
+loop. Native extension side modules over Chromium's 8 MiB synchronous-module
+limit require worker placement only when the carrier has no other unsupported
+host requirement. The current PostGIS carrier also requires native load-order
+handling and is therefore unsupported in both browser placements. Node
+currently rejects direct placement.
 
 ## Node.js
 
@@ -98,7 +126,7 @@ await database.close();
 publishes a complete PGDATA generation. A successful `close()` publishes once
 more. Browser or Worker termination can lose changes after the last published
 generation; this is snapshot persistence, not per-transaction crash durability.
-Only one Worker may own a named IndexedDB database at a time.
+Only one open database may own a named IndexedDB database at a time.
 
 Reopen with the same runtime and exact extension selection. A missing, added,
 or changed carrier fails closed until an explicit extension-migration contract
@@ -107,7 +135,7 @@ exists.
 ## Recover from errors
 
 SQL errors are ordinary `PostgresError` values with PostgreSQL fields such as
-`sqlstate`. The Worker consumes the response through `ReadyForQuery`, so the
+`sqlstate`. The binding consumes the response through `ReadyForQuery`, so the
 same database remains usable:
 
 ```ts
@@ -132,8 +160,8 @@ again.
 Persistence and ownership failures are separate `WasixStorageError` values.
 Inspect `code` and `durability`; after a checkpoint publication failure, close
 the poisoned handle and reopen the last complete generation before deciding how
-to reconcile application work. A Worker crash or transport failure is not a SQL
-error and also requires a new handle.
+to reconcile application work. A host or transport failure is not a SQL error
+and also requires a new handle.
 
 ## Public API boundary
 
@@ -141,21 +169,21 @@ The binding intentionally exposes one small asynchronous surface on both hosts:
 
 | API | Purpose |
 | --- | --- |
-| `Oliphaunt.open(options?)` | Start one host worker and one database |
+| `Oliphaunt.open(options?)` | Open one database with worker or direct browser placement |
 | `database.query(sql, parameters?)` | Run a typed row query |
 | `database.execute(sql)` | Execute SQL and return raw response bytes |
 | `database.execProtocolRaw(bytes)` | Drive advanced PostgreSQL protocol traffic |
+| `database.transaction(callback)` | Run a callback-scoped transaction with automatic commit or rollback |
 | `database.checkpoint()` | Publish the selected persistent storage generation |
-| `database.close()` | Terminate PostgreSQL and release the Worker/storage lease |
+| `database.close()` | Terminate PostgreSQL and release the host/storage lease |
+| `await using database = …` | Close through `Symbol.asyncDispose` at scope exit |
 
-It does not expose the Rust binding's transaction helper, `engine_capabilities()`,
-server/proxy, protocol streaming, physical archive, logical dump/restore, or
-host-directory APIs. Transactions can still be expressed with SQL, but the
-binding does not add a transaction callback abstraction.
+It does not expose `engine_capabilities()`, server/proxy, protocol streaming,
+physical archive, logical dump/restore, or host-directory APIs.
 
 Lifecycle semantics are fixed rather than dynamically reported:
-`multipleInstances = true` for separate workers using memory or different
-persistent store names, `sameInstanceLogicalReopen = false`,
+`multipleInstances = true` in both placements for databases using memory or
+different persistent store names, `sameInstanceLogicalReopen = false`,
 `instanceSwitchable = true`, and `crashRestartable = false`. A given IndexedDB
 name remains exclusively leased despite support for separate instances.
 

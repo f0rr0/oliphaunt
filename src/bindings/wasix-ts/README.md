@@ -1,9 +1,9 @@
 # `@oliphaunt/wasix`
 
-TypeScript binding that runs the portable Oliphaunt WASIX runtime inside a
-browser Web Worker or Node worker thread. This is a separate WASIX-facing product surface;
-it does not import `@oliphaunt/ts`, the native runtime, Node direct, or the
-broker.
+TypeScript binding that runs the portable Oliphaunt WASIX runtime with direct
+or worker-isolated browser execution, and a Node worker thread. This is a
+separate WASIX-facing product surface; it does not import `@oliphaunt/ts`, the
+native runtime, Node direct, or the broker.
 
 The public package owns the patched Wasmer host and its browser/Node worker
 adapters. Its default runtime edge follows the generated
@@ -54,6 +54,43 @@ pnpm --dir src/bindings/wasix-ts smoke:browser:pg-uuidv7
 That canary is narrow integration evidence. It does not add a browser target
 to the extension catalog or make arbitrary WASIX dynamic modules supported.
 
+## Compare PGlite in the browser
+
+The checked-in benchmark compares equivalent placements against pinned
+`@electric-sql/pglite` 0.5.4:
+
+```sh
+pnpm --dir src/bindings/wasix-ts bench:browser
+```
+
+It rotates engine order, keeps raw samples, separates cold from warm startup,
+warms representative PostgreSQL and JavaScript paths before timed workloads,
+and reports direct/direct and worker/worker medians independently. The result
+also records `fsync`, `synchronous_commit`, `full_page_writes`, and `wal_level`;
+performance claims must not conceal durability differences. The command exits
+unsuccessfully unless every comparable direct/direct and worker/worker metric,
+including close, meets the configured 30% advantage. Descriptive cold-open and
+WAL-byte measurements are reported but are not speed gates.
+
+The insert diagnostic records WAL volume alongside expression, heap, indexed,
+and server-reported execution time. Separate root-cause runs also compared
+buffer activity and relation sizes. The work exposed a preparation asymmetry:
+PGlite reused a precompiled `WebAssembly.Module`, while the WASIX host recompiled
+bytes on every open. Oliphaunt now caches verified preparation and guest
+compilation by runtime identity. That removes repeated compilation; it is not
+treated as a blanket explanation for bulk-insert differences. No WAL, SQL, or
+durability behavior is weakened to improve a score.
+
+The same decomposition separates transport from PostgreSQL execution. Worker
+placement can lose insert wall time to its outer request boundary, while the
+matched direct diagnostic places expression, heap, indexed, and server-reported
+insert work near PGlite with equal WAL volume. A repeated alternating-process
+A/B also replaced only the generic 64-bit compare-exchange read in XLogWrite's
+page-readiness check with an atomic load; it produced mixed sub-2% changes and
+worse commit tails. That hypothesis is retired rather than shipped as an
+unmeasured optimization. The strict gate remains failed wherever the measured
+lower quartile does not clear 30%.
+
 Inside that checked-in Vite harness, application code imports only the
 extension carrier it uses. `@oliphaunt/wasix` resolves the exact
 `@oliphaunt/liboliphaunt-wasix` runtime carrier internally:
@@ -70,6 +107,46 @@ const result = await database.query('select $1::int4 + 1 as answer', [41]);
 console.log(result.getText(0, 'answer'));
 await database.close();
 ```
+
+Browser worker execution remains the default because archive preparation,
+PostgreSQL work, extension setup, and persistent snapshots stay off the
+caller's JavaScript agent. Latency-sensitive applications can run PostgreSQL
+in that agent without changing database semantics or importing another class:
+
+```ts
+await using database = await Oliphaunt.open({ execution: 'direct' });
+const answer = await database.transaction(async (transaction) =>
+  transaction.query('select $1::int4 + 1 as answer', [41]),
+);
+```
+
+`execution` describes host placement, not a second PostgreSQL engine. Both
+values return the same `OliphauntDatabase`. Direct mode asynchronously
+instantiates the WASIX guest in the caller realm, then drives its exports
+synchronously and constructs no `Worker`; each database operation therefore
+blocks that JavaScript agent until PostgreSQL returns. It still requires
+cross-origin isolation. The direct path
+caches verified immutable runtime preparation and compiled guest modules in the
+calling realm, while each open materializes fresh writable database mounts.
+Both caches retain at most one exact runtime identity; this intentionally trades
+caller-realm heap for fast reopen latency. Worker execution remains the
+responsive, reclaim-on-close choice.
+Node currently supports only the default `worker` placement so the package
+never replaces application globals to emulate browser workers.
+Each direct open owns an independent guest instance, writable mounts, and
+storage lease. Multiple in-memory databases or distinct persistent stores may
+therefore remain open in one realm; calls remain serialized per database and
+all direct calls share that realm's event loop.
+
+Chromium also rejects synchronous compilation or instantiation of Wasm modules
+larger than 8 MiB on its main realm. Oliphaunt asynchronously constructs the
+14 MiB core guest, while current native side-module loading remains
+synchronous. Direct open therefore rejects an imported extension whose native
+module crosses that limit. The current PostGIS carrier additionally requires
+native load-order handling that the browser worker has not implemented, so it
+is explicitly unsupported in both browser placements today. Oversized carriers
+without that additional requirement can use worker execution; smaller
+qualified extension carriers remain available in direct mode.
 
 The same code runs on Node.js. Package exports select `worker_threads`
 automatically; consumers do not import a Node-specific subpath:
@@ -128,25 +205,29 @@ console.log((await database.query('select * from todo')).rows.length);
 await database.close();
 ```
 
-The adapter owns only `/base`, the PostgreSQL data directory. On every open the
-binding fetches and verifies the selected runtime again, creates fresh
-`/home` and `/tmp` mounts, and reconstructs `/bin`, `/lib`, and `/share` from
-the runtime plus the selectively imported `-wasix` extension carriers. The
-IndexedDB database records the exact runtime, PostgreSQL, template, manifest, and
-extension-carrier identities that created its current generation. Reopen fails
-closed with `WasixStorageError` code `incompatible` if any of those identities
-change or a previously selected extension import is missing. Adding, upgrading,
-or removing extensions from an existing database needs a future explicit migration
-contract; omission never silently uninstalls one.
+The adapter owns only `/base`, the PostgreSQL data directory. Worker execution
+fetches and verifies the selected runtime in its isolated realm. Direct
+execution reuses only a previously verified immutable prepared-runtime
+identity. Every open creates fresh `/home` and `/tmp` mounts and reconstructs
+`/bin`, `/lib`, and `/share` from the runtime plus the selectively imported
+`-wasix` extension carriers. The IndexedDB database records the exact runtime,
+PostgreSQL, template, manifest, and extension-carrier identities that created
+its current generation. Reopen fails closed with `WasixStorageError` code
+`incompatible` if any of those identities change or a previously selected
+extension import is missing. Adding, upgrading, or removing extensions from an
+existing database needs a future explicit migration contract; omission never
+silently uninstalls one.
 
-One worker owns a persistent database at a time. A second open in the same origin
-fails immediately with `WasixStorageError` code `busy`; it does not run a second
-PostgreSQL process or wait indefinitely. This is exclusive ownership, not a
-multi-tab proxy or multiple database connections.
+One open database owns a persistent store at a time. A second open for the same
+store fails immediately with `WasixStorageError` code `busy`; it does not run a
+second PostgreSQL process or wait indefinitely. This is exclusive ownership,
+not a multi-tab proxy or multiple database connections. Worker execution can
+host concurrent databases when they use memory or distinct persistent store
+names, and direct execution follows the same per-database ownership rule.
 
 Lifecycle semantics are fixed rather than dynamically reported:
-`multipleInstances = true` for separate workers using memory or different
-persistent store names, `sameInstanceLogicalReopen = false`,
+`multipleInstances = true` in both placements when databases use memory or
+different persistent store names, `sameInstanceLogicalReopen = false`,
 `instanceSwitchable = true`, and `crashRestartable = false`. A given IndexedDB
 name remains exclusively leased despite support for separate instances.
 
@@ -182,8 +263,10 @@ manifest as one product/version identity. The binding validates the descriptor,
 fetches all three package-relative assets, verifies their declared sizes and
 hashes, and compares the runtime and PGDATA identities with the canonical
 manifest before starting PostgreSQL. This happens for core-only opens too.
-Decompression, filesystem materialization, Wasmer initialization, PostgreSQL,
-and pgwire all stay in the worker.
+With default worker execution, decompression, filesystem materialization,
+Wasmer initialization, PostgreSQL, and pgwire stay in the package worker.
+Direct execution intentionally performs preparation and every guest export in
+the caller agent; it creates no outer or inner worker.
 
 Raw sources remain available only as an explicitly advanced, all-or-nothing
 runtime override:
@@ -263,9 +346,10 @@ runtime artifact URL bookkeeping.
 ## Current scope and divergences
 
 - Portable WASM only; browser and Node hosts never consume host AOT artifacts.
-- One serialized WASIX direct session per opened worker. Its active filesystem
-  is always Wasmer memory; storage adapters control how PGDATA is hydrated and
-  checkpointed around that process.
+- One serialized WASIX database session per open. Browser placement is selected
+  by `execution: 'worker' | 'direct'`; Node currently supports worker only. Its
+  active filesystem is always Wasmer memory; storage adapters control how PGDATA
+  is hydrated and checkpointed around that process.
 - A prepopulated PGDATA template is required; browser `initdb` is not run.
 - Omitted storage is fresh memory. The optional IndexedDB adapter proves exact
   compatible reopen, exclusive ownership, explicit checkpoint, clean-close
@@ -312,17 +396,18 @@ runtime artifact URL bookkeeping.
   `@oliphaunt/liboliphaunt-wasix`; selected extension descriptors supply their
   own exact portable carrier URLs or bytes. Runtime payloads stay
   owned by `liboliphaunt-wasix` rather than moving into this binding.
-- Every open requires and verifies the exact canonical manifest, runtime,
-  PGDATA, runtime module, PostgreSQL version, and source identity. Selected
-  extension carriers are additionally verified before their declared files are
-  installed.
-- Stock `@wasmer/sdk` 0.10.0 does **not** run the current runtime unchanged. It
-  embeds Wasmer 6.1/WASIX 0.601 while canonical runtime artifacts target
+- Every uncached runtime identity verifies the exact canonical manifest,
+  runtime, PGDATA, runtime module, PostgreSQL version, source identity, and
+  selected extension carriers before use. Every open uses that exact verified
+  identity; direct execution may reuse its immutable prepared representation.
+- Stock npm `@wasmer/sdk` 0.10.0 does **not** run the current runtime unchanged.
+  Its referenced source commit identifies itself as 0.8.0 and embeds Wasmer
+  6.1/WASIX 0.601 while canonical runtime artifacts target
   Wasmer 7.2/WASIX 0.702. `host/source.toml` and `host/patches/` own a narrow,
   source-built compatibility host; no opaque host
-  binary is checked in. The patches compile large modules asynchronously,
-  preserve module bytes across the blocking worker, and run the configured
-  builder so args, environment, mounts, and stdio survive process launch. The
+  binary is checked in. The patches compile and instantiate the large main
+  module asynchronously, preserve module bytes across the blocking worker, and
+  run the configured builder so args, environment, mounts, and stdio survive process launch. The
   host also owns the transport-scoped PostgreSQL recovery pump described above.
   The resulting JS, worker, Wasm, license, and provenance files are published
   package-relative so ordinary browser and Node resolution selects the same
@@ -345,11 +430,11 @@ runtime artifact URL bookkeeping.
   then emits `ParameterStatus*` and a second `ReadyForQuery`. The worker drains
   and validates that second batch before exposing the session.
 - The Wasmer npm release records source commit `93b8b738...`, whose checked-in
-  package metadata still says `0.8.0`, and its npm lock is stale. The host build
-  pins that exact Git commit plus Cargo crate checksums, imports the upstream
-  lock as its dependency baseline with the repository's pinned pnpm, then must
-  resolve the missing build metadata without a frozen lock in its disposable
-  checkout. This is intentionally not yet a hermetic release build.
+  package metadata says `0.8.0` and whose npm lock has stale root metadata. The
+  host build pins that exact Git commit plus Cargo crate checksums, applies a
+  reviewable lock repair for the missing declared dependencies, and installs
+  the integrity-pinned graph with `npm ci`. The repaired lock hash and all
+  source inputs are recorded in package provenance.
 - The 2026-08-12 dependency audit found `@wasmer/sdk` 0.10.0 is still npm's
   latest release. Its exact source commit nevertheless pins a coherent older
   family: `wasmer`/`wasmer-types` 6.1.0 and `wasmer-wasix`, `virtual-fs`,

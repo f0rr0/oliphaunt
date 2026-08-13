@@ -28,7 +28,7 @@ method.
 | React Native | `@oliphaunt/react-native` | Expo and New Architecture apps | Swift/Kotlin platform SDKs |
 | TypeScript | `@oliphaunt/ts` | Node.js, Bun, and Deno | Native direct, broker, or server engine |
 | Rust WASIX | `oliphaunt-wasix` | Rust applications hosting WASIX | Rust-owned WASIX direct or local server API |
-| WASIX TypeScript | `@oliphaunt/wasix` | Browser or Node apps choosing portable WASIX | One module Worker or worker thread |
+| WASIX TypeScript | `@oliphaunt/wasix` | Browser or Node apps choosing portable WASIX | Browser caller realm or module Worker; Node worker thread |
 
 ## Runtime Modes
 
@@ -39,12 +39,14 @@ method.
 | Native server | PostgreSQL clients, pools, ORMs, and tools | PostgreSQL-compatible server process | Rust and TypeScript where supported |
 | Rust WASIX direct | Rust-owned portable embedding | One embedded WASIX backend | `oliphaunt-wasix` |
 | Rust WASIX server | Local client-library compatibility | One embedded WASIX backend behind a local endpoint | `oliphaunt-wasix` |
-| Browser WASIX | Browser-local SQL | One serialized database in one module Worker | `@oliphaunt/wasix` |
+| Browser WASIX | Browser-local SQL | One serialized database in the caller realm or a module Worker | `@oliphaunt/wasix` |
 | Node WASIX | Portable SQL without a native runtime | One serialized database in one worker thread | `@oliphaunt/wasix` |
 
 Mobile direct mode has one resident backend per app process and one physical
-session. WASIX TypeScript similarly owns one serialized backend per worker, but
-it is not a native direct mode and does not use the native SDK contract.
+session. WASIX TypeScript similarly owns one serialized backend per opened
+database, placed in the browser caller realm, a browser module Worker, or a Node
+worker thread. It is not a native direct mode and does not use the native SDK
+contract.
 
 ## Feature Support
 

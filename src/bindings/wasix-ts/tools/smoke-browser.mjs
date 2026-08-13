@@ -7,18 +7,33 @@ import { fileURLToPath } from 'node:url';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
-const timeoutMs = Number(process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? 300_000);
+const benchmark = process.argv.includes('--benchmark');
+const quickBenchmark = benchmark && process.argv.includes('--quick');
+const timeoutMs = Number(
+  process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
+);
 const pgUuidv7Canary = process.argv.includes('--pg-uuidv7');
 const requiredInputs = [
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/prepopulated/pgdata-template.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/manifest.json'),
-  resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/extensions/pgtap.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix-ts/host/wasmer-sdk/dist/index.mjs'),
 ];
+if (!benchmark) {
+  requiredInputs.push(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/extensions/pgtap.tar.zst'),
+  );
+}
 if (pgUuidv7Canary) {
   requiredInputs.push(
     resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/extensions/pg_uuidv7.tar.zst'),
+  );
+}
+if (benchmark) {
+  requiredInputs.push(
+    resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist/pglite.data'),
+    resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist/pglite.wasm'),
+    resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist/initdb.wasm'),
   );
 }
 
@@ -95,7 +110,9 @@ try {
     }),
   ]);
 
-  const smokeUrl = `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}`;
+  const smokeUrl = benchmark
+    ? `http://127.0.0.1:${vitePort}/benchmark.html${quickBenchmark ? '?quick=1' : ''}`
+    : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}`;
   await cdp.send('Page.navigate', { url: smokeUrl });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -103,12 +120,24 @@ try {
     assertRunning(browser);
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression:
-        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
+        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',target:document.documentElement.dataset.oliphauntBenchmarkTarget??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
       returnByValue: true,
     });
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
     if (snapshot.state === 'passed') {
-      console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
+      if (benchmark) {
+        // Keep the raw samples available to CI and local callers even when the
+        // performance gate fails. Embedding the full payload in an uncaught
+        // Error truncates it in Node's diagnostic formatter.
+        console.log(
+          `wasix-ts browser benchmark: ${snapshot.target === 'met' ? 'PASS' : 'TARGET MISSED'} ${snapshot.output}`,
+        );
+        if (snapshot.target !== 'met') {
+          throw new Error(`browser benchmark missed its required target: ${snapshot.status}`);
+        }
+      } else {
+        console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
+      }
       break;
     }
     if (snapshot.state === 'failed') {

@@ -1,18 +1,25 @@
 [wasmer-js]
 name = "@wasmer/sdk"
-version = "0.10.0"
+version = "0.8.0"
 url = "https://github.com/wasmerio/wasmer-js.git"
 commit = "93b8b738ebd3ee57e118da0f0eb795b97d5b999e"
 
 [wasmer-wasix]
-# @wasmer/sdk 0.10.0's exact source commit is a coherent Wasmer 6.1 /
-# wasmer-wasix 0.601 dependency family. wasmer-wasix 0.702.1 requires Wasmer
+# The source commit referenced by the upstream 0.10.0 npm release identifies
+# itself as @wasmer/sdk 0.8.0 and carries a coherent Wasmer 6.1 / wasmer-wasix
+# 0.601 dependency family. wasmer-wasix 0.702.1 requires Wasmer
 # 7.2.1 plus matching virtual-fs/net, config, package, backend, WebC, and
 # wasm-bindgen APIs; it is not a single-crate update for this upstream JS host.
 name = "wasmer-wasix"
 version = "0.601.0"
 url = "https://static.crates.io/crates/wasmer-wasix/wasmer-wasix-0.601.0.crate"
 sha256 = "a9a804fcfbdbbfe5b2d6fb30e741e22a21e88e964dedfea9e609f13a52823bfe"
+
+[wasmer]
+name = "wasmer"
+version = "6.1.0"
+url = "https://static.crates.io/crates/wasmer/wasmer-6.1.0.crate"
+sha256 = "2d85671948f8886a1cc946141c0b688a5617603c103699a5fceeebeb4e75b0b6"
 
 [patches]
 series = [
@@ -21,4 +28,9 @@ series = [
   "0003-wasmer-js-install-browser-runtime-devices.patch",
   "0004-wasmer-wasix-recover-stdio-pgwire-errors.patch",
   "0005-wasmer-js-use-object-wasm-init.patch",
+  "0006-wasmer-js-reuse-precompiled-wasix-module.patch",
+  "0007-wasmer-js-run-oliphaunt-direct.patch",
+  "0008-wasmer-instantiate-js-modules-async.patch",
+  "0009-wasmer-wasix-instantiate-main-module-async.patch",
+  "0010-wasmer-js-refresh-npm-lock.patch",
 ]

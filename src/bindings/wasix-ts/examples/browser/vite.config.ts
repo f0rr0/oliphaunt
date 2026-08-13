@@ -8,8 +8,14 @@ import { defineConfig, type Plugin } from 'vite';
 const exampleRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleRoot, '../../../../..');
 const assetRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix/assets');
+const pgliteAssetRoot = resolve(exampleRoot, '../../node_modules/@electric-sql/pglite/dist');
 export default defineConfig({
   root: exampleRoot,
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'esnext',
+    },
+  },
   build: {
     target: 'esnext',
   },
@@ -41,6 +47,9 @@ function wasixAssets(): Plugin {
     ['/manifest', resolve(assetRoot, 'manifest.json')],
     ['/extensions/pgtap', resolve(assetRoot, 'extensions/pgtap.tar.zst')],
     ['/extensions/pg_uuidv7', resolve(assetRoot, 'extensions/pg_uuidv7.tar.zst')],
+    ['/pglite.data', resolve(pgliteAssetRoot, 'pglite.data')],
+    ['/pglite.wasm', resolve(pgliteAssetRoot, 'pglite.wasm')],
+    ['/initdb.wasm', resolve(pgliteAssetRoot, 'initdb.wasm')],
   ]);
   return {
     name: 'oliphaunt-wasix-assets',
@@ -71,10 +80,14 @@ function wasixAssets(): Plugin {
           const source = await readFile(path);
           const bytes = path.endsWith('manifest.json') ? coreManifest(source) : source;
           response.statusCode = 200;
-          response.setHeader(
-            'Content-Type',
-            path.endsWith('.json') ? 'application/json' : 'application/zstd',
-          );
+          const contentType = path.endsWith('.json')
+            ? 'application/json'
+            : path.endsWith('.wasm')
+              ? 'application/wasm'
+              : path.endsWith('.data')
+                ? 'application/octet-stream'
+                : 'application/zstd';
+          response.setHeader('Content-Type', contentType);
           response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
           response.end(bytes);
         } catch (error) {
