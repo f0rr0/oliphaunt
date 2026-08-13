@@ -1357,6 +1357,7 @@ func runtimeResourcesDiscoveryPrefersBundleContainingRequestedExtensions() throw
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-base-v1
+        selectedExtensions=
         extensions=
         sharedPreloadLibraries=
         mobileStaticRegistryState=not-required
@@ -1704,6 +1705,7 @@ func runtimeResourcesRejectUnsupportedRuntimeFeatures() throws {
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=vector
         extensions=vector
         runtimeFeatures=jit
         sharedPreloadLibraries=
@@ -1803,6 +1805,7 @@ func runtimeResourcesRejectMissingMobileStaticRegistryState() throws {
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=
         extensions=
         mobileStaticRegistryRegistered=
         mobileStaticRegistryPending=
@@ -1834,6 +1837,7 @@ func runtimeResourcesRejectInconsistentCompleteMobileStaticRegistry() throws {
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=vector
         extensions=vector
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=vector
@@ -1866,6 +1870,7 @@ func runtimeResourcesRejectNotRequiredMobileStaticRegistryWithModules() throws {
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=vector
         extensions=
         mobileStaticRegistryState=not-required
         mobileStaticRegistryRegistered=

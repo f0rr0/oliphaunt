@@ -11,7 +11,7 @@ exclude = { glob = [
 [[repos]]
 repo = "builtin"
 hooks = [
-  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], stages = ["pre-commit"], types = ["text"] },
+  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], stages = ["pre-commit"], types = ["text"], exclude = "\\.patch$" },
   { id = "end-of-file-fixer", stages = ["pre-commit"], types = ["text"] },
   { id = "check-toml", stages = ["pre-commit"] },
   { id = "check-yaml", args = ["--allow-multiple-documents"], stages = ["pre-commit"] },

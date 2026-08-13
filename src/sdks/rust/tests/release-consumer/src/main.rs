@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("usage: oliphaunt-rust-release-consumer DATABASE_ROOT"))?;
-    let database = block_on(Oliphaunt::builder().path(root).native_server().open())?;
+    let database = block_on(Oliphaunt::builder().directory(root).native_server().open())?;
     let result = block_on(database.query("SELECT 42::text AS value"))?;
     let value = result
         .get_text(0, "value")?
