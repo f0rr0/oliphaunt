@@ -67,13 +67,13 @@ type InsertDiagnostic = {
   indexedInsertWalBytes: number;
 };
 
-const insertTimingMetrics = [
+const insertDiagnosticMetrics = [
   'expressionOnlyMs',
   'heapInsert10kMs',
   'indexedInsert10kMs',
   'indexedInsertServerMs',
+  'indexedInsertWalBytes',
 ] as const;
-const insertDiagnosticMetrics = [...insertTimingMetrics, 'indexedInsertWalBytes'] as const;
 type InsertDiagnosticMetric = (typeof insertDiagnosticMetrics)[number];
 type InsertDiagnosticSummary = Record<InsertDiagnosticMetric, Record<Engine['name'], number>>;
 
@@ -88,11 +88,11 @@ const output = requireElement<HTMLPreElement>('output');
 const quick = new URL(location.href).searchParams.has('quick');
 const startupRuns = quick ? 2 : 5;
 const workloadRuns = quick ? 1 : 7;
+const insertDiagnosticRuns = quick ? 1 : 5;
 const pointSamples = quick ? 20 : 200;
 const rangeSamples = quick ? 10 : 50;
 const aggregateSamples = quick ? 5 : 30;
 const transactionInserts = quick ? 20 : 100;
-const targetPercent = 30;
 let pgliteAssetsPromise: Promise<PGliteAssets> | undefined;
 
 const engines: Engine[] = [
@@ -112,14 +112,11 @@ try {
   const summary = summarizeResults(startup, workload);
   const insertSummary = summarizeInsertDiagnostics(insertDiagnostic);
   const postgresProfiles = representativePostgresProfiles(workload);
-  const targetStatus = benchmarkTargetStatus(
-    summary,
-    insertSummary,
-    insertDiagnostic,
-    postgresProfiles,
-  );
   const result = {
-    benchmark: 'oliphaunt-wasix-vs-pglite-v2',
+    schema: 'oliphaunt-wasix-browser-engine-result-v1',
+    plan: 'browser-pglite-memory-v1',
+    mode: quick ? 'quick' : 'full',
+    benchmark: 'oliphaunt-wasix-vs-pglite-v3',
     measuredAt: new Date().toISOString(),
     environment: {
       userAgent: navigator.userAgent,
@@ -131,13 +128,11 @@ try {
       coldStartupComparable: false,
       coldStartupNote:
         'firstReady samples are descriptive because each implementation caches compiled assets differently',
-      storage: 'ephemeral memory',
-      targetPercent,
-      performanceGate:
-        'at least 30% advantage at the paired-sample lower quartile for every comparable metric',
+      storage: 'ephemeral-memory',
       workloadProfile: 'fresh database after one untimed representative warmup',
       startupRuns,
       workloadRuns,
+      insertDiagnosticRuns,
       rows: 10_000,
       pointSamples,
       rangeSamples,
@@ -150,17 +145,12 @@ try {
       summary: insertSummary,
       samples: insertDiagnostic,
     },
-    targetStatus,
+    correctness: { assertionsPassed: true },
     samples: { startup, workload },
   };
 
   output.textContent = JSON.stringify(result);
-  status.textContent = targetStatus.allMet
-    ? `Benchmark completed; every comparable metric met the ${targetPercent}% target.`
-    : `Benchmark completed; one or more comparable metrics missed the ${targetPercent}% target.`;
-  document.documentElement.dataset.oliphauntBenchmarkTarget = targetStatus.allMet
-    ? 'met'
-    : 'missed';
+  status.textContent = 'Benchmark completed; the runner is qualifying and writing the report.';
   document.documentElement.dataset.oliphauntSmoke = 'passed';
 } catch (error) {
   output.textContent = error instanceof Error ? (error.stack ?? error.message) : String(error);
@@ -170,10 +160,9 @@ try {
 
 async function measureInsertDiagnostics(): Promise<Record<Engine['name'], InsertDiagnostic[]>> {
   const measured = emptySamples<InsertDiagnostic>();
-  const runs = quick ? 1 : 5;
-  for (let run = 0; run < runs; run += 1) {
+  for (let run = 0; run < insertDiagnosticRuns; run += 1) {
     for (const engine of orderedEngines(run + 2)) {
-      status.textContent = `Insert diagnostic ${run + 1}/${runs}: ${engine.name}`;
+      status.textContent = `Insert diagnostic ${run + 1}/${insertDiagnosticRuns}: ${engine.name}`;
       const opened = await engine.open();
       const database = opened.database;
       try {
@@ -262,126 +251,12 @@ async function scalarText(database: BenchDatabase, sql: string): Promise<string>
   return database.scalar(sql);
 }
 
-function benchmarkTargetStatus(
-  summary: ReturnType<typeof summarizeResults>,
-  insert: InsertDiagnosticSummary,
-  insertSamples: Record<Engine['name'], InsertDiagnostic[]>,
-  profiles: Record<Engine['name'], PostgresProfile | null>,
-) {
-  const startup = summary.startup as {
-    warmReadyMs: { direct: ReturnType<typeof comparison>; worker: ReturnType<typeof comparison> };
-  };
-  const workload = summary.workload as Record<
-    string,
-    { direct: ReturnType<typeof comparison>; worker: ReturnType<typeof comparison> }
-  >;
-  const excluded = new Set(['readyMs']);
-  const comparable = [
-    ['startup.warmReadyMs', startup.warmReadyMs],
-    ...Object.entries(workload)
-      .filter(([metric]) => !excluded.has(metric))
-      .map(([metric, value]) => [`workload.${metric}`, value] as const),
-    ...insertTimingMetrics.map(
-      (metric) =>
-        [
-          `insertDiagnostic.${metric}`,
-          {
-            direct: pairedComparison(
-              insertSamples.wasixDirect.map((sample) => sample[metric]),
-              insertSamples.pgliteDirect.map((sample) => sample[metric]),
-            ),
-            worker: pairedComparison(
-              insertSamples.wasixWorker.map((sample) => sample[metric]),
-              insertSamples.pgliteWorker.map((sample) => sample[metric]),
-            ),
-          },
-        ] as const,
-    ),
-  ] as const;
-  const parityConstraints = {
-    durability: {
-      direct: durabilityParity(profiles.wasixDirect, profiles.pgliteDirect),
-      worker: durabilityParity(profiles.wasixWorker, profiles.pgliteWorker),
-    },
-    indexedInsertWalBytes: {
-      direct: walParity(
-        insert.indexedInsertWalBytes.wasixDirect,
-        insert.indexedInsertWalBytes.pgliteDirect,
-      ),
-      worker: walParity(
-        insert.indexedInsertWalBytes.wasixWorker,
-        insert.indexedInsertWalBytes.pgliteWorker,
-      ),
-    },
-  };
-  const performanceTargetMet = comparable.every(
-    ([, value]) => value.direct.meetsTarget === true && value.worker.meetsTarget === true,
-  );
-  const parityMet = [
-    parityConstraints.durability.direct,
-    parityConstraints.durability.worker,
-    parityConstraints.indexedInsertWalBytes.direct,
-    parityConstraints.indexedInsertWalBytes.worker,
-  ].every((constraint) => constraint.matches);
-  return {
-    targetPercent,
-    required: true,
-    gateStatistic: 'paired lower-quartile advantage',
-    allMet: performanceTargetMet && parityMet,
-    performanceTargetMet,
-    parityMet,
-    comparisons: Object.fromEntries(comparable),
-    excludedMetrics: {
-      'startup.firstReadyMs':
-        'descriptive only because implementations cache compiled assets differently',
-      'workload.readyMs': 'the independently sampled warm startup metric is evaluated instead',
-      'insertDiagnostic.indexedInsertWalBytes':
-        'WAL volume is a semantic parity constraint, not a speed target',
-    },
-    parityConstraints,
-    directMet: comparable.filter(([, value]) => value.direct.meetsTarget).map(([metric]) => metric),
-    workerMet: comparable.filter(([, value]) => value.worker.meetsTarget).map(([metric]) => metric),
-    directMissed: comparable
-      .filter(([, value]) => !value.direct.meetsTarget)
-      .map(([metric]) => metric),
-    workerMissed: comparable
-      .filter(([, value]) => !value.worker.meetsTarget)
-      .map(([metric]) => metric),
-  };
-}
-
 function representativePostgresProfiles(
   samples: Record<Engine['name'], WorkloadRun[]>,
 ): Record<Engine['name'], PostgresProfile | null> {
   return Object.fromEntries(
     engines.map((engine) => [engine.name, samples[engine.name][0]?.postgres ?? null]),
   ) as Record<Engine['name'], PostgresProfile | null>;
-}
-
-function durabilityParity(wasix: PostgresProfile | null, pglite: PostgresProfile | null) {
-  const settings = ['fsync', 'synchronousCommit', 'fullPageWrites', 'walLevel'] as const;
-  return {
-    wasix,
-    pglite,
-    matches:
-      wasix !== null &&
-      pglite !== null &&
-      settings.every((setting) => wasix[setting] === pglite[setting]),
-  };
-}
-
-function walParity(wasixBytes: number, pgliteBytes: number) {
-  const tolerancePercent = 0.1;
-  const deltaBytes = wasixBytes - pgliteBytes;
-  const deltaPercent = (Math.abs(deltaBytes) / pgliteBytes) * 100;
-  return {
-    wasixBytes,
-    pgliteBytes,
-    deltaBytes,
-    deltaPercent: round(deltaPercent),
-    tolerancePercent,
-    matches: deltaPercent <= tolerancePercent,
-  };
 }
 
 async function measureStartup(): Promise<Record<Engine['name'], number[]>> {
@@ -636,13 +511,16 @@ function pairedComparison(wasixSamples: number[], pgliteSamples: number[]) {
     return ((pglite - wasix) / pglite) * 100;
   });
   const pairedP25AdvantagePercent = quantile(pairedAdvantages, 0.25);
+  const pairedRatios = Array.from({ length: sampleCount }, (_, index) => {
+    return wasixSamples[index]! / pgliteSamples[index]!;
+  });
   return {
     ...comparison(
       median(wasixSamples.slice(0, sampleCount)),
       median(pgliteSamples.slice(0, sampleCount)),
     ),
-    meetsTarget: pairedP25AdvantagePercent >= targetPercent,
     sampleCount,
+    pairedRatioMedian: round(median(pairedRatios)),
     pairedMedianAdvantagePercent: round(median(pairedAdvantages)),
     pairedP25AdvantagePercent: round(pairedP25AdvantagePercent),
     pairedP75AdvantagePercent: round(quantile(pairedAdvantages, 0.75)),
@@ -651,14 +529,13 @@ function pairedComparison(wasixSamples: number[], pgliteSamples: number[]) {
 
 function comparison(wasixMs: number | undefined, pgliteMs: number | undefined) {
   if (wasixMs === undefined || pgliteMs === undefined) {
-    return { wasixMs: null, pgliteMs: null, advantagePercent: null, meetsTarget: null };
+    return { wasixMs: null, pgliteMs: null, advantagePercent: null };
   }
   const advantagePercent = ((pgliteMs - wasixMs) / pgliteMs) * 100;
   return {
     wasixMs: round(wasixMs),
     pgliteMs: round(pgliteMs),
     advantagePercent: round(advantagePercent),
-    meetsTarget: advantagePercent >= targetPercent,
   };
 }
 

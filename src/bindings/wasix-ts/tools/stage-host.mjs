@@ -58,12 +58,7 @@ function assertHostDeclarationCompatibility() {
     getSourceFile: (path, languageVersion, onError, shouldCreateNewSourceFile) =>
       isVirtual(path)
         ? ts.createSourceFile(path, sourceText, languageVersion, true, ts.ScriptKind.TS)
-        : defaultHost.getSourceFile(
-            path,
-            languageVersion,
-            onError,
-            shouldCreateNewSourceFile,
-          ),
+        : defaultHost.getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile),
   };
   const program = ts.createProgram([virtualFile], compilerOptions, compilerHost);
   const diagnostics = ts.getPreEmitDiagnostics(program);

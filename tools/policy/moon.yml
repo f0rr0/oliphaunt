@@ -51,6 +51,7 @@ tasks:
       - "!/src/bindings/wasix-ts/examples/browser/dist/**"
       - "/tools/policy/format.sh"
       - "/tools/perf/matrix/**/*"
+      - "/tools/perf/wasix-browser/**/*"
       - "/tools/test/**/*"
     options:
       cache: false
@@ -89,6 +90,7 @@ tasks:
       - "!/src/bindings/wasix-ts/examples/browser/dist/**"
       - "/tools/policy/format.sh"
       - "/tools/perf/matrix/**/*"
+      - "/tools/perf/wasix-browser/**/*"
       - "/tools/test/**/*"
     options:
       cache: true

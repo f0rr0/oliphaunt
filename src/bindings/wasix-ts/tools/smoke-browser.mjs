@@ -1,14 +1,39 @@
-import { spawn } from 'node:child_process';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { access, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import { installedPackageClosure } from '../../../../tools/perf/wasix-node/installed-closure.mjs';
+import {
+  browserMarkdownReport,
+  browserPlanSummary,
+  defaultBrowserPlanFile,
+  loadBrowserPlan,
+  summarizeBrowserResult,
+} from '../../../../tools/perf/wasix-browser/plan.mjs';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
+const execFileAsync = promisify(execFile);
 const benchmark = process.argv.includes('--benchmark');
 const quickBenchmark = benchmark && process.argv.includes('--quick');
+const planFile = resolve(argumentValue('--config') ?? defaultBrowserPlanFile);
+const planSource = benchmark ? await loadBrowserPlan(planFile) : undefined;
+const git = benchmark ? await gitProvenance() : undefined;
+const benchmarkOutput = benchmark
+  ? resolve(argumentValue('--output') ?? defaultBenchmarkOutput(git.commit))
+  : undefined;
+if (
+  !benchmark &&
+  (argumentValue('--config') !== undefined || argumentValue('--output') !== undefined)
+) {
+  throw new Error('--config and --output require --benchmark');
+}
+if (benchmarkOutput !== undefined) await requireAbsent(benchmarkOutput, 'benchmark output');
 const timeoutMs = Number(
   process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
 );
@@ -120,20 +145,38 @@ try {
     assertRunning(browser);
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression:
-        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',target:document.documentElement.dataset.oliphauntBenchmarkTarget??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
+        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
       returnByValue: true,
     });
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
     if (snapshot.state === 'passed') {
       if (benchmark) {
-        // Keep the raw samples available to CI and local callers even when the
-        // performance gate fails. Embedding the full payload in an uncaught
-        // Error truncates it in Node's diagnostic formatter.
+        const result = parseBenchmarkResult(snapshot.output);
+        const summary = summarizeBrowserResult(planSource, result);
+        const report = {
+          schema: 'oliphaunt-wasix-browser-benchmark-report-v1',
+          createdAt: new Date().toISOString(),
+          plan: browserPlanSummary(planSource),
+          provenance: {
+            git,
+            machine: machineProvenance(),
+            candidate: await candidateProvenance(),
+            comparison: await comparisonProvenance(planSource.plan),
+          },
+          result,
+          summary,
+        };
+        await writeBenchmarkReport(benchmarkOutput, report);
+        const direct = summary.topologies.direct;
+        const worker = summary.topologies.worker;
         console.log(
-          `wasix-ts browser benchmark: ${snapshot.target === 'met' ? 'PASS' : 'TARGET MISSED'} ${snapshot.output}`,
+          `wasix-ts browser benchmark: ${summary.passed ? 'PASS' : 'FAIL'} ` +
+            `direct=${direct.geomeanRatio.toFixed(4)} worker=${worker.geomeanRatio.toFixed(4)} ` +
+            `gate<=${summary.gate.maxGeomeanRatio.toFixed(2)} ` +
+            `report=${relative(repositoryRoot, benchmarkOutput)}`,
         );
-        if (snapshot.target !== 'met') {
-          throw new Error(`browser benchmark missed its required target: ${snapshot.status}`);
+        if (!summary.passed) {
+          throw new Error(`browser benchmark failed qualification: ${snapshot.status}`);
         }
       } else {
         console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
@@ -157,6 +200,151 @@ try {
   socket?.close();
   await Promise.all(children.reverse().map(stopChild));
   await rm(profile, { recursive: true, force: true });
+}
+
+function parseBenchmarkResult(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error('browser benchmark did not return valid JSON', { cause: error });
+  }
+}
+
+async function writeBenchmarkReport(outputDirectory, report) {
+  await mkdir(dirname(outputDirectory), { recursive: true });
+  await mkdir(outputDirectory);
+  await writeFile(resolve(outputDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, {
+    flag: 'wx',
+  });
+  await writeFile(resolve(outputDirectory, 'report.md'), browserMarkdownReport(report), {
+    flag: 'wx',
+  });
+}
+
+async function gitProvenance() {
+  const [{ stdout: commitOutput }, { stdout: statusOutput }] = await Promise.all([
+    execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot }),
+    execFileAsync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+      cwd: repositoryRoot,
+    }),
+  ]);
+  const commit = commitOutput.trim();
+  const status = statusOutput.trimEnd();
+  if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error('benchmark requires an exact Git commit');
+  return {
+    commit,
+    dirty: status.length > 0,
+    statusSha256: sha256(status),
+  };
+}
+
+async function candidateProvenance() {
+  const packageBytes = await readFile(resolve(bindingRoot, 'package.json'));
+  const packageJson = JSON.parse(packageBytes.toString('utf8'));
+  if (packageJson.name !== '@oliphaunt/wasix-ts') {
+    throw new Error(`browser benchmark loaded unexpected candidate ${packageJson.name}`);
+  }
+  const manifestBytes = await readFile(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/manifest.json'),
+  );
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
+  const runtime = manifest.runtime;
+  if (runtime === null || typeof runtime !== 'object') {
+    throw new Error('canonical WASIX manifest has no runtime entry');
+  }
+  const archiveBytes = await readFile(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', runtime.archive),
+  );
+  const archiveSha256 = sha256(archiveBytes);
+  if (archiveSha256 !== runtime.sha256) {
+    throw new Error('canonical WASIX runtime archive does not match its manifest');
+  }
+  return {
+    package: packageJson.name,
+    version: packageJson.version,
+    packageJsonSha256: sha256(packageBytes),
+    runtime: {
+      manifestSha256: sha256(manifestBytes),
+      archive: runtime.archive,
+      archiveSha256,
+      moduleSha256: runtime['module-sha256'],
+      postgresVersion: runtime['postgres-version'],
+      sourceFingerprint: manifest['source-fingerprint'],
+      sourceLane: manifest['source-lane'],
+    },
+  };
+}
+
+async function comparisonProvenance(plan) {
+  const entry = resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist/index.js');
+  const installedClosure = await installedPackageClosure(entry, plan.engines.comparison.package);
+  const root = installedClosure.packages.find(
+    (candidate) => candidate.id === installedClosure.root,
+  );
+  if (root === undefined) throw new Error('installed PGlite closure lost its root package');
+  if (
+    root.version !== plan.engines.comparison.version ||
+    root.installedTreeSha256 !== plan.engines.comparison.installedTreeSha256
+  ) {
+    throw new Error(
+      `installed PGlite is ${root.version}#${root.installedTreeSha256}, expected ` +
+        `${plan.engines.comparison.version}#${plan.engines.comparison.installedTreeSha256}`,
+    );
+  }
+  return { ...plan.engines.comparison, installedClosure };
+}
+
+function machineProvenance() {
+  const processors = cpus();
+  return {
+    hostname: hostname(),
+    platform: platform(),
+    release: release(),
+    arch: arch(),
+    node: process.version,
+    v8: process.versions.v8,
+    cpuModel: processors[0]?.model ?? 'unknown',
+    logicalCpus: processors.length,
+    totalMemoryBytes: totalmem(),
+  };
+}
+
+async function requireAbsent(path, label) {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error(`${label} already exists: ${path}`);
+}
+
+function defaultBenchmarkOutput(commit) {
+  const timestamp = new Date()
+    .toISOString()
+    .replaceAll(':', '')
+    .replaceAll('-', '')
+    .replace(/\.\d{3}Z$/u, 'Z');
+  return resolve(
+    repositoryRoot,
+    'target/perf',
+    `wasix-browser-${timestamp}-${commit.slice(0, 12)}`,
+  );
+}
+
+function argumentValue(flag) {
+  const positions = process.argv
+    .map((value, index) => (value === flag ? index : -1))
+    .filter((index) => index >= 0);
+  if (positions.length > 1) throw new Error(`${flag} may be specified only once`);
+  if (positions.length === 0) return undefined;
+  const value = process.argv[positions[0] + 1];
+  if (value === undefined || value.startsWith('--')) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function createCdpClient(webSocket) {
