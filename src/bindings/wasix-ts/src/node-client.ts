@@ -1,18 +1,30 @@
 import { Worker } from 'node:worker_threads';
 
-import { openWasixWithWorker, type WasixWorkerPort } from './client-common.js';
-import type { WorkerOpenOptions } from './rpc.js';
-import type { OliphauntWasixClient, WasixDatabase, WasixOpenOptions } from './types.js';
+import {
+  openWasixWithWorker,
+  serializeOpenConfig,
+  type WasixWorkerPort,
+} from './client-common.js';
+import { resolveExecutionMode } from './open-options.js';
+import type { SerializedOpenOptions } from './rpc.js';
+import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
 
-export async function openWasix(options: WasixOpenOptions = {}): Promise<WasixDatabase> {
-  return openWasixWithWorker(createNodeWorker, options, requireNodeStorage);
+export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
+  if (resolveExecutionMode(config) === 'direct') {
+    throw new TypeError(
+      '@oliphaunt/wasix direct execution is browser-only; use execution: "worker" in Node.js',
+    );
+  }
+  const openOptions = serializeOpenConfig(config);
+  requireNodeStorage(openOptions);
+  return openWasixWithWorker(createNodeWorker, openOptions);
 }
 
-export const Oliphaunt: OliphauntWasixClient = {
+export const Oliphaunt: OliphauntClient = {
   open: openWasix,
 };
 
-function requireNodeStorage(options: WorkerOpenOptions): void {
+function requireNodeStorage(options: SerializedOpenOptions): void {
   if (options.storage.kind !== 'memory') {
     throw new TypeError(
       '@oliphaunt/wasix IndexedDB storage is browser-only; omit storage to use Node memory storage',

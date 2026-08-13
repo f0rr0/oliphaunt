@@ -1,0 +1,434 @@
+import type {
+  Directory,
+  OliphauntDirectInstance,
+  RunWasixOptions,
+  WasmerInitOptions,
+} from './host/index.mjs';
+
+import type { BrowserDirectoryMount } from './archive.js';
+import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
+import { WasixStorageError } from './errors.js';
+import { prepareBrowserRuntime, type PreparedBrowserRuntime } from './extensions.js';
+import { assertSuccessfulStartupResponse, startupPacket } from './pgwire.js';
+import { PostgresError } from './query.js';
+import type { SerializedOpenOptions } from './rpc.js';
+import {
+  acquireBrowserStorage,
+  canonicalStorageContract,
+  type BrowserStorageLease,
+} from './storage-provider.js';
+import type { OliphauntDatabase } from './types.js';
+import {
+  compileWasixModule,
+  composeLifecycleFailure,
+  configureWasixDatabase,
+  describeError,
+  materializeWasixMounts,
+  wasixPostgresArgs,
+  wasixPostgresEnvironment,
+} from './wasix-process.js';
+
+/** @internal Narrow caller-realm host contract. */
+export type DirectWasixHost = Readonly<{
+  Directory: typeof Directory;
+  init(options?: WasmerInitOptions): Promise<unknown>;
+  instantiateOliphauntDirect(
+    module: WebAssembly.Module,
+    moduleBytes: Uint8Array,
+    options: RunWasixOptions,
+  ): Promise<OliphauntDirectInstance>;
+}>;
+
+/** @internal Dependency seam for deterministic direct-lifecycle qualification. */
+export type DirectWasixDependencies = Readonly<{
+  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime>;
+  acquireStorage(
+    storage: SerializedOpenOptions['storage'],
+    template: BrowserDirectoryMount,
+    compatibility: PreparedBrowserRuntime['storageCompatibility'],
+  ): Promise<BrowserStorageLease>;
+  compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
+}>;
+
+const preparedRuntimes = new Map<string, Promise<PreparedBrowserRuntime>>();
+const MAX_PREPARED_RUNTIMES = 1;
+const initializedHosts = new WeakMap<object, Promise<void>>();
+const CHROMIUM_SYNC_WASM_LIMIT_BYTES = 8 * 1024 * 1024;
+
+const defaultDependencies: DirectWasixDependencies = {
+  prepareRuntime: prepareRuntimeCached,
+  acquireStorage: acquireBrowserStorage,
+  compileModule: compileWasixModule,
+};
+
+/** @internal Open PostgreSQL in the caller realm; guest calls are synchronous after setup. */
+export async function openWasixDirect(
+  options: SerializedOpenOptions,
+  host: DirectWasixHost,
+): Promise<OliphauntDatabase> {
+  const session = await DirectWasixSession.open(options, host, defaultDependencies);
+  return new WasixDatabaseImpl(session);
+}
+
+/** Owns the caller-realm guest, its mounted PGDATA, and their joint lifecycle. */
+/** @internal */
+export class DirectWasixSession implements WasixDatabaseSession {
+  readonly #instance: OliphauntDirectInstance;
+  readonly #storage: BrowserStorageLease;
+  readonly #baseDirectory: Directory;
+  #closed = false;
+  #failed = false;
+  #closeAttempt: Promise<void> | undefined;
+
+  private constructor(
+    instance: OliphauntDirectInstance,
+    storage: BrowserStorageLease,
+    baseDirectory: Directory,
+  ) {
+    this.#instance = instance;
+    this.#storage = storage;
+    this.#baseDirectory = baseDirectory;
+  }
+
+  static async open(
+    options: SerializedOpenOptions,
+    host: DirectWasixHost,
+    dependencies: DirectWasixDependencies = defaultDependencies,
+  ): Promise<DirectWasixSession> {
+    assertDirectExtensionCompatibility(options);
+    const prepared = await dependencies.prepareRuntime(options);
+    const pgdataTemplate = prepared.layout.mounts['/base'];
+    if (pgdataTemplate === undefined) {
+      throw new Error('prepared WASIX runtime has no PGDATA mount');
+    }
+
+    await initializeHost(host);
+    const module = await dependencies.compileModule(
+      prepared.layout.module,
+      prepared.storageCompatibility.runtime.moduleSha256,
+    );
+    // Acquire persistent ownership only after every non-owning preparation
+    // step succeeds, so a compilation rejection cannot strand its lock.
+    const storage = await dependencies.acquireStorage(
+      options.storage,
+      pgdataTemplate,
+      prepared.storageCompatibility,
+    );
+
+    let instance: OliphauntDirectInstance | undefined;
+    let baseDirectory: Directory | undefined;
+    let opened: DirectWasixSession | undefined;
+    try {
+      const materialized = await materializeWasixMounts(
+        host.Directory,
+        prepared.layout,
+        storage.mount,
+      );
+      baseDirectory = materialized.baseDirectory;
+      const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
+      instance = await host.instantiateOliphauntDirect(
+        module,
+        prepared.layout.module,
+        {
+          program: '/bin/oliphaunt',
+          moduleBytes: prepared.layout.module,
+          args: wasixPostgresArgs(runtimeOptions),
+          cwd: '/',
+          env: wasixPostgresEnvironment(runtimeOptions),
+          mount: materialized.mounts,
+        },
+      );
+      const session = new DirectWasixSession(instance, storage, baseDirectory);
+      opened = session;
+      assertSuccessfulStartupResponse(
+        instance.startup(startupPacket(options.username, options.database)),
+      );
+      await configureWasixDatabase(options, prepared, storage.state, (input) =>
+        session.exec(input),
+      );
+      return session;
+    } catch (error) {
+      let failure = directStartupFailure(error);
+      if (opened !== undefined) {
+        throw await opened.#closeAfterOpenFailure(failure);
+      }
+      if (instance !== undefined) {
+        try {
+          instance.close();
+        } catch (closeError) {
+          failure = composeLifecycleFailure(
+            failure,
+            'direct WASIX instance cleanup also failed',
+            closeError,
+          );
+        }
+      }
+      try {
+        await storage.close(baseDirectory, 'failed');
+      } catch (releaseError) {
+        failure = composeLifecycleFailure(failure, 'storage release also failed', releaseError);
+      }
+      if (instance !== undefined) {
+        try {
+          instance.free();
+        } catch (freeError) {
+          failure = composeLifecycleFailure(
+            failure,
+            'direct WASIX allocation release also failed',
+            freeError,
+          );
+        }
+      }
+      throw failure;
+    }
+  }
+
+  exec(input: Uint8Array): Promise<Uint8Array> {
+    this.#assertHealthy();
+    try {
+      return Promise.resolve(this.#instance.execProtocolRaw(input));
+    } catch (error) {
+      this.#failed = true;
+      return Promise.reject(
+        new Error(
+          `${describeError(error)}; this database can no longer be used and must be reopened`,
+          { cause: error },
+        ),
+      );
+    }
+  }
+
+  async checkpoint(): Promise<void> {
+    this.#assertHealthy();
+    try {
+      await this.#storage.checkpoint(this.#baseDirectory);
+    } catch (error) {
+      this.#failed = true;
+      if (error instanceof WasixStorageError) {
+        throw error;
+      }
+      throw new WasixStorageError(`WASIX PGDATA checkpoint failed: ${describeError(error)}`, {
+        code: 'checkpoint-failed',
+        durability: 'unknown',
+        cause: error,
+      });
+    }
+  }
+
+  close(): Promise<void> {
+    this.#closeAttempt ??= this.#closeInner();
+    return this.#closeAttempt;
+  }
+
+  async #closeInner(): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+
+    let failure: Error | undefined;
+    try {
+      this.#instance.close();
+    } catch (error) {
+      failure = new Error(`WASIX PostgreSQL direct close failed: ${describeError(error)}`, {
+        cause: error,
+      });
+    }
+
+    try {
+      await this.#storage.close(
+        this.#baseDirectory,
+        failure === undefined && !this.#failed ? 'clean' : 'failed',
+      );
+    } catch (error) {
+      failure =
+        failure === undefined
+          ? storageCloseFailure(error)
+          : composeLifecycleFailure(failure, 'storage release also failed', error);
+    }
+
+    try {
+      this.#instance.free();
+    } catch (error) {
+      failure =
+        failure === undefined
+          ? new Error(`direct WASIX allocation release failed: ${describeError(error)}`, {
+              cause: error,
+            })
+          : composeLifecycleFailure(
+              failure,
+              'direct WASIX allocation release also failed',
+              error,
+            );
+    }
+    if (failure !== undefined) {
+      throw failure;
+    }
+  }
+
+  #assertHealthy(): void {
+    if (this.#closed) {
+      throw new Error('Oliphaunt WASIX direct database is closed');
+    }
+    if (this.#failed) {
+      throw new Error('Oliphaunt WASIX direct database failed; close it and open a new one');
+    }
+  }
+
+  async #closeAfterOpenFailure(failure: Error): Promise<Error> {
+    this.#closed = true;
+    this.#failed = true;
+    try {
+      this.#instance.close();
+    } catch (closeError) {
+      failure = composeLifecycleFailure(
+        failure,
+        'direct WASIX instance cleanup also failed',
+        closeError,
+      );
+    }
+    try {
+      await this.#storage.close(this.#baseDirectory, 'failed');
+    } catch (releaseError) {
+      failure = composeLifecycleFailure(failure, 'storage release also failed', releaseError);
+    }
+    try {
+      this.#instance.free();
+    } catch (freeError) {
+      failure = composeLifecycleFailure(
+        failure,
+        'direct WASIX allocation release also failed',
+        freeError,
+      );
+    }
+    return failure;
+  }
+}
+
+function assertDirectExtensionCompatibility(options: SerializedOpenOptions): void {
+  const unsupported = Object.values(options.extensionCarriers)
+    .flatMap((carrier) =>
+      carrier.install.nativeModules
+        .filter((module) => module.size > CHROMIUM_SYNC_WASM_LIMIT_BYTES)
+        .map((module) => ({
+          extension: carrier.sqlName,
+          module,
+          requiresLoadOrder: carrier.install.loadOrder.length > 0,
+        })),
+    )
+    .sort((left, right) => left.extension.localeCompare(right.extension));
+  if (unsupported.length === 0) {
+    return;
+  }
+  const detail = unsupported
+    .map(
+      ({ extension, module }) =>
+        `${extension}:${module.path} (${module.size.toLocaleString('en-US')} bytes)`,
+    )
+    .join(', ');
+  if (unsupported.some(({ requiresLoadOrder }) => requiresLoadOrder)) {
+    throw new TypeError(
+      `@oliphaunt/wasix browser execution cannot currently load ${detail}: direct execution exceeds Chromium's 8 MiB synchronous side-module limit, and worker execution does not yet implement the carrier's native load order`,
+    );
+  }
+  throw new TypeError(
+    `@oliphaunt/wasix direct execution cannot load native extension modules larger than 8 MiB in Chromium; use execution: "worker" for ${detail}`,
+  );
+}
+
+function directStartupFailure(error: unknown): Error {
+  const protocolResponse = directProtocolResponse(error);
+  if (protocolResponse !== undefined) {
+    try {
+      assertSuccessfulStartupResponse(protocolResponse);
+    } catch (postgresError) {
+      if (postgresError instanceof Error) {
+        return postgresError;
+      }
+    }
+  }
+  if (error instanceof WasixStorageError || error instanceof PostgresError) {
+    return error;
+  }
+  return new Error(`WASIX PostgreSQL direct startup failed: ${describeError(error)}`, {
+    cause: error,
+  });
+}
+
+function directProtocolResponse(error: unknown): Uint8Array | undefined {
+  if (typeof error !== 'object' || error === null || !('protocolResponse' in error)) {
+    return undefined;
+  }
+  const response = (error as { protocolResponse?: unknown }).protocolResponse;
+  return response instanceof Uint8Array ? response : undefined;
+}
+
+function storageCloseFailure(error: unknown): Error {
+  if (error instanceof WasixStorageError) {
+    return error;
+  }
+  return new WasixStorageError(`WASIX PGDATA close failed: ${describeError(error)}`, {
+    code: 'checkpoint-failed',
+    durability: 'unknown',
+    cause: error,
+  });
+}
+
+function prepareRuntimeCached(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime> {
+  const identity = preparedRuntimeIdentity(options);
+  let prepared = preparedRuntimes.get(identity);
+  if (prepared === undefined) {
+    prepared = prepareBrowserRuntime(options);
+    preparedRuntimes.set(identity, prepared);
+    while (preparedRuntimes.size > MAX_PREPARED_RUNTIMES) {
+      const oldest = preparedRuntimes.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      preparedRuntimes.delete(oldest);
+    }
+    void prepared.catch(() => {
+      if (preparedRuntimes.get(identity) === prepared) {
+        preparedRuntimes.delete(identity);
+      }
+    });
+  }
+  return prepared;
+}
+
+function initializeHost(host: DirectWasixHost): Promise<void> {
+  let initialized = initializedHosts.get(host);
+  if (initialized === undefined) {
+    initialized = host.init({}).then(() => undefined);
+    initializedHosts.set(host, initialized);
+    void initialized.catch(() => {
+      if (initializedHosts.get(host) === initialized) {
+        initializedHosts.delete(host);
+      }
+    });
+  }
+  return initialized;
+}
+
+function preparedRuntimeIdentity(options: SerializedOpenOptions): string {
+  const runtime = options.runtime;
+  return canonicalStorageContract({
+    runtime: {
+      product: runtime.product,
+      version: runtime.version,
+      runtimeArchive: assetIdentity(runtime.runtimeArchive),
+      pgdataArchive: assetIdentity(runtime.pgdataArchive),
+      manifest: {
+        sha256: runtime.manifest.sha256,
+        size: runtime.manifest.size,
+      },
+    },
+    extensions: options.extensions,
+    carriers: Object.values(options.extensionCarriers)
+      .sort((left, right) => left.sqlName.localeCompare(right.sqlName))
+      .map(({ source: _source, ...carrier }) => carrier),
+    startupGUCs: options.startupGUCs,
+  });
+}
+
+function assetIdentity(asset: { archive: string; sha256: string; size: number }) {
+  return { archive: asset.archive, sha256: asset.sha256, size: asset.size };
+}

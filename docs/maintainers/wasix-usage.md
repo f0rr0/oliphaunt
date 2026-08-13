@@ -120,9 +120,14 @@ spells persistent input as `--directory PATH`.
 
 ## TypeScript host
 
-`@oliphaunt/wasix` runs the portable guest in a browser module Worker or a Node
-worker thread. Omitted storage is fresh memory on both hosts. Browser IndexedDB
-is deliberately a selective adapter import:
+`@oliphaunt/wasix` runs the portable guest with worker-isolated execution by
+default. Browsers may instead select `execution: 'direct'` to construct
+PostgreSQL asynchronously in the caller realm, then drive it synchronously
+while keeping the same Promise-based database contract. Direct constructs no
+Web Worker and each
+database call blocks that JavaScript agent until PostgreSQL returns. Node uses
+a worker thread only. Omitted storage is fresh memory on both hosts. Browser
+IndexedDB is deliberately a selective adapter import:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix';
@@ -138,9 +143,23 @@ await database.query('select pgtap_version()');
 await database.close();
 ```
 
+Use the same `open()` entry point for latency-sensitive browser placement:
+
+```ts
+await using database = await Oliphaunt.open({ execution: 'direct' });
+const answer = await database.transaction((transaction) =>
+  transaction.query('select $1::int + 1 as answer', [41]),
+);
+```
+
+`execution` selects package lifecycle placement, not another PostgreSQL engine
+or another database class. Each open owns an independent database process;
+in-memory databases and distinct persistent store names can remain open in
+either browser placement. Node.js currently uses the default worker placement.
+
 The adapter snapshots the complete memory-backed PGDATA into one atomic
 IndexedDB record after explicit `checkpoint()` and clean `close()`. Web Locks
-enforce one worker owner per persistent database. SQL errors recover through
+enforce one open owner per persistent database. SQL errors recover through
 `ReadyForQuery` without poisoning storage. Snapshot failure retains the previous
 generation and poisons the live handle because newer commits may exist only in
 memory.
@@ -161,9 +180,10 @@ release line of its owning extension product.
 The Rust binding and canonical runtime use Wasmer `7.2.1` and the matching
 WASIX/virtual support family `0.702.1`.
 
-The latest npm `@wasmer/sdk` release is `0.10.0`, whose source remains on a
-coherent Wasmer 6.1/WASIX 0.601 family. The browser binding therefore uses a
-source-patched host pinned under `src/bindings/wasix-ts/host`. Updating only
+The latest npm `@wasmer/sdk` release is `0.10.0`, but the referenced source
+commit identifies itself as 0.8.0 and remains on a coherent Wasmer 6.1/WASIX
+0.601 family. The browser binding therefore uses a source-patched host pinned
+under `src/bindings/wasix-ts/host`. Updating only
 `wasmer-wasix` is not compatible: moving the browser host to 0.702 requires a
 coordinated Wasmer JS port, its matching support crates and WebC APIs, and
 requalification of the PostgreSQL error-recovery pump and extension carriers.

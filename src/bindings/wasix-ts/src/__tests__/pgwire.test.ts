@@ -55,6 +55,21 @@ describe('browser pgwire stream', () => {
     expect(writes).toEqual([input]);
   });
 
+  it('reuses a contiguous stdout chunk for the completed response', async () => {
+    const response = backendResponse('CZ');
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(response);
+      },
+    });
+    const wire = new PgwireStream(readable, new WritableStream<Uint8Array>());
+
+    const result = await wire.exchange(Uint8Array.of(1));
+
+    expect(result).toEqual(response);
+    expect(result.buffer).toBe(response.buffer);
+  });
+
   it('uses the PostgreSQL Terminate message', () => {
     expect(terminatePacket()).toEqual(Uint8Array.of(0x58, 0, 0, 0, 4));
   });

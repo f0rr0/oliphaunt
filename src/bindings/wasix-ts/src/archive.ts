@@ -94,7 +94,7 @@ export function extractTar(archive: Uint8Array): ExtractedArchive {
     if (files.has(path) || directories.has(path)) {
       throw new Error(`tar archive repeats entry path: ${path}`);
     }
-    files.set(path, payload.slice());
+    files.set(path, payload);
   }
 
   return { files, directories };

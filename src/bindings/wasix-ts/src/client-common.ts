@@ -1,41 +1,42 @@
 import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 
-import { type WasixDatabaseWorker, WorkerWasixDatabase } from './database.js';
+import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
 import { serializeWasixExtensionDescriptors } from './extension-descriptor.js';
 import type {
   SerializedAssetSource,
-  WorkerOpenOptions,
+  SerializedOpenOptions,
   WorkerRequest,
   WorkerResponse,
 } from './rpc.js';
 import { deserializeWorkerError } from './rpc.js';
 import { serializeWasixRuntimeDescriptor } from './runtime-descriptor.js';
 import { serializeWasixStorage } from './storage.js';
-import type { WasixDatabase, WasixOpenOptions } from './types.js';
+import type { OliphauntDatabase, OpenConfig } from './types.js';
 
-export async function openWasixWithWorker(
-  createWorker: () => WasixWorkerPort,
-  options: WasixOpenOptions = {},
-  validate?: (options: WorkerOpenOptions) => void,
-): Promise<WasixDatabase> {
-  const extensions = serializeWasixExtensionDescriptors(options.extensions ?? []);
-  const runtime = serializeWasixRuntimeDescriptor(options.advanced?.runtime ?? defaultWasixRuntime);
-  const storage = serializeWasixStorage(options.storage);
-  const openOptions: WorkerOpenOptions = {
+export function serializeOpenConfig(config: OpenConfig = {}): SerializedOpenOptions {
+  const extensions = serializeWasixExtensionDescriptors(config.extensions ?? []);
+  const runtime = serializeWasixRuntimeDescriptor(config.advanced?.runtime ?? defaultWasixRuntime);
+  const storage = serializeWasixStorage(config.storage);
+  return {
     runtime,
     extensionCarriers: extensions.carriers,
     extensions: extensions.selectedSqlNames,
-    username: options.username ?? 'postgres',
-    database: options.database ?? 'postgres',
-    startupGUCs: { ...(options.startupGUCs ?? {}) },
+    username: config.username ?? 'postgres',
+    database: config.database ?? 'postgres',
+    startupGUCs: { ...(config.startupGUCs ?? {}) },
     storage,
   };
-  validate?.(openOptions);
+}
+
+export async function openWasixWithWorker(
+  createWorker: () => WasixWorkerPort,
+  openOptions: SerializedOpenOptions,
+): Promise<OliphauntDatabase> {
   const rpc = new WorkerRpc(createWorker());
   const transfer = assetTransfers(openOptions);
   try {
     await rpc.request({ method: 'open', options: openOptions }, transfer);
-    return new WorkerWasixDatabase(rpc);
+    return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc));
   } catch (error) {
     rpc.terminate();
     throw error;
@@ -55,7 +56,7 @@ export type WasixWorkerPort = {
   onFatal(listener: (error: Error) => void): void;
 };
 
-class WorkerRpc implements WasixDatabaseWorker {
+class WorkerRpc {
   readonly #worker: WasixWorkerPort;
   readonly #pending = new Map<
     number,
@@ -124,7 +125,35 @@ class WorkerRpc implements WasixDatabaseWorker {
   }
 }
 
-function assetTransfers(options: WorkerOpenOptions): Transferable[] {
+class WorkerDatabaseSession implements WasixDatabaseSession {
+  readonly #rpc: WorkerRpc;
+
+  constructor(rpc: WorkerRpc) {
+    this.#rpc = rpc;
+  }
+
+  async exec(input: Uint8Array): Promise<Uint8Array> {
+    const response = await this.#rpc.request({ method: 'exec', input }, [input.buffer]);
+    if (!(response instanceof Uint8Array)) {
+      throw new Error('Oliphaunt WASIX worker returned an invalid protocol response');
+    }
+    return response;
+  }
+
+  async checkpoint(): Promise<void> {
+    await this.#rpc.request({ method: 'checkpoint' });
+  }
+
+  async close(): Promise<void> {
+    try {
+      await this.#rpc.request({ method: 'close' });
+    } finally {
+      this.#rpc.terminate();
+    }
+  }
+}
+
+function assetTransfers(options: SerializedOpenOptions): Transferable[] {
   const transfer: Transferable[] = [];
   const seen = new Set<ArrayBuffer>();
   appendAssetTransfer(options.runtime.runtimeArchive.source, transfer, seen);
