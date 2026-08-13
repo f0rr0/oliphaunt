@@ -145,7 +145,7 @@ export default Object.freeze(descriptor);
   return { ...(await pack(staging, tarballs)), build };
 }
 
-async function runtimeBuildProvenance(manifest) {
+export async function runtimeBuildProvenance(manifest) {
   const bytes = await readFile(buildOutputsFile);
   let outputs;
   try {

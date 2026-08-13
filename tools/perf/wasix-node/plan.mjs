@@ -456,7 +456,11 @@ export function assertHostBuildProvenance(actual, expected, label = 'host build'
       fail(`${label}.wasmerJsCommit must be a full lowercase Git commit`);
     }
     nonEmptyString(build.wasmerWasixVersion, `${label}.wasmerWasixVersion`);
-    equal(build.guestConcurrency, 'denied-for-oliphaunt-stdio-pgwire', `${label}.guestConcurrency`);
+    equal(
+      build.guestConcurrency,
+      'denied-for-oliphaunt-single-backend',
+      `${label}.guestConcurrency`,
+    );
     if (!LOWER_SHA256.test(build.inputsSha256)) {
       fail(`${label}.inputsSha256 must be a lowercase SHA-256 digest`);
     }

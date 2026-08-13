@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   browserPlanSummary,
   loadBrowserPlan,
+  qualifyingGitProvenance,
   summarizeBrowserResult,
+  validateBrowserPlan,
 } from './plan.mjs';
 
 const source = await loadBrowserPlan();
@@ -16,7 +18,89 @@ test('loads the exact browser plan and comparator pin', () => {
   assert.equal(summary.engines.candidate.package, '@oliphaunt/wasix-ts');
   assert.equal(summary.engines.comparison.package, '@electric-sql/pglite');
   assert.equal(summary.engines.comparison.version, '0.5.4');
+  assert.equal(summary.profiles.full.workloadRuns, 8);
   assert.equal(summary.gate.maxGeomeanRatio, 0.8);
+});
+
+test('rejects omitted metrics, settings, measurement fields, and engine boundaries', () => {
+  const cases = [
+    {
+      label: 'gated metric',
+      mutate(plan) {
+        plan.gate.metrics.pop();
+      },
+      expected: /plan\.gate\.metrics must contain exactly/u,
+    },
+    {
+      label: 'PostgreSQL setting',
+      mutate(plan) {
+        delete plan.postgres.settings.fsync;
+      },
+      expected: /plan\.postgres\.settings must contain exactly/u,
+    },
+    {
+      label: 'measurement rule',
+      mutate(plan) {
+        delete plan.measurement.timingBoundary;
+      },
+      expected: /plan\.measurement must contain exactly/u,
+    },
+    {
+      label: 'candidate boundary',
+      mutate(plan) {
+        delete plan.engines.candidate.directBoundary;
+      },
+      expected: /plan\.engines\.candidate must contain exactly/u,
+    },
+    {
+      label: 'comparison boundary',
+      mutate(plan) {
+        delete plan.engines.comparison.workerBoundary;
+      },
+      expected: /plan\.engines\.comparison must contain exactly/u,
+    },
+  ];
+
+  for (const { label, mutate, expected } of cases) {
+    const plan = structuredClone(source.plan);
+    mutate(plan);
+    assert.throws(() => validateBrowserPlan(plan), expected, label);
+  }
+});
+
+test('balances full workload rotation across all four engines', () => {
+  assert.equal(source.plan.profiles.full.workloadRuns, 8);
+  assert.equal(source.plan.profiles.full.workloadRuns % 4, 0);
+
+  for (const workloadRuns of [4, 6, 7, 9]) {
+    const plan = structuredClone(source.plan);
+    plan.profiles.full.workloadRuns = workloadRuns;
+    assert.throws(
+      () => validateBrowserPlan(plan),
+      /workloadRuns must be a multiple of 4 and at least 8/u,
+    );
+  }
+
+  const strongerPlan = structuredClone(source.plan);
+  strongerPlan.profiles.full.workloadRuns = 12;
+  assert.doesNotThrow(() => validateBrowserPlan(strongerPlan));
+});
+
+test('requires a clean exact Git commit and tree for benchmark qualification', () => {
+  const clean = {
+    commit: 'a'.repeat(40),
+    tree: 'b'.repeat(40),
+    status: '',
+  };
+  assert.deepEqual(qualifyingGitProvenance(clean), {
+    commit: clean.commit,
+    tree: clean.tree,
+    dirty: false,
+  });
+  assert.throws(
+    () => qualifyingGitProvenance({ ...clean, status: ' M benchmark.ts' }),
+    /requires a clean Git worktree/u,
+  );
 });
 
 test('requires a comfortable aggregate win independently in both browser topologies', () => {

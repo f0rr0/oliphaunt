@@ -1,13 +1,12 @@
-import type { Directory, Instance, WasmerInitOptions } from './host/index.mjs';
-
-import type { BrowserDirectoryMount, BrowserRuntimeLayout } from './archive.js';
+import type { WasixDirectoryMount, WasixRuntimeLayout } from './archive.js';
 import { WasixStorageError } from './errors.js';
-import { prepareBrowserRuntime, type PreparedBrowserRuntime } from './extensions.js';
+import { type PreparedWasixRuntime, prepareWasixRuntime } from './extensions.js';
+import type { Directory, Instance, WasmerInitOptions } from './host/index.mjs';
 import { assertSuccessfulStartupResponse, PgwireStream, startupPacket } from './pgwire.js';
 import { simpleQuery } from './protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import { acquireBrowserStorage, type BrowserStorageLease } from './storage-provider.js';
+import { acquireWasixStorage, type WasixStorageLease } from './storage-provider.js';
 
 export type WasixHost = Readonly<{
   Directory: typeof Directory;
@@ -27,19 +26,19 @@ export type WasixHost = Readonly<{
 
 /** @internal Dependency seam for deterministic lifecycle-failure qualification. */
 export type WasixProcessDependencies = Readonly<{
-  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime>;
+  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedWasixRuntime>;
   acquireStorage(
     storage: SerializedOpenOptions['storage'],
-    template: BrowserDirectoryMount,
-    compatibility: PreparedBrowserRuntime['storageCompatibility'],
-  ): Promise<BrowserStorageLease>;
+    template: WasixDirectoryMount,
+    compatibility: PreparedWasixRuntime['storageCompatibility'],
+  ): Promise<WasixStorageLease>;
   /** Test seam; production caches the verified guest compilation per JS realm. */
   compileModule?(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
 
 const defaultDependencies: WasixProcessDependencies = {
-  prepareRuntime: prepareBrowserRuntime,
-  acquireStorage: acquireBrowserStorage,
+  prepareRuntime: prepareWasixRuntime,
+  acquireStorage: acquireWasixStorage,
   compileModule: compileWasixModule,
 };
 
@@ -71,7 +70,7 @@ export class WasixProcess {
   readonly #instance: Instance;
   readonly #wire: PgwireStream;
   readonly #stderr: Promise<string>;
-  readonly #storage: BrowserStorageLease;
+  readonly #storage: WasixStorageLease;
   readonly #baseDirectory: Directory;
   #closed = false;
   #failed = false;
@@ -80,7 +79,7 @@ export class WasixProcess {
     instance: Instance,
     wire: PgwireStream,
     stderr: Promise<string>,
-    storage: BrowserStorageLease,
+    storage: WasixStorageLease,
     baseDirectory: Directory,
   ) {
     this.#instance = instance;
@@ -329,8 +328,8 @@ export class WasixProcess {
 /** @internal Materialize the exact runtime mounts shared by both execution placements. */
 export async function materializeWasixMounts(
   DirectoryConstructor: typeof Directory,
-  layout: BrowserRuntimeLayout,
-  pgdata: BrowserDirectoryMount,
+  layout: WasixRuntimeLayout,
+  pgdata: WasixDirectoryMount,
 ): Promise<{ mounts: Record<string, Directory>; baseDirectory: Directory }> {
   const mounts: Record<string, Directory> = {};
   for (const [mountPath, contents] of Object.entries(layout.mounts)) {
@@ -348,7 +347,7 @@ export async function materializeWasixMounts(
 
 async function materializeDirectory(
   DirectoryConstructor: typeof Directory,
-  contents: BrowserDirectoryMount,
+  contents: WasixDirectoryMount,
 ): Promise<Directory> {
   const directory = new DirectoryConstructor(contents.files);
   const existing = directoriesImpliedByFiles(Object.keys(contents.files));
@@ -443,6 +442,10 @@ export function wasixPostgresEnvironment(options: SerializedOpenOptions): Record
     PGTZ: 'UTC',
     PG_COLOR: 'never',
     PROJ_DATA: '/share/proj',
+    // The canonical guest specializes backend atomics for a one-backend
+    // WebAssembly instance. Every host placement must enforce that invariant;
+    // the stdio marker below is independently scoped to browser-worker I/O.
+    OLIPHAUNT_WASIX_SINGLE_BACKEND: '1',
     OLIPHAUNT_WASIX_STDIO_PGWIRE: '1',
   };
 }
@@ -510,8 +513,8 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
 /** @internal Complete extension and role setup after either transport reaches ReadyForQuery. */
 export async function configureWasixDatabase(
   options: SerializedOpenOptions,
-  prepared: PreparedBrowserRuntime,
-  storageState: BrowserStorageLease['state'],
+  prepared: PreparedWasixRuntime,
+  storageState: WasixStorageLease['state'],
   exec: (input: Uint8Array) => Promise<Uint8Array>,
 ): Promise<void> {
   // Imported carrier install contracts own extension lifecycle. Activate them

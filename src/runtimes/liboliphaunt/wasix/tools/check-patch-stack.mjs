@@ -154,14 +154,14 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
   },
   {
-    requirement: 'Browser hosts can own one blocking stdio pgwire lifecycle',
+    requirement: 'Browser-worker hosts can own one blocking stdio pgwire lifecycle',
     patches: ['0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch'],
     evidence: [
       'OLIPHAUNT_WASIX_STDIO_PGWIRE',
       'oliphaunt_wasix_set_protocol_stdio(1)',
       'ProcessStartupPacket(MyProcPort, true, true)',
     ],
-    posture: 'Only the explicit browser host contract enters the blocking stdio path; export-pumped hosts keep their existing lifecycle.',
+    posture: 'Only the explicit browser-worker contract enters the blocking stdio path; Rust, browser-direct, and Node hosts keep the export-driven lifecycle.',
   },
   {
     requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',
@@ -172,7 +172,7 @@ const REQUIRED_AUDIT_CHECKS = [
       'typedef int slock_t;',
       'oliphaunt_wasix_single_user_tas',
     ],
-    posture: 'Only the enforced one-backend-per-instance lane replaces atomic exchange; all concurrent PostgreSQL builds retain upstream spinlocks.',
+    posture: 'The shared guest lets Rust AOT and every TypeScript placement replace atomic exchange; all concurrent PostgreSQL builds retain upstream spinlocks.',
   },
   {
     requirement: 'Single-backend WASIX atomics preserve ABI and operation contracts',
@@ -184,7 +184,7 @@ const REQUIRED_AUDIT_CHECKS = [
       'volatile uint64 value pg_attribute_aligned(8)',
       '*expected = current',
     ],
-    posture: 'Only backend objects use scalar operations; frontends, extensions, and every concurrent PostgreSQL build retain normal atomics.',
+    posture: 'Shared guest backend objects use scalar operations for Rust and TypeScript hosts; frontends, extensions, and every concurrent PostgreSQL build retain normal atomics.',
   },
 ];
 

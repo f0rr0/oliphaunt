@@ -493,11 +493,13 @@ async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
     let dir = tempfile::TempDir::new().context("create Unix socket tempdir")?;
-    let socket_path = dir.path().join("oliphaunt.sock");
+    let socket_path = dir.path().join(".s.PGSQL.6543");
     let server = OliphauntServer::builder().unix(&socket_path).start()?;
+    let client_socket_path = socket_path.clone();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut stream = UnixStream::connect(socket_path).context("connect raw Unix client")?;
+        let mut stream =
+            UnixStream::connect(client_socket_path).context("connect raw Unix client")?;
         stream.write_all(&startup_message())?;
         read_until_ready(&mut stream).context("read Unix startup")?;
 
@@ -522,6 +524,10 @@ async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
     .await??;
 
     server.shutdown()?;
+    assert!(
+        !socket_path.exists(),
+        "server shutdown should remove the Unix socket it owns"
+    );
     Ok(())
 }
 

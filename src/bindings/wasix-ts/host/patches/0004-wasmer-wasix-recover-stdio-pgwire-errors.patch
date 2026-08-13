@@ -5,7 +5,7 @@ index 5ae3f53..1c67bd0 100644
 @@ -239,6 +239,74 @@ fn get_start(ctx: &WasiFunctionEnv, store: &Store) -> Option<Function> {
          .ok()
  }
- 
+
 +const OLIPHAUNT_STDIO_PGWIRE_ENV: &[u8] = b"OLIPHAUNT_WASIX_STDIO_PGWIRE=1";
 +const WEBASSEMBLY_EXCEPTION_MESSAGE: &str = "[object WebAssembly.Exception]";
 +
@@ -80,7 +80,7 @@ index 5ae3f53..1c67bd0 100644
 @@ -308,6 +376,10 @@ fn call_module(
              }
          }
- 
+
 +        if let Err(error) = call_ret {
 +            call_ret = continue_oliphaunt_stdio_pgwire_after_error(&ctx, &mut store, error);
 +        }

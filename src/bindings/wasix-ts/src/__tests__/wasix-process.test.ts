@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { WasixStorageError } from '../errors.js';
-import type { PreparedBrowserRuntime } from '../extensions.js';
+import type { PreparedWasixRuntime } from '../extensions.js';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
-import type { BrowserStorageLease } from '../storage-provider.js';
+import type { WasixStorageLease } from '../storage-provider.js';
 import {
-  composeLifecycleFailure,
   compileWasixModule,
-  WasixProcess,
+  composeLifecycleFailure,
   type WasixHost,
+  WasixProcess,
   type WasixProcessDependencies,
 } from '../wasix-process.js';
 
@@ -53,11 +53,13 @@ describe('WASIX process lifecycle failures', () => {
 
   it('disables maintenance workers in the single-process backend', async () => {
     let args: string[] | undefined;
+    let env: Record<string, string> | undefined;
     const baseHost = fakeHost({ stdout: startupSuccess() });
     const host: WasixHost = {
       ...baseHost,
       async runWasix(module, options) {
         args = options.args;
+        env = options.env;
         return baseHost.runWasix(module, options);
       },
     };
@@ -69,6 +71,10 @@ describe('WASIX process lifecycle failures', () => {
     );
 
     expect(args).toContain('max_parallel_maintenance_workers=0');
+    expect(env).toMatchObject({
+      OLIPHAUNT_WASIX_SINGLE_BACKEND: '1',
+      OLIPHAUNT_WASIX_STDIO_PGWIRE: '1',
+    });
     await process.close();
   });
 
@@ -274,7 +280,7 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 
 function fakeDependencies(
   acquireStorage: WasixProcessDependencies['acquireStorage'],
-  prepared: PreparedBrowserRuntime = preparedRuntime(),
+  prepared: PreparedWasixRuntime = preparedRuntime(),
 ): WasixProcessDependencies {
   return {
     async prepareRuntime(options) {
@@ -285,9 +291,9 @@ function fakeDependencies(
 }
 
 function fakeLease(
-  close: BrowserStorageLease['close'],
-  state: BrowserStorageLease['state'] = 'existing',
-): BrowserStorageLease {
+  close: WasixStorageLease['close'],
+  state: WasixStorageLease['state'] = 'existing',
+): WasixStorageLease {
   return {
     state,
     mount: pgdataMount(),
@@ -296,7 +302,7 @@ function fakeLease(
   };
 }
 
-function preparedRuntime(setupSql: string[] = []): PreparedBrowserRuntime {
+function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
   return {
     layout: {
       module: Uint8Array.of(0),

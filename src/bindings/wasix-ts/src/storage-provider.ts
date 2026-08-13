@@ -58,9 +58,6 @@ export function installNodeDirectoryStorageProvider(acquire: NodeDirectoryStorag
   acquireNodeDirectory = acquire;
 }
 
-/** @deprecated Internal compatibility alias; storage leases are host-neutral. */
-export type BrowserStorageLease = WasixStorageLease;
-
 export async function acquireWasixStorage(
   storage: SerializedWasixStorage,
   template: WasixDirectoryMount,
@@ -82,17 +79,17 @@ export async function acquireWasixStorage(
     }
     case 'node-directory':
       if (acquireNodeDirectory === undefined) {
-        throw new WasixStorageError('Node directory storage is unavailable in a browser worker', {
-          code: 'unavailable',
-          durability: 'unchanged',
-        });
+        throw new WasixStorageError(
+          'Node directory storage is unavailable in this @oliphaunt/wasix-ts host',
+          {
+            code: 'unavailable',
+            durability: 'unchanged',
+          },
+        );
       }
       return acquireNodeDirectory(storage.path, template, compatibility, storage.ownerToken);
   }
 }
-
-/** @deprecated Internal compatibility alias retained for source stability. */
-export const acquireBrowserStorage = acquireWasixStorage;
 
 /** Stable JSON used only for exact, fail-closed compatibility identities. */
 export function canonicalStorageContract(value: unknown): string {

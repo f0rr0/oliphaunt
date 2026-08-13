@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { BrowserRuntimeLayout, ExtractedArchive } from '../archive.js';
+import type { ExtractedArchive, WasixRuntimeLayout } from '../archive.js';
 import {
   assertExactCarrierClosure,
   assertExtensionCarriersCompatible,
@@ -9,12 +9,12 @@ import {
   mergeExtensionStartupGUCs,
   overlayExtensionArchive,
   parseWasixAssetManifest,
-  resolveBrowserExtensions,
+  resolveWasixExtensions,
 } from '../extensions.js';
 import type { SerializedExtensionCarrier, SerializedRuntimeDescriptor } from '../rpc.js';
 import type { WasixAssetManifest } from '../types.js';
 
-type ProjectedExtension = ReturnType<typeof resolveBrowserExtensions>['extensions'][number];
+type ProjectedExtension = ReturnType<typeof resolveWasixExtensions>['extensions'][number];
 type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
 describe('WASIX TypeScript extensions', () => {
@@ -27,7 +27,7 @@ describe('WASIX TypeScript extensions', () => {
         'share/postgresql/extension/pgtap--1.3.3.sql',
       ],
     });
-    const resolved = resolveBrowserExtensions(manifest(), carrierMap(pgtap), ['pgtap']);
+    const resolved = resolveWasixExtensions(manifest(), carrierMap(pgtap), ['pgtap']);
 
     expect(resolved).toEqual({
       extensions: [pgtap],
@@ -44,7 +44,7 @@ describe('WASIX TypeScript extensions', () => {
     const earthdistance = extension('earthdistance', { dependencies: ['cube'] });
 
     expect(
-      resolveBrowserExtensions(manifest(), carrierMap(earthdistance, cube), [
+      resolveWasixExtensions(manifest(), carrierMap(earthdistance, cube), [
         'earthdistance',
       ]).extensions.map((entry) => entry['sql-name']),
     ).toEqual(['cube', 'earthdistance']);
@@ -53,9 +53,9 @@ describe('WASIX TypeScript extensions', () => {
   it('rejects cyclic dependencies and duplicate canonical manifest identities', () => {
     const first = extension('first', { dependencies: ['second'] });
     const second = extension('second', { dependencies: ['first'] });
-    expect(() =>
-      resolveBrowserExtensions(manifest(), carrierMap(first, second), ['first']),
-    ).toThrow("cyclic WASIX extension dependency involving 'first'");
+    expect(() => resolveWasixExtensions(manifest(), carrierMap(first, second), ['first'])).toThrow(
+      "cyclic WASIX extension dependency involving 'first'",
+    );
 
     const runtimeOwned = { ...manifest(), extensions: [extension('pgtap')] };
     expect(() =>
@@ -65,9 +65,9 @@ describe('WASIX TypeScript extensions', () => {
 
   it('resolves install metadata exclusively from an imported carrier', () => {
     const pgtap = extension('pgtap');
-    const resolved = resolveBrowserExtensions(manifest(), carrierMap(pgtap), ['pgtap']);
+    const resolved = resolveWasixExtensions(manifest(), carrierMap(pgtap), ['pgtap']);
     expect(resolved.extensions).toEqual([pgtap]);
-    expect(() => resolveBrowserExtensions(manifest(), {}, ['pgtap'])).toThrow(
+    expect(() => resolveWasixExtensions(manifest(), {}, ['pgtap'])).toThrow(
       'has no imported carrier',
     );
   });
@@ -76,15 +76,15 @@ describe('WASIX TypeScript extensions', () => {
     const pgtap = extension('pgtap', { dependencies: ['plpgsql'] });
     const shadow = extension('plpgsql');
 
-    expect(() =>
-      resolveBrowserExtensions(manifest(), carrierMap(pgtap, shadow), ['pgtap']),
-    ).toThrow("carrier 'plpgsql' cannot replace runtime-provided support");
+    expect(() => resolveWasixExtensions(manifest(), carrierMap(pgtap, shadow), ['pgtap'])).toThrow(
+      "carrier 'plpgsql' cannot replace runtime-provided support",
+    );
   });
 
   it('requires the imported carrier closure to equal manifest-resolved extensions', () => {
     const cube = extension('cube');
     const earthdistance = extension('earthdistance', { dependencies: ['cube'] });
-    const resolved = resolveBrowserExtensions(manifest(), carrierMap(earthdistance, cube), [
+    const resolved = resolveWasixExtensions(manifest(), carrierMap(earthdistance, cube), [
       'earthdistance',
     ]);
     const cubeCarrier = serializedCarrier(cube);
@@ -153,19 +153,19 @@ describe('WASIX TypeScript extensions', () => {
   it('does not create a lifecycle schema when extension creation is disabled', () => {
     const manual = extension('manual', { createExtension: false, schema: 'manual_schema' });
     expect(
-      extensionSetupSql(resolveBrowserExtensions(manifest(), carrierMap(manual), ['manual'])),
+      extensionSetupSql(resolveWasixExtensions(manifest(), carrierMap(manual), ['manual'])),
     ).toEqual([]);
   });
 
-  it('fails closed for browser host capabilities that are not qualified', () => {
+  it('fails closed with host-neutral diagnostics for Node and browser callers', () => {
     const ordered = extension('ordered', { loadOrder: ['lib/postgresql/ordered.so'] });
-    expect(() => resolveBrowserExtensions(manifest(), carrierMap(ordered), ['ordered'])).toThrow(
-      'requires native load-order handling',
+    expect(() => resolveWasixExtensions(manifest(), carrierMap(ordered), ['ordered'])).toThrow(
+      'requires native load-order handling that the @oliphaunt/wasix-ts host does not implement',
     );
 
     const shared = extension('shared', { sharedMemoryRequired: true });
-    expect(() => resolveBrowserExtensions(manifest(), carrierMap(shared), ['shared'])).toThrow(
-      'requires shared-memory behavior',
+    expect(() => resolveWasixExtensions(manifest(), carrierMap(shared), ['shared'])).toThrow(
+      'requires shared-memory behavior that the @oliphaunt/wasix-ts host has not qualified',
     );
   });
 
@@ -263,7 +263,7 @@ describe('WASIX TypeScript extensions', () => {
     ).toThrow('collides with installed file share/postgresql/extension/plpgsql.control');
   });
 
-  it('parses the browser-relevant canonical generated manifest shape', () => {
+  it('parses the host-relevant canonical generated manifest shape', () => {
     const expected = manifest();
     const parsed = parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(expected)));
     expect(parsed.extensions).toEqual([]);
@@ -431,7 +431,7 @@ function runtimeDescriptor(): SerializedRuntimeDescriptor {
   };
 }
 
-function runtimeLayout(): BrowserRuntimeLayout {
+function runtimeLayout(): WasixRuntimeLayout {
   return {
     module: Uint8Array.of(0, 97, 115, 109),
     mounts: {

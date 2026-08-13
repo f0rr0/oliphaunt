@@ -27,9 +27,10 @@ topology therefore cannot subsidize the other. First cold open remains
 descriptive because the implementations use different compilation caches;
 close is descriptive because the public APIs make different worker-reclamation
 guarantees; insert decomposition remains diagnostic so it cannot overweight the
-primary insert workload. Machine-readable JSON, a compact Markdown report, the
-exact Git state, runtime asset hashes, and the installed PGlite tree are written
-under `target/perf`.
+primary insert workload. Machine-readable JSON and a compact Markdown report
+are written under `target/perf`. Benchmark runs require a clean worktree and
+record the exact Git commit and tree, runtime and staged host build identities,
+the built SDK tree, every harness source, and the installed PGlite closure.
 
 For a harness smoke check without a full sample set, run:
 

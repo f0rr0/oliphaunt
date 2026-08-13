@@ -28,14 +28,14 @@ index 3bdd017213..25a9ea2f04 100644
  # When including this file, set OBJS to the object files created in
  # this directory and SUBDIRS to subdirectories containing more things
  # to build.
- 
+
 +ifeq ($(PORTNAME), wasix-dl)
 +# PGXS side modules deliberately retain PostgreSQL's normal atomic ABI.
 +override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS
 +endif
 +
  subsysfilename = objfiles.txt
- 
+
  SUBDIROBJS = $(SUBDIRS:%=%/$(subsysfilename))
 diff --git a/src/backend/main/main.c b/src/backend/main/main.c
 index 625f573c88..f85272b9ef 100644
@@ -286,5 +286,5 @@ index 0000000000..5548925c11
 +OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL(u64, pg_atomic_uint64, uint64, int64)
 +
 +#undef OLIPHAUNT_WASIX_SINGLE_BACKEND_UINT_IMPL
--- 
+--
 2.49.0

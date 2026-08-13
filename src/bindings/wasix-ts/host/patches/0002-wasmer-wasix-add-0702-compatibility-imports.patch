@@ -4,19 +4,19 @@ index 00615d4..5f50af3 100644
 +++ b/src/lib.rs
 @@ -76,8 +76,8 @@
  pub use wasmer_wasix_types;
- 
+
  use wasmer::{
 -    imports, namespace, AsStoreMut, Exports, FunctionEnv, Imports, Memory32, MemoryAccessError,
 -    MemorySize, RuntimeError,
 +    imports, namespace, AsStoreMut, Exports, FunctionEnv, FunctionEnvMut, Imports, Memory32,
 +    MemoryAccessError, MemorySize, RuntimeError, WasmPtr,
  };
- 
+
  pub use virtual_fs;
 @@ -117,6 +117,34 @@ use crate::{
      },
  };
- 
+
 +// Compatibility imports added in WASIX 0.702. Current libc imports all five.
 +// Normal termination calls proc_exit2, whose non-vfork behavior matches
 +// proc_exit; setjmp-vfork and context switching remain unsupported.

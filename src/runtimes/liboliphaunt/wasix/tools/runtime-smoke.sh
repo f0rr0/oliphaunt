@@ -32,7 +32,6 @@ fi
 oliphaunt_runtime_wasm_require "$preflight_mode"
 if [ "$mode" = "core-smoke" ]; then
   export OLIPHAUNT_RUNTIME_WASM_ASSET_MODE="core"
-  export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1
 fi
 asset_mode="$OLIPHAUNT_RUNTIME_WASM_ASSET_MODE"
 full_evidence_features=""
@@ -56,6 +55,12 @@ oliphaunt_wasix_cargo_test() {
 }
 
 cargo run -p xtask -- assets install-local --target-triple "$host"
+if [ "$mode" = "core-smoke" ]; then
+  # Validate the installed AOT manifest against the asset set that actually
+  # produced it, then narrow only the smoke workload. A full manifest still
+  # contains the split pg_dump/psql tools even when this run skips their tests.
+  export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1
+fi
 export OLIPHAUNT_WASM_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets"
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="$root/target/oliphaunt-wasix/aot"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"

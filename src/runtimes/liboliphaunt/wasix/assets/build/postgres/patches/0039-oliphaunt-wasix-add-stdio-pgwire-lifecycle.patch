@@ -24,11 +24,11 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
 @@ -180,6 +180,8 @@ static StringInfoData row_description_buf;
  #define OLIPHAUNT_WASM_HOST_EXPORT(name) __attribute__((export_name(name)))
- 
+
  extern volatile int is_oliphaunt_active;
 +
 +extern int ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
- 
+
  static OliphauntWasmHostIO oliphaunt_wasix_protocol_io =
  {
 @@ -287,11 +289,48 @@ oliphaunt_wasix_send_conn_data(void)
@@ -70,7 +70,7 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 +}
 +
  static CommandDest oliphaunt_wasix_startup_error_saved_dest = DestDebug;
- 
+
  static void
  oliphaunt_wasix_begin_startup_error_capture(void)
  {
@@ -83,7 +83,7 @@ diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 @@ -5230,6 +5266,11 @@ PostgresMain(const char *dbname, const char *username)
  		/* Need not flush since ReadyForQuery will do it. */
  	}
- 
+
 +#ifdef OLIPHAUNT_WASM_SINGLE_USER
 +	if (oliphaunt_wasix_stdio_pgwire_requested())
 +		oliphaunt_wasix_start_stdio_pgwire();
@@ -100,8 +100,8 @@ diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
  extern int oliphaunt_wasix_shmctl(int shmid, int cmd, struct shmid_ds *buf);
  extern void oliphaunt_wasix_protocol_report_copy_response(int state);
 +extern int oliphaunt_wasix_set_protocol_stdio(int enabled);
- 
+
  #ifdef OLIPHAUNT_WASIX_BACKEND_TIMING
  #define OLIPHAUNT_BACKEND_TIMING_EXEC_SIMPLE_QUERY 36
--- 
+--
 2.49.0

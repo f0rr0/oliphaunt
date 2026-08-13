@@ -11,12 +11,27 @@ import {
   writeStoredDatabase,
 } from '../storage/indexed-db-provider.js';
 import {
+  acquireWasixStorage,
   canonicalStorageContract,
   type StorageDirectory,
   type WasixStorageCompatibility,
 } from '../storage-provider.js';
 
 describe('WASIX IndexedDB PGDATA snapshots', () => {
+  it('reports a missing Node directory integration without mislabeling the host', async () => {
+    await expect(
+      acquireWasixStorage(
+        {
+          schema: 'oliphaunt-wasix-storage-v1',
+          kind: 'node-directory',
+          path: '/tmp/oliphaunt-test',
+        },
+        pgdataTemplate(),
+        compatible(),
+      ),
+    ).rejects.toThrow('Node directory storage is unavailable in this @oliphaunt/wasix-ts host');
+  });
+
   it('recursively snapshots files and empty directories but not process lock files', async () => {
     const directory = fakeDirectory({
       '': [
@@ -240,6 +255,74 @@ describe('WASIX IndexedDB PGDATA snapshots', () => {
     expect(harness.isHeld()).toBe(false);
   });
 
+  it('preserves acquisition failures and releases ownership when connection cleanup throws', async () => {
+    const harness = providerHarness();
+    const readFailure = new Error('database read aborted');
+    harness.failNextRead(readFailure);
+    harness.failNextClose(new Error('connection close failed'));
+
+    const failure = await rejection(
+      acquireIndexedDbStorageWithBackend('todos', pgdataTemplate(), compatible(), harness.backend),
+    );
+    expect(failure).toMatchObject({ code: 'unavailable', durability: 'unchanged' });
+    expect(failure.message).toContain('database read aborted');
+    expect(failure.message).toContain('database connection cleanup also failed');
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    expect(harness.isHeld()).toBe(false);
+
+    const reacquired = await acquireIndexedDbStorageWithBackend(
+      'todos',
+      pgdataTemplate(),
+      compatible(),
+      harness.backend,
+    );
+    await reacquired.close(undefined, 'failed');
+  });
+
+  it('releases ownership and reports a connection cleanup failure on lease close', async () => {
+    const harness = providerHarness();
+    const lease = await acquireIndexedDbStorageWithBackend(
+      'todos',
+      pgdataTemplate(),
+      compatible(),
+      harness.backend,
+    );
+    const closeFailure = new Error('connection close failed');
+    harness.failNextClose(closeFailure);
+
+    await expect(lease.close(undefined, 'failed')).rejects.toMatchObject({
+      code: 'unavailable',
+      durability: 'unchanged',
+      cause: closeFailure,
+    });
+    expect(harness.isHeld()).toBe(false);
+
+    const reacquired = await acquireIndexedDbStorageWithBackend(
+      'todos',
+      pgdataTemplate(),
+      compatible(),
+      harness.backend,
+    );
+    await reacquired.close(undefined, 'failed');
+  });
+
+  it('preserves the primary failure while reporting ownership-release failures', async () => {
+    const harness = providerHarness();
+    const readFailure = new Error('database read aborted');
+    harness.failNextRead(readFailure);
+    harness.failNextRelease(new Error('lock callback failed'));
+
+    const failure = await rejection(
+      acquireIndexedDbStorageWithBackend('todos', pgdataTemplate(), compatible(), harness.backend),
+    );
+
+    expect(failure).toMatchObject({ code: 'unavailable', durability: 'unchanged' });
+    expect(failure.message).toContain('database read aborted');
+    expect(failure.message).toContain('ownership release also failed');
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    expect(harness.isHeld()).toBe(false);
+  });
+
   it('classifies an aborted checkpoint, releases the failed lease, and reacquires cleanly', async () => {
     const harness = providerHarness();
     const lease = await acquireIndexedDbStorageWithBackend(
@@ -423,13 +506,19 @@ function storedDatabase(name: string, compatibility: WasixStorageCompatibility):
 
 function providerHarness(): {
   backend: IndexedDbStorageBackend;
+  failNextClose(error: Error): void;
   failNextOpen(error: Error): void;
+  failNextRead(error: Error): void;
+  failNextRelease(error: Error): void;
   failNextWrite(error: Error): void;
   isHeld(): boolean;
 } {
   const records = new Map<string, StoredDatabase>();
   let held = false;
+  let nextCloseFailure: Error | undefined;
   let nextOpenFailure: Error | undefined;
+  let nextReadFailure: Error | undefined;
+  let nextReleaseFailure: Error | undefined;
   let nextWriteFailure: Error | undefined;
   const backend: IndexedDbStorageBackend = {
     async acquireLock(name) {
@@ -446,6 +535,11 @@ function providerHarness(): {
           if (!released) {
             released = true;
             held = false;
+            if (nextReleaseFailure !== undefined) {
+              const failure = nextReleaseFailure;
+              nextReleaseFailure = undefined;
+              throw failure;
+            }
           }
         },
       };
@@ -458,6 +552,11 @@ function providerHarness(): {
       }
       return {
         async read(name) {
+          if (nextReadFailure !== undefined) {
+            const failure = nextReadFailure;
+            nextReadFailure = undefined;
+            throw failure;
+          }
           return records.get(name);
         },
         async write(database) {
@@ -468,14 +567,29 @@ function providerHarness(): {
           }
           records.set(database.name, structuredClone(database));
         },
-        close() {},
+        close() {
+          if (nextCloseFailure !== undefined) {
+            const failure = nextCloseFailure;
+            nextCloseFailure = undefined;
+            throw failure;
+          }
+        },
       };
     },
   };
   return {
     backend,
+    failNextClose(error) {
+      nextCloseFailure = error;
+    },
     failNextOpen(error) {
       nextOpenFailure = error;
+    },
+    failNextRead(error) {
+      nextReadFailure = error;
+    },
+    failNextRelease(error) {
+      nextReleaseFailure = error;
     },
     failNextWrite(error) {
       nextWriteFailure = error;
@@ -484,4 +598,14 @@ function providerHarness(): {
       return held;
     },
   };
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error(`expected Error rejection, received ${String(error)}`);
+  }
+  throw new Error('expected promise to reject');
 }

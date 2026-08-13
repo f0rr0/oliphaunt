@@ -87,7 +87,7 @@ const status = requireElement<HTMLParagraphElement>('status');
 const output = requireElement<HTMLPreElement>('output');
 const quick = new URL(location.href).searchParams.has('quick');
 const startupRuns = quick ? 2 : 5;
-const workloadRuns = quick ? 1 : 7;
+const workloadRuns = quick ? 1 : 8;
 const insertDiagnosticRuns = quick ? 1 : 5;
 const pointSamples = quick ? 20 : 200;
 const rangeSamples = quick ? 10 : 50;
@@ -505,15 +505,17 @@ function pairedComparison(wasixSamples: number[], pgliteSamples: number[]) {
       pairedP75AdvantagePercent: null,
     };
   }
-  const pairedAdvantages = Array.from({ length: sampleCount }, (_, index) => {
-    const wasix = wasixSamples[index]!;
-    const pglite = pgliteSamples[index]!;
-    return ((pglite - wasix) / pglite) * 100;
+  const pairs = wasixSamples.slice(0, sampleCount).map((wasix, index) => {
+    const pglite = pgliteSamples[index];
+    if (pglite === undefined) throw new Error(`missing paired PGlite sample ${index}`);
+    return {
+      advantagePercent: ((pglite - wasix) / pglite) * 100,
+      ratio: wasix / pglite,
+    };
   });
+  const pairedAdvantages = pairs.map((pair) => pair.advantagePercent);
   const pairedP25AdvantagePercent = quantile(pairedAdvantages, 0.25);
-  const pairedRatios = Array.from({ length: sampleCount }, (_, index) => {
-    return wasixSamples[index]! / pgliteSamples[index]!;
-  });
+  const pairedRatios = pairs.map((pair) => pair.ratio);
   return {
     ...comparison(
       median(wasixSamples.slice(0, sampleCount)),
@@ -752,7 +754,12 @@ function median(values: number[]): number {
   }
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
+  const upper = sorted[middle];
+  if (upper === undefined) throw new Error('median requires at least one sample');
+  if (sorted.length % 2 !== 0) return upper;
+  const lower = sorted[middle - 1];
+  if (lower === undefined) throw new Error('median requires at least two samples for an even set');
+  return (lower + upper) / 2;
 }
 
 function quantile(values: number[], value: number): number {

@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DirectWasixSession,
   type DirectWasixDependencies,
   type DirectWasixHost,
+  DirectWasixSession,
+  prepareRuntimeCached,
 } from '../direct-client-common.js';
 import { WasixStorageError } from '../errors.js';
-import type { PreparedBrowserRuntime } from '../extensions.js';
+import type { PreparedWasixRuntime } from '../extensions.js';
 import type { OliphauntDirectInstance } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
-import type { BrowserStorageLease } from '../storage-provider.js';
+import type { WasixStorageLease } from '../storage-provider.js';
 
 describe('direct WASIX session lifecycle', () => {
   it('keeps startup SQLSTATE while composing cleanup failures in ownership order', async () => {
@@ -129,7 +130,7 @@ describe('direct WASIX session lifecycle', () => {
       durability: 'unchanged',
     });
     const events: string[] = [];
-    const storage: BrowserStorageLease = {
+    const storage: WasixStorageLease = {
       state: 'existing',
       mount: pgdataMount(),
       async checkpoint() {
@@ -173,6 +174,23 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
 
     expect(initializations).toBe(2);
+  });
+
+  it('evicts rejected runtime preparation so transient asset failures can be retried', async () => {
+    const options = openOptions();
+    options.startupGUCs.cache_retry_test = crypto.randomUUID();
+    const transientFailure = new Error('transient runtime asset failure');
+    let attempts = 0;
+    const prepare = async (): Promise<PreparedWasixRuntime> => {
+      attempts += 1;
+      if (attempts === 1) throw transientFailure;
+      return preparedRuntime();
+    };
+
+    await expect(prepareRuntimeCached(options, prepare)).rejects.toBe(transientFailure);
+    await expect(prepareRuntimeCached(options, prepare)).resolves.toEqual(preparedRuntime());
+
+    expect(attempts).toBe(2);
   });
 
   it('rejects an oversized load-ordered side module without promising an invalid worker fallback', async () => {
@@ -236,7 +254,9 @@ describe('direct WASIX session lifecycle', () => {
     ).rejects.toThrow(/worker execution does not yet implement.*native load order/);
     expect(prepared).toBe(false);
 
-    options.extensionCarriers.postgis!.install.loadOrder = [];
+    const postgisCarrier = options.extensionCarriers.postgis;
+    if (postgisCarrier === undefined) throw new Error('postgis test carrier is missing');
+    postgisCarrier.install.loadOrder = [];
     await expect(
       DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
     ).rejects.toThrow(/use execution: "worker" for postgis/);
@@ -264,8 +284,8 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 }
 
 function fakeDependencies(
-  storage: BrowserStorageLease,
-  prepared: PreparedBrowserRuntime = preparedRuntime(),
+  storage: WasixStorageLease,
+  prepared: PreparedWasixRuntime = preparedRuntime(),
 ): DirectWasixDependencies {
   return {
     async prepareRuntime() {
@@ -281,9 +301,9 @@ function fakeDependencies(
 }
 
 function fakeLease(
-  close: BrowserStorageLease['close'],
-  state: BrowserStorageLease['state'] = 'existing',
-): BrowserStorageLease {
+  close: WasixStorageLease['close'],
+  state: WasixStorageLease['state'] = 'existing',
+): WasixStorageLease {
   return {
     state,
     mount: pgdataMount(),
@@ -352,7 +372,7 @@ class FakeDirectory {
   }
 }
 
-function preparedRuntime(setupSql: string[] = []): PreparedBrowserRuntime {
+function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
   return {
     layout: {
       module: Uint8Array.of(0),

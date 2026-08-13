@@ -144,7 +144,14 @@ for policy_source in \
   "$wasmer_wasix_dir/src/syscalls/wasix/proc_fork.rs"; do
   grep -Fq 'oliphaunt_single_backend_requested' "$policy_source"
 done
+grep -Fq 'OLIPHAUNT_WASIX_SINGLE_BACKEND=1' \
+  "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs"
 grep -Fq '.unwrap_or(true)' "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs"
+grep -Fq 'key != "OLIPHAUNT_WASIX_STDIO_PGWIRE"' "$wasmer_js_dir/src/options.rs"
+if grep -Fq 'key != "OLIPHAUNT_WASIX_SINGLE_BACKEND"' "$wasmer_js_dir/src/options.rs"; then
+  echo "wasix-ts host build: direct execution discarded the single-backend invariant" >&2
+  exit 1
+fi
 
 # The pinned source commit's npm lock predates its package metadata. Patch only
 # the missing root metadata and dependencies, then install the integrity-pinned

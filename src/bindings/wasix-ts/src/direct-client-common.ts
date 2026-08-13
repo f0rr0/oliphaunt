@@ -1,21 +1,20 @@
+import type { WasixDirectoryMount } from './archive.js';
+import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
+import { WasixStorageError } from './errors.js';
+import { type PreparedWasixRuntime, prepareWasixRuntime } from './extensions.js';
 import type {
   Directory,
   OliphauntDirectInstance,
   RunWasixOptions,
   WasmerInitOptions,
 } from './host/index.mjs';
-
-import type { BrowserDirectoryMount } from './archive.js';
-import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
-import { WasixStorageError } from './errors.js';
-import { prepareBrowserRuntime, type PreparedBrowserRuntime } from './extensions.js';
 import { assertSuccessfulStartupResponse, startupPacket } from './pgwire.js';
 import { PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import {
-  acquireBrowserStorage,
+  acquireWasixStorage,
   canonicalStorageContract,
-  type BrowserStorageLease,
+  type WasixStorageLease,
 } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
 import {
@@ -41,25 +40,25 @@ export type DirectWasixHost = Readonly<{
 
 /** @internal Dependency seam for deterministic direct-lifecycle qualification. */
 export type DirectWasixDependencies = Readonly<{
-  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime>;
+  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedWasixRuntime>;
   acquireStorage(
     storage: SerializedOpenOptions['storage'],
-    template: BrowserDirectoryMount,
-    compatibility: PreparedBrowserRuntime['storageCompatibility'],
-  ): Promise<BrowserStorageLease>;
+    template: WasixDirectoryMount,
+    compatibility: PreparedWasixRuntime['storageCompatibility'],
+  ): Promise<WasixStorageLease>;
   compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
 
 export type DirectWasixEnvironment = 'browser' | 'node';
 
-const preparedRuntimes = new Map<string, Promise<PreparedBrowserRuntime>>();
+const preparedRuntimes = new Map<string, Promise<PreparedWasixRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
 const initializedHosts = new WeakMap<object, Promise<void>>();
 const CHROMIUM_SYNC_WASM_LIMIT_BYTES = 8 * 1024 * 1024;
 
 const defaultDependencies: DirectWasixDependencies = {
   prepareRuntime: prepareRuntimeCached,
-  acquireStorage: acquireBrowserStorage,
+  acquireStorage: acquireWasixStorage,
   compileModule: compileWasixModule,
 };
 
@@ -76,7 +75,7 @@ export async function openWasixDirect(
 /** @internal */
 export class DirectWasixSession implements WasixDatabaseSession {
   readonly #instance: OliphauntDirectInstance;
-  readonly #storage: BrowserStorageLease;
+  readonly #storage: WasixStorageLease;
   readonly #baseDirectory: Directory;
   #closed = false;
   #failed = false;
@@ -84,7 +83,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
 
   private constructor(
     instance: OliphauntDirectInstance,
-    storage: BrowserStorageLease,
+    storage: WasixStorageLease,
     baseDirectory: Directory,
   ) {
     this.#instance = instance;
@@ -369,12 +368,22 @@ function storageCloseFailure(error: unknown): Error {
   });
 }
 
-function prepareRuntimeCached(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime> {
+/** @internal Cache verified runtime materialization without caching transient failures. */
+export function prepareRuntimeCached(
+  options: SerializedOpenOptions,
+  prepare: (options: SerializedOpenOptions) => Promise<PreparedWasixRuntime> = prepareWasixRuntime,
+): Promise<PreparedWasixRuntime> {
   const identity = preparedRuntimeIdentity(options);
   let prepared = preparedRuntimes.get(identity);
   if (prepared === undefined) {
-    prepared = prepareBrowserRuntime(options);
-    preparedRuntimes.set(identity, prepared);
+    const attempt = prepare(options);
+    prepared = attempt;
+    preparedRuntimes.set(identity, attempt);
+    void attempt.catch(() => {
+      if (preparedRuntimes.get(identity) === attempt) {
+        preparedRuntimes.delete(identity);
+      }
+    });
     while (preparedRuntimes.size > MAX_PREPARED_RUNTIMES) {
       const oldest = preparedRuntimes.keys().next().value as string | undefined;
       if (oldest === undefined) break;

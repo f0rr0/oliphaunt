@@ -1,20 +1,31 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { installedPackageClosure } from '../../../../tools/perf/wasix-node/installed-closure.mjs';
 import {
   browserMarkdownReport,
   browserPlanSummary,
   defaultBrowserPlanFile,
   loadBrowserPlan,
+  qualifyingGitProvenance,
   summarizeBrowserResult,
 } from '../../../../tools/perf/wasix-browser/plan.mjs';
+import {
+  directoryTreeSha256,
+  installedPackageClosure,
+} from '../../../../tools/perf/wasix-node/installed-closure.mjs';
+import {
+  assertRuntimeBuildConfiguration,
+  installedHostBuildProvenance,
+} from '../../../../tools/perf/wasix-node/plan.mjs';
+import { loadHostBuildContract } from '../host/build-provenance.mjs';
+import { runtimeBuildProvenance } from './packed-node-fixture.mjs';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
@@ -151,6 +162,10 @@ try {
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
     if (snapshot.state === 'passed') {
       if (benchmark) {
+        const finalGit = await gitProvenance();
+        if (finalGit.commit !== git.commit || finalGit.tree !== git.tree) {
+          throw new Error('Git commit or tree changed while the browser benchmark was running');
+        }
         const result = parseBenchmarkResult(snapshot.output);
         const summary = summarizeBrowserResult(planSource, result);
         const report = {
@@ -160,8 +175,9 @@ try {
           provenance: {
             git,
             machine: machineProvenance(),
-            candidate: await candidateProvenance(),
+            candidate: await candidateProvenance(planSource.plan),
             comparison: await comparisonProvenance(planSource.plan),
+            tools: await toolProvenance(planSource.file),
           },
           result,
           summary,
@@ -222,27 +238,33 @@ async function writeBenchmarkReport(outputDirectory, report) {
 }
 
 async function gitProvenance() {
-  const [{ stdout: commitOutput }, { stdout: statusOutput }] = await Promise.all([
-    execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot }),
-    execFileAsync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
-      cwd: repositoryRoot,
-    }),
-  ]);
-  const commit = commitOutput.trim();
-  const status = statusOutput.trimEnd();
-  if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error('benchmark requires an exact Git commit');
-  return {
-    commit,
-    dirty: status.length > 0,
-    statusSha256: sha256(status),
-  };
+  const [{ stdout: commitOutput }, { stdout: treeOutput }, { stdout: statusOutput }] =
+    await Promise.all([
+      execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot }),
+      execFileAsync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repositoryRoot }),
+      execFileAsync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+        cwd: repositoryRoot,
+        maxBuffer: 16 * 1024 * 1024,
+      }),
+    ]);
+  return qualifyingGitProvenance({
+    commit: commitOutput.trim(),
+    tree: treeOutput.trim(),
+    status: statusOutput.trimEnd(),
+  });
 }
 
-async function candidateProvenance() {
-  const packageBytes = await readFile(resolve(bindingRoot, 'package.json'));
+async function candidateProvenance(plan) {
+  const packageFile = resolve(bindingRoot, 'package.json');
+  const packageBytes = await readFile(packageFile);
   const packageJson = JSON.parse(packageBytes.toString('utf8'));
   if (packageJson.name !== '@oliphaunt/wasix-ts') {
     throw new Error(`browser benchmark loaded unexpected candidate ${packageJson.name}`);
+  }
+  if (packageJson.dependencies?.fzstd !== plan.engines.candidate.dependencies.fzstd) {
+    throw new Error(
+      `browser benchmark loaded unexpected fzstd specifier ${packageJson.dependencies?.fzstd}`,
+    );
   }
   const manifestBytes = await readFile(
     resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/manifest.json'),
@@ -252,6 +274,10 @@ async function candidateProvenance() {
   if (runtime === null || typeof runtime !== 'object') {
     throw new Error('canonical WASIX manifest has no runtime entry');
   }
+  const pgdata = manifest['pgdata-template'];
+  if (pgdata === null || typeof pgdata !== 'object') {
+    throw new Error('canonical WASIX manifest has no PGDATA template entry');
+  }
   const archiveBytes = await readFile(
     resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', runtime.archive),
   );
@@ -259,20 +285,87 @@ async function candidateProvenance() {
   if (archiveSha256 !== runtime.sha256) {
     throw new Error('canonical WASIX runtime archive does not match its manifest');
   }
+  const pgdataBytes = await readFile(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', pgdata.archive),
+  );
+  const pgdataSha256 = sha256(pgdataBytes);
+  if (pgdataSha256 !== pgdata.sha256) {
+    throw new Error('canonical WASIX PGDATA template does not match its manifest');
+  }
+  const hostBuild = await installedHostBuildProvenance(
+    packageFile,
+    (await loadHostBuildContract()).provenance,
+  );
+  const runtimeBuild = await runtimeBuildProvenance(manifest);
+  assertRuntimeBuildConfiguration(
+    runtimeBuild.configuration,
+    plan.engines.candidate.runtimeBuild,
+    'browser candidate runtime build',
+  );
+  const require = createRequire(packageFile);
+  const fzstdClosure = await installedPackageClosure(require.resolve('fzstd'), 'fzstd');
+  const libDirectory = resolve(bindingRoot, 'lib');
   return {
     package: packageJson.name,
     version: packageJson.version,
     packageJsonSha256: sha256(packageBytes),
+    build: {
+      treeHashSchema: 'oliphaunt-path-size-content-sha256-v1',
+      libTreeSha256: await directoryTreeSha256(libDirectory),
+      hostBuild,
+      hostArtifacts: await fileProvenance([
+        resolve(libDirectory, 'host/index.mjs'),
+        resolve(libDirectory, 'host/worker.mjs'),
+        resolve(libDirectory, 'host/wasmer_js_bg.wasm'),
+        resolve(libDirectory, 'host/provenance.json'),
+      ]),
+      runtimeBuild,
+    },
+    dependencies: { fzstd: fzstdClosure },
     runtime: {
       manifestSha256: sha256(manifestBytes),
       archive: runtime.archive,
       archiveSha256,
+      archiveSize: archiveBytes.length,
       moduleSha256: runtime['module-sha256'],
       postgresVersion: runtime['postgres-version'],
       sourceFingerprint: manifest['source-fingerprint'],
       sourceLane: manifest['source-lane'],
     },
+    pgdataTemplate: {
+      archive: pgdata.archive,
+      archiveSha256: pgdataSha256,
+      archiveSize: pgdataBytes.length,
+    },
   };
+}
+
+async function toolProvenance(plan) {
+  return fileProvenance([
+    plan,
+    resolve(repositoryRoot, 'tools/perf/wasix-browser/plan.mjs'),
+    resolve(repositoryRoot, 'tools/perf/wasix-node/installed-closure.mjs'),
+    resolve(repositoryRoot, 'tools/perf/wasix-node/plan.mjs'),
+    resolve(bindingRoot, 'tools/smoke-browser.mjs'),
+    resolve(bindingRoot, 'tools/packed-node-fixture.mjs'),
+    resolve(bindingRoot, 'examples/browser/benchmark.html'),
+    resolve(bindingRoot, 'examples/browser/benchmark.ts'),
+    resolve(bindingRoot, 'examples/browser/pglite-worker.ts'),
+    resolve(bindingRoot, 'examples/browser/vite.config.ts'),
+  ]);
+}
+
+async function fileProvenance(files) {
+  const records = [];
+  for (const file of [...new Set(files.map((entry) => resolve(entry)))].sort()) {
+    const bytes = await readFile(file);
+    records.push({
+      path: relative(repositoryRoot, file).split('\\').join('/'),
+      sha256: sha256(bytes),
+      size: bytes.length,
+    });
+  }
+  return records;
 }
 
 async function comparisonProvenance(plan) {

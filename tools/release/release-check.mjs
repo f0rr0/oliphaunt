@@ -94,6 +94,10 @@ function main(argv) {
   run(TOOL, [
     process.execPath,
     "test",
+    // Positional paths are filters, so Bun still discovers recursively from
+    // the workspace root. Generated build trees are never mutation tests and
+    // can contain hundreds of thousands of files after local qualification.
+    "--path-ignore-patterns=target/**",
     "--isolate",
     `--max-concurrency=${MUTATION_TEST_MAX_CONCURRENCY}`,
     `--timeout=${MUTATION_TEST_TIMEOUT_MS}`,

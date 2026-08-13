@@ -632,7 +632,8 @@ const capabilityCards = [
   {
     title: 'WASIX TypeScript',
     value: 'one host Worker',
-    description: 'The browser/Node binding has a fixed narrow API and optional browser IndexedDB snapshots.',
+    description:
+      'The browser/Node binding has a fixed narrow API with optional IndexedDB or Node directory snapshots.',
     icon: ListChecks,
   },
   {
