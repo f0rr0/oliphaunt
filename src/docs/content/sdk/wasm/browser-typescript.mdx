@@ -1,13 +1,13 @@
 ---
 title: WASIX TypeScript
-description: Run portable Oliphaunt with direct or worker-isolated browser execution, or a Node worker thread.
+description: Run portable Oliphaunt with direct or worker-isolated execution in browsers and Node.js.
 ---
 
 # WASIX TypeScript
 
-`@oliphaunt/wasix-ts` runs the portable WASIX runtime with worker-isolated browser
-execution by default or direct browser execution on request. Node.js uses a
-worker thread. The same import and database API work in every placement;
+`@oliphaunt/wasix-ts` runs the portable WASIX runtime with worker isolation by
+default or direct execution on request in browsers and Node.js. The same import
+and database API work in every placement;
 package exports select the host adapter. It is separate from native
 `@oliphaunt/ts`: neither package imports, falls back to, or chooses the other at
 runtime. Applications do not configure runtime archive, PGDATA template,
@@ -51,13 +51,14 @@ remain open in either browser placement, although direct calls share one event
 loop. Native extension side modules over Chromium's 8 MiB synchronous-module
 limit require worker placement only when the carrier has no other unsupported
 host requirement. The current PostGIS carrier also requires native load-order
-handling and is therefore unsupported in both browser placements. Node
-currently rejects direct placement.
+handling and is therefore unsupported in both browser placements.
 
 ## Node.js
 
-Node.js uses the same consumer code and defaults to memory. No browser headers,
-host option, or Node-specific subpath is required:
+Node.js uses the same consumer code, defaults to memory and worker placement,
+and accepts `execution: 'direct'` when blocking the calling thread is an
+appropriate latency tradeoff. No browser headers, host option, or Node-specific
+subpath is required:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -215,7 +216,7 @@ The binding intentionally exposes one small asynchronous surface on both hosts:
 
 | API | Purpose |
 | --- | --- |
-| `Oliphaunt.open(options?)` | Open one database with worker or direct browser placement |
+| `Oliphaunt.open(options?)` | Open one database with worker or direct placement |
 | `database.query(sql, parameters?)` | Run a typed row query |
 | `database.execute(sql)` | Execute SQL and return raw response bytes |
 | `database.execProtocolRaw(bytes)` | Drive advanced PostgreSQL protocol traffic |
@@ -237,8 +238,8 @@ exclusively leased despite support for separate instances.
 ## Current host boundary
 
 IndexedDB is the only persistent browser adapter. OPFS is intentionally absent,
-and omitted storage already covers temporary in-memory use. Node owns its
-`worker_threads` adapter and offers memory plus explicit snapshot directory
+and omitted storage already covers temporary in-memory use. Node offers direct
+or `worker_threads` placement with memory plus explicit snapshot directory
 storage. Neither host routes through native `@oliphaunt/ts`.
 
 Use [Rust WASIX](./index) when Rust owns the portable host. Use

@@ -53,7 +53,7 @@ export type NodeDirectoryStorageAcquirer = (
 
 let acquireNodeDirectory: NodeDirectoryStorageAcquirer | undefined;
 
-/** @internal Installed only by the Node worker so browser graphs stay Node-free. */
+/** @internal Installed only by a Node host realm so browser graphs stay Node-free. */
 export function installNodeDirectoryStorageProvider(acquire: NodeDirectoryStorageAcquirer): void {
   acquireNodeDirectory = acquire;
 }

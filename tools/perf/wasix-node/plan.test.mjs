@@ -60,6 +60,9 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     backendTiming: '0',
   });
   assert.equal(summary.engines.candidate.executionBoundary, 'node-worker-thread');
+  assert.equal(summary.engines.candidate.directExecutionBoundary, 'node-main-thread');
+  assert.equal(summary.engines.candidate.directIsolationImplementation, 'none-main-thread');
+  assert.equal(summary.engines.candidate.directTimingBoundary, 'caller-around-public-api');
   assert.equal(summary.engines.comparison.package, '@electric-sql/pglite');
   assert.equal(summary.engines.comparison.version, '0.5.4');
   assert.equal(summary.engines.comparison.homepage, 'https://pglite.dev');
@@ -68,7 +71,11 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     'https://github.com/electric-sql/pglite',
   );
   assert.equal(summary.gate.maxGeomeanRatio, 0.8);
+  assert.deepEqual(summary.gate.placements, ['worker', 'direct']);
   assert.equal(summary.engines.comparison.executionBoundary, 'node-worker-thread');
+  assert.equal(summary.engines.comparison.directExecutionBoundary, 'node-main-thread');
+  assert.equal(summary.engines.comparison.directIsolationImplementation, 'none-main-thread');
+  assert.equal(summary.engines.comparison.directTimingBoundary, 'caller-around-public-api');
   assert.equal(summary.engines.candidate.timingBoundary, summary.engines.comparison.timingBoundary);
   assert.equal(
     summary.engines.comparison.benchmarkMethodology,

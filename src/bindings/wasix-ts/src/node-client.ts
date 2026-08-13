@@ -12,12 +12,13 @@ import type { SerializedOpenOptions } from './rpc.js';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
 
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
-  if (resolveExecutionMode(config) === 'direct') {
-    throw new TypeError(
-      '@oliphaunt/wasix-ts direct execution is browser-only; use execution: "worker" in Node.js',
-    );
-  }
+  const execution = resolveExecutionMode(config);
   const openOptions = serializeOpenConfig(config);
+  if (execution === 'direct') {
+    requireNodeStorage(openOptions);
+    const { openNodeDirect } = await import('./node-direct.js');
+    return openNodeDirect(openOptions);
+  }
   return openWasixWithWorker(createNodeWorker, openOptions, requireNodeStorage);
 }
 
