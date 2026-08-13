@@ -8,7 +8,7 @@ description: Understand Rust WASIX storage, initialization, locking, startup, su
 `oliphaunt-wasix` is the Rust host for the portable WASIX runtime. Its storage,
 assets, extensions, and server APIs are separate from native SDKs. The
 [WASIX TypeScript binding](./browser-typescript) is another WASIX host with a
-smaller direct-or-worker browser API and a worker-backed Node.js API.
+smaller direct-or-worker API for browsers and Node.js.
 
 <WasmRuntimeMap />
 
@@ -111,8 +111,8 @@ to open.
 
 `oliphaunt-wasix` is the Rust host package. The separate
 [`@oliphaunt/wasix-ts` TypeScript binding](./browser-typescript) runs the portable
-guest with direct or worker-isolated browser execution, or a Node worker
-thread, and defaults to memory. IndexedDB is a selective browser adapter. Node
+guest with direct or worker-isolated execution in browsers and Node.js, and
+defaults to memory. IndexedDB is a selective browser adapter. Node
 selectively exposes
 snapshot-backed directory persistence through `@oliphaunt/wasix-ts/storage/node`.
 Shared runtime carriers do not imply API parity, and the package

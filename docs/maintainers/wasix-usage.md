@@ -121,12 +121,11 @@ spells persistent input as `--directory PATH`.
 ## TypeScript host
 
 `@oliphaunt/wasix-ts` runs the portable guest with worker-isolated execution by
-default. Browsers may instead select `execution: 'direct'` to construct
+default. Browsers and Node.js may instead select `execution: 'direct'` to construct
 PostgreSQL asynchronously in the caller realm, then drive it synchronously
 while keeping the same Promise-based database contract. Direct constructs no
-Web Worker and each
-database call blocks that JavaScript agent until PostgreSQL returns. Node uses
-a worker thread only. Omitted storage is fresh memory on both hosts. Browser
+Worker and each database call blocks that JavaScript agent until PostgreSQL
+returns. Omitted storage is fresh memory on both hosts. Browser
 IndexedDB is deliberately a selective adapter import:
 
 ```ts
@@ -143,7 +142,7 @@ await database.query('select pgtap_version()');
 await database.close();
 ```
 
-Use the same `open()` entry point for latency-sensitive browser placement:
+Use the same `open()` entry point for latency-sensitive placement:
 
 ```ts
 await using database = await Oliphaunt.open({ execution: 'direct' });
@@ -155,7 +154,7 @@ const answer = await database.transaction((transaction) =>
 `execution` selects package lifecycle placement, not another PostgreSQL engine
 or another database class. Each open owns an independent database process;
 in-memory databases and distinct persistent store names can remain open in
-either browser placement. Node.js currently uses the default worker placement.
+either placement on both hosts.
 
 The adapter snapshots the complete memory-backed PGDATA into one atomic
 IndexedDB record after explicit `checkpoint()` and clean `close()`. Web Locks
@@ -172,9 +171,10 @@ exclusive cross-process path lock for local filesystems on one host. Linux
 leases include host, boot, and PID namespace identities, so only locally
 proven-dead owners are reaped; foreign scope leases fail closed as `busy`.
 Network and cross-host shared filesystems are unsupported, and persistent
-directory opens are restricted to Node's main thread so child-worker cleanup
-remains reliable. Package exports select the worker-thread adapter
-automatically; neither host routes through the TypeScript SDK's native runtime.
+directory opens are restricted to Node's main thread so process-owned leases
+remain recoverable and child-worker cleanup remains reliable. Package exports
+select the Node adapter automatically; neither host routes through the
+TypeScript SDK's native runtime.
 
 Extension packages use the WASIX-only suffix, while native/default package
 identifiers remain unsuffixed. Browser and Node WASIX hosts consume the

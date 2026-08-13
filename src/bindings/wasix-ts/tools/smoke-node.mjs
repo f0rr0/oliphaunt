@@ -30,12 +30,6 @@ const resolved = import.meta.resolve(candidate);
 if (!resolved.endsWith('/lib/index.node.js')) {
   throw new Error('Node did not select the worker_threads entrypoint: ' + resolved);
 }
-try {
-  await Oliphaunt.open({ execution: 'direct' });
-  throw new Error('Node unexpectedly accepted direct WASIX execution');
-} catch (error) {
-  if (!(error instanceof TypeError) || !error.message.includes('browser-only')) throw error;
-}
 const callerSource = [
   "import { parentPort } from 'node:worker_threads';",
   'const { default: Oliphaunt } = await import(' + JSON.stringify(resolved) + ');',
@@ -81,82 +75,109 @@ try {
 } catch (error) {
   if (error?.code !== 'ENOENT') throw error;
 }
-const db = await Oliphaunt.open({ extensions: [pgtap] });
-const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
-await db.query('CREATE TABLE smoke_transaction (value integer NOT NULL)');
-const transactionValue = await db.transaction(async (tx) => {
-  await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [7]);
-  return (await tx.query('SELECT value::text AS value FROM smoke_transaction')).getText(0, 'value');
-});
-const rollbackSentinel = new Error('packed transaction rollback sentinel');
-try {
-  await db.transaction(async (tx) => {
-    await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [9]);
-    throw rollbackSentinel;
+
+async function verifyMemory(execution) {
+  const db = await Oliphaunt.open({ execution, extensions: [pgtap] });
+  const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
+  await db.query('CREATE TABLE smoke_transaction (value integer NOT NULL)');
+  const transactionValue = await db.transaction(async (tx) => {
+    await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [7]);
+    return (await tx.query('SELECT value::text AS value FROM smoke_transaction')).getText(0, 'value');
   });
-  throw new Error('failed packed transaction unexpectedly committed');
-} catch (error) {
-  if (error !== rollbackSentinel) throw error;
+  const rollbackSentinel = new Error('packed transaction rollback sentinel');
+  try {
+    await db.transaction(async (tx) => {
+      await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [9]);
+      throw rollbackSentinel;
+    });
+    throw new Error('failed packed transaction unexpectedly committed');
+  } catch (error) {
+    if (error !== rollbackSentinel) throw error;
+  }
+  const transactionRows = (await db.query(
+    'SELECT count(*)::int AS count FROM smoke_transaction',
+  )).getText(0, 'count');
+  let sqlstate;
+  try {
+    await db.query('SELEC 1');
+  } catch (error) {
+    if (!(error instanceof PostgresError)) throw error;
+    sqlstate = error.sqlstate;
+  }
+  const answer = (await db.query('SELECT 42::int AS answer')).getText(0, 'answer');
+  await db[Symbol.asyncDispose]();
+  const result = { version, transactionValue, transactionRows, sqlstate, answer };
+  if (
+    !version ||
+    transactionValue !== '7' ||
+    transactionRows !== '1' ||
+    sqlstate !== '42601' ||
+    answer !== '42'
+  ) {
+    throw new Error(execution + ': ' + JSON.stringify(result));
+  }
+  return result;
 }
-const transactionRows = (await db.query(
-  'SELECT count(*)::int AS count FROM smoke_transaction',
-)).getText(0, 'count');
-let sqlstate;
-try {
-  await db.query('SELEC 1');
-} catch (error) {
-  if (!(error instanceof PostgresError)) throw error;
-  sqlstate = error.sqlstate;
-}
-const answer = (await db.query('SELECT 42::int AS answer')).getText(0, 'answer');
-await db[Symbol.asyncDispose]();
-if (
-  !version ||
-  transactionValue !== '7' ||
-  transactionRows !== '1' ||
-  sqlstate !== '42601' ||
-  answer !== '42'
-) {
-  throw new Error(JSON.stringify({ version, transactionValue, transactionRows, sqlstate, answer }));
+
+const direct = await verifyMemory('direct');
+const worker = await verifyMemory('worker');
+if (direct.version !== worker.version) {
+  throw new Error('placement extension versions differ: ' + JSON.stringify({ direct, worker }));
 }
 
 const storage = directory(new URL('./database space ü', import.meta.url));
-let persistent = await Oliphaunt.open({ storage, extensions: [pgtap] });
+let persistent = await Oliphaunt.open({ execution: 'direct', storage, extensions: [pgtap] });
 await persistent.query('CREATE TABLE smoke_persistence (value integer NOT NULL)');
 await persistent.query('INSERT INTO smoke_persistence VALUES (1)');
 await persistent.checkpoint();
 await persistent.query('INSERT INTO smoke_persistence VALUES (2)');
 let busy;
 try {
-  await Oliphaunt.open({ storage, extensions: [pgtap] });
+  await Oliphaunt.open({ execution: 'worker', storage, extensions: [pgtap] });
 } catch (error) {
   if (!(error instanceof WasixStorageError)) throw error;
   busy = error.code;
 }
 await persistent.close();
 
-persistent = await Oliphaunt.open({ storage, extensions: [pgtap] });
-const persistedRows = (await persistent.query(
+persistent = await Oliphaunt.open({ execution: 'worker', storage, extensions: [pgtap] });
+const workerPersistedRows = (await persistent.query(
   'SELECT count(*)::int AS count FROM smoke_persistence',
 )).getText(0, 'count');
 const persistentExtension = (await persistent.query(
   'SELECT pgtap_version()::text AS version',
 )).getText(0, 'version');
+await persistent.query('INSERT INTO smoke_persistence VALUES (3)');
 await persistent.close();
-if (busy !== 'busy' || persistedRows !== '2' || persistentExtension !== version) {
-  throw new Error(JSON.stringify({ busy, persistedRows, persistentExtension, version }));
+
+persistent = await Oliphaunt.open({ execution: 'direct', storage, extensions: [pgtap] });
+const directPersistedRows = (await persistent.query(
+  'SELECT count(*)::int AS count FROM smoke_persistence',
+)).getText(0, 'count');
+await persistent.close();
+if (
+  busy !== 'busy' ||
+  workerPersistedRows !== '2' ||
+  directPersistedRows !== '3' ||
+  persistentExtension !== direct.version
+) {
+  throw new Error(JSON.stringify({
+    busy,
+    workerPersistedRows,
+    directPersistedRows,
+    persistentExtension,
+    version: direct.version,
+  }));
 }
 console.log(JSON.stringify({
-  host: 'node-worker_threads',
+  host: 'node-direct-and-worker_threads',
+  placements: { direct, worker },
   extension: 'pgtap',
-  version,
-  transactionValue,
-  transactionRows,
-  sqlstate,
-  answer,
+  version: direct.version,
   storage: 'node-directory-snapshot',
   busy,
-  persistedRows,
+  workerPersistedRows,
+  directPersistedRows,
 }));
 `,
   );

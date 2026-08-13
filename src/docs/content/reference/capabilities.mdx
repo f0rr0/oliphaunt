@@ -7,7 +7,7 @@ description: Compare native SDK modes, Rust WASIX, and WASIX TypeScript without 
 
 Choose a product before choosing a feature. Native SDKs embed or supervise the
 native runtime, Rust WASIX hosts the portable runtime from Rust, and WASIX
-TypeScript hosts it in a browser or Node worker. Sharing PostgreSQL and portable
+TypeScript hosts it in a browser or Node realm. Sharing PostgreSQL and portable
 WASIX carriers does not make those public APIs interchangeable.
 
 Native SDKs expose capability reports for features that can vary by engine or
@@ -28,7 +28,7 @@ method.
 | React Native | `@oliphaunt/react-native` | Expo and New Architecture apps | Swift/Kotlin platform SDKs |
 | TypeScript | `@oliphaunt/ts` | Node.js, Bun, and Deno | Native direct, broker, or server engine |
 | Rust WASIX | `oliphaunt-wasix` | Rust applications hosting WASIX | Rust-owned WASIX direct or local server API |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser or Node apps choosing portable WASIX | Browser caller realm or module Worker; Node worker thread |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser or Node apps choosing portable WASIX | Browser or Node caller realm or Worker |
 
 ## Runtime Modes
 
@@ -40,12 +40,12 @@ method.
 | Rust WASIX direct | Rust-owned portable embedding | One embedded WASIX backend | `oliphaunt-wasix` |
 | Rust WASIX server | Local client-library compatibility | One embedded WASIX backend behind a local endpoint | `oliphaunt-wasix` |
 | Browser WASIX | Browser-local SQL | One serialized database in the caller realm or a module Worker | `@oliphaunt/wasix-ts` |
-| Node WASIX | Portable SQL without a native runtime | One serialized database in one worker thread | `@oliphaunt/wasix-ts` |
+| Node WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
 
 Mobile direct mode has one resident backend per app process and one physical
 session. WASIX TypeScript similarly owns one serialized backend per opened
-database, placed in the browser caller realm, a browser module Worker, or a Node
-worker thread. It is not a native direct mode and does not use the native SDK
+database, placed in the browser or Node caller realm or a Worker. It is not a
+native direct mode and does not use the native SDK
 contract.
 
 ## Feature Support
@@ -70,8 +70,8 @@ contract.
 Choose a native SDK when the application ships native `liboliphaunt` or its
 native helper processes. Choose Rust WASIX when Rust owns the portable host and
 needs the crate's direct, server, archive, or dump APIs. Choose WASIX TypeScript
-for the browser or Node worker API, SQLSTATE recovery, and selective extension
-imports; the browser can additionally opt into IndexedDB generations.
+for the browser or Node direct/Worker API, SQLSTATE recovery, and selective
+extension imports; the browser can additionally opt into IndexedDB generations.
 Node can opt into directory generations with the same checkpoint and clean-close
 snapshot contract.
 

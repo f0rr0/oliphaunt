@@ -2,7 +2,7 @@ export type PackageAssetReader = (source: URL) => Promise<Uint8Array>;
 
 let packageAssetReader: PackageAssetReader | undefined;
 
-/** @internal Installed only by the Node worker for package-relative file URLs. */
+/** @internal Installed by the active Node host realm for package-relative file URLs. */
 export function installPackageAssetReader(reader: PackageAssetReader): void {
   if (packageAssetReader !== undefined) {
     throw new Error('Oliphaunt WASIX package asset reader is already installed');

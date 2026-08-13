@@ -67,10 +67,9 @@ SDK ownership is product ownership, not just source layout:
 - WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
   liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
   resolve through Cargo artifact crates.
-- WASIX TypeScript owns browser direct or module-Worker placement and Node
-  worker-thread hosting for the portable WASIX runtime. It is separate from
-  desktop `@oliphaunt/ts` and has no native runtime, Node direct, or broker
-  dependency.
+- WASIX TypeScript owns direct or Worker placement in browsers and Node.js for
+  the portable WASIX runtime. It is separate from desktop `@oliphaunt/ts` and
+  has no native runtime, native Node-direct carrier, or broker dependency.
 
 The native SDKs are peers over the `liboliphaunt` C ABI and native
 runtime-resource model. The WASIX bindings are peers over
@@ -219,7 +218,7 @@ duplicate, or non-tool entries.
 ### WASIX TypeScript Deltas
 
 Public `@oliphaunt/wasix-ts` runs PostgreSQL with direct or worker-isolated
-execution in a cross-origin-isolated browser, or in a Node worker thread. Every
+execution in a cross-origin-isolated browser or Node.js. Every
 placement consumes portable WASIX assets only, shares one serialized
 PostgreSQL/pgwire database contract plus lifecycle configuration, and never
 reuses or extends native `@oliphaunt/ts`.
@@ -251,7 +250,7 @@ divergence record.
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
 | WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
-| WASIX TypeScript | cross-origin-isolated browsers and Node.js | `liboliphaunt-wasix` portable assets | not native; browser direct or worker-isolated execution, Node worker thread | exact error-recovery, selected-extension, and memory paths are proven on both hosts; browser IndexedDB and Node directory checkpoint/reopen use explicit snapshot adapters; no OPFS, generic native-extension contract, or tool/server/backup surface; explicit runtime replacement is advanced-only |
+| WASIX TypeScript | cross-origin-isolated browsers and Node.js | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on both hosts | exact error-recovery, selected-extension, and memory paths are proven in both placements; browser IndexedDB and Node directory checkpoint/reopen use explicit snapshot adapters; no OPFS, generic native-extension contract, or tool/server/backup surface; explicit runtime replacement is advanced-only |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct | Host-native compilations are development/parity evidence and are not published; JVM runtime is explicitly unavailable; Android common defaults require the `OliphauntAndroid` Context facade; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |

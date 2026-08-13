@@ -21,7 +21,7 @@ keeping public APIs native to each language and host.
 | React Native | `@oliphaunt/react-native` | Swift/Kotlin native runtime through TurboModule/JSI | Platform SDK default |
 | TypeScript | `@oliphaunt/ts` | Native runtime or native helper process | Temporary directory |
 | Rust WASIX | `oliphaunt-wasix` | Rust-owned portable WASIX host | Memory filesystem |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser direct or module-Worker placement, or Node worker thread | Memory filesystem |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser or Node direct/Worker placement | Memory filesystem |
 
 The existing native package and extension identifiers remain unchanged. WASIX
 is the explicit special-case identifier: for example,
@@ -42,7 +42,7 @@ helpers; it does not resolve either a native or WASIX runtime.
 Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX
 runtime assets. Rust owns direct/server hosting, physical archives, optional
 logical dump tooling, and protocol streaming. The TypeScript binding owns
-direct and worker-isolated browser adapters, a Node worker adapter, pgwire error
+direct and worker-isolated browser and Node adapters, pgwire error
 recovery, callback-scoped transactions, optional host-specific snapshots
 (IndexedDB in browsers, directories on Node), and a narrow asynchronous API.
 Carrier reuse is not API parity.

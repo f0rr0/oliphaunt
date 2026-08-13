@@ -98,6 +98,9 @@ export function validatePlan(plan) {
   exactKeys(
     candidate,
     [
+      'directExecutionBoundary',
+      'directIsolationImplementation',
+      'directTimingBoundary',
       'executionBoundary',
       'hostBuild',
       'isolationImplementation',
@@ -128,12 +131,29 @@ export function validatePlan(plan) {
     'plan.engines.candidate.isolationImplementation',
   );
   equal(candidate.timingBoundary, GATED_TIMING_BOUNDARY, 'plan.engines.candidate.timingBoundary');
+  equal(
+    candidate.directExecutionBoundary,
+    'node-main-thread',
+    'plan.engines.candidate.directExecutionBoundary',
+  );
+  equal(
+    candidate.directIsolationImplementation,
+    'none-main-thread',
+    'plan.engines.candidate.directIsolationImplementation',
+  );
+  equal(
+    candidate.directTimingBoundary,
+    'caller-around-public-api',
+    'plan.engines.candidate.directTimingBoundary',
+  );
   const comparison = object(engines.comparison, 'plan.engines.comparison');
   exactKeys(
     comparison,
     [
+      'directExecutionBoundary',
+      'directIsolationImplementation',
+      'directTimingBoundary',
       'executionBoundary',
-      'diagnosticExecutionBoundary',
       'gatedResponsePayload',
       'benchmarkMethodology',
       'benchmarkMethodologySource',
@@ -185,9 +205,19 @@ export function validatePlan(plan) {
     'plan.engines.comparison.officialWorkerModule',
   );
   equal(
-    comparison.diagnosticExecutionBoundary,
+    comparison.directExecutionBoundary,
     'node-main-thread',
-    'plan.engines.comparison.diagnosticExecutionBoundary',
+    'plan.engines.comparison.directExecutionBoundary',
+  );
+  equal(
+    comparison.directIsolationImplementation,
+    'none-main-thread',
+    'plan.engines.comparison.directIsolationImplementation',
+  );
+  equal(
+    comparison.directTimingBoundary,
+    'caller-around-public-api',
+    'plan.engines.comparison.directTimingBoundary',
   );
   equal(
     comparison.installedTreeHashSchema,
@@ -247,7 +277,7 @@ export function validatePlan(plan) {
   }
   equal(
     measurement.processOrder,
-    'alternating-gated-pairs-then-diagnostic-fresh-processes',
+    'alternating-worker-pairs-then-alternating-direct-pairs-fresh-processes',
     'plan.measurement.processOrder',
   );
   equal(measurement.pairing, 'same-repeat-candidate-over-comparison', 'plan.measurement.pairing');
@@ -260,7 +290,11 @@ export function validatePlan(plan) {
   );
 
   const gate = object(plan.gate, 'plan.gate');
-  exactKeys(gate, ['includes', 'maxGeomeanRatio', 'metric', 'requiresCorrectness'], 'plan.gate');
+  exactKeys(
+    gate,
+    ['includes', 'maxGeomeanRatio', 'metric', 'placements', 'requiresCorrectness'],
+    'plan.gate',
+  );
   if (
     typeof gate.maxGeomeanRatio !== 'number' ||
     gate.maxGeomeanRatio <= 0 ||
@@ -269,6 +303,7 @@ export function validatePlan(plan) {
     fail('plan.gate.maxGeomeanRatio must be positive and no greater than 0.80');
   }
   equal(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
+  exactStringList(gate.placements, ['worker', 'direct'], 'plan.gate.placements');
   equal(
     gate.metric,
     'geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better',

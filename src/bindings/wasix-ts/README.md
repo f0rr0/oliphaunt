@@ -1,11 +1,11 @@
 # `@oliphaunt/wasix-ts`
 
 TypeScript binding that runs the portable Oliphaunt WASIX runtime with direct
-or worker-isolated browser execution, and a Node worker thread. This is a
+or worker-isolated execution in browsers and Node.js. This is a
 separate WASIX-facing product surface; it does not import `@oliphaunt/ts`, the
-native runtime, Node direct, or the broker.
+native runtime or its Node-direct carrier, or the broker.
 
-The public package owns the patched Wasmer host and its browser/Node worker
+The public package owns the patched Wasmer host and its browser/Node placement
 adapters. Its default runtime edge follows the generated
 `@oliphaunt/liboliphaunt-wasix` carrier contract, so ordinary consumers do not
 configure raw core artifacts.
@@ -130,18 +130,16 @@ const answer = await database.transaction(async (transaction) =>
 ```
 
 `execution` describes host placement, not a second PostgreSQL engine. Both
-values return the same `OliphauntDatabase`. Direct mode asynchronously
+values return the same `OliphauntDatabase` in browsers and Node.js. Direct mode asynchronously
 instantiates the WASIX guest in the caller realm, then drives its exports
 synchronously and constructs no `Worker`; each database operation therefore
-blocks that JavaScript agent until PostgreSQL returns. It still requires
+blocks that JavaScript agent until PostgreSQL returns. Browser direct still requires
 cross-origin isolation. The direct path
 caches verified immutable runtime preparation and compiled guest modules in the
 calling realm, while each open materializes fresh writable database mounts.
 Both caches retain at most one exact runtime identity; this intentionally trades
-caller-realm heap for fast reopen latency. Worker execution remains the
-responsive, reclaim-on-close choice.
-Node currently supports only the default `worker` placement so the package
-never replaces application globals to emulate browser workers.
+caller-realm heap for fast reopen latency. Worker execution remains the default,
+responsive, reclaim-on-close choice on both hosts.
 Each direct open owns an independent guest instance, writable mounts, and
 storage lease. Multiple in-memory databases or distinct persistent stores may
 therefore remain open in one realm; calls remain serialized per database and
@@ -157,9 +155,10 @@ is explicitly unsupported in both browser placements today. Oversized carriers
 without that additional requirement can use worker execution; smaller
 qualified extension carriers remain available in direct mode.
 
-The same code runs on Node.js. Package exports select one package-owned
-`worker_threads` worker automatically, and that worker uses the synchronous
-guest driver without a redundant inner worker or stream pump. Consumers do not
+The same code runs on Node.js. Worker placement selects one package-owned
+`worker_threads` worker, and that worker uses the synchronous guest driver
+without a redundant inner worker or stream pump. Explicit direct placement
+runs that driver in the caller's Node realm without RPC. Consumers do not
 import a Node-specific subpath:
 
 ```sh
@@ -173,6 +172,13 @@ import pgtap from '@oliphaunt/extension-pgtap-wasix';
 const database = await Oliphaunt.open({ extensions: [pgtap] });
 console.log((await database.query('select pgtap_version() as version')).getText(0, 'version'));
 await database.close();
+```
+
+Choose direct placement when its lower call overhead matters more than keeping
+the calling Node thread responsive:
+
+```ts
+await using database = await Oliphaunt.open({ execution: 'direct' });
 ```
 
 Omitting `storage` selects a fresh Wasmer memory filesystem. Each `open()` is
@@ -246,8 +252,9 @@ hosts and live or foreign same-boot namespaces fail closed as `busy`. On
 non-Linux hosts, local PID liveness provides conservative crash recovery (PID
 reuse can only delay it). Network and cross-host shared filesystems are
 unsupported: directory-entry caching cannot provide the required ownership
-guarantee. Persistent directory storage must be opened from Node's main thread so
-the caller can clean up its child database worker after an unexpected exit.
+guarantee. Persistent directory storage must be opened from Node's main thread
+so its process-owned lease remains recoverable and worker placement can clean
+up its child database worker after an unexpected exit.
 Runtime, PostgreSQL, template, and extension identities must match on reopen;
 symbolic links, partial generations, and unsafe paths fail closed.
 
@@ -431,8 +438,8 @@ runtime artifact URL bookkeeping.
 ## Current scope and divergences
 
 - Portable WASM only; browser and Node hosts never consume host AOT artifacts.
-- One serialized WASIX database session per open. Browser placement is selected
-  by `execution: 'worker' | 'direct'`; Node currently supports worker only. Its
+- One serialized WASIX database session per open. Browser and Node placement is
+  selected by `execution: 'worker' | 'direct'`; worker remains the default. Its
   active filesystem is always Wasmer memory; storage adapters control how PGDATA
   is hydrated and checkpointed around that process.
 - A prepopulated PGDATA template is required; browser `initdb` is not run.
