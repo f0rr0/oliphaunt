@@ -1,7 +1,7 @@
 {
   "schema": "oliphaunt-wasix-node-benchmark-plan-v1",
   "id": "node-pglite-memory-v1",
-  "description": "Equivalent-isolation Node worker comparison between the packed Oliphaunt WASIX TypeScript SDK and exact PGlite using memory storage.",
+  "description": "Matched Node worker/worker and direct/direct comparisons between the packed Oliphaunt WASIX TypeScript SDK and exact PGlite using memory storage.",
   "engines": {
     "candidate": {
       "package": "@oliphaunt/wasix-ts",
@@ -37,7 +37,10 @@
       },
       "executionBoundary": "node-worker-thread",
       "isolationImplementation": "package-owned-worker-threads-rpc",
-      "timingBoundary": "host-end-to-end-around-one-worker-rpc"
+      "timingBoundary": "host-end-to-end-around-one-worker-rpc",
+      "directExecutionBoundary": "node-main-thread",
+      "directIsolationImplementation": "none-main-thread",
+      "directTimingBoundary": "caller-around-public-api"
     },
     "comparison": {
       "package": "@electric-sql/pglite",
@@ -50,7 +53,9 @@
       "executionBoundary": "node-worker-thread",
       "isolationImplementation": "harness-owned-worker-threads-rpc",
       "officialWorkerModule": "browser-worker-only",
-      "diagnosticExecutionBoundary": "node-main-thread",
+      "directExecutionBoundary": "node-main-thread",
+      "directIsolationImplementation": "none-main-thread",
+      "directTimingBoundary": "caller-around-public-api",
       "installedTreeHashSchema": "oliphaunt-path-size-content-sha256-v1",
       "installedTreeSha256": "b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84",
       "timingBoundary": "host-end-to-end-around-one-worker-rpc",
@@ -64,7 +69,7 @@
     "warmupIterations": 10,
     "sampleIterations": 100,
     "trimFraction": 0.1,
-    "processOrder": "alternating-gated-pairs-then-diagnostic-fresh-processes",
+    "processOrder": "alternating-worker-pairs-then-alternating-direct-pairs-fresh-processes",
     "pairing": "same-repeat-candidate-over-comparison",
     "percentileMethod": "nearest-rank",
     "startupMetric": "cold-to-first-result",
@@ -76,6 +81,10 @@
   "gate": {
     "maxGeomeanRatio": 0.8,
     "requiresCorrectness": true,
+    "placements": [
+      "worker",
+      "direct"
+    ],
     "metric": "geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better",
     "includes": [
       "cold-to-first-result",

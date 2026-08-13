@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable TypeScript WASIX binding for browser and Node workers."
+  description: "Portable TypeScript WASIX binding for browser and Node direct/Worker placement."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"

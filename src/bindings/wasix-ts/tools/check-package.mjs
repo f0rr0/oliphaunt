@@ -51,6 +51,7 @@ try {
     'lib/index.d.ts',
     'lib/index.node.js',
     'lib/node-client.js',
+    'lib/node-direct.js',
     'lib/node-directory-lock.js',
     'lib/node-lock-identity.js',
     'lib/node-worker.js',

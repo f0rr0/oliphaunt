@@ -143,12 +143,13 @@ try {
 }
 
 async function openEngine(engine, plan, candidateRoot) {
-  if (engine === 'candidate') return openCandidate(plan, candidateRoot);
+  if (engine === 'candidate') return openCandidate(plan, candidateRoot, false);
+  if (engine === 'candidate-main-thread') return openCandidate(plan, candidateRoot, true);
   if (engine === 'comparison') return openComparisonWorker(plan);
   return openComparisonMainThread(plan);
 }
 
-async function openCandidate(plan, candidateRoot) {
+async function openCandidate(plan, candidateRoot, direct) {
   if (candidateRoot === undefined)
     throw new Error('--candidate-root is required for candidate runs');
   const require = createRequire(resolve(candidateRoot, 'package.json'));
@@ -165,16 +166,25 @@ async function openCandidate(plan, candidateRoot) {
   if (typeof module.memory !== 'function') {
     throw new Error(`${plan.engines.candidate.package} has no explicit memory storage selector`);
   }
-  const instance = await client.open({ storage: module.memory() });
+  const instance = await client.open({
+    execution: direct ? 'direct' : 'worker',
+    storage: module.memory(),
+  });
   return {
     identity: {
-      kind: 'candidate',
+      kind: direct ? 'candidate-main-thread' : 'candidate',
       package: manifest.name,
       version: manifest.version,
       resolvedEntry: relative(candidateRoot, entry).split('\\').join('/'),
-      executionBoundary: plan.engines.candidate.executionBoundary,
-      isolationImplementation: plan.engines.candidate.isolationImplementation,
-      timingBoundary: plan.engines.candidate.timingBoundary,
+      executionBoundary: direct
+        ? plan.engines.candidate.directExecutionBoundary
+        : plan.engines.candidate.executionBoundary,
+      isolationImplementation: direct
+        ? plan.engines.candidate.directIsolationImplementation
+        : plan.engines.candidate.isolationImplementation,
+      timingBoundary: direct
+        ? plan.engines.candidate.directTimingBoundary
+        : plan.engines.candidate.timingBoundary,
       storage: plan.engines.candidate.storage,
     },
     query: async (sql, parameters) => canonicalCandidate(await instance.query(sql, parameters)),
@@ -246,9 +256,9 @@ async function openComparisonMainThread(plan) {
       package: resolved.manifest.name,
       version: resolved.manifest.version,
       resolvedEntry: resolved.entry,
-      executionBoundary: plan.engines.comparison.diagnosticExecutionBoundary,
-      isolationImplementation: 'none-main-thread-diagnostic',
-      timingBoundary: 'caller-around-public-api',
+      executionBoundary: plan.engines.comparison.directExecutionBoundary,
+      isolationImplementation: plan.engines.comparison.directIsolationImplementation,
+      timingBoundary: plan.engines.comparison.directTimingBoundary,
       storage: plan.engines.comparison.storage,
     },
     query: async (sql, parameters) => canonicalComparison(await instance.query(sql, parameters)),
@@ -428,8 +438,14 @@ function parseArguments(argv) {
     if (values[flag] !== undefined) throw new Error(`${flag} may only be provided once`);
     values[flag] = value;
   }
-  if (!['candidate', 'comparison', 'comparison-main-thread'].includes(values['--engine'])) {
-    throw new Error('--engine must be candidate, comparison, or comparison-main-thread');
+  if (
+    !['candidate', 'candidate-main-thread', 'comparison', 'comparison-main-thread'].includes(
+      values['--engine'],
+    )
+  ) {
+    throw new Error(
+      '--engine must be candidate, candidate-main-thread, comparison, or comparison-main-thread',
+    );
   }
   const repeat = Number(values['--repeat']);
   if (!Number.isSafeInteger(repeat) || repeat < 0) {

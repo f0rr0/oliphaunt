@@ -46,10 +46,10 @@ but is explicitly ineligible for performance qualification.
 `node-pglite-memory-v1.json` is the deterministic Node comparison plan for the
 public `@oliphaunt/wasix-ts` package and the exact PGlite control named in the
 plan. The executable harness lives in `tools/perf/wasix-node`. It runs both
-engines with memory storage and Node worker isolation, alternates which gated
-engine runs first across ten fresh-process pairs, and runs all ungated
-diagnostics only after those pairs. It gates the median candidate/control ratio
-within each pair.
+engines with memory storage in matched worker/worker and direct/direct
+placements. It alternates which engine runs first across ten fresh-process
+pairs per placement and gates each placement independently, so a strong worker
+result cannot hide a weak direct result or vice versa.
 
 Startup is one cold-to-first-result metric; public-open and
 immediate-first-query components remain visible without receiving separate
@@ -58,13 +58,13 @@ worker. Its official worker library requires browser Worker and Web Locks APIs,
 so this Node harness owns a deliberately small `worker_threads` RPC adapter and
 times both public APIs end-to-end from the Node host, including exactly one
 worker RPC for each engine. PGlite's official benchmark methodology is retained
-as provenance only: gated calls return public results without collecting or
-serializing comparator-only internal timing. Direct PGlite main-thread timing
-remains visible as an explicitly ungated diagnostic after the complete gated
-phase.
+as provenance only: calls return public results without collecting or
+serializing comparator-only internal timing. Direct placement times both
+packages around their caller-thread public APIs.
 
 Bulk timing sends identical PostgreSQL Simple Query bytes through both public
-`execProtocolRaw` APIs and transfers both raw responses across the worker edge.
+`execProtocolRaw` APIs and, in worker placement, transfers both raw responses
+across the worker edge.
 The untimed verifier decodes the timed response's command tags and result rows,
 then validates the resulting database state. Gate eligibility also requires
 all recorded PostgreSQL settings to match across every candidate/control run.

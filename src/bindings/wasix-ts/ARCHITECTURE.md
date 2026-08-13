@@ -129,17 +129,16 @@ synchronous WASIX process API.
 ## Node lifecycle
 
 Node selects `lib/index.node.js` through the package's `node` export condition.
-It creates one `worker_threads.Worker`; that worker reads package-relative
-runtime and extension `file:` URLs, then calls the shared dispatcher with the
-same synchronous guest driver used by browser direct execution. Keeping that
-driver inside the package worker preserves caller isolation without a second
-worker hop or stream pump. RPC framing, descriptor validation, archive
-verification, extension installation, query serialization, close semantics,
-and the memory default are not forked by host.
+Worker placement creates one `worker_threads.Worker`; direct placement loads
+the same synchronous guest driver lazily in the caller realm. The worker reads
+package-relative runtime and extension `file:` URLs and calls the shared
+dispatcher around that driver, preserving caller isolation without a second
+worker hop or stream pump. Direct placement removes the remaining RPC boundary
+and explicitly accepts blocking the calling Node thread. Descriptor validation,
+archive verification, extension installation, query serialization, close
+semantics, and the memory default are not forked by placement.
 
 IndexedDB remains browser-only and is rejected before a Node worker starts.
-Direct Node execution is rejected so the guest remains isolated in the
-package-owned worker rather than blocking the application's main thread.
 Node directory persistence is a selectively imported, snapshot-backed provider
 with exclusive path ownership. Direct host filesystem mounts, server mode,
 OPFS, and any fallback to native `@oliphaunt/ts` are intentionally absent.
@@ -281,7 +280,8 @@ crates; the adjacent patches are the reviewable compatibility delta. The build
 lands first in `target/oliphaunt-wasix-ts/host`. Public package staging copies
 the exact JS module, worker module, WebAssembly module, license, and provenance
 into `lib/host`; direct browser execution imports the host in the caller realm,
-while browser and Node workers import the same package-relative module.
+while browser and Node direct/worker placements import the same
+package-relative module.
 
 This is not a general backport of WASIX 0.702 to Wasmer 0.601. The ten patches:
 
@@ -440,9 +440,8 @@ bundle.
 `@oliphaunt/wasix-ts` is a separately versioned public SDK product. It has its own
 release metadata and changelog, declares an exact dependency on the published
 `@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
-under `lib/host`. Conditional package exports choose the browser adapter, which
-supports direct or module-Worker placement, or the Node worker-thread adapter
-without changing the consumer import.
+under `lib/host`. Conditional package exports choose browser or Node adapters;
+both support direct and Worker placement without changing the consumer import.
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
