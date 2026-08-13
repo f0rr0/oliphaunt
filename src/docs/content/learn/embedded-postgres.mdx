@@ -19,7 +19,7 @@ The product line has distinct native and WASIX hosts.
 | --- | --- |
 | Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
 | Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
-| WASIX TypeScript `@oliphaunt/wasix` | Browser direct or module-Worker placement, or Node worker threads, with memory; browsers may opt into IndexedDB snapshots |
+| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser direct or module-Worker placement, or Node worker threads, with memory; browsers may opt into IndexedDB snapshots and Node may opt into directory snapshots |
 
 The products share storage, exact extension selection, structured errors, and
 lifecycle concepts. Capabilities, backup/restore, server access, and persistence
@@ -46,7 +46,7 @@ lifecycle phases are present only where the host supports them:
 | --- | --- |
 | Open | Create or attach to storage, validate ownership, and materialize selected runtime resources |
 | Query | Route work through the selected engine and preserve mode-specific concurrency rules |
-| Background/checkpoint | Use platform lifecycle hooks or browser IndexedDB publication where exposed |
+| Background/checkpoint | Use platform lifecycle hooks or host-specific WASIX snapshot publication where exposed |
 | Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
 | Backup/restore | Use native or Rust WASIX data-movement APIs where exposed |
 

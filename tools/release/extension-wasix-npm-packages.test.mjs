@@ -355,7 +355,7 @@ test("stages one physical WASIX leaf across the complete native target set", () 
   const packageJson = JSON.parse(readFileSync(path.join(unpacked, "package.json"), "utf8"));
   expect(packageJson.name).toBe("@oliphaunt/extension-pgtap-wasix");
   const readme = readFileSync(path.join(unpacked, "README.md"), "utf8");
-  expect(readme).toContain("import Oliphaunt from '@oliphaunt/wasix';");
+  expect(readme).toContain("import Oliphaunt from '@oliphaunt/wasix-ts';");
   expect(readme).toContain("import pgtap from '@oliphaunt/extension-pgtap-wasix';");
   expect(readme).toContain("extensions: [pgtap]");
   expect(readme).toContain("This carrier is selected by the binding");

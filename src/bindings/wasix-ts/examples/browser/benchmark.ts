@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 
 type QueryParameters = readonly (null | string | number | boolean)[];
 
@@ -75,10 +75,7 @@ const insertTimingMetrics = [
 ] as const;
 const insertDiagnosticMetrics = [...insertTimingMetrics, 'indexedInsertWalBytes'] as const;
 type InsertDiagnosticMetric = (typeof insertDiagnosticMetrics)[number];
-type InsertDiagnosticSummary = Record<
-  InsertDiagnosticMetric,
-  Record<Engine['name'], number>
->;
+type InsertDiagnosticSummary = Record<InsertDiagnosticMetric, Record<Engine['name'], number>>;
 
 type PGliteAssets = {
   fsBundle: Blob;
@@ -342,12 +339,8 @@ function benchmarkTargetStatus(
         'WAL volume is a semantic parity constraint, not a speed target',
     },
     parityConstraints,
-    directMet: comparable
-      .filter(([, value]) => value.direct.meetsTarget)
-      .map(([metric]) => metric),
-    workerMet: comparable
-      .filter(([, value]) => value.worker.meetsTarget)
-      .map(([metric]) => metric),
+    directMet: comparable.filter(([, value]) => value.direct.meetsTarget).map(([metric]) => metric),
+    workerMet: comparable.filter(([, value]) => value.worker.meetsTarget).map(([metric]) => metric),
     directMissed: comparable
       .filter(([, value]) => !value.direct.meetsTarget)
       .map(([metric]) => metric),
@@ -644,7 +637,10 @@ function pairedComparison(wasixSamples: number[], pgliteSamples: number[]) {
   });
   const pairedP25AdvantagePercent = quantile(pairedAdvantages, 0.25);
   return {
-    ...comparison(median(wasixSamples.slice(0, sampleCount)), median(pgliteSamples.slice(0, sampleCount))),
+    ...comparison(
+      median(wasixSamples.slice(0, sampleCount)),
+      median(pgliteSamples.slice(0, sampleCount)),
+    ),
     meetsTarget: pairedP25AdvantagePercent >= targetPercent,
     sampleCount,
     pairedMedianAdvantagePercent: round(median(pairedAdvantages)),

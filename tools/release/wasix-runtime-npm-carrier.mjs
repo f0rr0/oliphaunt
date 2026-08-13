@@ -463,7 +463,7 @@ function writeJson(file, value) {
 function writeReadme(packageDir) {
   writeFileSync(path.join(packageDir, "README.md"), `# ${WASIX_RUNTIME_NPM_PACKAGE}
 
-Internal host-neutral portable runtime carrier for \`@oliphaunt/wasix\`.
+Internal host-neutral portable runtime carrier for \`@oliphaunt/wasix-ts\`.
 Application code should depend on the binding, which selects this matching
 carrier automatically. The descriptor and assets can be consumed by browser
 or Node WASIX hosts; importing them alone is not a host-support claim.

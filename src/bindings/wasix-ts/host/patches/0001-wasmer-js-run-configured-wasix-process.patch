@@ -1,9 +1,22 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index b21b6eb..2799a07 100644
+index b21b6eb..4a26370 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -138,6 +138,8 @@ dwarf-debug-info = false
- wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-Oz"]
+@@ -126,7 +126,7 @@ wasmer-types = { version = "4.2.5", default-features = false }
+ 
+ [profile.release]
+ lto = true
+-opt-level = 'z'
++opt-level = 3
+ 
+ [package.metadata.wasm-pack.profile.release.wasm-bindgen]
+ debug-js-glue = false
+@@ -135,9 +135,11 @@ demangle-name-section = false
+ dwarf-debug-info = false
+ 
+ [package.metadata.wasm-pack.profile.release]
+-wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-Oz"]
++wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-O3"]
  
  [patch.crates-io]
 +wasmer = { path = "../wasmer-6.1.0" }

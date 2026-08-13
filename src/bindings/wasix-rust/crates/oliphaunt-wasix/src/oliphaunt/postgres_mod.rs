@@ -20,8 +20,8 @@ use wasmer_wasix::fs::WasiFsRoot;
 use wasmer_wasix::runners::wasi::{PackageOrHash, RuntimeOrEngine, WasiRunner};
 use wasmer_wasix::runtime::module_cache::ModuleCache;
 use wasmer_wasix::runtime::module_cache::SharedCache;
-use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
 use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
+use wasmer_wasix::runtime::task_manager::{VirtualTaskManager, VirtualTaskManagerExt};
 use wasmer_wasix::runtime::{PluggableRuntime, Runtime};
 use wasmer_wasix::virtual_fs::null_file::NullFile;
 use wasmer_wasix::{WasiError, WasiFunctionEnv, virtual_fs};
@@ -37,10 +37,12 @@ use super::storage::PgDataStorage;
 use super::timing;
 
 mod stdio;
+mod task_policy;
 mod wasix_fs;
 
 pub(crate) use stdio::ProtocolStream;
 use stdio::{ProtocolStdioAttachment, ProtocolStdioFile, TailCaptureFile, TailCaptureHandle};
+use task_policy::{GuestWasmTasks, constrain_single_backend_tasks};
 use wasix_fs::{
     EagerCopyOverlayFileSystem, host_filesystem, maybe_trace_filesystem, wasi_root_with_devices,
 };
@@ -1097,7 +1099,12 @@ fn process_wasix_runtime(engine: &Engine) -> Result<Arc<WasixProcessRuntime>> {
             };
             let wasix_runtime = {
                 let _phase = timing::phase("wasix.runtime_construct.pluggable_runtime");
-                build_wasix_runtime(&tokio_runtime, engine, wasix_module_cache.clone())
+                build_wasix_runtime(
+                    &tokio_runtime,
+                    engine,
+                    wasix_module_cache.clone(),
+                    GuestWasmTasks::Deny,
+                )
             };
 
             Ok(Arc::new(WasixProcessRuntime {
@@ -1168,6 +1175,7 @@ fn instantiate_wasix_module(
         input.runtime_layout,
     );
     add_oliphaunt_args(&mut builder, input.postgres_config, input.startup_config)?;
+    constrain_single_backend_tasks(&mut builder);
 
     {
         let _phase = timing::phase("wasix.instantiate.module");
@@ -1249,9 +1257,12 @@ fn build_wasix_runtime(
     runtime: &TokioRuntime,
     engine: &Engine,
     module_cache: Arc<SharedCache>,
+    guest_wasm_tasks: GuestWasmTasks,
 ) -> Arc<dyn Runtime + Send + Sync> {
     let _guard = runtime.enter();
-    let task_manager = Arc::new(TokioTaskManager::new(runtime.handle().clone()));
+    let task_manager: Arc<dyn VirtualTaskManager> =
+        Arc::new(TokioTaskManager::new(runtime.handle().clone()));
+    let task_manager = guest_wasm_tasks.apply(task_manager);
     let mut wasix_runtime = PluggableRuntime::new(task_manager);
     wasix_runtime.set_engine(engine.clone());
     wasix_runtime.set_module_cache(module_cache);
@@ -1312,6 +1323,7 @@ fn run_split_initdb(
         &process_runtime.tokio_runtime,
         &engine,
         process_runtime.wasix_module_cache.clone(),
+        GuestWasmTasks::Allow,
     );
 
     let package = split_initdb_binary_package(&initdb_module, &postgres_module)?;
@@ -2152,47 +2164,55 @@ fn add_oliphaunt_args(
     postgres_config: &PostgresConfig,
     startup_config: &StartupConfig,
 ) -> Result<()> {
-    postgres_config.validate()?;
-    startup_config.validate()?;
-    for arg in ["--single", "-F", "-O", "-j"] {
-        builder.add_arg(arg);
-    }
-    if let Some(level) = startup_config.debug_level {
-        builder.add_arg("-d");
-        builder.add_arg(level.to_string());
-    }
-    for (name, value) in DEFAULT_STARTUP_GUCS {
-        builder.add_arg("-c");
-        builder.add_arg(format!("{name}={value}"));
-    }
-    if startup_config.relaxed_durability {
-        builder.add_arg("-c");
-        builder.add_arg("synchronous_commit=off");
-    }
-    for (name, value) in postgres_config.iter() {
-        builder.add_arg("-c");
-        builder.add_arg(format!("{name}={value}"));
-    }
-    for arg in &startup_config.extra_args {
-        builder.add_arg(arg);
-    }
-    for arg in ["-D", PGDATA_DIR, startup_config.database.as_str()] {
+    for arg in oliphaunt_args(postgres_config, startup_config)? {
         builder.add_arg(arg);
     }
     Ok(())
 }
 
+fn oliphaunt_args(
+    postgres_config: &PostgresConfig,
+    startup_config: &StartupConfig,
+) -> Result<Vec<String>> {
+    postgres_config.validate()?;
+    startup_config.validate()?;
+    let mut args = ["--single", "-F", "-O", "-j"].map(str::to_owned).to_vec();
+    if let Some(level) = startup_config.debug_level {
+        args.push("-d".to_owned());
+        args.push(level.to_string());
+    }
+    for (name, value) in DEFAULT_STARTUP_GUCS {
+        args.push("-c".to_owned());
+        args.push(format!("{name}={value}"));
+    }
+    if startup_config.relaxed_durability {
+        args.push("-c".to_owned());
+        args.push("synchronous_commit=off".to_owned());
+    }
+    for (name, value) in postgres_config.iter() {
+        args.push("-c".to_owned());
+        args.push(format!("{name}={value}"));
+    }
+    args.extend(
+        startup_config
+            .effective_extra_args()
+            .into_iter()
+            .map(str::to_owned),
+    );
+    // PostgreSQL's getopt accepts clustered short options. Emit invariants
+    // after every advanced caller option so the runtime-owned values win even
+    // if a future spelling is not recognized by the diagnostic validator.
+    for (name, value) in crate::oliphaunt::config::SINGLE_BACKEND_STARTUP_GUCS {
+        args.push("-c".to_owned());
+        args.push(format!("{name}={value}"));
+    }
+    args.extend(["-D", PGDATA_DIR, "--", startup_config.database.as_str()].map(str::to_owned));
+    Ok(args)
+}
+
 const DEFAULT_STARTUP_GUCS: &[(&str, &str)] = &[
     ("search_path", "public"),
-    ("exit_on_error", "false"),
     ("log_checkpoints", "false"),
-    ("max_wal_senders", "0"),
-    ("max_worker_processes", "0"),
-    ("max_parallel_workers", "0"),
-    ("max_parallel_workers_per_gather", "0"),
-    // PostgreSQL 18 defaults io_method=worker, but the embedded WASIX
-    // single-user backend has no postmaster-managed IO worker process model.
-    ("io_method", "sync"),
     ("wal_buffers", "4MB"),
     ("min_wal_size", "80MB"),
     ("shared_buffers", "128MB"),
@@ -2343,6 +2363,43 @@ mod tests {
     use super::*;
     use std::io;
     use std::pin::Pin;
+
+    #[test]
+    fn postgres_argv_delimits_an_option_like_database_name() -> Result<()> {
+        let startup = StartupConfig {
+            database: "--io-method=worker".to_owned(),
+            ..StartupConfig::default()
+        };
+
+        let args = oliphaunt_args(&PostgresConfig::default(), &startup)?;
+
+        assert!(
+            args.windows(2)
+                .any(|tail| tail == ["--", "--io-method=worker"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn single_backend_gucs_follow_clustered_advanced_options() -> Result<()> {
+        let startup = StartupConfig {
+            extra_args: vec!["-Fcio_method=sync".to_owned()],
+            ..StartupConfig::default()
+        };
+
+        let args = oliphaunt_args(&PostgresConfig::default(), &startup)?;
+        let advanced = args
+            .iter()
+            .position(|arg| arg == "-Fcio_method=sync")
+            .context("missing advanced option")?;
+        let enforced = args
+            .windows(2)
+            .position(|pair| pair == ["-c", "io_method=sync"])
+            .context("missing enforced io_method")?;
+
+        assert!(advanced < enforced);
+        Ok(())
+    }
 
     #[test]
     fn protocol_stdio_fails_closed_when_detached() -> Result<()> {

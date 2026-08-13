@@ -24,7 +24,7 @@ test("runtime owners expose their complete contrib registry inventory", async ()
   const contribPackages = async (owner) => (await productRegistryPackages(owner))
     .filter(({ name }) => name.includes("contrib-pg18"));
   expect(await contribPackages(descriptor.nativeOwner)).toHaveLength(12);
-  expect(await contribPackages(descriptor.wasixOwner)).toHaveLength(5);
+  expect(await contribPackages(descriptor.wasixOwner)).toHaveLength(6);
 });
 
 test("publication-lock inventory includes dynamic Cargo payload-part carriers", () => {

@@ -1,4 +1,4 @@
-import type { BrowserDirectoryMount } from './archive.js';
+import type { WasixDirectoryMount } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import type { SerializedWasixStorage } from './storage.js';
 import { validateIndexedDbDatabaseName } from './storage.js';
@@ -35,20 +35,37 @@ export type StorageDirectory = {
   readFile(path: string): Promise<Uint8Array>;
 };
 
-export type BrowserStorageLease = {
+export type WasixStorageLease = {
   /** Whether PGDATA came from the packaged template or a prior checkpoint. */
   readonly state: 'new' | 'existing';
   /** Initial contents for the worker-owned `/base` Wasmer memory mount. */
-  readonly mount: BrowserDirectoryMount;
+  readonly mount: WasixDirectoryMount;
   checkpoint(directory: StorageDirectory): Promise<void>;
   close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void>;
 };
 
-export async function acquireBrowserStorage(
-  storage: SerializedWasixStorage,
-  template: BrowserDirectoryMount,
+export type NodeDirectoryStorageAcquirer = (
+  path: string,
+  template: WasixDirectoryMount,
   compatibility: WasixStorageCompatibility,
-): Promise<BrowserStorageLease> {
+  ownerToken?: string,
+) => Promise<WasixStorageLease>;
+
+let acquireNodeDirectory: NodeDirectoryStorageAcquirer | undefined;
+
+/** @internal Installed only by the Node worker so browser graphs stay Node-free. */
+export function installNodeDirectoryStorageProvider(acquire: NodeDirectoryStorageAcquirer): void {
+  acquireNodeDirectory = acquire;
+}
+
+/** @deprecated Internal compatibility alias; storage leases are host-neutral. */
+export type BrowserStorageLease = WasixStorageLease;
+
+export async function acquireWasixStorage(
+  storage: SerializedWasixStorage,
+  template: WasixDirectoryMount,
+  compatibility: WasixStorageCompatibility,
+): Promise<WasixStorageLease> {
   if (storage.schema !== 'oliphaunt-wasix-storage-v1') {
     throw new WasixStorageError('WASIX storage descriptor has an unsupported schema', {
       code: 'unavailable',
@@ -63,8 +80,19 @@ export async function acquireBrowserStorage(
       const { acquireIndexedDbStorage } = await import('./storage/indexed-db-provider.js');
       return acquireIndexedDbStorage(storage.name, template, compatibility);
     }
+    case 'node-directory':
+      if (acquireNodeDirectory === undefined) {
+        throw new WasixStorageError('Node directory storage is unavailable in a browser worker', {
+          code: 'unavailable',
+          durability: 'unchanged',
+        });
+      }
+      return acquireNodeDirectory(storage.path, template, compatibility, storage.ownerToken);
   }
 }
+
+/** @deprecated Internal compatibility alias retained for source stability. */
+export const acquireBrowserStorage = acquireWasixStorage;
 
 /** Stable JSON used only for exact, fail-closed compatibility identities. */
 export function canonicalStorageContract(value: unknown): string {
@@ -103,7 +131,7 @@ export function canonicalStorageContract(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
-function memoryLease(template: BrowserDirectoryMount): BrowserStorageLease {
+function memoryLease(template: WasixDirectoryMount): WasixStorageLease {
   return {
     state: 'new',
     mount: template,

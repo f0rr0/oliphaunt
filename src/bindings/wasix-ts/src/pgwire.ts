@@ -1,6 +1,8 @@
 import { assertSuccessfulQueryResponse } from './query.js';
 
 const encoder = new TextEncoder();
+const INITIAL_RECEIVE_BUFFER_BYTES = 4 * 1024;
+const MAX_BACKEND_MESSAGE_BYTES = 64 * 1024 * 1024;
 
 export function startupPacket(username: string, database: string): Uint8Array {
   assertStartupValue('username', username);
@@ -34,6 +36,8 @@ export class PgwireStream {
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
   readonly #writer: WritableStreamDefaultWriter<Uint8Array>;
   #buffer: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  #readOffset = 0;
+  #writeOffset = 0;
   #closed = false;
 
   constructor(readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>) {
@@ -110,43 +114,84 @@ export class PgwireStream {
   }
 
   async #readUntilReady(stopAtError: boolean): Promise<Uint8Array> {
-    const messages: Uint8Array[] = [];
-    let totalLength = 0;
+    // A prior exchange may have read ahead into the next response. Compact it
+    // once here, before this response begins, so growth can retain all bytes
+    // from offset zero and the completed response needs only one final copy.
+    this.#compactUnread();
+    const responseStart = this.#readOffset;
 
     while (true) {
       await this.#fill(5);
-      const tag = this.#buffer[0];
-      const bodyLength = readI32(this.#buffer, 1);
+      const tag = this.#buffer[this.#readOffset];
+      const bodyLength = readI32(this.#buffer, this.#readOffset + 1);
       if (bodyLength < 4) {
         throw new Error(`invalid PostgreSQL backend message length ${bodyLength}`);
       }
       const messageLength = bodyLength + 1;
-      if (messageLength > 64 * 1024 * 1024) {
+      if (messageLength > MAX_BACKEND_MESSAGE_BYTES) {
         throw new Error(`PostgreSQL backend message exceeds 64 MiB: ${messageLength} bytes`);
       }
       await this.#fill(messageLength);
-      const message = this.#buffer.subarray(0, messageLength);
-      this.#buffer = this.#buffer.subarray(messageLength);
-      messages.push(message);
-      totalLength += message.length;
+      this.#readOffset += messageLength;
 
       if (tag === 'Z'.charCodeAt(0) || (stopAtError && tag === 'E'.charCodeAt(0))) {
-        return contiguousView(messages, totalLength) ?? concatenate(messages, totalLength);
+        const responseEnd = this.#readOffset;
+        if (
+          responseStart === 0 &&
+          responseEnd === this.#writeOffset &&
+          responseEnd === this.#buffer.length
+        ) {
+          const response = this.#buffer;
+          this.#buffer = new Uint8Array();
+          this.#readOffset = 0;
+          this.#writeOffset = 0;
+          return response;
+        }
+        return this.#buffer.slice(responseStart, responseEnd);
       }
     }
   }
 
   async #fill(length: number): Promise<void> {
-    while (this.#buffer.length < length) {
+    while (this.#writeOffset - this.#readOffset < length) {
       const next = await this.#reader.read();
       if (next.done) {
         throw new Error('Oliphaunt WASIX process closed stdout before ReadyForQuery');
       }
-      this.#buffer =
-        this.#buffer.length === 0
-          ? next.value
-          : concatenate([this.#buffer, next.value], this.#buffer.length + next.value.length);
+      if (this.#buffer.length === 0 && this.#readOffset === 0 && this.#writeOffset === 0) {
+        this.#buffer = next.value;
+        this.#writeOffset = next.value.length;
+        continue;
+      }
+      this.#ensureCapacity(next.value.length);
+      this.#buffer.set(next.value, this.#writeOffset);
+      this.#writeOffset += next.value.length;
     }
+  }
+
+  #compactUnread(): void {
+    if (this.#readOffset === 0) {
+      return;
+    }
+    if (this.#readOffset < this.#writeOffset) {
+      this.#buffer.copyWithin(0, this.#readOffset, this.#writeOffset);
+    }
+    this.#writeOffset -= this.#readOffset;
+    this.#readOffset = 0;
+  }
+
+  #ensureCapacity(additionalLength: number): void {
+    const requiredLength = this.#writeOffset + additionalLength;
+    if (requiredLength <= this.#buffer.length) {
+      return;
+    }
+    const capacity = Math.max(
+      requiredLength,
+      Math.max(INITIAL_RECEIVE_BUFFER_BYTES, this.#buffer.length * 2),
+    );
+    const expanded = new Uint8Array(capacity);
+    expanded.set(this.#buffer.subarray(0, this.#writeOffset));
+    this.#buffer = expanded;
   }
 }
 
@@ -246,22 +291,4 @@ function concatenate(chunks: ReadonlyArray<Uint8Array>, totalLength: number): Ui
     offset += chunk.length;
   }
   return result;
-}
-
-function contiguousView(
-  chunks: ReadonlyArray<Uint8Array>,
-  totalLength: number,
-): Uint8Array | undefined {
-  const first = chunks[0];
-  if (first === undefined) {
-    return new Uint8Array();
-  }
-  let offset = first.byteOffset;
-  for (const chunk of chunks) {
-    if (chunk.buffer !== first.buffer || chunk.byteOffset !== offset) {
-      return undefined;
-    }
-    offset += chunk.byteLength;
-  }
-  return new Uint8Array(first.buffer, first.byteOffset, totalLength);
 }

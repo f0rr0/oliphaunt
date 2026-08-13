@@ -1392,7 +1392,7 @@ function writeWasixExtensionReadme(packageDir, packageName, members, bundle) {
     "Consumer API:",
     "",
     "```ts",
-    "import Oliphaunt from '@oliphaunt/wasix';",
+    "import Oliphaunt from '@oliphaunt/wasix-ts';",
     ...imports,
     "",
     "const database = await Oliphaunt.open({",

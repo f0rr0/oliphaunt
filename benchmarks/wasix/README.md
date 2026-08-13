@@ -1,6 +1,6 @@
 # WASIX Benchmarks
 
-WASIX benchmark specs and baselines live here. Rust runner implementation and
+WASIX benchmark specs and baselines live here. Runner implementations and
 runtime orchestration stay under `tools/perf` and the WASIX product source tree.
 
 ## Browser comparison
@@ -30,3 +30,47 @@ For a harness smoke check without a full sample set, run:
 pnpm --dir src/bindings/wasix-ts package:build
 node src/bindings/wasix-ts/tools/smoke-browser.mjs --benchmark --quick
 ```
+
+## Node comparison
+
+`node-pglite-memory-v1.json` is the deterministic Node comparison plan for the
+public `@oliphaunt/wasix-ts` package and the exact PGlite control named in the
+plan. The executable harness lives in `tools/perf/wasix-node`. It runs both
+engines with memory storage and Node worker isolation, alternates which gated
+engine runs first across ten fresh-process pairs, and runs all ungated
+diagnostics only after those pairs. It gates the median candidate/control ratio
+within each pair.
+
+Startup is one cold-to-first-result metric; public-open and
+immediate-first-query components remain visible without receiving separate
+gate weight. PGlite's published benchmark times `pg.exec()` inside a browser
+worker. Its official worker library requires browser Worker and Web Locks APIs,
+so this Node harness owns a deliberately small `worker_threads` RPC adapter and
+times both public APIs end-to-end from the Node host, including exactly one
+worker RPC for each engine. PGlite's official benchmark methodology is retained
+as provenance only: gated calls return public results without collecting or
+serializing comparator-only internal timing. Direct PGlite main-thread timing
+remains visible as an explicitly ungated diagnostic after the complete gated
+phase.
+
+Bulk timing sends identical PostgreSQL Simple Query bytes through both public
+`execProtocolRaw` APIs and transfers both raw responses across the worker edge.
+The untimed verifier decodes the timed response's command tags and result rows,
+then validates the resulting database state. Gate eligibility also requires
+all recorded PostgreSQL settings to match across every candidate/control run.
+Generated SQL is bounded by the compact row counts in the plan; upstream
+generated benchmark files are not vendored.
+
+Validate the plan without runtime assets with
+`moon run oliphaunt-wasix-ts:bench`. After building the portable runtime, run
+the uncached local measurement with
+`moon run oliphaunt-wasix-ts:bench-run`. Each run writes machine-readable JSON
+and a compact Markdown table under `target/perf`; it passes only when canonical
+timed-response/result hashes and PostgreSQL settings agree and the geometric
+mean of median paired Oliphaunt/PGlite ratios is at most `0.80`. Reports pin the
+comparator tarball integrity and installed tree hash, and record the complete
+resolved installed closure of each engine. The candidate package fixture also
+requires its runtime module to match the canonical asset manifest and build
+outputs, then records the full build-profile signature plus the exact outputs
+digest. The checked-in plan rejects anything other than the qualified
+`release` profile with `-O2 -g0 -flto=thin` and a ThinLTO final link.

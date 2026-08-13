@@ -95,7 +95,8 @@ export class WasixProcess {
     host: WasixHost,
     dependencies: WasixProcessDependencies = defaultDependencies,
   ): Promise<WasixProcess> {
-    const prepared = await dependencies.prepareRuntime(options);
+    // Host bootstrap and carrier preparation are independent cold-open work.
+    const [prepared] = await Promise.all([dependencies.prepareRuntime(options), host.init({})]);
     const module =
       dependencies.compileModule === undefined
         ? prepared.layout.module
@@ -104,7 +105,6 @@ export class WasixProcess {
             prepared.storageCompatibility.runtime.moduleSha256,
           );
     const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
-    await host.init({});
     const pgdataTemplate = prepared.layout.mounts['/base'];
     if (pgdataTemplate === undefined) {
       throw new Error('prepared WASIX runtime has no PGDATA mount');
@@ -382,28 +382,26 @@ function compareDirectoryDepth(left: string, right: string): number {
 export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single', '-F', '-O', '-j'];
   const startupGUCs = { ...options.startupGUCs };
-  for (const protectedName of ['exit_on_error']) {
-    const configuredName = Object.keys(startupGUCs).find(
-      (name) => name.toLowerCase() === protectedName,
+  for (const [configuredName, configuredValue] of Object.entries(startupGUCs)) {
+    const managed = Object.entries(SINGLE_BACKEND_GUCS).find(
+      ([name]) => name === configuredName.toLowerCase(),
     );
-    if (configuredName !== undefined) {
+    if (managed === undefined) continue;
+    const [, requiredValue] = managed;
+    if (configuredValue !== requiredValue) {
       throw new Error(
-        `PostgreSQL setting ${JSON.stringify(configuredName)} is managed by @oliphaunt/wasix and cannot be overridden`,
+        `PostgreSQL setting ${JSON.stringify(configuredName)} is managed by @oliphaunt/wasix-ts and must remain ${JSON.stringify(requiredValue)}`,
       );
     }
+    delete startupGUCs[configuredName];
   }
   for (const [name, value] of Object.entries({
     search_path: 'public',
-    exit_on_error: 'false',
     log_checkpoints: 'false',
-    max_wal_senders: '0',
-    max_worker_processes: '0',
-    max_parallel_workers: '0',
-    max_parallel_workers_per_gather: '0',
-    io_method: 'sync',
     wal_buffers: '4MB',
     min_wal_size: '80MB',
     shared_buffers: '128MB',
+    ...SINGLE_BACKEND_GUCS,
     ...startupGUCs,
   })) {
     validateGuc(name, value);
@@ -415,10 +413,18 @@ export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   return args;
 }
 
+const SINGLE_BACKEND_GUCS = {
+  exit_on_error: 'false',
+  max_wal_senders: '0',
+  max_worker_processes: '0',
+  max_parallel_workers: '0',
+  max_parallel_workers_per_gather: '0',
+  max_parallel_maintenance_workers: '0',
+  io_method: 'sync',
+} as const;
+
 /** @internal PostgreSQL environment shared by both execution placements. */
-export function wasixPostgresEnvironment(
-  options: SerializedOpenOptions,
-): Record<string, string> {
+export function wasixPostgresEnvironment(options: SerializedOpenOptions): Record<string, string> {
   return {
     PREFIX: '/',
     PGDATA: '/base',

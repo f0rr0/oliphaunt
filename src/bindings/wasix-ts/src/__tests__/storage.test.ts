@@ -1,9 +1,12 @@
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import { deserializeWorkerError, serializeWorkerError } from '../rpc.js';
 import { indexedDB } from '../storage/indexed-db.js';
+import { directory } from '../storage/node.js';
 import { memory, serializeWasixStorage, type WasixStorage } from '../storage.js';
 
 type MainPackage = typeof import('../index.js');
@@ -40,16 +43,37 @@ describe('WASIX storage descriptors', () => {
     expect(() => indexedDB('bad\0name')).toThrow('without NUL bytes');
   });
 
+  it('requires selective Node directory construction and validates its path', () => {
+    const descriptor = directory('./data/with spaces');
+    expect(Object.keys(descriptor)).toEqual([]);
+    expect(serializeWasixStorage(descriptor)).toEqual({
+      schema: 'oliphaunt-wasix-storage-v1',
+      kind: 'node-directory',
+      path: './data/with spaces',
+    });
+    const fileUrl = new URL('file:///tmp/data%20space');
+    expect(serializeWasixStorage(directory(fileUrl))).toEqual({
+      schema: 'oliphaunt-wasix-storage-v1',
+      kind: 'node-directory',
+      path: fileURLToPath(fileUrl),
+    });
+    expect(() => directory(new URL('https://example.com/data'))).toThrow(
+      'URL must be of scheme file',
+    );
+    expect(() => directory('')).toThrow('non-empty string');
+    expect(() => directory('bad\0path')).toThrow('without NUL bytes');
+  });
+
   it('rejects user-authored and structured-cloned lookalikes', () => {
     expect(() =>
       serializeWasixStorage({
         schema: 'oliphaunt-wasix-storage-v1',
         kind: 'memory',
       } as unknown as WasixStorage),
-    ).toThrow('must come from @oliphaunt/wasix');
+    ).toThrow('must come from @oliphaunt/wasix-ts');
 
     expect(() => serializeWasixStorage(structuredClone(memory()))).toThrow(
-      'must come from @oliphaunt/wasix',
+      'must come from @oliphaunt/wasix-ts',
     );
   });
 

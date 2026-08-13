@@ -50,7 +50,7 @@ configuration schema.
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
 | React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
 | Rust WASIX | `DatabaseStorage::Memory` | `Directory` or `ApplicationData` |
-| TypeScript WASIX | omitted `storage` | selectively imported `indexedDB(name)` |
+| TypeScript WASIX | omitted `storage` | `indexedDB(name)` in browsers or `directory(path)` on Node |
 
 The React Native `applicationData` case is intentional. JavaScript has no
 portable API for constructing an iOS/Android app-sandbox path, so the native
@@ -60,9 +60,11 @@ idiomatic `directories` project identity for host applications.
 
 TypeScript WASIX does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
-Node worker-thread host uses the same memory default. Node directory persistence
-remains absent until the binding owns a truthful host-filesystem provider;
-portable `@oliphaunt/wasix` and native `@oliphaunt/ts` remain separate products.
+Node worker-thread host uses the same memory default and selectively exposes a
+snapshot-backed directory provider. That provider hydrates Wasmer memory and
+publishes complete generations on checkpoint/clean close; it is not described
+as a direct host mount. Portable `@oliphaunt/wasix-ts` and native
+`@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
 
@@ -87,15 +89,21 @@ Restore uses `destination`, not `root`. A restore destination is an external
 filesystem location receiving a backup artifact; it is not an open database's
 storage selector. Replacement must remain explicit.
 
-## Browser IndexedDB contract
+## WASIX snapshot contract
 
-`@oliphaunt/wasix` follows the useful parts of PGlite's filesystem model:
-memory is the zero-configuration default, and browser persistence is an
-explicit, selectively imported filesystem adapter. PGlite's IndexedDB layer
+`@oliphaunt/wasix-ts` follows the useful parts of PGlite's filesystem model:
+memory is the zero-configuration default, and host persistence is an explicit,
+selectively imported filesystem adapter. PGlite's IndexedDB layer
 loads files into memory and flushes changed whole files after queries. Oliphaunt
 currently publishes one complete PGDATA snapshot atomically on
 `checkpoint()` and clean `close()` because Wasmer's browser `Directory` API does
 not expose a dirty-file feed.
+
+Node applies the same complete-generation model to an application-owned
+directory. All adapter state lives below `.oliphaunt-wasix-ts`; snapshot files
+and containing directories are synced where the host filesystem supports it,
+then whole generations are renamed at one commit point. The last generation is
+retained until a later open validates the new one.
 
 Consequences are part of the public contract:
 
@@ -109,6 +117,16 @@ Consequences are part of the public contract:
   live handle, because newer commits may exist only in memory; and
 - browser termination loses changes after the last successful checkpoint or
   clean close. This is not per-query or crash durability.
+- one fixed atomic Node lock slot owns a local-filesystem directory; its
+  published child is the complete unique lease identity, concurrent or
+  cross-process opens on one host fail `busy`, proven-dead local owners and
+  leases from an earlier boot of the same Linux host are reaped by exact-owner
+  removal, foreign identities fail closed, and a main-thread parent performs
+  token-scoped cleanup after a database worker exit; non-Linux recovery uses
+  local PID liveness, while network and cross-host shared filesystems are
+  unsupported; and
+- Node rejects symlinked or foreign adapter state and never treats unrelated
+  files in the application directory as generations.
 
 OPFS is intentionally absent. The current host cannot provide a truthful direct
 synchronous mount across supported browsers, and an OPFS-branded copy of the

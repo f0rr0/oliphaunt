@@ -41,8 +41,8 @@ if [ "${OLIPHAUNT_WASM_PG18_DISABLE_SPINLOCKS:-0}" = "1" ]; then
   CONFIGURE_EXTRA_ARGS+=("--disable""-spinlocks")
 fi
 
-mkdir -p "$GENERATED_ROOT/build/wasix-oliphaunt"
-OLIPHAUNT_SHIM="$GENERATED_ROOT/build/wasix-oliphaunt/oliphaunt_wasix_bridge.o"
+OLIPHAUNT_SHIM="${OLIPHAUNT_WASM_SHIM_OBJECT:-$GENERATED_ROOT/build/wasix-oliphaunt/oliphaunt_wasix_bridge.o}"
+mkdir -p "$(dirname "$OLIPHAUNT_SHIM")"
 
 wasixcc $COMMON_CFLAGS $COMMON_CPPFLAGS \
   -include stdbool.h \

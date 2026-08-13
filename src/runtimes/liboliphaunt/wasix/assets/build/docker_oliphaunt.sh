@@ -139,4 +139,10 @@ fi
     make -s -C "$BUILD_DIR/src/backend" generated-headers
     make -s -C "$BUILD_DIR/src/backend" submake-libpgport
     make -s -j"$JOBS" -C "$BUILD_DIR/src/backend" oliphaunt
+    ./src/runtimes/liboliphaunt/wasix/assets/build/link_wasix_runtime.sh \
+      "$BUILD_DIR" \
+      "$ICU_PREFIX" \
+      "$CONTAINER_GENERATED_ROOT/build/wasix-oliphaunt/oliphaunt_wasix_bridge.o" \
+      ./src/runtimes/liboliphaunt/wasix/assets/generated/wasix-dl.exports \
+      "$oliphaunt_wasix_wasix_profile"
   '

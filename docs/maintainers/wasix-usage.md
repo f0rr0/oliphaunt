@@ -1,7 +1,7 @@
 # WASIX usage and maintenance
 
 This document records the supported `oliphaunt-wasix` Rust shape and the
-public `@oliphaunt/wasix` TypeScript binding. WASIX is a separate product
+public `@oliphaunt/wasix-ts` TypeScript binding. WASIX is a separate product
 family. Neither binding imports, aliases, or falls back to a native SDK.
 
 ## Rust host
@@ -120,7 +120,7 @@ spells persistent input as `--directory PATH`.
 
 ## TypeScript host
 
-`@oliphaunt/wasix` runs the portable guest with worker-isolated execution by
+`@oliphaunt/wasix-ts` runs the portable guest with worker-isolated execution by
 default. Browsers may instead select `execution: 'direct'` to construct
 PostgreSQL asynchronously in the caller realm, then drive it synchronously
 while keeping the same Promise-based database contract. Direct constructs no
@@ -130,9 +130,9 @@ a worker thread only. Omitted storage is fresh memory on both hosts. Browser
 IndexedDB is deliberately a selective adapter import:
 
 ```ts
-import Oliphaunt from '@oliphaunt/wasix';
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
-import { indexedDB } from '@oliphaunt/wasix/storage/indexed-db';
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 
 const database = await Oliphaunt.open({
   storage: indexedDB('maintainer-proof'),
@@ -166,9 +166,15 @@ memory.
 
 This is checkpoint/clean-close persistence, not per-query or crash durability.
 OPFS is absent because the current Wasmer browser filesystem cannot expose a
-truthful direct synchronous mount. Node currently supports the memory default
-only. Package exports select the worker-thread adapter automatically; neither
-host routes through the TypeScript SDK's native runtime.
+truthful direct synchronous mount. Node adds a selectively imported
+`storage/node` directory adapter with the same honest snapshot boundary and an
+exclusive cross-process path lock for local filesystems on one host. Linux
+leases include host, boot, and PID namespace identities, so only locally
+proven-dead owners are reaped; foreign scope leases fail closed as `busy`.
+Network and cross-host shared filesystems are unsupported, and persistent
+directory opens are restricted to Node's main thread so child-worker cleanup
+remains reliable. Package exports select the worker-thread adapter
+automatically; neither host routes through the TypeScript SDK's native runtime.
 
 Extension packages use the WASIX-only suffix, while native/default package
 identifiers remain unsuffixed. Browser and Node WASIX hosts consume the
