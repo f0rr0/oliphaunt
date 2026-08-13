@@ -48,13 +48,13 @@ const expected = {
   },
   'wasix-typescript': {
     classification: 'sdk',
-    package_identity: 'npm:@oliphaunt/wasix',
+    package_identity: 'npm:@oliphaunt/wasix-ts',
     implementation_path: 'src/bindings/wasix-ts',
     documentation_path: 'src/docs/content/sdk/wasm',
     supported_consumer_targets: ['browser', 'node'],
     planned_consumer_targets: [],
     runtime_owner: true,
-    runtime_boundary: '@oliphaunt/wasix',
+    runtime_boundary: '@oliphaunt/wasix-ts',
     parity_role: 'wasm-peer',
     available_modes: ['wasix-browser', 'wasix-node'],
     unsupported_modes: [

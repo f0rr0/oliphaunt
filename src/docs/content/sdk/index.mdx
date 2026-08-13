@@ -17,10 +17,10 @@ keeps ecosystem-native naming and exposes only the behavior its host supports.
   embeds or supervises the native runtime family.
 - Choose Rust WASIX (`oliphaunt-wasix`) when Rust owns the portable WASIX host
   and needs Rust direct, local server, extension, or data-movement APIs.
-- Choose WASIX TypeScript (`@oliphaunt/wasix`) when portable PostgreSQL runs
+- Choose WASIX TypeScript (`@oliphaunt/wasix-ts`) when portable PostgreSQL runs
   directly or in a module Worker in a browser, or in a Node worker thread.
-  Memory is the default; extensions are selective imports and IndexedDB is a
-  browser-only opt-in.
+  Memory is the default; extensions are selective imports, IndexedDB snapshots
+  are a browser opt-in, and directory snapshots are a Node opt-in.
 - Choose the C ABI only when building another native language binding or
   integrating `liboliphaunt` directly.
 
@@ -42,7 +42,8 @@ The products use a cohesive vocabulary where the host actually supports it:
 Those concepts are not a parity promise. Native SDKs expose their engine modes
 and capability reports. Rust WASIX adds Rust host, server, physical archive, and
 optional dump tooling. WASIX TypeScript intentionally exposes only
-`open`, `query`, `execute`, raw protocol, `checkpoint`, and `close`.
+`open`, `query`, `execute`, raw protocol, callback transactions, `checkpoint`,
+and `close`.
 
 <ModeMatrix />
 
@@ -61,8 +62,9 @@ optional dump tooling. WASIX TypeScript intentionally exposes only
 - Use [Start](/docs/start) for the shortest first-query path.
 - Use [Capability Matrix](/docs/reference/capabilities) before relying on a
   mode or feature in a packaged app.
-- Use [WASIX TypeScript](/docs/sdk/wasix/browser-typescript) for the browser and
-  Node Worker, error-recovery, IndexedDB, and selective-extension contract.
+- Use [WASIX TypeScript](/docs/sdk/wasix/browser-typescript) for direct or
+  worker-isolated browser execution, Node worker execution, error recovery,
+  host-specific snapshots, and selective extensions.
 - Use [Rust WASIX](/docs/sdk/wasix) for the Rust portable host.
 - Use [Native Runtime](/docs/learn/native-runtime) for native direct, broker,
   and server semantics.

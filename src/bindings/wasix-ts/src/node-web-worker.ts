@@ -1,5 +1,7 @@
 import { Worker as ThreadWorker, type TransferListItem } from 'node:worker_threads';
 
+import { nodeWorkerExecArgv } from './node-worker-options.js';
+
 type WebWorkerListener = (event: { data: unknown }) => void;
 type WebWorkerErrorListener = (error: Error) => void;
 
@@ -16,6 +18,7 @@ export class NodeWebWorker {
 
   constructor(source: string | URL, options: { name?: string } = {}) {
     this.#worker = new ThreadWorker(new URL('./node-web-worker-thread.js', import.meta.url), {
+      execArgv: nodeWorkerExecArgv(),
       name: options.name,
       workerData: { source: String(source) },
     });

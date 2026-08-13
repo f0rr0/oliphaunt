@@ -43,4 +43,5 @@ pnpm --package=@biomejs/biome@2.4.16 dlx biome "${biome_args[@]}" \
   src/sdks/js/jsr.json \
   src/sdks/js/src \
   tools/perf/matrix \
+  tools/perf/wasix-node \
   tools/test

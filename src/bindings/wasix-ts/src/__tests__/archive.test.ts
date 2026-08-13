@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractTar, layoutRuntime } from '../archive.js';
+import { decompressIfNeeded, extractTar, layoutRuntime } from '../archive.js';
 
 describe('WASIX TypeScript archives', () => {
+  it('preserves uncompressed archive bytes by identity', () => {
+    const bytes = Uint8Array.of(1, 2, 3);
+
+    expect(decompressIfNeeded(bytes)).toBe(bytes);
+  });
+
   it('extracts regular files from a tar archive', () => {
     const archive = tar([
       ['oliphaunt/bin/oliphaunt', Uint8Array.of(0, 97, 115, 109)],

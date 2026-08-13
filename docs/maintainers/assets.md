@@ -147,9 +147,10 @@ templates, and the absence of committed PGDATA template, portable WASIX, or
 native AOT blobs.
 
 Release assets are built with the `release` profile by default: WASIX C code
-uses `-O2 -g0`, and Binaryen runs the wasixcc default optimization plus
-`--converge`, `--strip-debug`, and `--strip-producers`. The `release-o3`
-profile remains available for explicit O3/ThinLTO comparison builds.
+uses `-O2 -g0` with ThinLTO through the final guest link, and Binaryen runs the
+wasixcc default optimization plus `--converge`, `--strip-debug`, and
+`--strip-producers`. The `release-o3` profile remains available for explicit O3
+comparison builds.
 
 Generated runtime hashes in package metadata are refreshed in the release
 staging workspace. CI-produced assets are selected by exact workflow run or

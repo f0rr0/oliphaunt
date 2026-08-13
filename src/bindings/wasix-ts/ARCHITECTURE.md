@@ -130,18 +130,19 @@ synchronous WASIX process API.
 
 Node selects `lib/index.node.js` through the package's `node` export condition.
 It creates one `worker_threads.Worker`; that worker reads package-relative
-runtime and extension `file:` URLs, then calls the same dispatcher and
-`WasixProcess` used by the browser worker. Wasmer's own inner Web Worker edge is
-adapted to worker threads by a narrow package-owned bridge. RPC framing,
-descriptor validation, archive verification, extension installation, pgwire
-recovery, query serialization, close semantics, and the memory default are not
-forked by host.
+runtime and extension `file:` URLs, then calls the shared dispatcher with the
+same synchronous guest driver used by browser direct execution. Keeping that
+driver inside the package worker preserves caller isolation without a second
+worker hop or stream pump. RPC framing, descriptor validation, archive
+verification, extension installation, query serialization, close semantics,
+and the memory default are not forked by host.
 
 IndexedDB remains browser-only and is rejected before a Node worker starts.
-Direct Node execution is rejected because the current Wasmer bridge would need
-to replace application-global `Worker` and `URL.createObjectURL` values.
-Node directory persistence, server mode, OPFS, and any fallback to native
-`@oliphaunt/ts` are intentionally absent.
+Direct Node execution is rejected so the guest remains isolated in the
+package-owned worker rather than blocking the application's main thread.
+Node directory persistence is a selectively imported, snapshot-backed provider
+with exclusive path ownership. Direct host filesystem mounts, server mode,
+OPFS, and any fallback to native `@oliphaunt/ts` are intentionally absent.
 
 ## Browser storage boundary
 
@@ -436,7 +437,7 @@ bundle.
 
 ## Public package and qualification
 
-`@oliphaunt/wasix` is a separately versioned public SDK product. It has its own
+`@oliphaunt/wasix-ts` is a separately versioned public SDK product. It has its own
 release metadata and changelog, declares an exact dependency on the published
 `@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
 under `lib/host`. Conditional package exports choose the browser adapter, which

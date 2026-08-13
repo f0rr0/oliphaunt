@@ -4,7 +4,7 @@ export function resolveExecutionMode(config: OpenConfig): ExecutionMode {
   const execution = config.execution ?? 'worker';
   if (execution !== 'direct' && execution !== 'worker') {
     throw new TypeError(
-      `@oliphaunt/wasix execution must be "direct" or "worker", received ${JSON.stringify(execution)}`,
+      `@oliphaunt/wasix-ts execution must be "direct" or "worker", received ${JSON.stringify(execution)}`,
     );
   }
   return execution;

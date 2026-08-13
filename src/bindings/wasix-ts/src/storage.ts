@@ -17,6 +17,13 @@ export type SerializedWasixStorage =
       schema: 'oliphaunt-wasix-storage-v1';
       kind: 'indexed-db';
       name: string;
+    }>
+  | Readonly<{
+      schema: 'oliphaunt-wasix-storage-v1';
+      kind: 'node-directory';
+      path: string;
+      /** @internal Per-worker lease identity used for crash-safe lock cleanup. */
+      ownerToken?: string;
     }>;
 
 const descriptorValues = new WeakMap<object, SerializedWasixStorage>();
@@ -35,6 +42,12 @@ export function defineIndexedDbStorage(name: string): WasixStorage {
   return defineStorage({ schema: 'oliphaunt-wasix-storage-v1', kind: 'indexed-db', name });
 }
 
+/** @internal Used by the selectively imported Node directory adapter. */
+export function defineNodeDirectoryStorage(path: string): WasixStorage {
+  validateNodeDirectoryPath(path);
+  return defineStorage({ schema: 'oliphaunt-wasix-storage-v1', kind: 'node-directory', path });
+}
+
 /** @internal Validate and project the opaque main-thread value for the worker. */
 export function serializeWasixStorage(storage: WasixStorage | undefined): SerializedWasixStorage {
   if (storage === undefined) {
@@ -43,15 +56,28 @@ export function serializeWasixStorage(storage: WasixStorage | undefined): Serial
   const value = descriptorValues.get(storage as object);
   if (value === undefined) {
     throw new TypeError(
-      'storage must come from @oliphaunt/wasix or one of its storage adapter subpaths',
+      'storage must come from @oliphaunt/wasix-ts or one of its storage adapter subpaths',
     );
   }
-  return value.kind === 'memory' ? { ...value } : { ...value, name: value.name };
+  switch (value.kind) {
+    case 'memory':
+      return { ...value };
+    case 'indexed-db':
+      return { ...value, name: value.name };
+    case 'node-directory':
+      return { ...value, path: value.path };
+  }
 }
 
 export function validateIndexedDbDatabaseName(name: unknown): asserts name is string {
   if (typeof name !== 'string' || name.length === 0 || name.length > 200 || name.includes('\0')) {
     throw new TypeError('IndexedDB storage name must be 1-200 characters without NUL bytes');
+  }
+}
+
+export function validateNodeDirectoryPath(path: unknown): asserts path is string {
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) {
+    throw new TypeError('Node directory storage path must be a non-empty string without NUL bytes');
   }
 }
 

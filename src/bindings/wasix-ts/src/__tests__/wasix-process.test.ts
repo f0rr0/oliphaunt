@@ -25,6 +25,94 @@ describe('WASIX process lifecycle failures', () => {
     await expect(first).resolves.toBeInstanceOf(WebAssembly.Module);
   });
 
+  it('overlaps host bootstrap with runtime preparation', async () => {
+    const sequence: string[] = [];
+    const dependencies: WasixProcessDependencies = {
+      async prepareRuntime() {
+        sequence.push('prepare-start');
+        await Promise.resolve();
+        sequence.push('prepare-finish');
+        return preparedRuntime();
+      },
+      async acquireStorage() {
+        return fakeLease(async () => undefined);
+      },
+    };
+    const baseHost = fakeHost({ stdout: startupSuccess() });
+    const host: WasixHost = {
+      ...baseHost,
+      async init() {
+        sequence.push('host-init');
+      },
+    };
+
+    const process = await WasixProcess.open(openOptions(), host, dependencies);
+    expect(sequence).toEqual(['prepare-start', 'host-init', 'prepare-finish']);
+    await process.close();
+  });
+
+  it('disables maintenance workers in the single-process backend', async () => {
+    let args: string[] | undefined;
+    const baseHost = fakeHost({ stdout: startupSuccess() });
+    const host: WasixHost = {
+      ...baseHost,
+      async runWasix(module, options) {
+        args = options.args;
+        return baseHost.runWasix(module, options);
+      },
+    };
+
+    const process = await WasixProcess.open(
+      openOptions(),
+      host,
+      fakeDependencies(async () => fakeLease(async () => undefined)),
+    );
+
+    expect(args).toContain('max_parallel_maintenance_workers=0');
+    await process.close();
+  });
+
+  it.each([
+    'max_worker_processes',
+    'MAX_PARALLEL_MAINTENANCE_WORKERS',
+    'io_method',
+  ])('rejects an override of the managed single-backend setting %s', async (name) => {
+    const options = openOptions();
+    options.startupGUCs = { [name]: '1' };
+
+    await expect(
+      WasixProcess.open(
+        options,
+        fakeHost({ stdout: startupSuccess() }),
+        fakeDependencies(async () => fakeLease(async () => undefined)),
+      ),
+    ).rejects.toThrow(name);
+  });
+
+  it('canonicalizes an explicitly matching single-backend setting', async () => {
+    let args: string[] | undefined;
+    const baseHost = fakeHost({ stdout: startupSuccess() });
+    const host: WasixHost = {
+      ...baseHost,
+      async runWasix(module, options) {
+        args = options.args;
+        return baseHost.runWasix(module, options);
+      },
+    };
+    const options = openOptions();
+    options.startupGUCs = { MAX_WORKER_PROCESSES: '0' };
+
+    const process = await WasixProcess.open(
+      options,
+      host,
+      fakeDependencies(async () => fakeLease(async () => undefined)),
+    );
+
+    expect(args?.filter((arg) => arg === 'max_worker_processes=0')).toHaveLength(1);
+    expect(args).not.toContain('MAX_WORKER_PROCESSES=0');
+    await process.close();
+  });
+
   it('keeps startup SQLSTATE, reports release failure, and permits reacquisition', async () => {
     let held = false;
     let failFirstRelease = true;
@@ -189,8 +277,8 @@ function fakeDependencies(
   prepared: PreparedBrowserRuntime = preparedRuntime(),
 ): WasixProcessDependencies {
   return {
-    async prepareRuntime() {
-      return prepared;
+    async prepareRuntime(options) {
+      return { ...prepared, startupGUCs: { ...options.startupGUCs } };
     },
     acquireStorage,
   };

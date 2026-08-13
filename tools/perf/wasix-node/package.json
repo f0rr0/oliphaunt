@@ -1,0 +1,12 @@
+{
+  "name": "@oliphaunt/perf-wasix-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.4"
+  },
+  "engines": {
+    "node": ">=22.13 <25"
+  }
+}

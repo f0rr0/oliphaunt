@@ -194,3 +194,10 @@ export type OliphauntTransaction = {
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
 };
+
+/** Descriptive aliases retained for consumers that prefer runtime-qualified names. */
+export type WasixOpenOptions = OpenConfig;
+export type WasixAdvancedOpenOptions = NonNullable<OpenConfig['advanced']>;
+export type WasixDatabase = OliphauntDatabase;
+export type WasixTransaction = OliphauntTransaction;
+export type OliphauntWasixClient = OliphauntClient;

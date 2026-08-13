@@ -92,6 +92,8 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         "0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch",
         "0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch",
         "0034-oliphaunt-wasix-set-embedded-postmaster-environment.patch",
+        "0040-oliphaunt-wasix-use-single-backend-spinlocks.patch",
+        "0041-oliphaunt-wasix-specialize-single-backend-atomics.patch",
     ] {
         ensure!(
             series.contains(&required),
@@ -123,6 +125,34 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         patch_texts.push(((*patch_name).to_owned(), text));
     }
     check_postgres_patch_series_hygiene(&patch_texts)?;
+
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR)
+            .join("0040-oliphaunt-wasix-use-single-backend-spinlocks.patch"),
+        &[
+            "defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS",
+            "typedef int slock_t;",
+            "oliphaunt_wasix_single_user_tas",
+            "__asm__ __volatile__",
+        ],
+    )?;
+
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR)
+            .join("0041-oliphaunt-wasix-specialize-single-backend-atomics.patch"),
+        &[
+            "override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS",
+            "defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER) && defined(OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS)",
+            "postmaster mode is unavailable in the single-backend WASIX runtime",
+            "fork-child mode is unavailable in the single-backend WASIX runtime",
+            "volatile int value;",
+            "volatile uint32 value;",
+            "volatile uint64 value pg_attribute_aligned(8);",
+            "PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY",
+            "*expected = current;",
+        ],
+    )?;
 
     for entry in
         fs::read_dir(POSTGRES_PATCH_DIR).with_context(|| format!("read {POSTGRES_PATCH_DIR}"))?
@@ -498,10 +528,22 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         &[
             "const DEFAULT_STARTUP_GUCS",
             "(\"log_checkpoints\", \"false\")",
-            "(\"max_wal_senders\", \"0\")",
             "(\"wal_buffers\", \"4MB\")",
             "(\"min_wal_size\", \"80MB\")",
             "(\"shared_buffers\", \"128MB\")",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/config.rs",
+        &[
+            "const SINGLE_BACKEND_STARTUP_GUCS",
+            "(\"exit_on_error\", \"false\")",
+            "(\"max_wal_senders\", \"0\")",
+            "(\"max_worker_processes\", \"0\")",
+            "(\"max_parallel_workers\", \"0\")",
+            "(\"max_parallel_workers_per_gather\", \"0\")",
+            "(\"max_parallel_maintenance_workers\", \"0\")",
+            "(\"io_method\", \"sync\")",
         ],
     )?;
     ensure_file_contains_all(
@@ -641,8 +683,8 @@ fn collect_pg18_legacy_symbol_leaks(
 
 fn check_postgres_patch_series_hygiene(patches: &[(String, String)]) -> Result<()> {
     ensure!(
-        patches.len() == 39,
-        "PG18 WASIX patch series should stay reviewable at exactly 39 audited patches; got {}",
+        patches.len() == 41,
+        "PG18 WASIX patch series should stay reviewable at exactly 41 audited patches; got {}",
         patches.len()
     );
     for (index, (patch_name, patch_text)) in patches.iter().enumerate() {
@@ -1620,6 +1662,7 @@ pub(crate) fn check_rust_startup_abi_boundary() -> Result<()> {
         "oliphaunt_wasix_set_protocol_transport",
         "oliphaunt_wasix_protocol_stream_active",
         "The upstream lifecycle is already running by this point",
+        "[\"-D\", PGDATA_DIR, \"--\", startup_config.database.as_str()]",
     ] {
         if !text.contains(marker) {
             bail!(

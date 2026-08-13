@@ -4,17 +4,18 @@ Date: Thu, 28 May 2026 00:00:00 +0530
 Subject: [PATCH] oliphaunt-wasix: use wasm-ld for backend core
 
 Use the same relocatable wasm linker shape as the released WASIX lane when
-assembling the backend core archive.  The default LD can resolve to the host
-linker in the cross build and cannot read wasm/LTO backend objects.
+assembling the backend core archive.  Leave the final dynamic-main link to the
+product build helper so its generated side-module export closure stays the one
+authoritative policy instead of wasixcc's unconditional export-all default.
 ---
- src/backend/Makefile | 12 +++++++++---
- 1 file changed, 9 insertions(+), 3 deletions(-)
+ src/backend/Makefile | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
 
 diff --git a/src/backend/Makefile b/src/backend/Makefile
 index 9292f77031..89c356d090 100644
 --- a/src/backend/Makefile
 +++ b/src/backend/Makefile
-@@ -83,12 +83,19 @@ libpostgres.a: postgres
+@@ -96,12 +96,18 @@ libpostgres.a: postgres
  endif # win32
 
  ifeq ($(PORTNAME), wasix-dl)
@@ -35,7 +36,6 @@ index 9292f77031..89c356d090 100644
 +	$(AR) rcs $(LIBPG) $(PGBACKEND)
 +	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
 +	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
-+	$(CC) $(CFLAGS) $(top_builddir)/libpgcore.a $(PGMAIN) $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
 
  postgres: oliphaunt
 
