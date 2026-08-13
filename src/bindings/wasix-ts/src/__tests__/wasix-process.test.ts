@@ -3,20 +3,33 @@ import { describe, expect, it } from 'vitest';
 import { WasixStorageError } from '../errors.js';
 import type { PreparedBrowserRuntime } from '../extensions.js';
 import { PostgresError } from '../query.js';
-import type { WorkerOpenOptions } from '../rpc.js';
+import type { SerializedOpenOptions } from '../rpc.js';
 import type { BrowserStorageLease } from '../storage-provider.js';
 import {
   composeLifecycleFailure,
+  compileWasixModule,
   WasixProcess,
   type WasixHost,
   type WasixProcessDependencies,
 } from '../wasix-process.js';
 
 describe('WASIX process lifecycle failures', () => {
+  it('coalesces verified guest compilation by module identity', async () => {
+    const bytes = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0);
+    const identity = `test-${crypto.randomUUID()}`;
+
+    const first = compileWasixModule(bytes, identity);
+    const second = compileWasixModule(bytes.slice(), identity);
+
+    expect(second).toBe(first);
+    await expect(first).resolves.toBeInstanceOf(WebAssembly.Module);
+  });
+
   it('keeps startup SQLSTATE, reports release failure, and permits reacquisition', async () => {
     let held = false;
     let failFirstRelease = true;
     let acquisitions = 0;
+    const lifecycle = { frees: 0, terminates: 0, waits: 0 };
     const dependencies = fakeDependencies(async () => {
       if (held) {
         throw new WasixStorageError('storage is still held', {
@@ -36,7 +49,11 @@ describe('WASIX process lifecycle failures', () => {
     });
 
     const first = await rejection(
-      WasixProcess.open(openOptions(), fakeHost({ stdout: startupError('3D000') }), dependencies),
+      WasixProcess.open(
+        openOptions(),
+        fakeHost({ stdout: startupError('3D000'), lifecycle }),
+        dependencies,
+      ),
     );
     expect(first).toBeInstanceOf(PostgresError);
     expect(first).toMatchObject({ sqlstate: '3D000', postgresMessage: 'database does not exist' });
@@ -45,13 +62,50 @@ describe('WASIX process lifecycle failures', () => {
     expect(held).toBe(false);
 
     const second = await rejection(
-      WasixProcess.open(openOptions(), fakeHost({ stdout: startupError('3D000') }), dependencies),
+      WasixProcess.open(
+        openOptions(),
+        fakeHost({ stdout: startupError('3D000'), lifecycle }),
+        dependencies,
+      ),
     );
     expect(second).toBeInstanceOf(PostgresError);
     expect(second).toMatchObject({ sqlstate: '3D000' });
     expect(second.message).not.toContain('storage is still held');
     expect(acquisitions).toBe(2);
     expect(held).toBe(false);
+    expect(lifecycle).toEqual({ frees: 0, terminates: 2, waits: 2 });
+  });
+
+  it('terminates and awaits a healthy guest when extension setup fails', async () => {
+    const lifecycle = { frees: 0, terminates: 0, waits: 0 };
+    const events: string[] = [];
+    const outcomes: string[] = [];
+    const dependencies = fakeDependencies(
+      async () =>
+        fakeLease(async (_directory, outcome) => {
+          events.push('storage');
+          outcomes.push(outcome);
+        }, 'new'),
+      preparedRuntime(['SELECT 1 / 0']),
+    );
+
+    const failure = await rejection(
+      WasixProcess.open(
+        openOptions(),
+        fakeHost({
+          stdout: concatenate([startupSuccess(), queryError('22012', 'division by zero')]),
+          lifecycle,
+          events,
+        }),
+        dependencies,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(PostgresError);
+    expect(failure).toMatchObject({ sqlstate: '22012', postgresMessage: 'division by zero' });
+    expect(lifecycle).toEqual({ frees: 0, terminates: 1, waits: 1 });
+    expect(outcomes).toEqual(['failed']);
+    expect(events).toEqual(['wait', 'storage']);
   });
 
   it('preserves storage code and durability while composing cleanup diagnostics', () => {
@@ -76,17 +130,26 @@ describe('WASIX process lifecycle failures', () => {
   it.each([
     {
       label: 'terminate',
-      host: { stdout: startupSuccess(), terminateFailure: new Error('terminate transport failed') },
+      host: {
+        stdout: concatenate([startupSuccess(), querySuccess()]),
+        terminateFailure: new Error('terminate transport failed'),
+      },
       primary: 'WASIX PostgreSQL terminate failed: terminate transport failed',
     },
     {
       label: 'wait',
-      host: { stdout: startupSuccess(), waitFailure: new Error('wait exploded') },
+      host: {
+        stdout: concatenate([startupSuccess(), querySuccess()]),
+        waitFailure: new Error('wait exploded'),
+      },
       primary: 'WASIX PostgreSQL wait failed: wait exploded',
     },
     {
       label: 'exit',
-      host: { stdout: startupSuccess(), output: { ok: false, code: 7 } },
+      host: {
+        stdout: concatenate([startupSuccess(), querySuccess()]),
+        output: { ok: false, code: 7 },
+      },
       primary: 'WASIX PostgreSQL exited with code 7',
     },
   ])('keeps the $label failure primary when storage cleanup also fails', async ({
@@ -123,32 +186,36 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 
 function fakeDependencies(
   acquireStorage: WasixProcessDependencies['acquireStorage'],
+  prepared: PreparedBrowserRuntime = preparedRuntime(),
 ): WasixProcessDependencies {
   return {
     async prepareRuntime() {
-      return preparedRuntime();
+      return prepared;
     },
     acquireStorage,
   };
 }
 
-function fakeLease(close: BrowserStorageLease['close']): BrowserStorageLease {
+function fakeLease(
+  close: BrowserStorageLease['close'],
+  state: BrowserStorageLease['state'] = 'existing',
+): BrowserStorageLease {
   return {
-    state: 'existing',
+    state,
     mount: pgdataMount(),
     async checkpoint() {},
     close,
   };
 }
 
-function preparedRuntime(): PreparedBrowserRuntime {
+function preparedRuntime(setupSql: string[] = []): PreparedBrowserRuntime {
   return {
     layout: {
       module: Uint8Array.of(0),
       mounts: { '/base': pgdataMount() },
     },
     startupGUCs: {},
-    setupSql: [],
+    setupSql,
     storageCompatibility: {
       schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
       runtime: {
@@ -176,7 +243,7 @@ function pgdataMount() {
   };
 }
 
-function openOptions(): WorkerOpenOptions {
+function openOptions(): SerializedOpenOptions {
   return {
     runtime: {
       schema: 'oliphaunt-wasix-runtime-v1',
@@ -211,6 +278,8 @@ type FakeHostOptions = {
   terminateFailure?: Error;
   waitFailure?: Error;
   output?: { ok: boolean; code: number };
+  lifecycle?: { frees: number; terminates: number; waits: number };
+  events?: string[];
 };
 
 function fakeHost(options: FakeHostOptions): WasixHost {
@@ -218,22 +287,36 @@ function fakeHost(options: FakeHostOptions): WasixHost {
     Directory: FakeDirectory as unknown as WasixHost['Directory'],
     async init() {},
     async runWasix() {
-      let writes = 0;
       return {
         stdin: new WritableStream<Uint8Array>({
-          write() {
-            writes += 1;
-            if (writes > 1 && options.terminateFailure !== undefined) {
+          write(value) {
+            const terminate = value[0] === 'X'.charCodeAt(0);
+            if (terminate && options.lifecycle !== undefined) {
+              options.lifecycle.terminates += 1;
+            }
+            if (terminate && options.terminateFailure !== undefined) {
               throw options.terminateFailure;
             }
           },
         }),
         stdout: byteStream(options.stdout),
         stderr: byteStream(new Uint8Array()),
-        free() {},
+        free() {
+          if (options.lifecycle !== undefined) options.lifecycle.frees += 1;
+        },
         async wait() {
+          if (options.lifecycle !== undefined) options.lifecycle.waits += 1;
+          if (options.events !== undefined) {
+            options.events.push('wait');
+          }
           if (options.waitFailure !== undefined) throw options.waitFailure;
-          return options.output ?? { ok: true, code: 0 };
+          return {
+            stdoutBytes: new Uint8Array(),
+            stdout: '',
+            stderrBytes: new Uint8Array(),
+            stderr: '',
+            ...(options.output ?? { ok: true, code: 0 }),
+          };
         },
       };
     },
@@ -278,12 +361,27 @@ function startupSuccess(): Uint8Array {
 }
 
 function startupError(sqlstate: string): Uint8Array {
+  return errorResponse('FATAL', sqlstate, 'database does not exist');
+}
+
+function queryError(sqlstate: string, message: string): Uint8Array {
+  return concatenate([
+    errorResponse('ERROR', sqlstate, message),
+    backendMessage('Z', Uint8Array.of('I'.charCodeAt(0))),
+  ]);
+}
+
+function querySuccess(): Uint8Array {
+  return backendMessage('Z', Uint8Array.of('I'.charCodeAt(0)));
+}
+
+function errorResponse(severity: string, sqlstate: string, message: string): Uint8Array {
   const encoder = new TextEncoder();
   const fields: number[] = [];
   for (const [code, value] of [
-    ['S', 'FATAL'],
+    ['S', severity],
     ['C', sqlstate],
-    ['M', 'database does not exist'],
+    ['M', message],
   ] as const) {
     fields.push(code.charCodeAt(0), ...encoder.encode(value), 0);
   }

@@ -1,5 +1,8 @@
 import { simpleQuery } from './protocol.js';
 
+const decoder = new TextDecoder('utf-8', { fatal: true });
+const encoder = new TextEncoder();
+
 export type QueryBinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
 export type QueryParam =
@@ -27,6 +30,18 @@ export type QueryRow = {
   values: Array<Uint8Array | null>;
   text(column: number): string | null;
 };
+
+class ParsedQueryRow implements QueryRow {
+  constructor(readonly values: Array<Uint8Array | null>) {}
+
+  text(column: number): string | null {
+    if (column < 0 || column >= this.values.length) {
+      throw new Error(`query row has no column at index ${column}`);
+    }
+    const value = this.values[column]!;
+    return value === null ? null : decodeUtf8Strict(value, 'query value');
+  }
+}
 
 export type QueryResult = {
   fields: QueryField[];
@@ -260,13 +275,13 @@ function normalizeQueryParam(parameter: QueryParam): NormalizedParam {
     typeof parameter === 'number' ||
     typeof parameter === 'boolean'
   ) {
-    return { kind: 'text', value: new TextEncoder().encode(String(parameter)) };
+    return { kind: 'text', value: encoder.encode(String(parameter)) };
   }
   if (isQueryBinaryInput(parameter)) {
     return { kind: 'binary', value: toUint8Array(parameter) };
   }
   if (parameter.format === 'text') {
-    return { kind: 'text', value: new TextEncoder().encode(String(parameter.value)) };
+    return { kind: 'text', value: encoder.encode(String(parameter.value)) };
   }
   return { kind: 'binary', value: toUint8Array(parameter.value) };
 }
@@ -330,7 +345,7 @@ function pushCString(out: number[], value: string): void {
   if (value.includes('\0')) {
     throw new Error('frontend protocol string must not contain NUL bytes');
   }
-  out.push(...new TextEncoder().encode(value), 0);
+  out.push(...encoder.encode(value), 0);
 }
 
 function pushSizedValue(out: number[], value: Uint8Array): void {
@@ -398,27 +413,18 @@ function parseDataRow(cursor: ByteCursor, expectedColumns: number): QueryRow {
       `DataRow column count ${count} does not match RowDescription count ${expectedColumns}`,
     );
   }
-  const values: Array<Uint8Array | null> = [];
+  const values = new Array<Uint8Array | null>(count);
   for (let index = 0; index < count; index += 1) {
     const length = cursor.readI32('DataRow value length');
     if (length === -1) {
-      values.push(null);
+      values[index] = null;
     } else if (length < 0) {
       throw new Error(`invalid DataRow value length ${length}`);
     } else {
-      values.push(cursor.readBytes(length, 'DataRow value'));
+      values[index] = cursor.readBytes(length, 'DataRow value');
     }
   }
-  return {
-    values,
-    text(column: number): string | null {
-      if (column < 0 || column >= values.length) {
-        throw new Error(`query row has no column at index ${column}`);
-      }
-      const value = values[column]!;
-      return value === null ? null : decodeUtf8Strict(value, 'query value');
-    },
-  };
+  return new ParsedQueryRow(values);
 }
 
 function parseErrorResponse(cursor: ByteCursor): PostgresError {
@@ -540,15 +546,23 @@ class ByteCursor {
   }
 
   readU8(label: string): number {
-    return this.readBytes(1, label)[0]!;
+    if (this.#offset >= this.#bytes.length) {
+      throw new Error(`truncated ${label}`);
+    }
+    return this.#bytes[this.#offset++]!;
   }
 
   readU32(label: string): number {
+    if (this.#offset + 4 > this.#bytes.length) {
+      throw new Error(`truncated ${label}`);
+    }
+    const offset = this.#offset;
+    this.#offset += 4;
     return (
-      (this.readU8(label) * 0x1000000 +
-        (this.readU8(label) << 16) +
-        (this.readU8(label) << 8) +
-        this.readU8(label)) >>>
+      (this.#bytes[offset]! * 0x1000000 +
+        (this.#bytes[offset + 1]! << 16) +
+        (this.#bytes[offset + 2]! << 8) +
+        this.#bytes[offset + 3]!) >>>
       0
     );
   }
@@ -559,7 +573,11 @@ class ByteCursor {
   }
 
   readI16(label: string): number {
-    const value = (this.readU8(label) << 8) | this.readU8(label);
+    if (this.#offset + 2 > this.#bytes.length) {
+      throw new Error(`truncated ${label}`);
+    }
+    const value = (this.#bytes[this.#offset]! << 8) | this.#bytes[this.#offset + 1]!;
+    this.#offset += 2;
     return value > 0x7fff ? value - 0x10000 : value;
   }
 
@@ -577,15 +595,22 @@ class ByteCursor {
     if (count < 0 || this.#offset + count > this.#bytes.length) {
       throw new Error(`truncated ${label}`);
     }
-    const value = this.#bytes.slice(this.#offset, this.#offset + count);
+    const value = this.#bytes.subarray(this.#offset, this.#offset + count);
     this.#offset += count;
     return value;
   }
 }
 
 function decodeUtf8Strict(bytes: Uint8Array, label: string): string {
-  validateUtf8(bytes, label);
-  return new TextDecoder().decode(bytes);
+  try {
+    return decoder.decode(bytes);
+  } catch {
+    // Keep the precise protocol diagnostic off the valid-data hot path. The
+    // platform decoder performs the usual validation in native code; this
+    // scanner only runs after it has already rejected malformed UTF-8.
+    validateUtf8(bytes, label);
+    throw new Error(`${label} is not valid UTF-8`);
+  }
 }
 
 function validateUtf8(bytes: Uint8Array, label: string): void {

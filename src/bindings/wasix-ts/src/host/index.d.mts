@@ -1,18 +1,34 @@
 export type WasixOutput = Readonly<{
   ok: boolean;
   code: number;
+  stdoutBytes: Uint8Array;
+  stdout: string;
+  stderrBytes: Uint8Array;
+  stderr: string;
 }>;
 
+export type DirectoryEntry = Readonly<{
+  type: 'dir' | 'file' | 'unknown';
+  name: string;
+}>;
+
+export type DirectoryInit = Record<string, string | Uint8Array>;
+
 export class Directory {
-  constructor(files?: Record<string, Uint8Array>);
+  constructor(files?: DirectoryInit | null);
+  free(): void;
+  __getClassname(): string;
   createDir(path: string): Promise<void>;
-  readDir(path: string): Promise<
-    Readonly<{ type: 'dir' | 'file' | 'unknown'; name: string }>[]
-  >;
+  readDir(path: string): Promise<DirectoryEntry[]>;
   readFile(path: string): Promise<Uint8Array>;
+  readTextFile(path: string): Promise<string>;
+  writeFile(path: string, contents: string | Uint8Array): Promise<void>;
+  removeDir(path: string): Promise<void>;
+  removeFile(path: string): Promise<void>;
 }
 
 export class Instance {
+  private constructor();
   readonly stdin: WritableStream<Uint8Array> | undefined;
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
@@ -20,13 +36,47 @@ export class Instance {
   wait(): Promise<WasixOutput>;
 }
 
+/** Caller-realm Oliphaunt driver. Methods run synchronously and never create a Worker. */
+export class OliphauntDirectInstance {
+  private constructor();
+  startup(packet: Uint8Array): Uint8Array;
+  execProtocolRaw(input: Uint8Array): Uint8Array;
+  close(): void;
+  free(): void;
+}
+
 export type RunWasixOptions = Readonly<{
-  program: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-  mount: Record<string, Directory>;
+  program?: string;
+  moduleBytes?: Uint8Array;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  mount?: Record<string, DirectoryInit | Directory>;
 }>;
 
-export function init(options?: Record<string, unknown>): Promise<unknown>;
-export function runWasix(module: Uint8Array, options: RunWasixOptions): Promise<Instance>;
+export type WasmerInitOptions = Readonly<{
+  module?:
+    | RequestInfo
+    | URL
+    | Response
+    | BufferSource
+    | WebAssembly.Module
+    | Promise<RequestInfo | URL | Response | BufferSource | WebAssembly.Module>;
+  memory?: WebAssembly.Memory;
+  workerUrl?: string | URL;
+  sdkUrl?: string | URL;
+  log?: string;
+  registryUrl?: string;
+  token?: string;
+}>;
+
+export function init(options?: WasmerInitOptions): Promise<unknown>;
+export function runWasix(
+  module: Uint8Array | WebAssembly.Module,
+  options: RunWasixOptions,
+): Promise<Instance>;
+export function instantiateOliphauntDirect(
+  module: WebAssembly.Module,
+  moduleBytes: Uint8Array,
+  options: RunWasixOptions,
+): Promise<OliphauntDirectInstance>;

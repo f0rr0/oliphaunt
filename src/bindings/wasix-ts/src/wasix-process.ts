@@ -1,4 +1,4 @@
-import type { Directory, Instance } from './host/index.mjs';
+import type { Directory, Instance, WasmerInitOptions } from './host/index.mjs';
 
 import type { BrowserDirectoryMount, BrowserRuntimeLayout } from './archive.js';
 import { WasixStorageError } from './errors.js';
@@ -6,16 +6,17 @@ import { prepareBrowserRuntime, type PreparedBrowserRuntime } from './extensions
 import { assertSuccessfulStartupResponse, PgwireStream, startupPacket } from './pgwire.js';
 import { simpleQuery } from './protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
-import type { WorkerOpenOptions } from './rpc.js';
+import type { SerializedOpenOptions } from './rpc.js';
 import { acquireBrowserStorage, type BrowserStorageLease } from './storage-provider.js';
 
 export type WasixHost = Readonly<{
   Directory: typeof Directory;
-  init(options?: Record<string, unknown>): Promise<unknown>;
+  init(options?: WasmerInitOptions): Promise<unknown>;
   runWasix(
-    module: Uint8Array,
+    module: Uint8Array | WebAssembly.Module,
     options: {
       program: string;
+      moduleBytes?: Uint8Array;
       args: string[];
       cwd: string;
       env: Record<string, string>;
@@ -26,18 +27,44 @@ export type WasixHost = Readonly<{
 
 /** @internal Dependency seam for deterministic lifecycle-failure qualification. */
 export type WasixProcessDependencies = Readonly<{
-  prepareRuntime(options: WorkerOpenOptions): Promise<PreparedBrowserRuntime>;
+  prepareRuntime(options: SerializedOpenOptions): Promise<PreparedBrowserRuntime>;
   acquireStorage(
-    storage: WorkerOpenOptions['storage'],
+    storage: SerializedOpenOptions['storage'],
     template: BrowserDirectoryMount,
     compatibility: PreparedBrowserRuntime['storageCompatibility'],
   ): Promise<BrowserStorageLease>;
+  /** Test seam; production caches the verified guest compilation per JS realm. */
+  compileModule?(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
 
 const defaultDependencies: WasixProcessDependencies = {
   prepareRuntime: prepareBrowserRuntime,
   acquireStorage: acquireBrowserStorage,
+  compileModule: compileWasixModule,
 };
+
+let compiledModuleCache: { sha256: string; module: Promise<WebAssembly.Module> } | undefined;
+
+/** @internal Verified-module compilation cache shared by direct opens in one JS realm. */
+export function compileWasixModule(
+  module: Uint8Array,
+  sha256: string,
+): Promise<WebAssembly.Module> {
+  if (compiledModuleCache?.sha256 !== sha256) {
+    const source =
+      module.buffer instanceof ArrayBuffer
+        ? (module as Uint8Array<ArrayBuffer>)
+        : Uint8Array.from(module);
+    const compiled = WebAssembly.compile(source);
+    compiledModuleCache = { sha256, module: compiled };
+    void compiled.catch(() => {
+      if (compiledModuleCache?.module === compiled) {
+        compiledModuleCache = undefined;
+      }
+    });
+  }
+  return compiledModuleCache.module;
+}
 
 /** Host-neutral PostgreSQL/WASIX lifecycle shared by browser and Node workers. */
 export class WasixProcess {
@@ -64,11 +91,18 @@ export class WasixProcess {
   }
 
   static async open(
-    options: WorkerOpenOptions,
+    options: SerializedOpenOptions,
     host: WasixHost,
     dependencies: WasixProcessDependencies = defaultDependencies,
   ): Promise<WasixProcess> {
     const prepared = await dependencies.prepareRuntime(options);
+    const module =
+      dependencies.compileModule === undefined
+        ? prepared.layout.module
+        : await dependencies.compileModule(
+            prepared.layout.module,
+            prepared.storageCompatibility.runtime.moduleSha256,
+          );
     const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
     await host.init({});
     const pgdataTemplate = prepared.layout.mounts['/base'];
@@ -85,13 +119,18 @@ export class WasixProcess {
     let opened: WasixProcess | undefined;
     let baseDirectory: Directory | undefined;
     try {
-      const materialized = await materializeMounts(host.Directory, prepared.layout, storage.mount);
+      const materialized = await materializeWasixMounts(
+        host.Directory,
+        prepared.layout,
+        storage.mount,
+      );
       baseDirectory = materialized.baseDirectory;
-      instance = await host.runWasix(prepared.layout.module, {
+      instance = await host.runWasix(module, {
         program: '/bin/oliphaunt',
-        args: postgresArgs(runtimeOptions),
+        moduleBytes: prepared.layout.module,
+        args: wasixPostgresArgs(runtimeOptions),
         cwd: '/',
-        env: postgresEnvironment(runtimeOptions),
+        env: wasixPostgresEnvironment(runtimeOptions),
         mount: materialized.mounts,
       });
       if (instance.stdin === undefined) {
@@ -102,7 +141,8 @@ export class WasixProcess {
         (error) => `stderr capture failed: ${describeError(error)}`,
       );
       const wire = new PgwireStream(instance.stdout, instance.stdin);
-      opened = new WasixProcess(instance, wire, stderr, storage, baseDirectory);
+      const process = new WasixProcess(instance, wire, stderr, storage, baseDirectory);
+      opened = process;
       assertSuccessfulStartupResponse(
         await wire.startup(startupPacket(options.username, options.database)),
       );
@@ -110,18 +150,10 @@ export class WasixProcess {
       // ReadyForQuery after the explicit startup response. Drain and validate
       // that transition before exposing the session to callers.
       await wire.settleStartup();
-      // Imported carrier install contracts own extension lifecycle. Activate
-      // while the fixed bootstrap superuser is selected, then apply the caller's role.
-      if (storage.state === 'new') {
-        for (const sql of prepared.setupSql) {
-          assertSuccessfulQueryResponse(await opened.exec(simpleQuery(sql)));
-        }
-      }
-      if (options.username !== 'postgres') {
-        const username = options.username.replaceAll('"', '""');
-        assertSuccessfulQueryResponse(await opened.exec(simpleQuery(`SET ROLE "${username}"`)));
-      }
-      return opened;
+      await configureWasixDatabase(options, prepared, storage.state, (input) =>
+        process.exec(input),
+      );
+      return process;
     } catch (error) {
       const detail = opened === undefined ? '' : await opened.#stderrSnapshot();
       let failure: Error =
@@ -130,6 +162,9 @@ export class WasixProcess {
           : new Error(`WASIX PostgreSQL startup failed: ${describeError(error)}${detail}`, {
               cause: error,
             });
+      if (opened !== undefined) {
+        throw await opened.#closeAfterOpenFailure(failure);
+      }
       if (instance !== undefined) {
         try {
           instance.free();
@@ -259,9 +294,40 @@ export class WasixProcess {
     ]);
     return stderr.length > 0 ? `\nWASIX stderr:\n${stderr}` : '';
   }
+
+  async #closeAfterOpenFailure(failure: Error): Promise<Error> {
+    this.#closed = true;
+    this.#failed = true;
+    try {
+      await this.#wire.close();
+    } catch (terminateError) {
+      failure = composeLifecycleFailure(
+        failure,
+        'WASIX terminate after failed open also failed',
+        terminateError,
+      );
+    }
+    try {
+      // wait() is the ownership boundary for a started Wasmer instance.
+      await this.#instance.wait();
+    } catch (waitError) {
+      failure = composeLifecycleFailure(
+        failure,
+        'WASIX wait after failed open also failed',
+        waitError,
+      );
+    }
+    try {
+      await this.#storage.close(this.#baseDirectory, 'failed');
+    } catch (releaseError) {
+      failure = composeLifecycleFailure(failure, 'storage release also failed', releaseError);
+    }
+    return failure;
+  }
 }
 
-async function materializeMounts(
+/** @internal Materialize the exact runtime mounts shared by both execution placements. */
+export async function materializeWasixMounts(
   DirectoryConstructor: typeof Directory,
   layout: BrowserRuntimeLayout,
   pgdata: BrowserDirectoryMount,
@@ -312,7 +378,8 @@ function compareDirectoryDepth(left: string, right: string): number {
   return left.split('/').length - right.split('/').length || left.localeCompare(right);
 }
 
-function postgresArgs(options: WorkerOpenOptions): string[] {
+/** @internal PostgreSQL argv shared by both execution placements. */
+export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single', '-F', '-O', '-j'];
   const startupGUCs = { ...options.startupGUCs };
   for (const protectedName of ['exit_on_error']) {
@@ -348,7 +415,10 @@ function postgresArgs(options: WorkerOpenOptions): string[] {
   return args;
 }
 
-function postgresEnvironment(options: WorkerOpenOptions): Record<string, string> {
+/** @internal PostgreSQL environment shared by both execution placements. */
+export function wasixPostgresEnvironment(
+  options: SerializedOpenOptions,
+): Record<string, string> {
   return {
     PREFIX: '/',
     PGDATA: '/base',
@@ -397,8 +467,15 @@ async function captureText(stream: ReadableStream<Uint8Array>): Promise<string> 
   }
 }
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** @internal Normalize lifecycle diagnostics without discarding structured primary errors. */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const detailed = (error as Error & { detailedMessage?: unknown }).detailedMessage;
+  return typeof detailed === 'string' && detailed.length > 0 && detailed !== error.message
+    ? `${error.message}: ${detailed}`
+    : error.message;
 }
 
 /** @internal Preserve a structured primary while attaching cleanup diagnostics. */
@@ -422,4 +499,24 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
     });
   }
   return new Error(message, { cause });
+}
+
+/** @internal Complete extension and role setup after either transport reaches ReadyForQuery. */
+export async function configureWasixDatabase(
+  options: SerializedOpenOptions,
+  prepared: PreparedBrowserRuntime,
+  storageState: BrowserStorageLease['state'],
+  exec: (input: Uint8Array) => Promise<Uint8Array>,
+): Promise<void> {
+  // Imported carrier install contracts own extension lifecycle. Activate them
+  // while the fixed bootstrap superuser is selected, then apply the caller's role.
+  if (storageState === 'new') {
+    for (const sql of prepared.setupSql) {
+      assertSuccessfulQueryResponse(await exec(simpleQuery(sql)));
+    }
+  }
+  if (options.username !== 'postgres') {
+    const username = options.username.replaceAll('"', '""');
+    assertSuccessfulQueryResponse(await exec(simpleQuery(`SET ROLE "${username}"`)));
+  }
 }

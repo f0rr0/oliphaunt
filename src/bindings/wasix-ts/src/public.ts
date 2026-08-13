@@ -21,10 +21,12 @@ export {
 export { memory, type WasixStorage } from './storage.js';
 export type {
   BinaryInput,
-  OliphauntWasixClient,
-  WasixAdvancedOpenOptions,
+  ExecutionMode,
+  OliphauntClient,
+  OliphauntDatabase,
+  OliphauntTransaction,
+  OpenConfig,
   WasixAssetSource,
-  WasixDatabase,
   WasixExtensionCarrier,
   WasixExtensionCompatibility,
   WasixExtensionDescriptor,
@@ -32,7 +34,6 @@ export type {
   WasixExtensionInstall,
   WasixExtensionLifecycle,
   WasixExtensionNativeModule,
-  WasixOpenOptions,
   WasixRuntimeArchive,
   WasixRuntimeDescriptor,
   WasixRuntimeManifest,

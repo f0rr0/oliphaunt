@@ -51,6 +51,7 @@ try {
     'lib/node-web-worker-thread.js',
     'lib/worker.js',
     'lib/host/index.mjs',
+    'lib/host/index.d.mts',
     'lib/host/worker.mjs',
     'lib/host/wasmer_js_bg.wasm',
     'lib/host/provenance.json',
@@ -120,7 +121,9 @@ try {
     await readFile(resolve(packageDir, 'lib/host/provenance.json'), 'utf8'),
   );
   if (
+    typeof provenance.wasmerJsVersion !== 'string' ||
     typeof provenance.wasmerJsCommit !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(provenance.packageLockSha256 ?? '') ||
     typeof provenance.inputsSha256 !== 'string'
   ) {
     throw new Error('WASIX TypeScript package omitted patched-host provenance');

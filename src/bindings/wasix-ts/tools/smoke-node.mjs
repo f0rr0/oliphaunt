@@ -52,6 +52,12 @@ const resolved = import.meta.resolve('@oliphaunt/wasix');
 if (!resolved.endsWith('/lib/index.node.js')) {
   throw new Error('Node did not select the worker_threads entrypoint: ' + resolved);
 }
+try {
+  await Oliphaunt.open({ execution: 'direct' });
+  throw new Error('Node unexpectedly accepted direct WASIX execution');
+} catch (error) {
+  if (!(error instanceof TypeError) || !error.message.includes('browser-only')) throw error;
+}
 const db = await Oliphaunt.open({ extensions: [pgtap] });
 const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
 let sqlstate;
@@ -62,11 +68,14 @@ try {
   sqlstate = error.sqlstate;
 }
 const answer = (await db.query('SELECT 42::int AS answer')).getText(0, 'answer');
+const transactionAnswer = await db.transaction(async (transaction) =>
+  (await transaction.query('SELECT $1::int + 1 AS answer', [41])).getText(0, 'answer'),
+);
 await db.close();
-if (!version || sqlstate !== '42601' || answer !== '42') {
-  throw new Error(JSON.stringify({ version, sqlstate, answer }));
+if (!version || sqlstate !== '42601' || answer !== '42' || transactionAnswer !== '42') {
+  throw new Error(JSON.stringify({ version, sqlstate, answer, transactionAnswer }));
 }
-console.log(JSON.stringify({ host: 'node-worker_threads', extension: 'pgtap', version, sqlstate, answer }));
+console.log(JSON.stringify({ host: 'node-worker_threads', extension: 'pgtap', version, sqlstate, answer, transactionAnswer }));
 `,
   );
   const { stdout } = await run(process.execPath, ['verify.mjs'], consumer, 300_000);

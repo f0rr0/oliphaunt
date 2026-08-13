@@ -18,6 +18,15 @@ describe('WASIX TypeScript archives', () => {
     });
   });
 
+  it('keeps extracted file payloads as zero-copy archive views', () => {
+    const archive = tar([['share/data', Uint8Array.of(1, 2, 3)]]);
+
+    const extracted = extractTar(archive).files.get('share/data');
+
+    expect(extracted).toEqual(Uint8Array.of(1, 2, 3));
+    expect(extracted?.buffer).toBe(archive.buffer);
+  });
+
   it('preserves empty directories needed by PostgreSQL', () => {
     const archive = tar([
       ['PG_VERSION', new TextEncoder().encode('18')],

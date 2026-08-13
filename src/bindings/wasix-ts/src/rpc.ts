@@ -68,7 +68,8 @@ export type SerializedRuntimeDescriptor = {
   };
 };
 
-export type WorkerOpenOptions = {
+/** Host-ready open options shared by direct and worker execution. */
+export type SerializedOpenOptions = {
   runtime: SerializedRuntimeDescriptor;
   /** Exact imported carrier closure, keyed by PostgreSQL SQL name. */
   extensionCarriers: Record<string, SerializedExtensionCarrier>;
@@ -80,7 +81,7 @@ export type WorkerOpenOptions = {
 };
 
 export type WorkerRequest =
-  | { id: number; method: 'open'; options: WorkerOpenOptions }
+  | { id: number; method: 'open'; options: SerializedOpenOptions }
   | { id: number; method: 'exec'; input: Uint8Array }
   | { id: number; method: 'checkpoint' }
   | { id: number; method: 'close' };

@@ -855,7 +855,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 ### Types
 
 - `BinaryInput`
-- `OliphauntWasixClient`
+- `ExecutionMode`
+- `OliphauntClient`
+- `OliphauntDatabase`
+- `OliphauntTransaction`
+- `OpenConfig`
 - `PostgresErrorField`
 - `QueryBinaryInput`
 - `QueryField`
@@ -863,9 +867,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryParam`
 - `QueryResult`
 - `QueryRow`
-- `WasixAdvancedOpenOptions`
 - `WasixAssetSource`
-- `WasixDatabase`
 - `WasixExtensionCarrier`
 - `WasixExtensionCompatibility`
 - `WasixExtensionDescriptor`
@@ -873,7 +875,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `WasixExtensionInstall`
 - `WasixExtensionLifecycle`
 - `WasixExtensionNativeModule`
-- `WasixOpenOptions`
 - `WasixRuntimeArchive`
 - `WasixRuntimeDescriptor`
 - `WasixRuntimeManifest`
@@ -896,7 +897,24 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 ### Members
 
 - `Oliphaunt`
-- `OliphauntWasixClient.open()`
+- `OliphauntClient.open()`
+- `OliphauntDatabase.[Symbol.asyncDispose]()`
+- `OliphauntDatabase.checkpoint()`
+- `OliphauntDatabase.close()`
+- `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execute()`
+- `OliphauntDatabase.query()`
+- `OliphauntDatabase.transaction()`
+- `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execute()`
+- `OliphauntTransaction.query()`
+- `OpenConfig.advanced`
+- `OpenConfig.database`
+- `OpenConfig.execution`
+- `OpenConfig.extensions`
+- `OpenConfig.startupGUCs`
+- `OpenConfig.storage`
+- `OpenConfig.username`
 - `PostgresError.columnName`
 - `PostgresError.constraintName`
 - `PostgresError.dataTypeName`
@@ -927,12 +945,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryResult.rows`
 - `QueryRow.text()`
 - `QueryRow.values`
-- `WasixAdvancedOpenOptions.runtime`
-- `WasixDatabase.checkpoint()`
-- `WasixDatabase.close()`
-- `WasixDatabase.execProtocolRaw()`
-- `WasixDatabase.execute()`
-- `WasixDatabase.query()`
 - `WasixExtensionCarrier.archive`
 - `WasixExtensionCarrier.install`
 - `WasixExtensionCarrier.product`
@@ -971,12 +983,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `WasixExtensionNativeModule.path`
 - `WasixExtensionNativeModule.sha256`
 - `WasixExtensionNativeModule.size`
-- `WasixOpenOptions.advanced`
-- `WasixOpenOptions.database`
-- `WasixOpenOptions.extensions`
-- `WasixOpenOptions.startupGUCs`
-- `WasixOpenOptions.storage`
-- `WasixOpenOptions.username`
 - `WasixRuntimeArchive.archive`
 - `WasixRuntimeArchive.sha256`
 - `WasixRuntimeArchive.size`
