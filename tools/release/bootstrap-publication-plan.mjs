@@ -71,9 +71,9 @@ export function bootstrapPublicationPlan(lock, products) {
       if (lockedDependency === undefined) {
         throw error(`${carrier.id} refers to unknown locked dependency ${dependency}`);
       }
-      // Bootstrap only pre-creates immutable-name registries. Maven and JSR
-      // have no separate identity-creation phase, so a resolved dependency in
-      // either non-bootstrap ecosystem remains intentionally external to this
+      // Bootstrap only pre-creates immutable-name registries. Maven has no
+      // separate identity-creation phase, so a resolved dependency in that
+      // non-bootstrap ecosystem remains intentionally external to this
       // plan and is handled by the normal global publication topology. Every
       // locked Cargo/npm dependency, however, must be in this exact selection.
       if (!BOOTSTRAP_ECOSYSTEMS.has(lockedDependency.ecosystem)) {

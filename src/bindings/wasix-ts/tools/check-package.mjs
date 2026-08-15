@@ -5,11 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, promisify } from 'node:util';
 
-import {
-  assertWasixTypescriptJsrDirectory,
-  prepareWasixTypescriptJsrPackage,
-  prepareWasixTypescriptPackage,
-} from '../../../../tools/release/wasix-typescript-package.mjs';
+import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 import { loadHostBuildContract } from '../host/build-provenance.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -31,35 +27,10 @@ const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-package-check-'
 try {
   const staging = resolve(scratch, 'package');
   await mkdir(staging);
-  for (const name of [
-    'package.json',
-    'jsr.json',
-    'README.md',
-    'ARCHITECTURE.md',
-    'CHANGELOG.md',
-    'lib',
-  ]) {
+  for (const name of ['package.json', 'README.md', 'ARCHITECTURE.md', 'CHANGELOG.md', 'lib']) {
     await cp(resolve(packageDir, name), resolve(staging, name), { recursive: true });
   }
   const stagedPackageJson = prepareWasixTypescriptPackage(staging);
-  prepareWasixTypescriptJsrPackage(staging);
-  const jsrStaging = resolve(scratch, 'jsr-package');
-  await mkdir(jsrStaging);
-  for (const name of [
-    'jsr.json',
-    'README.md',
-    'ARCHITECTURE.md',
-    'CHANGELOG.md',
-    'LICENSE',
-    'THIRD_PARTY_NOTICES.md',
-    'lib',
-  ]) {
-    await cp(resolve(staging, name), resolve(jsrStaging, name), { recursive: true });
-  }
-  assertWasixTypescriptJsrDirectory(jsrStaging, {
-    version: stagedPackageJson.version,
-    runtimeVersion: stagedPackageJson.dependencies[runtimePackage],
-  });
   const { stdout } = await execFileAsync('pnpm', ['pack', '--dry-run', '--json'], {
     cwd: staging,
     env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },

@@ -31,7 +31,7 @@ Tool versions for Moon, Node, pnpm, Bun, and Deno are pinned in `.prototools`.
 Bun is required for the TypeScript SDK checks because `@oliphaunt/ts` supports
 Bun through the npm artifact; local checks use `tools/dev/bun.sh` when the shell
 does not already provide the pinned Bun. Deno is optional for normal local checks
-and uses `tools/dev/deno.sh` on demand for JSR package validation.
+and uses `tools/dev/deno.sh` on demand for Deno npm-package validation.
 
 Windows native builds obtain WinFlexBison from the exact upstream archive pinned
 in `src/sources/toolchains/winflexbison.toml`. The shared native setup verifies

@@ -131,12 +131,12 @@ console.log(result.getText(0, 'answer'));
 await database.close();
 ```
 
-Deno can use the full JSR carrier instead of the npm root. Its root selects the
-Deno facade directly, and its storage export remains Deno-scoped:
+Deno imports the same npm package through its `npm:` compatibility layer. Its
+root selects the Deno facade directly, and its storage export remains Deno-scoped:
 
 ```ts
-import Oliphaunt from 'jsr:@oliphaunt/wasix-ts';
-import { directory } from 'jsr:@oliphaunt/wasix-ts/storage/deno';
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
 
 const database = await Oliphaunt.open({ storage: directory('./data/main') });
 await database.close();
@@ -592,7 +592,6 @@ runtime artifact URL bookkeeping.
 - The package is a separately versioned public SDK product. It declares an
   exact-version dependency on `@oliphaunt/liboliphaunt-wasix`; that runtime
   remains its own product and the native `@oliphaunt/ts` graph stays separate.
-  The npm and `jsr:@oliphaunt/wasix-ts` carriers share this product version and
-  exact portable runtime closure.
+  The npm carrier owns this product version and exact portable runtime closure.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for ownership and lifecycle details.

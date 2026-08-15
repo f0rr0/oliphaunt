@@ -1400,25 +1400,11 @@ function assertSdkInstallReleaseContracts() {
       'public Kotlin install docs must not advertise the unpublished dev.oliphaunt:oliphaunt coordinate',
     );
   }
-  const typescriptDocs = [
-    'src/docs/content/sdk/typescript/index.mdx',
-    'src/docs/content/reference/sdk-products.mdx',
-  ]
-    .map(readText)
-    .join('\n');
-  if (
-    !typescriptDocs.includes('JSR package intentionally contains only') ||
-    !typescriptDocs.includes('JSR distribution is deliberately limited')
-  ) {
-    fail(
-      'TypeScript public docs must distinguish the native npm distribution from protocol/query-only JSR',
-    );
-  }
   const wasixTypescriptDocs = readText('src/docs/content/sdk/wasm/browser-typescript.mdx');
   for (const contract of [
-    "jsr:@oliphaunt/wasix-ts';",
-    "jsr:@oliphaunt/wasix-ts/storage/deno';",
-    'pins the same portable runtime and decompressor versions',
+    "npm:@oliphaunt/wasix-ts';",
+    "npm:@oliphaunt/wasix-ts/storage/deno';",
+    'same npm package as browsers, Node.js, and Bun',
   ]) {
     if (!wasixTypescriptDocs.includes(contract)) {
       fail(`WASIX TypeScript public docs must include ${JSON.stringify(contract)}`);

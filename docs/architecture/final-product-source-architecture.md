@@ -269,7 +269,7 @@ artifact envelopes. Publishable artifacts are produced by explicit
 the `CI` workflow.
 
 Use pnpm only for JavaScript dependency installation and package-manager
-commands. Use Cargo, SwiftPM/Xcode, Gradle, npm/JSR, and Expo through
+commands. Use Cargo, SwiftPM/Xcode, Gradle, npm, and Expo through
 product-local Moon tasks or product-owned scripts. Do not add root alias layers
 over Moon.
 

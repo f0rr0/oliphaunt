@@ -1,11 +1,10 @@
 id = "oliphaunt-js"
 owner = "@oliphaunt/sdk-js"
 kind = "sdk"
-publish_targets = ["npm", "jsr"]
-registry_packages = ["npm:@oliphaunt/ts", "jsr:@oliphaunt/ts"]
+publish_targets = ["npm"]
+registry_packages = ["npm:@oliphaunt/ts"]
 release_artifacts = [
   "npm-package",
-  "jsr-package",
   "node-bun-deno-direct",
   "rust-broker-helper-compatibility",
 ]

@@ -4,7 +4,6 @@ import process from "node:process";
 import { loadPublicationCatalog } from "../../tools/release/publication-catalog.mjs";
 import { mavenCentralAuthorization } from "../../tools/release/maven-central-auth.mjs";
 
-const JSR_API_BASE = "https://api.jsr.io";
 const MAVEN_CENTRAL_API_BASE = "https://central.sonatype.com";
 const MAX_READINESS_RESPONSE_BYTES = 1024 * 1024;
 
@@ -123,34 +122,6 @@ async function requestJson(url, { authorization = undefined, context }) {
   fail(lastFailure ?? `${context} request failed`);
 }
 
-function parseJsrIdentity(identity) {
-  const match = identity.match(/^@([a-z][a-z0-9-]*)\/([a-z][a-z0-9-]*)$/u);
-  if (match === null) {
-    fail(`invalid JSR identity in publication catalog: ${identity}`);
-  }
-  return { scope: match[1], packageName: match[2] };
-}
-
-async function verifyJsrIdentity(identity, expectedRepository) {
-  const { scope, packageName } = parseJsrIdentity(identity);
-  const url = `${JSR_API_BASE}/scopes/${encodeURIComponent(scope)}/packages/${encodeURIComponent(packageName)}`;
-  const pkg = await requestJson(url, { context: `JSR package ${identity}` });
-  if (pkg?.scope !== scope || pkg?.name !== packageName) {
-    fail(`JSR package ${identity} returned mismatched identity metadata`);
-  }
-  const linkedRepository = pkg?.githubRepository;
-  const actualRepository = linkedRepository === null || linkedRepository === undefined
-    ? null
-    : `${linkedRepository.owner}/${linkedRepository.name}`;
-  if (actualRepository !== expectedRepository) {
-    fail(
-      `JSR package ${identity} must exist and link to ${expectedRepository}; got ${actualRepository ?? "no linked repository"}. `
-      + "Create/link it in JSR package settings before normal publication.",
-    );
-  }
-  console.log(`JSR readiness passed: ${identity} is linked to ${expectedRepository}`);
-}
-
 function mavenNamespaces(catalog, expectedNamespace) {
   const groups = new Set();
   for (const carrier of catalog.carriers.filter(({ ecosystem }) => ecosystem === "maven")) {
@@ -200,16 +171,8 @@ async function verifyMavenNamespace(catalog) {
 
 const products = productsFromEnvironment();
 const catalog = loadPublicationCatalog("verify-external-publish-readiness", { products });
-const expectedRepository = requiredEnv("CANONICAL_RELEASE_REPOSITORY");
-const jsrIdentities = [
-  ...new Set(catalog.carriers.filter(({ ecosystem }) => ecosystem === "jsr").map(({ name }) => name)),
-].sort();
-
-for (const identity of jsrIdentities) {
-  await verifyJsrIdentity(identity, expectedRepository);
-}
 await verifyMavenNamespace(catalog);
 
-if (jsrIdentities.length === 0 && !catalog.carriers.some(({ ecosystem }) => ecosystem === "maven")) {
-  console.log("selected products do not require JSR or Maven Central external readiness checks");
+if (!catalog.carriers.some(({ ecosystem }) => ecosystem === "maven")) {
+  console.log("selected products do not require Maven Central external readiness checks");
 }

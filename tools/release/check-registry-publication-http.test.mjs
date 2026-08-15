@@ -6,7 +6,6 @@ import {
   CRATES_IO_READ_RETRY_BUDGET_SECONDS,
   boundedRegistrySleep,
   cratesioUrlExists,
-  jsrManagementPackageExists,
   readBoundedRegistryJson,
   registryRequestTimeoutMilliseconds,
 } from "./check_registry_publication.mjs";
@@ -151,39 +150,5 @@ describe("registry publication HTTP response boundary", () => {
     );
     expect(calls).toBe(1);
     expect(excessiveSleeps).toEqual([CRATES_IO_READ_INTERVAL_SECONDS * 1000]);
-  });
-
-  test("detects a zero-version JSR identity through the credential-free management endpoint", async () => {
-    const requests = [];
-    const exists = await jsrManagementPackageExists("@oliphaunt/ts", {
-      apiBase: "https://api.example.test/",
-      fetchImpl: async (url, init) => {
-        requests.push({ url: String(url), init });
-        return Response.json({
-          scope: "oliphaunt",
-          name: "ts",
-          versionCount: 0,
-          latestVersion: null,
-          githubRepository: { owner: "f0rr0", name: "oliphaunt" },
-        });
-      },
-    });
-
-    expect(exists).toBe(true);
-    expect(requests).toHaveLength(1);
-    expect(requests[0].url).toBe("https://api.example.test/scopes/oliphaunt/packages/ts");
-    expect(new Headers(requests[0].init.headers).has("authorization")).toBe(false);
-  });
-
-  test("distinguishes a missing JSR identity and rejects mismatched management metadata", async () => {
-    await expect(jsrManagementPackageExists("@oliphaunt/absent", {
-      apiBase: "https://api.example.test",
-      fetchImpl: async () => new Response("not found", { status: 404 }),
-    })).resolves.toBe(false);
-
-    await expect(jsrManagementPackageExists("@oliphaunt/ts", {
-      apiBase: "https://api.example.test",
-      fetchImpl: async () => Response.json({ scope: "another-scope", name: "ts", versionCount: 0 }),
-    })).rejects.toThrow("JSR management API returned mismatched identity metadata for @oliphaunt/ts");
   });
 });

@@ -35,11 +35,9 @@ TypeScript owns Node.js, Bun, and Deno integration over native runtimes and
 helpers. WASIX TypeScript never imports that native package and does not silently
 change runtime families; its conditional export only selects the portable host.
 
-The native TypeScript npm package carries native runtime integration.
-The JSR distribution is deliberately limited to portable protocol and query helpers.
-WASIX TypeScript is a separate product: npm supports every declared
-host, while `jsr:@oliphaunt/wasix-ts` exposes the full Deno WASIX facade and its
-Deno directory-storage subpath.
+The native TypeScript npm package carries native runtime integration for Node.js,
+Bun, and Deno. WASIX TypeScript is a separate npm product supporting every
+declared host, including its Deno directory-storage subpath.
 
 Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX
 runtime assets. Rust owns direct/server hosting, physical archives, optional

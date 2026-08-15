@@ -57,14 +57,10 @@ import {
   extensionCarrierLegalContract,
 } from "./extension-upstream-licenses.mjs";
 import {
-  assertSourceOnlyJsrDirectory,
   assertSourceOnlyNpmArchive,
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
-import {
-  assertWasixTypescriptJsrDirectory,
-  assertWasixTypescriptNpmArchive,
-} from "./wasix-typescript-package.mjs";
+import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -1117,11 +1113,7 @@ async function checkSdkProduct(product, { require }) {
       fail(`${product} must stage exactly one npm tarball under ${rel(root)}`);
     }
     try {
-      const packageManifest = assertWasixTypescriptNpmArchive(tarballs[0]);
-      assertWasixTypescriptJsrDirectory(path.join(root, "jsr-source"), {
-        version: packageManifest.version,
-        runtimeVersion: packageManifest.dependencies["@oliphaunt/liboliphaunt-wasix"],
-      });
+      assertWasixTypescriptNpmArchive(tarballs[0]);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }
@@ -1171,13 +1163,6 @@ async function checkSdkProduct(product, { require }) {
         }
       }
       checked = true;
-    }
-    if (product === "oliphaunt-js" && tarballs.length > 0) {
-      try {
-        assertSourceOnlyJsrDirectory(path.join(root, "jsr-source"));
-      } catch (error) {
-        fail(error instanceof Error ? error.message : String(error));
-      }
     }
   } else if (product === "oliphaunt-swift") {
     const archives = readdirSync(root).filter((name) => name.endsWith(".zip")).map((name) => path.join(root, name)).sort(compareText);

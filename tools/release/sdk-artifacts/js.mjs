@@ -1,15 +1,11 @@
 import path from "node:path";
 
 import {
-  assertSourceOnlyJsrDirectory,
   assertSourceOnlyNpmArchive,
   prepareSourceOnlyNpmPackage,
   SOURCE_ONLY_NPM_PROFILES,
 } from "../source-only-sdk-package.mjs";
-import {
-  packageNpmWorkspace,
-  stageJsrSourceWorkspace,
-} from "./npm.mjs";
+import { packageNpmWorkspace } from "./npm.mjs";
 import { ROOT, requireDir } from "./shared.mjs";
 
 export function stageArtifacts(artifactRoot) {
@@ -18,7 +14,4 @@ export function stageArtifacts(artifactRoot) {
   prepareSourceOnlyNpmPackage(packageShapeDir, SOURCE_ONLY_NPM_PROFILES.js);
   const archive = packageNpmWorkspace(packageShapeDir, artifactRoot);
   assertSourceOnlyNpmArchive(archive, SOURCE_ONLY_NPM_PROFILES.js);
-  const jsrSource = path.join(artifactRoot, "jsr-source");
-  stageJsrSourceWorkspace(packageShapeDir, jsrSource);
-  assertSourceOnlyJsrDirectory(jsrSource);
 }

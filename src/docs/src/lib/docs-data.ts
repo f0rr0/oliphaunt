@@ -149,7 +149,7 @@ export const sdkSurfaces: SdkSurface[] = [
     modes: ['WASIX browser', 'WASIX Node', 'WASIX Bun', 'WASIX Deno'],
     verifyFirst: 'Open memory storage, recover from a SQL error, and close the host Worker cleanly.',
     guideOutcomes: [
-      'Install from npm on every host or use the full JSR WASIX package on Deno.',
+      'Install the same npm package on every host, including Deno.',
       'Run PostgreSQL in a browser, Node, Bun, or Deno Worker without importing the native TypeScript SDK.',
       'Import only the WASIX extension descriptors the application uses.',
       'Opt into IndexedDB or Node/Bun/Deno directory storage when checkpoint and clean-close persistence fits the app.',

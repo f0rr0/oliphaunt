@@ -1,12 +1,11 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
 import {
-  jsrPublishedFileProof,
   validateLockedRegistryReceipts,
   validateRegistryReceiptEvidence,
   verifyLockedCarrierIntegrity,
@@ -17,28 +16,6 @@ import { createCratesIoReadGate } from "./registry-http-retry.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const sha = (bytes, algorithm, encoding = "hex") => createHash(algorithm).update(bytes).digest(encoding);
-
-function directoryEnvelope(root) {
-  const files = [];
-  const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
-      const child = path.join(directory, entry.name);
-      if (entry.isDirectory()) visit(child);
-      else if (entry.isFile()) files.push(child);
-    }
-  };
-  visit(root);
-  const hash = createHash("sha256");
-  let size = 0;
-  for (const file of files) {
-    const relative = path.relative(root, file).split(path.sep).join("/");
-    const bytes = readFileSync(file);
-    hash.update(`${relative}\0${bytes.length}\0`);
-    hash.update(bytes);
-    size += bytes.length;
-  }
-  return { sha256: hash.digest("hex"), size };
-}
 
 test("proves Cargo checksum and npm SRI against frozen archive bytes and rejects same-version byte conflicts", async () => {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
@@ -263,59 +240,13 @@ test("proves Cargo checksum and npm SRI against frozen archive bytes and rejects
   }
 });
 
-test("applies only the exact source-bound JSR publish normalization", () => {
-  const lock = {
-    lockDigest: "5ee675ab3066cca7df21dd425a5c80fd6c9b9c4b276757fc1aa84e2020761266",
-    source: {
-      commit: "9c398f4e5c05f494f9b752a8634e74e0bc11dd19",
-      tree: "396cf3b10adb1a5b625e66c5ebacf8c3d364b543",
-    },
-  };
-  const carrier = {
-    id: "jsr:@oliphaunt/ts",
-    version: "0.1.0",
-  };
-  const raw = {
-    checksum: "sha256-9951733bc3dd68542ac51fef522b10121ab782562b650857e102eb42495038a0",
-    size: 938,
-  };
-  const published = {
-    checksum: "sha256-5deab23099b38b44af86bcafbcdc8a4fb487444880e23b260e74d1c8b6379774",
-    size: 938,
-  };
-
-  assert.deepEqual(jsrPublishedFileProof(lock, carrier, "/src/jsr.ts", raw), published);
-  assert.equal(jsrPublishedFileProof(lock, carrier, "/README.md", raw), raw);
-  assert.equal(
-    jsrPublishedFileProof({ ...lock, lockDigest: "0".repeat(64) }, carrier, "/src/jsr.ts", raw),
-    raw,
-  );
-  assert.throws(
-    () => jsrPublishedFileProof(lock, carrier, "/src/jsr.ts", { ...raw, size: raw.size + 1 }),
-    /no longer matches its exact publish-time normalization record/u,
-  );
-});
-
-test("proves every frozen Maven payload and the exact JSR file manifest before an immutable-version skip", async () => {
+test("proves every frozen Maven payload before an immutable-version skip", async () => {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
-  const root = mkdtempSync(path.join(ROOT, "target", "registry-integrity-maven-jsr-test-"));
+  const root = mkdtempSync(path.join(ROOT, "target", "registry-integrity-maven-test-"));
   try {
     const mavenBytes = Buffer.from("exact Maven payload bytes\n");
     const mavenFile = path.join(root, "native-runtime.tar.gz");
     writeFileSync(mavenFile, mavenBytes);
-
-    const jsrRoot = path.join(root, "jsr-source");
-    mkdirSync(path.join(jsrRoot, "src"), { recursive: true });
-    const jsrConfig = Buffer.from(`${JSON.stringify({
-      name: "@example/alpha",
-      version: "1.0.0",
-      exports: "./src/mod.ts",
-      publish: { include: ["jsr.json", "src/mod.ts"] },
-    }, null, 2)}\n`);
-    const jsrModule = Buffer.from("export const alpha = 1;\n");
-    writeFileSync(path.join(jsrRoot, "jsr.json"), jsrConfig);
-    writeFileSync(path.join(jsrRoot, "src/mod.ts"), jsrModule);
-    const envelope = directoryEnvelope(jsrRoot);
 
     const lock = {
       carriers: [
@@ -328,43 +259,18 @@ test("proves every frozen Maven payload and the exact JSR file manifest before a
           publishOrder: 0,
           artifacts: [{ path: path.relative(ROOT, mavenFile), sha256: sha(mavenBytes, "sha256"), size: mavenBytes.length }],
         },
-        {
-          id: "jsr:@example/alpha",
-          product: "alpha",
-          ecosystem: "jsr",
-          name: "@example/alpha",
-          version: "1.0.0",
-          publishOrder: 1,
-          artifacts: [{ path: path.relative(ROOT, jsrRoot), ...envelope }],
-        },
       ],
     };
-    const jsrManifest = {
-      "/jsr.json": { checksum: `sha256-${sha(jsrConfig, "sha256")}`, size: jsrConfig.length },
-      "/src/mod.ts": { checksum: `sha256-${sha(jsrModule, "sha256")}`, size: jsrModule.length },
-    };
-    const goodFetch = async (url) => url.includes("_meta.json")
-      ? Response.json({ manifest: jsrManifest })
-      : new Response(mavenBytes);
+    const goodFetch = async () => new Response(mavenBytes);
 
     const maven = await verifyLockedCarrierIntegrity(lock, "maven:dev.example:alpha-native", { fetchImpl: goodFetch });
-    const jsr = await verifyLockedCarrierIntegrity(lock, "jsr:@example/alpha", { fetchImpl: goodFetch });
     assert.equal(maven.registryProof.files[0].digest, sha(mavenBytes, "sha256"));
-    assert.deepEqual(jsr.registryProof.files, jsrManifest);
 
     const wrongMavenFetch = async () => new Response(Buffer.from("different immutable bytes\n"));
     await assert.rejects(
       () => verifyLockedCarrierIntegrity(lock, "maven:dev.example:alpha-native", { fetchImpl: wrongMavenFetch }),
       /Maven payload mismatch/u,
     );
-    const wrongJsrFetch = async () => Response.json({
-      manifest: { ...jsrManifest, "/unexpected.ts": { checksum: `sha256-${"0".repeat(64)}`, size: 0 } },
-    });
-    await assert.rejects(
-      () => verifyLockedCarrierIntegrity(lock, "jsr:@example/alpha", { fetchImpl: wrongJsrFetch }),
-      /does not match/u,
-    );
-
     let oversizedPayloadAttempts = 0;
     const oversizedMavenFetch = async () => {
       oversizedPayloadAttempts += 1;
@@ -392,7 +298,7 @@ test("writes and revalidates exhaustive empty evidence for a selected source-onl
       carriers: [],
     };
     const file = path.join(root, "empty-receipts.json");
-    const ecosystems = ["cargo", "npm", "maven", "jsr"];
+    const ecosystems = ["cargo", "npm", "maven"];
     const written = writeRegistryReceiptEvidence(file, lock, {
       products: ["oliphaunt-swift"],
       ecosystems,

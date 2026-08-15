@@ -64,7 +64,6 @@ const STABLE_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
 const INSTALL_SCRIPTS = new Set(["preinstall", "install", "postinstall"]);
 const REGISTRY_TARGET_ECOSYSTEM = Object.freeze({
   "crates-io": "cargo",
-  jsr: "jsr",
   "maven-central": "maven",
   npm: "npm",
 });
@@ -174,7 +173,7 @@ function conventionalVersion(relativePath) {
     const manifest = readToml(relativePath);
     return object(manifest.package, `${relativePath}.package`).version;
   }
-  if (basename === "package.json" || basename === "jsr.json") {
+  if (basename === "package.json") {
     return readJson(relativePath).version;
   }
   if (basename === "VERSION" || basename === "LIBOLIPHAUNT_VERSION") {
@@ -430,17 +429,6 @@ function validateSourcePackageManifests(graph, catalog) {
         cargo += 1;
       }
     }
-  }
-  for (const carrier of catalog.carriers.filter(({ ecosystem }) => ecosystem === "jsr")) {
-    const product = graph.products[carrier.product];
-    const relativePath = path.posix.join(product.path, "jsr.json");
-    const jsr = readJson(relativePath);
-    assert(jsr.name === carrier.name, `${relativePath} identity must match ${carrier.id}`);
-    assert(jsr.version === product.version, `${relativePath} version must match ${carrier.product}`);
-    assert(
-      carriers.get(`jsr:${jsr.name}`)?.product === carrier.product,
-      `${relativePath} identity must be declared by ${carrier.product}`,
-    );
   }
   return { npm, cargo };
 }

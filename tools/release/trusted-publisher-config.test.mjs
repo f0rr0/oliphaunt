@@ -80,7 +80,6 @@ test("derives exact npm/Cargo identities and bounded npm batches from the lock",
   const npm = Array.from({ length: NPM_TRUST_BATCH_SIZE + 1 }, (_, index) =>
     carrier("npm", `@oliphaunt/package-${String(index).padStart(2, "0")}`));
   const plan = buildTrustedPublisherPlan(lock([
-    carrier("jsr", "@oliphaunt/ts"),
     carrier("cargo", "oliphaunt-one"),
     ...npm,
   ]));

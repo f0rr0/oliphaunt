@@ -137,7 +137,7 @@ synthetic root:
   adapter glue, not a parallel PostgreSQL lifecycle implementation.
 - `src/sdks/js` is the SDK for Node.js, Bun, and Deno. Tauri apps currently
   use the Rust SDK behind narrow app-owned commands; direct JavaScript/webview
-  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm/JSR package metadata, and
+  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm package metadata, and
   broker/server client orchestration. Its broker implementation depends on the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol,
   so that dependency must remain modeled in Moon and product-local release

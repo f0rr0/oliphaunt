@@ -78,18 +78,6 @@ function npmFixture(stageRoot, artifacts, name, version) {
   return output;
 }
 
-function jsrFixture(artifacts, name, version) {
-  const directory = path.join(artifacts, "jsr-package");
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "jsr.json"), `${JSON.stringify({
-    name,
-    version,
-    exports: "./mod.ts",
-    publish: { include: ["jsr.json", "mod.ts"] },
-  }, null, 2)}\n`);
-  writeFileSync(path.join(directory, "mod.ts"), "export const fixture = true;\n");
-}
-
 function mavenFixture(artifacts, group, name, version) {
   const directory = path.join(artifacts, "maven", ...group.split("."), name, version);
   mkdirSync(directory, { recursive: true });
@@ -120,7 +108,6 @@ function fixture() {
     cargoFixture(stage, artifacts, "oliphaunt-build", versions.get("oliphaunt-rust")),
   ];
   const npm = npmFixture(stage, artifacts, "@oliphaunt/ts", versions.get("oliphaunt-js"));
-  jsrFixture(artifacts, "@oliphaunt/ts", versions.get("oliphaunt-js"));
   const lock = freezePublicationCandidate(buildPublicationCandidate({
     products: PRODUCTS,
     artifactRoots: [artifacts],
@@ -225,7 +212,6 @@ test("packs a deterministic exact Cargo/npm capsule and atomically installs it",
         carrier.artifact.sha256,
       );
     }
-    assert.equal(readFileSync(first).includes(Buffer.from("jsr-package/mod.ts")), false, "JSR bytes must not enter the capsule");
   } finally {
     rmSync(value.root, { recursive: true, force: true });
     rmSync(output, { recursive: true, force: true });

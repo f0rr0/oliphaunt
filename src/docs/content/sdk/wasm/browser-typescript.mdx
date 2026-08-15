@@ -23,18 +23,17 @@ Install from npm for browsers, Node.js, Bun, or Deno:
 pnpm add @oliphaunt/wasix-ts
 ```
 
-Deno applications can instead use the first-class JSR package. It exposes the
-same WASIX database API plus the Deno-scoped directory adapter:
+Deno applications import the same npm package as browsers, Node.js, and Bun,
+using Deno's `npm:` specifier and the Deno-scoped directory adapter:
 
 ```ts
-import Oliphaunt from 'jsr:@oliphaunt/wasix-ts';
-import { directory } from 'jsr:@oliphaunt/wasix-ts/storage/deno';
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
 
 const database = await Oliphaunt.open({ storage: directory('./data/main') });
 ```
 
-The JSR carrier pins the same portable runtime and decompressor versions as the
-npm carrier; it does not fall back to native `@oliphaunt/ts`.
+The package does not fall back to native `@oliphaunt/ts`.
 
 ## Browser requirements
 

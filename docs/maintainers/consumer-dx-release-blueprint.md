@@ -217,33 +217,28 @@ Browser, Node, Bun, and Deno WASIX hosts share the same `-wasix` extension
 descriptor and bytes. Host selection belongs to `@oliphaunt/wasix-ts`; native
 JavaScript remains on the established unsuffixed surface.
 
-### JavaScript: Deno And JSR
+### JavaScript: Deno And npm
 
-`jsr:@oliphaunt/ts` is a TypeScript protocol/client package. It does not expose
-native-direct or broker runtime artifact resolution.
-
-Deno native users install through npm:
+Deno native users install the same package as Node and Bun through npm:
 
 ```ts
 import { Oliphaunt } from 'npm:@oliphaunt/ts';
 ```
 
 The Deno native path uses the same npm-installed platform packages as Node and
-Bun. The JSR package fails on native runtime creation with an error that points
-to `npm:@oliphaunt/ts`.
+Bun.
 
-Deno WASIX users can instead install the separately versioned full runtime
-facade from JSR:
+Deno WASIX users install the separately versioned full runtime facade from npm:
 
 ```ts
-import Oliphaunt from 'jsr:@oliphaunt/wasix-ts';
-import { directory } from 'jsr:@oliphaunt/wasix-ts/storage/deno';
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
 ```
 
 That carrier pins `npm:@oliphaunt/liboliphaunt-wasix` and `npm:fzstd` at exact
-versions, publishes the patched host bytes, and shares the
-`oliphaunt-wasix-ts` product version with its npm carrier. It does not broaden
-the native `@oliphaunt/ts` JSR surface.
+versions, publishes the patched host bytes, and owns the
+`oliphaunt-wasix-ts` product version. It remains separate from native
+`@oliphaunt/ts`.
 
 ### Rust Native
 
@@ -561,9 +556,9 @@ Keep these gates:
 3. No runtime download gate: public SDK packages contain no `fetch(`,
    GitHub-release URL construction, or runtime asset cache installer in normal
    runtime paths.
-4. Real package smoke: install from packed artifacts in scratch projects for npm,
-   the native TypeScript JSR protocol package, the Deno WASIX JSR package,
-   Cargo native, Cargo WASIX, Android Gradle, SwiftPM, and React Native.
+4. Real package smoke: install from packed artifacts in scratch projects for npm
+   across Node, Bun, and Deno, plus Cargo native, Cargo WASIX, Android Gradle,
+   SwiftPM, and React Native.
 5. Network-off smoke: after package install, disable network and open a database
    with one contrib extension and one external extension.
 6. Exact extension gate: selected extension artifacts enter the app; unselected

@@ -230,14 +230,7 @@
       "release-type": "node",
       "component": "oliphaunt-js",
       "package-name": "@oliphaunt/ts",
-      "changelog-path": "CHANGELOG.md",
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "jsr.json",
-          "jsonpath": "$.version"
-        }
-      ]
+      "changelog-path": "CHANGELOG.md"
     },
     "src/extensions/external/pg_hashids": {
       "release-type": "simple",
@@ -357,14 +350,7 @@
       "release-type": "node",
       "component": "oliphaunt-wasix-ts",
       "package-name": "@oliphaunt/wasix-ts",
-      "changelog-path": "CHANGELOG.md",
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "jsr.json",
-          "jsonpath": "$.version"
-        }
-      ]
+      "changelog-path": "CHANGELOG.md"
     }
   }
 }
