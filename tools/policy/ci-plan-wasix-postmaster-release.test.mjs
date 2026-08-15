@@ -5,10 +5,17 @@ import {test} from 'node:test';
 import {captureCommandOutput} from '../dev/capture-command-output.mjs';
 import {moonCommand} from '../dev/moon-command.mjs';
 import {affectedNames, triggeringProjectNames} from '../graph/affected.mjs';
-import {planJobsForAffected} from '../graph/ci_plan.mjs';
+import {CI_JOB_TARGETS, planJobsForAffected} from '../graph/ci_plan.mjs';
 import {buildPlan, loadGraph, normalizeFiles} from '../release/release-graph.mjs';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
+
+test('postmaster CI selects only terminal product roots', () => {
+  assert.deepEqual(CI_JOB_TARGETS['wasix-postmaster'], [
+    'liboliphaunt-wasix-postmaster:portable-inputs',
+    'liboliphaunt-wasix-postmaster:release-assets',
+  ]);
+});
 
 function directEffects(relativePath) {
   const environment = {...process.env, MOON_CACHE: 'off'};

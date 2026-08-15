@@ -1892,7 +1892,7 @@ jobs:
           cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Build, verify, qualify, and package WASIX postmaster
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-postmaster
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=deep MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-postmaster
 
       - name: Upload Linux WASIX postmaster release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1968,7 +1968,7 @@ jobs:
       - name: Build, verify, qualify, and package WASIX postmaster
         env:
           OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:release-assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets
 
       - name: Upload macOS WASIX postmaster release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -270,7 +270,7 @@ tasks:
       runInCI: true
 
   carrier:
-    tags: ["runtime", "artifact", "ci-wasix-postmaster"]
+    tags: ["runtime", "artifact"]
     script: |
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/precompile-wasix-core.sh
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/build-sealed-headless-carrier.sh
@@ -308,6 +308,7 @@ tasks:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "/src/sources/third-party/wasix-postmaster/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/portable-archive.mjs"
@@ -363,6 +364,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "/src/sources/third-party/wasix-postmaster/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/portable-archive.mjs"

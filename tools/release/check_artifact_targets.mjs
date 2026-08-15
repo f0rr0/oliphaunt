@@ -743,6 +743,18 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     [{}],
     ["liboliphaunt-wasix-postmaster-release-assets-macos-arm64"],
   );
+  const linuxPostmasterQualification = workflowJob(workflow, "wasix-postmaster-linux").steps
+    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
+  invariant(
+    linuxPostmasterQualification?.run?.includes("OLIPHAUNT_MOON_UPSTREAM=deep"),
+    "Linux WASIX postmaster qualification must execute its complete Moon dependency graph",
+  );
+  const macosPostmasterQualification = workflowJob(workflow, "wasix-postmaster-macos").steps
+    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
+  invariant(
+    macosPostmasterQualification?.run?.includes("--upstream deep"),
+    "macOS WASIX postmaster qualification must execute its complete Moon dependency graph",
+  );
   validateWorkflowConsumer(
     workflow,
     "wasix-postmaster-macos",
