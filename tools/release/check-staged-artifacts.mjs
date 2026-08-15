@@ -61,7 +61,10 @@ import {
   assertSourceOnlyNpmArchive,
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
-import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
+import {
+  assertWasixTypescriptJsrDirectory,
+  assertWasixTypescriptNpmArchive,
+} from "./wasix-typescript-package.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -1114,7 +1117,11 @@ async function checkSdkProduct(product, { require }) {
       fail(`${product} must stage exactly one npm tarball under ${rel(root)}`);
     }
     try {
-      assertWasixTypescriptNpmArchive(tarballs[0]);
+      const packageManifest = assertWasixTypescriptNpmArchive(tarballs[0]);
+      assertWasixTypescriptJsrDirectory(path.join(root, "jsr-source"), {
+        version: packageManifest.version,
+        runtimeVersion: packageManifest.dependencies["@oliphaunt/liboliphaunt-wasix"],
+      });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }

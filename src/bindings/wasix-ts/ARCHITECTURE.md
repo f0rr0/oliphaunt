@@ -21,7 +21,7 @@ liboliphaunt-wasix portable assets
 ```
 
 Portable extension descriptors are a second input edge. Their package identity
-is runtime-specific but host-neutral, so browser and Node WASIX adapters
+is runtime-specific but host-neutral, so browser, Node, Bun, and Deno WASIX adapters
 consume the same extension package:
 
 ```text
@@ -50,14 +50,14 @@ carrier envelope and portable extension bytes.
 The canonical guest also owns the backend-only single-backend spinlock and
 scalar-atomic specializations carried by PostgreSQL patches 0040 and 0041.
 They follow the guest into the Rust binding's AOT artifacts and the portable
-module used by browser direct, browser worker, and Node worker execution; they
-are not a TypeScript or Node host optimization. Frontends, PGXS side modules,
+module used by browser direct, browser worker, and Node/Bun/Deno worker execution; they
+are not a TypeScript or server-runtime host optimization. Frontends, PGXS side modules,
 and concurrent PostgreSQL builds retain the normal atomic implementation. Host
 lifecycle stays separate. All TypeScript placements assert the shared
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
 denies guest process and thread creation under it. Only browser worker placement
 also uses `OLIPHAUNT_WASIX_STDIO_PGWIRE=1` for the patched stdio-pgwire pump;
-browser direct and Node worker placement remove that transport marker and use
+browser direct and server-runtime worker placement remove that transport marker and use
 the Oliphaunt export driver that mirrors the Rust host.
 
 ## Browser lifecycle
@@ -139,20 +139,24 @@ source-pinned direct host deliberately adds only the narrow Oliphaunt export
 driver needed to match the WASIX Rust lifecycle; it is not a general
 synchronous WASIX process API.
 
-## Node lifecycle
+## Node, Bun, and Deno lifecycle
 
-Node selects `lib/index.node.js` through the package's `node` export condition.
-Worker placement creates one `worker_threads.Worker`; direct placement loads
+Node, Bun, and Deno select `lib/index.node.js`, `lib/index.bun.js`, or
+`lib/index.deno.js` through explicit package export conditions. Each facade
+uses the runtime's `node:worker_threads` compatibility surface. Worker placement
+creates one `worker_threads.Worker`; direct placement loads
 the same synchronous guest driver lazily in the caller realm. The worker reads
 package-relative runtime and extension `file:` URLs and calls the shared
 dispatcher around that driver, preserving caller isolation without a second
 worker hop or stream pump. Direct placement removes the remaining RPC boundary
-and explicitly accepts blocking the calling Node thread. Descriptor validation,
+and explicitly accepts blocking the calling JavaScript thread. Descriptor validation,
 archive verification, extension installation, query serialization, close
 semantics, and the memory default are not forked by placement.
 
-IndexedDB remains browser-only and is rejected before a Node worker starts.
-Node directory persistence is a selectively imported, snapshot-backed provider
+IndexedDB remains browser-only and is rejected before a server-runtime worker
+starts. Directory persistence is exposed through matching `storage/node`,
+`storage/bun`, and `storage/deno` entrypoints backed by one portable,
+snapshot-backed provider
 with exclusive path ownership. Direct host filesystem mounts, server mode,
 OPFS, and any fallback to native `@oliphaunt/ts` are intentionally absent.
 
@@ -293,7 +297,7 @@ crates; the adjacent patches are the reviewable compatibility delta. The build
 lands first in `target/oliphaunt-wasix-ts/host`. Public package staging copies
 the exact JS module, worker module, WebAssembly module, license, and provenance
 into `lib/host`; direct browser execution imports the host in the caller realm,
-while browser and Node direct/worker placements import the same
+while browser and Node/Bun/Deno direct/worker placements import the same
 package-relative module.
 
 This is not a general backport of WASIX 0.702 to Wasmer 0.601. The eleven patches:
@@ -424,7 +428,7 @@ are frozen. SDK release staging injects the exact dependency recorded by
 `oliphaunt.runtimeVersion`, validates it, and publishes only that staged
 manifest. This keeps fresh frozen workspace installs independent of an
 unpublished candidate while making the consumer tarball's runtime edge exact.
-The Node consumer smoke uses the same staging function, not a test-only package
+The Node, Bun, and Deno consumer smokes use the same staging function, not a test-only package
 rewrite.
 
 The release runtime carrier owns a stripped core manifest (`extensions: []`).
@@ -456,14 +460,14 @@ bundle.
 `@oliphaunt/wasix-ts` is a separately versioned public SDK product. It has its own
 release metadata and changelog, declares an exact dependency on the published
 `@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
-under `lib/host`. Conditional package exports choose browser or Node adapters;
-both support direct and Worker placement without changing the consumer import.
+under `lib/host`. Conditional package exports choose browser, Node, Bun, or Deno
+adapters; all support direct and Worker placement without changing the consumer import.
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
 continue with `42` on the same handle, checkpoint IndexedDB, and close with a
-successful zero exit status. The Node smoke installs packed release candidates
-into a fresh external project, verifies Node selects the conditional export,
+successful zero exit status. Each server-runtime smoke installs packed release
+candidates into a fresh external project, verifies the runtime selects its conditional export,
 starts the same portable runtime with package-relative assets, activates
 `pgtap`, recovers from an error, and closes cleanly. The opt-in native browser
 profile additionally loads and calls the canonical `pg_uuidv7.so`; it remains

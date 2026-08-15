@@ -1,7 +1,7 @@
 {
   "name": "@oliphaunt/wasix-ts",
   "version": "0.0.0",
-  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers and Node.js.",
+  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, and Deno.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -26,6 +26,8 @@
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
+      "deno": "./lib/index.deno.js",
+      "bun": "./lib/index.bun.js",
       "node": "./lib/index.node.js",
       "browser": "./lib/index.js",
       "default": "./lib/index.js"
@@ -45,6 +47,14 @@
     "./storage/node": {
       "types": "./lib/storage/node.d.ts",
       "node": "./lib/storage/node.js"
+    },
+    "./storage/bun": {
+      "types": "./lib/storage/bun.d.ts",
+      "bun": "./lib/storage/bun.js"
+    },
+    "./storage/deno": {
+      "types": "./lib/storage/deno.d.ts",
+      "deno": "./lib/storage/deno.js"
     },
     "./package.json": {
       "default": "./package.json"
@@ -70,6 +80,9 @@
     "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
     "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
     "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
+    "smoke:bun": "pnpm run package:build && node tools/smoke-node.mjs --runtime bun",
+    "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
+    "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",
     "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
     "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json"
   },
@@ -84,6 +97,8 @@
     "vitest": "catalog:"
   },
   "engines": {
-    "node": ">=22.13 <25"
+    "node": ">=22.13 <25",
+    "bun": ">=1.3.14",
+    "deno": ">=2.8.1"
   }
 }

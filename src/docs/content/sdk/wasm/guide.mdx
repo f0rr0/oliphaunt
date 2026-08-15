@@ -9,7 +9,7 @@ Use `oliphaunt-wasix` when Rust owns the WASIX host. This crate is separate
 from every native SDK and from the WASIX TypeScript binding.
 
 <Callout type="info" title="This is the Rust binding">
-Browser and Node TypeScript applications use [`@oliphaunt/wasix-ts`](./browser-typescript). The Rust
+Browser, Node, Bun, and Deno TypeScript applications use [`@oliphaunt/wasix-ts`](./browser-typescript). The Rust
 and TypeScript bindings consume the portable WASIX runtime family, but they do not
 promise the same public API.
 </Callout>
@@ -156,6 +156,6 @@ directory.
 
 Check the selected storage and initialization policy, the exact runtime/AOT
 asset pair, enabled extension features, directory ownership, and SQLSTATE-bearing
-PostgreSQL errors. Browser and Node direct/Worker placement, IndexedDB, and
+PostgreSQL errors. Browser, Node, Bun, and Deno direct/Worker placement, IndexedDB, and
 recovery behavior are documented on the
 [WASIX TypeScript page](./browser-typescript).

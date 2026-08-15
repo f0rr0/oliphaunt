@@ -1493,6 +1493,11 @@ jobs:
         with:
           tools: wasm-pack@0.15.0
 
+      - name: Set up Deno
+        uses: ./.github/actions/setup-deno
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
       - name: Download same-run portable WASIX outputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1502,7 +1507,9 @@ jobs:
       - name: Build and smoke WASIX TypeScript SDK package
         run: |
           pnpm --dir src/bindings/wasix-ts package:build
-          node src/bindings/wasix-ts/tools/smoke-node.mjs
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
           OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
 
       - name: Upload WASIX TypeScript SDK package artifacts

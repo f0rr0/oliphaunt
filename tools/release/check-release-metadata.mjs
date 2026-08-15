@@ -431,11 +431,17 @@ function validateSourcePackageManifests(graph, catalog) {
       }
     }
   }
-  const jsr = readJson("src/sdks/js/jsr.json");
-  const jsProduct = graph.products["oliphaunt-js"];
-  assert(jsr.name === "@oliphaunt/ts", "JSR SDK identity must match the TypeScript package identity");
-  assert(jsr.version === jsProduct.version, "JSR SDK version must match oliphaunt-js");
-  assert(carriers.get(`jsr:${jsr.name}`)?.product === "oliphaunt-js", "JSR SDK identity must be declared by oliphaunt-js");
+  for (const carrier of catalog.carriers.filter(({ ecosystem }) => ecosystem === "jsr")) {
+    const product = graph.products[carrier.product];
+    const relativePath = path.posix.join(product.path, "jsr.json");
+    const jsr = readJson(relativePath);
+    assert(jsr.name === carrier.name, `${relativePath} identity must match ${carrier.id}`);
+    assert(jsr.version === product.version, `${relativePath} version must match ${carrier.product}`);
+    assert(
+      carriers.get(`jsr:${jsr.name}`)?.product === carrier.product,
+      `${relativePath} identity must be declared by ${carrier.product}`,
+    );
+  }
   return { npm, cargo };
 }
 

@@ -3,7 +3,11 @@ import type { Worker } from 'node:worker_threads';
 import type { WasixWorkerPort } from './worker-rpc.js';
 
 /** @internal Adapts Node's EventEmitter worker API to the shared worker transport. */
-export function nodeWorkerPort(worker: Worker, recoverLease?: () => void): WasixWorkerPort {
+export function nodeWorkerPort(
+  worker: Worker,
+  recoverLease?: () => void,
+  runtimeName = 'Node',
+): WasixWorkerPort {
   let terminating = false;
   let recovered = false;
   return {
@@ -28,7 +32,7 @@ export function nodeWorkerPort(worker: Worker, recoverLease?: () => void): Wasix
         fail(
           error instanceof Error
             ? error
-            : new Error('Oliphaunt WASIX Node worker returned an unreadable message'),
+            : new Error(`Oliphaunt WASIX ${runtimeName} worker returned an unreadable message`),
         );
       });
       worker.on('exit', (code) => {
@@ -36,7 +40,9 @@ export function nodeWorkerPort(worker: Worker, recoverLease?: () => void): Wasix
           recovered = true;
           recoverLease?.();
         }
-        fail(new Error(`Oliphaunt WASIX Node worker exited unexpectedly with code ${code}`));
+        fail(
+          new Error(`Oliphaunt WASIX ${runtimeName} worker exited unexpectedly with code ${code}`),
+        );
       });
     },
   };

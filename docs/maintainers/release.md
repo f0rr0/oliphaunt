@@ -609,8 +609,10 @@ Target packages are required where package managers select by OS/CPU/libc/ABI or
 - WASIX: portable runtime/extension carriers plus native AOT carriers for Linux
   x64/arm64 GNU, macOS arm64, and Windows x64 MSVC.
 - SDK façades: Rust/Cargo, npm, Maven/Gradle, and SwiftPM entry points select
-  only the needed target carriers. JSR is deliberately protocol/query-only and
-  does not claim native runtime carriers.
+  only the needed target carriers. Native `jsr:@oliphaunt/ts` is deliberately
+  protocol/query-only and does not claim native runtime carriers;
+  `jsr:@oliphaunt/wasix-ts` is the full Deno facade over the declared portable
+  WASIX runtime carrier.
 
 The first release is fail-closed: it does not publish macOS x64, Windows ARM64,
 Linux musl, Android 32-bit, or additional Apple architectures. A target becomes

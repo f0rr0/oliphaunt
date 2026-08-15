@@ -1074,9 +1074,15 @@ async function publishTypescriptNpm(headRef) {
   await npmPublishTarball(carrier.name, carrier.file, carrier.version);
 }
 
-async function publishTypescriptJsr(headRef, { version: versionOverride, source: sourceOverride } = {}) {
-  const product = "oliphaunt-js";
-  const packageName = "@oliphaunt/ts";
+async function publishJsrCarrier(
+  headRef,
+  {
+    product = "oliphaunt-js",
+    packageName = "@oliphaunt/ts",
+    version: versionOverride,
+    source: sourceOverride,
+  } = {},
+) {
   if (BOOTSTRAP_IDENTITIES) {
     throw new Error("JSR publication is forbidden during identity bootstrap");
   }
@@ -1343,10 +1349,9 @@ async function publishNormalCarrier(operation, headRef, context, provenReceipts)
     return await npmPublishTarball(carrier.name, locked.file, carrier.version);
   }
   if (carrier.ecosystem === "jsr") {
-    if (carrier.product !== "oliphaunt-js" || carrier.name !== "@oliphaunt/ts") {
-      throw new Error(`unsupported JSR carrier ${carrier.id}; add an exact frozen JSR publisher before selecting it`);
-    }
-    return await publishTypescriptJsr(headRef, {
+    return await publishJsrCarrier(headRef, {
+      product: carrier.product,
+      packageName: carrier.name,
       version: carrier.version,
       source: path.join(ROOT, "target", "sdk-artifacts", carrier.product, "jsr-source"),
     });
@@ -1721,7 +1726,7 @@ if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step ==
 }
 
 if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "jsr") {
-  await publishTypescriptJsr(publishProductStep.headRef);
+  await publishJsrCarrier(publishProductStep.headRef);
   process.exit(0);
 }
 

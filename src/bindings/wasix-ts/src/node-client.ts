@@ -9,6 +9,7 @@ import { nodeWorkerExecArgv } from './node-worker-options.js';
 import { nodeWorkerPort } from './node-worker-port.js';
 import { resolveExecutionMode } from './open-options.js';
 import type { SerializedOpenOptions } from './rpc.js';
+import { serverRuntime, serverRuntimeName } from './server-runtime.js';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
 
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
@@ -29,13 +30,13 @@ export const Oliphaunt: OliphauntClient = {
 function requireNodeStorage(options: SerializedOpenOptions): void {
   if (options.storage.kind === 'indexed-db') {
     throw new TypeError(
-      '@oliphaunt/wasix-ts IndexedDB storage is browser-only; use memory or the storage/node adapter',
+      `@oliphaunt/wasix-ts IndexedDB storage is browser-only; use memory or the storage/${serverRuntime()} adapter`,
     );
   }
   if (options.storage.kind === 'node-directory') {
     if (!isMainThread) {
       throw new TypeError(
-        '@oliphaunt/wasix-ts Node directory storage must be opened from the main thread',
+        `@oliphaunt/wasix-ts ${serverRuntimeName()} directory storage must be opened from the main thread`,
       );
     }
     options.storage = {
@@ -59,6 +60,7 @@ function createNodeWorker(options: SerializedOpenOptions): WasixWorkerPort {
       name: 'oliphaunt-wasix',
     }),
     recoverLease,
+    serverRuntimeName(),
   );
 }
 

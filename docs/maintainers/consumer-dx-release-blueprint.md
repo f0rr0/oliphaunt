@@ -186,7 +186,7 @@ Package layout:
 - `@oliphaunt/extension-<name>` is a descriptor package.
 - Descriptor packages declare native platform artifact packages.
 - `@oliphaunt/extension-<name>-wasix` is the separately imported portable
-  WASIX descriptor and byte carrier shared by browser and Node hosts. It shares
+  WASIX descriptor and byte carrier shared by browser, Node, Bun, and Deno hosts. It shares
   the unsuffixed product's version and does not introduce a `-native` alias.
 - `@oliphaunt/liboliphaunt-wasix` is the generated, internal runtime carrier
   selected by the WASIX binding. Applications do not supply ordinary asset
@@ -213,7 +213,7 @@ import pgtap from '@oliphaunt/extension-pgtap-wasix';
 const db = await Oliphaunt.open({ extensions: [pgtap] });
 ```
 
-Node and browser WASIX hosts share the same `-wasix` extension
+Browser, Node, Bun, and Deno WASIX hosts share the same `-wasix` extension
 descriptor and bytes. Host selection belongs to `@oliphaunt/wasix-ts`; native
 JavaScript remains on the established unsuffixed surface.
 
@@ -231,6 +231,19 @@ import { Oliphaunt } from 'npm:@oliphaunt/ts';
 The Deno native path uses the same npm-installed platform packages as Node and
 Bun. The JSR package fails on native runtime creation with an error that points
 to `npm:@oliphaunt/ts`.
+
+Deno WASIX users can instead install the separately versioned full runtime
+facade from JSR:
+
+```ts
+import Oliphaunt from 'jsr:@oliphaunt/wasix-ts';
+import { directory } from 'jsr:@oliphaunt/wasix-ts/storage/deno';
+```
+
+That carrier pins `npm:@oliphaunt/liboliphaunt-wasix` and `npm:fzstd` at exact
+versions, publishes the patched host bytes, and shares the
+`oliphaunt-wasix-ts` product version with its npm carrier. It does not broaden
+the native `@oliphaunt/ts` JSR surface.
 
 ### Rust Native
 
@@ -549,8 +562,8 @@ Keep these gates:
    GitHub-release URL construction, or runtime asset cache installer in normal
    runtime paths.
 4. Real package smoke: install from packed artifacts in scratch projects for npm,
-   JSR protocol package, Cargo native, Cargo WASIX, Android Gradle, SwiftPM, and
-   React Native.
+   the native TypeScript JSR protocol package, the Deno WASIX JSR package,
+   Cargo native, Cargo WASIX, Android Gradle, SwiftPM, and React Native.
 5. Network-off smoke: after package install, disable network and open a database
    with one contrib extension and one external extension.
 6. Exact extension gate: selected extension artifacts enter the app; unselected

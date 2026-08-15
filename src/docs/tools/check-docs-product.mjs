@@ -1414,6 +1414,16 @@ function assertSdkInstallReleaseContracts() {
       'TypeScript public docs must distinguish the native npm distribution from protocol/query-only JSR',
     );
   }
+  const wasixTypescriptDocs = readText('src/docs/content/sdk/wasm/browser-typescript.mdx');
+  for (const contract of [
+    "jsr:@oliphaunt/wasix-ts';",
+    "jsr:@oliphaunt/wasix-ts/storage/deno';",
+    'pins the same portable runtime and decompressor versions',
+  ]) {
+    if (!wasixTypescriptDocs.includes(contract)) {
+      fail(`WASIX TypeScript public docs must include ${JSON.stringify(contract)}`);
+    }
+  }
 }
 
 assertNoTrackedRootProductsDocs();

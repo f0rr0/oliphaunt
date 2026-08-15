@@ -78,6 +78,7 @@ The declared public entry points are:
 | Android | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers |
 | React Native | `@oliphaunt/react-native` | npm package delegating runtime work to Swift and Kotlin |
 | Node.js, Bun, and Deno | `@oliphaunt/ts` | npm for native runtime support; JSR for protocol/query helpers only |
+| Browser, Node.js, Bun, and Deno WASIX | `@oliphaunt/wasix-ts` | npm for every host; JSR for the full Deno WASIX runtime surface |
 | Native bindings | `liboliphaunt` C ABI | declared native runtime carriers |
 
 Kotlin host-native and JVM compilations are development/parity evidence, not

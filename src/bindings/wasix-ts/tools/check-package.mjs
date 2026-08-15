@@ -5,7 +5,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, promisify } from 'node:util';
 
-import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
+import {
+  assertWasixTypescriptJsrDirectory,
+  prepareWasixTypescriptJsrPackage,
+  prepareWasixTypescriptPackage,
+} from '../../../../tools/release/wasix-typescript-package.mjs';
 import { loadHostBuildContract } from '../host/build-provenance.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -27,10 +31,35 @@ const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-package-check-'
 try {
   const staging = resolve(scratch, 'package');
   await mkdir(staging);
-  for (const name of ['package.json', 'README.md', 'ARCHITECTURE.md', 'CHANGELOG.md', 'lib']) {
+  for (const name of [
+    'package.json',
+    'jsr.json',
+    'README.md',
+    'ARCHITECTURE.md',
+    'CHANGELOG.md',
+    'lib',
+  ]) {
     await cp(resolve(packageDir, name), resolve(staging, name), { recursive: true });
   }
   const stagedPackageJson = prepareWasixTypescriptPackage(staging);
+  prepareWasixTypescriptJsrPackage(staging);
+  const jsrStaging = resolve(scratch, 'jsr-package');
+  await mkdir(jsrStaging);
+  for (const name of [
+    'jsr.json',
+    'README.md',
+    'ARCHITECTURE.md',
+    'CHANGELOG.md',
+    'LICENSE',
+    'THIRD_PARTY_NOTICES.md',
+    'lib',
+  ]) {
+    await cp(resolve(staging, name), resolve(jsrStaging, name), { recursive: true });
+  }
+  assertWasixTypescriptJsrDirectory(jsrStaging, {
+    version: stagedPackageJson.version,
+    runtimeVersion: stagedPackageJson.dependencies[runtimePackage],
+  });
   const { stdout } = await execFileAsync('pnpm', ['pack', '--dry-run', '--json'], {
     cwd: staging,
     env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },
@@ -49,6 +78,8 @@ try {
     'THIRD_PARTY_NOTICES.md',
     'lib/index.js',
     'lib/index.d.ts',
+    'lib/index.bun.js',
+    'lib/index.deno.js',
     'lib/index.node.js',
     'lib/node-client.js',
     'lib/node-direct.js',
@@ -57,6 +88,7 @@ try {
     'lib/node-worker.js',
     'lib/node-worker-options.js',
     'lib/node-zstd.js',
+    'lib/server-runtime.js',
     'lib/node-web-worker.js',
     'lib/node-web-worker-thread.js',
     'lib/worker.js',
@@ -68,6 +100,10 @@ try {
     'lib/host/LICENSE',
     'lib/storage/indexed-db.js',
     'lib/storage/indexed-db.d.ts',
+    'lib/storage/bun.js',
+    'lib/storage/bun.d.ts',
+    'lib/storage/deno.js',
+    'lib/storage/deno.d.ts',
     'lib/storage/node.js',
     'lib/storage/node.d.ts',
     'lib/storage/node-directory-provider.js',
@@ -101,6 +137,8 @@ try {
     './package.json',
     './protocol',
     './query',
+    './storage/bun',
+    './storage/deno',
     './storage/indexed-db',
     './storage/node',
   ];
@@ -118,17 +156,41 @@ try {
   ) {
     throw new Error('WASIX TypeScript package omitted its Node-only directory adapter');
   }
+  if (
+    exports['./storage/bun']?.types !== './lib/storage/bun.d.ts' ||
+    exports['./storage/bun']?.bun !== './lib/storage/bun.js' ||
+    Object.keys(exports['./storage/bun'] ?? {}).some(
+      (condition) => !['types', 'bun'].includes(condition),
+    )
+  ) {
+    throw new Error('WASIX TypeScript package omitted its Bun-only directory adapter');
+  }
+  if (
+    exports['./storage/deno']?.types !== './lib/storage/deno.d.ts' ||
+    exports['./storage/deno']?.deno !== './lib/storage/deno.js' ||
+    Object.keys(exports['./storage/deno'] ?? {}).some(
+      (condition) => !['types', 'deno'].includes(condition),
+    )
+  ) {
+    throw new Error('WASIX TypeScript package omitted its Deno-only directory adapter');
+  }
   if (exports['./storage/opfs'] !== undefined) {
     throw new Error('WASIX TypeScript package exposes an unimplemented storage adapter');
   }
   const rootExport = exports['.'];
   if (
+    JSON.stringify(Object.keys(rootExport ?? {})) !==
+      JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default']) ||
     rootExport?.types !== './lib/index.d.ts' ||
+    rootExport?.deno !== './lib/index.deno.js' ||
+    rootExport?.bun !== './lib/index.bun.js' ||
     rootExport?.browser !== './lib/index.js' ||
     rootExport?.node !== './lib/index.node.js' ||
     rootExport?.default !== './lib/index.js'
   ) {
-    throw new Error('WASIX TypeScript package omitted its exact browser/Node conditional facade');
+    throw new Error(
+      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno conditional facade',
+    );
   }
 
   if (

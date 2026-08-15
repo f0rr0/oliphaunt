@@ -18,7 +18,7 @@ keeps ecosystem-native naming and exposes only the behavior its host supports.
 - Choose Rust WASIX (`oliphaunt-wasix`) when Rust owns the portable WASIX host
   and needs Rust direct, local server, extension, or data-movement APIs.
 - Choose WASIX TypeScript (`@oliphaunt/wasix-ts`) when portable PostgreSQL runs
-  directly or in a Worker in a browser or Node.js.
+  directly or in a Worker in a browser, Node.js, Bun, or Deno.
   Memory is the default; extensions are selective imports, IndexedDB snapshots
   are a browser opt-in, and directory snapshots are a Node opt-in.
 - Choose the C ABI only when building another native language binding or
@@ -52,7 +52,7 @@ and `close`.
 | Question | Why it matters |
 | --- | --- |
 | Which package do I install? | Package identity determines native versus WASIX runtime ownership. |
-| Which host runs PostgreSQL? | Native process, Rust WASIX host, and browser or Node caller realm/Worker have different lifecycle behavior. |
+| Which host runs PostgreSQL? | Native process, Rust WASIX host, and browser or Node/Bun/Deno caller realm/Worker have different lifecycle behavior. |
 | What is the storage default? | Sensible defaults avoid configuration while explicit storage opts into persistence. |
 | How do I select extensions? | Native SDKs select exact SQL names; WASIX TypeScript imports exact portable descriptors. |
 | Which APIs are actually present? | Server, capability, streaming, transaction-helper, and data-movement support differs by product. |
@@ -63,7 +63,7 @@ and `close`.
 - Use [Capability Matrix](/docs/reference/capabilities) before relying on a
   mode or feature in a packaged app.
 - Use [WASIX TypeScript](/docs/sdk/wasix/browser-typescript) for direct or
-  worker-isolated browser and Node execution, error recovery,
+  worker-isolated browser, Node, Bun, and Deno execution, error recovery,
   host-specific snapshots, and selective extensions.
 - Use [Rust WASIX](/docs/sdk/wasix) for the Rust portable host.
 - Use [Native Runtime](/docs/learn/native-runtime) for native direct, broker,

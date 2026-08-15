@@ -4,14 +4,14 @@ id: "oliphaunt-wasix-ts"
 language: "typescript"
 layer: "library"
 stack: "frontend"
-tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "sdk", "release-product"]
+tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
 dependsOn:
   - "liboliphaunt-wasix"
   - "shared-js-core"
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable TypeScript WASIX binding for browser and Node direct/Worker placement."
+  description: "Portable TypeScript WASIX binding for browser, Node, Bun, and Deno direct/Worker placement."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"
@@ -68,9 +68,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-node:
     tags: ["quality", "smoke", "node"]
-    script: |
-      pnpm --dir src/bindings/wasix-ts package:build
-      node src/bindings/wasix-ts/tools/smoke-node.mjs
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node"
     deps:
       - "oliphaunt-wasix-ts:package"
       - "liboliphaunt-wasix:runtime-portable"
@@ -85,6 +83,106 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
     options:
       cache: false
+      runFromWorkspaceRoot: true
+  smoke-bun:
+    tags: ["quality", "smoke", "bun"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  smoke-deno:
+    tags: ["quality", "smoke", "deno"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/sources/toolchains/deno.toml"
+      - "/tools/dev/deno.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-smoke-node:
+    tags: ["quality", "smoke", "package", "node"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-smoke-bun:
+    tags: ["quality", "smoke", "package", "bun"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-smoke-deno:
+    tags: ["quality", "smoke", "package", "deno"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/sources/toolchains/deno.toml"
+      - "/tools/dev/deno.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: true
       runFromWorkspaceRoot: true
   bench:
     tags: ["bench", "plan"]
@@ -172,7 +270,9 @@ tasks:
     tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
     command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts"
     deps:
-      - "oliphaunt-wasix-ts:smoke-node"
+      - "oliphaunt-wasix-ts:package-smoke-bun"
+      - "oliphaunt-wasix-ts:package-smoke-deno"
+      - "oliphaunt-wasix-ts:package-smoke-node"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
