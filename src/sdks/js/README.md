@@ -20,17 +20,16 @@ The broker/server architecture and implementation gates are documented in
 pnpm add @oliphaunt/ts
 ```
 
-For Deno or pnpm projects that only need protocol/query helpers:
+For Deno:
 
 ```sh
-deno add jsr:@oliphaunt/ts
-pnpm add jsr:@oliphaunt/ts
+deno add npm:@oliphaunt/ts
 ```
 
 Node.js, Bun, and Deno use `nativeDirect` by default. The Node/Bun registry
 artifact is `@oliphaunt/ts`; Deno native applications import
-`npm:@oliphaunt/ts`. Deno can consume packages from the npm registry, and that
-is the native-runtime install path. JSR publishes protocol/query helpers only.
+`npm:@oliphaunt/ts`. Deno consumes the same package from the npm registry, which
+is the native-runtime install path.
 
 On supported desktop targets, package managers install the matching
 `@oliphaunt/liboliphaunt-*`, `@oliphaunt/tools-*`, `@oliphaunt/broker-*`, and
@@ -62,8 +61,7 @@ deno add npm:@oliphaunt/icu
 
 Node, Bun, and Deno native modes discover `@oliphaunt/icu` when it is installed
 and set the runtime ICU data environment before opening liboliphaunt. Do not add
-`@oliphaunt/icu` for applications that do not use ICU collations. JSR remains
-protocol/query-only and does not expose native runtime or ICU packages.
+`@oliphaunt/icu` for applications that do not use ICU collations.
 
 PostgreSQL extensions follow the same registry-driven model in Node and Bun.
 Applications add the extension meta package for every extension they pass to

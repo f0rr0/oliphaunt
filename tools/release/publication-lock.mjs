@@ -44,7 +44,6 @@ import {
   extensionCarrierLegalFileInventory,
 } from "./extension-upstream-licenses.mjs";
 import { readCanonicalTarGzipEntries } from "./portable-archive.mjs";
-import { expectedJsrPublishedManifest } from "./jsr-publish-normalization.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -54,7 +53,7 @@ export const DEFAULT_PUBLICATION_LOCK = path.join(ROOT, "target/release/publicat
 
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "target"]);
 const EXTENSION_PRODUCT_KINDS = new Set(["exact-extension-artifact", "exact-extension-bundle"]);
-const ECOSYSTEM_ORDER = new Map([["cargo", 0], ["maven", 1], ["npm", 2], ["jsr", 3]]);
+const ECOSYSTEM_ORDER = new Map([["cargo", 0], ["maven", 1], ["npm", 2]]);
 const ROLE_ORDER = new Map([
   ["payload-part", 0],
   ["resource", 1],
@@ -465,29 +464,6 @@ function directoryEnvelope(directory) {
   return { path: rel(directory), sha256: hash.digest("hex"), size };
 }
 
-function jsrArtifact(file) {
-  const manifest = JSON.parse(readFileSync(file, "utf8"));
-  if (typeof manifest.name !== "string" || typeof manifest.version !== "string" || !manifest.name.startsWith("@")) {
-    return null;
-  }
-  const imports = manifest.imports;
-  const dependencies = imports !== null && !Array.isArray(imports) && typeof imports === "object"
-    ? Object.entries(imports).map(([name, requirement]) => ({
-      ecosystem: String(requirement).startsWith("jsr:") ? "jsr" : "npm",
-      name,
-      requirement: String(requirement),
-      scope: "runtime",
-    }))
-    : [];
-  return {
-    ecosystem: "jsr",
-    name: manifest.name,
-    version: manifest.version,
-    dependencies,
-    artifacts: [directoryEnvelope(path.dirname(file))],
-  };
-}
-
 function mergeArtifactRecord(records, record) {
   const id = `${record.ecosystem}:${record.name}@${record.version}`;
   const existing = records.get(id);
@@ -553,14 +529,6 @@ function discoverPublicationArtifactsMatching(roots, includeRecord) {
       }
     } else if (file.endsWith(".tsv")) {
       for (const record of mavenManifestArtifacts(file)) {
-        addRecord(record);
-      }
-    } else if (path.basename(file) === "jsr.json" || path.basename(file) === "jsr.jsonc") {
-      if (file.endsWith(".jsonc")) {
-        throw error(`${rel(file)} must be strict JSON for a reproducible JSR publication lock`);
-      }
-      const record = jsrArtifact(file);
-      if (record !== null) {
         addRecord(record);
       }
     }
@@ -1880,35 +1848,7 @@ export function freezePublicationCandidate(candidate) {
   };
   delete frozen.missing;
   frozen.lockDigest = digestValue(withoutDigest(frozen));
-  assertJsrPublicationNormalizationAdmissions(frozen);
   return frozen;
-}
-
-export function assertJsrPublicationNormalizationAdmissions(lock) {
-  const admitted = [];
-  for (const carrier of lock.carriers.filter(({ ecosystem }) => ecosystem === "jsr")) {
-    if (carrier.artifacts.length !== 1) {
-      throw error(`${carrier.id} must freeze exactly one JSR source-directory envelope`);
-    }
-    const artifact = carrier.artifacts[0];
-    const directory = path.resolve(ROOT, artifact.path);
-    let metadata;
-    try {
-      metadata = lstatSync(directory);
-    } catch (cause) {
-      throw error(`${carrier.id} frozen JSR source is missing: ${artifact.path}: ${cause.message}`);
-    }
-    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-      throw error(`${carrier.id} frozen JSR artifact must be a non-symlink directory: ${artifact.path}`);
-    }
-    const observed = directoryEnvelope(directory);
-    if (observed.sha256 !== artifact.sha256 || observed.size !== artifact.size) {
-      throw error(`${carrier.id} frozen JSR source bytes do not match the publication lock: ${artifact.path}`);
-    }
-    const files = expectedJsrPublishedManifest({ carrier, directory, lock });
-    admitted.push({ carrierId: carrier.id, fileCount: Object.keys(files).length });
-  }
-  return admitted;
 }
 
 function assertHash(value, context) {

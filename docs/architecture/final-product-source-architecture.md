@@ -43,7 +43,7 @@ src/sdks/kotlin                  Kotlin/Android SDK
 src/sdks/react-native            React Native SDK
 src/sdks/js                      TypeScript SDK
 src/bindings/wasix-rust          Rust binding for the WASIX runtime
-src/bindings/wasix-ts            TypeScript browser/Node binding for the WASIX runtime
+src/bindings/wasix-ts            TypeScript browser/Node/Bun/Deno binding for the WASIX runtime
 src/shared/contracts             cross-language protocol and API contracts
 src/shared/extension-runtime-contract extension/runtime ABI contract
 src/shared/fixtures              shared semantic test fixtures
@@ -238,7 +238,7 @@ versioned product.
 - JavaScript keeps the existing unsuffixed extension package as the
   native/default facade. Portable WASIX bytes use a distinct `-wasix` npm leaf
   owned and versioned by that same extension product. Its exact-member ESM
-  descriptors are host-neutral across browser and Node WASIX adapters; the
+  descriptors are host-neutral across browser, Node, Bun, and Deno WASIX adapters; the
   host and runtime remain separate axes.
 - Native runtime targets may opt out of exact-extension artifact publication
   with product-local target metadata when no real extension producer exists for
@@ -269,7 +269,7 @@ artifact envelopes. Publishable artifacts are produced by explicit
 the `CI` workflow.
 
 Use pnpm only for JavaScript dependency installation and package-manager
-commands. Use Cargo, SwiftPM/Xcode, Gradle, npm/JSR, and Expo through
+commands. Use Cargo, SwiftPM/Xcode, Gradle, npm, and Expo through
 product-local Moon tasks or product-owned scripts. Do not add root alias layers
 over Moon.
 

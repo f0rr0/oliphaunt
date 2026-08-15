@@ -40,7 +40,7 @@ export function extensionNpmPackageForProduct(product) {
  * Host-neutral npm carrier for one product's portable WASIX extension bytes.
  *
  * Keep the unsuffixed npm identity as the established native/default facade.
- * Browser and Node WASIX hosts intentionally share this one explicit carrier.
+ * Browser, Node, Bun, and Deno WASIX hosts intentionally share this one explicit carrier.
  */
 export function extensionNpmWasixPackageForProduct(product) {
   return `${extensionNpmPackageForProduct(product)}-wasix`;

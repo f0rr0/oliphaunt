@@ -16,7 +16,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { createPackedWasixNodeConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
+import { createPackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
 import { installedPackageClosure } from './installed-closure.mjs';
 import {
   assertRuntimeBuildConfiguration,
@@ -72,7 +72,7 @@ async function runMeasuredBenchmark(planSource, options) {
   const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-node-bench-'));
 
   try {
-    const fixture = await createPackedWasixNodeConsumer({
+    const fixture = await createPackedWasixConsumer({
       scratch,
       consumerName: 'oliphaunt-wasix-node-benchmark-consumer',
     });

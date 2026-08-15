@@ -16,6 +16,8 @@ function manifest() {
     exports: {
       '.': {
         types: './lib/index.d.ts',
+        deno: './lib/index.deno.js',
+        bun: './lib/index.bun.js',
         node: './lib/index.node.js',
         browser: './lib/index.js',
         default: './lib/index.js',
@@ -24,6 +26,19 @@ function manifest() {
         types: './lib/storage/node.d.ts',
         node: './lib/storage/node.js',
       },
+      './storage/bun': {
+        types: './lib/storage/bun.d.ts',
+        bun: './lib/storage/bun.js',
+      },
+      './storage/deno': {
+        types: './lib/storage/deno.d.ts',
+        deno: './lib/storage/deno.js',
+      },
+    },
+    engines: {
+      node: '>=22.13 <25',
+      bun: '>=1.3.14',
+      deno: '>=2.8.1',
     },
     oliphaunt: {
       runtimeProduct: 'liboliphaunt-wasix',
@@ -35,6 +50,37 @@ function manifest() {
 describe('WASIX TypeScript release dependency closure', () => {
   test('accepts only the exact portable runtime and decompressor', () => {
     expect(() => assertWasixTypescriptManifest(manifest())).not.toThrow();
+  });
+
+  test('rejects a root condition order that lets Node shadow Deno or Bun', () => {
+    const candidate = manifest();
+    candidate.exports['.'] = {
+      types: './lib/index.d.ts',
+      node: './lib/index.node.js',
+      deno: './lib/index.deno.js',
+      bun: './lib/index.bun.js',
+      browser: './lib/index.js',
+      default: './lib/index.js',
+    };
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose exact browser, Node, Bun, and Deno conditional entrypoints',
+    );
+  });
+
+  test('rejects a cross-runtime directory storage fallback', () => {
+    const candidate = manifest();
+    candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose Deno directory storage only under the Deno condition',
+    );
+  });
+
+  test('rejects runtime floors outside the qualified envelope', () => {
+    const candidate = manifest();
+    candidate.engines.bun = '>=1';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must declare the qualified Node, Bun, and Deno runtime floors',
+    );
   });
 
   for (const [family, dependency] of [

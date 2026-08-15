@@ -16,13 +16,14 @@ const buildOutputsFile = resolve(
   'target/oliphaunt-wasix/wasix-build/build/outputs.json',
 );
 
-export async function createPackedWasixNodeConsumer({
+export async function createPackedWasixConsumer({
   scratch,
   consumerName = 'oliphaunt-wasix-node-consumer',
   includePgtap = false,
+  useStubRuntime = false,
 }) {
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) {
-    throw new Error('packed WASIX Node fixture requires an absolute scratch directory');
+    throw new Error('packed WASIX server-runtime fixture requires an absolute scratch directory');
   }
   const releaseVersions = JSON.parse(
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
@@ -33,7 +34,12 @@ export async function createPackedWasixNodeConsumer({
   await mkdir(tarballs, { recursive: true });
 
   const binding = await packBinding({ scratch, tarballs });
-  const runtime = await packRuntime({ scratch, tarballs, runtimeVersion });
+  if (includePgtap && useStubRuntime) {
+    throw new Error('the packed WASIX stub runtime cannot carry extensions');
+  }
+  const runtime = useStubRuntime
+    ? await packStubRuntime({ scratch, tarballs, runtimeVersion })
+    : await packRuntime({ scratch, tarballs, runtimeVersion });
   const extension = includePgtap
     ? await packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion })
     : undefined;
@@ -68,6 +74,48 @@ export async function createPackedWasixNodeConsumer({
       ...(extension === undefined ? {} : { extension }),
     },
   };
+}
+
+async function packStubRuntime({ scratch, tarballs, runtimeVersion }) {
+  requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const staging = resolve(scratch, 'runtime');
+  await mkdir(staging);
+  const emptyByteSha256 = sha256(Buffer.of(0));
+  await writeFile(
+    resolve(staging, 'index.js'),
+    `const byte = new URL('data:application/octet-stream;base64,AA==');
+export default Object.freeze({
+  schema: 'oliphaunt-wasix-runtime-v1',
+  runtime: 'wasix',
+  product: 'liboliphaunt-wasix',
+  version: ${JSON.stringify(runtimeVersion)},
+  runtimeArchive: {
+    archive: 'runtime.tar.zst',
+    sha256: ${JSON.stringify(emptyByteSha256)},
+    size: 1,
+    source: byte,
+  },
+  pgdataArchive: {
+    archive: 'pgdata.tar.zst',
+    sha256: ${JSON.stringify(emptyByteSha256)},
+    size: 1,
+    source: byte,
+  },
+  manifest: {
+    sha256: ${JSON.stringify(emptyByteSha256)},
+    size: 1,
+    source: byte,
+  },
+});
+`,
+  );
+  await writeJson(resolve(staging, 'package.json'), {
+    name: '@oliphaunt/liboliphaunt-wasix',
+    version: runtimeVersion,
+    type: 'module',
+    exports: { '.': './index.js' },
+  });
+  return pack(staging, tarballs);
 }
 
 export async function runFixtureCommand(command, args, cwd, timeout = 120_000) {

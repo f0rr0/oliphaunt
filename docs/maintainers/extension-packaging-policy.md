@@ -66,7 +66,7 @@ identity. The facade, native leaves, WASIX leaf, Cargo carriers, and release
 assets all share the owning extension product's exact packaging version, tag,
 and changelog.
 
-An npm WASIX leaf is host-neutral: browser and Node WASIX hosts consume the
+An npm WASIX leaf is host-neutral: browser, Node, Bun, and Deno WASIX hosts consume the
 same portable carrier. Its ESM descriptor selects one exact SQL extension and
 contains the verified carrier closure required to materialize it. Contrib
 members use exact package subpaths so importing one member does not create an
@@ -77,7 +77,7 @@ exports, and unresolved imports. The compatible host checks the carried bytes
 against that descriptor/install contract. The base runtime carrier deliberately
 ships a core-only manifest with `extensions: []`; it owns runtime support and
 core identity, not independently versioned extension metadata. Importing a
-carrier is not by itself a browser or Node support claim.
+carrier is not by itself a browser, Node, Bun, or Deno support claim.
 
 Physical aggregate carriers use `oliphaunt-extension-bundle-v1`. Their
 manifest describes the immutable nested archives and compatibility contract;

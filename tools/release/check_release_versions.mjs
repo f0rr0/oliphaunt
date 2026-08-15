@@ -18,7 +18,7 @@ import {
 } from "./release-graph.mjs";
 
 const TOOL = "check_release_versions.mjs";
-const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
+const REGISTRY_TARGETS = new Set(["crates-io", "npm", "maven-central"]);
 const REGISTRY_INVENTORY_SCHEMA = "oliphaunt-release-registry-inventory-v1";
 
 function fail(message) {

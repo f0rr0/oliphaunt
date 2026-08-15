@@ -1013,3 +1013,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 ### Storage subpath: @oliphaunt/wasix-ts/storage/node
 
 - `directory`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/bun
+
+- `directory`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/deno
+
+- `directory`

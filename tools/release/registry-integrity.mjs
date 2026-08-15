@@ -5,7 +5,6 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -16,20 +15,11 @@ import process from "node:process";
 import { createCratesIoReadGate } from "./registry-http-retry.mjs";
 import { loadPublicationLock } from "./publication-lock.mjs";
 import { ROOT, compareText } from "./release-graph.mjs";
-import {
-  expectedJsrPublishedManifest,
-  jsrPublishedFileProof,
-} from "./jsr-publish-normalization.mjs";
-
-export { jsrPublishedFileProof };
-
 const CRATES_IO_API = process.env.CRATES_IO_API || "https://crates.io/api/v1";
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || "https://repo1.maven.org/maven2";
-const JSR_REGISTRY = process.env.JSR_REGISTRY || "https://jsr.io";
 const USER_AGENT = "oliphaunt-release-integrity (https://github.com/f0rr0/oliphaunt)";
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "target"]);
-const SUPPORTED_ECOSYSTEMS = new Set(["cargo", "npm", "maven", "jsr"]);
+const SUPPORTED_ECOSYSTEMS = new Set(["cargo", "npm", "maven"]);
 const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const REQUEST_ATTEMPTS = 8;
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -464,96 +454,10 @@ async function mavenReceipt(carrier, fetchImpl) {
   return receipt;
 }
 
-function walkDirectoryFiles(root) {
-  const files = [];
-  const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name))) {
-      const child = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw error(`JSR publication source must not contain symlinks: ${path.relative(ROOT, child)}`);
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORIES.has(entry.name)) visit(child);
-      } else if (entry.isFile()) {
-        files.push(child);
-      }
-    }
-  };
-  visit(root);
-  return files;
-}
-
-function directoryEnvelope(directory) {
-  const hash = createHash("sha256");
-  let size = 0;
-  for (const file of walkDirectoryFiles(directory)) {
-    const relative = path.relative(directory, file).split(path.sep).join("/");
-    const bytes = readFileSync(file);
-    hash.update(`${relative}\0${bytes.length}\0`);
-    hash.update(bytes);
-    size += bytes.length;
-  }
-  return { sha256: hash.digest("hex"), size };
-}
-
-function requireLockedDirectory(artifact, carrier) {
-  const directory = path.resolve(ROOT, artifact.path);
-  let stat;
-  try { stat = lstatSync(directory); } catch { throw error(`${carrier.id} locked directory is unavailable: ${artifact.path}`); }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) throw error(`${carrier.id} locked JSR artifact is not a directory: ${artifact.path}`);
-  const observed = directoryEnvelope(directory);
-  if (observed.sha256 !== artifact.sha256 || observed.size !== artifact.size) {
-    throw error(`${carrier.id} local JSR source no longer matches the frozen lock: ${artifact.path}`);
-  }
-  return directory;
-}
-
-function normalizeJsrManifest(value, carrier) {
-  if (value === null || Array.isArray(value) || typeof value !== "object") throw error(`${carrier.id} JSR version metadata has no file manifest`);
-  const normalized = {};
-  for (const [name, entry] of Object.entries(value).sort(([left], [right]) => compareText(left, right))) {
-    if (!name.startsWith("/") || entry === null || Array.isArray(entry) || typeof entry !== "object") {
-      throw error(`${carrier.id} JSR version metadata has an invalid manifest entry ${JSON.stringify(name)}`);
-    }
-    if (!/^sha256-[0-9a-f]{64}$/u.test(entry.checksum) || !Number.isSafeInteger(entry.size) || entry.size < 0) {
-      throw error(`${carrier.id} JSR version metadata has an invalid proof for ${name}`);
-    }
-    normalized[name] = { checksum: entry.checksum, size: entry.size };
-  }
-  return normalized;
-}
-
-function expectedJsrReceipt(carrier, lock) {
-  if (carrier.artifacts.length !== 1) throw error(`${carrier.id} must freeze exactly one JSR source-directory envelope`);
-  const directory = requireLockedDirectory(carrier.artifacts[0], carrier);
-  const match = carrier.name.match(/^@([^/]+)\/(.+)$/u);
-  if (match === null) throw error(`${carrier.id} has invalid JSR package name ${JSON.stringify(carrier.name)}`);
-  const url = `${JSR_REGISTRY.replace(/\/+$/u, "")}/@${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}/${encodeURIComponent(carrier.version)}_meta.json`;
-  const manifest = expectedJsrPublishedManifest({ carrier, directory, lock });
-  return {
-    id: carrier.id,
-    product: carrier.product,
-    ecosystem: carrier.ecosystem,
-    name: carrier.name,
-    version: carrier.version,
-    lockedArtifacts: lockedArtifactEnvelope(carrier),
-    registryProof: { algorithm: "sha256", digest: digestValue(manifest), files: manifest, source: "jsr-version-file-manifest", url },
-  };
-}
-
-async function jsrReceipt(carrier, lock, fetchImpl) {
-  const receipt = expectedJsrReceipt(carrier, lock);
-  const metadata = await requestJson(receipt.registryProof.url, fetchImpl);
-  const observed = normalizeJsrManifest(metadata?.manifest, carrier);
-  if (stableJson(observed) !== stableJson(receipt.registryProof.files)) {
-    throw error(`${carrier.id} JSR published file manifest does not match the frozen canonical publication proof`);
-  }
-  return receipt;
-}
-
 function expectedLockedCarrierReceipt(carrier, lock) {
   if (carrier.ecosystem === "cargo") return expectedCargoReceipt(carrier);
   if (carrier.ecosystem === "npm") return expectedNpmReceipt(carrier);
   if (carrier.ecosystem === "maven") return expectedMavenReceipt(carrier);
-  if (carrier.ecosystem === "jsr") return expectedJsrReceipt(carrier, lock);
   throw error(`${carrier.id} byte-level registry verification is unsupported for ${carrier.ecosystem}`);
 }
 
@@ -571,8 +475,8 @@ function assertSealedReceiptCommon(receipt, carrier) {
   if (stableJson(receipt.lockedArtifacts) !== stableJson(lockedArtifactEnvelope(carrier))) {
     throw error(`${carrier.id} sealed registry receipt changed its frozen artifact envelope`);
   }
-  exactKeys(receipt.registryProof, carrier.ecosystem === "maven" || carrier.ecosystem === "jsr"
-    ? ["algorithm", "digest", "files", "source", ...(carrier.ecosystem === "jsr" ? ["url"] : [])]
+  exactKeys(receipt.registryProof, carrier.ecosystem === "maven"
+    ? ["algorithm", "digest", "files", "source"]
     : ["algorithm", "digest", "source", "url"], `${carrier.id} sealed registry proof`);
 }
 
@@ -637,31 +541,12 @@ function validateSealedLockedCarrierReceipt(receipt, carrier) {
     }
     return receipt;
   }
-  if (carrier.ecosystem === "jsr") {
-    if (carrier.artifacts.length !== 1) throw error(`${carrier.id} must freeze exactly one JSR source-directory envelope`);
-    const match = carrier.name.match(/^@([^/]+)\/(.+)$/u);
-    if (match === null) throw error(`${carrier.id} has invalid JSR package name ${JSON.stringify(carrier.name)}`);
-    const expectedUrl = `${JSR_REGISTRY.replace(/\/+$/u, "")}/@${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}/${encodeURIComponent(carrier.version)}_meta.json`;
-    const files = normalizeJsrManifest(proof.files, carrier);
-    for (const [name, file] of Object.entries(proof.files)) {
-      exactKeys(file, ["checksum", "size"], `${carrier.id} sealed JSR proof ${name}`);
-    }
-    if (
-      proof.algorithm !== "sha256"
-      || proof.source !== "jsr-version-file-manifest"
-      || proof.url !== expectedUrl
-      || proof.digest !== digestValue(files)
-    ) {
-      throw error(`${carrier.id} sealed JSR proof changed its exact registry manifest identity`);
-    }
-    return receipt;
-  }
   throw error(`${carrier.id} sealed registry receipt uses an unsupported ecosystem`);
 }
 
 function selectedLockedRegistryCarriers(lock, {
   products,
-  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  ecosystems = ["cargo", "npm", "maven"],
   carrierIds,
 } = {}) {
   if (!Array.isArray(lock?.carriers)) throw error("publication lock has no carriers list");
@@ -702,7 +587,7 @@ function selectedLockedRegistryCarriers(lock, {
 
 export function validateLockedRegistryReceipts(lock, {
   products,
-  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  ecosystems = ["cargo", "npm", "maven"],
   carrierIds,
   receipts,
   receiptMode = "local",
@@ -741,7 +626,7 @@ export function validateLockedRegistryReceipts(lock, {
 
 export function registryReceiptEvidence(lock, {
   products,
-  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  ecosystems = ["cargo", "npm", "maven"],
   receipts,
 } = {}) {
   const validated = validateLockedRegistryReceipts(lock, { products, ecosystems, receipts });
@@ -807,7 +692,7 @@ export function validateRegistryReceiptEvidence(file, lock, {
     throw error("registry receipt evidence is not bound to the active publication lock source/digest");
   }
   const expectedProducts = [...products].sort(compareText);
-  const expectedEcosystems = [...(ecosystems ?? ["cargo", "npm", "maven", "jsr"])].sort(compareText);
+  const expectedEcosystems = [...(ecosystems ?? ["cargo", "npm", "maven"])].sort(compareText);
   if (stableJson(evidence.products) !== stableJson(expectedProducts) || stableJson(evidence.ecosystems) !== stableJson(expectedEcosystems)) {
     throw error("registry receipt evidence product/ecosystem selection does not match the requested release");
   }
@@ -829,13 +714,12 @@ export async function verifyLockedCarrierIntegrity(lock, carrierId, {
   if (carrier.ecosystem === "cargo") return cargoReceipt(carrier, fetchImpl, cratesIoReadGate);
   if (carrier.ecosystem === "npm") return npmReceipt(carrier, fetchImpl);
   if (carrier.ecosystem === "maven") return mavenReceipt(carrier, fetchImpl);
-  if (carrier.ecosystem === "jsr") return jsrReceipt(carrier, lock, fetchImpl);
   throw error(`${carrier.id} byte-level registry verification is unsupported for ${carrier.ecosystem}`);
 }
 
 export async function verifyLockedRegistryIntegrity(lock, {
   products,
-  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  ecosystems = ["cargo", "npm", "maven"],
   carrierIds,
   fetchImpl = fetch,
   concurrency = Number(process.env.REGISTRY_INTEGRITY_CONCURRENCY ?? 8),
@@ -923,7 +807,7 @@ if (import.meta.main) {
     if (args.verifyReceipts) {
       const evidence = validateRegistryReceiptEvidence(args.verifyReceipts, lock, {
         products: args.products,
-        ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven", "jsr"],
+        ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven"],
         receiptMode: args.sealedReceipts ? "sealed" : "local",
       });
       console.log(`Verified ${evidence.receipts.length} immutable registry receipts against the frozen publication lock.`);
@@ -931,7 +815,7 @@ if (import.meta.main) {
     }
     const receipts = await verifyLockedRegistryIntegrity(lock, {
       products: args.products,
-      ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven", "jsr"],
+      ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven"],
       carrierIds: args.carrierId ? [args.carrierId] : undefined,
       concurrency: args.concurrency,
     });

@@ -51,12 +51,12 @@ const expected = {
     package_identity: 'npm:@oliphaunt/wasix-ts',
     implementation_path: 'src/bindings/wasix-ts',
     documentation_path: 'src/docs/content/sdk/wasm',
-    supported_consumer_targets: ['browser', 'node'],
+    supported_consumer_targets: ['browser', 'node', 'bun', 'deno'],
     planned_consumer_targets: [],
     runtime_owner: true,
     runtime_boundary: '@oliphaunt/wasix-ts',
     parity_role: 'wasm-peer',
-    available_modes: ['wasix-browser', 'wasix-node'],
+    available_modes: ['wasix-browser', 'wasix-node', 'wasix-bun', 'wasix-deno'],
     unsupported_modes: [
       'wasix-server',
       'native-direct',
@@ -64,7 +64,7 @@ const expected = {
       'native-server',
     ],
     unsupported_mode_reason:
-      'the binding owns portable browser and Node worker hosts; server and every native mode remain separate products',
+      'the binding owns portable browser, Node, Bun, and Deno worker hosts; server and every native mode remain separate products',
     artifact_resolution: 'liboliphaunt-wasix-npm-carrier',
     tool_resolution: 'not-exposed-browser',
     extension_resolution: 'exact-extension-wasix-npm-packages',

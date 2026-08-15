@@ -1009,7 +1009,7 @@ export function currentProductVersionSync(product, prefix = "release-artifact-ta
     let version = "";
     if (name === "Cargo.toml") {
       version = parseCargoVersion(text, file, prefix);
-    } else if (name === "package.json" || name === "jsr.json") {
+    } else if (name === "package.json") {
       const data = JSON.parse(text);
       version = typeof data.version === "string" ? data.version : "";
     } else if (name === "gradle.properties") {

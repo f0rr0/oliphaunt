@@ -27,7 +27,7 @@ describe("immutable mutation reconciliation", () => {
     let mutations = 0;
     let reconciliations = 0;
     await expect(mutateOnceAndRequireExactState({
-      label: "JSR publish for @scope/pkg@1.2.3",
+      label: "npm publish for @scope/pkg@1.2.3",
       mutate: () => { mutations += 1; },
       reconcile: () => { reconciliations += 1; },
     })).resolves.toEqual({ reconciledMutationFailure: false });
@@ -39,7 +39,7 @@ describe("immutable mutation reconciliation", () => {
     let mutations = 0;
     let reconciliations = 0;
     await expect(mutateOnceAndRequireExactState({
-      label: "JSR publish for @scope/pkg@1.2.3",
+      label: "npm publish for @scope/pkg@1.2.3",
       mutate: () => {
         mutations += 1;
         throw new Error("transport timed out");
@@ -55,7 +55,7 @@ describe("immutable mutation reconciliation", () => {
     let mutations = 0;
     let reconciliations = 0;
     const promise = mutateOnceAndRequireExactState({
-      label: "JSR publish for @scope/pkg@1.2.3",
+      label: "npm publish for @scope/pkg@1.2.3",
       mutate: () => {
         mutations += 1;
         throw mutationFailure;
@@ -66,7 +66,7 @@ describe("immutable mutation reconciliation", () => {
       },
     });
     await expect(promise).rejects.toThrow(
-      "JSR publish for @scope/pkg@1.2.3 failed (connection reset after upload) and immutable state did not reconcile: exact version remains absent",
+      "npm publish for @scope/pkg@1.2.3 failed (connection reset after upload) and immutable state did not reconcile: exact version remains absent",
     );
     await promise.catch((error) => expect(error.cause).toBe(mutationFailure));
     expect(mutations).toBe(1);
@@ -76,7 +76,7 @@ describe("immutable mutation reconciliation", () => {
   test("propagates reconciliation failure after a successful mutation", async () => {
     const reconciliationFailure = new Error("registry visibility deadline elapsed");
     const promise = mutateOnceAndRequireExactState({
-      label: "JSR publish",
+      label: "npm publish",
       mutate: () => {},
       reconcile: () => { throw reconciliationFailure; },
     });

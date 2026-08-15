@@ -41,9 +41,7 @@ not source-text assertions, prove runtime delegation and consumer behavior.
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol
   instead of inventing another broker runtime; app developers get verified
   release assets by default instead of building Rust locally. The npm package
-  is the native-runtime distribution for Node, Bun, and Deno; the JSR package
-  intentionally exposes protocol/query helpers only and must not advertise a
-  native runtime.
+  is the native-runtime distribution for Node, Bun, and Deno.
 
 The Rust SDK is canonical for now; Swift, Kotlin, React Native, and TypeScript
 mirror its mode, raw protocol, typed query, transaction, checkpoint, structured PostgreSQL error, capabilities, backup, restore, exact extension, and resource packaging terminology unless a platform restriction is documented.

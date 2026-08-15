@@ -62,18 +62,16 @@ describe("normal publication plan", () => {
       carrier({ id: "npm:@example/runtime", product: "runtime", publishOrder: 1 }),
       carrier({ id: "cargo:sdk", product: "sdk", publishOrder: 2, dependencies: ["cargo:runtime"] }),
       carrier({ id: "npm:@example/sdk", product: "sdk", publishOrder: 3, dependencies: ["npm:@example/runtime"] }),
-      carrier({ id: "jsr:@example/sdk", product: "sdk", publishOrder: 4, dependencies: ["npm:@example/sdk"] }),
     ]);
     const plan = normalPublicationPlan(value, ["runtime", "sdk"]);
-    expect(plan.carrierCount).toBe(5);
+    expect(plan.carrierCount).toBe(4);
     expect(plan.operations.map(({ carrierId }) => carrierId)).toEqual([
       "cargo:runtime",
       "npm:@example/runtime",
       "cargo:sdk",
       "npm:@example/sdk",
-      "jsr:@example/sdk",
     ]);
-    expect(plan.operations.map(({ operationOrder }) => operationOrder)).toEqual([0, 1, 2, 3, 4]);
+    expect(plan.operations.map(({ operationOrder }) => operationOrder)).toEqual([0, 1, 2, 3]);
   });
 
   test("recomputes readiness after every operation to preserve global lock priority", () => {
@@ -100,10 +98,9 @@ describe("normal publication plan", () => {
         publishOrder: 2,
         dependencies: ["maven:dev.example:runtime"],
       }),
-      carrier({ id: "jsr:@example/sdk", product: "sdk", publishOrder: 3, dependencies: ["npm:@example/runtime"] }),
     ]);
     const plan = normalPublicationPlan(value, ["runtime", "sdk"]);
-    expect(plan.operations).toHaveLength(3);
+    expect(plan.operations).toHaveLength(2);
     expect(plan.operations[0]).toMatchObject({
       id: "maven:atomic-deployment",
       kind: "maven-atomic-deployment",
@@ -115,7 +112,6 @@ describe("normal publication plan", () => {
     expect(plan.operations.map(({ id }) => id)).toEqual([
       "maven:atomic-deployment",
       "carrier:npm:@example/runtime",
-      "carrier:jsr:@example/sdk",
     ]);
   });
 
@@ -123,13 +119,13 @@ describe("normal publication plan", () => {
     const value = lock([
       carrier({ id: "npm:@example/input", product: "input", publishOrder: 0 }),
       carrier({ id: "maven:dev.example:sdk", product: "sdk", publishOrder: 1, dependencies: ["npm:@example/input"] }),
-      carrier({ id: "jsr:@example/output", product: "output", publishOrder: 2, dependencies: ["maven:dev.example:sdk"] }),
+      carrier({ id: "npm:@example/output", product: "output", publishOrder: 2, dependencies: ["maven:dev.example:sdk"] }),
     ]);
     const plan = normalPublicationPlan(value, ["input", "sdk", "output"]);
     expect(plan.operations.map(({ id }) => id)).toEqual([
       "carrier:npm:@example/input",
       "maven:atomic-deployment",
-      "carrier:jsr:@example/output",
+      "carrier:npm:@example/output",
     ]);
   });
 

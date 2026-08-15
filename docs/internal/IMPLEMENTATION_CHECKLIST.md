@@ -257,7 +257,7 @@ intentionally not maintained here.
 - [x] Release dry-run SDK validation consumes staged builder artifacts in
   all release modes instead of rebuilding SDKs from source. Evidence:
   `release.py` validates staged Cargo crates, Kotlin Maven repository
-  artifacts, Swift release manifests/source archives, and npm/JSR tarballs;
+  artifacts, Swift release manifests/source archives, and npm tarballs;
   Kotlin, React Native, TypeScript, WASIX Rust, and Rust dry-runs return after
   staged validation rather than invoking `check-sdk.sh`, Gradle local publish,
   `cargo package`, or `cargo publish --dry-run`.
@@ -504,7 +504,7 @@ intentionally not maintained here.
   installed-app E2E evidence from staged mobile app artifacts.
 - [x] TypeScript package artifacts stay SDK-scoped. Evidence:
   `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js` stages the npm tarball
-  and JSR source only; the affected planner now selects only `js-sdk-package`
+  and npm source only; the affected planner now selects only `js-sdk-package`
   for `oliphaunt-js:package-artifacts`. Broker and Node-direct helper artifacts
   are built and downloaded only when the helper products themselves are being
   released.
@@ -532,7 +532,7 @@ intentionally not maintained here.
 - [x] Repository tasks are Moon-first. Root package-manager aliases are not the
   public orchestration surface.
 - [x] pnpm remains JS dependency/package-manager tooling, not the global graph.
-- [x] Cargo, SwiftPM/Xcode, Gradle, npm/JSR, and Expo are invoked through
+- [x] Cargo, SwiftPM/Xcode, Gradle, npm, and Expo are invoked through
   product-local Moon tasks or product-owned scripts.
 - [x] Policy checks reject stale release graphs, root product aliases, broad
   generated-state inputs, and mobile source-build fallbacks.

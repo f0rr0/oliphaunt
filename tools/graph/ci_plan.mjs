@@ -378,9 +378,9 @@ export function planJobsForAffected(directProjects, tasks) {
   for (const job of jobsForTargets(tasks, { allowedJobs: ALL_BUILDER_JOBS })) {
     jobs.add(job);
   }
-  // The WASIX TypeScript package runs its packed Node consumer against the
-  // same-run portable runtime rather than silently falling back to workspace
-  // or registry assets.
+  // The WASIX TypeScript package runs packed Node, Bun, and Deno consumers
+  // against the same-run portable runtime rather than silently falling back
+  // to workspace or registry assets.
   if (jobs.has("wasix-ts-sdk-package")) {
     jobs.add("liboliphaunt-wasix-runtime");
   }

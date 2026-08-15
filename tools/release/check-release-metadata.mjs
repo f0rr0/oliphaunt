@@ -64,7 +64,6 @@ const STABLE_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
 const INSTALL_SCRIPTS = new Set(["preinstall", "install", "postinstall"]);
 const REGISTRY_TARGET_ECOSYSTEM = Object.freeze({
   "crates-io": "cargo",
-  jsr: "jsr",
   "maven-central": "maven",
   npm: "npm",
 });
@@ -174,7 +173,7 @@ function conventionalVersion(relativePath) {
     const manifest = readToml(relativePath);
     return object(manifest.package, `${relativePath}.package`).version;
   }
-  if (basename === "package.json" || basename === "jsr.json") {
+  if (basename === "package.json") {
     return readJson(relativePath).version;
   }
   if (basename === "VERSION" || basename === "LIBOLIPHAUNT_VERSION") {
@@ -431,11 +430,6 @@ function validateSourcePackageManifests(graph, catalog) {
       }
     }
   }
-  const jsr = readJson("src/sdks/js/jsr.json");
-  const jsProduct = graph.products["oliphaunt-js"];
-  assert(jsr.name === "@oliphaunt/ts", "JSR SDK identity must match the TypeScript package identity");
-  assert(jsr.version === jsProduct.version, "JSR SDK version must match oliphaunt-js");
-  assert(carriers.get(`jsr:${jsr.name}`)?.product === "oliphaunt-js", "JSR SDK identity must be declared by oliphaunt-js");
   return { npm, cargo };
 }
 

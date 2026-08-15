@@ -65,15 +65,16 @@ and physical-iOS boundaries.
 
 The declared public entry points are:
 
-| App surface            | Package entry point                                           | Distribution boundary                                               |
-| ---------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Rust/Tauri desktop     | `oliphaunt`                                                   | Cargo and target-specific native artifact crates                    |
-| WASIX Rust             | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                  |
-| Swift                  | `Oliphaunt`                                                   | SwiftPM source tag and checksum-pinned release assets               |
-| Android                | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers  |
-| React Native           | `@oliphaunt/react-native`                                     | npm package delegating runtime work to Swift and Kotlin             |
-| Node.js, Bun, and Deno | `@oliphaunt/ts`                                               | npm for native runtime support; JSR for protocol/query helpers only |
-| Native bindings        | `liboliphaunt` C ABI                                          | declared native runtime carriers                                    |
+| App surface                         | Package entry point                                           | Distribution boundary                                              |
+| ----------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Rust/Tauri desktop                  | `oliphaunt`                                                   | Cargo and target-specific native artifact crates                   |
+| WASIX Rust                          | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                 |
+| Swift                               | `Oliphaunt`                                                   | SwiftPM source tag and checksum-pinned release assets              |
+| Android                             | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers |
+| React Native                        | `@oliphaunt/react-native`                                     | npm package delegating runtime work to Swift and Kotlin            |
+| Node.js, Bun, and Deno              | `@oliphaunt/ts`                                               | npm                                                                |
+| Browser, Node.js, Bun, and Deno WASIX | `@oliphaunt/wasix-ts`                                       | npm                                                                |
+| Native bindings                     | `liboliphaunt` C ABI                                          | declared native runtime carriers                                   |
 
 Kotlin host-native and JVM compilations are development/parity evidence, not
 public Kotlin Multiplatform or JVM artifacts. The first Swift release starts at

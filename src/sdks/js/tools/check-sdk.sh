@@ -216,13 +216,9 @@ process.stdin.on('end', () => {
       throw new Error('packed TypeScript package must not run consumer install lifecycle script ' + scriptName);
     }
   }
-});
+  });
 " "$package_dir/package.json"
   run node tools/release/source-only-sdk-package.mjs check-npm-archive js "$pack_file"
-  run node tools/release/source-only-sdk-package.mjs check-jsr-directory "$package_dir"
-  if [ "$mode" != "package-shape" ] && [ "${OLIPHAUNT_JS_SKIP_REGISTRY_DRY_RUN:-0}" != "1" ]; then
-    run pnpm --dir "$package_dir" exec jsr publish --dry-run --allow-dirty
-  fi
   if [ "$mode" != "package-shape" ]; then
     cat >"$package_dir/.oliphaunt-bun-smoke.ts" <<'TS'
 import * as sdk from './lib/index.js';
@@ -373,10 +369,6 @@ do
 done
 require_source_text "$package_dir/lib/index.d.ts" "OliphauntDatabase" \
   "TypeScript SDK root declarations must expose the structural database type"
-require_source_text "$package_dir/jsr.json" '".": "./src/jsr.ts"' \
-  "TypeScript SDK must publish a protocol-only JSR root entrypoint"
-reject_source_text "$package_dir/jsr.json" '"./deno"' \
-  "TypeScript SDK JSR package must not expose native runtime entrypoints"
 require_source_text "$package_dir/src/native/node.ts" "loadNodeDirectAddon" \
   "TypeScript Node native-direct binding must load the Oliphaunt-owned prebuilt Node-API adapter"
 require_source_text "$package_dir/src/client.ts" "defaultEngineForRuntime(runtime: JavaScriptRuntime" \

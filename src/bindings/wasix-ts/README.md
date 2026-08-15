@@ -1,11 +1,11 @@
 # `@oliphaunt/wasix-ts`
 
 TypeScript binding that runs the portable Oliphaunt WASIX runtime with direct
-or worker-isolated execution in browsers and Node.js. This is a
+or worker-isolated execution in browsers, Node.js, Bun, and Deno. This is a
 separate WASIX-facing product surface; it does not import `@oliphaunt/ts`, the
 native runtime or its Node-direct carrier, or the broker.
 
-The public package owns the patched Wasmer host and its browser/Node placement
+The public package owns the patched Wasmer host and its browser/server-runtime placement
 adapters. Its default runtime edge follows the generated
 `@oliphaunt/liboliphaunt-wasix` carrier contract, so ordinary consumers do not
 configure raw core artifacts.
@@ -93,9 +93,9 @@ durability behavior is weakened to improve a score.
 
 The canonical PostgreSQL guest also specializes spinlocks and scalar atomics
 for its enforced one-backend-per-WebAssembly-instance model. Those backend-only
-changes are part of `liboliphaunt-wasix`, not the Node adapter: the Rust
+changes are part of `liboliphaunt-wasix`, not a server-runtime adapter: the Rust
 binding's AOT artifacts and the portable module used by browser direct,
-browser worker, and Node worker execution all receive them. Frontend tools,
+browser worker, and Node/Bun/Deno worker execution all receive them. Frontend tools,
 PGXS side modules, and PostgreSQL builds that permit concurrent backends retain
 the normal atomic implementation. Every TypeScript placement passes
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1`, and the source-pinned host denies guest
@@ -131,6 +131,17 @@ console.log(result.getText(0, 'answer'));
 await database.close();
 ```
 
+Deno imports the same npm package through its `npm:` compatibility layer. Its
+root selects the Deno facade directly, and its storage export remains Deno-scoped:
+
+```ts
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
+
+const database = await Oliphaunt.open({ storage: directory('./data/main') });
+await database.close();
+```
+
 Browser worker execution remains the default because archive preparation,
 PostgreSQL work, extension setup, and persistent snapshots stay off the
 caller's JavaScript agent. Latency-sensitive applications can run PostgreSQL
@@ -144,7 +155,7 @@ const answer = await database.transaction(async (transaction) =>
 ```
 
 `execution` describes host placement, not a second PostgreSQL engine. Both
-values return the same `OliphauntDatabase` in browsers and Node.js. Direct mode asynchronously
+values return the same `OliphauntDatabase` in browsers, Node.js, Bun, and Deno. Direct mode asynchronously
 instantiates the WASIX guest in the caller realm, then drives its exports
 synchronously and constructs no `Worker`; each database operation therefore
 blocks that JavaScript agent until PostgreSQL returns. Browser direct still requires
@@ -153,7 +164,7 @@ caches verified immutable runtime preparation and compiled guest modules in the
 calling realm, while each open materializes fresh writable database mounts.
 Both caches retain at most one exact runtime identity; this intentionally trades
 caller-realm heap for fast reopen latency. Worker execution remains the default,
-responsive, reclaim-on-close choice on both hosts.
+responsive, reclaim-on-close choice on every host.
 Each direct open owns an independent guest instance, writable mounts, and
 storage lease. Multiple in-memory databases or distinct persistent stores may
 therefore remain open in one realm; calls remain serialized per database and
@@ -169,11 +180,12 @@ is explicitly unsupported in both browser placements today. Oversized carriers
 without that additional requirement can use worker execution; smaller
 qualified extension carriers remain available in direct mode.
 
-The same code runs on Node.js. Worker placement selects one package-owned
-`worker_threads` worker, and that worker uses the synchronous guest driver
-without a redundant inner worker or stream pump. Explicit direct placement
-runs that driver in the caller's Node realm without RPC. Consumers do not
-import a Node-specific subpath:
+The same code runs on Node.js, Bun, and Deno. Conditional exports select an
+explicit facade for each runtime. Worker placement uses that runtime's
+`node:worker_threads` implementation and the synchronous guest driver without a
+redundant transport hop or stream pump. Explicit direct placement runs that
+driver in the caller realm without RPC. Consumers do not import a
+runtime-specific root subpath:
 
 ```sh
 pnpm add @oliphaunt/wasix-ts @oliphaunt/extension-pgtap-wasix
@@ -189,7 +201,7 @@ await database.close();
 ```
 
 Choose direct placement when its lower call overhead matters more than keeping
-the calling Node thread responsive:
+the calling JavaScript thread responsive:
 
 ```ts
 await using database = await Oliphaunt.open({ execution: 'direct' });
@@ -233,11 +245,11 @@ await using database = await Oliphaunt.open();
 await database.query('select 42 as answer');
 ```
 
-## Persistent Node storage
+## Persistent Node, Bun, and Deno storage
 
-Node applications may selectively import the directory adapter. Relative paths
-are resolved when `open()` is called; `file:` URL objects and strings are
-accepted as well:
+Server-runtime applications may selectively import the matching directory
+adapter. Relative paths are resolved when `open()` is called; `file:` URL
+objects and strings are accepted as well:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -246,13 +258,18 @@ import { directory } from '@oliphaunt/wasix-ts/storage/node';
 const storage = directory('./data/todos');
 let database = await Oliphaunt.open({ storage });
 await database.query('create table if not exists todo (title text not null)');
-await database.query('insert into todo values ($1)', ['ship Node support']);
+await database.query('insert into todo values ($1)', ['ship WASIX support']);
 await database.close();
 
 database = await Oliphaunt.open({ storage });
 console.log((await database.query('select * from todo')).rows.length);
 await database.close();
 ```
+
+Use `@oliphaunt/wasix-ts/storage/bun` under Bun and
+`@oliphaunt/wasix-ts/storage/deno` under Deno. Deno applications must grant
+read and write access to the selected directory; worker placement inherits the
+application's permissions.
 
 The adapter keeps PostgreSQL in Wasmer memory while it is open, then publishes
 a complete PGDATA directory generation after `checkpoint()` and clean `close()`.
@@ -266,7 +283,7 @@ hosts and live or foreign same-boot namespaces fail closed as `busy`. On
 non-Linux hosts, local PID liveness provides conservative crash recovery (PID
 reuse can only delay it). Network and cross-host shared filesystems are
 unsupported: directory-entry caching cannot provide the required ownership
-guarantee. Persistent directory storage must be opened from Node's main thread
+guarantee. Persistent directory storage must be opened from the active runtime's main thread
 so its process-owned lease remains recoverable and worker placement can clean
 up its child database worker after an unexpected exit.
 Runtime, PostgreSQL, template, and extension identities must match on reopen;
@@ -359,10 +376,10 @@ already means anonymous in-memory lifetime. Rust WASIX
 `DatabaseStorage::TemporaryDirectory` is a different, disk-backed lifetime
 policy, and must not be projected into this API
 as if it meant memory. This clean-break API accepts no `root`, `temporary`, or
-generic persistence compatibility aliases. Node uses the same memory default,
-rejects the browser-only IndexedDB adapter, and exposes its snapshot directory
-provider only through `@oliphaunt/wasix-ts/storage/node`. Neither host routes
-through the native public product.
+generic persistence compatibility aliases. Node, Bun, and Deno use the same
+memory default, reject the browser-only IndexedDB adapter, and expose snapshot
+directory providers through their matching `storage/node`, `storage/bun`, or
+`storage/deno` subpath. No host routes through the native public product.
 
 The default runtime descriptor keeps the runtime archive, PGDATA template, and
 manifest as one product/version identity. The binding validates the descriptor,
@@ -432,7 +449,7 @@ keeps its current name:
 @oliphaunt/extension-pgtap-wasix  portable WASIX carrier
 ```
 
-Both browser and Node WASIX hosts consume the same `-wasix` descriptor
+Browser, Node, Bun, and Deno WASIX hosts consume the same `-wasix` descriptor
 and portable bytes. It is versioned in the existing
 `oliphaunt-extension-pgtap` product stream, alongside the native/default
 carrier, rather than owning a second release line. Each extension product
@@ -451,8 +468,8 @@ runtime artifact URL bookkeeping.
 
 ## Current scope and divergences
 
-- Portable WASM only; browser and Node hosts never consume host AOT artifacts.
-- One serialized WASIX database session per open. Browser and Node placement is
+- Portable WASM only; browser, Node, Bun, and Deno hosts never consume host AOT artifacts.
+- One serialized WASIX database session per open. Placement is
   selected by `execution: 'worker' | 'direct'`; worker remains the default. Its
   active filesystem is always Wasmer memory; storage adapters control how PGDATA
   is hydrated and checkpointed around that process.
@@ -486,7 +503,7 @@ runtime artifact URL bookkeeping.
   stdio or marks the process finished, the source-patched host recognizes that
   exception only when `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`, calls the existing
   `PostgresMainLongJmp` cleanup export, and continues through the existing loop
-  exports. Later errors use the same pump. Browser direct and Node worker
+  exports. Later errors use the same pump. Browser direct and server-runtime worker
   execution instead use the direct Oliphaunt export driver, matching the Rust
   host lifecycle: it treats `PostgresMainLoopOnce` traps as the exported
   recovery boundary and also cleans up non-trapping `ErrorResponse`s. This
@@ -519,11 +536,11 @@ runtime artifact URL bookkeeping.
   run the configured builder so args, environment, mounts, and stdio survive process launch. The
   host also owns the two narrow PostgreSQL recovery paths described above.
   The resulting JS, worker, Wasm, license, and provenance files are published
-  package-relative so ordinary browser and Node resolution selects the same
+  package-relative so ordinary browser, Node, Bun, and Deno resolution selects the same
   qualified host without an application alias.
 - That host is qualified only for Oliphaunt's single-process stdio-pgwire path
-  in a browser worker and its direct export path in browser direct or a Node
-  worker.
+  in a browser worker and its direct export path in browser direct or a Node,
+  Bun, or Deno worker.
   `proc_exit2` maps to the older normal-exit implementation, while
   `proc_fork_env` and context create/switch/destroy fail with `ENOTSUP`.
   Those shims are installed for both WASIX memory widths. The host also creates
@@ -575,5 +592,6 @@ runtime artifact URL bookkeeping.
 - The package is a separately versioned public SDK product. It declares an
   exact-version dependency on `@oliphaunt/liboliphaunt-wasix`; that runtime
   remains its own product and the native `@oliphaunt/ts` graph stays separate.
+  The npm carrier owns this product version and exact portable runtime closure.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for ownership and lifecycle details.

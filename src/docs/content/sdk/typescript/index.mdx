@@ -26,10 +26,8 @@ Install the package from npm:
 npm install @oliphaunt/ts
 ```
 
-npm is the native-runtime distribution for Node.js, Bun, and Deno (Deno can
-import it through `npm:`). The JSR package intentionally contains only the
-portable protocol and query helpers; it does not claim or resolve a native
-runtime.
+npm is the native-runtime distribution for Node.js, Bun, and Deno. Deno imports
+the same package through `npm:@oliphaunt/ts`.
 
 Use this SDK for Node.js, Bun, and Deno. Tauri frontends currently call narrow
 app-owned Rust commands; the direct JavaScript adapter remains planned.
