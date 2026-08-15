@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "must run inside the Oliphaunt git checkout" >&2
-  exit 1
-}
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+  # A Docker bind mount of a linked Git worktree can expose the source tree
+  # without the external gitdir named by its `.git` file. Keep the pinned
+  # launcher usable there, while still requiring the repository's own root
+  # markers rather than accepting an arbitrary directory.
+  root="$script_dir"
+  while [ "$root" != "/" ]; do
+    if [ -f "$root/package.json" ] && [ -f "$root/.prototools" ] &&
+       [ -f "$root/tools/dev/install-pinned-js-runtime.sh" ]; then
+      break
+    fi
+    root="$(dirname "$root")"
+  done
+  if [ "$root" = "/" ]; then
+    echo "must run inside the Oliphaunt git checkout" >&2
+    exit 1
+  fi
+fi
 cd "$root"
 
 fail() {

@@ -24,7 +24,6 @@ export const REGISTRY_KIND_TO_ECOSYSTEM = Object.freeze({
   crates: "cargo",
   npm: "npm",
   maven: "maven",
-  jsr: "jsr",
 });
 
 const TARGET_MARKERS = [
@@ -116,9 +115,6 @@ function carrierTarget(product, ecosystem, name) {
 function carrierRole(product, ecosystem, name, target) {
   if (/-part-[0-9]{3}$/u.test(name)) {
     return "payload-part";
-  }
-  if (ecosystem === "jsr") {
-    return "facade";
   }
   if (ecosystem === "maven" && (name.includes("gradle-plugin") || name.endsWith(".gradle.plugin"))) {
     return "plugin";

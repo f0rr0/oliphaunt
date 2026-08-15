@@ -1,12 +1,12 @@
 ---
 title: WASIX TypeScript
-description: Run portable Oliphaunt with direct or worker-isolated execution in browsers and Node.js.
+description: Run portable Oliphaunt with direct or worker-isolated execution in browsers, Node.js, Bun, and Deno.
 ---
 
 # WASIX TypeScript
 
 `@oliphaunt/wasix-ts` runs the portable WASIX runtime with worker isolation by
-default or direct execution on request in browsers and Node.js. The same import
+default or direct execution on request in browsers, Node.js, Bun, and Deno. The same import
 and database API work in every placement;
 package exports select the host adapter. It is separate from native
 `@oliphaunt/ts`: neither package imports, falls back to, or chooses the other at
@@ -14,6 +14,26 @@ runtime. Applications do not configure runtime archive, PGDATA template,
 manifest, or host URLs.
 
 <SdkGuideSummary id="wasix-typescript" />
+
+## Install
+
+Install from npm for browsers, Node.js, Bun, or Deno:
+
+```sh
+pnpm add @oliphaunt/wasix-ts
+```
+
+Deno applications import the same npm package as browsers, Node.js, and Bun,
+using Deno's `npm:` specifier and the Deno-scoped directory adapter:
+
+```ts
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
+
+const database = await Oliphaunt.open({ storage: directory('./data/main') });
+```
+
+The package does not fall back to native `@oliphaunt/ts`.
 
 ## Browser requirements
 
@@ -53,11 +73,12 @@ limit require worker placement only when the carrier has no other unsupported
 host requirement. The current PostGIS carrier also requires native load-order
 handling and is therefore unsupported in both browser placements.
 
-## Node.js
+## Node.js, Bun, and Deno
 
-Node.js uses the same consumer code, defaults to memory and worker placement,
-and accepts `execution: 'direct'` when blocking the calling thread is an
-appropriate latency tradeoff. No browser headers, host option, or Node-specific
+Node.js, Bun, and Deno use the same consumer code, default to memory and worker
+placement, and accept `execution: 'direct'` when blocking the calling thread is
+an appropriate latency tradeoff. Package conditions select a dedicated facade
+for each runtime. No browser headers, host option, or runtime-specific root
 subpath is required:
 
 ```ts
@@ -70,11 +91,14 @@ console.log(result.getText(0, 'answer'));
 await database.close();
 ```
 
-Importing the IndexedDB adapter is valid package resolution on Node, but passing
-it to `open()` fails before a worker starts. Use the Node-only directory adapter
-when checkpoint/clean-close snapshot persistence fits the application.
+Importing the IndexedDB adapter is valid package resolution on these runtimes,
+but passing it to `open()` fails before a worker starts. Use the matching
+runtime-only directory adapter when checkpoint/clean-close snapshot persistence
+fits the application.
 
-Persistent Node storage is a selective import:
+Persistent directory storage is a selective import. The example below uses
+Node; replace the final subpath with `storage/bun` or `storage/deno` for those
+runtimes:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -90,6 +114,9 @@ database = await Oliphaunt.open({ storage });
 console.log((await database.query('select * from note')).rows.length);
 await database.close();
 ```
+
+Deno must be granted read and write access to the selected directory. Worker
+placement inherits those application permissions.
 
 The adapter hydrates PGDATA into Wasmer memory and atomically publishes a whole
 directory generation on `checkpoint()` and clean `close()`. It validates the
@@ -212,7 +239,7 @@ and also requires a new handle.
 
 ## Public API boundary
 
-The binding intentionally exposes one small asynchronous surface on both hosts:
+The binding intentionally exposes one small asynchronous surface on every host:
 
 | API | Purpose |
 | --- | --- |
@@ -232,15 +259,15 @@ Lifecycle semantics are fixed rather than dynamically reported:
 `multipleInstances = true` for databases using memory or distinct persistent
 store identities in every supported placement,
 `sameInstanceLogicalReopen = false`, `instanceSwitchable = true`, and
-`crashRestartable = false`. A given IndexedDB name or Node directory remains
+`crashRestartable = false`. A given IndexedDB name or server-runtime directory remains
 exclusively leased despite support for separate instances.
 
 ## Current host boundary
 
 IndexedDB is the only persistent browser adapter. OPFS is intentionally absent,
-and omitted storage already covers temporary in-memory use. Node offers direct
-or `worker_threads` placement with memory plus explicit snapshot directory
-storage. Neither host routes through native `@oliphaunt/ts`.
+and omitted storage already covers temporary in-memory use. Node, Bun, and Deno
+offer direct or `worker_threads` placement with memory plus explicit snapshot
+directory storage. No host routes through native `@oliphaunt/ts`.
 
 Use [Rust WASIX](./index) when Rust owns the portable host. Use
 [TypeScript](/docs/sdk/typescript) for Node.js, Bun, or Deno applications that

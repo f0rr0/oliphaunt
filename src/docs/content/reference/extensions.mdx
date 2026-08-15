@@ -60,7 +60,7 @@ let database = Oliphaunt::builder().extension(PGTAP).open()?;
 
 ## Browser WASIX selection
 
-Import only the portable carrier descriptors the browser or Node application uses:
+Import only the portable carrier descriptors the browser, Node, Bun, or Deno application uses:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -83,7 +83,7 @@ only extensions published for the selected WASIX host.
 | React Native | Config plugin delegates selection to Swift/Kotlin packaging |
 | TypeScript | SDK resolves selected native artifacts or helper-process resources |
 | Rust WASIX | Exact Cargo features carry selected portable artifacts; typed values select them at open |
-| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and portable bytes on browser and Node hosts |
+| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and portable bytes on browser, Node, Bun, and Deno hosts |
 
 ## Dependencies
 

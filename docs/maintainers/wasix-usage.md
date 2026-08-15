@@ -121,11 +121,11 @@ spells persistent input as `--directory PATH`.
 ## TypeScript host
 
 `@oliphaunt/wasix-ts` runs the portable guest with worker-isolated execution by
-default. Browsers and Node.js may instead select `execution: 'direct'` to construct
+default. Browsers, Node.js, Bun, and Deno may instead select `execution: 'direct'` to construct
 PostgreSQL asynchronously in the caller realm, then drive it synchronously
 while keeping the same Promise-based database contract. Direct constructs no
 Worker and each database call blocks that JavaScript agent until PostgreSQL
-returns. Omitted storage is fresh memory on both hosts. Browser
+returns. Omitted storage is fresh memory on every host. Browser
 IndexedDB is deliberately a selective adapter import:
 
 ```ts
@@ -154,7 +154,7 @@ const answer = await database.transaction((transaction) =>
 `execution` selects package lifecycle placement, not another PostgreSQL engine
 or another database class. Each open owns an independent database process;
 in-memory databases and distinct persistent store names can remain open in
-either placement on both hosts.
+either placement on every host.
 
 The adapter snapshots the complete memory-backed PGDATA into one atomic
 IndexedDB record after explicit `checkpoint()` and clean `close()`. Web Locks
@@ -165,19 +165,20 @@ memory.
 
 This is checkpoint/clean-close persistence, not per-query or crash durability.
 OPFS is absent because the current Wasmer browser filesystem cannot expose a
-truthful direct synchronous mount. Node adds a selectively imported
-`storage/node` directory adapter with the same honest snapshot boundary and an
+truthful direct synchronous mount. Node, Bun, and Deno add selectively imported
+`storage/node`, `storage/bun`, and `storage/deno` directory adapters with the
+same honest snapshot boundary and an
 exclusive cross-process path lock for local filesystems on one host. Linux
 leases include host, boot, and PID namespace identities, so only locally
 proven-dead owners are reaped; foreign scope leases fail closed as `busy`.
 Network and cross-host shared filesystems are unsupported, and persistent
-directory opens are restricted to Node's main thread so process-owned leases
+directory opens are restricted to the active runtime's main thread so process-owned leases
 remain recoverable and child-worker cleanup remains reliable. Package exports
-select the Node adapter automatically; neither host routes through the
+select the matching server-runtime adapter automatically; no host routes through the
 TypeScript SDK's native runtime.
 
 Extension packages use the WASIX-only suffix, while native/default package
-identifiers remain unsuffixed. Browser and Node WASIX hosts consume the
+identifiers remain unsuffixed. Browser, Node, Bun, and Deno WASIX hosts consume the
 same host-neutral descriptor and bytes. A WASIX leaf shares the version and
 release line of its owning extension product.
 
@@ -188,11 +189,11 @@ patches 0040 and 0041 specialize backend spinlocks and atomics because every
 released WASIX database uses one PostgreSQL backend per WebAssembly instance.
 They are compiled into the canonical guest once, so the Rust binding's AOT
 artifacts and the portable module used by browser direct, browser worker, and
-Node worker execution all benefit. They are not Node-specific patches.
+Node/Bun/Deno worker execution all benefit. They are not host-specific patches.
 
 Transport remains host-specific. PostgreSQL patch 0039 adds an opt-in stdio
 pgwire entry point to the shared guest, but only browser-worker execution sets
-`OLIPHAUNT_WASIX_STDIO_PGWIRE=1`. Rust, browser-direct, and Node hosts pump the
+`OLIPHAUNT_WASIX_STDIO_PGWIRE=1`. Rust, browser-direct, and Node/Bun/Deno hosts pump the
 existing lifecycle exports instead. The patches under
 `src/bindings/wasix-ts/host` adapt the pinned Wasmer JS 6.1/WASIX 0.601 host;
 they do not belong in the Rust host, which uses the coherent Wasmer
@@ -218,9 +219,17 @@ Use the product tasks rather than ad hoc root wrappers:
 
 ```sh
 moon run oliphaunt-wasix-rust:package
-moon run oliphaunt-wasix-ts:package oliphaunt-wasix-ts:smoke-node
+moon run oliphaunt-wasix-ts:package-smoke-node oliphaunt-wasix-ts:package-smoke-bun oliphaunt-wasix-ts:package-smoke-deno
+moon run oliphaunt-wasix-ts:smoke-node oliphaunt-wasix-ts:smoke-bun oliphaunt-wasix-ts:smoke-deno
 moon run oliphaunt-wasix-ts:smoke oliphaunt-wasix-ts:smoke-pg-uuidv7
 ```
+
+The `package-smoke-*` tasks are the fast packed-consumer checks. They use a
+contract-valid inert runtime descriptor to prove package conditions, runtime
+entrypoints, directory adapters, and `worker_threads` behavior without
+building PostgreSQL or any extension. The full `smoke-*` tasks consume the
+canonical portable runtime and therefore deliberately depend on the runtime
+producer; CI supplies that producer's same-run artifact before invoking them.
 
 The browser smokes are local-only finite Chrome proofs and require the canonical
 runtime outputs. The normal smoke proves pgtap, distinct SQLSTATE errors,
@@ -228,6 +237,7 @@ runtime outputs. The normal smoke proves pgtap, distinct SQLSTATE errors,
 exit. The pg_uuidv7 canary additionally proves the exact selected native WASIX
 module; it is not a generic dynamic-extension support claim.
 
-The Node smoke packs the SDK, runtime carrier, and selected extension carrier,
-installs them in a fresh external project, and proves conditional export,
-package-relative asset, extension, recovery, and clean-close behavior.
+The Node, Bun, and Deno smokes each pack the SDK, runtime carrier, and selected
+extension carrier, install them in a fresh external project, and prove the
+runtime's conditional export, package-relative asset, extension, recovery, and
+clean-close behavior.

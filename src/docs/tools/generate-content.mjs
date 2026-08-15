@@ -903,7 +903,8 @@ const routePresentation = {
     icon: 'Braces',
   },
   'oliphaunt-wasix': {
-    description: 'Rust WASIX plus the separate browser-and-Node WASIX TypeScript binding.',
+    description:
+      'Rust WASIX plus the separate browser, Node, Bun, and Deno WASIX TypeScript binding.',
     icon: 'Boxes',
   },
 };

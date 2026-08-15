@@ -190,35 +190,11 @@ export function assertSourceOnlyNpmArchive(archive, contract) {
   return manifest;
 }
 
-export function assertSourceOnlyJsrDirectory(packageDir, { name = "@oliphaunt/ts" } = {}) {
-  const directory = path.resolve(packageDir);
-  assertReleaseNoticesInDirectory(directory, SOURCE_NOTICE_OPTIONS);
-  const packageManifest = readJson(path.join(directory, "package.json"), "JSR source package.json");
-  assertManifestContract(packageManifest, SOURCE_ONLY_NPM_PROFILES.js, "JSR source package.json");
-  const jsrManifest = readJson(path.join(directory, "jsr.json"), "JSR manifest");
-  if (jsrManifest.name !== name) {
-    throw new Error(`JSR manifest must identify ${name}, got ${JSON.stringify(jsrManifest.name)}`);
-  }
-  if (jsrManifest.license !== SOURCE_LICENSE) {
-    throw new Error(`JSR manifest must declare ${SOURCE_LICENSE}, got ${JSON.stringify(jsrManifest.license)}`);
-  }
-  if (!Array.isArray(jsrManifest.publish?.include)) {
-    throw new Error("JSR manifest must declare a publish.include allowlist");
-  }
-  for (const member of NOTICE_FILES) {
-    if (!jsrManifest.publish.include.includes(member)) {
-      throw new Error(`JSR publish.include must contain ${member}`);
-    }
-  }
-  return jsrManifest;
-}
-
 function usage() {
   return [
     "usage:",
     `  ${TOOL} prepare-npm <js|react-native> <package-directory>`,
     `  ${TOOL} check-npm-archive <js|react-native> <package.tgz>`,
-    `  ${TOOL} check-jsr-directory <package-directory>`,
   ].join("\n");
 }
 
@@ -236,8 +212,6 @@ function main(argv) {
     prepareSourceOnlyNpmPackage(second, profile(first));
   } else if (command === "check-npm-archive" && first && second && extra.length === 0) {
     assertSourceOnlyNpmArchive(second, profile(first));
-  } else if (command === "check-jsr-directory" && first && second === undefined) {
-    assertSourceOnlyJsrDirectory(first);
   } else {
     throw new Error(usage());
   }

@@ -13,7 +13,13 @@ export function stageArtifacts(artifactRoot, workRoot) {
   requireDir(path.join(packageRoot, 'lib/host'));
   const staging = path.join(workRoot, 'package');
   mkdirSync(staging, { recursive: true });
-  for (const name of ['package.json', 'README.md', 'ARCHITECTURE.md', 'CHANGELOG.md', 'lib']) {
+  for (const name of [
+    'package.json',
+    'README.md',
+    'ARCHITECTURE.md',
+    'CHANGELOG.md',
+    'lib',
+  ]) {
     cpSync(path.join(packageRoot, name), path.join(staging, name), { recursive: true });
   }
   prepareWasixTypescriptPackage(staging);

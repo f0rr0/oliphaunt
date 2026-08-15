@@ -1,6 +1,6 @@
 ---
 name: release-oliphaunt
-description: Prepare, audit, bootstrap, publish, verify, or recover Oliphaunt releases across GitHub, crates.io, npm, JSR, Maven Central, and SwiftPM. Use for release PRs, version bumps, changelogs, registry setup, publication failures, missing tags/packages, or first-release work.
+description: Prepare, audit, bootstrap, publish, verify, or recover Oliphaunt releases across GitHub, crates.io, npm, Maven Central, and SwiftPM. Use for release PRs, version bumps, changelogs, registry setup, publication failures, missing tags/packages, or first-release work.
 ---
 
 # Release Oliphaunt

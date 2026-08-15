@@ -37,7 +37,7 @@ source lives under `src/<product>/`.
   `src/sdks/react-native/`, and `src/sdks/js/` own platform and
   runtime SDKs.
 - `src/bindings/wasix-rust/` owns the released Rust WASIX binding.
-- `src/bindings/wasix-ts/` owns the public browser-and-Node TypeScript WASIX
+- `src/bindings/wasix-ts/` owns the public browser, Node, Bun, and Deno TypeScript WASIX
   binding. It is a peer binding, not part of the native TypeScript SDK.
 - `src/runtimes/liboliphaunt/wasix-postmaster/` owns the independent,
   non-release research lane for a PostgreSQL postmaster with fresh WASIX
@@ -109,7 +109,7 @@ synthetic root:
   release lane and comparison target. It should not expose native engine
   selection or link/load `liboliphaunt`; native Rust work belongs in
   `src/sdks/rust`.
-- `src/bindings/wasix-ts` is the public browser-and-Node binding over the same
+- `src/bindings/wasix-ts` is the public browser, Node, Bun, and Deno binding over the same
   portable WASIX runtime. It owns module-Worker and worker-thread orchestration,
   archive-to-memory mounts, the patched package-relative Wasmer host, and the
   stdio pgwire client. It must not depend on `src/sdks/js`, native runtime
@@ -137,7 +137,7 @@ synthetic root:
   adapter glue, not a parallel PostgreSQL lifecycle implementation.
 - `src/sdks/js` is the SDK for Node.js, Bun, and Deno. Tauri apps currently
   use the Rust SDK behind narrow app-owned commands; direct JavaScript/webview
-  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm/JSR package metadata, and
+  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm package metadata, and
   broker/server client orchestration. Its broker implementation depends on the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol,
   so that dependency must remain modeled in Moon and product-local release

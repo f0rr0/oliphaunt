@@ -116,8 +116,8 @@ Moon is the contributor command surface. `.prototools` pins Moon, Node, pnpm,
 Bun, and Deno. Use pnpm to install JavaScript workspace dependencies when
 working on JavaScript-family projects; do not use it as a repo-wide task
 router. Bun is required for the
-TypeScript SDK check because Bun installs `@oliphaunt/ts` from npm; Deno is
-used by strict JSR consumer-release gates.
+TypeScript SDK check because Bun installs `@oliphaunt/ts` from npm; Deno checks
+the same npm package through its native npm compatibility layer.
 
 React Native installed-app validation uses the Expo development-client example
 as the default harness because the package always exercises custom Swift/Kotlin
@@ -126,7 +126,7 @@ native code. `moon run oliphaunt-react-native:smoke-android`,
 `moon run oliphaunt-react-native:smoke-mobile` run the installed app lanes.
 `moon run oliphaunt-react-native:check` is the package-only TypeScript,
 Codegen, and native-source lane. `moon run
-oliphaunt-js:check` validates the desktop JavaScript SDK, including npm and JSR
+oliphaunt-js:check` validates the desktop JavaScript SDK, including npm
 package shape.
 
 For liboliphaunt work, use the product Moon tasks above. Product inner loops

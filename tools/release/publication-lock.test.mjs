@@ -154,19 +154,6 @@ function mavenFixture(root, group, artifact, version) {
   return pom;
 }
 
-function jsrFixture(root, name, version) {
-  const directory = path.join(root, "jsr");
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "jsr.json"), `${JSON.stringify({
-    name,
-    version,
-    exports: "./mod.ts",
-    publish: { include: ["jsr.json", "mod.ts"] },
-  }, null, 2)}\n`);
-  writeFileSync(path.join(directory, "mod.ts"), "export const fixture = true;\n");
-  return directory;
-}
-
 function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -540,11 +527,11 @@ describe("canonical publication catalog", () => {
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
     expect(catalog.products).toHaveLength(18);
-    expect(catalog.carriers).toHaveLength(196);
+    expect(catalog.carriers).toHaveLength(195);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
-    }), {})).toEqual({ cargo: 103, npm: 69, maven: 23, jsr: 1 });
+    }), {})).toEqual({ cargo: 103, npm: 69, maven: 23 });
     expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
     expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);
@@ -636,16 +623,14 @@ describe("publication artifact discovery and freezing", () => {
     );
   });
 
-  test("reads npm, Cargo, Maven, and JSR identities, bytes, and dependencies", () => {
+  test("reads npm, Cargo, and Maven identities, bytes, and dependencies", () => {
     const root = temporaryDirectory();
     npmFixture(root, "@oliphaunt/test", "1.2.3");
     cargoFixture(root, "oliphaunt-test", "1.2.3");
     mavenFixture(root, "dev.oliphaunt", "test", "1.2.3");
-    jsrFixture(root, "@oliphaunt/jsr-test", "1.2.3");
     const records = discoverPublicationArtifacts([root]);
     expect(records.map((record) => `${record.ecosystem}:${record.name}`).sort()).toEqual([
       "cargo:oliphaunt-test",
-      "jsr:@oliphaunt/jsr-test",
       "maven:dev.oliphaunt:test",
       "npm:@oliphaunt/test",
     ]);
@@ -714,17 +699,13 @@ describe("publication artifact discovery and freezing", () => {
     const catalog = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-js"] });
     const version = catalog.products[0].version;
     npmFixture(root, "@oliphaunt/ts", version);
-    jsrFixture(root, "@oliphaunt/ts", version);
     const candidate = buildPublicationCandidate({
       products: ["oliphaunt-js"],
       artifactRoots: [root],
     });
     expect(candidate.missing).toEqual([]);
-    expect(candidate.carriers).toHaveLength(2);
+    expect(candidate.carriers).toHaveLength(1);
     expect(candidate.packageEnvelopeDigest).toHaveLength(64);
-    const duplicateOrder = structuredClone(candidate);
-    duplicateOrder.carriers[1].publishOrder = duplicateOrder.carriers[0].publishOrder;
-    expect(() => validatePublicationCandidate(duplicateOrder)).toThrow(/publishOrder sequence/u);
     const unknownDependency = structuredClone(candidate);
     unknownDependency.carriers[0].dependencies = ["npm:@oliphaunt/not-frozen"];
     expect(() => validatePublicationCandidate(unknownDependency)).toThrow(/internal package dependency identities/u);
@@ -738,41 +719,18 @@ describe("publication artifact discovery and freezing", () => {
     expect(() => validatePublicationLock(tampered)).toThrow(/Digest mismatch|digest mismatch|packageEnvelopeDigest/u);
   });
 
-  test("freeze rejects rewrite-prone JSR source without an exact immutable normalization record", () => {
-    const root = temporaryDirectory();
-    const catalog = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-js"] });
-    const version = catalog.products[0].version;
-    npmFixture(root, "@oliphaunt/ts", version);
-    const jsr = jsrFixture(root, "@oliphaunt/ts", version);
-    writeFileSync(path.join(jsr, "dep.ts"), "export const fixture = true;\n");
-    writeFileSync(path.join(jsr, "mod.ts"), "export { fixture } from './dep.js';\n");
-    const config = JSON.parse(readFileSync(path.join(jsr, "jsr.json"), "utf8"));
-    config.publish.include.push("dep.ts");
-    writeFileSync(path.join(jsr, "jsr.json"), `${JSON.stringify(config, null, 2)}\n`);
-
-    const candidate = buildPublicationCandidate({
-      products: ["oliphaunt-js"],
-      artifactRoots: [root],
-    });
-    expect(candidate.missing).toEqual([]);
-    expect(() => freezePublicationCandidate(candidate)).toThrow(
-      /rewrite-prone.*without an exact pre-recorded publish normalization/u,
-    );
-  });
-
   test("structural lock verification remains valid after registry payload handoff cleanup", () => {
     const root = temporaryDirectory();
     const catalog = loadPublicationCatalog("publication-lock.test", { products: ["oliphaunt-js"] });
     const version = catalog.products[0].version;
-    npmFixture(root, "@oliphaunt/ts", version);
-    const jsr = jsrFixture(root, "@oliphaunt/ts", version);
+    const npm = npmFixture(root, "@oliphaunt/ts", version);
     const lock = freezePublicationCandidate(buildPublicationCandidate({
       products: ["oliphaunt-js"],
       artifactRoots: [root],
     }));
     const lockFile = path.join(root, "publication-lock.json");
     writeFileSync(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
-    rmSync(jsr, { force: true, recursive: true });
+    rmSync(npm, { force: true });
 
     const result = spawnSync(process.execPath, [
       "tools/release/publication-lock.mjs",
@@ -793,7 +751,6 @@ describe("publication artifact discovery and freezing", () => {
     });
     const selectedVersion = selectedCatalog.products[0].version;
     npmFixture(root, "@oliphaunt/ts", selectedVersion);
-    jsrFixture(root, "@oliphaunt/ts", selectedVersion);
 
     const fullCatalog = loadPublicationCatalog("publication-lock.test");
     const unselected = fullCatalog.carriers.find((carrier) =>
@@ -826,7 +783,6 @@ describe("publication artifact discovery and freezing", () => {
     });
     expect(candidate.carriers.map((carrier) => `${carrier.ecosystem}:${carrier.name}`)).toEqual([
       "npm:@oliphaunt/ts",
-      "jsr:@oliphaunt/ts",
     ]);
     expect(candidate.carriers.every((carrier) => carrier.product === "oliphaunt-js")).toBe(true);
 

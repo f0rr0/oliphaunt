@@ -33,25 +33,22 @@ import { validateGithubAttestationReceipt } from "./verify_github_release_attest
 export const PUBLIC_CONSUMER_EVIDENCE_SCHEMA = "oliphaunt-public-consumer-smoke-v1";
 
 const TOOL = "public-consumer-smoke";
-const REGISTRY_ECOSYSTEMS = ["cargo", "jsr", "maven", "npm"];
+const REGISTRY_ECOSYSTEMS = ["cargo", "maven", "npm"];
 const SUPPORTED_PUBLISH_TARGETS = new Set([
   "crates-io",
   "github-release",
   "github-release-assets",
-  "jsr",
   "maven-central",
   "npm",
   "swift-package-source-tag",
 ]);
 const TARGET_ECOSYSTEM = new Map([
   ["crates-io", "cargo"],
-  ["jsr", "jsr"],
   ["maven-central", "maven"],
   ["npm", "npm"],
 ]);
 const CONSUMER_DEPENDENCY_SCOPES = Object.freeze({
   cargo: new Set(["build", "runtime"]),
-  jsr: new Set(["runtime"]),
   maven: new Set(["compile", "runtime"]),
   npm: new Set(["optional", "peer", "runtime"]),
 });
@@ -1088,76 +1085,6 @@ ${probeRows}
   };
 }
 
-function jsrSpecifier(name, version) {
-  if (!name.startsWith("@") || !name.includes("/")) throw error(`invalid locked JSR package name ${JSON.stringify(name)}`);
-  return `jsr:${name}@${version}`;
-}
-
-export function validateJsrResolution(denoLock, carriers, requiredCarrierIds = carriers.map(({ id }) => id)) {
-  if (
-    denoLock === null
-    || Array.isArray(denoLock)
-    || typeof denoLock !== "object"
-    || denoLock.jsr === null
-    || Array.isArray(denoLock.jsr)
-    || typeof denoLock.jsr !== "object"
-  ) {
-    throw error("Deno did not emit a JSR package lock map");
-  }
-  const resolved = [];
-  for (const carrier of carriers) {
-    const prefix = `${carrier.name}@`;
-    const matches = Object.entries(denoLock.jsr).filter(([name]) => name.startsWith(prefix));
-    if (matches.length === 0) continue;
-    const exact = `${carrier.name}@${carrier.version}`;
-    if (matches.length !== 1 || matches[0][0] !== exact) {
-      throw error(`${carrier.id} resolved a substituted or duplicate JSR version instead of exact ${carrier.version}`);
-    }
-    const integrity = matches[0][1]?.integrity;
-    if (!SHA256_RE.test(integrity ?? "")) throw error(`${carrier.id}@${carrier.version} clean JSR lock has no SHA-256 integrity`);
-    resolved.push({ id: carrier.id, version: carrier.version, integrity });
-  }
-  const resolvedIds = new Set(resolved.map(({ id }) => id));
-  const missing = requiredCarrierIds.filter((id) => !resolvedIds.has(id));
-  if (missing.length > 0) throw error(`required exact JSR entries were omitted from clean resolution: ${missing.join(", ")}`);
-  return resolved.sort((left, right) => compareText(left.id, right.id));
-}
-
-async function runJsrSurface({ lock, surface, root, deadlineMilliseconds, signal }) {
-  const directory = path.join(root, "jsr");
-  mkdirSync(directory, { recursive: true });
-  const carriers = carrierRows(lock, surface);
-  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
-  const env = sanitizedPublicEnvironment({
-    DENO_DIR: path.join(root, "deno-cache"),
-    HOME: path.join(root, "deno-home"),
-  });
-  const entries = [];
-  const rows = [];
-  for (const [index, entryCarrierId] of surface.entryCarrierIds.entries()) {
-    const carrier = byId.get(entryCarrierId);
-    const consumer = path.join(directory, `entry-${String(index).padStart(3, "0")}`);
-    mkdirSync(consumer, { recursive: true });
-    writeFileSync(path.join(consumer, "smoke.ts"), `import ${JSON.stringify(jsrSpecifier(carrier.name, carrier.version))};\n`);
-    await runBoundedCommand("deno", ["cache", "--reload", "--lock=deno.lock", "smoke.ts"], {
-      cwd: consumer, env, deadlineMilliseconds, signal,
-    });
-    let denoLock;
-    try { denoLock = JSON.parse(readFileSync(path.join(consumer, "deno.lock"), "utf8")); } catch (cause) {
-      throw error(`Deno emitted an invalid package lock: ${cause.message}`);
-    }
-    const resolved = validateJsrResolution(denoLock, carriers, [entryCarrierId]);
-    rows.push(resolved);
-    entries.push({ entryCarrierId, resolvedCarrierIds: resolved.map(({ id }) => id) });
-  }
-  return {
-    surface: "jsr",
-    mode: "anonymous-public-independent-entry-exact-source-cache",
-    registry: "https://jsr.io",
-    ...resolvedSurfaceCoverage(surface, entries, rows),
-  };
-}
-
 function gitEnvironment(root) {
   const home = path.join(root, "git-home");
   mkdirSync(home, { recursive: true });
@@ -1468,7 +1395,6 @@ async function main(argv) {
       if (surface.ecosystem === "cargo") return runCargoSurface(options);
       if (surface.ecosystem === "npm") return runNpmSurface(options);
       if (surface.ecosystem === "maven") return runMavenSurface(options);
-      if (surface.ecosystem === "jsr") return runJsrSurface(options);
       throw error(`no public consumer runner for ${surface.ecosystem}`);
     },
   ));

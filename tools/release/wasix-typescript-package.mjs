@@ -67,12 +67,16 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const root = manifest.exports?.['.'];
   if (
-    root?.types !== './lib/index.d.ts'
+    JSON.stringify(Object.keys(root ?? {}))
+      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
+    || root?.types !== './lib/index.d.ts'
+    || root?.deno !== './lib/index.deno.js'
+    || root?.bun !== './lib/index.bun.js'
     || root?.browser !== './lib/index.js'
     || root?.node !== './lib/index.node.js'
     || root?.default !== './lib/index.js'
   ) {
-    fail(`${label} must expose exact browser and Node conditional entrypoints`);
+    fail(`${label} must expose exact browser, Node, Bun, and Deno conditional entrypoints`);
   }
   const nodeStorage = manifest.exports?.['./storage/node'];
   if (
@@ -82,6 +86,29 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     || nodeStorage?.default !== undefined
   ) {
     fail(`${label} must expose directory storage only under the Node condition`);
+  }
+  const bunStorage = manifest.exports?.['./storage/bun'];
+  if (
+    bunStorage?.types !== './lib/storage/bun.d.ts'
+    || bunStorage?.bun !== './lib/storage/bun.js'
+    || sortedKeys(bunStorage).some((condition) => !['bun', 'types'].includes(condition))
+  ) {
+    fail(`${label} must expose Bun directory storage only under the Bun condition`);
+  }
+  const denoStorage = manifest.exports?.['./storage/deno'];
+  if (
+    denoStorage?.types !== './lib/storage/deno.d.ts'
+    || denoStorage?.deno !== './lib/storage/deno.js'
+    || sortedKeys(denoStorage).some((condition) => !['deno', 'types'].includes(condition))
+  ) {
+    fail(`${label} must expose Deno directory storage only under the Deno condition`);
+  }
+  if (
+    manifest.engines?.node !== '>=22.13 <25'
+    || manifest.engines?.bun !== '>=1.3.14'
+    || manifest.engines?.deno !== '>=2.8.1'
+  ) {
+    fail(`${label} must declare the qualified Node, Bun, and Deno runtime floors`);
   }
   if (
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix'
@@ -155,6 +182,8 @@ export function assertWasixTypescriptNpmArchive(archive) {
   );
   for (const name of [
     'lib/index.js',
+    'lib/index.bun.js',
+    'lib/index.deno.js',
     'lib/index.node.js',
     'lib/node-client.js',
     'lib/node-directory-lock.js',
@@ -164,6 +193,9 @@ export function assertWasixTypescriptNpmArchive(archive) {
     'lib/node-zstd.js',
     'lib/node-web-worker.js',
     'lib/node-web-worker-thread.js',
+    'lib/server-runtime.js',
+    'lib/storage/bun.js',
+    'lib/storage/deno.js',
     'lib/storage/node.js',
     'lib/storage/node-directory-provider.js',
     'lib/zstd.js',
@@ -176,11 +208,14 @@ export function assertWasixTypescriptNpmArchive(archive) {
   ]) requireFile(name);
   const browserWorker = requireFile('lib/worker.js').toString('utf8');
   const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
+  const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');
   if (
     !browserWorker.includes(esmImportFrom('./host/index.mjs'))
-    || !nodeWorker.includes(esmImportFrom('./node-host.js'))
+    || !nodeWorker.includes(esmImportFrom('./node-direct.js'))
+    || !nodeDirect.includes(esmImportFrom('./node-host.js'))
     || browserWorker.includes('@wasmer/sdk')
     || nodeWorker.includes('@wasmer/sdk')
+    || nodeDirect.includes('@wasmer/sdk')
   ) {
     fail(`${path.basename(file)} workers do not resolve the package-relative patched host`);
   }

@@ -15,7 +15,6 @@ import {
   runSurfaceWithRetries,
   sanitizedPublicEnvironment,
   validateCargoResolution,
-  validateJsrResolution,
   validateMavenResolution,
   validateNpmResolution,
   validatePublicConsumerEvidence,
@@ -60,7 +59,7 @@ function graph(products) {
 }
 
 test("derives every registry surface and graph-root entry from the exact selected lock", () => {
-  const products = [product("runtime", ["crates-io", "maven-central", "npm"]), product("sdk", ["crates-io", "jsr", "maven-central", "npm"])];
+  const products = [product("runtime", ["crates-io", "maven-central", "npm"]), product("sdk", ["crates-io", "maven-central", "npm"])];
   const frozen = lock(products, [
     carrier("cargo:runtime-leaf", "runtime", 0),
     carrier("npm:@example/runtime-leaf", "runtime", 1),
@@ -68,10 +67,9 @@ test("derives every registry surface and graph-root entry from the exact selecte
     carrier("cargo:sdk", "sdk", 3, ["cargo:runtime-leaf"]),
     carrier("npm:@example/sdk", "sdk", 4, ["npm:@example/runtime-leaf"]),
     carrier("maven:dev.example:sdk", "sdk", 5, ["maven:dev.example:runtime"]),
-    carrier("jsr:@example/sdk", "sdk", 6),
   ]);
   const plan = publicConsumerPlan(frozen, ["runtime", "sdk"], graph(products));
-  assert.deepEqual(plan.surfaces.map(({ ecosystem }) => ecosystem), ["cargo", "jsr", "maven", "npm"]);
+  assert.deepEqual(plan.surfaces.map(({ ecosystem }) => ecosystem), ["cargo", "maven", "npm"]);
   assert.deepEqual(plan.surfaces.find(({ ecosystem }) => ecosystem === "cargo").entryCarrierIds, ["cargo:sdk"]);
   assert.deepEqual(plan.surfaces.find(({ ecosystem }) => ecosystem === "cargo").entryClosures, [{
     entryCarrierId: "cargo:sdk",
@@ -118,11 +116,10 @@ test("derives consumer closures from package-manager scopes instead of publicati
 });
 
 test("projects cross-registry publication edges out of each public consumer closure", () => {
-  const products = [product("sdk", ["jsr", "maven-central", "npm"])];
+  const products = [product("sdk", ["maven-central", "npm"])];
   const frozen = lock(products, [
     carrier("npm:@example/sdk", "sdk", 0),
     carrier("maven:dev.example:sdk", "sdk", 1, ["npm:@example/sdk"]),
-    carrier("jsr:@example/sdk", "sdk", 2, ["maven:dev.example:sdk"]),
   ]);
   const plan = publicConsumerPlan(frozen, ["sdk"], graph(products));
   assert.deepEqual(plan.surfaces.find(({ ecosystem }) => ecosystem === "npm").entryClosures, [
@@ -130,9 +127,6 @@ test("projects cross-registry publication edges out of each public consumer clos
   ]);
   assert.deepEqual(plan.surfaces.find(({ ecosystem }) => ecosystem === "maven").entryClosures, [
     { entryCarrierId: "maven:dev.example:sdk", carrierIds: ["maven:dev.example:sdk"] },
-  ]);
-  assert.deepEqual(plan.surfaces.find(({ ecosystem }) => ecosystem === "jsr").entryClosures, [
-    { entryCarrierId: "jsr:@example/sdk", carrierIds: ["jsr:@example/sdk"] },
   ]);
 });
 
@@ -161,7 +155,7 @@ test("fails closed on product, target, carrier, and dependency-closure omissions
   assert.throws(() => publicConsumerPlan(cycle, ["cycle"], graph(cycleProducts)), /no public consumer entry root/u);
 });
 
-test("validates exact public Cargo, npm, Maven, and JSR resolution records", () => {
+test("validates exact public Cargo, npm, and Maven resolution records", () => {
   const cargo = [carrier("cargo:alpha", "alpha", 0)];
   assert.deepEqual(validateCargoResolution(`version = 4
 
@@ -221,16 +215,6 @@ checksum = "${"d".repeat(64)}"
     },
   );
   assert.throws(() => validateMavenResolution("", mavenCarrier), /omitted from its independent clean Maven Central resolution/u);
-
-  const jsrCarrier = [carrier("jsr:@example/alpha", "alpha", 0)];
-  assert.deepEqual(
-    validateJsrResolution({
-      version: "5",
-      jsr: { "@example/alpha@1.2.3": { integrity: "d".repeat(64) } },
-    }, jsrCarrier),
-    [{ id: "jsr:@example/alpha", version: "1.2.3", integrity: "d".repeat(64) }],
-  );
-  assert.throws(() => validateJsrResolution({ version: "5", jsr: {} }, jsrCarrier), /omitted from clean resolution/u);
 });
 
 test("selects every opt-in Cargo entry feature for exhaustive carrier resolution", () => {

@@ -4,7 +4,7 @@ import {
   withCratesIoTrustedPublishingToken,
 } from "./crates-io-trusted-publishing.mjs";
 
-const ECOSYSTEMS = ["cargo", "npm", "maven", "jsr"];
+const ECOSYSTEMS = ["cargo", "npm", "maven"];
 
 function error(message) {
   return new Error(`normal-publication-executor: ${message}`);
@@ -33,7 +33,7 @@ function validatePlan(plan) {
     }
     if (operation.kind === "carrier") {
       if (
-        !new Set(["cargo", "npm", "jsr"]).has(operation.ecosystem)
+        !new Set(["cargo", "npm"]).has(operation.ecosystem)
         || typeof operation.carrierId !== "string"
         || !operation.carrierId.startsWith(`${operation.ecosystem}:`)
         || carrierIds.has(operation.carrierId)

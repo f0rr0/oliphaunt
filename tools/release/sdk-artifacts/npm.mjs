@@ -1,18 +1,14 @@
 import {
   mkdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
 import {
-  copyDirContents,
   fail,
   isFile,
   rel,
   requireCommand,
-  requireDir,
-  requireFile,
   run,
 } from "./shared.mjs";
 
@@ -129,22 +125,4 @@ export function packageNpmWorkspace(packageDir, destination) {
     fail(`pnpm pack did not create ${rel(packFile)}`);
   }
   return packFile;
-}
-
-export function stageJsrSourceWorkspace(packageDir, destination) {
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
-  copyDirContents(packageDir, destination, {
-    filter: (source) => {
-      const relative = path.relative(packageDir, source);
-      if (!relative) {
-        return true;
-      }
-      const [topLevel] = relative.split(path.sep);
-      return !new Set(["node_modules", "lib", ".turbo"]).has(topLevel);
-    },
-  });
-  requireFile(path.join(destination, "jsr.json"));
-  requireFile(path.join(destination, "package.json"));
-  requireDir(path.join(destination, "src"));
 }

@@ -9,7 +9,7 @@
 - TypeScript: desktop JavaScript SDK for Node.js, Bun, and Deno. A direct
   Tauri JavaScript/webview adapter is planned.
 - WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
-- WASIX TypeScript: public browser-and-Node binding for the WASIX/WASM runtime.
+- WASIX TypeScript: public browser, Node, Bun, and Deno binding for the WASIX/WASM runtime.
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
@@ -67,7 +67,7 @@ SDK ownership is product ownership, not just source layout:
 - WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
   liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
   resolve through Cargo artifact crates.
-- WASIX TypeScript owns direct or Worker placement in browsers and Node.js for
+- WASIX TypeScript owns direct or Worker placement in browsers, Node.js, Bun, and Deno for
   the portable WASIX runtime. It is separate from desktop `@oliphaunt/ts` and
   has no native runtime, native Node-direct carrier, or broker dependency.
 
@@ -100,7 +100,7 @@ those overrides are not the consumer install path.
 | Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | the PostgreSQL 18 contrib bundle or independently versioned external extension Cargo carriers, selected by exact SQL name | `OLIPHAUNT_RESOURCES_DIR` |
 | WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | contrib-bundle or external WASIX/AOT carriers selected by exact SQL name | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
 | WASIX TypeScript | exact `@oliphaunt/liboliphaunt-wasix` dependency selected internally; its descriptor binds the portable runtime, PGDATA, and core-only manifest as one identity | unavailable | selectively imported host-neutral `@oliphaunt/extension-*-wasix` descriptors with product-owned install contracts; `pgtap` is qualified, with `pg_uuidv7` as a narrow native canary | `advanced.runtime` only for explicit custom runtime replacement |
-| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*`; JSR is protocol/query-only | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
+| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
 | Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | checksum-covered release carriers composed over the embedded base snapshot; contrib has one 32-row carrier and each external release has one row | `--carrier`, repeatable `--extension-carrier`, `runtimeDirectory`, or `resourceRoot` |
 | Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
@@ -218,7 +218,7 @@ duplicate, or non-tool entries.
 ### WASIX TypeScript Deltas
 
 Public `@oliphaunt/wasix-ts` runs PostgreSQL with direct or worker-isolated
-execution in a cross-origin-isolated browser or Node.js. Every
+execution in a cross-origin-isolated browser, Node.js, Bun, or Deno. Every
 placement consumes portable WASIX assets only, shares one serialized
 PostgreSQL/pgwire database contract plus lifecycle configuration, and never
 reuses or extends native `@oliphaunt/ts`.
@@ -228,7 +228,7 @@ prepopulated PGDATA, no ICU/tools/backup/restore/server/cancellation/COPY
 streaming surface, and no generic native-extension claim. Ordinary runtime
 assets come from the exact `@oliphaunt/liboliphaunt-wasix` dependency; explicit
 sources remain an advanced custom-runtime override. The package-owned patched
-source-pinned Wasmer JS 0.8/WASIX 0.601 host has executable browser and fresh external Node
+source-pinned Wasmer JS 0.8/WASIX 0.601 host has executable browser and fresh external Node/Bun/Deno
 consumer proofs for the exact portable 0.702 guest pairing. Simple and extended
 PostgreSQL errors recover repeatedly, SQL-only `pgtap` completes a real test
 lifecycle, and clean close requires a zero worker-process exit or successful
@@ -236,11 +236,11 @@ caller-realm atexit cleanup. The browser-only
 `pg_uuidv7` canary executes on both sides of recovery, but generic 0.702 or
 native-module compatibility is not claimed.
 
-Memory is the zero-configuration default on both hosts. A selectively imported
+Memory is the zero-configuration default on every host. A selectively imported
 IndexedDB adapter owns exclusive browser persistence and publishes complete
 PGDATA snapshots on explicit checkpoint or clean close; it does not claim
-per-query or crash durability. Node adds a selectively imported snapshot-backed
-directory adapter with the same boundary. OPFS and extension migration remain
+per-query or crash durability. Node, Bun, and Deno add selectively imported
+snapshot-backed directory adapters with the same boundary. OPFS and extension migration remain
 absent until their real contracts exist. The binding README is the detailed
 divergence record.
 
@@ -250,7 +250,7 @@ divergence record.
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
 | WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
-| WASIX TypeScript | cross-origin-isolated browsers and Node.js | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on both hosts | exact error-recovery, selected-extension, and memory paths are proven in both placements; browser IndexedDB and Node directory checkpoint/reopen use explicit snapshot adapters; no OPFS, generic native-extension contract, or tool/server/backup surface; explicit runtime replacement is advanced-only |
+| WASIX TypeScript | cross-origin-isolated browsers, Node.js, Bun, and Deno | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on every host | exact error-recovery, selected-extension, and memory paths are proven in both placements; browser IndexedDB and Node/Bun/Deno directory checkpoint/reopen use explicit snapshot adapters; no OPFS, generic native-extension contract, or tool/server/backup surface; explicit runtime replacement is advanced-only |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct | Host-native compilations are development/parity evidence and are not published; JVM runtime is explicitly unavailable; Android common defaults require the `OliphauntAndroid` Context facade; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |

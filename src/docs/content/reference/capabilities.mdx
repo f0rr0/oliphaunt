@@ -7,7 +7,7 @@ description: Compare native SDK modes, Rust WASIX, and WASIX TypeScript without 
 
 Choose a product before choosing a feature. Native SDKs embed or supervise the
 native runtime, Rust WASIX hosts the portable runtime from Rust, and WASIX
-TypeScript hosts it in a browser or Node realm. Sharing PostgreSQL and portable
+TypeScript hosts it in a browser, Node, Bun, or Deno realm. Sharing PostgreSQL and portable
 WASIX carriers does not make those public APIs interchangeable.
 
 Native SDKs expose capability reports for features that can vary by engine or
@@ -28,7 +28,7 @@ method.
 | React Native | `@oliphaunt/react-native` | Expo and New Architecture apps | Swift/Kotlin platform SDKs |
 | TypeScript | `@oliphaunt/ts` | Node.js, Bun, and Deno | Native direct, broker, or server engine |
 | Rust WASIX | `oliphaunt-wasix` | Rust applications hosting WASIX | Rust-owned WASIX direct or local server API |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser or Node apps choosing portable WASIX | Browser or Node caller realm or Worker |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno apps choosing portable WASIX | Browser or server-runtime caller realm or Worker |
 
 ## Runtime Modes
 
@@ -41,10 +41,12 @@ method.
 | Rust WASIX server | Local client-library compatibility | One embedded WASIX backend behind a local endpoint | `oliphaunt-wasix` |
 | Browser WASIX | Browser-local SQL | One serialized database in the caller realm or a module Worker | `@oliphaunt/wasix-ts` |
 | Node WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
+| Bun WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
+| Deno WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
 
 Mobile direct mode has one resident backend per app process and one physical
 session. WASIX TypeScript similarly owns one serialized backend per opened
-database, placed in the browser or Node caller realm or a Worker. It is not a
+database, placed in the browser or a Node/Bun/Deno caller realm or Worker. It is not a
 native direct mode and does not use the native SDK
 contract.
 
@@ -52,7 +54,7 @@ contract.
 
 | Feature | Rust | Swift | Kotlin | React Native | TypeScript | Rust WASIX | WASIX TypeScript |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Persistent storage | Yes | Yes | Yes | Via Swift/Kotlin | Host directory | Host directory or app-data directory | Browser: selective IndexedDB snapshots; Node: selective directory snapshots |
+| Persistent storage | Yes | Yes | Yes | Via Swift/Kotlin | Host directory | Host directory or app-data directory | Browser: selective IndexedDB snapshots; Node/Bun/Deno: selective directory snapshots |
 | Default storage | Temporary directory | Temporary directory | Temporary directory | Via Swift/Kotlin | Temporary directory | Memory filesystem | Memory filesystem |
 | Simple SQL helpers | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Raw protocol bytes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -70,10 +72,10 @@ contract.
 Choose a native SDK when the application ships native `liboliphaunt` or its
 native helper processes. Choose Rust WASIX when Rust owns the portable host and
 needs the crate's direct, server, archive, or dump APIs. Choose WASIX TypeScript
-for the browser or Node direct/Worker API, SQLSTATE recovery, and selective
+for the browser, Node, Bun, or Deno direct/Worker API, SQLSTATE recovery, and selective
 extension imports; the browser can additionally opt into IndexedDB generations.
-Node can opt into directory generations with the same checkpoint and clean-close
-snapshot contract.
+Node, Bun, and Deno can opt into directory generations with the same checkpoint
+and clean-close snapshot contract.
 
 Do not import native `@oliphaunt/ts` as a fallback for `@oliphaunt/wasix-ts`, and do
 not infer a browser API from an API that exists in the Rust WASIX crate.

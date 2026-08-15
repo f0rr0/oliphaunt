@@ -1,20 +1,25 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { createPackedWasixNodeConsumer, runFixtureCommand } from './packed-node-fixture.mjs';
+import { createPackedWasixConsumer, runFixtureCommand } from './packed-node-fixture.mjs';
 
-const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-node-smoke-'));
+const { packageOnly, runtime } = readOptions(process.argv.slice(2));
+const runtimeName = runtime === 'bun' ? 'Bun' : runtime === 'deno' ? 'Deno' : 'Node';
+const expectedEntrypoint = `index.${runtime}.js`;
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const scratch = await mkdtemp(resolve(tmpdir(), `oliphaunt-wasix-${runtime}-smoke-`));
 
 try {
-  const fixture = await createPackedWasixNodeConsumer({
+  const fixture = await createPackedWasixConsumer({
     scratch,
-    consumerName: 'oliphaunt-wasix-node-smoke-consumer',
-    includePgtap: true,
+    consumerName: `oliphaunt-wasix-${runtime}-smoke-consumer`,
+    includePgtap: !packageOnly,
+    useStubRuntime: packageOnly,
   });
   const candidate = fixture.packages.binding.name;
-  const extension = fixture.packages.extension.name;
+  const extension = fixture.packages.extension?.name;
   await writeFile(
     resolve(fixture.consumer, 'verify.mjs'),
     `import { access } from 'node:fs/promises';
@@ -22,19 +27,22 @@ import { Worker } from 'node:worker_threads';
 
 const candidate = ${JSON.stringify(candidate)};
 const extension = ${JSON.stringify(extension)};
-const pgtap = (await import(extension)).default;
+const runtime = ${JSON.stringify(runtime)};
+const runtimeName = ${JSON.stringify(runtimeName)};
+const packageOnly = ${JSON.stringify(packageOnly)};
+const pgtap = packageOnly ? undefined : (await import(extension)).default;
 const { default: Oliphaunt, PostgresError, WasixStorageError } = await import(candidate);
-const { directory } = await import(candidate + '/storage/node');
+const { directory } = await import(candidate + '/storage/' + runtime);
 
 const resolved = import.meta.resolve(candidate);
-if (!resolved.endsWith('/lib/index.node.js')) {
-  throw new Error('Node did not select the worker_threads entrypoint: ' + resolved);
+if (!resolved.endsWith('/lib/${expectedEntrypoint}')) {
+  throw new Error(runtimeName + ' did not select its worker_threads entrypoint: ' + resolved);
 }
 const callerSource = [
   "import { parentPort } from 'node:worker_threads';",
   'const { default: Oliphaunt } = await import(' + JSON.stringify(resolved) + ');',
   'const { directory } = await import(' +
-    JSON.stringify(import.meta.resolve(candidate + '/storage/node')) +
+    JSON.stringify(import.meta.resolve(candidate + '/storage/' + runtime)) +
     ');',
   'try {',
   '  await Oliphaunt.open({ storage: directory(' +
@@ -65,7 +73,7 @@ const callerResult = await new Promise((resolveResult, rejectResult) => {
 if (
   callerResult?.name !== 'TypeError' ||
   callerResult?.message !==
-    '@oliphaunt/wasix-ts Node directory storage must be opened from the main thread'
+    '@oliphaunt/wasix-ts ' + runtimeName + ' directory storage must be opened from the main thread'
 ) {
   throw new Error('persistent storage caller-worker guard failed: ' + JSON.stringify(callerResult));
 }
@@ -76,6 +84,17 @@ try {
   if (error?.code !== 'ENOENT') throw error;
 }
 
+if (packageOnly) {
+  const storage = directory(new URL('./package-condition-storage', import.meta.url));
+  if (!Object.isFrozen(storage) || Reflect.ownKeys(storage).length !== 0) {
+    throw new Error(runtimeName + ' storage condition returned an invalid adapter');
+  }
+  console.log(JSON.stringify({
+    host: runtime + '-package-condition-and-worker_threads',
+    entrypoint: ${JSON.stringify(expectedEntrypoint)},
+    storage: runtime + '-directory',
+  }));
+} else {
 async function verifyMemory(execution) {
   const db = await Oliphaunt.open({ execution, extensions: [pgtap] });
   const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
@@ -170,28 +189,73 @@ if (
   }));
 }
 console.log(JSON.stringify({
-  host: 'node-direct-and-worker_threads',
+  host: runtime + '-direct-and-worker_threads',
   placements: { direct, worker },
   extension: 'pgtap',
   version: direct.version,
-  storage: 'node-directory-snapshot',
+  storage: runtime + '-directory-snapshot',
   busy,
   workerPersistedRows,
   directPersistedRows,
 }));
+}
 `,
   );
+  const verification = runtimeVerificationCommand(
+    runtime,
+    pathToFileURL(resolve(fixture.consumer, 'verify.mjs')).href,
+  );
   const { stdout } = await runFixtureCommand(
-    process.execPath,
-    [
-      '--input-type=module',
-      '--eval',
-      `await import(${JSON.stringify(pathToFileURL(resolve(fixture.consumer, 'verify.mjs')).href)})`,
-    ],
+    verification.command,
+    verification.args,
     fixture.consumer,
     300_000,
   );
-  console.log(`wasix-ts Node smoke: PASS ${stdout.trim()}`);
+  console.log(`wasix-ts ${runtimeName} smoke: PASS ${stdout.trim()}`);
 } finally {
   await rm(scratch, { force: true, recursive: true });
+}
+
+function readOptions(args) {
+  let packageOnly = false;
+  let runtime = 'node';
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--package-only' && !packageOnly) {
+      packageOnly = true;
+      continue;
+    }
+    if (
+      argument === '--runtime' &&
+      index + 1 < args.length &&
+      ['bun', 'deno', 'node'].includes(args[index + 1])
+    ) {
+      runtime = args[index + 1];
+      index += 1;
+      continue;
+    }
+    throw new Error('usage: smoke-node.mjs [--runtime node|bun|deno] [--package-only]');
+  }
+  return { packageOnly, runtime };
+}
+
+function runtimeVerificationCommand(runtime, verificationUrl) {
+  const expression = `await import(${JSON.stringify(verificationUrl)})`;
+  switch (runtime) {
+    case 'node':
+      return {
+        command: process.execPath,
+        args: ['--input-type=module', '--eval', expression],
+      };
+    case 'bun':
+      return {
+        command: resolve(repositoryRoot, 'tools/dev/bun.sh'),
+        args: ['--eval', expression],
+      };
+    case 'deno':
+      return {
+        command: resolve(repositoryRoot, 'tools/dev/deno.sh'),
+        args: ['run', '--allow-all', verificationUrl],
+      };
+  }
 }

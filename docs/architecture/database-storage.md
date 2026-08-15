@@ -50,7 +50,7 @@ configuration schema.
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
 | React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
 | Rust WASIX | `DatabaseStorage::Memory` | `Directory` or `ApplicationData` |
-| TypeScript WASIX | omitted `storage` | `indexedDB(name)` in browsers or `directory(path)` on Node |
+| TypeScript WASIX | omitted `storage` | `indexedDB(name)` in browsers or `directory(path)` on Node, Bun, and Deno |
 
 The React Native `applicationData` case is intentional. JavaScript has no
 portable API for constructing an iOS/Android app-sandbox path, so the native
@@ -60,8 +60,8 @@ idiomatic `directories` project identity for host applications.
 
 TypeScript WASIX does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
-Node worker-thread host uses the same memory default and selectively exposes a
-snapshot-backed directory provider. That provider hydrates Wasmer memory and
+Node, Bun, and Deno worker-thread hosts use the same memory default and
+selectively expose snapshot-backed directory providers. Those providers hydrate Wasmer memory and
 publishes complete generations on checkpoint/clean close; it is not described
 as a direct host mount. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.

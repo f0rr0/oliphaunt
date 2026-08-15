@@ -1,5 +1,5 @@
 name: Set up Deno
-description: Install the pinned Deno toolchain for TypeScript/JSR release checks.
+description: Install the pinned Deno toolchain for TypeScript runtime checks.
 
 inputs:
   deno-version:
