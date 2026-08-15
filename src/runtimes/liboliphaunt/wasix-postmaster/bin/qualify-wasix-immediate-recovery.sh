@@ -23,18 +23,12 @@ and restarts the exact same carrier, PGDATA, and /dev/shm mount.
 
 Options:
   --sealed-carrier DIR       Compiler-free sealed carrier. Required.
-  --mode MODE                qualification or diagnostic. Default:
-                             qualification. Qualification mode requires the
-                             immutable/zero-write and finite cgroup controls
-                             below; diagnostic preserves the compatibility
-                             execution path but is non-release.
-  --require-zero-write-aot   Require direct activation from immutable AOT and
-                             executable memory-image inodes, then validate the
-                             complete loader audit after the final restart.
+  --target TARGET            Release target. Defaults to the current host;
+                             supported: linux-x64-gnu, macos-arm64.
   --immutable-carrier-receipt FILE
                              External receipt created by
-                             deploy-immutable-sealed-carrier.sh. Required with
-                             --require-zero-write-aot and forbidden otherwise.
+                             deploy-immutable-sealed-carrier.sh. Required on
+                             Linux; unsupported on macOS.
   --cgroup-memory-max SIZE   Finite MemoryMax for each postmaster server tree.
   --cgroup-memory-high SIZE  Finite MemoryHigh for each postmaster server tree.
   --cgroup-swap-max SIZE     Finite MemorySwapMax for each postmaster server
@@ -58,20 +52,21 @@ Success requires all of the following:
   * a bridged SIGTERM performs smart shutdown; and
   * a final reopen is clean and reproduces the checksum again.
 
-Qualification mode additionally requires full immutable-carrier verification
-at both campaign boundaries, receipt-bound fast checks before every execution,
-an exact population of one outer initdb and three outer postgres executor
-invocations, direct-immutable evidence for every module activation (including
-initdb's bootstrap postgres and dynamic modules), and proven
-MemoryMax/MemoryHigh/MemorySwapMax membership for every server tree.
+Both release targets require full cryptographic carrier verification at both
+campaign boundaries, continuity checks before every execution, an exact
+population of one outer initdb and three outer postgres executor invocations,
+and loader evidence for every activated module (including initdb's bootstrap
+postgres and dynamic modules). Linux additionally requires immutable-inode
+activation and proven MemoryMax/MemoryHigh/MemorySwapMax membership. macOS
+requires private streamed-copy activation with no source writes or sync calls.
 USAGE
 }
 
 sealed_carrier=""
 sealed_carrier_explicit=0
-mode="${WASIX_RECOVERY_MODE:-qualification}"
-mode_explicit=0
-require_zero_write_aot=0
+release_target=""
+mode=qualification
+classification=product-qualification
 immutable_carrier_receipt=""
 cgroup_memory_max="${WASIX_RECOVERY_CGROUP_MEMORY_MAX:-}"
 cgroup_memory_high="${WASIX_RECOVERY_CGROUP_MEMORY_HIGH:-}"
@@ -98,22 +93,14 @@ while [ "$#" -gt 0 ]; do
       sealed_carrier="$1"
       sealed_carrier_explicit=1
       ;;
-    --mode)
+    --target)
       shift
-      [ "$#" -gt 0 ] || { echo "--mode requires qualification or diagnostic" >&2; exit 2; }
-      [ "$mode_explicit" -eq 0 ] || {
-        echo "--mode may only be specified once" >&2
+      [ "$#" -gt 0 ] || { echo "--target requires a value" >&2; exit 2; }
+      [ -z "$release_target" ] || {
+        echo "--target may only be specified once" >&2
         exit 2
       }
-      mode="$1"
-      mode_explicit=1
-      ;;
-    --require-zero-write-aot)
-      [ "$require_zero_write_aot" -eq 0 ] || {
-        echo "--require-zero-write-aot may only be specified once" >&2
-        exit 2
-      }
-      require_zero_write_aot=1
+      release_target="$1"
       ;;
     --immutable-carrier-receipt)
       shift
@@ -224,20 +211,29 @@ PY
 [ -n "$sealed_carrier" ] || { echo "--sealed-carrier is required" >&2; exit 2; }
 [ -d "$sealed_carrier" ] || { printf 'missing sealed carrier: %s\n' "$sealed_carrier" >&2; exit 2; }
 sealed_carrier="$(cd "$sealed_carrier" && pwd -P)"
-case "$mode" in
-  qualification|diagnostic) ;;
-  *) echo "--mode requires qualification or diagnostic" >&2; exit 2 ;;
+host_target="$(fresh_release_target)" || exit 2
+release_target="${release_target:-$host_target}"
+[ "$release_target" = "$host_target" ] || {
+  printf 'release target %s does not match current host %s\n' \
+    "$release_target" "$host_target" >&2
+  exit 2
+}
+case "$release_target" in
+  linux-x64-gnu)
+    hardened_qualification=1
+    boundary_verification_scope=full-cryptographic-plus-immutable-receipt
+    required_snapshot_policy=direct-immutable
+    ;;
+  macos-arm64)
+    hardened_qualification=0
+    boundary_verification_scope=full-cryptographic
+    required_snapshot_policy=portable-copy
+    ;;
+  *)
+    printf 'unsupported release target: %s\n' "$release_target" >&2
+    exit 2
+    ;;
 esac
-if [ "$mode" = qualification ]; then
-  classification=product-qualification
-else
-  classification=diagnostic-non-release
-fi
-if [ "$require_zero_write_aot" -eq 1 ]; then
-  boundary_verification_scope=full-cryptographic-plus-immutable-receipt
-else
-  boundary_verification_scope=full-cryptographic-carrier-only
-fi
 if ! is_positive_integer "$port" || [ "$port" -gt 65535 ]; then
   echo "--port requires a port number from 1 through 65535" >&2
   exit 2
@@ -260,23 +256,17 @@ if [ -n "$cgroup_memory_max$cgroup_memory_high$cgroup_swap_max" ]; then
   fi
   cgroup_enabled=1
 fi
-if [ "$mode" = qualification ]; then
-  [ "$require_zero_write_aot" -eq 1 ] || {
-    echo "qualification mode requires --require-zero-write-aot" >&2
-    exit 2
-  }
+if [ "$hardened_qualification" -eq 1 ]; then
   [ "$cgroup_enabled" -eq 1 ] || {
-    echo "qualification mode requires finite --cgroup-memory-max, --cgroup-memory-high, and --cgroup-swap-max" >&2
+    echo "Linux immediate-recovery qualification requires finite --cgroup-memory-max, --cgroup-memory-high, and --cgroup-swap-max" >&2
     exit 2
   }
-fi
-if [ "$require_zero_write_aot" -eq 1 ]; then
   [ -n "$immutable_carrier_receipt" ] || {
-    echo "--require-zero-write-aot requires --immutable-carrier-receipt" >&2
+    echo "--immutable-carrier-receipt is required on Linux" >&2
     exit 2
   }
-elif [ -n "$immutable_carrier_receipt" ]; then
-  echo "--immutable-carrier-receipt requires --require-zero-write-aot" >&2
+elif [ "$cgroup_enabled" -eq 1 ] || [ -n "$immutable_carrier_receipt" ]; then
+  echo "immutable-carrier receipts and Linux cgroup controls are unsupported on macOS" >&2
   exit 2
 fi
 fresh_require_command python3
@@ -313,11 +303,6 @@ case "$run_label" in
     exit 2
     ;;
 esac
-[ "$(uname -s)" = Linux ] || {
-  echo "immediate-recovery qualification currently requires Linux process birth identities" >&2
-  exit 2
-}
-
 fresh_require_command perl
 fresh_require_command stat
 if [ "$cgroup_enabled" -eq 1 ]; then
@@ -327,9 +312,9 @@ if [ "$cgroup_enabled" -eq 1 ]; then
     exit 2
   }
 fi
-[ -x "$NATIVE_INSTALL_DIR/bin/psql" ] || {
-  printf 'missing native PostgreSQL 18 psql client: %s\n' "$NATIVE_INSTALL_DIR/bin/psql" >&2
-  printf 'Build it with %s/bin/build-native-oracle.sh first.\n' "$FRESH_ROOT" >&2
+[ -x "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" ] || {
+  printf 'missing native PostgreSQL 18 psql client: %s\n' "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" >&2
+  printf 'Build it with %s/bin/build-native-client-tools.sh first.\n' "$FRESH_ROOT" >&2
   exit 2
 }
 
@@ -344,7 +329,7 @@ frozen_guest_build_recipe_sha256="$FRESH_QUALIFICATION_GUEST_BUILD_RECIPE_SHA256
 immutable_receipt_sha256=none
 immutable_receipt_dev=none
 immutable_receipt_ino=none
-if [ "$require_zero_write_aot" -eq 1 ]; then
+if [ "$hardened_qualification" -eq 1 ]; then
   [ "$(id -u)" -ne 0 ] || {
     echo "zero-write recovery qualification must run unprivileged" >&2
     exit 2
@@ -408,35 +393,28 @@ profile_resolution="$report_dir/postgres-profile-resolution.tsv"
 fresh_write_postgres_profile_evidence "$profile_inputs" "$profile_resolution"
 loader_validator="$FRESH_ROOT/bin/validate-sealed-loader-audit.py"
 loader_validator_sha256="$(fresh_wasmer_bin_hash "$loader_validator")"
-cache_observe_validator="$FRESH_ROOT/bin/validate-file-cache-telemetry.py"
-cache_observe_validator_sha256="$(fresh_wasmer_bin_hash "$cache_observe_validator")"
-cache_adaptive_validator="$FRESH_ROOT/bin/validate-adaptive-file-cache-telemetry.py"
-cache_adaptive_validator_sha256="$(fresh_wasmer_bin_hash "$cache_adaptive_validator")"
 sealed_loader_audit="$report_dir/sealed-loader-audit.jsonl"
 sealed_loader_validation="$report_dir/sealed-loader-audit-validation.tsv"
-immutable_verification="$report_dir/immutable-carrier-verification.tsv"
+carrier_continuity_verification="$report_dir/carrier-continuity-verification.tsv"
 carrier_boundary_verification="$report_dir/carrier-boundary-verification.tsv"
 qualification_policy="$report_dir/qualification-policy.tsv"
-cache_telemetry_policy="$report_dir/cache-telemetry-policy.tsv"
 evidence_envelope="$report_dir/qualification-evidence-envelope.tsv"
 if [ -e "$sealed_loader_audit" ] || [ -L "$sealed_loader_audit" ]; then
   echo "sealed loader audit path exists before recovery qualification" >&2
   exit 2
 fi
-printf 'stage\texpected_receipt_sha256\tobserved_receipt_sha256\texpected_receipt_dev\tobserved_receipt_dev\texpected_receipt_ino\tobserved_receipt_ino\tstatus\n' \
-  >"$immutable_verification"
+printf 'stage\tverification_method\texpected_closure_identity\tobserved_closure_identity\tstatus\n' \
+  >"$carrier_continuity_verification"
 printf 'stage\tverification_scope\texpected_closure_identity\tobserved_closure_identity\tstatus\n' \
   >"$carrier_boundary_verification"
 printf 'campaign-start\t%s\t%s\t%s\tpassed\n' \
   "$boundary_verification_scope" "$frozen_carrier_identity" \
   "$frozen_carrier_identity" \
   >>"$carrier_boundary_verification"
-printf 'schema_version\tmode\tclassification\trequire_zero_write_aot\trequired_snapshot_mode\texpected_outer_initdb_invocations\texpected_outer_postgres_invocations\tcarrier_closure_identity\tmanifest_sha256\twasmer_receipt_sha256\tpayload_sha256\theadless_sha256\tcore_profile\tguest_build_recipe_sha256\timmutable_receipt_path\timmutable_receipt_sha256\timmutable_receipt_dev\timmutable_receipt_ino\tloader_validator_sha256\tcgroup_enabled\tcgroup_memory_max\tcgroup_memory_max_bytes\tcgroup_memory_high\tcgroup_memory_high_bytes\tcgroup_swap_max\tcgroup_swap_max_bytes\tpostgres_profile_identity\n' \
+printf 'schema_version\tmode\tclassification\trelease_target\trequired_snapshot_policy\texpected_outer_initdb_invocations\texpected_outer_postgres_invocations\tcarrier_closure_identity\tmanifest_sha256\twasmer_receipt_sha256\tpayload_sha256\theadless_sha256\tcore_profile\tguest_build_recipe_sha256\timmutable_receipt_path\timmutable_receipt_sha256\timmutable_receipt_dev\timmutable_receipt_ino\tloader_validator_sha256\tcgroup_enabled\tcgroup_memory_max\tcgroup_memory_max_bytes\tcgroup_memory_high\tcgroup_memory_high_bytes\tcgroup_swap_max\tcgroup_swap_max_bytes\tpostgres_profile_identity\n' \
   >"$qualification_policy"
-printf 'oliphaunt.wasix-postmaster.immediate-recovery-policy.v3\t%s\t%s\t%s\t%s\t1\t3\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$mode" "$classification" \
-  "$require_zero_write_aot" \
-  "$([ "$require_zero_write_aot" -eq 1 ] && printf direct-immutable-inode || printf compatibility)" \
+printf 'oliphaunt.wasix-postmaster.immediate-recovery-policy.v5\t%s\t%s\t%s\t%s\t1\t3\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$mode" "$classification" "$release_target" "$required_snapshot_policy" \
   "$frozen_carrier_identity" "$frozen_manifest_sha256" \
   "$frozen_wasmer_receipt_sha256" "$frozen_payload_sha256" \
   "$frozen_headless_sha256" "$frozen_core_profile" \
@@ -449,14 +427,8 @@ printf 'oliphaunt.wasix-postmaster.immediate-recovery-policy.v3\t%s\t%s\t%s\t%s\
   "${cgroup_swap_max:-none}" "$cgroup_swap_max_bytes" \
   "$FRESH_POSTGRES_PROFILE_RESOLUTION_IDENTITY" \
   >>"$qualification_policy"
-printf 'schema_version\tactivation_source\toutput_environment\tadaptive_path_derivation\tobserve_validator_sha256\tadaptive_validator_sha256\texpected_observe_validations\texpected_adaptive_validations\n' \
-  >"$cache_telemetry_policy"
-printf 'oliphaunt.wasix-postmaster.cache-telemetry-policy.v1\tsealed-manifest-only\tOLIPHAUNT_WASIX_CACHE_OFFER_TELEMETRY_FILE\tPath::with_extension("adaptive.json")\t%s\t%s\t4\t3\n' \
-  "$cache_observe_validator_sha256" "$cache_adaptive_validator_sha256" \
-  >>"$cache_telemetry_policy"
-cache_telemetry_policy_sha256="$(fresh_wasmer_bin_hash "$cache_telemetry_policy")"
 qualification_policy_sha256="$(fresh_wasmer_bin_hash "$qualification_policy")"
-chmod 0444 "$qualification_policy" "$cache_telemetry_policy"
+chmod 0444 "$qualification_policy"
 
 wasmer_bin="$sealed_carrier/bin/wasmer-headless"
 sealed_manifest="$sealed_carrier/manifest.json"
@@ -471,14 +443,12 @@ esac
 sealed_loader_unset_args=(
   -u OLIPHAUNT_WASIX_REQUIRE_ZERO_WRITE_AOT
   -u OLIPHAUNT_WASIX_SEALED_LOADER_AUDIT_FILE
-  -u OLIPHAUNT_WASIX_CACHE_OFFER_TELEMETRY_FILE
 )
-sealed_loader_env=()
-if [ "$require_zero_write_aot" -eq 1 ]; then
-  sealed_loader_env=(
-    OLIPHAUNT_WASIX_REQUIRE_ZERO_WRITE_AOT=1
-    "OLIPHAUNT_WASIX_SEALED_LOADER_AUDIT_FILE=$sealed_loader_audit"
-  )
+sealed_loader_env=(
+  "OLIPHAUNT_WASIX_SEALED_LOADER_AUDIT_FILE=$sealed_loader_audit"
+)
+if [ "$hardened_qualification" -eq 1 ]; then
+  sealed_loader_env+=(OLIPHAUNT_WASIX_REQUIRE_ZERO_WRITE_AOT=1)
 fi
 
 wasmer_args=(
@@ -526,38 +496,48 @@ active_cgroup_dir=""
 active_cgroup_identity=""
 server_command_prefix=()
 
-assert_frozen_immutable_carrier() {
+assert_frozen_carrier() {
   local stage="$1"
-  local observed_sha=none observed_dev=none observed_ino=none status=passed
+  local method observed_identity=none status=passed
 
-  [ "$require_zero_write_aot" -eq 1 ] || return 0
-  if ! "$FRESH_ROOT/bin/verify-immutable-sealed-carrier.sh" \
-    --sealed-carrier "$sealed_carrier" \
-    --receipt "$immutable_carrier_receipt" --fast; then
-    status=verification-failed
-  fi
-  if fresh_capture_stable_regular_file_identity \
-    "$immutable_carrier_receipt" 2>/dev/null; then
-    observed_sha="$FRESH_QUALIFICATION_REGULAR_FILE_SHA256"
-    observed_dev="$FRESH_QUALIFICATION_REGULAR_FILE_DEVICE"
-    observed_ino="$FRESH_QUALIFICATION_REGULAR_FILE_INODE"
+  if [ "$hardened_qualification" -eq 1 ]; then
+    method=immutable-receipt-fast
+    if ! "$FRESH_ROOT/bin/verify-immutable-sealed-carrier.sh" \
+      --sealed-carrier "$sealed_carrier" \
+      --receipt "$immutable_carrier_receipt" --fast; then
+      status=verification-failed
+    elif ! fresh_capture_stable_regular_file_identity \
+      "$immutable_carrier_receipt" 2>/dev/null; then
+      status=unreadable
+    elif [ "$FRESH_QUALIFICATION_REGULAR_FILE_SHA256" != \
+      "$immutable_receipt_sha256" ] ||
+      [ "$FRESH_QUALIFICATION_REGULAR_FILE_DEVICE" != \
+        "$immutable_receipt_dev" ] ||
+      [ "$FRESH_QUALIFICATION_REGULAR_FILE_INODE" != \
+        "$immutable_receipt_ino" ]; then
+      status=identity-changed
+    else
+      observed_identity="$frozen_carrier_identity"
+    fi
   else
-    status=unreadable
+    method=full-cryptographic
+    if fresh_capture_qualification_carrier_identity "$sealed_carrier"; then
+      observed_identity="$FRESH_QUALIFICATION_CARRIER_CLOSURE_IDENTITY"
+      if [ "$observed_identity" != "$frozen_carrier_identity" ] ||
+        [ "$FRESH_QUALIFICATION_CORE_PROFILE" != "$frozen_core_profile" ] ||
+        [ "$FRESH_QUALIFICATION_GUEST_BUILD_RECIPE_SHA256" != \
+          "$frozen_guest_build_recipe_sha256" ]; then
+        status=identity-changed
+      fi
+    else
+      status=verification-failed
+    fi
   fi
-  if [ "$status" = passed ] && {
-    [ "$observed_sha" != "$immutable_receipt_sha256" ] ||
-      [ "$observed_dev" != "$immutable_receipt_dev" ] ||
-      [ "$observed_ino" != "$immutable_receipt_ino" ];
-  }; then
-    status=identity-changed
-  fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$stage" "$immutable_receipt_sha256" "$observed_sha" \
-    "$immutable_receipt_dev" "$observed_dev" \
-    "$immutable_receipt_ino" "$observed_ino" "$status" \
-    >>"$immutable_verification"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$stage" "$method" "$frozen_carrier_identity" "$observed_identity" \
+    "$status" >>"$carrier_continuity_verification"
   [ "$status" = passed ] || {
-    printf 'immutable carrier deployment identity failed at %s: %s\n' \
+    printf 'sealed carrier continuity failed at %s: %s\n' \
       "$stage" "$status" >&2
     return 125
   }
@@ -566,14 +546,8 @@ assert_frozen_immutable_carrier() {
 assert_frozen_policy() {
   [ "$(fresh_wasmer_bin_hash "$qualification_policy")" = \
     "$qualification_policy_sha256" ] &&
-    [ "$(fresh_wasmer_bin_hash "$cache_telemetry_policy")" = \
-      "$cache_telemetry_policy_sha256" ] &&
     [ "$(fresh_wasmer_bin_hash "$loader_validator")" = \
       "$loader_validator_sha256" ] &&
-    [ "$(fresh_wasmer_bin_hash "$cache_observe_validator")" = \
-      "$cache_observe_validator_sha256" ] &&
-    [ "$(fresh_wasmer_bin_hash "$cache_adaptive_validator")" = \
-      "$cache_adaptive_validator_sha256" ] &&
     fresh_assert_postgres_profile_inputs
 }
 
@@ -582,24 +556,11 @@ snapshot_carrier() {
   local manifest_sha receipt_sha payload_sha headless_sha
 
   assert_frozen_policy || return
-  if [ "$require_zero_write_aot" -eq 1 ]; then
-    assert_frozen_immutable_carrier "$phase" || return
-    manifest_sha="$frozen_manifest_sha256"
-    receipt_sha="$frozen_wasmer_receipt_sha256"
-    payload_sha="$frozen_payload_sha256"
-    headless_sha="$frozen_headless_sha256"
-  else
-    fresh_capture_qualification_carrier_identity "$sealed_carrier" || return
-    [ "$FRESH_QUALIFICATION_CARRIER_CLOSURE_IDENTITY" = \
-      "$frozen_carrier_identity" ] || {
-      printf 'sealed carrier identity changed during recovery qualification\n' >&2
-      return 1
-    }
-    manifest_sha="$FRESH_QUALIFICATION_CARRIER_MANIFEST_SHA256"
-    receipt_sha="$FRESH_QUALIFICATION_CARRIER_RECEIPT_SHA256"
-    payload_sha="$FRESH_QUALIFICATION_CARRIER_PAYLOAD_SHA256"
-    headless_sha="$FRESH_QUALIFICATION_CARRIER_HEADLESS_SHA256"
-  fi
+  assert_frozen_carrier "$phase" || return
+  manifest_sha="$frozen_manifest_sha256"
+  receipt_sha="$frozen_wasmer_receipt_sha256"
+  payload_sha="$frozen_payload_sha256"
+  headless_sha="$frozen_headless_sha256"
   printf '%s\t%s\t%s\t%s\t%s\n' \
     "$phase" "$manifest_sha" "$receipt_sha" "$payload_sha" "$headless_sha" \
     >>"$carrier_snapshots"
@@ -649,7 +610,6 @@ on_exit() {
     printf 'last_stage\t%s\n' "$current_stage"
     printf 'cleanup_escalation\t%s\n' "$cleanup_escalation"
     printf 'mode\t%s\n' "$mode"
-    printf 'require_zero_write_aot\t%s\n' "$require_zero_write_aot"
     printf 'cgroup_enabled\t%s\n' "$cgroup_enabled"
     printf 'run_root\t%s\n' "$run_root"
     printf 'report_dir\t%s\n' "$report_dir"
@@ -665,43 +625,6 @@ run_logged() {
   local log="$1"
   shift
   fresh_run_process_group_timeout "$timeout_seconds" -- "$@" >"$log" 2>&1
-}
-
-cache_telemetry_path_for_log() {
-  local log="$1"
-  case "$log" in
-    /*.log) printf '%s.cache-offers.json\n' "${log%.log}" ;;
-    *) printf 'cache telemetry requires an absolute .log path: %s\n' "$log" >&2; return 125 ;;
-  esac
-}
-
-validate_observe_cache_telemetry() {
-  local log="$1"
-  local expected_workload="$2"
-  local telemetry validation
-  telemetry="$(cache_telemetry_path_for_log "$log")" || return
-  validation="${telemetry%.json}-validation.tsv"
-  python3 "$cache_observe_validator" \
-    --telemetry "$telemetry" \
-    --manifest "$sealed_manifest" \
-    --output "$validation" \
-    --expected-workload "$expected_workload"
-  chmod 0444 "$telemetry"
-}
-
-validate_postgres_cache_telemetry() {
-  local log="$1"
-  local telemetry adaptive validation
-  validate_observe_cache_telemetry "$log" runtime:postgres
-  telemetry="$(cache_telemetry_path_for_log "$log")" || return
-  # Exact sibling convention used by Rust Path::with_extension("adaptive.json").
-  adaptive="${telemetry%.json}.adaptive.json"
-  validation="${telemetry%.json}-adaptive-validation.tsv"
-  python3 "$cache_adaptive_validator" \
-    --telemetry "$adaptive" \
-    --manifest "$sealed_manifest" \
-    --output "$validation"
-  chmod 0444 "$adaptive"
 }
 
 configure_server_cgroup() {
@@ -829,7 +752,6 @@ start_server() {
     -c unix_socket_directories=
   )
   local guc
-  local cache_telemetry
 
   [ -z "$active_pid" ] || {
     echo "refusing to replace an active recovery server" >&2
@@ -849,15 +771,13 @@ start_server() {
     postgres_args+=(-c "$guc")
   done
   assert_frozen_policy || return
-  assert_frozen_immutable_carrier "before-$phase-start" || return
+  assert_frozen_carrier "before-$phase-start" || return
   configure_server_cgroup "$phase"
-  cache_telemetry="$(cache_telemetry_path_for_log "$server_log")" || return
   fresh_spawn_process_group -- launch_with_embedded_nofile "$limits_file" \
     "${server_command_prefix[@]}" \
     env -u WASMER_DIR -u WASMER_CACHE_DIR \
     "${sealed_loader_unset_args[@]}" \
     "${sealed_loader_env[@]}" \
-    "OLIPHAUNT_WASIX_CACHE_OFFER_TELEMETRY_FILE=$cache_telemetry" \
     "$wasmer_bin" "${wasmer_args[@]}" "$wasix_postgres" -- \
     "${postgres_args[@]}" >"$server_log" 2>&1 || return
   active_pid="$FRESH_PROCESS_GROUP_PID"
@@ -882,7 +802,7 @@ wait_for_ready() {
   while [ "$(fresh_supervision_now_ms)" -lt "$deadline" ]; do
     set +e
     fresh_run_process_group_timeout_ms 1000 -- \
-      env PGCONNECT_TIMEOUT=1 "$NATIVE_INSTALL_DIR/bin/psql" \
+      env PGCONNECT_TIMEOUT=1 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
       "$conn" -XAtq -v ON_ERROR_STOP=1 -c 'select 1' >"$attempt_log" 2>&1
     status=$?
     set -e
@@ -916,7 +836,7 @@ psql_to_file() {
   local output="$1"
   local sql="$2"
   fresh_run_process_group_timeout "$timeout_seconds" -- \
-    env PGCONNECT_TIMEOUT=5 "$NATIVE_INSTALL_DIR/bin/psql" \
+    env PGCONNECT_TIMEOUT=5 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
     "$conn" -XAtq -F $'\t' -v ON_ERROR_STOP=1 -c "$sql" \
     >"$output" 2>"$output.stderr"
 }
@@ -929,7 +849,7 @@ capture_and_validate_settings() {
   {
     printf 'name\tsetting\tunit\tsource\n'
     fresh_run_process_group_timeout "$timeout_seconds" -- \
-      env PGCONNECT_TIMEOUT=5 "$NATIVE_INSTALL_DIR/bin/psql" \
+      env PGCONNECT_TIMEOUT=5 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
       "$conn" -XAtq -F $'\t' -v ON_ERROR_STOP=1 -c "
         SELECT name, setting, coalesce(unit, ''), source
         FROM pg_settings
@@ -961,7 +881,7 @@ capture_database_state() {
   {
     printf 'row_count\tpayload_sum\tcontent_md5\tcheckpoint_lsn\tredo_lsn\tinsert_lsn\tflush_lsn\tcheckpoints_timed\tcheckpoints_requested\tcheckpoints_done\n'
     fresh_run_process_group_timeout "$timeout_seconds" -- \
-      env PGCONNECT_TIMEOUT=5 "$NATIVE_INSTALL_DIR/bin/psql" \
+      env PGCONNECT_TIMEOUT=5 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
       "$conn" -XAtq -F $'\t' -v ON_ERROR_STOP=1 -c "
         SELECT
           count(*),
@@ -1082,17 +1002,14 @@ wait_for_unassisted_exit() {
 
 snapshot_carrier before-initdb
 current_stage="initdb"
-assert_frozen_immutable_carrier before-initdb-execution
+assert_frozen_carrier before-initdb-execution
 initdb_log="$report_dir/initdb.log"
-initdb_cache_telemetry="$(cache_telemetry_path_for_log "$initdb_log")"
 run_logged "$report_dir/initdb.log" \
   env -u WASMER_DIR -u WASMER_CACHE_DIR \
   "${sealed_loader_unset_args[@]}" \
   "${sealed_loader_env[@]}" \
-  "OLIPHAUNT_WASIX_CACHE_OFFER_TELEMETRY_FILE=$initdb_cache_telemetry" \
   "$wasmer_bin" "${wasmer_args[@]}" "$wasix_initdb" -- \
   -D "$pgdata" -A trust --no-locale --encoding=UTF8 --no-instructions
-validate_observe_cache_telemetry "$initdb_log" runtime:initdb
 snapshot_carrier after-initdb
 
 current_stage="baseline-start"
@@ -1174,7 +1091,6 @@ snapshot_carrier before-sigquit
 current_stage="immediate-shutdown"
 signal_active_server QUIT "$report_dir/sigquit.tsv"
 wait_for_unassisted_exit "$report_dir/immediate-exit.tsv"
-validate_postgres_cache_telemetry "$report_dir/baseline.server.log"
 grep -Fq 'received immediate shutdown request' "$report_dir/baseline.server.log" || {
   echo "PostgreSQL did not log an immediate shutdown request after host SIGQUIT" >&2
   exit 1
@@ -1201,7 +1117,6 @@ snapshot_carrier after-recovery
 current_stage="smart-shutdown"
 signal_active_server TERM "$report_dir/sigterm.tsv"
 wait_for_unassisted_exit "$report_dir/smart-exit.tsv"
-validate_postgres_cache_telemetry "$report_dir/recovery.server.log"
 grep -Fq 'received smart shutdown request' "$report_dir/recovery.server.log" || {
   echo "PostgreSQL did not log a smart shutdown request after host SIGTERM" >&2
   exit 1
@@ -1226,7 +1141,6 @@ assert_same_contents "$report_dir/pre-crash-state.tsv" "$report_dir/clean-reopen
 current_stage="final-smart-shutdown"
 signal_active_server TERM "$report_dir/final-sigterm.tsv"
 wait_for_unassisted_exit "$report_dir/final-smart-exit.tsv"
-validate_postgres_cache_telemetry "$report_dir/clean-reopen.server.log"
 grep -Fq 'received smart shutdown request' "$report_dir/clean-reopen.server.log" || {
   echo "final PostgreSQL process did not receive smart shutdown" >&2
   exit 1
@@ -1234,19 +1148,17 @@ grep -Fq 'received smart shutdown request' "$report_dir/clean-reopen.server.log"
 snapshot_carrier final
 
 current_stage="sealed-loader-validation"
-if [ "$require_zero_write_aot" -eq 1 ]; then
-  python3 "$loader_validator" \
-    --audit "$sealed_loader_audit" \
-    --manifest "$sealed_manifest" \
-    --output "$sealed_loader_validation" \
-    --required-snapshot-mode direct-immutable-inode \
-    --expected-initdb-executions 1 \
-    --expected-postgres-executions 3
-  chmod 0444 "$sealed_loader_audit" "$sealed_loader_validation"
-fi
+python3 "$loader_validator" \
+  --audit "$sealed_loader_audit" \
+  --manifest "$sealed_manifest" \
+  --output "$sealed_loader_validation" \
+  --snapshot-policy "$required_snapshot_policy" \
+  --expected-initdb-executions 1 \
+  --expected-postgres-executions 3
+chmod 0444 "$sealed_loader_audit" "$sealed_loader_validation"
 
 current_stage="campaign-end-verification"
-if [ "$require_zero_write_aot" -eq 1 ]; then
+if [ "$hardened_qualification" -eq 1 ]; then
   "$FRESH_ROOT/bin/verify-immutable-sealed-carrier.sh" \
     --sealed-carrier "$sealed_carrier" \
     --receipt "$immutable_carrier_receipt"
@@ -1265,7 +1177,7 @@ printf 'campaign-end\t%s\t%s\t%s\tpassed\n' \
   "$FRESH_QUALIFICATION_CARRIER_CLOSURE_IDENTITY" \
   >>"$carrier_boundary_verification"
 assert_frozen_policy
-assert_frozen_immutable_carrier campaign-end
+assert_frozen_carrier campaign-end
 
 if [ "$keep_pgdata" -eq 0 ]; then
   fresh_require_managed_generated_path "$pgdata" "successful recovery PGDATA"
@@ -1278,14 +1190,12 @@ else
     "$pgdata" "$dev_shm" >"$report_dir/run-retention.tsv"
 fi
 
-sealed_loader_audit_sha256=none
-sealed_loader_validation_sha256=none
-if [ "$require_zero_write_aot" -eq 1 ]; then
-  sealed_loader_audit_sha256="$(fresh_wasmer_bin_hash "$sealed_loader_audit")"
-  sealed_loader_validation_sha256="$(fresh_wasmer_bin_hash "$sealed_loader_validation")"
-fi
+sealed_loader_audit_sha256="$(fresh_wasmer_bin_hash "$sealed_loader_audit")"
+sealed_loader_validation_sha256="$(fresh_wasmer_bin_hash "$sealed_loader_validation")"
 carrier_snapshots_sha256="$(fresh_wasmer_bin_hash "$carrier_snapshots")"
-immutable_verification_sha256="$(fresh_wasmer_bin_hash "$immutable_verification")"
+carrier_continuity_verification_sha256="$(
+  fresh_wasmer_bin_hash "$carrier_continuity_verification"
+)"
 carrier_boundary_verification_sha256="$(
   fresh_wasmer_bin_hash "$carrier_boundary_verification"
 )"
@@ -1299,66 +1209,13 @@ if [ "$cgroup_enabled" -eq 1 ]; then
     } | fresh_sha256_stream
   )"
 fi
-observed_cache_observe_validations="$(
-  find "$report_dir" -type f -name '*.cache-offers-validation.tsv' -print | wc -l
-)"
-observed_cache_adaptive_validations="$(
-  find "$report_dir" -type f -name '*.cache-offers-adaptive-validation.tsv' -print | wc -l
-)"
-[ "$observed_cache_observe_validations" -eq 4 ] &&
-  [ "$observed_cache_adaptive_validations" -eq 3 ] || {
-  printf 'recovery cache telemetry validation population differs: observe=%s/4 adaptive=%s/3\n' \
-    "$observed_cache_observe_validations" \
-    "$observed_cache_adaptive_validations" >&2
-  exit 1
-}
-cache_adaptive_active_count=0
-cache_adaptive_fallback_count=0
-while IFS= read -r adaptive_validation_file; do
-  adaptive_outcome="$(awk -F '\t' 'NR == 2 { print $3 }' \
-    "$adaptive_validation_file")"
-  case "$adaptive_outcome" in
-    adaptive-active)
-      cache_adaptive_active_count=$((cache_adaptive_active_count + 1))
-      ;;
-    observe-only-fallback)
-      cache_adaptive_fallback_count=$((cache_adaptive_fallback_count + 1))
-      ;;
-    *)
-      printf 'unknown adaptive validation outcome %s in %s\n' \
-        "$adaptive_outcome" "$adaptive_validation_file" >&2
-      exit 1
-      ;;
-  esac
-done < <(
-  find "$report_dir" -type f \
-    -name '*.cache-offers-adaptive-validation.tsv' -print | LC_ALL=C sort
-)
-[ $((cache_adaptive_active_count + cache_adaptive_fallback_count)) -eq 3 ] || {
-  echo 'recovery adaptive cache outcomes do not cover all postgres epochs' >&2
-  exit 1
-}
-cache_validation_identity="$(
-  find "$report_dir" -type f \
-    \( -name '*.cache-offers-validation.tsv' -o \
-       -name '*.cache-offers-adaptive-validation.tsv' \) -print |
-    LC_ALL=C sort |
-    while IFS= read -r validation_file; do
-      fresh_wasmer_bin_hash "$validation_file"
-    done |
-    fresh_sha256_stream
-)"
-printf 'schema_version\tstatus\tmode\tclassification\tcarrier_closure_identity\tqualification_policy_sha256\tcache_telemetry_policy_sha256\tcache_validation_identity\tcache_observe_validation_count\tcache_adaptive_validation_count\tcache_adaptive_active_count\tcache_adaptive_fallback_count\timmutable_receipt_sha256\timmutable_receipt_dev\timmutable_receipt_ino\timmutable_verification_sha256\tcarrier_boundary_verification_sha256\tsealed_loader_audit_sha256\tsealed_loader_validation_sha256\tcarrier_snapshots_sha256\tcgroup_evidence_identity\tcgroup_memory_max_bytes\tcgroup_memory_high_bytes\tcgroup_swap_max_bytes\tcore_profile\tguest_build_recipe_sha256\n' \
+printf 'schema_version\tstatus\tmode\tclassification\trelease_target\tcarrier_closure_identity\tqualification_policy_sha256\timmutable_receipt_sha256\timmutable_receipt_dev\timmutable_receipt_ino\tcarrier_continuity_verification_sha256\tcarrier_boundary_verification_sha256\tsealed_loader_audit_sha256\tsealed_loader_validation_sha256\tcarrier_snapshots_sha256\tcgroup_evidence_identity\tcgroup_memory_max_bytes\tcgroup_memory_high_bytes\tcgroup_swap_max_bytes\tcore_profile\tguest_build_recipe_sha256\n' \
   >"$evidence_envelope"
-printf 'oliphaunt.wasix-postmaster.immediate-recovery-evidence.v3\tpassed\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$mode" "$classification" "$frozen_carrier_identity" \
-  "$qualification_policy_sha256" "$cache_telemetry_policy_sha256" \
-  "$cache_validation_identity" "$observed_cache_observe_validations" \
-  "$observed_cache_adaptive_validations" \
-  "$cache_adaptive_active_count" "$cache_adaptive_fallback_count" \
-  "$immutable_receipt_sha256" \
+printf 'oliphaunt.wasix-postmaster.immediate-recovery-evidence.v5\tpassed\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$mode" "$classification" "$release_target" "$frozen_carrier_identity" \
+  "$qualification_policy_sha256" "$immutable_receipt_sha256" \
   "$immutable_receipt_dev" "$immutable_receipt_ino" \
-  "$immutable_verification_sha256" \
+  "$carrier_continuity_verification_sha256" \
   "$carrier_boundary_verification_sha256" \
   "$sealed_loader_audit_sha256" "$sealed_loader_validation_sha256" \
   "$carrier_snapshots_sha256" "$cgroup_evidence_identity" \
@@ -1366,7 +1223,7 @@ printf 'oliphaunt.wasix-postmaster.immediate-recovery-evidence.v3\tpassed\t%s\t%
   "$cgroup_memory_high_bytes" "$cgroup_swap_max_bytes" \
   "$frozen_core_profile" "$frozen_guest_build_recipe_sha256" \
   >>"$evidence_envelope"
-chmod 0444 "$immutable_verification" "$carrier_snapshots" \
+chmod 0444 "$carrier_continuity_verification" "$carrier_snapshots" \
   "$carrier_boundary_verification" "$evidence_envelope" \
   "$report_dir/run-retention.tsv"
 if [ "$cgroup_enabled" -eq 1 ]; then

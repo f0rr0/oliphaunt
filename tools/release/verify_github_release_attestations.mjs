@@ -60,6 +60,7 @@ const GITHUB_RELEASE_ARTIFACT_ROLES = new Set([
 const BASE_ASSET_BACKED_PRODUCTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
 ]);
@@ -427,6 +428,13 @@ async function expectedAssets(product, version) {
       assets.push(...await expectedExtensionAssets(contrib.artifactProduct, version, "wasix"));
     }
     return [...new Set(assets)].sort(compareText);
+  }
+  if (product === "liboliphaunt-wasix-postmaster") {
+    return [
+      `${product}-${version}-linux-x64-gnu.tar.gz`,
+      `${product}-${version}-macos-arm64.tar.gz`,
+      `${product}-${version}-release-assets.sha256`,
+    ];
   }
   if (product === "oliphaunt-broker") {
     return expectedDesktopAssets(product, "broker-helper", version, PREFIX);

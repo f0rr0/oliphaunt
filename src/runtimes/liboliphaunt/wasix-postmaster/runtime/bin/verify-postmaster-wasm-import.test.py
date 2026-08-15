@@ -8,6 +8,7 @@ import unittest
 
 
 SCRIPT = pathlib.Path(__file__).with_name("verify-postmaster-wasm-import.py")
+SIGNATURE = (b"\x7f\x7e\x7e\x7f", b"\x7f")
 
 
 def uleb(value):
@@ -15,9 +16,7 @@ def uleb(value):
     while True:
         byte = value & 0x7F
         value >>= 7
-        if value:
-            byte |= 0x80
-        encoded.append(byte)
+        encoded.append(byte | (0x80 if value else 0))
         if not value:
             return bytes(encoded)
 
@@ -36,31 +35,16 @@ def section(section_id, payload):
 
 
 def module(imports=None):
-    if imports is None:
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_offer",
-                (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_revoke",
-                (b"\x7f\x7f\x7f", b"\x7f"),
-            ),
-        ]
+    imports = imports or [("oliphaunt_postmaster_v1", "fd_sync_range", SIGNATURE)]
     function_types = []
     import_entries = []
     for type_index, (module_name, field, signature) in enumerate(imports):
         params, results = signature
-        function_type = b"\x60" + vector(*(bytes([item]) for item in params))
-        function_type += vector(*(bytes([item]) for item in results))
-        function_types.append(function_type)
+        function_types.append(
+            b"\x60"
+            + vector(*(bytes([item]) for item in params))
+            + vector(*(bytes([item]) for item in results))
+        )
         import_entries.append(name(module_name) + name(field) + b"\x00" + uleb(type_index))
     return (
         b"\x00asm\x01\x00\x00\x00"
@@ -86,130 +70,26 @@ class VerifyPostmasterImportTests(unittest.TestCase):
         result = self.run_verifier(module())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("(i32,i64,i64,i32)->(i32)", result.stdout)
-        self.assertIn("(i32,i64,i64,i32,i32)->(i32)", result.stdout)
-        self.assertIn("(i32,i32,i32)->(i32)", result.stdout)
 
     def test_rejects_legacy_namespace_alias(self):
-        imports = [
-            ("wasix_32v1", "fd_sync_range", (b"\x7f\x7e\x7e\x7f", b"\x7f")),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_offer",
-                (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_revoke",
-                (b"\x7f\x7f\x7f", b"\x7f"),
-            ),
-        ]
-        result = self.run_verifier(module(imports))
+        result = self.run_verifier(module([("wasix_32v1", "fd_sync_range", SIGNATURE)]))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("forbidden fd_sync_range import alias", result.stderr)
 
     def test_rejects_wrong_signature(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            ("oliphaunt_postmaster_v1", "fd_cache_offer", (b"\x7f\x7e", b"\x7f")),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_revoke",
-                (b"\x7f\x7f\x7f", b"\x7f"),
-            ),
-        ]
-        result = self.run_verifier(module(imports))
+        result = self.run_verifier(
+            module([("oliphaunt_postmaster_v1", "fd_sync_range", (b"\x7f", b"\x7f"))])
+        )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("fd_cache_offer signature is", result.stderr)
+        self.assertIn("fd_sync_range signature is", result.stderr)
 
-    def test_rejects_missing_cache_offer_import(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            )
-        ]
-        result = self.run_verifier(module(imports))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected exactly one oliphaunt_postmaster_v1.fd_cache_offer", result.stderr)
-
-    def test_rejects_missing_cache_revoke_import(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_offer",
-                (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f"),
-            ),
-        ]
-        result = self.run_verifier(module(imports))
+    def test_rejects_missing_product_import(self):
+        result = self.run_verifier(module([("wasi_snapshot_preview1", "fd_sync", (b"\x7f", b"\x7f"))]))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "expected exactly one oliphaunt_postmaster_v1.fd_cache_revoke",
+            "expected exactly one oliphaunt_postmaster_v1.fd_sync_range",
             result.stderr,
         )
-
-    def test_rejects_cache_offer_namespace_alias(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            ("wasix_32v1", "fd_cache_offer", (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f")),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_revoke",
-                (b"\x7f\x7f\x7f", b"\x7f"),
-            ),
-        ]
-        result = self.run_verifier(module(imports))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("forbidden fd_cache_offer import alias", result.stderr)
-
-    def test_rejects_cache_revoke_namespace_alias(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_offer",
-                (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f"),
-            ),
-            ("wasix_32v1", "fd_cache_revoke", (b"\x7f\x7f\x7f", b"\x7f")),
-        ]
-        result = self.run_verifier(module(imports))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("forbidden fd_cache_revoke import alias", result.stderr)
-
-    def test_rejects_cache_revoke_wrong_signature(self):
-        imports = [
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_sync_range",
-                (b"\x7f\x7e\x7e\x7f", b"\x7f"),
-            ),
-            (
-                "oliphaunt_postmaster_v1",
-                "fd_cache_offer",
-                (b"\x7f\x7e\x7e\x7f\x7f", b"\x7f"),
-            ),
-            ("oliphaunt_postmaster_v1", "fd_cache_revoke", (b"\x7f", b"\x7f")),
-        ]
-        result = self.run_verifier(module(imports))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("fd_cache_revoke signature is", result.stderr)
 
 
 if __name__ == "__main__":

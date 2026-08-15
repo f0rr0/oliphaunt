@@ -31,12 +31,12 @@ wasmer_bin="$(fresh_wasmer_bin)"
 wasmer_bin_hash="$(fresh_wasmer_bin_hash "$wasmer_bin")"
 wasmer_cache_dir="$(fresh_wasmer_cache_dir "$wasmer_bin")"
 wasmer_compiler="$(fresh_wasmer_compiler)"
-wasmer_llvm_opt_level="${WASMER_LLVM_OPT_LEVEL:-aggressive}"
+wasmer_llvm_opt_level=aggressive
 wasmer_stack_size="${WASMER_STACK_SIZE:-33554432}"
 wasmer_compiler_threads="${WASMER_COMPILER_THREADS:-$(fresh_jobs)}"
 fresh_require_wasmer_compiler_cli "$wasmer_bin" "$wasmer_compiler" run
-pg_regress_bin="$NATIVE_BUILD_DIR/src/test/regress/pg_regress"
-"$FRESH_ROOT/bin/build-native-oracle.sh" >/dev/null
+pg_regress_bin="$CLIENT_TOOLS_BUILD_DIR/src/test/regress/pg_regress"
+"$FRESH_ROOT/bin/build-native-client-tools.sh" >/dev/null
 if [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ]; then
   "$FRESH_ROOT/bin/build-wasix-core.sh"
 fi
@@ -113,8 +113,6 @@ wasmer_args+=(
   printf -- '- WASIX install dir: `%s`\n' "$WASIX_INSTALL_DIR"
   printf -- '- Wasmer compiler: `%s`\n' "$wasmer_compiler"
   printf -- '- Wasmer LLVM opt level: `%s`\n' "$wasmer_llvm_opt_level"
-  printf -- '- WASMER_LLVM_FULL_O3_PIPELINE: `%s`\n' "${WASMER_LLVM_FULL_O3_PIPELINE:-0}"
-  printf -- '- WASMER_LLVM_INDIRECT_CALL_CACHE: `%s`\n' "${WASMER_LLVM_INDIRECT_CALL_CACHE:-0}"
   printf -- '- Wasmer stack size: `%s`\n' "$wasmer_stack_size"
   printf -- '- Wasmer compiler threads: `%s`\n' "$wasmer_compiler_threads"
   printf -- '- Dynamic library path: `%s`\n' "$WASIX_INSTALL_DIR/lib/postgresql"
@@ -151,7 +149,7 @@ trap cleanup EXIT
 : >"$wait_log"
 ready=0
 for _ in $(seq 1 150); do
-  if "$NATIVE_INSTALL_DIR/bin/psql" \
+  if "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" \
       "postgresql://wasix@127.0.0.1:$port/postgres" \
       -X -q -c 'select 1' >>"$wait_log" 2>&1; then
     ready=1
@@ -177,7 +175,7 @@ set +e
     --port="$port" \
     --user=wasix \
     --dbname=postgres \
-    --bindir="$NATIVE_INSTALL_DIR/bin" \
+    --bindir="$CLIENT_TOOLS_INSTALL_DIR/bin" \
     --dlpath="$WASIX_INSTALL_DIR/lib/postgresql" \
     --inputdir="$BASELINE_DIR/src/test/regress" \
     --outputdir="$regress_out" \

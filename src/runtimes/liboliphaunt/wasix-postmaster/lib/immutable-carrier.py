@@ -32,6 +32,12 @@ CAP_LINUX_IMMUTABLE = 9
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 AOT_RE = re.compile(r"aot/[0-9A-F]{64}\.bin\Z")
 MEMORY_RE = re.compile(r"memory/[0-9A-F]{64}\.bin\Z")
+SIDE_MODULE_POLICY_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "runtime"
+    / "policies"
+    / "sealed-side-modules.v1.tsv"
+)
 
 
 class DeploymentError(Exception):
@@ -41,6 +47,23 @@ class DeploymentError(Exception):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise DeploymentError(message)
+
+
+def expected_aot_count() -> int:
+    rows = [
+        line
+        for line in SIDE_MODULE_POLICY_PATH.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(bool(rows), "sealed side-module policy is empty")
+    require(
+        all(len(line.split("\t")) == 3 for line in rows),
+        "sealed side-module policy contains a malformed row",
+    )
+    return 2 + len(rows)
+
+
+EXPECTED_AOT_COUNT = expected_aot_count()
 
 
 def canonical_json(value: Any) -> bytes:
@@ -278,7 +301,10 @@ def carrier_closure_identity(identity_hashes: dict[str, str]) -> str:
 
 def direct_loader_paths(manifest: dict[str, Any]) -> list[tuple[str, str, str]]:
     artifacts = manifest.get("artifacts")
-    require(isinstance(artifacts, list) and len(artifacts) == 5, "manifest must contain exactly five artifacts")
+    require(
+        isinstance(artifacts, list) and len(artifacts) == EXPECTED_AOT_COUNT,
+        f"manifest must contain exactly {EXPECTED_AOT_COUNT} artifacts",
+    )
     selected: list[tuple[str, str, str]] = []
     for index, artifact in enumerate(artifacts):
         require(isinstance(artifact, dict), f"manifest artifact {index} is not an object")
@@ -297,7 +323,10 @@ def direct_loader_paths(manifest: dict[str, Any]) -> list[tuple[str, str, str]]:
     selected.sort()
     paths = [item[0] for item in selected]
     require(len(paths) == len(set(paths)), "manifest direct-loader paths are not unique")
-    require(sum(kind == "aot" for _, kind, _ in selected) == 5, "immutable policy requires five AOT artifacts")
+    require(
+        sum(kind == "aot" for _, kind, _ in selected) == EXPECTED_AOT_COUNT,
+        "immutable policy requires the complete AOT closure",
+    )
     require(
         sum(kind == "memory-image" for _, kind, _ in selected) == 2,
         "immutable policy requires two executable memory images",
@@ -988,7 +1017,11 @@ def parse_receipt_entries(
         if entry["direct-loader-kind"] != "none"
     ]
     require(receipt["direct-loader-paths"] == direct_paths, "receipt direct-loader subset differs")
-    require(sum(entry["direct-loader-kind"] == "aot" for entry in result) == 5, "receipt AOT file count differs")
+    require(
+        sum(entry["direct-loader-kind"] == "aot" for entry in result)
+        == EXPECTED_AOT_COUNT,
+        "receipt AOT file count differs",
+    )
     require(sum(entry["direct-loader-kind"] == "memory-image" for entry in result) == 2, "receipt memory-image count differs")
     return result
 

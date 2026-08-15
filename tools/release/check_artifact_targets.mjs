@@ -341,6 +341,37 @@ export function expectedArtifactTargetContract() {
     portableRow("liboliphaunt-wasix", "runtime-portable", "wasix-runtime", "liboliphaunt-wasix-{version}-runtime-portable.tar.zst"),
     portableRow("liboliphaunt-wasix", "icu-data", "icu-data", "liboliphaunt-wasix-{version}-icu-data.tar.zst"),
     portableRow("liboliphaunt-wasix", "checksums", "checksums", "liboliphaunt-wasix-{version}-release-assets.sha256"),
+    targetRow({
+      product: "liboliphaunt-wasix-postmaster",
+      id: "linux-x64-gnu",
+      kind: "wasix-postmaster-runtime",
+      target: "linux-x64-gnu",
+      asset: "liboliphaunt-wasix-postmaster-{version}-linux-x64-gnu.tar.gz",
+      surfaces: [GITHUB],
+      triple: "x86_64-unknown-linux-gnu",
+      runner: "ubuntu-24.04",
+      extensionArtifacts: false,
+    }),
+    targetRow({
+      product: "liboliphaunt-wasix-postmaster",
+      id: "macos-arm64",
+      kind: "wasix-postmaster-runtime",
+      target: "macos-arm64",
+      asset: "liboliphaunt-wasix-postmaster-{version}-macos-arm64.tar.gz",
+      surfaces: [GITHUB],
+      triple: "aarch64-apple-darwin",
+      runner: "macos-26",
+      extensionArtifacts: false,
+    }),
+    targetRow({
+      product: "liboliphaunt-wasix-postmaster",
+      id: "checksums",
+      kind: "checksums",
+      target: "portable",
+      asset: "liboliphaunt-wasix-postmaster-{version}-release-assets.sha256",
+      surfaces: [GITHUB],
+      extensionArtifacts: false,
+    }),
     portableRow("oliphaunt-broker", "checksums", "checksums", "oliphaunt-broker-{version}-release-assets.sha256", BROKER_SURFACES),
     portableRow("oliphaunt-node-direct", "checksums", "checksums", "oliphaunt-node-direct-{version}-release-assets.sha256"),
   );
@@ -689,7 +720,44 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     ["mobile-extension-packages", "oliphaunt-mobile-extension-package-artifacts"],
     ["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-runtime-portable"],
     ["liboliphaunt-wasix-release-assets", "liboliphaunt-wasix-release-assets"],
+    ["wasix-postmaster", "liboliphaunt-wasix-postmaster-release-assets"],
   ]) validateWorkflowProducer(workflow, jobId, artifact, [{}], [artifact]);
+  validateWorkflowProducer(
+    workflow,
+    "wasix-postmaster-linux",
+    "liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu",
+    [{}],
+    ["liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu"],
+  );
+  validateWorkflowProducer(
+    workflow,
+    "wasix-postmaster-linux",
+    "liboliphaunt-wasix-postmaster-portable-build-inputs",
+    [{}],
+    ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
+  );
+  validateWorkflowProducer(
+    workflow,
+    "wasix-postmaster-macos",
+    "liboliphaunt-wasix-postmaster-release-assets-macos-arm64",
+    [{}],
+    ["liboliphaunt-wasix-postmaster-release-assets-macos-arm64"],
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "wasix-postmaster-macos",
+    ["wasix-postmaster-linux"],
+    ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "wasix-postmaster",
+    ["wasix-postmaster-linux", "wasix-postmaster-macos"],
+    [
+      "liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu",
+      "liboliphaunt-wasix-postmaster-release-assets-macos-arm64",
+    ],
+  );
   validateWorkflowConsumer(
     workflow,
     "broker-release-assets",
@@ -820,6 +888,7 @@ export function validateRepository() {
   for (const [product, preset] of Object.entries({
     "liboliphaunt-native": "liboliphaunt-native",
     "liboliphaunt-wasix": "liboliphaunt-wasix",
+    "liboliphaunt-wasix-postmaster": "liboliphaunt-wasix-postmaster",
     "oliphaunt-broker": "broker-helper",
     "oliphaunt-node-direct": "node-direct-addon",
   })) invariant(releaseMetadata(product, TOOL).artifactTargets?.preset === preset, `${product} must use Moon artifact target preset ${preset}`);

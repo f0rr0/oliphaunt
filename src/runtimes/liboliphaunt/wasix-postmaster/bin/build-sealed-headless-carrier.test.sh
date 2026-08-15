@@ -20,8 +20,6 @@ export FRESH_WASMER_BUILD_RECEIPT="$test_root/wasmer-build.receipt"
 export FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT="$test_root/postmaster-executor-build.receipt"
 export WASIX_INSTALL_DIR="$test_root/install"
 export WASIX_CORE_PROFILE=release-o3
-export WASMER_COMPILER=llvm
-export WASMER_LLVM_OPT_LEVEL=aggressive
 export FAKE_WASMER_CAPTURE_LOG="$test_root/memory-captures.log"
 export FAKE_WASMER_VALIDATION_LOG="$test_root/final-validations.log"
 unset FRESH_PINNED_WASMER_CACHE_DIR FRESH_ALLOW_PINNED_CACHE_WRITE
@@ -287,13 +285,14 @@ target_triple="$(fresh_host_arch | sed 's/linux-amd64/x86_64-unknown-linux-gnu/;
 
 cache_bucket="$(fresh_wasmer_cache_dir "$FRESH_POSTMASTER_COMPILER_BIN")/compiled/$(fresh_wasmer_compiler_cache_bucket llvm aggressive "$FRESH_WASMER_ARTIFACT_ABI_VERSION")"
 mkdir -p "$cache_bucket"
-for relative in \
-  bin/initdb \
-  bin/postgres \
-  lib/libpq.so.5.18 \
-  lib/postgresql/dict_snowball.so \
-  lib/postgresql/plpgsql.so
-do
+required_modules=(bin/initdb bin/postgres)
+while IFS=$'\t' read -r relative _aliases _abi_policy; do
+  case "$relative" in
+    ""|'#'*) continue ;;
+  esac
+  required_modules+=("$relative")
+done <"$project_root/runtime/policies/sealed-side-modules.v1.tsv"
+for relative in "${required_modules[@]}"; do
   module="$WASIX_INSTALL_DIR/$relative"
   module_hash="$(fresh_wasmer_module_hash "$module")"
   "$FRESH_POSTMASTER_COMPILER_BIN" \
@@ -465,7 +464,32 @@ do
     exit 1
   }
 done
-[ "$(find "$output/aot" -type f -name '*.bin' | wc -l | tr -d '[:space:]')" -eq 5 ]
+while IFS=$'\t' read -r relative aliases _abi_policy; do
+  case "$relative" in
+    ""|'#'*) continue ;;
+  esac
+  [ -f "$output/$relative" ] && [ ! -L "$output/$relative" ] || {
+    printf 'missing regular carrier side module: %s\n' "$relative" >&2
+    exit 1
+  }
+  if [ "$aliases" != - ]; then
+    old_ifs="$IFS"
+    IFS=','
+    for alias_relative in $aliases; do
+      IFS="$old_ifs"
+      cmp -s "$output/$relative" "$output/$alias_relative" || {
+        printf 'carrier side-module alias differs from canonical module: %s\n' \
+          "$alias_relative" >&2
+        exit 1
+      }
+      IFS=','
+    done
+    IFS="$old_ifs"
+  fi
+done <"$project_root/runtime/policies/sealed-side-modules.v1.tsv"
+side_module_count="$(awk -F '\t' '!/^#/ && NF { count += 1 } END { print count + 0 }' \
+  "$project_root/runtime/policies/sealed-side-modules.v1.tsv")"
+[ "$(find "$output/aot" -type f -name '*.bin' | wc -l | tr -d '[:space:]')" -eq "$((side_module_count + 2))" ]
 [ "$(find "$output/memory" -type f -name '*.bin' | wc -l | tr -d '[:space:]')" -eq 2 ]
 [ "$(find "$output/memory" -type f -name '*.receipt.json' | wc -l | tr -d '[:space:]')" -eq 2 ]
 [ "$(wc -l <"$FAKE_WASMER_CAPTURE_LOG" | tr -d '[:space:]')" -eq 4 ]
@@ -475,24 +499,19 @@ done
 [ "$(stat -c %a "$output" 2>/dev/null || stat -f %Lp "$output")" = 555 ]
 [ "$(stat -c %a "$output/share/postgresql/postgresql.conf.sample" 2>/dev/null || stat -f %Lp "$output/share/postgresql/postgresql.conf.sample")" = 444 ]
 
-python3 - "$output" <<'PY'
+python3 - "$output" "$project_root/runtime/policies/sealed-side-modules.v1.tsv" <<'PY'
 import hashlib
 import json
 import os
 import sys
 
 root = sys.argv[1]
+side_module_policy = sys.argv[2]
 with open(os.path.join(root, "manifest.json"), encoding="utf-8") as stream:
     manifest = json.load(stream)
 assert manifest["format-version"] == 6
 assert manifest["schema"] == "oliphaunt.wasix-postmaster.sealed-aot.v5"
 assert manifest["core-profile"] == "release-o3"
-assert manifest["file-cache-policy"] == {
-    "requested-policy-id": "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5",
-    "approved-config-id": "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.embedded-v4",
-    "config-sha256": "01668b856435cb8c34b2d2324ab55b7f1f5961b8b403c1ee49d9ee4b5c865f53",
-    "portable-fallback-mode": "observe-only",
-}
 with open(os.path.join(root, "guest-build.receipt"), "rb") as stream:
     guest_build_receipt = stream.read()
 assert manifest["guest-build-recipe-sha256"] == hashlib.sha256(
@@ -526,7 +545,18 @@ assert executor_receipt["schema"] == "oliphaunt.wasix-postmaster.postmaster-exec
 assert executor_receipt["linear_memory_profile_id"] == linear_profile["id"]
 assert executor_receipt["executor_role"] == "postmaster-product"
 assert executor_receipt["executor_binary_sha256"] == manifest["executor-sha256"]
-assert len(manifest["artifacts"]) == 5
+with open(side_module_policy, encoding="utf-8") as stream:
+    side_modules = {
+        line.split("\t", 1)[0]
+        for line in stream
+        if line.strip() and not line.startswith("#")
+    }
+assert len(manifest["artifacts"]) == len(side_modules) + 2
+assert {
+    item["module-path"]
+    for item in manifest["artifacts"]
+    if item["kind"] == "side-module"
+} == side_modules
 assert {tuple(item["exec-aliases"]) for item in manifest["artifacts"] if item["kind"] == "executable"} == {
     ("/bin/initdb",),
     ("/bin/postgres",),
@@ -786,59 +816,6 @@ fi
 "$project_root/bin/verify-sealed-headless-carrier.sh" "$output" >/dev/null
 [ "$(python3 "$project_root/lib/verify-sealed-carrier.py" executor-selection "$output")" = \
   $'postmaster-product\tpostmaster-executor.receipt\t'"$(fresh_wasmer_bin_hash "$output/postmaster-executor.receipt")"$'\t'"$(fresh_wasmer_bin_hash "$output/bin/wasmer-headless")" ]
-
-full_control_output="$test_root/full-headless-control-carrier"
-"$project_root/bin/build-sealed-headless-carrier.sh" \
-  --executor-role full-headless \
-  --output "$full_control_output" \
-  --cache-bucket "$cache_bucket" >/dev/null
-[ ! -e "$full_control_output/postmaster-executor.receipt" ]
-[ -f "$full_control_output/postmaster-compiler.receipt" ] && \
-  [ ! -L "$full_control_output/postmaster-compiler.receipt" ]
-"$project_root/bin/verify-sealed-headless-carrier.sh" "$full_control_output" >/dev/null
-[ "$(python3 "$project_root/lib/verify-sealed-carrier.py" executor-selection "$full_control_output")" = \
-  $'full-headless\twasmer-build.receipt\t'"$(fresh_wasmer_bin_hash "$full_control_output/wasmer-build.receipt")"$'\t'"$(fresh_wasmer_bin_hash "$full_control_output/bin/wasmer-headless")" ]
-
-current_evidence="$test_root/current-evidence.json"
-"$project_root/bin/current-evidence-manifest.py" write \
-  --carrier "$output" \
-  --output "$current_evidence" >/dev/null
-"$project_root/bin/current-evidence-manifest.py" verify \
-  --carrier "$output" \
-  --output "$current_evidence" >/dev/null
-if "$project_root/bin/current-evidence-manifest.py" write \
-  --carrier "$output" \
-  --output "$output/current-evidence.json" >/dev/null 2>&1
-then
-  printf 'current-evidence writer mutated the sealed carrier\n' >&2
-  exit 1
-fi
-if "$project_root/bin/current-evidence-manifest.py" write \
-  --carrier "$output" \
-  --output "$current_evidence" >/dev/null 2>&1
-then
-  printf 'current-evidence writer replaced an existing output\n' >&2
-  exit 1
-fi
-qualified_evidence="$test_root/forged-qualified-evidence.json"
-python3 - "$current_evidence" "$qualified_evidence" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    evidence = json.load(source)
-evidence["qualification-status"] = "qualified"
-with open(sys.argv[2], "w", encoding="utf-8", newline="\n") as output:
-    json.dump(evidence, output, indent=2, sort_keys=True)
-    output.write("\n")
-PY
-if "$project_root/bin/current-evidence-manifest.py" verify \
-  --carrier "$output" \
-  --output "$qualified_evidence" >/dev/null 2>&1
-then
-  printf 'current-evidence verifier accepted a forged qualification status\n' >&2
-  exit 1
-fi
 
 # The implicit publication path is derived from the finished exact payload
 # inventory, not merely from the runtime ABI.  This keeps distinct PostgreSQL

@@ -39,11 +39,11 @@ source lives under `src/<product>/`.
 - `src/bindings/wasix-rust/` owns the released Rust WASIX binding.
 - `src/bindings/wasix-ts/` owns the public browser, Node, Bun, and Deno TypeScript WASIX
   binding. It is a peer binding, not part of the native TypeScript SDK.
-- `src/runtimes/liboliphaunt/wasix-postmaster/` owns the independent,
-  non-release research lane for a PostgreSQL postmaster with fresh WASIX
-  backends. It may reuse the canonical WASIX build container and toolchain
-  recipe, but it does not share runtime patches, generated carriers, release
-  metadata, or support claims with the released single-backend WASIX product.
+- `src/runtimes/liboliphaunt/wasix-postmaster/` owns the released concurrent
+  PostgreSQL postmaster runtime and its sealed WASIX backend carrier. It reuses
+  canonical source and toolchain inputs where semantics agree, while owning
+  its concurrency-specific patches, carrier, release metadata, and support
+  claims.
 - `src/*/moon.yml` is the canonical product graph. `tools/policy/sdk-manifest.toml`
   is a small SDK parity ownership registry and must agree with Moon metadata.
 - Tooling lives under `tools/`.
@@ -60,10 +60,10 @@ source lives under `src/<product>/`.
   toolchain pins, extension-owned source pins, and generated extension catalogs
   live under `src/postgres/versions/18`, `src/sources/third-party`,
   `src/sources/toolchains`, and `src/extensions`.
-- Research-only Wasmer and wasix-libc pins for the postmaster lane live under
+- Postmaster-specific Wasmer and wasix-libc pins live under
   `src/sources/third-party/wasix-postmaster/`. The default `production-all`
-  source scope excludes that directory; only the explicit research scope and
-  the repository-wide `all` scope may acquire it.
+  source scope includes every released product input; the focused
+  `wasix-postmaster-runtime` scope acquires only this product's runtime inputs.
 
 There should be no tracked product source under retired roots such as
 `crates/`, `sdks/`, root `liboliphaunt/`, or root product examples.
@@ -116,12 +116,12 @@ synthetic root:
   carriers, Node direct, or the broker. Ordinary opens consume the generated
   host-neutral `@oliphaunt/liboliphaunt-wasix` carrier; conditional exports
   select the host adapter without changing the public package identity.
-- `src/runtimes/liboliphaunt/wasix-postmaster` is a peer research project, not
-  an implementation directory of `liboliphaunt-wasix`. Its Moon project has no
-  release product, its expensive build and qualification tasks are manual, and
-  all generated checkouts, builds, carriers, caches, and reports stay under
-  `target/oliphaunt-wasix-postmaster/`. It has no release boundary and cannot
-  inherit one from another WASIX product.
+- `src/runtimes/liboliphaunt/wasix-postmaster` is a peer release product, not an
+  implementation directory of `liboliphaunt-wasix`. It owns a distinct Moon
+  release component and sealed carrier because its concurrent process and
+  shared-memory semantics differ from the single-backend runtime. Generated
+  checkouts, builds, carriers, caches, and reports stay under
+  `target/oliphaunt-wasix-postmaster/`.
 - `src/runtimes/liboliphaunt/wasix/assets/build` is source-only: scripts, patches,
   Docker inputs, and shims. Generated WASIX build and work trees live under
   `target/oliphaunt-wasix/wasix-build`.

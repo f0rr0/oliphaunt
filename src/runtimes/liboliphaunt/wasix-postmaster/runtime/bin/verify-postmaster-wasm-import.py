@@ -14,14 +14,6 @@ EXPECTED_IMPORTS = {
         (0x7F, 0x7E, 0x7E, 0x7F),  # i32, i64, i64, i32
         (0x7F,),  # i32 errno
     ),
-    "fd_cache_offer": (
-        (0x7F, 0x7E, 0x7E, 0x7F, 0x7F),  # i32, i64, i64, i32, i32
-        (0x7F,),  # i32 errno
-    ),
-    "fd_cache_revoke": (
-        (0x7F, 0x7F, 0x7F),  # i32 fd, i32 class, i32 flags
-        (0x7F,),  # i32 errno
-    ),
 }
 VALUE_TYPE_NAMES = {
     0x7F: "i32",

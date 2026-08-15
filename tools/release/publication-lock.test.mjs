@@ -526,7 +526,7 @@ describe("canonical publication catalog", () => {
 
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
-    expect(catalog.products).toHaveLength(18);
+    expect(catalog.products).toHaveLength(19);
     expect(catalog.carriers).toHaveLength(195);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,

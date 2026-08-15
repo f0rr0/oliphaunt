@@ -65,7 +65,7 @@ export function compileWasixModule(
   return compiledModuleCache.module;
 }
 
-/** Host-neutral PostgreSQL/WASIX lifecycle shared by browser and Node workers. */
+/** Host-neutral PostgreSQL/WASIX lifecycle shared by browser, Node, Bun, and Deno workers. */
 export class WasixProcess {
   readonly #instance: Instance;
   readonly #wire: PgwireStream;

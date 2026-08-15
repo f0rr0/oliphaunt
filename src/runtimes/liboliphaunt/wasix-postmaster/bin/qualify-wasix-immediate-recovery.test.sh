@@ -9,8 +9,7 @@ trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 
 help_output="$("$qualifier" --help)"
 for option in \
-  '--mode MODE' \
-  '--require-zero-write-aot' \
+  '--target TARGET' \
   '--immutable-carrier-receipt FILE' \
   '--cgroup-memory-max SIZE' \
   '--cgroup-memory-high SIZE' \
@@ -18,18 +17,21 @@ for option in \
 do
   grep -Fq -- "$option" <<<"$help_output"
 done
-grep -Fq 'qualification mode requires --require-zero-write-aot' "$qualifier"
-grep -Fq 'qualification mode requires finite --cgroup-memory-max' "$qualifier"
+grep -Fq -- '--immutable-carrier-receipt is required on Linux' "$qualifier"
+grep -Fq 'Linux immediate-recovery qualification requires finite --cgroup-memory-max' "$qualifier"
+grep -Fq 'required_snapshot_policy=portable-copy' "$qualifier"
+if grep -Fq -- '--mode MODE' <<<"$help_output"; then
+  echo 'recovery qualifier still exposes a research/diagnostic mode' >&2
+  exit 1
+fi
 grep -Fq -- '--expected-initdb-executions 1' "$qualifier"
 grep -Fq -- '--expected-postgres-executions 3' "$qualifier"
 grep -Fq 'expected_outer_initdb_invocations' "$qualifier"
 grep -Fq 'expected_outer_postgres_invocations' "$qualifier"
-grep -Fq "initdb's bootstrap postgres and dynamic modules" <<<"$help_output"
-grep -Fq 'validate-adaptive-file-cache-telemetry.py' "$qualifier"
-grep -Fq 'Path::with_extension("adaptive.json")' "$qualifier"
-grep -Fq 'immediate-recovery-evidence.v3' "$qualifier"
-if grep -Fq 'OLIPHAUNT_WASIX_ADAPTIVE_CACHE_TELEMETRY_FILE' "$qualifier"; then
-  echo 'recovery qualifier added an adaptive policy environment surface' >&2
+grep -Fq 'postgres and dynamic modules' <<<"$help_output"
+grep -Fq 'immediate-recovery-evidence.v5' "$qualifier"
+if grep -Eq 'adaptive|cache-offers|CACHE_OFFER' "$qualifier"; then
+  echo 'recovery qualifier still contains cache experiment machinery' >&2
   exit 1
 fi
 

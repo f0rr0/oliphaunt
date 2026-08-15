@@ -1,2 +1,0 @@
-schema_version	profile_id	status	claim_scope	checkpoint_timeout_seconds	checkpoint_completion_target	max_wal_size_bytes	min_wal_size_bytes	min_periodic_wal_bytes	min_periodic_checkpoints	max_checkpoint_seconds	min_completion_fraction	min_achieved_tps	max_p95_ms	max_p99_ms	max_latency_ms	max_checkpoint_overlap_ratio	max_checkpoint_overlap_delta_ms	min_checkpoint_overlap_samples
-oliphaunt.wasix-postmaster.checkpoint-policy.v1	embedded-steady-v1	research-only	checkpoint-recycle-stress-not-product-default	30	0.9	268435456	67108864	536870912	6	30	0.99	59.4	10	50	250	2.0	10	100

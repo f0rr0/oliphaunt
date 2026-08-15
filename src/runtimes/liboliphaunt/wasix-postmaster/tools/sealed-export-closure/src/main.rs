@@ -17,8 +17,6 @@ const PROOF_SCHEMA: &str = "oliphaunt.wasix-postmaster.sealed-export-closure-pro
 const RECEIPT_SCHEMA: &str = "oliphaunt.wasix-postmaster.sealed-export-structure.v1";
 const POLICY_ID: &str = "oliphaunt.wasix-postmaster.sealed-export-closure.v1";
 const DCE_PASS: &str = "--remove-unused-module-elements";
-const LOCAL_FUNCREF_BYTES: u64 = 32;
-const LOCAL_GLOBAL_BYTES: u64 = 48;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "kebab-case")]
@@ -151,19 +149,6 @@ impl StructuralSnapshot {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
-struct StructuralEstimate {
-    classification: &'static str,
-    formula: &'static str,
-    removed_local_functions: u32,
-    bytes_per_eager_local_funcref: u64,
-    removed_local_globals: u32,
-    bytes_per_eager_local_global: u64,
-    estimated_bytes_per_instance: u64,
-    caveat: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
 struct StructuralReceipt {
     schema: &'static str,
     policy_id: &'static str,
@@ -180,7 +165,6 @@ struct StructuralReceipt {
     final_proof_sha256: String,
     seed: StructuralSnapshot,
     final_module: StructuralSnapshot,
-    estimate: StructuralEstimate,
     sides: Vec<SideIdentity>,
 }
 
@@ -1111,10 +1095,6 @@ fn attest_final(
         "DCE did not remove any local functions or globals"
     );
 
-    let removed_functions = seed.main.local_functions - final_proof.main.local_functions;
-    let removed_globals = seed.main.local_globals - final_proof.main.local_globals;
-    let estimated_bytes = u64::from(removed_functions) * LOCAL_FUNCREF_BYTES
-        + u64::from(removed_globals) * LOCAL_GLOBAL_BYTES;
     let seed_snapshot = StructuralSnapshot::new(&seed.main)?;
     let final_snapshot = StructuralSnapshot::new(&final_proof.main)?;
     let seed_bytes = json_bytes(&seed)?;
@@ -1136,16 +1116,6 @@ fn attest_final(
         final_proof_sha256: sha256(&final_bytes),
         seed: seed_snapshot,
         final_module: final_snapshot,
-        estimate: StructuralEstimate {
-            classification: "structural-estimate-not-measured-rss",
-            formula: "removed-local-functions * 32 + removed-local-globals * 48",
-            removed_local_functions: removed_functions,
-            bytes_per_eager_local_funcref: LOCAL_FUNCREF_BYTES,
-            removed_local_globals: removed_globals,
-            bytes_per_eager_local_global: LOCAL_GLOBAL_BYTES,
-            estimated_bytes_per_instance: estimated_bytes,
-            caveat: "The estimate models Wasmer's eager VMCallerCheckedAnyfunc and local-global structures on a 64-bit host; allocator overhead, sharing, and measured RSS/PSS are deliberately excluded.",
-        },
         sides: seed
             .sides
             .iter()
@@ -1550,7 +1520,7 @@ mod tests {
     }
 
     #[test]
-    fn final_attestation_labels_the_structural_estimate_as_unmeasured() {
+    fn final_attestation_binds_seed_final_and_side_identity() {
         let seed = path("attest-seed.wasm");
         let final_module = path("attest-final.wasm");
         let side = path("attest-side.wasm");
@@ -1581,11 +1551,8 @@ mod tests {
         .unwrap();
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
-        assert_eq!(
-            value["estimate"]["classification"],
-            "structural-estimate-not-measured-rss"
-        );
-        assert_eq!(value["estimate"]["estimated-bytes-per-instance"], 128);
+        assert_eq!(value["seed"]["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(value["final-module"]["sha256"].as_str().unwrap().len(), 64);
         let seed_value: serde_json::Value =
             serde_json::from_slice(&fs::read(&seed_proof).unwrap()).unwrap();
         let final_value: serde_json::Value =

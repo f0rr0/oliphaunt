@@ -56,7 +56,7 @@ def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
     for directory in ("aot", "memory", "bin"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     artifacts = []
-    for index in range(5):
+    for index in range(MODULE.EXPECTED_AOT_COUNT):
         module_digest = f"{index + 1:064X}"
         artifact_path = f"aot/{module_digest}.bin"
         artifact_data = f"artifact-{index}\n".encode()
@@ -134,7 +134,9 @@ class ImmutableCarrierTests(unittest.TestCase):
             self.assertEqual(result["core_profile"], "release-o3")
             self.assertEqual(result["guest_build_recipe_sha256"], "9" * 64)
             self.assertGreater(len(result["entries"]), 7)
-            self.assertEqual(len(result["direct-loader-paths"]), 7)
+            self.assertEqual(
+                len(result["direct-loader-paths"]), MODULE.EXPECTED_AOT_COUNT + 2
+            )
             self.assertTrue(
                 all(
                     entry["uid"] == os.geteuid() and entry["gid"] == os.getegid()

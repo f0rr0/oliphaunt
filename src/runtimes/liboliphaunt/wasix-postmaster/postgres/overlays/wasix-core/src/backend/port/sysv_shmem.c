@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * sysv_shmem.c
- *	  WASIX shared memory implementation for the PostgreSQL 18 research port.
+ *	  WASIX shared memory implementation for the PostgreSQL 18 postmaster.
  *
  * PostgreSQL 18's configure script selects src/backend/port/sysv_shmem.c for
  * every non-Windows port. WASIX does not provide SysV IPC headers, but it does

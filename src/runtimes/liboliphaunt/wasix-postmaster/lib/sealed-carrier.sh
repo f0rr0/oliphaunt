@@ -201,10 +201,7 @@ fresh_aot_producer_recipe_sha256() {
   } | fresh_sha256_stream
 }
 
-# Resolve the exact native executor role from the verified carrier closure.
-# The product role is discriminated solely by the canonical
-# postmaster-executor.receipt sidecar; a carrier without it remains the
-# historical full-headless control lane.
+# Resolve the exact product executor identity from the verified carrier closure.
 fresh_sealed_executor_selection() {
   local carrier_root="$1"
   local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.py"
@@ -221,13 +218,11 @@ fresh_sealed_executor_selection() {
     printf 'sealed executor selection has unexpected fields: %s\n' "$selection" >&2
     return 2
   }
-  case "$FRESH_SEALED_EXECUTOR_ROLE:$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" in
-    full-headless:wasmer-build.receipt|postmaster-product:postmaster-executor.receipt) ;;
-    *)
-      printf 'sealed executor selection role/receipt differs: %s\n' "$selection" >&2
-      return 2
-      ;;
-  esac
+  [ "$FRESH_SEALED_EXECUTOR_ROLE:$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" = \
+    postmaster-product:postmaster-executor.receipt ] || {
+    printf 'sealed executor selection role/receipt differs: %s\n' "$selection" >&2
+    return 2
+  }
   fresh_is_sha256 "$FRESH_SEALED_EXECUTOR_RECEIPT_SHA256" && \
     fresh_is_sha256 "$FRESH_SEALED_EXECUTOR_SHA256" || {
     printf 'sealed executor selection contains a malformed identity\n' >&2
@@ -286,23 +281,11 @@ fresh_verify_sealed_headless_carrier() {
   fi
 
   fresh_sealed_executor_selection "$carrier_root" || return
-  case "$FRESH_SEALED_EXECUTOR_ROLE" in
-    postmaster-product)
-      fresh_require_patched_postmaster_executor \
-        "$headless" \
-        "$carrier_root/$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" \
-        "$receipt" || return
-      ;;
-    full-headless)
-      WASMER_BUILD_RECEIPT="$receipt" \
-        fresh_require_patched_wasmer_headless "$headless" || return
-      ;;
-  esac
-  if [ "$FRESH_SEALED_EXECUTOR_ROLE" = postmaster-product ]; then
-    product_receipt="$carrier_root/postmaster-executor.receipt"
-  else
-    product_receipt="$carrier_root/postmaster-compiler.receipt"
-  fi
+  fresh_require_patched_postmaster_executor \
+    "$headless" \
+    "$carrier_root/$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" \
+    "$receipt" || return
+  product_receipt="$carrier_root/postmaster-executor.receipt"
   [ -f "$product_receipt" ] && [ ! -L "$product_receipt" ] || {
     printf 'missing receipt-bound product compiler identity: %s\n' \
       "$product_receipt" >&2

@@ -3,18 +3,11 @@
 set -euo pipefail
 
 wasix_core_profile_explicit=0
-if [[ -v WASIX_CORE_PROFILE ]] && [ -n "$WASIX_CORE_PROFILE" ]; then
+if [ "${WASIX_CORE_PROFILE+x}" = x ] && [ -n "$WASIX_CORE_PROFILE" ]; then
   wasix_core_profile_explicit=1
 fi
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$FRESH_ROOT/lib/sealed-carrier.sh"
-
-# These values are a closed compile-time contract with the product executor's
-# sealed manifest parser. There is deliberately no environment override.
-readonly SEALED_FILE_CACHE_REQUESTED_POLICY_ID="oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5"
-readonly SEALED_FILE_CACHE_APPROVED_CONFIG_ID="oliphaunt.wasix-postmaster.file-cache.adaptive-linux.embedded-v4"
-readonly SEALED_FILE_CACHE_CONFIG_SHA256="01668b856435cb8c34b2d2324ab55b7f1f5961b8b403c1ee49d9ee4b5c865f53"
-readonly SEALED_FILE_CACHE_PORTABLE_FALLBACK_MODE="observe-only"
 
 usage() {
   cat <<'EOF'
@@ -30,13 +23,11 @@ Options:
   --install-dir DIR         WASIX PostgreSQL prefix (default: WASIX_INSTALL_DIR)
   --postmaster-compiler FILE
                             Receipt-bound bounded-memory LLVM producer
-  --executor-role ROLE      postmaster-product (default) or full-headless
   --postmaster-executor FILE
                             Product-specific sealed-postmaster executor
   --postmaster-executor-receipt FILE
                             Exact product executor build receipt
   --start-proof-tool FILE   Receipt-bound deterministic-start analyzer
-  --headless-wasmer FILE    Full Wasmer headless control executor
   --cache-bucket DIR        Exact precompiled AOT bucket
   --receipt FILE            Canonical Wasmer build receipt
   -h, --help                Show this help
@@ -53,21 +44,15 @@ fail() {
 output=""
 install_dir="$WASIX_INSTALL_DIR"
 postmaster_compiler="$FRESH_POSTMASTER_COMPILER_BIN"
-headless_wasmer="$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
 postmaster_executor="$FRESH_POSTMASTER_EXECUTOR_BIN"
 postmaster_executor_receipt="$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT"
 start_proof_tool="$FRESH_START_PROOF_BIN"
-executor_role="$FRESH_POSTMASTER_EXECUTOR_ROLE"
-executor_role_explicit=0
-headless_wasmer_explicit=0
-postmaster_executor_explicit=0
-postmaster_executor_receipt_explicit=0
 receipt="${WASMER_BUILD_RECEIPT:-$FRESH_WASMER_BUILD_RECEIPT}"
 cache_bucket=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --output|--install-dir|--postmaster-compiler|--executor-role|--postmaster-executor|--postmaster-executor-receipt|--start-proof-tool|--headless-wasmer|--cache-bucket|--receipt)
+    --output|--install-dir|--postmaster-compiler|--postmaster-executor|--postmaster-executor-receipt|--start-proof-tool|--cache-bucket|--receipt)
       option="$1"
       shift
       [ "$#" -gt 0 ] || fail "$option requires a value"
@@ -75,11 +60,9 @@ while [ "$#" -gt 0 ]; do
         --output) output="$1" ;;
         --install-dir) install_dir="$1" ;;
         --postmaster-compiler) postmaster_compiler="$1" ;;
-        --executor-role) executor_role="$1"; executor_role_explicit=1 ;;
-        --postmaster-executor) postmaster_executor="$1"; postmaster_executor_explicit=1 ;;
-        --postmaster-executor-receipt) postmaster_executor_receipt="$1"; postmaster_executor_receipt_explicit=1 ;;
+        --postmaster-executor) postmaster_executor="$1" ;;
+        --postmaster-executor-receipt) postmaster_executor_receipt="$1" ;;
         --start-proof-tool) start_proof_tool="$1" ;;
-        --headless-wasmer) headless_wasmer="$1"; headless_wasmer_explicit=1 ;;
         --cache-bucket) cache_bucket="$1" ;;
         --receipt) receipt="$1" ;;
       esac
@@ -95,36 +78,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if [ "$executor_role_explicit" -eq 0 ]; then
-  if [ "$headless_wasmer_explicit" -eq 1 ] && \
-    { [ "$postmaster_executor_explicit" -eq 1 ] || \
-      [ "$postmaster_executor_receipt_explicit" -eq 1 ]; }
-  then
-    fail 'executor overrides for both roles require an explicit --executor-role'
-  elif [ "$headless_wasmer_explicit" -eq 1 ]; then
-    # Preserve the historical meaning of the existing override while making
-    # the product executor the default for ordinary carrier construction.
-    executor_role=full-headless
-  fi
-fi
-case "$executor_role" in
-  postmaster-product)
-    [ "$headless_wasmer_explicit" -eq 0 ] || {
-      fail '--headless-wasmer is only valid with --executor-role full-headless'
-    }
-    selected_executor="$postmaster_executor"
-    ;;
-  full-headless)
-    { [ "$postmaster_executor_explicit" -eq 0 ] && \
-      [ "$postmaster_executor_receipt_explicit" -eq 0 ]; } || {
-      fail 'postmaster executor overrides require --executor-role postmaster-product'
-    }
-    selected_executor="$headless_wasmer"
-    ;;
-  *)
-    fail "unknown executor role: $executor_role"
-    ;;
-esac
+selected_executor="$postmaster_executor"
 
 # Memory-image v2 proof generation is a carrier-build concern independent of
 # which runtime executable will later validate the sealed carrier.
@@ -153,16 +107,8 @@ fresh_require_patched_postmaster_compiler \
   "$postmaster_executor_receipt" \
   "$receipt" \
   "$postmaster_executor"
-case "$executor_role" in
-  postmaster-product)
-    fresh_require_patched_postmaster_executor \
-      "$selected_executor" "$postmaster_executor_receipt" "$receipt"
-    ;;
-  full-headless)
-    WASMER_BUILD_RECEIPT="$receipt" \
-      fresh_require_patched_wasmer_headless "$selected_executor"
-    ;;
-esac
+fresh_require_patched_postmaster_executor \
+  "$selected_executor" "$postmaster_executor_receipt" "$receipt"
 
 runtime_abi_id="$(fresh_manifest_value "$receipt" runtime_abi_id)"
 output_is_explicit=1
@@ -351,17 +297,12 @@ share_source="$install_dir/share/postgresql"
 [ -d "$share_source" ] && [ ! -L "$share_source" ] || fail "missing PostgreSQL support tree: $share_source"
 
 compiler="$(fresh_wasmer_compiler)"
-[ "$compiler" = llvm ] || fail "sealed carriers currently require the LLVM AOT producer"
-llvm_opt_level="${WASMER_LLVM_OPT_LEVEL:-aggressive}"
-[ "$llvm_opt_level" = aggressive ] || fail "sealed carriers currently require WASMER_LLVM_OPT_LEVEL=aggressive"
+llvm_opt_level=aggressive
 capture_stack_size="${WASMER_STACK_SIZE:-33554432}"
 case "$capture_stack_size" in
   ''|*[!0-9]*) fail "WASMER_STACK_SIZE must be a positive integer" ;;
 esac
 [ "$capture_stack_size" -gt 0 ] || fail "WASMER_STACK_SIZE must be greater than zero"
-if fresh_wasmer_llvm_native_cpu_enabled; then
-  fail "sealed carriers refuse WASMER_LLVM_NATIVE_CPU; use the generic baseline CPU policy"
-fi
 compiler_config="$(fresh_wasmer_compiler_cache_bucket \
   "$compiler" "$llvm_opt_level" "$FRESH_WASMER_ARTIFACT_ABI_VERSION")"
 [ -z "${FRESH_PINNED_WASMER_CACHE_DIR:-}" ] || {
@@ -381,13 +322,29 @@ expected_cache_bucket="$(cd "$expected_cache_bucket" && pwd -P)"
   fail "AOT cache bucket is not bound to the selected producer: expected $expected_cache_bucket, got $cache_bucket"
 }
 
+side_module_policy="$FRESH_ROOT/runtime/policies/sealed-side-modules.v1.tsv"
+[ -f "$side_module_policy" ] && [ ! -L "$side_module_policy" ] || {
+  fail "missing regular sealed side-module policy: $side_module_policy"
+}
+
 required_modules=(
   bin/initdb
   bin/postgres
-  lib/libpq.so.5.18
-  lib/postgresql/dict_snowball.so
-  lib/postgresql/plpgsql.so
 )
+while IFS=$'\t' read -r relative aliases abi_policy extra; do
+  case "$relative" in
+    ""|'#'*) continue ;;
+  esac
+  [ -z "${extra:-}" ] && [ -n "${aliases:-}" ] && [ -n "${abi_policy:-}" ] || {
+    fail "invalid sealed side-module policy row: $relative"
+  }
+  case "$relative" in
+    lib/*.so|lib/*.so.*|lib/postgresql/*.so) ;;
+    *) fail "invalid sealed side-module path: $relative" ;;
+  esac
+  required_modules+=("$relative")
+done <"$side_module_policy"
+[ "${#required_modules[@]}" -gt 2 ] || fail "sealed side-module policy is empty"
 for relative in "${required_modules[@]}"; do
   source_path="$install_dir/$relative"
   [ -f "$source_path" ] && [ ! -L "$source_path" ] || fail "missing regular runtime-closure module: $source_path"
@@ -491,15 +448,34 @@ copy_artifact() {
 
 copy_artifact runtime:initdb executable bin/initdb /bin/initdb
 copy_artifact runtime:postgres executable bin/postgres /bin/postgres
-copy_artifact runtime:libpq.so.5.18 side-module lib/libpq.so.5.18 ""
-copy_artifact runtime:dict_snowball.so side-module lib/postgresql/dict_snowball.so ""
-copy_artifact runtime:plpgsql.so side-module lib/postgresql/plpgsql.so ""
+while IFS=$'\t' read -r relative aliases abi_policy extra; do
+  case "$relative" in
+    ""|'#'*) continue ;;
+  esac
+  artifact_name="runtime:${relative##*/}"
+  copy_artifact "$artifact_name" side-module "$relative" ""
 
-# WASIX's dynamic loader resolves the two normal libpq soname aliases.  Keep
-# each alias a regular carrier file; a symlink would violate the sealed-path
-# open policy and could become dangling after relocation.
-cp -p "$staging/lib/libpq.so.5.18" "$staging/lib/libpq.so.5"
-cp -p "$staging/lib/libpq.so.5.18" "$staging/lib/libpq.so"
+  # Dynamic-loader aliases are policy, not ad-hoc carrier knowledge. Keep each
+  # alias as a regular byte-identical file because sealed paths reject symlinks.
+  if [ "$aliases" != - ]; then
+    old_ifs="$IFS"
+    IFS=','
+    for alias_relative in $aliases; do
+      IFS="$old_ifs"
+      case "$alias_relative" in
+        lib/*.so|lib/*.so.*|lib/postgresql/*.so) ;;
+        *) fail "invalid sealed side-module alias: $alias_relative" ;;
+      esac
+      [ ! -e "$staging/$alias_relative" ] || {
+        fail "duplicate sealed side-module alias: $alias_relative"
+      }
+      mkdir -p "$staging/$(dirname "$alias_relative")"
+      cp -p "$staging/$relative" "$staging/$alias_relative"
+      IFS=','
+    done
+    IFS="$old_ifs"
+  fi
+done <"$side_module_policy"
 
 if find "$staging" -type l -print -quit | grep -q .; then
   fail "staged carrier contains a symbolic link"
@@ -511,18 +487,10 @@ fi
 sealed_receipt="$staging/wasmer-build.receipt"
 cp -p "$receipt" "$sealed_receipt"
 chmod 0444 "$sealed_receipt"
-sealed_postmaster_executor_receipt=""
-sealed_product_build_receipt=""
-if [ "$executor_role" = postmaster-product ]; then
-  sealed_postmaster_executor_receipt="$staging/postmaster-executor.receipt"
-  cp -p "$postmaster_executor_receipt" "$sealed_postmaster_executor_receipt"
-  chmod 0444 "$sealed_postmaster_executor_receipt"
-  sealed_product_build_receipt="$sealed_postmaster_executor_receipt"
-else
-  sealed_product_build_receipt="$staging/postmaster-compiler.receipt"
-  cp -p "$postmaster_executor_receipt" "$sealed_product_build_receipt"
-  chmod 0444 "$sealed_product_build_receipt"
-fi
+sealed_postmaster_executor_receipt="$staging/postmaster-executor.receipt"
+cp -p "$postmaster_executor_receipt" "$sealed_postmaster_executor_receipt"
+chmod 0444 "$sealed_postmaster_executor_receipt"
+sealed_product_build_receipt="$sealed_postmaster_executor_receipt"
 guest_build_receipt="$staging/guest-build.receipt"
 cp -p "$guest_build_receipt_source" "$guest_build_receipt"
 chmod 0444 "$guest_build_receipt"
@@ -553,18 +521,10 @@ fresh_require_patched_postmaster_compiler \
   "$sealed_product_build_receipt" \
   "$sealed_receipt" \
   "$postmaster_executor"
-case "$executor_role" in
-  postmaster-product)
-    fresh_require_patched_postmaster_executor \
-      "$staging/bin/wasmer-headless" \
-      "$sealed_postmaster_executor_receipt" \
-      "$sealed_receipt"
-    ;;
-  full-headless)
-    WASMER_BUILD_RECEIPT="$sealed_receipt" \
-      fresh_require_patched_wasmer_headless "$staging/bin/wasmer-headless"
-    ;;
-esac
+fresh_require_patched_postmaster_executor \
+  "$staging/bin/wasmer-headless" \
+  "$sealed_postmaster_executor_receipt" \
+  "$sealed_receipt"
 snapshot_runtime_abi_id="$(fresh_manifest_value "$sealed_receipt" runtime_abi_id)"
 [ "$snapshot_runtime_abi_id" = "$runtime_abi_id" ] || {
   fail "runtime ABI changed while snapshotting the build receipt"
@@ -643,10 +603,6 @@ write_sealed_manifest() {
     "$FRESH_WASMER_VERSION" \
     "$FRESH_WASMER_WASIX_VERSION" \
     "$FRESH_WASMER_ARTIFACT_ABI_VERSION" \
-    "$SEALED_FILE_CACHE_REQUESTED_POLICY_ID" \
-    "$SEALED_FILE_CACHE_APPROVED_CONFIG_ID" \
-    "$SEALED_FILE_CACHE_CONFIG_SHA256" \
-    "$SEALED_FILE_CACHE_PORTABLE_FALLBACK_MODE" \
     "$linear_memory_receipt_relative" \
     "$linear_memory_install_receipt_sha256" <<'PY'
 import hashlib
@@ -677,10 +633,6 @@ import sys
     wasmer_version,
     wasmer_wasix_version,
     artifact_abi_version,
-    file_cache_requested_policy_id,
-    file_cache_approved_config_id,
-    file_cache_config_sha256,
-    file_cache_portable_fallback_mode,
     linear_memory_receipt_path,
     linear_memory_receipt_sha256,
 ) = sys.argv[1:]
@@ -819,12 +771,6 @@ manifest = {
         "static-access-lowering": linear_memory_receipt["static-access-lowering"],
         "install-receipt-path": linear_memory_receipt_path,
         "install-receipt-sha256": linear_memory_receipt_sha256,
-    },
-    "file-cache-policy": {
-        "requested-policy-id": file_cache_requested_policy_id,
-        "approved-config-id": file_cache_approved_config_id,
-        "config-sha256": file_cache_config_sha256,
-        "portable-fallback-mode": file_cache_portable_fallback_mode,
     },
     "wasm-features": ["exceptions", "threads"],
     "entrypoint": "runtime:postgres",
@@ -1503,7 +1449,7 @@ PY
 trap - EXIT HUP INT TERM
 
 printf 'built sealed headless WASIX PostgreSQL carrier: %s\n' "$output"
-printf 'executor role: %s\n' "$executor_role"
+printf 'executor role: postmaster-product\n'
 printf 'runtime ABI ID: %s\n' "$runtime_abi_id"
 printf 'source fingerprint: %s\n' "$source_fingerprint"
 printf 'payload inventory SHA-256: %s\n' "$payload_inventory_sha256"

@@ -15,6 +15,15 @@ POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT="${POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT:-
 WASMER_TARGET_DIR="$WASMER_ROOT/target"
 POSTMASTER_EXECUTOR_TARGET_DIR="$FRESH_POSTMASTER_EXECUTOR_TARGET_DIR"
 POSTMASTER_COMPILER_TARGET_DIR="$FRESH_POSTMASTER_COMPILER_TARGET_DIR"
+PORTABLE_INPUTS="${OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS:-0}"
+
+case "$PORTABLE_INPUTS" in
+	0|1) ;;
+	*)
+		printf 'OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS must be 0 or 1\n' >&2
+		exit 2
+		;;
+esac
 
 if [ -n "${CARGO_TARGET_DIR:-}" ] || [ -n "${CARGO_BUILD_TARGET:-}" ] ||
 	{ [ -n "${CARGO_INCREMENTAL:-}" ] && [ "$CARGO_INCREMENTAL" != 0 ]; }; then
@@ -88,8 +97,22 @@ UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
 	printf 'missing prepared Wasmer checkout: %s\n' "$WASMER_ROOT" >&2
 	exit 2
 }
-UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
-	"$FRESH_ROOT/runtime/bin/record-code-grounding.sh" --strict
+while IFS=$'\t' read -r capability _owner _basis source_paths _rest; do
+	case "${capability:-}" in ''|'#'*) continue ;; esac
+	IFS=';' read -r -a source_refs <<<"$source_paths"
+	for source_ref in "${source_refs[@]}"; do
+		case "$source_ref" in
+			project:*) source_path="$FRESH_ROOT/${source_ref#project:}" ;;
+			wasmer:*) source_path="$WASMER_ROOT/${source_ref#wasmer:}" ;;
+			wasix-libc:*) source_path="$WASIX_LIBC_ROOT/${source_ref#wasix-libc:}" ;;
+			*) printf 'unknown capability source reference: %s\n' "$source_ref" >&2; exit 2 ;;
+		esac
+		[ -e "$source_path" ] || {
+			printf 'missing source for capability %s: %s\n' "$capability" "$source_ref" >&2
+			exit 2
+		}
+	done
+done <"$FRESH_ROOT/runtime/capabilities.tsv"
 python3 "$FRESH_ROOT/runtime/bin/verify-runtime-state-ownership.py" \
 	--wasmer-root "$WASMER_ROOT"
 python3 "$FRESH_ROOT/runtime/bin/verify-runtime-execution-ownership.py" \
@@ -187,13 +210,15 @@ cargo test \
 	trap::traphandlers::tests::tls_stack_reuses_mapping_without_global_queue \
 	-- \
 	--exact
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/compiler/Cargo.toml" \
-	engine::code_memory::tests::strict_linux_x86_64::relocated_regular_file_preserves_base_bytes_permissions_and_execution \
-	-- \
-	--exact
+if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
+	cargo test \
+		--locked \
+		--target-dir "$WASMER_TARGET_DIR" \
+		--manifest-path "$WASMER_ROOT/lib/compiler/Cargo.toml" \
+		engine::code_memory::tests::strict_linux_x86_64::relocated_regular_file_preserves_base_bytes_permissions_and_execution \
+		-- \
+		--exact
+fi
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -628,32 +653,6 @@ listed_tests="$(cargo test \
 	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
 	--lib \
 	--no-default-features \
-	--features sys-minimal,wasmer/cranelift \
-	perf::tests \
-	-- \
-	--list)"
-require_listed_tests "$listed_tests" \
-	'perf::tests::wait_dump_config_is_disabled_without_both_interval_and_file' \
-	'perf::tests::wait_dump_zero_limit_means_unlimited_and_verbose_is_explicit' \
-	'perf::tests::wait_dump_order_is_strictly_monotonic' \
-	'perf::tests::runtime_state_record_schema_and_field_order_are_exact' \
-	'perf::tests::runtime_fence_request_log_and_commit_schemas_are_exact' \
-	'perf::tests::committed_fence_ack_binds_the_synced_log_prefix' \
-	'perf::tests::append_cursor_is_not_inflated_by_an_unrelated_writer'
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,wasmer/cranelift \
-	perf::tests
-listed_tests="$(cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
 	--features sys-minimal,wasmer/cranelift,ctrlc \
 	os::task::task_join_handle::tests \
 	-- \
@@ -818,77 +817,6 @@ cargo test \
 listed_tests="$(cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,host-fs,wasmer/cranelift \
-	runtime::file_cache::tests \
-	-- \
-	--list)"
-require_listed_tests "$listed_tests" \
-	'runtime::file_cache::tests::composite_forwards_each_event_once_to_each_configured_role' \
-	'runtime::file_cache::tests::observe_only_telemetry_is_exact_and_atomically_published' \
-	'runtime::file_cache::tests::pinned_file_is_owned_path_free_and_fails_closed_after_mutation' \
-	'runtime::file_cache::tests::public_telemetry_preflight_uses_the_atomic_publisher_contract' \
-	'runtime::file_cache::tests::raw_abi_validation_is_ordered_and_pointer_width_independent' \
-	'runtime::file_cache::tests::telemetry_configuration_rejects_relative_and_symlink_destinations'
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,host-fs,wasmer/cranelift \
-	runtime::file_cache::tests
-listed_tests="$(cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,wasmer/cranelift \
-	runtime::adaptive_file_cache::tests \
-	-- \
-	--list)"
-require_listed_tests "$listed_tests" \
-	'runtime::adaptive_file_cache::tests::adaptive_telemetry_uses_hardened_atomic_publisher_and_identifies_fallback' \
-	'runtime::adaptive_file_cache::tests::denied_admission_is_atomically_published_and_deny_unknown_on_readback' \
-	'runtime::adaptive_file_cache::tests::discovery_errors_map_to_three_stable_non_verbose_fallback_reasons' \
-	'runtime::adaptive_file_cache::tests::normal_sync_and_validation_fast_paths_do_not_wait_for_policy_mutex' \
-	'runtime::adaptive_file_cache::tests::sealed_v5_profile_queues_below_l2_and_keeps_relations_observe_only' \
-	'runtime::adaptive_file_cache::tests::v5_rejects_any_attempt_to_reenable_immediate_wal_action' \
-	'runtime::adaptive_file_cache::tests::unflagged_durable_wal_is_retained_without_sampling_pressure' \
-	'runtime::adaptive_file_cache::tests::contended_action_gate_never_blocks_relation_and_only_queues_proven_wal' \
-	'runtime::adaptive_file_cache::tests::legacy_bit0_wal_is_observable_but_never_actionable' \
-	'runtime::adaptive_file_cache::tests::only_bit1_wal_at_level3_can_bypass_global_dirty_veto' \
-	'runtime::adaptive_file_cache::tests::psi_worsening_after_advice_in_exact_window_trips_and_recovers' \
-	'runtime::adaptive_file_cache::tests::sampling_error_fails_closed' \
-	'runtime::adaptive_file_cache::tests::wal_requires_canonical_complete_segment_without_alignment_trimming' \
-	'runtime::adaptive_file_cache::tests::one_hundred_wal_segments_are_bounded_and_only_one_acts_per_fresh_sample' \
-	'runtime::adaptive_file_cache::tests::fresh_250ms_samples_gate_one_candidate_only_in_l2_or_l3' \
-	'runtime::adaptive_file_cache::tests::synchronous_revoke_cancels_exact_identity_and_conserves_the_ledger' \
-	'runtime::adaptive_file_cache::tests::odd_global_revoke_sequence_rejects_an_offer_pinned_before_the_boundary' \
-	'runtime::adaptive_file_cache::tests::revoke_waits_for_inflight_advice_before_returning' \
-	'runtime::adaptive_file_cache::tests::deferred_wal_capacity_includes_inflight_budget_and_evicts_oldest' \
-	'runtime::adaptive_file_cache::tests::deferred_test_lock_contention_drops_once_with_exact_conservation' \
-	'runtime::adaptive_file_cache::tests::deferred_generation_invalidation_is_benign_and_advice_error_is_terminal' \
-	'runtime::adaptive_file_cache::tests::sampler_clock_and_breaker_degradation_flush_deferred_ownership' \
-	'runtime::adaptive_file_cache::tests::maintenance_expires_deferred_pin_without_an_advice_trigger' \
-	'runtime::adaptive_file_cache::tests::finalization_flushes_queue_and_publishes_terminal_zero_receipt' \
-	'runtime::adaptive_file_cache::tests::finalization_rejects_a_previously_published_live_snapshot' \
-	'runtime::adaptive_file_cache::tests::threaded_finalization_waits_for_action_then_publishes_terminal_zero' \
-	'runtime::adaptive_file_cache::tests::admission_word_and_seqcst_wait_protocol_cover_adversarial_interleavings'
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
-	--lib \
-	--no-default-features \
-	--features sys-minimal,wasmer/cranelift \
-	runtime::adaptive_file_cache::tests
-listed_tests="$(cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
 	--manifest-path "$WASMER_ROOT/lib/oliphaunt-wasix-postmaster-executor/Cargo.toml" \
 	--lib \
 	--no-default-features \
@@ -897,10 +825,8 @@ listed_tests="$(cargo test \
 	-- \
 	--list)"
 require_listed_tests "$listed_tests" \
-	'sealed::tests::runtime_policy_identity_approved_config_hash_matches_compiled_default_telemetry' \
 	'sealed::tests::runtime_policy_identity_requires_the_exact_postmaster_closure' \
 	'sealed::tests::runtime_policy_identity_parser_rejects_unknown_manifest_fields' \
-	'sealed::tests::runtime_policy_identity_rejects_unknown_or_mismatched_file_cache_policy' \
 	'sealed::tests::runtime_policy_identity_selects_only_product_executables'
 cargo test \
 	--locked \
@@ -995,7 +921,6 @@ require_listed_tests "$listed_tests" \
 	'args::tests::parses_the_complete_closed_product_contract' \
 	'args::tests::denies_unknown_generic_wasmer_options' \
 	'args::tests::required_abi_and_cache_assertions_fail_closed' \
-	'execute::tests::adaptive_telemetry_is_a_deterministic_distinct_sibling' \
 	'execute::tests::product_runtime_policy_is_declared_at_the_execution_boundary' \
 	'execute::tests::product_runner_applies_the_same_guest_and_host_task_budget' \
 	'execute::tests::process_tree_join_precedes_one_shot_product_evidence_finalization' \
@@ -1160,7 +1085,11 @@ cargo build \
 	--release \
 	--no-default-features \
 	--features "$FRESH_POSTMASTER_COMPILER_FEATURES"
-if [ -f "$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest" ] && \
+if [ "$PORTABLE_INPUTS" -eq 1 ]; then
+	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
+		"$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh" \
+		--no-build --portable-inputs
+elif [ -f "$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest" ] && \
 	UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
 	"$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh" --no-build; then
 	:

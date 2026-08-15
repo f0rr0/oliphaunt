@@ -62,6 +62,13 @@ def manifest() -> dict[str, object]:
         {"name": "runtime:dict_snowball.so", "module-sha256": "4" * 64},
         {"name": "runtime:plpgsql.so", "module-sha256": "5" * 64},
     ]
+    artifacts.extend(
+        {
+            "name": f"runtime:declared_side_module_{index:02d}.so",
+            "module-sha256": f"{index:064x}",
+        }
+        for index in range(10, 34)
+    )
     return {"artifacts": artifacts}
 
 
@@ -130,6 +137,62 @@ def record(module_hash: str, kind: str, pid: int) -> dict[str, object]:
     }
 
 
+def portable_record(module_hash: str, kind: str, pid: int) -> dict[str, object]:
+    value = record(module_hash, kind, pid)
+    unsupported = {
+        "state": "unsupported-platform",
+        "page_size": None,
+        "total_pages": None,
+        "resident_pages": None,
+        "resident_bytes": None,
+        "errno": None,
+    }
+    value.update(
+        snapshot_mode=(
+            "streamed-copy"
+            if kind == "aot"
+            else "streamed-copy-sealed-backing"
+        ),
+        source_bytes_read=MAPPED_SIZE,
+        snapshot_bytes_written=MAPPED_SIZE,
+        read_advice_supported=False,
+        read_advice_calls=0,
+        read_advice_successes=0,
+        source_cache_eviction_supported=False,
+        source_cache_eviction_calls=0,
+        source_cache_eviction_successes=0,
+        snapshot_cache_eviction_applicable=kind == "aot",
+        snapshot_cache_eviction_supported=kind != "aot",
+        snapshot_cache_eviction_calls=0,
+        snapshot_cache_eviction_successes=0,
+        mapping_cache_eviction_supported=kind != "preinitialized-memory",
+        mapping_cache_eviction_calls=0,
+        mapping_cache_eviction_successes=0,
+        residency_after_hash_inspect=dict(unsupported),
+        residency_after_archive_release=(
+            dict(unsupported)
+            if kind == "aot"
+            else {
+                "state": "not-applicable",
+                "page_size": None,
+                "total_pages": None,
+                "resident_pages": None,
+                "resident_bytes": None,
+                "errno": None,
+            }
+        ),
+        source_residency_before_eviction=dict(unsupported),
+        source_residency_after_eviction=dict(unsupported),
+        residency_after_eviction=dict(unsupported),
+        write_policy=(
+            "private-streamed-copy-no-sync"
+            if kind == "aot"
+            else "private-sealed-backing-no-sync"
+        ),
+    )
+    return value
+
+
 def summary(module_hash: str, pid: int, instances: int = 1) -> dict[str, object]:
     assert instances > 0
     reuse_successes = instances - 1
@@ -179,6 +242,16 @@ def lifecycle_records(
     return records
 
 
+def portable_lifecycle_records() -> list[dict[str, object]]:
+    records = lifecycle_records()
+    return [
+        portable_record(item["module_sha256"], item["artifact_kind"], item["pid"])
+        if item.get("schema") == MODULE.SCHEMA
+        else item
+        for item in records
+    ]
+
+
 def find_summary(
     records: list[dict[str, object]], module_hash: str, pid: int
 ) -> dict[str, object]:
@@ -219,6 +292,24 @@ class LoaderAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.ValidationError, message):
                 MODULE.validate(audit_path, manifest_path, root / "validation.tsv")
 
+    def assert_rejected_with_policy(
+        self,
+        records: list[dict[str, object]],
+        message: str,
+        *,
+        snapshot_policy: str,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path, audit_path = self.write_fixture(root, records)
+            with self.assertRaisesRegex(MODULE.ValidationError, message):
+                MODULE.validate(
+                    audit_path,
+                    manifest_path,
+                    root / "validation.tsv",
+                    snapshot_policy=snapshot_policy,
+                )
+
     def test_exact_direct_aot_and_memory_evidence_passes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -229,10 +320,10 @@ class LoaderAuditTests(unittest.TestCase):
                 audit_path,
                 manifest_path,
                 output,
-                required_snapshot_mode="direct-immutable-inode",
+                snapshot_policy="direct-immutable",
             )
             self.assertIn(
-                "\tpassed\t6\t3\t3\t1\t1\t101\t202\tdirect-immutable-inode\t",
+                "\tpassed\t6\t3\t3\t1\t1\t101\t202\tdirect-immutable\t",
                 output.read_text(),
             )
             header, result = output.read_text().splitlines()
@@ -245,6 +336,33 @@ class LoaderAuditTests(unittest.TestCase):
                     "3\t3\t3\t0\t3\t3\t3\t0\t12288\t0\t0\t0\t3\t0\t0"
                 )
             )
+
+    def test_portable_copy_aot_and_memory_evidence_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path, audit_path = self.write_fixture(
+                root,
+                portable_lifecycle_records(),
+            )
+            output = root / "validation.tsv"
+            MODULE.validate(
+                audit_path,
+                manifest_path,
+                output,
+                snapshot_policy="portable-copy",
+            )
+            header, values = output.read_text().splitlines()
+            result = dict(zip(header.split("\t"), values.split("\t"), strict=True))
+            self.assertEqual(result["snapshot_policy"], "portable-copy")
+            self.assertEqual(result["records"], "6")
+            self.assertEqual(result["residency_after_hash_inspect_bytes"], "0")
+
+    def test_portable_policy_rejects_direct_activation(self) -> None:
+        self.assert_rejected_with_policy(
+            lifecycle_records(),
+            "snapshot mode differs from portable-copy policy",
+            snapshot_policy="portable-copy",
+        )
 
     def test_destination_appearing_at_commit_is_not_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -345,7 +463,7 @@ class LoaderAuditTests(unittest.TestCase):
                 audit_path,
                 manifest_path,
                 output,
-                required_snapshot_mode="direct-immutable-inode",
+                snapshot_policy="direct-immutable",
                 expected_initdb_executions=2,
                 expected_postgres_executions=3,
             )
@@ -373,7 +491,7 @@ class LoaderAuditTests(unittest.TestCase):
         for field, value, message in (
             ("snapshot_mode", "reflink", "non-direct snapshot mode"),
             ("source_bytes_written", 1, "source bytes were written"),
-            ("snapshot_bytes_written", 1, "snapshot bytes were written"),
+            ("snapshot_bytes_written", 1, "snapshot byte accounting differs"),
             ("sync_calls", 1, "loader issued sync calls"),
         ):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
@@ -390,12 +508,12 @@ class LoaderAuditTests(unittest.TestCase):
             records = lifecycle_records()
             records[3]["snapshot_mode"] = "direct-read-only-filesystem"
             manifest_path, audit_path = self.write_fixture(root, records)
-            with self.assertRaisesRegex(MODULE.ValidationError, "snapshot mode differs from required"):
+            with self.assertRaisesRegex(MODULE.ValidationError, "snapshot mode differs from direct-immutable policy"):
                 MODULE.validate(
                     audit_path,
                     manifest_path,
                     root / "validation.tsv",
-                    required_snapshot_mode="direct-immutable-inode",
+                    snapshot_policy="direct-immutable",
                 )
 
     def test_missing_memory_activation_and_pid_mismatch_are_rejected(self) -> None:

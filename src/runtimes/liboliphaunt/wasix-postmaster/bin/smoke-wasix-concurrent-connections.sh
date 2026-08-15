@@ -3,6 +3,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
+source "$FRESH_ROOT/lib/sealed-carrier.sh"
 
 usage() {
   cat <<'USAGE'
@@ -19,6 +20,7 @@ Options:
   --timeout SECONDS     Wall timeout for the client fanout. Default: 60.
   --port PORT           TCP port. Default: PGPORT or 55445.
   --label NAME          Report/run label. Default: wasix-concurrent-connections.
+  --sealed-carrier DIR  Run the exact compiler-free release carrier.
   --skip-build          Require an existing WASIX install.
   --skip-precompile     Reuse the current Wasmer cache.
   --postgres-guc GUC    Extra postmaster -c name=value setting. May repeat.
@@ -38,6 +40,7 @@ skip_build=0
 skip_precompile="${WASIX_SKIP_PRECOMPILE:-0}"
 postgres_gucs=()
 wasmer_extra_args=()
+sealed_carrier=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -88,6 +91,18 @@ while [ "$#" -gt 0 ]; do
         exit 2
       fi
       label="$1"
+      ;;
+    --sealed-carrier)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "--sealed-carrier requires a directory" >&2
+        exit 2
+      fi
+      [ -z "$sealed_carrier" ] || {
+        echo "--sealed-carrier may only be specified once" >&2
+        exit 2
+      }
+      sealed_carrier="$1"
       ;;
     --skip-build)
       skip_build=1
@@ -148,10 +163,21 @@ awk -v value="$hold_seconds" 'BEGIN {
 
 fresh_ensure_dirs
 
-if [ ! -x "$NATIVE_INSTALL_DIR/bin/psql" ]; then
-  "$FRESH_ROOT/bin/build-native-oracle.sh" >/dev/null
+if [ ! -x "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" ]; then
+  "$FRESH_ROOT/bin/build-native-client-tools.sh" >/dev/null
 fi
-if [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ] || [ ! -x "$WASIX_INSTALL_DIR/bin/initdb" ]; then
+runtime_root="$WASIX_INSTALL_DIR"
+if [ -n "$sealed_carrier" ]; then
+  [ -d "$sealed_carrier" ] && [ ! -L "$sealed_carrier" ] || {
+    printf 'invalid sealed carrier: %s\n' "$sealed_carrier" >&2
+    exit 2
+  }
+  sealed_carrier="$(cd "$sealed_carrier" && pwd -P)"
+  fresh_verify_sealed_headless_carrier "$sealed_carrier"
+  runtime_root="$sealed_carrier"
+  skip_build=1
+  skip_precompile=1
+elif [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ] || [ ! -x "$WASIX_INSTALL_DIR/bin/initdb" ]; then
   if [ "$skip_build" -eq 1 ]; then
     printf 'missing WASIX install with --skip-build: %s\n' "$WASIX_INSTALL_DIR" >&2
     exit 2
@@ -159,14 +185,22 @@ if [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ] || [ ! -x "$WASIX_INSTALL_DIR/bin/
   "$FRESH_ROOT/bin/build-wasix-core.sh" >/dev/null
 fi
 
-wasmer_bin="$(fresh_wasmer_bin)"
+if [ -n "$sealed_carrier" ]; then
+  wasmer_bin="$sealed_carrier/bin/wasmer-headless"
+else
+  wasmer_bin="$(fresh_wasmer_bin)"
+fi
 wasmer_bin_hash="$(fresh_wasmer_bin_hash "$wasmer_bin")"
-wasmer_cache_dir="$(fresh_wasmer_cache_dir "$wasmer_bin")"
-wasmer_compiler="$(fresh_wasmer_compiler)"
-wasmer_llvm_opt_level="${WASMER_LLVM_OPT_LEVEL:-aggressive}"
+wasmer_cache_dir="disabled"
+wasmer_compiler="headless"
+wasmer_llvm_opt_level=aggressive
 wasmer_stack_size="${WASMER_STACK_SIZE:-33554432}"
 wasmer_compiler_threads="${WASMER_COMPILER_THREADS:-$(fresh_jobs)}"
-fresh_require_wasmer_compiler_cli "$wasmer_bin" "$wasmer_compiler" run
+if [ -z "$sealed_carrier" ]; then
+  wasmer_cache_dir="$(fresh_wasmer_cache_dir "$wasmer_bin")"
+  wasmer_compiler="$(fresh_wasmer_compiler)"
+  fresh_require_wasmer_compiler_cli "$wasmer_bin" "$wasmer_compiler" run
+fi
 
 if [ "$skip_precompile" != "1" ]; then
   "$FRESH_ROOT/bin/precompile-wasix-core.sh" >/dev/null
@@ -208,13 +242,10 @@ fresh_write_report_header "$summary" "WASIX Concurrent Connections Smoke"
   printf -- '- Wasmer version: `%s`\n' "$(fresh_wasmer_version "$wasmer_bin" 2>/dev/null || true)"
   printf -- '- Wasmer cache dir: `%s`\n' "$wasmer_cache_dir"
   printf -- '- WASIX core profile: `%s`\n' "$WASIX_CORE_PROFILE"
-  printf -- '- WASIX install dir: `%s`\n' "$WASIX_INSTALL_DIR"
+  printf -- '- Runtime payload: `%s`\n' "$runtime_root"
   printf -- '- Pinned runtime: `%s`\n' "${FRESH_PINNED_RUNTIME_NAME:-}"
   printf -- '- Wasmer compiler: `%s`\n' "$wasmer_compiler"
   printf -- '- Wasmer LLVM opt level: `%s`\n' "$wasmer_llvm_opt_level"
-  printf -- '- WASMER_LLVM_NATIVE_CPU: `%s`\n' "${WASMER_LLVM_NATIVE_CPU:-0}"
-  printf -- '- WASMER_LLVM_FULL_O3_PIPELINE: `%s`\n' "${WASMER_LLVM_FULL_O3_PIPELINE:-0}"
-  printf -- '- WASMER_LLVM_INDIRECT_CALL_CACHE: `%s`\n' "${WASMER_LLVM_INDIRECT_CALL_CACHE:-0}"
   printf -- '- Wasmer stack size: `%s`\n' "$wasmer_stack_size"
   printf -- '- Wasmer compiler threads: `%s`\n' "$wasmer_compiler_threads"
   printf -- '- Runtime network capability: `--net` (host networking requested; host policy still applies)\n'
@@ -311,24 +342,33 @@ select
 from wasix_concurrent_probe;
 SQL
 
-wasmer_env=(
-  "WASMER_DIR=$FRESH_WORK_ROOT/tools/wasmer-home"
-  "WASMER_CACHE_DIR=$wasmer_cache_dir"
-)
+wasmer_env=()
 wasmer_args=(
   run
   --quiet
 )
-while IFS= read -r arg; do
-  wasmer_args+=("$arg")
-done < <(fresh_wasmer_compiler_args_for "$wasmer_bin" run "$wasmer_compiler" "$wasmer_llvm_opt_level" "$wasmer_compiler_threads")
+if [ -n "$sealed_carrier" ]; then
+  wasmer_args+=(
+    --disable-cache
+    --sealed-module-manifest "$sealed_carrier/manifest.json"
+    --volume "$sealed_carrier:$sealed_carrier"
+  )
+else
+  wasmer_env=(
+    "WASMER_DIR=$FRESH_WORK_ROOT/tools/wasmer-home"
+    "WASMER_CACHE_DIR=$wasmer_cache_dir"
+  )
+  while IFS= read -r arg; do
+    wasmer_args+=("$arg")
+  done < <(fresh_wasmer_compiler_args_for "$wasmer_bin" run "$wasmer_compiler" "$wasmer_llvm_opt_level" "$wasmer_compiler_threads")
+fi
 wasmer_args+=(
   --stack-size "$wasmer_stack_size"
   --enable-exceptions
   --enable-threads
   --net
   --volume "$REPO_ROOT:$REPO_ROOT"
-  --volume "$WASIX_INSTALL_DIR/lib:/lib"
+  --volume "$runtime_root/lib:/lib"
   --volume "$dev_shm:/dev/shm"
 )
 if [ "${#wasmer_extra_args[@]}" -gt 0 ]; then
@@ -336,7 +376,7 @@ if [ "${#wasmer_extra_args[@]}" -gt 0 ]; then
 fi
 
 env "${wasmer_env[@]}" \
-  "$wasmer_bin" "${wasmer_args[@]}" "$WASIX_INSTALL_DIR/bin/initdb" -- \
+  "$wasmer_bin" "${wasmer_args[@]}" "$runtime_root/bin/initdb" -- \
     -D "$pgdata" \
     -A trust \
     --no-locale \
@@ -370,7 +410,7 @@ fi
 
 set +e
 env "${wasmer_env[@]}" \
-  "$wasmer_bin" "${wasmer_args[@]}" "$WASIX_INSTALL_DIR/bin/postgres" -- \
+  "$wasmer_bin" "${wasmer_args[@]}" "$runtime_root/bin/postgres" -- \
     "${postgres_args[@]}" >"$server_log" 2>&1 &
 server_pid=$!
 set -e
@@ -380,7 +420,7 @@ conn="postgresql://wasix@127.0.0.1:$port/postgres"
 ready=0
 readiness_reason=""
 for _ in $(seq 1 300); do
-  if "$NATIVE_INSTALL_DIR/bin/psql" "$conn" -X -q -c 'select 1' >>"$wait_log" 2>&1; then
+  if "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" -X -q -c 'select 1' >>"$wait_log" 2>&1; then
     ready=1
     break
   fi
@@ -409,7 +449,7 @@ if [ "$ready" -ne 1 ]; then
   exit 2
 fi
 
-"$NATIVE_INSTALL_DIR/bin/psql" "$conn" -X -q -v ON_ERROR_STOP=1 >"$setup_log" 2>&1 <<'SQL'
+"$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" -X -q -v ON_ERROR_STOP=1 >"$setup_log" 2>&1 <<'SQL'
 drop table if exists wasix_concurrent_probe;
 create table wasix_concurrent_probe (
   client_id integer not null,
@@ -428,7 +468,7 @@ client_logs=()
 for client in $(seq 1 "$connections"); do
   client_log="$report_dir/client-$client.log"
   client_logs+=("$client_log")
-  PGCONNECT_TIMEOUT=10 "$NATIVE_INSTALL_DIR/bin/psql" "$conn" \
+  PGCONNECT_TIMEOUT=10 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
     -X -q \
     -v ON_ERROR_STOP=1 \
     -v "client_id=$client" \
@@ -486,7 +526,7 @@ done
 
 set +e
 run_logged_timeout "$verify_timeout" "$verify_log" \
-  "$NATIVE_INSTALL_DIR/bin/psql" "$conn" \
+  "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
     -X -q -A -t -F $'\t' \
     -v ON_ERROR_STOP=1 \
     -f "$verify_sql"

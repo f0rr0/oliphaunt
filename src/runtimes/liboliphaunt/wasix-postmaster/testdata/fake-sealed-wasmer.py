@@ -13,17 +13,6 @@ import pathlib
 import sys
 
 
-EXPECTED_FILE_CACHE_POLICY = {
-    "requested-policy-id": "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5",
-    "approved-config-id": (
-        "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.embedded-v4"
-    ),
-    "config-sha256": (
-        "01668b856435cb8c34b2d2324ab55b7f1f5961b8b403c1ee49d9ee4b5c865f53"
-    ),
-    "portable-fallback-mode": "observe-only",
-}
-
 
 def fail(message):
     raise SystemExit(f"fake sealed Wasmer: {message}")
@@ -144,9 +133,6 @@ def main():
     volume_for_guest(volumes, "/lib")
     with manifest_path.open(encoding="utf-8") as stream:
         manifest = json.load(stream)
-    if manifest.get("file-cache-policy") != EXPECTED_FILE_CACHE_POLICY:
-        fail("manifest did not carry the exact compiled file-cache policy")
-
     image_value = values.get("--emit-preinitialized-memory-image")
     receipt_value = values.get("--emit-preinitialized-memory-receipt")
     if bool(image_value) != bool(receipt_value):

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Commands supervised by the benchmark must own a dedicated process group.
+# Supervised product lifecycle commands must own a dedicated process group.
 # Killing only the shell's direct child can leave psql, Wasmer, or another
 # helper running after its evidence row has already been classified as timed
 # out. These helpers keep process-group creation, bounded escalation, direct
@@ -34,7 +34,7 @@ fresh_supervision_pid_running() {
 
 # Return an immutable birth identity for a live process. Linux /proc starttime is
 # monotonic since boot and survives exec, which is exactly what server launch via
-# systemd-run needs. The ps fallback is diagnostic on non-Linux hosts.
+# systemd-run needs. The ps fallback covers non-Linux development hosts.
 fresh_process_birth_identity() {
   local pid="$1"
   local kernel stat_line remainder starttime started
@@ -163,7 +163,7 @@ fresh_spawn_process_group() {
 
   # In a non-interactive Bash shell, monitor mode makes each background job
   # the leader of a distinct process group. Disable it immediately after the
-  # fork so the remainder of the benchmark retains normal script semantics.
+  # fork so the remainder of the lifecycle runner retains normal script semantics.
   case "$-" in
     *m*) monitor_was_on=1 ;;
   esac
@@ -176,7 +176,7 @@ fresh_spawn_process_group() {
   # A supervised command is deliberately placed in its own background process
   # group.  Letting that group inherit a controlling terminal as stdin makes a
   # read stop it with SIGTTIN, leaving an otherwise healthy command parked
-  # until its timeout.  Supervised benchmark and server commands are
+  # until its timeout. Supervised product and server commands are
   # non-interactive, so detach stdin at the process-ownership boundary.
   "$@" </dev/null &
   pid=$!
@@ -203,7 +203,7 @@ fresh_spawn_process_group() {
   own_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$own_pgid" ] && [ "$own_pgid" = "$pid" ]; then
     fresh_terminate_unisolated_leader "$pid" || true
-    printf 'refusing to supervise child %s in the benchmark process group\n' "$pid" >&2
+    printf 'refusing to supervise child %s in the lifecycle-runner process group\n' "$pid" >&2
     return 125
   fi
   identity="$(fresh_process_birth_identity "$pid" 2>/dev/null || true)"
@@ -250,7 +250,7 @@ fresh_terminate_process_group() {
   esac
   own_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$own_pgid" ] && [ "$own_pgid" = "$pgid" ]; then
-    printf 'refusing to signal the benchmark process group %s\n' "$pgid" >&2
+    printf 'refusing to signal the lifecycle-runner process group %s\n' "$pgid" >&2
     return 125
   fi
 
