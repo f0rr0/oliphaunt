@@ -27,8 +27,8 @@ export POSTGRES_VERSION="${POSTGRES_VERSION:-18.4}"
 export POSTGRES_SOURCE_TOML="${POSTGRES_SOURCE_TOML:-$REPO_ROOT/src/postgres/versions/18/source.toml}"
 export BASELINE_DIR="${BASELINE_DIR:-$FRESH_WORK_ROOT/sources/postgresql-$POSTGRES_VERSION}"
 export WASIX_SRC_DIR="${WASIX_SRC_DIR:-$FRESH_WORK_ROOT/work/postgres-wasix-core-src}"
-export NATIVE_BUILD_DIR="${NATIVE_BUILD_DIR:-$FRESH_WORK_ROOT/builds/native-oracle}"
-export NATIVE_INSTALL_DIR="${NATIVE_INSTALL_DIR:-$FRESH_WORK_ROOT/install/native-oracle}"
+export CLIENT_TOOLS_BUILD_DIR="${CLIENT_TOOLS_BUILD_DIR:-$FRESH_WORK_ROOT/builds/native-client-tools}"
+export CLIENT_TOOLS_INSTALL_DIR="${CLIENT_TOOLS_INSTALL_DIR:-$FRESH_WORK_ROOT/install/native-client-tools}"
 export FRESH_WASIX_DOCKER_IMAGE="${FRESH_WASIX_DOCKER_IMAGE:-oliphaunt-wasix-wasix-build:local}"
 export FRESH_WASMER_VERSION="${FRESH_WASMER_VERSION:-7.2.0-alpha.2}"
 export FRESH_WASMER_WASIX_VERSION="${FRESH_WASMER_WASIX_VERSION:-0.702.0-alpha.2}"
@@ -139,7 +139,7 @@ fresh_validate_postmaster_task_budget_profile() {
       if (NF != 15 ||
           $1 != "oliphaunt.wasix-postmaster.runtime-task-budget.v1" ||
           $2 != expected_id ||
-          $3 != "research-only" ||
+          $3 != "supported" ||
           $4 != "18" ||
           $5 != "embedded-concurrent") exit 2
       for (i = 6; i <= 15; i++)
@@ -174,7 +174,7 @@ fresh_normalize_wasix_core_profile() {
   esac
 }
 
-WASIX_CORE_PROFILE="$(fresh_normalize_wasix_core_profile "${WASIX_CORE_PROFILE:-safe-o2}")"
+WASIX_CORE_PROFILE="$(fresh_normalize_wasix_core_profile "${WASIX_CORE_PROFILE:-release-o3}")"
 export WASIX_CORE_PROFILE
 
 fresh_wasix_core_profile_suffix_for() {
@@ -353,7 +353,7 @@ fresh_project_source_identity_path() {
 fresh_require_patched_wasixcc_sysroot() {
   local carrier_manifest="$WASIXCC_SYSROOT_PREFIX/.oliphaunt-patched-sysroots.manifest"
   local variant_manifest="$WASIXCC_SYSROOT/.oliphaunt-patched-sysroot.manifest"
-  local validator="$FRESH_ROOT/runtime/bin/run-blocker-probes.sh"
+  local validator="$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh"
 
   if [ ! -f "$carrier_manifest" ] || [ ! -f "$variant_manifest" ]; then
     {
@@ -713,10 +713,26 @@ fresh_host_abi() {
   esac
 }
 
-fresh_local_wasmer_bin() {
-  local host_arch
-  host_arch="$(fresh_host_arch)"
-  printf '%s/tools/wasmer-v%s/bin/wasmer\n' "$FRESH_WORK_ROOT" "$FRESH_WASMER_VERSION"
+fresh_release_target() {
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) echo "macos-arm64" ;;
+    Linux-x86_64) echo "linux-x64-gnu" ;;
+    *)
+      echo "unsupported WASIX postmaster release host: $(uname -s)-$(uname -m)" >&2
+      return 2
+      ;;
+  esac
+}
+
+fresh_release_target_triple() {
+  case "$1" in
+    linux-x64-gnu) echo "x86_64-unknown-linux-gnu" ;;
+    macos-arm64) echo "aarch64-apple-darwin" ;;
+    *)
+      printf 'unsupported WASIX postmaster release target: %s\n' "$1" >&2
+      return 2
+      ;;
+  esac
 }
 
 fresh_manifest_value() {
@@ -895,8 +911,7 @@ fresh_runtime_build_recipe_sha256() {
     "$FRESH_ROOT/runtime/bin/prepare-upstream-checkouts.sh"
     "$FRESH_ROOT/runtime/bin/build-runtime.sh"
     "$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh"
-    "$FRESH_ROOT/runtime/bin/record-code-grounding.sh"
-    "$FRESH_ROOT/runtime/bin/run-blocker-probes.sh"
+    "$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh"
     "$FRESH_ROOT/runtime/bin/verify-runtime-execution-ownership.py"
     "$FRESH_ROOT/runtime/bin/verify-runtime-state-ownership.py"
     "$FRESH_ROOT/runtime/bin/verify-source-lock.py"
@@ -1444,97 +1459,38 @@ fresh_wasmer_version() {
     "$wasmer_bin" --version
 }
 
-fresh_wasmer_llvm_native_cpu_enabled() {
-  case "${WASMER_LLVM_NATIVE_CPU:-0}" in
-    1|yes|true|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-fresh_wasmer_llvm_full_o3_enabled() {
-  case "${WASMER_LLVM_FULL_O3_PIPELINE:-0}" in
-    1|yes|true|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-fresh_wasmer_llvm_indirect_call_cache_enabled() {
-  case "${WASMER_LLVM_INDIRECT_CALL_CACHE:-0}" in
-    1|yes|true|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-fresh_wasmer_llvm_volatile_memops_enabled() {
-  case "${WASMER_LLVM_VOLATILE_MEMOPS:-0}" in
-    1|yes|true|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 fresh_wasmer_cache_dir() {
   local wasmer_bin="$1"
-  local suffix=""
   if [ -n "${FRESH_PINNED_WASMER_CACHE_DIR:-}" ]; then
     printf '%s\n' "$FRESH_PINNED_WASMER_CACHE_DIR"
     return
   fi
-  if fresh_wasmer_llvm_native_cpu_enabled; then
-    suffix="${suffix}-llvm-native-cpu"
-  fi
-  if fresh_wasmer_llvm_full_o3_enabled; then
-    suffix="${suffix}-llvm-full-o3"
-  fi
-  if fresh_wasmer_llvm_indirect_call_cache_enabled; then
-    suffix="${suffix}-llvm-indirect-call-cache"
-  fi
-  if fresh_wasmer_llvm_volatile_memops_enabled; then
-    suffix="${suffix}-llvm-volatile-memops"
-  fi
-  printf '%s/tools/wasmer-cache/%s%s\n' "$FRESH_WORK_ROOT" "$(fresh_wasmer_bin_hash "$wasmer_bin")" "$suffix"
+  printf '%s/tools/wasmer-cache/%s\n' "$FRESH_WORK_ROOT" "$(fresh_wasmer_bin_hash "$wasmer_bin")"
 }
 
 fresh_wasmer_llvm_opt_suffix() {
-  case "${1:-aggressive}" in
-    none) echo "opt0" ;;
-    less) echo "optl" ;;
-    default) echo "optd" ;;
-    aggressive) echo "opta" ;;
-    *)
-      echo "unknown LLVM opt level: $1" >&2
-      return 2
-      ;;
-  esac
+  [ "${1:-aggressive}" = aggressive ] || {
+    echo "the postmaster product compiler is fixed to aggressive LLVM optimization" >&2
+    return 2
+  }
+  echo opta
 }
 
 fresh_normalize_wasmer_compiler() {
-  case "${1:-llvm}" in
-    llvm|LLVM) echo "llvm" ;;
-    cranelift|clif|Cranelift) echo "cranelift" ;;
-    singlepass|single-pass|Singlepass) echo "singlepass" ;;
-    *)
-      echo "unknown WASMER_COMPILER=$1; expected llvm, cranelift, or singlepass" >&2
-      return 2
-      ;;
-  esac
+  [ "${1:-llvm}" = llvm ] || {
+    echo "the postmaster product compiler is fixed to llvm" >&2
+    return 2
+  }
+  echo llvm
 }
 
 fresh_wasmer_compiler() {
-  fresh_normalize_wasmer_compiler "${WASMER_COMPILER:-${WASMER_BACKEND:-llvm}}"
+  printf '%s\n' llvm
 }
 
 fresh_wasmer_compiler_cli_flag() {
-  case "$(fresh_normalize_wasmer_compiler "$1")" in
-    llvm)
-      printf '%s\n' --llvm
-      ;;
-    cranelift)
-      printf '%s\n' --cranelift
-      ;;
-    singlepass)
-      printf '%s\n' --singlepass
-      ;;
-  esac
+  fresh_normalize_wasmer_compiler "$1" >/dev/null || return
+  printf '%s\n' --llvm
 }
 
 fresh_wasmer_cli_has_option() {
@@ -1568,47 +1524,13 @@ fresh_require_wasmer_compiler_cli() {
   for subcommand in "$@"; do
     if ! fresh_wasmer_cli_has_option "$wasmer_bin" "$subcommand" "$flag"; then
       {
-        printf 'WASMER_COMPILER=%s requires `%s %s`, but `%s %s --help` does not expose that option.\n' \
-          "$compiler" "$(basename "$wasmer_bin")" "$flag" "$wasmer_bin" "$subcommand"
-        printf 'Build or select a Wasmer binary with the requested backend feature, or set WASMER_COMPILER to a backend exposed by this CLI.\n'
+        printf 'the postmaster LLVM compiler requires `%s %s`, but `%s %s --help` does not expose that option.\n' \
+          "$(basename "$wasmer_bin")" "$flag" "$wasmer_bin" "$subcommand"
+        printf 'Build or select the receipt-bound postmaster compiler.\n'
       } >&2
       return 2
     fi
-    if [ "$(fresh_normalize_wasmer_compiler "$compiler")" = "llvm" ] && fresh_wasmer_llvm_full_o3_enabled; then
-      if ! fresh_wasmer_cli_has_option "$wasmer_bin" "$subcommand" "--llvm-full-o3-pipeline"; then
-        {
-          printf 'WASMER_LLVM_FULL_O3_PIPELINE=1 requires `%s --llvm-full-o3-pipeline`, but `%s %s --help` does not expose that option.\n' \
-            "$(basename "$wasmer_bin")" "$wasmer_bin" "$subcommand"
-          printf 'Build or select a Wasmer binary with explicit full-O3 LLVM pipeline support, or unset WASMER_LLVM_FULL_O3_PIPELINE.\n'
-        } >&2
-        return 2
-      fi
-    fi
-    if [ "$(fresh_normalize_wasmer_compiler "$compiler")" = "llvm" ] && fresh_wasmer_llvm_indirect_call_cache_enabled; then
-      if ! fresh_wasmer_cli_has_option "$wasmer_bin" "$subcommand" "--llvm-indirect-call-cache"; then
-        {
-          printf 'WASMER_LLVM_INDIRECT_CALL_CACHE=1 requires `%s --llvm-indirect-call-cache`, but `%s %s --help` does not expose that option.\n' \
-            "$(basename "$wasmer_bin")" "$wasmer_bin" "$subcommand"
-          printf 'Build or select a Wasmer binary with guarded indirect-call cache support, or unset WASMER_LLVM_INDIRECT_CALL_CACHE.\n'
-        } >&2
-        return 2
-      fi
-    fi
-    if [ "$(fresh_normalize_wasmer_compiler "$compiler")" = "llvm" ] && fresh_wasmer_llvm_volatile_memops_enabled; then
-      if ! fresh_wasmer_cli_has_option "$wasmer_bin" "$subcommand" "--disable-non-volatile-memops"; then
-        {
-          printf 'WASMER_LLVM_VOLATILE_MEMOPS=1 requires `%s --disable-non-volatile-memops`, but `%s %s --help` does not expose that option.\n' \
-            "$(basename "$wasmer_bin")" "$wasmer_bin" "$subcommand"
-          printf 'Build or select a Wasmer binary with explicit volatile-memory support, or unset WASMER_LLVM_VOLATILE_MEMOPS.\n'
-        } >&2
-        return 2
-      fi
-    fi
   done
-}
-
-fresh_wasmer_compiler_args() {
-  fresh_wasmer_compiler_args_for "" "" "$@"
 }
 
 fresh_wasmer_compiler_args_for() {
@@ -1618,6 +1540,10 @@ fresh_wasmer_compiler_args_for() {
   local compiler="$1"
   local llvm_opt_level="$2"
   local compiler_threads="$3"
+  [ "$llvm_opt_level" = aggressive ] || {
+    echo "the postmaster product compiler is fixed to aggressive LLVM optimization" >&2
+    return 2
+  }
 
   case "$(fresh_normalize_wasmer_compiler "$compiler")" in
     llvm)
@@ -1627,21 +1553,6 @@ fresh_wasmer_compiler_args_for() {
         fresh_wasmer_cli_has_option "$wasmer_bin" "$subcommand" "--llvm-opt-level"; then
         printf '%s\n' --llvm-opt-level "$llvm_opt_level"
       fi
-      if fresh_wasmer_llvm_full_o3_enabled; then
-        printf '%s\n' --llvm-full-o3-pipeline
-      fi
-      if fresh_wasmer_llvm_indirect_call_cache_enabled; then
-        printf '%s\n' --llvm-indirect-call-cache
-      fi
-      if fresh_wasmer_llvm_volatile_memops_enabled; then
-        printf '%s\n' --disable-non-volatile-memops
-      fi
-      ;;
-    cranelift)
-      printf '%s\n' --cranelift
-      ;;
-    singlepass)
-      printf '%s\n' --singlepass
       ;;
   esac
   if [ -n "$compiler_threads" ]; then
@@ -1653,29 +1564,14 @@ fresh_wasmer_compiler_cache_bucket() {
   local compiler="$1"
   local llvm_opt_level="$2"
   local artifact_version="$3"
+  [ "$llvm_opt_level" = aggressive ] || {
+    echo "the postmaster product compiler is fixed to aggressive LLVM optimization" >&2
+    return 2
+  }
 
   case "$(fresh_normalize_wasmer_compiler "$compiler")" in
     llvm)
-      local suffix=""
-      if fresh_wasmer_llvm_native_cpu_enabled; then
-        suffix="${suffix}-nativecpu"
-      fi
-      if fresh_wasmer_llvm_full_o3_enabled; then
-        suffix="${suffix}-fullo3"
-      fi
-      if fresh_wasmer_llvm_indirect_call_cache_enabled; then
-        suffix="${suffix}-indirectcallcache"
-      fi
-      if fresh_wasmer_llvm_volatile_memops_enabled; then
-        suffix="${suffix}-volatilemem"
-      fi
-      printf 'llvm-%s%s-v%s\n' "$(fresh_wasmer_llvm_opt_suffix "$llvm_opt_level")" "$suffix" "$artifact_version"
-      ;;
-    cranelift)
-      printf 'cranelift-v%s\n' "$artifact_version"
-      ;;
-    singlepass)
-      printf 'singlepass-v%s\n' "$artifact_version"
+      printf 'llvm-%s-v%s\n' "$(fresh_wasmer_llvm_opt_suffix "$llvm_opt_level")" "$artifact_version"
       ;;
   esac
 }

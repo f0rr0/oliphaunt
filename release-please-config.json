@@ -340,6 +340,13 @@
         }
       ]
     },
+    "src/runtimes/liboliphaunt/wasix-postmaster": {
+      "release-type": "simple",
+      "component": "liboliphaunt-wasix-postmaster",
+      "package-name": "liboliphaunt-wasix-postmaster",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
     "src/bindings/wasix-rust/crates/oliphaunt-wasix": {
       "release-type": "rust",
       "component": "oliphaunt-wasix-rust",

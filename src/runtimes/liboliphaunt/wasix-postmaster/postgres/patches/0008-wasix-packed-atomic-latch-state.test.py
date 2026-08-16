@@ -106,12 +106,6 @@ def main() -> None:
         if line and not line.startswith("#")
     ]
     require(series.count(PATCH_NAME) == 1, "packed-latch patch must occur once")
-    require(
-        series.index(PATCH_NAME) + 1
-        == series.index("0009-wasix-inactive-durable-wal-cache-offer.patch"),
-        "packed-latch patch must immediately precede the WAL cache-offer seam",
-    )
-
     provenance_path = PROJECT_ROOT / "postgres/product-patch-provenance.toml"
     with provenance_path.open("rb") as handle:
         provenance = tomllib.load(handle)

@@ -28,6 +28,8 @@ Oliphaunt is a multi-product monorepo, not one repository-wide version:
   carriers.
 - `liboliphaunt-wasix` owns portable WASIX runtime assets and host AOT
   carriers.
+- `liboliphaunt-wasix-postmaster` owns the concurrent Linux x64 GNU and macOS arm64 WASIX
+  postmaster carrier with isolated PostgreSQL backends.
 - Native and WASIX own independent versions. A change to one does not select
   the other unless a declared directed compatibility dependency requires it.
 - Rust, Swift, Kotlin/Android, React Native, TypeScript, and WASIX Rust are
@@ -52,6 +54,7 @@ The published target manifests currently declare:
 | Android | `arm64-v8a`, `x86_64` |
 | Apple | iOS XCFramework carrier plus the declared macOS arm64 runtime carrier, delivered through SwiftPM and GitHub release assets |
 | WASIX | portable runtime plus AOT carriers for Linux x64/arm64 GNU, macOS arm64, and Windows x64 MSVC |
+| WASIX postmaster | sealed concurrent runtime carriers for Linux x64 GNU and macOS arm64 |
 
 The first release intentionally does **not** claim macOS x64, Windows ARM64,
 Linux musl, Android 32-bit, or undeclared Apple architectures. A compiler,
@@ -74,6 +77,7 @@ The declared public entry points are:
 | --- | --- | --- |
 | Rust/Tauri desktop | `oliphaunt` | Cargo and target-specific native artifact crates |
 | WASIX Rust | `oliphaunt-wasix` | Cargo portable/AOT artifact crates |
+| WASIX postmaster server | `oliphaunt-wasix-postmaster` release launcher | GitHub `linux-x64-gnu` or `macos-arm64` sealed carrier archive |
 | Swift | `Oliphaunt` | SwiftPM source tag and checksum-pinned release assets |
 | Android | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers |
 | React Native | `@oliphaunt/react-native` | npm package delegating runtime work to Swift and Kotlin |

@@ -24,9 +24,13 @@ def fixture(root: Path) -> tuple[Path, Path]:
     copy_file(PROJECT_ROOT / "sources.lock.toml", project / "sources.lock.toml")
     copy_file(PROJECT_ROOT / "lib/common.sh", project / "lib/common.sh")
     for patch in (
-        "postgres/patches/0007-wasix-semantic-relation-cache-offers.patch",
+        "postgres/patches/series",
+        "postgres/product-patch-provenance.toml",
+        "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch",
+        "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch",
+        "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch",
+        "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch",
         "postgres/patches/0008-wasix-packed-atomic-latch-state.patch",
-        "postgres/patches/0009-wasix-inactive-durable-wal-cache-offer.patch",
         "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch",
         "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
     ):
@@ -88,18 +92,6 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
         project, repo = fixture(Path(temporary))
-        patch = project / "postgres/patches/0007-wasix-semantic-relation-cache-offers.patch"
-        with patch.open("ab") as handle:
-            handle.write(b"\n")
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker="current_postgresql_patches.semantic_relation_cache_offers.bytes",
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
         patch = project / "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
         with patch.open("ab") as handle:
             handle.write(b"\n")
@@ -107,134 +99,7 @@ def main() -> None:
             project,
             repo,
             succeeds=False,
-            marker="current_postgresql_patches.packed_atomic_latch_state.bytes",
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        patch = project / "postgres/patches/0009-wasix-inactive-durable-wal-cache-offer.patch"
-        with patch.open("ab") as handle:
-            handle.write(b"\n")
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker="current_postgresql_patches.inactive_durable_wal_cache_offer.bytes",
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            'offer_class = "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE"',
-            'offer_class = "PG_WASIX_CACHE_CLASS_UNSAFE_WAL"',
-        )
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker="current_postgresql_patches.inactive_durable_wal_cache_offer.offer_class",
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            'unflagged_disposition = "retain"',
-            'unflagged_disposition = "reclaim"',
-        )
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "unflagged_disposition"
-            ),
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            'revoke_abi_signature = "(i32,i32,i32)->i32_errno"',
-            'revoke_abi_signature = "(i32)->i32_errno"',
-        )
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "revoke_abi_signature"
-            ),
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(lock, "revoke_flags_value = 0", "revoke_flags_value = 1")
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "revoke_flags_value"
-            ),
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(lock, "adaptive_eviction_enabled = true", "adaptive_eviction_enabled = false")
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "adaptive_eviction_enabled"
-            ),
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            'adaptive_policy_id = "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5"',
-            'adaptive_policy_id = "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.unknown"',
-        )
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "adaptive_policy_id"
-            ),
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            'adaptive_required_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE"',
-            'adaptive_required_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE"',
-        )
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker=(
-                "current_postgresql_patches.inactive_durable_wal_cache_offer."
-                "adaptive_required_flag"
-            ),
+            marker="current_postgresql_product_inputs.file",
         )
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
@@ -250,17 +115,6 @@ def main() -> None:
             repo,
             succeeds=False,
             marker="current_postgresql_patches.packed_atomic_latch_state.feature_macro",
-        )
-
-    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
-        project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(lock, "abi_available = true", "abi_available = false")
-        run(
-            project,
-            repo,
-            succeeds=False,
-            marker="current_postgresql_patches.semantic_relation_cache_offers.abi_available",
         )
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
@@ -284,13 +138,15 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
         project, repo = fixture(Path(temporary))
-        lock = project / "sources.lock.toml"
-        replace(
-            lock,
-            "e1773e04f09b0c422a0e45be1ff885fd5b1c191054abb969e1e354a60423930b",
-            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        patch = project / "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
+        with patch.open("ab") as handle:
+            handle.write(b"\n")
+        run(
+            project,
+            repo,
+            succeeds=False,
+            marker="current_postgresql_product_inputs.file",
         )
-        run(project, repo, succeeds=False, marker="historical provenance.patch_exports")
 
     print("source lock verifier tests passed")
 

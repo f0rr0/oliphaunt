@@ -19,16 +19,6 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
-EVIDENCE_SCRIPT = SCRIPT.parent.parent / "bin" / "current-evidence-manifest.py"
-EVIDENCE_SPEC = importlib.util.spec_from_file_location(
-    "current_evidence_manifest", EVIDENCE_SCRIPT
-)
-assert EVIDENCE_SPEC is not None and EVIDENCE_SPEC.loader is not None
-EVIDENCE = importlib.util.module_from_spec(EVIDENCE_SPEC)
-sys.modules[EVIDENCE_SPEC.name] = EVIDENCE
-EVIDENCE_SPEC.loader.exec_module(EVIDENCE)
-
-
 def sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -285,14 +275,8 @@ class ExecutorReceiptV3Tests(unittest.TestCase):
         }
         return verified, wasmer_receipt
 
-    def test_both_parsers_accept_exact_analyzer_provenance(self) -> None:
+    def test_verifier_accepts_exact_analyzer_provenance(self) -> None:
         values = valid_executor_receipt_values()
-        evidence_payload = render_executor_receipt(
-            values, EVIDENCE.POSTMASTER_EXECUTOR_RECEIPT_KEYS
-        )
-        self.assertEqual(
-            EVIDENCE.parse_postmaster_executor_receipt(evidence_payload), values
-        )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             verified, wasmer_receipt = self.verifier_fixture(root, values)
@@ -303,7 +287,7 @@ class ExecutorReceiptV3Tests(unittest.TestCase):
                 values,
             )
 
-    def test_both_parsers_reject_legacy_v2_schema_and_weakened_tools(self) -> None:
+    def test_verifier_rejects_legacy_v2_schema_and_weakened_tools(self) -> None:
         for field, value in (
             (
                 "schema",
@@ -326,11 +310,6 @@ class ExecutorReceiptV3Tests(unittest.TestCase):
             with self.subTest(field=field):
                 values = valid_executor_receipt_values()
                 values[field] = value
-                payload = render_executor_receipt(
-                    values, EVIDENCE.POSTMASTER_EXECUTOR_RECEIPT_KEYS
-                )
-                with self.assertRaises(EVIDENCE.EvidenceError):
-                    EVIDENCE.parse_postmaster_executor_receipt(payload)
                 with tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary)
                     verified, wasmer_receipt = self.verifier_fixture(root, values)

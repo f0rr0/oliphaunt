@@ -14,6 +14,7 @@ import { afterAll, expect, test } from "bun:test";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import {
   assertWasixExtensionInstall,
+  assertWasixExtensionMemberInstall,
   projectWasixExtensionInstallSidecar,
 } from "./wasix-extension-install-contract.mjs";
 
@@ -167,4 +168,37 @@ test("rejects install contracts that the consumer descriptor cannot accept", () 
   expect(() => assertWasixExtensionInstall(missingInstalledModule, {
     expectedSqlName: "example",
   })).toThrow(/must appear in installedFiles/u);
+});
+
+test("binds one install contract to exactly one portable member asset", () => {
+  const value = fixture();
+  const install = projectWasixExtensionInstallSidecar(value, {
+    archiveBytes: value.archiveBytes,
+    label: "member fixture",
+  }).install;
+  const portableAsset = {
+    family: "wasix",
+    kind: "wasix-runtime",
+    target: "wasix-portable",
+  };
+  expect(assertWasixExtensionMemberInstall({
+    sqlName: "example",
+    assets: [portableAsset],
+    wasixInstall: install,
+  })).toEqual(install);
+  expect(assertWasixExtensionMemberInstall({
+    sqlName: "example",
+    assets: [{ family: "native", kind: "runtime", target: "linux-x64-gnu" }],
+    wasixInstall: null,
+  })).toBeNull();
+  expect(() => assertWasixExtensionMemberInstall({
+    sqlName: "example",
+    assets: [],
+    wasixInstall: install,
+  })).toThrow(/must be null without a portable WASIX asset/u);
+  expect(() => assertWasixExtensionMemberInstall({
+    sqlName: "example",
+    assets: [portableAsset, portableAsset],
+    wasixInstall: install,
+  })).toThrow(/must declare exactly one portable WASIX asset/u);
 });

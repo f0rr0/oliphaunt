@@ -61,6 +61,30 @@ function canonicalJson(value) {
   return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
 }
 
+function wasixInstall(sqlName, dependencies, createsExtension) {
+  return {
+    schema: "oliphaunt-wasix-extension-install-v1",
+    name: sqlName,
+    nativeModule: null,
+    nativeModules: [],
+    coreExportsRequired: [],
+    dependencies,
+    loadOrder: [],
+    lifecycle: {
+      createExtension: createsExtension,
+      createSchema: "pg_catalog",
+      loadSql: [],
+      postCreateSql: [],
+      startupConfig: [],
+      preloadRequired: false,
+      restartRequired: false,
+      sharedMemoryRequired: false,
+    },
+    installedFiles: [`share/postgresql/extension/${sqlName}.control`],
+    unresolvedImports: [],
+  };
+}
+
 function refreshTarHeaderChecksum(tar, offset = 0) {
   tar.fill(0x20, offset + 148, offset + 156);
   const checksum = tar.subarray(offset, offset + 512)
@@ -270,10 +294,12 @@ function extensionGithubReleaseFixture(
         memberAssets.push(asset);
       }
     }
+    const dependencies = [...extension["selected-extension-dependencies"]].sort();
+    const createsExtension = extension["creates-extension"] !== false;
     extensions.push({
       sqlName,
-      createsExtension: extension["creates-extension"] !== false,
-      dependencies: [...extension["selected-extension-dependencies"]].sort(),
+      createsExtension,
+      dependencies,
       dataFiles: [...extension["runtime-share-data-files"]].sort(),
       extensionSqlFileNames: [...extension["extension-sql-file-names"]].sort(),
       extensionSqlFilePrefixes: [...extension["extension-sql-file-prefixes"]].sort(),
@@ -288,6 +314,9 @@ function extensionGithubReleaseFixture(
         initSymbol: null,
         symbols: [],
       },
+      wasixInstall: memberAssets.some((asset) => asset.family === "wasix")
+        ? wasixInstall(sqlName, dependencies, createsExtension)
+        : null,
       sharedPreloadLibraries: [...extension["shared-preload-libraries"]].sort(),
       mobileReleaseReady: extension["mobile-release-ready"] === true,
       desktopReleaseReady: extension["desktop-release-ready"] === true,
@@ -468,6 +497,7 @@ function extensionGithubReleaseFixture(
           nativeModuleStem: extensions[0].nativeModuleStem,
           iosNativeDependencies: extensions[0].iosNativeDependencies,
           iosRegistration: extensions[0].iosRegistration,
+          wasixInstall: extensions[0].wasixInstall,
           sharedPreloadLibraries: extensions[0].sharedPreloadLibraries,
           mobileReleaseReady: extensions[0].mobileReleaseReady,
           desktopReleaseReady: extensions[0].desktopReleaseReady,
@@ -526,7 +556,7 @@ describe("canonical publication catalog", () => {
 
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
-    expect(catalog.products).toHaveLength(18);
+    expect(catalog.products).toHaveLength(19);
     expect(catalog.carriers).toHaveLength(195);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,

@@ -1,9 +1,9 @@
 # WASIX Postmaster Third-Party Sources
 
-These pins reproduce the host runtime used by the concurrent PostgreSQL/WASIX
-postmaster experiment. They are intentionally separate from the stock WASIX
-runtime source domain: applying the postmaster runtime patches must not alter
-the existing `liboliphaunt-wasix` product.
+These are the production source pins for the concurrent PostgreSQL/WASIX
+postmaster runtime. They are separate from the single-backend WASIX source
+domain because applying the postmaster concurrency patches must not alter the
+existing `liboliphaunt-wasix` product.
 
 The hardened source fetcher materializes clean, immutable checkouts under
 `target/oliphaunt-sources/checkouts/`. Project scripts copy those inputs into

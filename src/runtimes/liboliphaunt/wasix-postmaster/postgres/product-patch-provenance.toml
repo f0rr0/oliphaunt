@@ -1,15 +1,36 @@
 schema_version = 1
 
 [[patch]]
-path = "postgres/patches/0007-wasix-semantic-relation-cache-offers.patch"
+path = "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
 base_tag = "REL_18_4"
-status = "guest-seam-only"
-native_behavior_preserved = "All new declarations, switch entries, and call sites are guarded by __wasi__; native PostgreSQL retains upstream read, sync, VFD, smgr, and WAL control flow."
-wasix_fact = "A host cache controller needs PostgreSQL reuse and durability context that generic read, write, and fsync interception cannot recover."
-rejected_alternative = "Do not issue unconditional DONTNEED, scan relation paths, reopen VFDs for hints, intercept generic file calls, weaken FileSync/WAL semantics, or embed adaptive policy in the guest."
-gate = "The static patch test locks the eight-file scope and semantic call sites; the clean REL_18_4 and ordered-series git apply checks must pass."
-abi = "oliphaunt_postmaster_v1.fd_cache_offer(i32,i64,i64,i32,i32)->i32_errno"
-abi_available = true
+status = "guest-platform-correctness"
+native_behavior_preserved = true
+wasix_fact = "The multi-instance WASIX process model requires named POSIX shared-memory objects that every backend can reopen at the inherited PostgreSQL address."
+gate = "The ordered patch series, shared-memory probes, concurrent connection smoke, and backend-wave qualification must pass."
+
+[[patch]]
+path = "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch"
+base_tag = "REL_18_4"
+status = "guest-link-correctness"
+native_behavior_preserved = true
+wasix_fact = "The WASIX libpq client tools use the sealed PostgreSQL encoding modules without relying on an unresolved native dynamic-loader path."
+gate = "The ordered patch series and PostgreSQL regression subset must pass."
+
+[[patch]]
+path = "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch"
+base_tag = "REL_18_4"
+status = "guest-process-model"
+native_behavior_preserved = true
+wasix_fact = "Postmaster children and initdb's bootstrap server must re-enter through the sealed executor as fresh module instances while preserving PostgreSQL's EXEC_BACKEND handoff."
+gate = "The ordered patch series, initdb smoke, concurrent connection smoke, and immediate-recovery qualification must pass."
+
+[[patch]]
+path = "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch"
+base_tag = "REL_18_4"
+status = "guest-process-correctness"
+native_behavior_preserved = true
+wasix_fact = "A signal may interrupt WASIX child joining without making the child unreapable; PostgreSQL must retry the wait operation on EINTR."
+gate = "The ordered patch series, process supervision tests, concurrent connection smoke, and backend-wave qualification must pass."
 
 [[patch]]
 path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
@@ -23,34 +44,3 @@ layout_contract = "One naturally aligned lock-free pg_atomic_uint32 packs SET=1 
 ordering_contract = "SetLatch uses SC fetch-or and signals only the clear-to-set transition that observed SLEEPING. WaitEventSetWait publishes SLEEPING with fetch-or, rechecks through a true SC atomic load, retracts SLEEPING before returning or after wake, and ResetLatch clears only SET."
 signal_contract = "The atomic operations are compile-time required to be lock-free; no errno, owner, wake primitive, or signal-handler call path is changed."
 gate = "Local acceptance requires the static state-machine test, standalone clean REL_18_4 apply check, ordered full-series apply check, final-Wasm atomic opcode/fence verifier, cross-instance latch probe, and fresh-postmaster backend-wave qualification."
-
-[[patch]]
-path = "postgres/patches/0009-wasix-inactive-durable-wal-cache-offer.patch"
-base_tag = "REL_18_4"
-status = "guest-semantic-seam"
-offer_class = "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE"
-reclaim_eligible_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE"
-reclaim_eligible_flag_value = 1
-reclaim_eligible_flag_semantics = "legacy-low-reuse-hint-only"
-cache_drop_safe_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE"
-cache_drop_safe_flag_value = 2
-cache_drop_safe_flag_semantics = "positive-complete-durable-nondirect-cache-drop-proof"
-unflagged_disposition = "retain"
-revoke_abi = "oliphaunt_postmaster_v1.fd_cache_revoke(i32,i32,i32)->i32_errno"
-revoke_class = "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE"
-revoke_class_value = 6
-revoke_flags = "PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE"
-revoke_flags_value = 0
-revoke_timing = "once-per-open-before-first-wal-payload-write"
-native_behavior_preserved = true
-adaptive_eviction_enabled = true
-adaptive_policy_id = "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5"
-adaptive_required_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE"
-adaptive_portable_fallback = "observe-only"
-wasix_fact = "The writer knows exactly when a WAL segment has received its complete last page and satisfied PostgreSQL durability semantics; generic host file I/O cannot safely reconstruct that proof or distinguish active and partial WAL."
-state_contract = "The completion/durability proof is bound to the exact fd, segment number, and timeline generation; every open clears it and arms one synchronous class-6/flags-zero revoke, normal XLogWrite, walreceiver, and bootstrap clear that arm before attempting the import and before their first WAL payload write, every write clears the completion proof, sync-open durability is captured when the descriptor is opened so a later fsync reload cannot fabricate O_SYNC/O_DSYNC, completion can set it only after the finishing_seg issue_xlog_fsync path with enableFsync true, and close consumes and resets all local generation state before fd reuse."
-range_contract = "The exact open descriptor range [0, wal_segment_size) is always offered after consuming a valid completion proof. Class PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE with flags zero is retain-required telemetry. Bit 0 WAL_RECLAIM_ELIGIBLE preserves the legacy low-reuse predicate: PostgreSQL's existing !XLogIsNeeded() and non-direct-WAL condition. Bit 1 WAL_CACHE_DROP_SAFE is the independent positive correctness proof and is set for every complete, durable, non-direct-I/O segment, including replica-level WAL that an archiver or walsender may later refault from the still-present file."
-durability_contract = "No fsync, WAL write, full_page_writes, synchronous_commit, wal_level, archive, streaming, recycling, retention, or close behavior is removed, bypassed, or reordered."
-policy_contract = "The guest emits fallible errno-preserving semantic offers and a synchronous class-6/flags-zero mutation revoke. The sealed research runtime mirrors every call into the stable observe-only controller. runtime:postgres may additionally install the manifest-bound adaptive-linux.v5 embedded-v4 experimental controller only after it pins a finite Linux cgroup-v2 pressure source and constructs the bounded maintenance task; initdb and failed admission remain observe-only. An exact positive WAL_CACHE_DROP_SAFE offer duplicates only the already-open regular-file descriptor into a four-entry, four-descriptor, 64 MiB, four-second ledger. It never advises immediately: at most one complete candidate may act after a newly acquired sample at least 250 ms after the prior sample reaches L2/L3 pressure. Every first WAL payload mutation synchronously revokes the exact descriptor identity before the write, and terminal evidence must prove zero open capabilities plus exact entry/byte conservation. Relation offers remain observe-only in embedded-v4 so relation reuse is not conflated with completed-WAL safety. WAL action still requires offset zero, a complete canonical PostgreSQL segment no larger than 16 MiB, exact host-page alignment, zero busy retries, and serialized admission. Class 6, flags zero, bit 0 alone, partial ranges, path reopening, immediate eviction, and unbounded deferred work are not correctness proofs. The acting controller is experimental and makes no pressure, refault, crash, archive, replication, RSS, latency, or performance claim; observe-only is the supported evidence behavior."
-rejected_alternative = "Do not issue new posix_fadvise calls, infer completion from close or a partial flush, suppress writer-inactive telemetry when XLogIsNeeded(), conflate low expected reuse with cache-drop correctness, treat class 6 or legacy bit 0 alone as safety, offer bootstrap/preallocated/active/partial/unsynced/direct-I/O WAL, defer inode-bound work without a synchronous mutation generation, or carry a bare boolean across descriptor reuse."
-gate = "Local semantic-seam acceptance requires the static/state-machine test, standalone clean REL_18_4 apply check, ordered full-series apply check, exact fd_cache_revoke final-Wasm import, normal-writer/walreceiver/bootstrap ordering checks, exact class-and-eligibility telemetry, synchronous revoke/offer race tests, and terminal zero-descriptor/exact-conservation evidence. Durability, restart, archive, streaming, pressure, and refault behavior are explicitly outside the acting controller claim."

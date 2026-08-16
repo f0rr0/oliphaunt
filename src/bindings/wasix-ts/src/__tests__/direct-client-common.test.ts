@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   type DirectWasixDependencies,
@@ -176,6 +176,30 @@ describe('direct WASIX session lifecycle', () => {
     expect(initializations).toBe(2);
   });
 
+  it('keeps direct host startup event-loop-visible and releases storage on timeout', async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+    });
+    try {
+      const opening = DirectWasixSession.open(
+        openOptions(),
+        fakeHost({
+          instantiate: () => new Promise<OliphauntDirectInstance>(() => undefined),
+        }),
+        fakeDependencies(storage),
+      );
+      const timedOut = expect(opening).rejects.toThrow('direct startup exceeded 120000ms');
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      await timedOut;
+      expect(events).toEqual(['storage:failed']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('evicts rejected runtime preparation so transient asset failures can be retried', async () => {
     const options = openOptions();
     options.startupGUCs.cache_retry_test = crypto.randomUUID();
@@ -319,6 +343,7 @@ type FakeHostOptions = {
   execProtocolRaw?(): Uint8Array;
   close?(): void;
   free?(): void;
+  instantiate?(): Promise<OliphauntDirectInstance>;
 };
 
 function fakeHost(options: FakeHostOptions): DirectWasixHost {
@@ -347,7 +372,7 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
       await options.init?.();
     },
     async instantiateOliphauntDirect() {
-      return instance;
+      return options.instantiate?.() ?? instance;
     },
   };
 }

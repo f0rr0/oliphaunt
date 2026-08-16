@@ -272,6 +272,30 @@ export function assertWasixExtensionInstall(value, {
   return deepFreeze(checkedInstall(value, label, { expectedSqlName }));
 }
 
+export function assertWasixExtensionMemberInstall(value, {
+  label = "extension member",
+} = {}) {
+  const member = object(value, label);
+  if (!Array.isArray(member.assets)) throw error(`${label}.assets`, "must be an array");
+  const portableAssets = member.assets.filter((asset) =>
+    asset?.family === "wasix"
+    && asset?.target === "wasix-portable"
+    && asset?.kind === "wasix-runtime");
+  if (portableAssets.length === 0) {
+    if (member.wasixInstall !== null) {
+      throw error(`${label}.wasixInstall`, "must be null without a portable WASIX asset");
+    }
+    return null;
+  }
+  if (portableAssets.length !== 1) {
+    throw error(label, "must declare exactly one portable WASIX asset");
+  }
+  return assertWasixExtensionInstall(member.wasixInstall, {
+    expectedSqlName: member.sqlName,
+    label: `${label}.wasixInstall`,
+  });
+}
+
 export function assertWasixExtensionInstallSidecar(value, {
   expectedArchive,
   expectedSha256,

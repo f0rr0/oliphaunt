@@ -13,17 +13,6 @@ import pathlib
 import sys
 
 
-EXPECTED_FILE_CACHE_POLICY = {
-    "requested-policy-id": "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5",
-    "approved-config-id": (
-        "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.embedded-v4"
-    ),
-    "config-sha256": (
-        "01668b856435cb8c34b2d2324ab55b7f1f5961b8b403c1ee49d9ee4b5c865f53"
-    ),
-    "portable-fallback-mode": "observe-only",
-}
-
 
 def fail(message):
     raise SystemExit(f"fake sealed Wasmer: {message}")
@@ -144,9 +133,6 @@ def main():
     volume_for_guest(volumes, "/lib")
     with manifest_path.open(encoding="utf-8") as stream:
         manifest = json.load(stream)
-    if manifest.get("file-cache-policy") != EXPECTED_FILE_CACHE_POLICY:
-        fail("manifest did not carry the exact compiled file-cache policy")
-
     image_value = values.get("--emit-preinitialized-memory-image")
     receipt_value = values.get("--emit-preinitialized-memory-receipt")
     if bool(image_value) != bool(receipt_value):
@@ -206,44 +192,8 @@ def main():
     if manifest.get("schema") != "oliphaunt.wasix-postmaster.sealed-aot.v5":
         fail("validation did not use sealed-aot.v5")
     for artifact in manifest["artifacts"]:
-        memory = artifact.get("preinitialized-memory")
-        if artifact["kind"] == "executable":
-            if memory is None:
-                fail(f"final executable {artifact['name']} has no memory image")
-            if memory.get("schema") != "oliphaunt.wasix-postmaster.memory-image.v2":
-                fail(f"final executable {artifact['name']} has no attested memory image")
-            proof = memory.get("deterministic-start-proof")
-            if not isinstance(proof, dict) or proof.get("module-sha256") != artifact.get(
-                "module-sha256"
-            ):
-                fail(f"final executable {artifact['name']} has an unbound start proof")
-            if (
-                proof.get("schema")
-                != "oliphaunt.wasix-postmaster.deterministic-start-proof.v1"
-                or proof.get("analyzer-policy")
-                != "llvm-shared-memory-init-restricted-effects.v1"
-                or proof.get("ordinary-start-execution-per-instance") is not True
-                or proof.get("first-instance-full-byte-validation") is not True
-            ):
-                fail(f"final executable {artifact['name']} has an invalid start proof")
-            canonical_proof = json.dumps(
-                proof,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            if memory.get("deterministic-start-proof-output-sha256") != hashlib.sha256(
-                canonical_proof
-            ).hexdigest():
-                fail(f"final executable {artifact['name']} has a bad analyzer output digest")
-            path = carrier_root / memory["path"]
-            if path.stat().st_size != memory["size"]:
-                fail(f"final executable {artifact['name']} has a bad memory image size")
-            if file_sha256(path) != memory["sha256"]:
-                fail(f"final executable {artifact['name']} has a bad memory image digest")
-        elif memory is not None:
-            fail(f"final side module {artifact['name']} has a memory image")
-
+        if "preinitialized-memory" in artifact:
+            fail(f"final artifact {artifact['name']} has a preinitialized memory image")
     expected_carrier_volume = f"{carrier_root}:{carrier_root}"
     expected_share_volume = f"{carrier_root / 'share'}:/share"
     if volumes.count(expected_carrier_volume) != 1:

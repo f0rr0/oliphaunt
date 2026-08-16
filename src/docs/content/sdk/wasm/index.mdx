@@ -59,6 +59,11 @@ Those Rust-only server and dump APIs must not be inferred for the
 TypeScript binding, whose intentionally smaller surface is documented on its
 own page.
 
+Applications that need a real concurrent PostgreSQL listener on Linux x64 GNU or macOS arm64
+can instead deploy the separate [WASIX postmaster](/docs/sdk/wasix/runtime#wasix-postmaster)
+sealed carrier. It is a peer runtime product, not an execution mode hidden in
+the single-backend SDK.
+
 ## App Responsibilities
 
 - Depend on the portable runtime artifact and target-specific AOT artifact for
@@ -75,4 +80,5 @@ Use [Build With Rust WASIX](/docs/sdk/wasix/guide) for the first query and
 runtime configuration. Use [Rust WASIX runtime](/docs/sdk/wasix/runtime) for
 server/proxy and asset behavior, and [dump and restore](/docs/sdk/wasix/dump-restore)
 for data movement. TypeScript applications start with
-[WASIX TypeScript](/docs/sdk/wasix/browser-typescript).
+[WASIX TypeScript](/docs/sdk/wasix/browser-typescript). Concurrent server
+deployments start with [WASIX postmaster](/docs/sdk/wasix/runtime#wasix-postmaster).

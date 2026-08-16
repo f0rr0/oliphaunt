@@ -1,8 +1,5 @@
 0001-wasix-use-posix-dsm-not-sysv.patch
 0003-wasix-libpq-static-encoding-shim.patch
 0004-wasix-core-execbackend-initdb-runtime.patch
-0005-pg-dump-avoid-lto-executequery-collision.patch
 0006-wasix-retry-proc-join-on-eintr.patch
-0007-wasix-semantic-relation-cache-offers.patch
 0008-wasix-packed-atomic-latch-state.patch
-0009-wasix-inactive-durable-wal-cache-offer.patch

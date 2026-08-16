@@ -1,26 +1,39 @@
-[provenance]
-experiment_commit = "aa4211f4485327cb7493863ea3380acf27c5f951"
-experiment_path = "assets/wasix-build/experiments/fresh-wasix-postgres"
-experiment_tree = "655afa8f52fa3ed06a0001b7180abdad58cc0a08"
+[current_postgresql_product_inputs]
 
-[provenance.patch_exports]
-wasmer_sha256 = "e1773e04f09b0c422a0e45be1ff885fd5b1c191054abb969e1e354a60423930b"
-wasmer_bytes = 727574
-wasix_libc_experiment_sha256 = "c81cd0a332f2a0b8d4c1abb97824c9b48c14e1768ee2c75e664863bc5cd0e7d5"
-wasix_libc_experiment_bytes = 29477
-wasix_libc_replay_sha256 = "9f76a72bb5e0295fd4238ebc1e511e3550c2b1da6b3fcd828d52bd82cb94b353"
-wasix_libc_replay_bytes = 29480
-wasix_libc_repair = "restore the unified-diff context marker and two source spaces for the pinned __wasilibc_futex.c blank line"
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/series"
+sha256 = "3842f934e69d47a85c13e6ad37fb6d095b512bca56c3c0bdfac9e159ded26f22"
+bytes = 218
 
-[current_postgresql_patches.semantic_relation_cache_offers]
-path = "postgres/patches/0007-wasix-semantic-relation-cache-offers.patch"
-base_tag = "REL_18_4"
-sha256 = "83dae096ea9dbe8c483280425e49d40e69135cec7b09d9423fd55b44154f85bf"
-bytes = 10320
-abi_module = "oliphaunt_postmaster_v1"
-abi_function = "fd_cache_offer"
-abi_signature = "(i32,i64,i64,i32,i32)->i32_errno"
-abi_available = true
+[[current_postgresql_product_inputs.file]]
+path = "postgres/product-patch-provenance.toml"
+sha256 = "26e2b2e54bfe4c99b2007593e0eb34071030970fecca4b79a4056098dc81121e"
+bytes = 3445
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
+sha256 = "17435fd5261a641837053728ed3314a2145307ab25bea473d5529b62a6a5aa3b"
+bytes = 883
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch"
+sha256 = "a7eb6c9bd4366938fd40de1e8bdeaba600f4d9a42f5d2935677a795c3fcefc43"
+bytes = 501
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch"
+sha256 = "acf40abd1498a92d122f939857086003e66962e51a2501b927391939981de502"
+bytes = 28650
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch"
+sha256 = "329fb6d098240b96d504165043f5b9f41f67439032b7dbf672367bffa4c78c14"
+bytes = 1751
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
+sha256 = "419eb45d4ee33aac428bc21a819409e4cd5fac5a227562c3e2c60a1a697fef43"
+bytes = 10236
 
 [current_postgresql_patches.packed_atomic_latch_state]
 path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
@@ -30,45 +43,17 @@ bytes = 10236
 feature_macro = "PG_WASIX_ATOMIC_LATCH_STATE"
 native_behavior_preserved = true
 
-[current_postgresql_patches.inactive_durable_wal_cache_offer]
-path = "postgres/patches/0009-wasix-inactive-durable-wal-cache-offer.patch"
-base_tag = "REL_18_4"
-sha256 = "77d74e0539c1dbfa81333350e9cd7e69714d4888a46cfe9cdfe2e70c5e6cb992"
-bytes = 11522
-offer_class = "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE"
-offer_class_value = 6
-reclaim_eligible_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE"
-reclaim_eligible_flag_value = 1
-reclaim_eligible_flag_semantics = "legacy-low-reuse-hint-only"
-cache_drop_safe_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE"
-cache_drop_safe_flag_value = 2
-cache_drop_safe_flag_semantics = "positive-complete-durable-nondirect-cache-drop-proof"
-unflagged_disposition = "retain"
-revoke_abi_module = "oliphaunt_postmaster_v1"
-revoke_abi_function = "fd_cache_revoke"
-revoke_abi_signature = "(i32,i32,i32)->i32_errno"
-revoke_class = "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE"
-revoke_class_value = 6
-revoke_flags = "PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE"
-revoke_flags_value = 0
-revoke_timing = "once-per-open-before-first-wal-payload-write"
-native_behavior_preserved = true
-adaptive_eviction_enabled = true
-adaptive_policy_id = "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5"
-adaptive_required_flag = "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE"
-adaptive_portable_fallback = "observe-only"
-
 [current_runtime_patches.wasmer]
 path = "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
 base_commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
-sha256 = "4a164cad0ec19dbe29cf0fe3f37e94b9f2ee9f887252b74a8eeecd6dfc41e333"
-bytes = 2255905
+sha256 = "3406534fb297c690567b7df5cb31937dcf1708e13973562859cbc7d8a50bdc21"
+bytes = 1719460
 
 [current_runtime_patches.wasix_libc]
 path = "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
 base_commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
-sha256 = "59a936d5f6398b5b60c3e6e8b6c220a02a22603daf2eb0920f227021d56ffe7d"
-bytes = 70876
+sha256 = "116f0728a06e7b2e8e4189b0af6a7d22f40fb0fdda597a6170b5b6e712ddc3dc"
+bytes = 57623
 
 [postgresql]
 version = "18.4"

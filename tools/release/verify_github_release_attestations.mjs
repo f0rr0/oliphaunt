@@ -27,6 +27,7 @@ import {
 } from "./publication-lock.mjs";
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
 import { swiftExtensionCarrierAssetName } from "./ios-carrier-manifest.mjs";
+import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "verify_github_release_attestations.mjs";
@@ -60,6 +61,7 @@ const GITHUB_RELEASE_ARTIFACT_ROLES = new Set([
 const BASE_ASSET_BACKED_PRODUCTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
 ]);
@@ -91,6 +93,7 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
   "mobileReleaseReady",
   "desktopReleaseReady",
@@ -137,6 +140,7 @@ const PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
   "mobileReleaseReady",
   "desktopReleaseReady",
@@ -427,6 +431,13 @@ async function expectedAssets(product, version) {
       assets.push(...await expectedExtensionAssets(contrib.artifactProduct, version, "wasix"));
     }
     return [...new Set(assets)].sort(compareText);
+  }
+  if (product === "liboliphaunt-wasix-postmaster") {
+    return [
+      `${product}-${version}-linux-x64-gnu.tar.gz`,
+      `${product}-${version}-macos-arm64.tar.gz`,
+      `${product}-${version}-release-assets.sha256`,
+    ];
   }
   if (product === "oliphaunt-broker") {
     return expectedDesktopAssets(product, "broker-helper", version, PREFIX);
@@ -1092,6 +1103,10 @@ function assertCanonicalMemberSemantics(product, member, context) {
   assertCanonicalIosRegistration(member, expected, context);
 }
 
+function assertCanonicalWasixInstall(member, context) {
+  assertWasixExtensionMemberInstall(member, { label: context });
+}
+
 export function assertCanonicalExtensionReleaseIdentity(
   product,
   version,
@@ -1183,6 +1198,11 @@ async function validateExtensionManifest(
       context,
     );
     validateExtensionAssets(manifest.assets, context, seen);
+    try {
+      assertCanonicalWasixInstall(manifest, context);
+    } catch (error) {
+      fail(error.message);
+    }
     return manifest.assets;
   }
   if (manifest.schema !== "oliphaunt-extension-release-manifest-v2") {
@@ -1212,6 +1232,11 @@ async function validateExtensionManifest(
     }
     validateKeySet(member, PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS, memberContext);
     validateBundleMemberAssets(member.assets, memberContext, carriers, seenLocators);
+    try {
+      assertCanonicalWasixInstall(member, memberContext);
+    } catch (error) {
+      fail(error.message);
+    }
     for (const asset of member.assets) {
       const expectedMemberPath = `extensions/${member.sqlName}/${asset.name}`;
       if (asset.memberPath !== expectedMemberPath) {

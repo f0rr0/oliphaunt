@@ -7,6 +7,14 @@ source "$FRESH_ROOT/lib/wasix-build-lock.sh"
 
 configure_only=0
 force_clean=0
+portable_inputs="${OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS:-0}"
+case "$portable_inputs" in
+  0|1) ;;
+  *)
+    echo 'OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS must be 0 or 1' >&2
+    exit 2
+    ;;
+esac
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --configure-only)
@@ -33,6 +41,36 @@ case "${WASIX_CORE_CHILD_BACKEND:-exec}" in
     exit 2
     ;;
 esac
+
+if [ "$portable_inputs" -eq 1 ]; then
+  [ "$force_clean" -eq 0 ] || {
+    echo '--clean is incompatible with portable PostgreSQL build inputs' >&2
+    exit 2
+  }
+  guest_receipt="$WASIX_INSTALL_DIR/guest-build.receipt"
+  [ -f "$guest_receipt" ] && [ ! -L "$guest_receipt" ] || {
+    printf 'missing portable PostgreSQL guest receipt: %s\n' "$guest_receipt" >&2
+    exit 2
+  }
+  expected_guest_identity="$(
+    fresh_manifest_value "$guest_receipt" installed_closure_sha256
+  )"
+  actual_guest_identity="$(
+    python3 "$FRESH_ROOT/lib/guest_build_provenance.py" identity \
+      "$WASIX_INSTALL_DIR"
+  )"
+  [ "$actual_guest_identity" = "$expected_guest_identity" ] || {
+    echo 'portable PostgreSQL guest differs from its build receipt' >&2
+    exit 2
+  }
+  [ "$(fresh_manifest_value "$guest_receipt" core_profile)" = \
+    "$WASIX_CORE_PROFILE" ] || {
+    echo 'portable PostgreSQL guest profile differs from the selected product profile' >&2
+    exit 2
+  }
+  printf 'validated portable PostgreSQL guest: %s\n' "$WASIX_INSTALL_DIR"
+  exit 0
+fi
 
 managed_work_probe="$FRESH_WORK_ROOT/.managed-path-boundary"
 fresh_require_managed_generated_path "$managed_work_probe" FRESH_WORK_ROOT
@@ -276,7 +314,7 @@ else
 fi
 
 if ! DOCKER_IMAGE="$FRESH_WASIX_DOCKER_IMAGE" \
-  "$FRESH_ROOT/runtime/bin/run-blocker-probes.sh" --validate-sysroot-only >>"$log" 2>&1; then
+  "$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh" --validate-sysroot-only >>"$log" 2>&1; then
   {
     printf '\n## Result\n\n'
     printf -- '- Status: `fail`\n'

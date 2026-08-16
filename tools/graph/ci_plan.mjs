@@ -51,6 +51,7 @@ export const BUILDER_JOBS = new Set([
   "liboliphaunt-wasix-aot",
   "liboliphaunt-wasix-release-assets",
   "liboliphaunt-wasix-runtime",
+  "wasix-postmaster",
   "mobile-build-android",
   "mobile-build-ios",
   "mobile-extension-packages",

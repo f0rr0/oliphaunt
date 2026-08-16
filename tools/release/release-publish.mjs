@@ -164,6 +164,7 @@ const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
 const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
 ]);

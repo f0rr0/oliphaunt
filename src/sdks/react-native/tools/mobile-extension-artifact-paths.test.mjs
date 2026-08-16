@@ -218,6 +218,7 @@ function extensionMember(sqlName, stagesIos = true) {
           sqlName,
           symbols: [],
         },
+    wasixInstall: null,
     sharedPreloadLibraries: [...row["shared-preload-libraries"]].sort(),
     mobileReleaseReady: row["mobile-release-ready"],
     desktopReleaseReady: row["desktop-release-ready"],

@@ -44,7 +44,7 @@ tasks:
       - "/tools/dev/start-android-emulator-ci.test.sh"
       - "/tools/policy/assertions/workflow-security.mjs"
       - "/tools/policy/assertions/workflow-security.test.mjs"
-      - "/tools/policy/ci-plan-research-isolation.test.mjs"
+      - "/tools/policy/ci-plan-wasix-postmaster-release.test.mjs"
       - "/tools/policy/check-workflows.sh"
       - "/tools/graph/affected.mjs"
       - "/tools/graph/ci_plan.mjs"

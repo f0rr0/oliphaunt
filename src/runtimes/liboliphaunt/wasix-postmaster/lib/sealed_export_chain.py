@@ -55,7 +55,6 @@ RECEIPT_KEYS = {
     "final-proof-sha256",
     "seed",
     "final-module",
-    "estimate",
     "sides",
 }
 SNAPSHOT_KEYS = {
@@ -67,16 +66,6 @@ SNAPSHOT_KEYS = {
     "element-function-entries",
     "element-unique-function-indices",
     "start-function-index",
-}
-ESTIMATE_KEYS = {
-    "classification",
-    "formula",
-    "removed-local-functions",
-    "bytes-per-eager-local-funcref",
-    "removed-local-globals",
-    "bytes-per-eager-local-global",
-    "estimated-bytes-per-instance",
-    "caveat",
 }
 SIDE_KEYS = {"path", "sha256"}
 PROOF_KEYS = {
@@ -397,10 +386,8 @@ def validate_export_chain(
 
     seed = receipt["seed"]
     final_module = receipt["final-module"]
-    estimate = receipt["estimate"]
     require(isinstance(seed, dict) and set(seed) == SNAPSHOT_KEYS, "sealed-export seed snapshot fields differ")
     require(isinstance(final_module, dict) and set(final_module) == SNAPSHOT_KEYS, "sealed-export final snapshot fields differ")
-    require(isinstance(estimate, dict) and set(estimate) == ESTIMATE_KEYS, "sealed-export estimate fields differ")
     seed_sha = require_sha(seed["sha256"], "sealed-export seed module")
     final_sha = require_sha(final_module["sha256"], "sealed-export final module")
     require(

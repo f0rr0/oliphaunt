@@ -34,4 +34,5 @@ series = [
   "0009-wasmer-wasix-instantiate-main-module-async.patch",
   "0010-wasmer-js-refresh-npm-lock.patch",
   "0011-wasmer-wasix-deny-single-backend-guest-spawn.patch",
+  "0012-wasmer-js-remove-retired-wasm32-wasi-target.patch",
 ]
