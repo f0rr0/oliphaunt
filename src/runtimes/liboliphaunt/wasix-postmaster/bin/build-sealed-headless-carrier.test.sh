@@ -4,6 +4,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-sealed-carrier.XXXXXX")"
+test_root="$(cd "$test_root" && pwd -P)"
 cleanup_test_root() {
   chmod -R u+w "$test_root" 2>/dev/null || true
   rm -rf -- "$test_root"

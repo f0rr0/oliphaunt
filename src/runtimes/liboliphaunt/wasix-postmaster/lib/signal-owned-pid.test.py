@@ -184,6 +184,7 @@ class SignalOwnedPidTests(unittest.TestCase):
                     events, [("open", 44, 0), ("poll", 74), ("close", 74)]
                 )
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux pidfd contract")
     def test_pidfd_rejects_wrong_birth_and_signals_exact_process(self) -> None:
         process = subprocess.Popen(["sleep", "30"])
         try:
@@ -229,6 +230,7 @@ class SignalOwnedPidTests(unittest.TestCase):
                 process.kill()
                 process.wait()
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux pidfd contract")
     def test_already_exited_process_is_a_noop(self) -> None:
         # Keep the fixture alive long enough to capture a real birth identity,
         # then reap it before invoking the helper.  A `true` process can exit

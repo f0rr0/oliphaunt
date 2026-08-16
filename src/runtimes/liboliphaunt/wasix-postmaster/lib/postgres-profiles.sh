@@ -391,18 +391,17 @@ fresh_validate_postgres_profile_settings() {
     return 2
   }
   pending="$(dirname "$output")/.$(basename "$output").pending.$$"
-  if pending_identity="$(awk -F '\t' -v OFS='\t' -v expected="$expected" '
-    BEGIN {
-      count = split(expected, rows, "\n")
-      for (i = 1; i <= count; i++) {
-        split(rows[i], field, "\t")
-        wanted[field[1]] = 1
-        expected_setting[field[1]] = field[2]
-        expected_unit[field[1]] = field[3]
-      }
-      print "name", "expected_setting", "expected_unit", "observed_setting", "observed_unit", "source", "status"
+  if pending_identity="$(awk -F '\t' -v OFS='\t' '
+    NR == FNR {
+      count++
+      rows[count] = $0
+      wanted[$1] = 1
+      expected_setting[$1] = $2
+      expected_unit[$1] = $3
+      next
     }
-    NR == 1 {
+    FNR == 1 {
+      print "name", "expected_setting", "expected_unit", "observed_setting", "observed_unit", "source", "status"
       if ($0 != "name\tsetting\tunit\tsource") malformed = 1
       next
     }
@@ -424,7 +423,8 @@ fresh_validate_postgres_profile_settings() {
       }
       exit failed ? 1 : 0
     }
-  ' "$settings" | python3 "$publication_tool" write-stdin-identified "$pending")"; then
+  ' <(printf '%s\n' "$expected") "$settings" |
+    python3 "$publication_tool" write-stdin-identified "$pending")"; then
     status=0
   else
     status=$?

@@ -107,7 +107,22 @@ def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
     return root.resolve(), expected
 
 
+class ImmutableCarrierPlatformTests(unittest.TestCase):
+    def test_non_linux_platform_is_rejected(self) -> None:
+        with mock.patch.object(sys, "platform", "darwin"):
+            with self.assertRaisesRegex(
+                MODULE.DeploymentError, "immutable deployment requires Linux"
+            ):
+                MODULE.require_linux()
+
+
 class ImmutableCarrierTests(unittest.TestCase):
+    def setUp(self) -> None:
+        if not sys.platform.startswith("linux"):
+            linux_guard = mock.patch.object(MODULE, "require_linux", return_value=None)
+            linux_guard.start()
+            self.addCleanup(linux_guard.stop)
+
     def test_deploy_verify_and_exact_remove_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)

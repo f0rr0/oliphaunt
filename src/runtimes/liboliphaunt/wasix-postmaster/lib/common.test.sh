@@ -4,6 +4,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-wasmer-receipt.XXXXXX")"
+test_root="$(cd "$test_root" && pwd -P)"
 guard_sandbox=""
 
 cleanup() {
@@ -324,16 +325,17 @@ if expect_invalid_wasm_opt_default; then
 fi
 unset WASIXCC_WASM_OPT_SUPPRESS_DEFAULT
 
-cp /bin/true "$FRESH_UPSTREAM_WASMER_BIN"
-chmod +x "$FRESH_UPSTREAM_WASMER_BIN"
-cp /bin/true "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
-chmod +x "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
-cp /bin/true "$FRESH_POSTMASTER_EXECUTOR_BIN"
-chmod +x "$FRESH_POSTMASTER_EXECUTOR_BIN"
+true_bin="$(type -P true)"
+cp "$true_bin" "$FRESH_UPSTREAM_WASMER_BIN"
+chmod u+wx "$FRESH_UPSTREAM_WASMER_BIN"
+cp "$true_bin" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
+chmod u+wx "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
+cp "$true_bin" "$FRESH_POSTMASTER_EXECUTOR_BIN"
+chmod u+wx "$FRESH_POSTMASTER_EXECUTOR_BIN"
 cp "$project_root/testdata/fake-start-proof.py" "$FRESH_START_PROOF_BIN"
 chmod +x "$FRESH_START_PROOF_BIN"
-cp /bin/true "$FRESH_MEMORY_PROFILE_BIN"
-chmod +x "$FRESH_MEMORY_PROFILE_BIN"
+cp "$true_bin" "$FRESH_MEMORY_PROFILE_BIN"
+chmod u+wx "$FRESH_MEMORY_PROFILE_BIN"
 cp "$project_root/testdata/fake-postmaster-compiler.py" "$FRESH_POSTMASTER_COMPILER_BIN"
 chmod +x "$FRESH_POSTMASTER_COMPILER_BIN"
 
@@ -841,8 +843,8 @@ rm "$WASMER_BUILD_RECEIPT"
 mv "$test_root/receipt.saved" "$WASMER_BUILD_RECEIPT"
 
 mkdir -p "$test_root/bin"
-cp /bin/true "$test_root/bin/wasmer"
-chmod +x "$test_root/bin/wasmer"
+cp "$true_bin" "$test_root/bin/wasmer"
+chmod u+wx "$test_root/bin/wasmer"
 FRESH_UPSTREAM_WASMER_BIN="$test_root/missing" \
   PATH="$test_root/bin:$PATH" \
   expect_failure fresh_wasmer_bin

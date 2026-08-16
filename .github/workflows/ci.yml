@@ -1937,10 +1937,11 @@ jobs:
 
       - name: Install portable shell utilities
         run: |
-          brew install bash coreutils util-linux
+          brew install bash coreutils findutils util-linux
           {
             echo "$(brew --prefix bash)/bin"
             echo "$(brew --prefix coreutils)/libexec/gnubin"
+            echo "$(brew --prefix findutils)/libexec/gnubin"
             echo "$(brew --prefix util-linux)/bin"
           } >> "$GITHUB_PATH"
 
