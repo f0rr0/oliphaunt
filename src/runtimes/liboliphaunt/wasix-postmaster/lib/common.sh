@@ -713,19 +713,27 @@ fresh_host_abi() {
   esac
 }
 
-fresh_release_target() {
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) echo "macos-arm64" ;;
-    Linux-x86_64) echo "linux-x64-gnu" ;;
+fresh_release_target_for_host_arch() {
+  case "$1" in
+    darwin-arm64) echo "macos-arm64" ;;
+    linux-arm64) echo "linux-arm64-gnu" ;;
+    linux-amd64) echo "linux-x64-gnu" ;;
     *)
-      echo "unsupported WASIX postmaster release host: $(uname -s)-$(uname -m)" >&2
+      printf 'unsupported WASIX postmaster release host: %s\n' "$1" >&2
       return 2
       ;;
   esac
 }
 
+fresh_release_target() {
+  local host_arch
+  host_arch="$(fresh_host_arch)" || return
+  fresh_release_target_for_host_arch "$host_arch"
+}
+
 fresh_release_target_triple() {
   case "$1" in
+    linux-arm64-gnu) echo "aarch64-unknown-linux-gnu" ;;
     linux-x64-gnu) echo "x86_64-unknown-linux-gnu" ;;
     macos-arm64) echo "aarch64-apple-darwin" ;;
     *)

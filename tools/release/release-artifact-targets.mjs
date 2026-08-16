@@ -100,9 +100,15 @@ export const MOBILE_TARGETS = {
 };
 
 const NATIVE_RUNTIME_TARGETS = { ...DESKTOP_TARGETS, ...MOBILE_TARGETS };
-const WASIX_TARGETS = new Set(["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
-const WASIX_POSTMASTER_TARGETS = new Set(["linux-x64-gnu", "macos-arm64"]);
-const BROKER_TARGETS = new Set(["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
+const RELEASE_HOST_TARGETS = Object.freeze([
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]);
+const WASIX_TARGETS = new Set(["portable", ...RELEASE_HOST_TARGETS]);
+const WASIX_POSTMASTER_TARGETS = new Set(RELEASE_HOST_TARGETS);
+const BROKER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const NODE_DIRECT_TARGETS = BROKER_TARGETS;
 const PRODUCT_PRESETS = {
   "liboliphaunt-native": "liboliphaunt-native",
@@ -292,6 +298,19 @@ function plannedTargets(product, expectedPreset, knownTargets, prefix) {
   return parsed;
 }
 
+function artifactTargetTiers(product, expectedPreset, knownTargets, prefix) {
+  const published = new Set(publishedTargets(product, expectedPreset, knownTargets, prefix));
+  const planned = plannedTargets(product, expectedPreset, knownTargets, prefix);
+  const overlap = [...planned.keys()].filter((target) => published.has(target)).sort(compareText);
+  if (overlap.length > 0) {
+    fail(
+      prefix,
+      `Moon release metadata for ${product} declares target(s) as both published and planned: ${overlap.join(", ")}`,
+    );
+  }
+  return { published, planned };
+}
+
 function nativeLibraryRelativePath(target) {
   if (target.startsWith("android-")) {
     return `jni/${MOBILE_TARGETS[target].androidAbi}/liboliphaunt.so`;
@@ -351,10 +370,12 @@ export function liboliphauntAndroidAbi(target) {
 
 function liboliphauntNativeRows(prefix) {
   const product = "liboliphaunt-native";
-  const published = new Set(
-    publishedTargets(product, PRODUCT_PRESETS[product], new Set(Object.keys(NATIVE_RUNTIME_TARGETS)), prefix),
+  const { published, planned } = artifactTargetTiers(
+    product,
+    PRODUCT_PRESETS[product],
+    new Set(Object.keys(NATIVE_RUNTIME_TARGETS)),
+    prefix,
   );
-  const planned = plannedTargets(product, PRODUCT_PRESETS[product], new Set(Object.keys(NATIVE_RUNTIME_TARGETS)), prefix);
   const rows = [];
   for (const target of [...new Set([...published, ...planned.keys()])].sort(compareText)) {
     const platform = NATIVE_RUNTIME_TARGETS[target];
@@ -544,14 +565,16 @@ function liboliphauntWasixRows(prefix) {
 
 function liboliphauntWasixPostmasterRows(prefix) {
   const product = "liboliphaunt-wasix-postmaster";
-  const rows = [];
-  for (const target of publishedTargets(
+  const { published, planned } = artifactTargetTiers(
     product,
     PRODUCT_PRESETS[product],
     WASIX_POSTMASTER_TARGETS,
     prefix,
-  ).sort(compareText)) {
+  );
+  const rows = [];
+  for (const target of [...new Set([...published, ...planned.keys()])].sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
+    const publishedTarget = published.has(target);
     rows.push({
       id: `${product}.${target}`,
       product,
@@ -559,16 +582,23 @@ function liboliphauntWasixPostmasterRows(prefix) {
       target,
       triple: platform.triple,
       runner: platform.runner,
-      asset: `${product}-{version}-${target}.tar.gz`,
+      llvm_url: platform.wasixLlvmUrl,
+      llvm_sha256: platform.wasixLlvmSha256,
+      llvm_bytes: platform.wasixLlvmBytes,
+      asset: `${product}-{version}-${target}.tar.zst`,
       surfaces: ["github-release"],
-      published: true,
-      binary_compatibility: requiredBinaryCompatibility(
-        target,
-        `${product} runtime`,
-        prefix,
-      ),
+      published: publishedTarget,
+      binary_compatibility: publishedTarget
+        ? requiredBinaryCompatibility(target, `${product} runtime`, prefix)
+        : undefined,
       extension_artifacts: false,
       _source_file: "Moon release metadata",
+      ...(publishedTarget
+        ? {}
+        : {
+            tier: "planned",
+            unsupported_reason: planned.get(target).unsupportedReason,
+          }),
     });
   }
   rows.push({

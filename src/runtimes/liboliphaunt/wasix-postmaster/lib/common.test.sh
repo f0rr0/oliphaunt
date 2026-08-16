@@ -30,6 +30,21 @@ unset WASMER_BIN
 
 source "$project_root/lib/common.sh"
 
+[ "$(fresh_release_target_for_host_arch linux-arm64)" = "linux-arm64-gnu" ]
+[ "$(fresh_release_target_for_host_arch linux-amd64)" = "linux-x64-gnu" ]
+[ "$(fresh_release_target_for_host_arch darwin-arm64)" = "macos-arm64" ]
+[ "$(fresh_release_target_triple linux-arm64-gnu)" = "aarch64-unknown-linux-gnu" ]
+[ "$(fresh_release_target_triple linux-x64-gnu)" = "x86_64-unknown-linux-gnu" ]
+[ "$(fresh_release_target_triple macos-arm64)" = "aarch64-apple-darwin" ]
+if fresh_release_target_for_host_arch darwin-amd64 >/dev/null 2>&1; then
+  echo 'macOS x64 unexpectedly mapped to a WASIX postmaster release target' >&2
+  exit 1
+fi
+if fresh_release_target_triple windows-x64-msvc >/dev/null 2>&1; then
+  echo 'planned Windows x64 unexpectedly mapped to a qualified release triple' >&2
+  exit 1
+fi
+
 if (FRESH_PROJECT_SOURCE_ID_PREFIX=mutable) 2>/dev/null; then
   echo 'canonical project source identity prefix remained mutable after sourcing' >&2
   exit 1

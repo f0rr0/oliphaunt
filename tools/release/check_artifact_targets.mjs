@@ -18,6 +18,7 @@ import {
   liboliphauntNativeIosRuntimeMatrix,
   liboliphauntNativeRuntimeMatrix,
   liboliphauntWasixAotRuntimeMatrix,
+  liboliphauntWasixPostmasterRuntimeMatrix,
   nodeDirectRuntimeMatrix,
   reactNativeAndroidMobileAppMatrix,
 } from "./artifact_target_matrix.mjs";
@@ -343,28 +344,6 @@ export function expectedArtifactTargetContract() {
     portableRow("liboliphaunt-wasix", "checksums", "checksums", "liboliphaunt-wasix-{version}-release-assets.sha256"),
     targetRow({
       product: "liboliphaunt-wasix-postmaster",
-      id: "linux-x64-gnu",
-      kind: "wasix-postmaster-runtime",
-      target: "linux-x64-gnu",
-      asset: "liboliphaunt-wasix-postmaster-{version}-linux-x64-gnu.tar.gz",
-      surfaces: [GITHUB],
-      triple: "x86_64-unknown-linux-gnu",
-      runner: "ubuntu-24.04",
-      extensionArtifacts: false,
-    }),
-    targetRow({
-      product: "liboliphaunt-wasix-postmaster",
-      id: "macos-arm64",
-      kind: "wasix-postmaster-runtime",
-      target: "macos-arm64",
-      asset: "liboliphaunt-wasix-postmaster-{version}-macos-arm64.tar.gz",
-      surfaces: [GITHUB],
-      triple: "aarch64-apple-darwin",
-      runner: "macos-26",
-      extensionArtifacts: false,
-    }),
-    targetRow({
-      product: "liboliphaunt-wasix-postmaster",
       id: "checksums",
       kind: "checksums",
       target: "portable",
@@ -388,6 +367,22 @@ export function expectedArtifactTargetContract() {
       llvm: `https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/${llvmArchive}`,
       llvmSha256,
       llvmBytes,
+    }));
+    rows.push(targetRow({
+      product: "liboliphaunt-wasix-postmaster",
+      id: target,
+      kind: "wasix-postmaster-runtime",
+      target,
+      asset: `liboliphaunt-wasix-postmaster-{version}-${target}.tar.zst`,
+      surfaces: [GITHUB],
+      published: target !== "windows-x64-msvc",
+      triple,
+      runner,
+      llvm: `https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/${llvmArchive}`,
+      llvmSha256,
+      llvmBytes,
+      tier: target === "windows-x64-msvc" ? "planned" : null,
+      extensionArtifacts: false,
     }));
   }
   return rows.sort((left, right) => compareText(left.id, right.id));
@@ -511,6 +506,42 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
         && row.llvm_bytes > 0
         && row.llvm_bytes <= 2 * 1024 * 1024 * 1024,
       `WASIX AOT CI matrix ${row.target_id} must bind its exact supported LLVM byte size`,
+    );
+  }
+  const postmasterTargets = targets.filter(
+    ({ product, kind }) => product === "liboliphaunt-wasix-postmaster" && kind === "wasix-postmaster-runtime",
+  );
+  assertSameStrings(
+    matrices.wasixPostmaster.include.map(({ target_id }) => target_id),
+    postmasterTargets.map(({ target }) => target),
+    "WASIX postmaster CI matrix",
+  );
+  const postmasterByTarget = new Map(postmasterTargets.map((target) => [target.target, target]));
+  for (const row of matrices.wasixPostmaster.include) {
+    const target = postmasterByTarget.get(row.target_id);
+    invariant(target !== undefined, `WASIX postmaster CI matrix has unknown target ${row.target_id}`);
+    invariant(
+      row.os === target.runner && row.target === target.triple,
+      `WASIX postmaster CI matrix ${row.target_id} must bind its declared runner and target triple`,
+    );
+    invariant(
+      row.artifact === `liboliphaunt-wasix-postmaster-release-assets-${target.target}`,
+      `WASIX postmaster CI matrix ${row.target_id} must bind its exact CI artifact name`,
+    );
+    invariant(
+      row.release_asset_path
+        === `target/oliphaunt-wasix-postmaster/release-assets/${target.asset.replace("{version}", "*")}`,
+      `WASIX postmaster CI matrix ${row.target_id} must bind its catalog-derived release asset path`,
+    );
+    invariant(
+      row.produces_artifact === target.published,
+      `WASIX postmaster CI matrix ${row.target_id} production status must match publication metadata`,
+    );
+    invariant(
+      row.llvm_url === target.llvmUrl
+        && row.llvm_sha256 === target.llvmSha256
+        && row.llvm_bytes === target.llvmBytes,
+      `WASIX postmaster CI matrix ${row.target_id} must bind its declared LLVM toolchain`,
     );
   }
   assertSameStrings(
@@ -682,6 +713,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     extensionNative: inventory.matrices.extensionNative.include,
     extensionWasix: inventory.matrices.extensionWasix.include,
     wasixAot: inventory.matrices.wasixAot.include,
+    wasixPostmaster: inventory.matrices.wasixPostmaster.include,
     reactNativeAndroid: inventory.matrices.reactNativeAndroid.include,
   };
   const releaseAssets = (product, kind) => ciReleaseAssetArtifactRows(product, kind, TOOL).map(({ artifactName }) => artifactName);
@@ -722,53 +754,83 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     ["liboliphaunt-wasix-release-assets", "liboliphaunt-wasix-release-assets"],
     ["wasix-postmaster", "liboliphaunt-wasix-postmaster-release-assets"],
   ]) validateWorkflowProducer(workflow, jobId, artifact, [{}], [artifact]);
+  const postmasterReleaseAssets = releaseAssets(
+    "liboliphaunt-wasix-postmaster",
+    "wasix-postmaster-runtime",
+  );
+  const postmasterProducers = matrixRows.wasixPostmaster.filter(({ produces_artifact: producesArtifact }) => producesArtifact);
   validateWorkflowProducer(
     workflow,
-    "wasix-postmaster-linux",
-    "liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu",
-    [{}],
-    ["liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu"],
+    "wasix-postmaster-target",
+    "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}",
+    postmasterProducers,
+    postmasterReleaseAssets,
   );
   validateWorkflowProducer(
     workflow,
-    "wasix-postmaster-linux",
+    "wasix-postmaster-portable",
     "liboliphaunt-wasix-postmaster-portable-build-inputs",
     [{}],
     ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
   );
-  validateWorkflowProducer(
+  const portablePostmasterQualification = workflowJob(workflow, "wasix-postmaster-portable").steps
+    .find((step) => step.name === "Build and qualify portable WASIX postmaster inputs");
+  invariant(
+    portablePostmasterQualification?.run?.includes("--upstream deep")
+      && portablePostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:portable-inputs"),
+    "portable WASIX postmaster qualification must execute its complete Moon dependency graph",
+  );
+  const targetPostmasterQualification = workflowJob(workflow, "wasix-postmaster-target").steps
+    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
+  invariant(
+    targetPostmasterQualification?.run?.includes("--upstream deep")
+      && targetPostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:release-assets")
+      && targetPostmasterQualification.if === "${{ matrix.produces_artifact == true }}",
+    "target WASIX postmaster qualification must execute its complete Moon dependency graph only for artifact producers",
+  );
+  const postmasterUpload = actionSteps(workflow, "wasix-postmaster-target", "actions/upload-artifact@")
+    .find((step) => step.with?.name === "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}");
+  invariant(
+    postmasterUpload?.if === "${{ matrix.produces_artifact == true }}"
+      && postmasterUpload.with?.path === "${{ matrix.release_asset_path }}",
+    "WASIX postmaster targets must upload only their catalog-derived release asset path",
+  );
+  const plannedPostmasterStep = workflowJob(workflow, "wasix-postmaster-target").steps
+    .find((step) => step.name === "Record planned WASIX postmaster target");
+  invariant(
+    plannedPostmasterStep?.if === "${{ matrix.produces_artifact == false }}"
+      && String(plannedPostmasterStep.run ?? "").includes("intentionally produces no artifact"),
+    "planned WASIX postmaster targets must execute only an explicit no-op",
+  );
+  invariant(
+    actionSteps(workflow, "wasix-postmaster", "./.github/actions/setup-moon").length === 1,
+    "WASIX postmaster aggregation must load its release catalog through the pinned Moon toolchain",
+  );
+  const postmasterAggregation = workflowJob(workflow, "wasix-postmaster").steps
+    .find((step) => step.name === "Merge target WASIX postmaster release assets");
+  invariant(
+    String(postmasterAggregation?.run ?? "").includes(
+      "run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets",
+    ),
+    "WASIX postmaster aggregation must run the product-owned aggregate Moon task without producer dependencies",
+  );
+  validateMergedSameRunDownload(
     workflow,
-    "wasix-postmaster-macos",
-    "liboliphaunt-wasix-postmaster-release-assets-macos-arm64",
-    [{}],
-    ["liboliphaunt-wasix-postmaster-release-assets-macos-arm64"],
-  );
-  const linuxPostmasterQualification = workflowJob(workflow, "wasix-postmaster-linux").steps
-    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
-  invariant(
-    linuxPostmasterQualification?.run?.includes("OLIPHAUNT_MOON_UPSTREAM=deep"),
-    "Linux WASIX postmaster qualification must execute its complete Moon dependency graph",
-  );
-  const macosPostmasterQualification = workflowJob(workflow, "wasix-postmaster-macos").steps
-    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
-  invariant(
-    macosPostmasterQualification?.run?.includes("--upstream deep"),
-    "macOS WASIX postmaster qualification must execute its complete Moon dependency graph",
+    "wasix-postmaster",
+    "liboliphaunt-wasix-postmaster-release-assets-*",
+    "target/oliphaunt-wasix-postmaster/release-assets",
   );
   validateWorkflowConsumer(
     workflow,
-    "wasix-postmaster-macos",
-    ["wasix-postmaster-linux"],
+    "wasix-postmaster-target",
+    ["wasix-postmaster-portable"],
     ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
   );
   validateWorkflowConsumer(
     workflow,
     "wasix-postmaster",
-    ["wasix-postmaster-linux", "wasix-postmaster-macos"],
-    [
-      "liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu",
-      "liboliphaunt-wasix-postmaster-release-assets-macos-arm64",
-    ],
+    ["wasix-postmaster-target"],
+    postmasterReleaseAssets,
   );
   validateWorkflowConsumer(
     workflow,
@@ -888,6 +950,7 @@ export function repositoryInventory() {
       extensionNative: extensionArtifactsNativeMatrix(),
       extensionWasix: extensionArtifactsWasixMatrix(),
       wasixAot: liboliphauntWasixAotRuntimeMatrix(),
+      wasixPostmaster: liboliphauntWasixPostmasterRuntimeMatrix(),
       broker: brokerRuntimeMatrix(),
       nodeDirect: nodeDirectRuntimeMatrix(),
     },

@@ -12,8 +12,10 @@ workload without changing PostgreSQL protocol semantics.
 
 ## Published targets
 
-Release carriers are published for `linux-x64-gnu` and `macos-arm64`. Each
-contains:
+Release carriers are published as level-19 Zstandard `.tar.zst` archives for
+`linux-arm64-gnu`, `linux-x64-gnu`, and `macos-arm64`, matching the normal
+WASIX carrier format. `windows-x64-msvc` remains an explicit planned CI no-op
+and is not a published target or release asset. Each published carrier contains:
 
 - the compiler-free postmaster executor;
 - `initdb`, `postgres`, and every side module declared by
@@ -118,3 +120,5 @@ runtime, packaging, verification, and qualification machinery.
   task describe the same product.
 - A release is valid only when the exact release commit produced and verified
   the carrier later attached to its GitHub release.
+- The checksum manifest uses the same canonical release-asset contract as the
+  single-backend WASIX product and covers every published carrier exactly.

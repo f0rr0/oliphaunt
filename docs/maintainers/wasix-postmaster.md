@@ -177,13 +177,23 @@ release qualification.
 
 ## Platform and SDK support
 
-Release carriers are qualified for Linux x86_64 GNU and macOS arm64. Both
-targets build their native executor, compiler, AOT modules, carrier, and client
-tools on the target host, then run independent carrier verification, backend
-wave stress, and crash-recovery qualification. The portable PostgreSQL guest,
-patched WASIX sysroot, and runtime capability probes are produced once on
-Linux and transferred as a verified build input because macOS runners do not
-provide Docker.
+Release carriers are qualified for Linux arm64 GNU, Linux x86_64 GNU, and
+macOS arm64. Each target builds its native executor, compiler, AOT modules,
+carrier, and client tools on the target host, then runs independent carrier
+verification, backend wave stress, and crash-recovery qualification. The
+portable PostgreSQL guest, patched WASIX sysroot, and runtime capability probes
+are produced once on Linux x86_64 and transferred as a verified build input to
+both Linux target jobs and macOS; this avoids repeating the portable build and
+also handles the absence of Docker on macOS runners.
+
+Published carrier archives use the same level-19 Zstandard `.tar.zst` format
+as the single-backend WASIX AOT carriers. The portable-input `.tar.gz` file is
+only an internal CI handoff between build jobs; it is not a release asset and
+is never included in the release checksum or attestation set.
+
+Windows x64 is present in the CI matrix as an explicit planned no-op. It does
+not build or publish an asset until its runtime, memory-mapping, packaging, and
+lifecycle contracts are implemented and qualified.
 
 Linux admits direct carrier mappings only after immutable-inode deployment and
 qualifies every server tree under finite cgroup-v2 memory controls. macOS has

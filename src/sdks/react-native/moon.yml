@@ -141,6 +141,7 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-extension-install-contract.mjs"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"

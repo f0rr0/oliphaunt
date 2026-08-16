@@ -115,6 +115,7 @@ jobs:
       native_extension_lifecycle_matrix: ${{ steps.plan.outputs.native_extension_lifecycle_matrix }}
       native_extension_lifecycle_shard_count: ${{ steps.plan.outputs.native_extension_lifecycle_shard_count }}
       liboliphaunt_wasix_aot_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_wasix_aot_runtime_matrix }}
+      liboliphaunt_wasix_postmaster_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_wasix_postmaster_runtime_matrix }}
       liboliphaunt_native_android_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_android_runtime_matrix }}
       liboliphaunt_native_desktop_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_desktop_runtime_matrix }}
       liboliphaunt_native_ios_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_ios_runtime_matrix }}
@@ -1856,8 +1857,8 @@ jobs:
           path: target/oliphaunt-wasix/release-assets
           if-no-files-found: error
 
-  wasix-postmaster-linux:
-    name: Builds / wasix-postmaster (linux-x64-gnu)
+  wasix-postmaster-portable:
+    name: Builds / wasix-postmaster (portable)
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
@@ -1891,15 +1892,8 @@ jobs:
           version: ${{ env.WASMER_LLVM_VERSION }}
           cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
-      - name: Build, verify, qualify, and package WASIX postmaster
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=deep MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-postmaster
-
-      - name: Upload Linux WASIX postmaster release asset
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu
-          path: target/oliphaunt-wasix-postmaster/release-assets/*.tar.gz
-          if-no-files-found: error
+      - name: Build and qualify portable WASIX postmaster inputs
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:portable-inputs
 
       - name: Upload portable WASIX postmaster build inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1908,16 +1902,30 @@ jobs:
           path: target/oliphaunt-wasix-postmaster/portable-inputs/wasix-postmaster-portable-build-inputs.tar.gz
           if-no-files-found: error
 
-  wasix-postmaster-macos:
-    name: Builds / wasix-postmaster (macos-arm64)
+  wasix-postmaster-target:
+    name: Builds / wasix-postmaster (${{ matrix.target_id }})
     needs:
       - affected
-      - wasix-postmaster-linux
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-linux.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
-    runs-on: macos-26
+      - wasix-postmaster-portable
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-portable.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.liboliphaunt_wasix_postmaster_runtime_matrix || '{"include":[]}') }}
     steps:
+      # TODO(wasix-postmaster): replace this no-op with the Windows x64 sealed
+      # carrier build after fixed shared-memory remapping, sealed AOT activation,
+      # launcher packaging, and lifecycle qualification are implemented.
+      - name: Record planned WASIX postmaster target
+        if: ${{ matrix.produces_artifact == false }}
+        shell: pwsh
+        env:
+          PLANNED_TARGET_ID: ${{ matrix.target_id }}
+        run: Write-Host "$env:PLANNED_TARGET_ID is planned and intentionally produces no artifact"
+
       - name: Checkout repository
+        if: ${{ matrix.produces_artifact == true }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
@@ -1925,17 +1933,21 @@ jobs:
           persist-credentials: false
 
       - name: Set up Moon
+        if: ${{ matrix.produces_artifact == true }}
         uses: ./.github/actions/setup-moon
 
       - name: Set up Bun
+        if: ${{ matrix.produces_artifact == true }}
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Set up Rust
+        if: ${{ matrix.produces_artifact == true }}
         uses: ./.github/actions/setup-rust
 
       - name: Install portable shell utilities
+        if: ${{ matrix.produces_artifact == true && runner.os == 'macOS' }}
         run: |
           brew install bash coreutils findutils util-linux
           {
@@ -1946,20 +1958,23 @@ jobs:
           } >> "$GITHUB_PATH"
 
       - name: Install Wasmer LLVM 22.1
+        if: ${{ matrix.produces_artifact == true }}
         uses: ./.github/actions/setup-wasmer-llvm
         with:
-          url: ${{ env.WASMER_LLVM_MACOS_ARM64_URL }}
-          sha256: ${{ env.WASMER_LLVM_MACOS_ARM64_SHA256 }}
-          bytes: ${{ env.WASMER_LLVM_MACOS_ARM64_BYTES }}
+          url: ${{ matrix.llvm_url }}
+          sha256: ${{ matrix.llvm_sha256 }}
+          bytes: ${{ matrix.llvm_bytes }}
           version: ${{ env.WASMER_LLVM_VERSION }}
 
       - name: Download portable WASIX postmaster build inputs
+        if: ${{ matrix.produces_artifact == true }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: liboliphaunt-wasix-postmaster-portable-build-inputs
           path: target/oliphaunt-wasix-postmaster/portable-input-download
 
       - name: Restore portable WASIX postmaster build inputs
+        if: ${{ matrix.produces_artifact == true }}
         run: |
           archive=target/oliphaunt-wasix-postmaster/portable-input-download/wasix-postmaster-portable-build-inputs.tar.gz
           test -f "$archive"
@@ -1967,24 +1982,25 @@ jobs:
             -C target/oliphaunt-wasix-postmaster
 
       - name: Build, verify, qualify, and package WASIX postmaster
+        if: ${{ matrix.produces_artifact == true }}
         env:
           OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets
 
-      - name: Upload macOS WASIX postmaster release asset
+      - name: Upload target WASIX postmaster release asset
+        if: ${{ matrix.produces_artifact == true }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: liboliphaunt-wasix-postmaster-release-assets-macos-arm64
-          path: target/oliphaunt-wasix-postmaster/release-assets/*.tar.gz
+          name: liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}
+          path: ${{ matrix.release_asset_path }}
           if-no-files-found: error
 
   wasix-postmaster:
     name: Builds / wasix-postmaster
     needs:
       - affected
-      - wasix-postmaster-linux
-      - wasix-postmaster-macos
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-linux.result == 'success' && needs.wasix-postmaster-macos.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+      - wasix-postmaster-target
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-target.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -1995,6 +2011,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
       - name: Download target WASIX postmaster release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -2003,7 +2022,7 @@ jobs:
           merge-multiple: true
 
       - name: Merge target WASIX postmaster release assets
-        run: bash src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets
 
       - name: Upload complete WASIX postmaster release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

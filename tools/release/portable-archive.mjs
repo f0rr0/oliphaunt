@@ -1,6 +1,14 @@
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { gzipSync, inflateRawSync, zstdDecompressSync } from "node:zlib";
+import {
+  constants as zlibConstants,
+  gzipSync,
+  inflateRawSync,
+  zstdCompressSync,
+  zstdDecompressSync,
+} from "node:zlib";
+
+export const RELEASE_ZSTD_COMPRESSION_LEVEL = 19;
 
 export const DEFAULT_PORTABLE_ARCHIVE_LIMITS = Object.freeze({
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -50,6 +58,14 @@ export function normalizeCanonicalGzipHeader(compressed) {
 
 export function canonicalGzipSync(input) {
   return normalizeCanonicalGzipHeader(gzipSync(input, { mtime: 0 }));
+}
+
+export function releaseZstdCompressSync(input) {
+  return zstdCompressSync(input, {
+    params: {
+      [zlibConstants.ZSTD_c_compressionLevel]: RELEASE_ZSTD_COMPRESSION_LEVEL,
+    },
+  });
 }
 
 function positiveLimit(value, fallback, label) {

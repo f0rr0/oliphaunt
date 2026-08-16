@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import test from "node:test";
-import { deflateRawSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
+import {
+  constants as zlibConstants,
+  deflateRawSync,
+  gunzipSync,
+  gzipSync,
+  zstdCompressSync,
+} from "node:zlib";
 
 import {
   canonicalGzipSync,
@@ -16,6 +22,8 @@ import {
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
+  RELEASE_ZSTD_COMPRESSION_LEVEL,
+  releaseZstdCompressSync,
 } from "./portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -216,6 +224,19 @@ test("canonicalizes host-derived gzip metadata without changing payload or calle
   assert.throws(
     () => normalizeCanonicalGzipHeader(Buffer.from("not gzip")),
     /flag-free gzip stream/u,
+  );
+});
+
+test("uses the shared level-19 Zstandard release setting", () => {
+  const payload = Buffer.from("portable Zstandard payload\n");
+  assert.equal(RELEASE_ZSTD_COMPRESSION_LEVEL, 19);
+  assert.deepEqual(
+    releaseZstdCompressSync(payload),
+    zstdCompressSync(payload, {
+      params: {
+        [zlibConstants.ZSTD_c_compressionLevel]: 19,
+      },
+    }),
   );
 });
 

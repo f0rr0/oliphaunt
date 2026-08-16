@@ -79,7 +79,7 @@ version="$(tr -d '\r\n' <"$project_root/VERSION")"
 
 asset_dir="$repo_root/target/oliphaunt-wasix-postmaster/release-assets"
 mkdir -p "$asset_dir"
-asset_name="liboliphaunt-wasix-postmaster-$version-$release_target.tar.gz"
+asset_name="liboliphaunt-wasix-postmaster-$version-$release_target.tar.zst"
 [ ! -e "$asset_dir/$asset_name" ] || {
   echo 'refusing to overwrite existing WASIX postmaster release assets' >&2
   exit 2

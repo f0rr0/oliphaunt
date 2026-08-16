@@ -24,8 +24,12 @@ project:
     artifactTargets:
       preset: "liboliphaunt-wasix-postmaster"
       publishedTargets:
+        - "linux-arm64-gnu"
         - "linux-x64-gnu"
         - "macos-arm64"
+      plannedTargets:
+        windows-x64-msvc:
+          unsupportedReason: "Windows x64 remains a CI no-op until sealed AOT activation, fixed shared-memory remapping, launcher packaging, and lifecycle qualification are implemented."
 
 owners:
   defaultOwner: "@oliphaunt/wasix"
@@ -314,6 +318,26 @@ tasks:
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  aggregate-release-assets:
+    tags: ["release", "artifact-package", "ci-wasix-postmaster"]
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
+      - "/tools/dev/bun.sh"
+      - "/tools/release/merge-product-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     outputs:
       - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     options:

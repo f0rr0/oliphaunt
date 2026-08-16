@@ -167,6 +167,7 @@ JSON
     "$root/tools/release/portable-archive.mjs" \
     "$root/tools/release/release-directory-safety.mjs" \
     "$root/tools/release/release-notices.mjs" \
+    "$root/tools/release/wasix-extension-install-contract.mjs" \
     "$scratch_root/tools/release/"
   cp \
     "$root/tools/test/fd-backed-spawn-sync.mjs" \
