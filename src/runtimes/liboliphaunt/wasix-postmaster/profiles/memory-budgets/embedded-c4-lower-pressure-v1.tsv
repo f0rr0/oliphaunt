@@ -1,2 +1,0 @@
-schema_version	profile_id	status	connections	workloads	runtime_footprint	durability	memory_max	memory_high	swap_max	max_peak_pss_kib	max_peak_pss_anon_kib	max_peak_page_table_kib	max_cgroup_high_events_delta	max_psi_some_stall_fraction	max_psi_full_stall_fraction
-oliphaunt.wasix-postmaster.memory-budget-profile.v1	embedded-c4-lower-pressure-v1	research-only	4	indexed-read,mixed-write,indexed-update,indexed-insert	embedded-concurrent	safe	256M	224M	0	163840	98304	2048	4096	0.015	0.010

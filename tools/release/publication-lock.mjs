@@ -44,6 +44,7 @@ import {
   extensionCarrierLegalFileInventory,
 } from "./extension-upstream-licenses.mjs";
 import { readCanonicalTarGzipEntries } from "./portable-archive.mjs";
+import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -910,6 +911,9 @@ function publicExtensionAsset(row) {
 }
 
 function publicExtensionMember(member) {
+  const wasixInstall = assertWasixExtensionMemberInstall(member, {
+    label: `${member.sqlName} extension member`,
+  });
   return {
     sqlName: member.sqlName,
     createsExtension: member.createsExtension,
@@ -921,6 +925,7 @@ function publicExtensionMember(member) {
     nativeModuleStem: member.nativeModuleStem,
     iosNativeDependencies: member.iosNativeDependencies,
     iosRegistration: member.iosRegistration,
+    wasixInstall,
     sharedPreloadLibraries: member.sharedPreloadLibraries,
     mobileReleaseReady: member.mobileReleaseReady,
     desktopReleaseReady: member.desktopReleaseReady,
@@ -1352,6 +1357,7 @@ function extensionGithubReleaseArtifacts(files, product) {
     nativeModuleStem: publicMember.nativeModuleStem,
     iosNativeDependencies: publicMember.iosNativeDependencies,
     iosRegistration: publicMember.iosRegistration,
+    wasixInstall: publicMember.wasixInstall,
     sharedPreloadLibraries: publicMember.sharedPreloadLibraries,
     mobileReleaseReady: publicMember.mobileReleaseReady,
     desktopReleaseReady: publicMember.desktopReleaseReady,

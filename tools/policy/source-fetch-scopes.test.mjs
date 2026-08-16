@@ -15,9 +15,10 @@ const productionDomains = [
   ['shared', sourceOrigins.sharedThirdParty],
   ['native', sourceOrigins.nativeThirdParty],
   ['wasix', sourceOrigins.wasixThirdParty],
+  ['wasix-postmaster', sourceOrigins.wasixPostmasterThirdParty],
 ];
 
-test('production-all is the explicit default and excludes independent research pins', () => {
+test('production-all is the explicit default and includes every release product pin', () => {
   assert.equal(defaultSourceScope, 'production-all');
   assert.equal(sourceScopes.includes(defaultSourceScope), true);
   assert.deepEqual(sourceDomainsForScope('production-all'), productionDomains);
@@ -29,7 +30,7 @@ test('production-all is the explicit default and excludes independent research p
   assert.equal(scopeIncludes('production-all', sourceOrigins.extension), true);
   assert.equal(
     scopeIncludes('production-all', sourceOrigins.wasixPostmasterThirdParty),
-    false,
+    true,
   );
 });
 

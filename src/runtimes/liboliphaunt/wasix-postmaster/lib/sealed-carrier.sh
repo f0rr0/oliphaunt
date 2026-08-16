@@ -119,7 +119,7 @@ fresh_aot_producer_recipe_sha256() {
   }
   case "$capture_stack_size" in
     ''|*[!0-9]*)
-      printf 'memory image capture stack size must be a positive integer\n' >&2
+      printf 'runtime stack size must be a positive integer\n' >&2
       return 2
       ;;
   esac
@@ -190,21 +190,61 @@ fresh_aot_producer_recipe_sha256() {
     printf '%s\0%s\0' linear-memory-maximum-pages "$FRESH_LINEAR_MEMORY_MAXIMUM_PAGES"
     printf '%s\0%s\0' linear-memory-static-bound-pages "$FRESH_LINEAR_MEMORY_STATIC_BOUND_PAGES"
     printf '%s\0%s\0' linear-memory-static-offset-guard-bytes "$FRESH_LINEAR_MEMORY_STATIC_OFFSET_GUARD_BYTES"
-    printf '%s\0%s\0' memory-image-schema oliphaunt.wasix-postmaster.memory-image.v2
-    printf '%s\0%s\0' deterministic-start-proof-schema oliphaunt.wasix-postmaster.deterministic-start-proof.v1
-    printf '%s\0%s\0' deterministic-start-analyzer-policy llvm-shared-memory-init-restricted-effects.v1
     printf '%s\0%s\0' postmaster-executor-receipt-schema oliphaunt.wasix-postmaster.postmaster-executor-build.v3
-    printf '%s\0%s\0' memory-image-phase post-module-start-pre-link-relocations-v1
-    printf '%s\0%s\0' memory-image-alignment 65536
-    printf '%s\0%s\0' independent-capture-count 2
-    printf '%s\0%s\0' capture-stack-size "$capture_stack_size"
+    printf '%s\0%s\0' runtime-stack-size "$capture_stack_size"
   } | fresh_sha256_stream
 }
 
-# Resolve the exact native executor role from the verified carrier closure.
-# The product role is discriminated solely by the canonical
-# postmaster-executor.receipt sidecar; a carrier without it remains the
-# historical full-headless control lane.
+# Select the carrier produced from the current guest and runtime receipts.
+# Content-addressed carriers intentionally survive rebuilds, so callers must
+# not infer "current" from the number of directories below the work root.
+# Full verification also excludes carriers sealed by an older packaging
+# policy when only packaging inputs changed between builds.
+fresh_select_current_sealed_carrier() {
+  local carriers_root="${1:-$FRESH_WORK_ROOT/carriers}"
+  local guest_receipt="$WASIX_INSTALL_DIR/guest-build.receipt"
+  local wasmer_receipt="${WASMER_BUILD_RECEIPT:-$FRESH_WASMER_BUILD_RECEIPT}"
+  local executor_receipt="$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT"
+  local candidate
+  local current_receipt
+  local matches=()
+
+  [ -d "$carriers_root" ] && [ ! -L "$carriers_root" ] || {
+    printf 'sealed carrier root is not a regular directory: %s\n' \
+      "$carriers_root" >&2
+    return 2
+  }
+  for current_receipt in \
+    "$guest_receipt" \
+    "$wasmer_receipt" \
+    "$executor_receipt"
+  do
+    [ -f "$current_receipt" ] && [ ! -L "$current_receipt" ] || {
+      printf 'current carrier input is not a regular receipt: %s\n' \
+        "$current_receipt" >&2
+      return 2
+    }
+  done
+
+  while IFS= read -r -d '' candidate; do
+    [ ! -L "$candidate" ] || continue
+    cmp -s "$candidate/guest-build.receipt" "$guest_receipt" || continue
+    cmp -s "$candidate/wasmer-build.receipt" "$wasmer_receipt" || continue
+    cmp -s "$candidate/postmaster-executor.receipt" "$executor_receipt" || continue
+    fresh_verify_sealed_headless_carrier "$candidate" >/dev/null 2>&1 || continue
+    matches+=("$candidate")
+  done < <(find "$carriers_root" -mindepth 1 -maxdepth 1 -type d \
+    -name 'wasix-postmaster-*' -print0 2>/dev/null)
+
+  [ "${#matches[@]}" -eq 1 ] || {
+    printf 'expected exactly one verified carrier for the current build receipts, found %s\n' \
+      "${#matches[@]}" >&2
+    return 2
+  }
+  printf '%s\n' "${matches[0]}"
+}
+
+# Resolve the exact product executor identity from the verified carrier closure.
 fresh_sealed_executor_selection() {
   local carrier_root="$1"
   local verifier="$FRESH_ROOT/lib/verify-sealed-carrier.py"
@@ -221,13 +261,11 @@ fresh_sealed_executor_selection() {
     printf 'sealed executor selection has unexpected fields: %s\n' "$selection" >&2
     return 2
   }
-  case "$FRESH_SEALED_EXECUTOR_ROLE:$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" in
-    full-headless:wasmer-build.receipt|postmaster-product:postmaster-executor.receipt) ;;
-    *)
-      printf 'sealed executor selection role/receipt differs: %s\n' "$selection" >&2
-      return 2
-      ;;
-  esac
+  [ "$FRESH_SEALED_EXECUTOR_ROLE:$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" = \
+    postmaster-product:postmaster-executor.receipt ] || {
+    printf 'sealed executor selection role/receipt differs: %s\n' "$selection" >&2
+    return 2
+  }
   fresh_is_sha256 "$FRESH_SEALED_EXECUTOR_RECEIPT_SHA256" && \
     fresh_is_sha256 "$FRESH_SEALED_EXECUTOR_SHA256" || {
     printf 'sealed executor selection contains a malformed identity\n' >&2
@@ -242,7 +280,7 @@ fresh_sealed_executor_selection() {
 # Validate the complete locally sealed carrier before it is published or used.
 # The payload inventory is intentionally self-excluding, so this verifies it as
 # the exact set of every other regular file and then checks that the manifest,
-# receipt, headless executor, AOT closure, and memory-image receipts all agree.
+# receipt, headless executor, and AOT closure all agree.
 fresh_verify_sealed_headless_carrier() {
   local carrier_input="$1"
   local carrier_root
@@ -286,23 +324,11 @@ fresh_verify_sealed_headless_carrier() {
   fi
 
   fresh_sealed_executor_selection "$carrier_root" || return
-  case "$FRESH_SEALED_EXECUTOR_ROLE" in
-    postmaster-product)
-      fresh_require_patched_postmaster_executor \
-        "$headless" \
-        "$carrier_root/$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" \
-        "$receipt" || return
-      ;;
-    full-headless)
-      WASMER_BUILD_RECEIPT="$receipt" \
-        fresh_require_patched_wasmer_headless "$headless" || return
-      ;;
-  esac
-  if [ "$FRESH_SEALED_EXECUTOR_ROLE" = postmaster-product ]; then
-    product_receipt="$carrier_root/postmaster-executor.receipt"
-  else
-    product_receipt="$carrier_root/postmaster-compiler.receipt"
-  fi
+  fresh_require_patched_postmaster_executor \
+    "$headless" \
+    "$carrier_root/$FRESH_SEALED_EXECUTOR_RECEIPT_RELATIVE" \
+    "$receipt" || return
+  product_receipt="$carrier_root/postmaster-executor.receipt"
   [ -f "$product_receipt" ] && [ ! -L "$product_receipt" ] || {
     printf 'missing receipt-bound product compiler identity: %s\n' \
       "$product_receipt" >&2

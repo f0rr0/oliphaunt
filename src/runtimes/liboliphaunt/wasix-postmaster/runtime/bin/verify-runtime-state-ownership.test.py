@@ -30,33 +30,27 @@ STATE_MOD = r'''
 use std::sync::Arc;
 
 pub(crate) struct WasiState {
-    runtime_state_registration: Option<WasiRuntimeStateRegistration>,
+    fs: WasiFs,
 }
 
 impl WasiState {
     #[cfg(feature = "enable-serde")]
-    pub(crate) fn unfreeze(
-        bytes: &[u8],
-        control_plane: &WasiControlPlane,
-    ) -> Option<Arc<Self>> {
-        let state = bincode::deserialize(bytes).ok()?;
-        Some(control_plane.register_runtime_state(state))
+    pub fn unfreeze(bytes: &[u8]) -> Option<Self> {
+        bincode::deserialize(bytes).ok()
     }
 
-    pub(crate) fn fork_registered(
+    pub(crate) fn fork_with(
         &self,
-        control_plane: &WasiControlPlane,
         prepare: impl FnOnce(&mut Self),
     ) -> Result<Arc<Self>, Errno> {
         let mut state = self.fork()?;
         prepare(&mut state);
-        Ok(control_plane.register_runtime_state(state))
+        Ok(Arc::new(state))
     }
 
     fn fork(&self) -> Result<Self, Errno> {
         Ok(WasiState {
             fs: self.fs.fork(),
-            runtime_state_registration: None,
         })
     }
 }
@@ -65,7 +59,7 @@ impl WasiState {
 mod tests {
     fn raw_state_tests_are_not_production_boundaries() {
         let first = parent.fork();
-        let second = WasiState { runtime_state_registration: None };
+        let second = WasiState { fs: self.fs.fork() };
     }
 }
 '''
@@ -74,7 +68,7 @@ STATE_ENV = r'''
 fn duplicate(&self) -> WasiEnvInit {
     WasiEnvInit {
         state: WasiState {
-            runtime_state_registration: None,
+            fs: WasiFs::new(),
         },
     }
 }
@@ -83,17 +77,13 @@ pub(crate) fn fork_guarded(
     &self,
 ) -> Result<(Self, WasiThreadHandle, WasiProcessRegistrationGuard), ControlPlaneError> {
     let state = self.state
-        .fork_registered(&self.control_plane, |_| {});
+        .fork_with(|_| {});
     finish_fork(state)
 }
 
-fn from_init(init: WasiEnvInit) {
-    let state = init.control_plane.register_runtime_state(init.state);
-}
-
 // Decoys cannot satisfy or perturb the production inventory:
-// state.fork(); WasiState { runtime_state_registration: None }
-const DECOY: &str = "state.fork_registered(); WasiState { }";
+// state.fork(); WasiState { fs: WasiFs::new() }
+const DECOY: &str = "state.fork_with(); WasiState { }";
 
 #[cfg(test)]
 mod tests {
@@ -104,44 +94,21 @@ mod tests {
 STATE_BUILDER = r'''
 fn build_init() -> WasiEnvInit {
     let state = WasiState {
-        runtime_state_registration: None,
+        fs: WasiFs::new(),
     };
     WasiEnvInit { state }
 }
 '''
 
-CONTROL_PLANE = r'''
-impl WasiControlPlane {
-    pub(crate) fn register_runtime_state(&self, state: WasiState) -> Arc<WasiState> {
-        if !crate::perf::wait_dump_enabled() {
-            return Arc::new(state);
-        }
-        self.register_runtime_state_inner(state)
-    }
-
-    fn register_runtime_state_inner(&self, state: WasiState) -> Arc<WasiState> {
-        Arc::new_cyclic(|identity| {
-            let mut state = state;
-            state.runtime_state_registration = Some(WasiRuntimeStateRegistration {
-                identity: identity.clone(),
-            });
-            self.state.runtime_states.lock().unwrap().entries
-                .insert(id, identity.clone());
-            state
-        })
-    }
-}
-'''
-
 CMD_WASMER = r'''
 fn reset(env: &mut WasiEnv) {
-    env.state = env.state.fork_registered(&env.control_plane, |_| {});
+    env.state = env.state.fork_with(|_| {});
 }
 '''
 
 PROC_SPAWN = r'''
 fn spawn(env: &WasiEnv, child_env: &mut WasiEnv) {
-    child_env.state = env.state.fork_registered(&child_env.control_plane, |_| {});
+    child_env.state = env.state.fork_with(|_| {});
 }
 '''
 
@@ -153,7 +120,6 @@ class RuntimeStateOwnershipVerifierTests(unittest.TestCase):
             "state/mod.rs": STATE_MOD,
             "state/env.rs": STATE_ENV,
             "state/builder.rs": STATE_BUILDER,
-            "os/task/control_plane.rs": CONTROL_PLANE,
             "os/command/builtins/cmd_wasmer.rs": CMD_WASMER,
             "syscalls/wasix/proc_spawn.rs": PROC_SPAWN,
         }
@@ -176,12 +142,15 @@ class RuntimeStateOwnershipVerifierTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         return temporary, self.write_fixture(Path(temporary.name))
 
-    def test_accepts_the_exact_registered_ownership_inventory(self) -> None:
+    def test_accepts_the_exact_owned_state_inventory(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
             result = self.run_verifier(wasmer)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("verified WASIX runtime-state ownership boundaries", result.stdout)
+            self.assertIn(
+                "verified WASIX process-local runtime-state ownership boundaries",
+                result.stdout,
+            )
 
     def test_rejects_source_replaced_with_symlink_before_open(self) -> None:
         temporary, wasmer = self.fixture()
@@ -278,7 +247,7 @@ class RuntimeStateOwnershipVerifierTests(unittest.TestCase):
         with temporary:
             escape = wasmer / "lib/wasix/src/escape.rs"
             escape.write_text(
-                "fn escape() { let leaked = WasiState { runtime_state_registration: None }; }\n",
+                "fn escape() { let leaked = WasiState { fs: WasiFs::new() }; }\n",
                 encoding="utf-8",
             )
             result = self.run_verifier(wasmer)
@@ -291,82 +260,76 @@ class RuntimeStateOwnershipVerifierTests(unittest.TestCase):
             path = wasmer / "lib/wasix/src/state/mod.rs"
             source = path.read_text(encoding="utf-8")
             source = source.replace(
-                "bytes: &[u8],\n        control_plane: &WasiControlPlane,\n    ) -> Option<Arc<Self>>",
-                "bytes: &[u8],\n    ) -> Option<Self>",
+                "pub fn unfreeze(bytes: &[u8]) -> Option<Self>",
+                "pub(crate) fn unfreeze(bytes: &[u8]) -> Option<Arc<Self>>",
             )
             path.write_text(source, encoding="utf-8")
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("registered WasiState unfreeze", result.stderr)
+            self.assertIn("WasiState unfreeze", result.stderr)
 
-    def test_rejects_replacing_registered_fork_with_raw_fork(self) -> None:
+    def test_rejects_replacing_owned_fork_with_raw_fork(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
             path = wasmer / "lib/wasix/src/os/command/builtins/cmd_wasmer.rs"
             source = path.read_text(encoding="utf-8")
             path.write_text(
-                source.replace("fork_registered(&env.control_plane, |_| {})", "fork()"),
+                source.replace("fork_with(|_| {})", "fork()"),
                 encoding="utf-8",
             )
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("registered WasiState fork call-site inventory changed", result.stderr)
+            self.assertIn("owned WasiState fork call-site inventory changed", result.stderr)
 
-    def test_rejects_registration_before_fork_preparation(self) -> None:
+    def test_rejects_ownership_before_fork_preparation(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
             path = wasmer / "lib/wasix/src/state/mod.rs"
             source = path.read_text(encoding="utf-8")
             source = source.replace(
-                "prepare(&mut state);\n        Ok(control_plane.register_runtime_state(state))",
-                "let state = control_plane.register_runtime_state(state);\n"
+                "prepare(&mut state);\n        Ok(Arc::new(state))",
+                "let state = Arc::new(state);\n"
                 "        prepare(Arc::get_mut(&mut state).unwrap());\n"
                 "        Ok(state)",
             )
             path.write_text(source, encoding="utf-8")
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("registered WasiState fork is missing ordered boundary", result.stderr)
+            self.assertIn("owned WasiState fork is missing ordered boundary", result.stderr)
 
-    def test_rejects_indirect_guarded_fork_registration(self) -> None:
+    def test_rejects_indirect_guarded_fork_ownership(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
             path = wasmer / "lib/wasix/src/state/env.rs"
             source = path.read_text(encoding="utf-8")
             source = source.replace(
-                "let state = self.state\n        .fork_registered(&self.control_plane, |_| {});",
+                "let state = self.state\n        .fork_with(|_| {});",
                 "let state = self.duplicate_state();",
             )
             path.write_text(source, encoding="utf-8")
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("must directly cross the registered state boundary", result.stderr)
+            self.assertIn("must directly cross the owned state boundary", result.stderr)
 
-    def test_rejects_a_second_registered_fork_boundary(self) -> None:
+    def test_rejects_a_second_owned_fork_boundary(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
             path = wasmer / "lib/wasix/src/state/mod.rs"
             with path.open("a", encoding="utf-8") as handle:
-                handle.write("\nfn fork_registered(&self) { unreachable!() }\n")
+                handle.write("\nfn fork_with(&self) { unreachable!() }\n")
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("exactly one registered fork boundary", result.stderr)
+            self.assertIn("exactly one owned fork boundary", result.stderr)
 
-    def test_rejects_bypassing_initial_registration(self) -> None:
+    def test_rejects_retired_runtime_state_registry(self) -> None:
         temporary, wasmer = self.fixture()
         with temporary:
-            path = wasmer / "lib/wasix/src/state/env.rs"
-            source = path.read_text(encoding="utf-8")
-            path.write_text(
-                source.replace(
-                    "init.control_plane.register_runtime_state(init.state)",
-                    "Arc::new(init.state)",
-                ),
-                encoding="utf-8",
-            )
+            path = wasmer / "lib/wasix/src/os/task/control_plane.rs"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fn register_runtime_state() {}\n", encoding="utf-8")
             result = self.run_verifier(wasmer)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("runtime-state registration call-site inventory changed", result.stderr)
+            self.assertIn("retired runtime-state diagnostic registry", result.stderr)
 
 
 if __name__ == "__main__":

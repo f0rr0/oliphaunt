@@ -13,6 +13,7 @@ const originsByScope = Object.freeze({
     sourceOrigins.sharedThirdParty,
     sourceOrigins.nativeThirdParty,
     sourceOrigins.wasixThirdParty,
+    sourceOrigins.wasixPostmasterThirdParty,
     sourceOrigins.extension,
   ]),
   all: Object.freeze(Object.values(sourceOrigins)),

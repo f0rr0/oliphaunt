@@ -28,15 +28,6 @@ COMMON_KEYS = {
     "FRESH_WASIX_LIBC_SOURCE_COMMIT",
 }
 
-HISTORICAL_EXPORTS = {
-    "wasmer_sha256": "e1773e04f09b0c422a0e45be1ff885fd5b1c191054abb969e1e354a60423930b",
-    "wasmer_bytes": 727574,
-    "wasix_libc_experiment_sha256": "c81cd0a332f2a0b8d4c1abb97824c9b48c14e1768ee2c75e664863bc5cd0e7d5",
-    "wasix_libc_experiment_bytes": 29477,
-    "wasix_libc_replay_sha256": "9f76a72bb5e0295fd4238ebc1e511e3550c2b1da6b3fcd828d52bd82cb94b353",
-    "wasix_libc_replay_bytes": 29480,
-}
-
 SOURCE_MANIFESTS = {
     "wasmer": {
         "path": "src/sources/third-party/wasix-postmaster/wasmer.toml",
@@ -138,29 +129,41 @@ def verify_patch(
     )
 
 
-def verify_postgresql_cache_offer_patch(
-    project_root: Path, record: dict[str, Any], *, postgres_tag: str
+def verify_postgresql_product_inputs(
+    project_root: Path, record: dict[str, Any]
 ) -> None:
-    label = "current_postgresql_patches.semantic_relation_cache_offers"
-    expected_path = (
-        "postgres/patches/0007-wasix-semantic-relation-cache-offers.patch"
+    label = "current_postgresql_product_inputs"
+    files = record.get("file")
+    if not isinstance(files, list) or not all(isinstance(item, dict) for item in files):
+        raise VerificationError(f"{label}.file must be an array of tables")
+    series_path = regular_project_file(
+        project_root, "postgres/patches/series", f"{label}.series"
     )
-    require_equal(f"{label}.path", record.get("path"), expected_path)
-    require_equal(f"{label}.base_tag", record.get("base_tag"), postgres_tag)
-    require_equal(f"{label}.abi_module", record.get("abi_module"), "oliphaunt_postmaster_v1")
-    require_equal(f"{label}.abi_function", record.get("abi_function"), "fd_cache_offer")
-    require_equal(
-        f"{label}.abi_signature",
-        record.get("abi_signature"),
-        "(i32,i64,i64,i32,i32)->i32_errno",
-    )
-    require_equal(f"{label}.abi_available", record.get("abi_available"), True)
-    path = regular_project_file(project_root, expected_path, label)
-    contents = path.read_bytes()
-    require_equal(f"{label}.bytes", record.get("bytes"), len(contents))
-    require_equal(
-        f"{label}.sha256", record.get("sha256"), hashlib.sha256(contents).hexdigest()
-    )
+    expected_paths = {
+        "postgres/patches/series",
+        "postgres/product-patch-provenance.toml",
+        *{
+            f"postgres/patches/{line}"
+            for line in series_path.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        },
+    }
+    actual_paths = [item.get("path") for item in files]
+    if len(actual_paths) != len(set(actual_paths)):
+        raise VerificationError(f"{label}.file contains duplicate paths")
+    require_equal(f"{label}.paths", set(actual_paths), expected_paths)
+    for index, item in enumerate(files):
+        item_label = f"{label}.file[{index}]"
+        relative = item.get("path")
+        if not isinstance(relative, str):
+            raise VerificationError(f"{item_label}.path must be a string")
+        contents = regular_project_file(project_root, relative, item_label).read_bytes()
+        require_equal(f"{item_label}.bytes", item.get("bytes"), len(contents))
+        require_equal(
+            f"{item_label}.sha256",
+            item.get("sha256"),
+            hashlib.sha256(contents).hexdigest(),
+        )
 
 
 def verify_postgresql_packed_latch_patch(
@@ -188,132 +191,12 @@ def verify_postgresql_packed_latch_patch(
     )
 
 
-def verify_postgresql_wal_cache_offer_patch(
-    project_root: Path, record: dict[str, Any], *, postgres_tag: str
-) -> None:
-    label = "current_postgresql_patches.inactive_durable_wal_cache_offer"
-    expected_path = (
-        "postgres/patches/0009-wasix-inactive-durable-wal-cache-offer.patch"
-    )
-    require_equal(f"{label}.path", record.get("path"), expected_path)
-    require_equal(f"{label}.base_tag", record.get("base_tag"), postgres_tag)
-    require_equal(
-        f"{label}.offer_class",
-        record.get("offer_class"),
-        "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE",
-    )
-    require_equal(f"{label}.offer_class_value", record.get("offer_class_value"), 6)
-    require_equal(
-        f"{label}.reclaim_eligible_flag",
-        record.get("reclaim_eligible_flag"),
-        "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE",
-    )
-    require_equal(
-        f"{label}.reclaim_eligible_flag_value",
-        record.get("reclaim_eligible_flag_value"),
-        1,
-    )
-    require_equal(
-        f"{label}.reclaim_eligible_flag_semantics",
-        record.get("reclaim_eligible_flag_semantics"),
-        "legacy-low-reuse-hint-only",
-    )
-    require_equal(
-        f"{label}.cache_drop_safe_flag",
-        record.get("cache_drop_safe_flag"),
-        "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE",
-    )
-    require_equal(
-        f"{label}.cache_drop_safe_flag_value",
-        record.get("cache_drop_safe_flag_value"),
-        2,
-    )
-    require_equal(
-        f"{label}.cache_drop_safe_flag_semantics",
-        record.get("cache_drop_safe_flag_semantics"),
-        "positive-complete-durable-nondirect-cache-drop-proof",
-    )
-    require_equal(
-        f"{label}.unflagged_disposition",
-        record.get("unflagged_disposition"),
-        "retain",
-    )
-    require_equal(
-        f"{label}.revoke_abi_module",
-        record.get("revoke_abi_module"),
-        "oliphaunt_postmaster_v1",
-    )
-    require_equal(
-        f"{label}.revoke_abi_function",
-        record.get("revoke_abi_function"),
-        "fd_cache_revoke",
-    )
-    require_equal(
-        f"{label}.revoke_abi_signature",
-        record.get("revoke_abi_signature"),
-        "(i32,i32,i32)->i32_errno",
-    )
-    require_equal(
-        f"{label}.revoke_class",
-        record.get("revoke_class"),
-        "PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE",
-    )
-    require_equal(f"{label}.revoke_class_value", record.get("revoke_class_value"), 6)
-    require_equal(
-        f"{label}.revoke_flags",
-        record.get("revoke_flags"),
-        "PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE",
-    )
-    require_equal(f"{label}.revoke_flags_value", record.get("revoke_flags_value"), 0)
-    require_equal(
-        f"{label}.revoke_timing",
-        record.get("revoke_timing"),
-        "once-per-open-before-first-wal-payload-write",
-    )
-    require_equal(
-        f"{label}.native_behavior_preserved",
-        record.get("native_behavior_preserved"),
-        True,
-    )
-    require_equal(
-        f"{label}.adaptive_eviction_enabled",
-        record.get("adaptive_eviction_enabled"),
-        True,
-    )
-    require_equal(
-        f"{label}.adaptive_policy_id",
-        record.get("adaptive_policy_id"),
-        "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5",
-    )
-    require_equal(
-        f"{label}.adaptive_required_flag",
-        record.get("adaptive_required_flag"),
-        "PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE",
-    )
-    require_equal(
-        f"{label}.adaptive_portable_fallback",
-        record.get("adaptive_portable_fallback"),
-        "observe-only",
-    )
-    path = regular_project_file(project_root, expected_path, label)
-    contents = path.read_bytes()
-    require_equal(f"{label}.bytes", record.get("bytes"), len(contents))
-    require_equal(
-        f"{label}.sha256", record.get("sha256"), hashlib.sha256(contents).hexdigest()
-    )
-
-
 def verify(project_root: Path, repo_root: Path) -> None:
     project_root = project_root.resolve()
     repo_root = repo_root.resolve()
     lock_path = project_root / "sources.lock.toml"
     lock = load_toml(lock_path)
     common = parse_common_constants(project_root / "lib/common.sh")
-
-    provenance = require_table(lock, "provenance", str(lock_path))
-    historical = require_table(provenance, "patch_exports", str(lock_path))
-    for key, expected in HISTORICAL_EXPORTS.items():
-        require_equal(f"historical provenance.patch_exports.{key}", historical.get(key), expected)
 
     postgres = require_table(lock, "postgresql", str(lock_path))
     postgres_source_path = repo_root / "src/postgres/versions/18/source.toml"
@@ -328,12 +211,9 @@ def verify(project_root: Path, repo_root: Path) -> None:
     postgresql_patches = require_table(
         lock, "current_postgresql_patches", str(lock_path)
     )
-    verify_postgresql_cache_offer_patch(
+    verify_postgresql_product_inputs(
         project_root,
-        require_table(
-            postgresql_patches, "semantic_relation_cache_offers", str(lock_path)
-        ),
-        postgres_tag=postgres["tag"],
+        require_table(lock, "current_postgresql_product_inputs", str(lock_path)),
     )
     verify_postgresql_packed_latch_patch(
         project_root,
@@ -342,14 +222,6 @@ def verify(project_root: Path, repo_root: Path) -> None:
         ),
         postgres_tag=postgres["tag"],
     )
-    verify_postgresql_wal_cache_offer_patch(
-        project_root,
-        require_table(
-            postgresql_patches, "inactive_durable_wal_cache_offer", str(lock_path)
-        ),
-        postgres_tag=postgres["tag"],
-    )
-
     wasmer = require_table(lock, "wasmer", str(lock_path))
     require_equal("Wasmer version vs common.sh", wasmer.get("version"), common["FRESH_WASMER_VERSION"])
     require_equal("wasmer-wasix version vs common.sh", wasmer.get("wasix_version"), common["FRESH_WASMER_WASIX_VERSION"])

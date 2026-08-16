@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Validate direct immutable activation evidence emitted by sealed Wasmer."""
+"""Validate sealed Wasmer activation evidence for a release platform."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ MEMORY_IMAGE_SCHEMA = "oliphaunt.wasix-postmaster.memory-image.v2"
 DETERMINISTIC_START_PROOF_SCHEMA = (
     "oliphaunt.wasix-postmaster.deterministic-start-proof.v1"
 )
-RESULT_SCHEMA = "oliphaunt.wasix-postmaster.sealed-loader-audit-validation.v3"
+RESULT_SCHEMA = "oliphaunt.wasix-postmaster.sealed-loader-audit-validation.v4"
 MAX_U64 = (1 << 64) - 1
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 FIELDS = {
@@ -123,13 +123,11 @@ RESIDENCY_FIELDS = {
     "errno",
 }
 DIRECT_MODES = {"direct-immutable-inode", "direct-read-only-filesystem"}
-EXPECTED_ARTIFACT_NAMES = {
-    "runtime:initdb",
-    "runtime:postgres",
-    "runtime:libpq.so.5.18",
-    "runtime:dict_snowball.so",
-    "runtime:plpgsql.so",
+PORTABLE_MODES = {
+    "aot": "streamed-copy",
+    "preinitialized-memory": "streamed-copy-sealed-backing",
 }
+SNAPSHOT_POLICIES = {"direct", "direct-immutable", "portable-copy"}
 EXECUTABLE_NAMES = ("runtime:initdb", "runtime:postgres")
 
 
@@ -166,68 +164,28 @@ def manifest_module_evidence(
         raise ValidationError(f"invalid sealed manifest: {error}") from error
     require(isinstance(manifest, dict), "sealed manifest must be an object")
     artifacts = manifest.get("artifacts")
-    require(isinstance(artifacts, list) and len(artifacts) == 5, "sealed manifest artifact closure differs")
+    require(
+        isinstance(artifacts, list) and len(artifacts) >= len(EXECUTABLE_NAMES),
+        "sealed manifest artifact closure is incomplete",
+    )
     modules: dict[str, str] = {}
-    attested_memory: dict[str, dict[str, Any]] = {}
     for artifact in artifacts:
         require(isinstance(artifact, dict), "sealed manifest artifact must be an object")
         name = artifact.get("name")
-        require(isinstance(name, str) and name in EXPECTED_ARTIFACT_NAMES, "sealed manifest artifact closure differs")
+        require(
+            isinstance(name, str) and name.startswith("runtime:") and len(name) > 8,
+            "sealed manifest artifact name is invalid",
+        )
         module_hash = artifact.get("module-sha256")
         require(isinstance(module_hash, str) and SHA256_RE.fullmatch(module_hash), f"invalid module SHA-256 for {name}")
         require(name not in modules, f"duplicate manifest artifact: {name}")
         require(module_hash not in modules.values(), f"duplicate manifest module hash: {module_hash}")
         modules[name] = module_hash
-        if name not in EXECUTABLE_NAMES:
-            continue
-        memory = artifact.get("preinitialized-memory")
-        require(isinstance(memory, dict), f"missing preinitialized-memory metadata for {name}")
-        require(
-            memory.get("schema") == MEMORY_IMAGE_SCHEMA,
-            f"preinitialized-memory schema differs for {name}",
-        )
-        require(
-            memory.get("module-sha256") == module_hash,
-            f"preinitialized-memory module SHA-256 differs for {name}",
-        )
-        mapped_size = memory.get("mapped-size")
-        require(
-            type(mapped_size) is int and 0 < mapped_size <= MAX_U64,
-            f"preinitialized-memory mapped size is invalid for {name}",
-        )
-        proof = memory.get("deterministic-start-proof")
-        require(isinstance(proof, dict), f"missing deterministic-start proof for {name}")
-        require(
-            proof.get("schema") == DETERMINISTIC_START_PROOF_SCHEMA,
-            f"deterministic-start proof schema differs for {name}",
-        )
-        require(
-            proof.get("module-sha256") == module_hash,
-            f"deterministic-start proof module SHA-256 differs for {name}",
-        )
-        proof_sha256 = proof.get("proof-sha256")
-        proof_output_sha256 = memory.get("deterministic-start-proof-output-sha256")
-        require(
-            isinstance(proof_sha256, str) and SHA256_RE.fullmatch(proof_sha256),
-            f"deterministic-start proof SHA-256 is invalid for {name}",
-        )
-        require(
-            isinstance(proof_output_sha256, str)
-            and SHA256_RE.fullmatch(proof_output_sha256),
-            f"deterministic-start proof output SHA-256 is invalid for {name}",
-        )
-        attested_memory[module_hash] = {
-            "memory_image_schema": memory["schema"],
-            "proof_sha256": proof_sha256,
-            "proof_output_sha256": proof_output_sha256,
-            "mapped_size": mapped_size,
-        }
-    require(set(modules) == EXPECTED_ARTIFACT_NAMES, "sealed manifest artifact closure differs")
     require(
-        set(attested_memory) == {modules[name] for name in EXECUTABLE_NAMES},
-        "sealed manifest attested executable closure differs",
+        all(name in modules for name in EXECUTABLE_NAMES),
+        "sealed manifest executable closure differs",
     )
-    return modules, attested_memory
+    return modules, {}
 
 
 def exact_nonnegative(value: Any, label: str) -> int:
@@ -255,6 +213,7 @@ def validate_advice(
     errno_field: str,
     expected_applicable: bool,
     expected_calls: int,
+    allow_unsupported: bool,
     line_number: int,
 ) -> tuple[int, int]:
     label = f"{prefix} line {line_number}"
@@ -268,7 +227,13 @@ def validate_advice(
     if not applicable:
         require(calls == 0 and successes == 0 and errno is None, f"{label} issued an inapplicable call")
         return calls, successes
-    require(supported, f"{label} is unsupported")
+    if not supported:
+        require(allow_unsupported, f"{label} is unsupported")
+        require(
+            calls == 0 and successes == 0 and errno is None,
+            f"{label} unsupported shape differs",
+        )
+        return calls, successes
     require(calls == expected_calls, f"{label} call count differs")
     require(successes == calls, f"{label} advisory call failed")
     require(errno is None, f"{label} success unexpectedly carries errno")
@@ -280,12 +245,15 @@ def validate_residency(
     *,
     label: str,
     logical_bytes: int,
-    expected_state: str,
+    expected_states: set[str],
 ) -> int:
     require(isinstance(value, dict) and set(value) == RESIDENCY_FIELDS, f"{label} fields differ")
     state = value["state"]
-    require(state == expected_state, f"{label} state differs: expected {expected_state}, got {state!r}")
-    if state == "not-applicable":
+    require(
+        state in expected_states,
+        f"{label} state differs: expected {sorted(expected_states)!r}, got {state!r}",
+    )
+    if state in {"not-applicable", "unsupported-platform"}:
         for field in RESIDENCY_FIELDS - {"state"}:
             require(value[field] is None, f"{label} not-applicable field {field} must be null")
         return 0
@@ -313,7 +281,11 @@ def validate_residency(
 
 def parse_audit(
     data: bytes,
+    *,
+    snapshot_policy: str = "direct",
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[tuple[int, dict[str, Any]]]]:
+    require(snapshot_policy in SNAPSHOT_POLICIES, "unknown snapshot policy")
+    portable = snapshot_policy == "portable-copy"
     require(data and data.endswith(b"\n"), "sealed loader audit must be nonempty and newline-terminated")
     require(b"\r" not in data, "sealed loader audit contains a carriage return")
     records: list[tuple[int, dict[str, Any]]] = []
@@ -326,45 +298,37 @@ def parse_audit(
         require(isinstance(record, dict), f"audit record must be an object on line {line_number}")
         schema = record.get("schema")
         require(isinstance(schema, str), f"audit schema is missing on line {line_number}")
-        if schema == SUMMARY_SCHEMA:
-            require(set(record) == SUMMARY_FIELDS, f"attested-start summary fields differ on line {line_number}")
-            require(type(record["pid"]) is int and record["pid"] > 0, f"invalid summary pid on line {line_number}")
-            require(
-                record["artifact_kind"] == "attested-start-runtime-summary",
-                f"invalid summary artifact kind on line {line_number}",
-            )
-            require(record["terminal"] is True, f"attested-start summary is not terminal on line {line_number}")
-            for field in ("module_sha256", "proof_sha256", "proof_output_sha256"):
-                require(
-                    isinstance(record[field], str) and SHA256_RE.fullmatch(record[field]),
-                    f"invalid summary {field} on line {line_number}",
-                )
-            require(
-                record["memory_image_schema"] == MEMORY_IMAGE_SCHEMA,
-                f"unknown summary memory image schema on line {line_number}",
-            )
-            require(
-                exact_u64(record["mapped_size"], f"summary mapped_size line {line_number}") > 0,
-                f"summary mapped_size must be positive on line {line_number}",
-            )
-            for field in SUMMARY_COUNTER_FIELDS:
-                exact_u64(record[field], f"summary {field} line {line_number}")
-            exact_bool(record["counter_overflow"], f"summary counter_overflow line {line_number}")
-            summaries.append((line_number, record))
-            continue
-
         require(schema == SCHEMA, f"unknown audit schema on line {line_number}: {schema!r}")
         require(set(record) == FIELDS, f"loader audit fields differ on line {line_number}")
         require(type(record["pid"]) is int and record["pid"] > 0, f"invalid audit pid on line {line_number}")
-        require(record["artifact_kind"] in ("aot", "preinitialized-memory"), f"invalid artifact kind on line {line_number}")
+        require(record["artifact_kind"] == "aot", f"invalid artifact kind on line {line_number}")
         require(isinstance(record["module_sha256"], str) and SHA256_RE.fullmatch(record["module_sha256"]), f"invalid module SHA-256 on line {line_number}")
-        require(record["snapshot_mode"] in DIRECT_MODES, f"non-direct snapshot mode on line {line_number}")
+        if portable:
+            expected_mode = PORTABLE_MODES[record["artifact_kind"]]
+            require(
+                record["snapshot_mode"] == expected_mode,
+                f"snapshot mode differs from portable-copy policy on line {line_number}",
+            )
+        else:
+            require(record["snapshot_mode"] in DIRECT_MODES, f"non-direct snapshot mode on line {line_number}")
+            if snapshot_policy == "direct-immutable":
+                require(
+                    record["snapshot_mode"] == "direct-immutable-inode",
+                    f"snapshot mode differs from direct-immutable policy on line {line_number}",
+                )
         logical = exact_nonnegative(record["logical_bytes"], f"logical_bytes line {line_number}")
         require(logical > 0, f"logical_bytes must be positive on line {line_number}")
         source_read = exact_nonnegative(record["source_bytes_read"], f"source_bytes_read line {line_number}")
-        require(source_read in (0, logical), f"source_bytes_read differs from direct-mode contract on line {line_number}")
+        if portable:
+            require(source_read == logical, f"source_bytes_read differs from portable-copy contract on line {line_number}")
+        else:
+            require(source_read in (0, logical), f"source_bytes_read differs from direct-mode contract on line {line_number}")
         require(exact_nonnegative(record["source_bytes_written"], f"source_bytes_written line {line_number}") == 0, f"source bytes were written on line {line_number}")
-        require(exact_nonnegative(record["snapshot_bytes_written"], f"snapshot_bytes_written line {line_number}") == 0, f"snapshot bytes were written on line {line_number}")
+        expected_snapshot_writes = logical if portable else 0
+        require(
+            exact_nonnegative(record["snapshot_bytes_written"], f"snapshot_bytes_written line {line_number}") == expected_snapshot_writes,
+            f"snapshot byte accounting differs on line {line_number}",
+        )
         require(exact_nonnegative(record["mapping_bytes_hashed"], f"mapping_bytes_hashed line {line_number}") == logical, f"mapping hash coverage differs on line {line_number}")
         require(exact_nonnegative(record["sync_calls"], f"sync_calls line {line_number}") == 0, f"loader issued sync calls on line {line_number}")
         validate_advice(
@@ -373,6 +337,7 @@ def parse_audit(
             errno_field="read_advice_first_errno",
             expected_applicable=True,
             expected_calls=2,
+            allow_unsupported=portable,
             line_number=line_number,
         )
         validate_advice(
@@ -381,58 +346,73 @@ def parse_audit(
             errno_field="source_cache_eviction_errno",
             expected_applicable=True,
             expected_calls=1,
+            allow_unsupported=portable,
             line_number=line_number,
         )
         validate_advice(
             record,
             prefix="snapshot_cache_eviction",
             errno_field="snapshot_cache_eviction_errno",
-            expected_applicable=False,
+            expected_applicable=portable and record["artifact_kind"] == "aot",
             expected_calls=1,
+            allow_unsupported=portable,
             line_number=line_number,
         )
         validate_advice(
             record,
             prefix="mapping_cache_eviction",
             errno_field="mapping_cache_eviction_errno",
-            expected_applicable=record["artifact_kind"] == "preinitialized-memory",
+            expected_applicable=False,
             expected_calls=1,
+            allow_unsupported=portable,
             line_number=line_number,
         )
         validate_residency(
             record["residency_after_hash_inspect"],
             label=f"residency_after_hash_inspect line {line_number}",
             logical_bytes=logical,
-            expected_state="measured",
+            expected_states={"unsupported-platform"} if portable else {"measured"},
         )
         validate_residency(
             record["residency_after_archive_release"],
             label=f"residency_after_archive_release line {line_number}",
             logical_bytes=logical,
-            expected_state=("measured" if record["artifact_kind"] == "aot" else "not-applicable"),
+            expected_states=(
+                {"unsupported-platform"}
+                if portable and record["artifact_kind"] == "aot"
+                else {"measured"}
+                if record["artifact_kind"] == "aot"
+                else {"not-applicable"}
+            ),
         )
         validate_residency(
             record["source_residency_before_eviction"],
             label=f"source_residency_before_eviction line {line_number}",
             logical_bytes=logical,
-            expected_state="measured",
+            expected_states={"unsupported-platform"} if portable else {"measured"},
         )
         validate_residency(
             record["source_residency_after_eviction"],
             label=f"source_residency_after_eviction line {line_number}",
             logical_bytes=logical,
-            expected_state="measured",
+            expected_states={"unsupported-platform"} if portable else {"measured"},
         )
         validate_residency(
             record["residency_after_eviction"],
             label=f"residency_after_eviction line {line_number}",
             logical_bytes=logical,
-            expected_state="measured",
+            expected_states={"unsupported-platform"} if portable else {"measured"},
         )
-        require(record["write_policy"] == "none-immutable-source", f"write policy differs on line {line_number}")
+        expected_write_policy = (
+            "private-streamed-copy-no-sync"
+            if portable and record["artifact_kind"] == "aot"
+            else "private-sealed-backing-no-sync"
+            if portable
+            else "none-immutable-source"
+        )
+        require(record["write_policy"] == expected_write_policy, f"write policy differs on line {line_number}")
         records.append((line_number, record))
     require(records, "sealed loader audit contains no loader receipts")
-    require(summaries, "sealed loader audit contains no attested-start summaries")
     return records, summaries
 
 
@@ -524,15 +504,12 @@ def validate(
     manifest: Path,
     output: Path,
     *,
-    required_snapshot_mode: str | None = None,
+    snapshot_policy: str = "direct",
     expected_initdb_executions: int = 1,
     expected_postgres_executions: int = 1,
 ) -> None:
     require(not os.path.lexists(output), f"validation output already exists: {output}")
-    require(
-        required_snapshot_mode is None or required_snapshot_mode in DIRECT_MODES,
-        "required snapshot mode is not a direct loader mode",
-    )
+    require(snapshot_policy in SNAPSHOT_POLICIES, "unknown snapshot policy")
     require(expected_initdb_executions > 0, "expected initdb executions must be positive")
     require(expected_postgres_executions > 0, "expected postgres executions must be positive")
     audit_data = read_regular(audit, "sealed loader audit")
@@ -540,7 +517,10 @@ def validate(
     validator_data = read_regular(Path(__file__), "validator")
     manifest_modules, manifest_attested_memory = manifest_module_evidence(manifest_data)
     expected = {name: manifest_modules[name] for name in EXECUTABLE_NAMES}
-    parsed_records, parsed_summaries = parse_audit(audit_data)
+    parsed_records, parsed_summaries = parse_audit(
+        audit_data,
+        snapshot_policy=snapshot_policy,
+    )
     records = [record for _, record in parsed_records]
     summaries = [record for _, record in parsed_summaries]
     allowed_module_hashes = set(manifest_modules.values())
@@ -549,17 +529,6 @@ def validate(
             record["module_sha256"] in allowed_module_hashes,
             f"audit module SHA-256 is not in sealed manifest on line {line_number}",
         )
-    for line_number, summary in parsed_summaries:
-        require(
-            summary["module_sha256"] in allowed_module_hashes,
-            f"summary module SHA-256 is not in sealed manifest on line {line_number}",
-        )
-    if required_snapshot_mode is not None:
-        for line_number, record in parsed_records:
-            require(
-                record["snapshot_mode"] == required_snapshot_mode,
-                f"snapshot mode differs from required {required_snapshot_mode} on line {line_number}",
-            )
     by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for record in records:
         by_key.setdefault((record["module_sha256"], record["artifact_kind"]), []).append(record)
@@ -575,12 +544,8 @@ def validate(
     activation_pids: dict[str, set[int]] = {}
     for name, module_hash in expected.items():
         aot = by_key.get((module_hash, "aot"), [])
-        memory = by_key.get((module_hash, "preinitialized-memory"), [])
         aot_pids = [record["pid"] for record in aot]
-        memory_pids = [record["pid"] for record in memory]
         require(len(set(aot_pids)) == len(aot_pids), f"{name} AOT audit pids are not unique")
-        require(len(set(memory_pids)) == len(memory_pids), f"{name} memory audit pids are not unique")
-        require(set(aot_pids) == set(memory_pids), f"{name} AOT and memory audit pids differ")
         activation_pids[name] = set(aot_pids)
 
     initdb_pids = activation_pids["runtime:initdb"]
@@ -604,43 +569,6 @@ def validate(
         "runtime:postgres activation population differs from initdb bootstrap plus outer executions",
     )
 
-    memory_activations: dict[tuple[int, str], int] = {}
-    for line_number, record in parsed_records:
-        if record["artifact_kind"] != "preinitialized-memory":
-            continue
-        module_hash = record["module_sha256"]
-        require(
-            module_hash in manifest_attested_memory,
-            f"preinitialized-memory activation has no attested v2 manifest metadata on line {line_number}",
-        )
-        require(
-            record["logical_bytes"] == manifest_attested_memory[module_hash]["mapped_size"],
-            f"preinitialized-memory activation size differs from sealed manifest on line {line_number}",
-        )
-        key = (record["pid"], module_hash)
-        require(key not in memory_activations, f"duplicate preinitialized-memory activation for pid/module {key}")
-        memory_activations[key] = line_number
-
-    summaries_by_activation: dict[tuple[int, str], dict[str, Any]] = {}
-    for line_number, summary in parsed_summaries:
-        key = (summary["pid"], summary["module_sha256"])
-        require(key not in summaries_by_activation, f"duplicate attested-start summary for pid/module {key}")
-        require(key in memory_activations, f"orphan attested-start summary for pid/module {key}")
-        require(
-            line_number > memory_activations[key],
-            f"attested-start summary precedes its memory activation for pid/module {key}",
-        )
-        validate_attested_start_summary(
-            summary,
-            manifest_attested_memory[summary["module_sha256"]],
-            line_number=line_number,
-        )
-        summaries_by_activation[key] = summary
-    missing_summaries = set(memory_activations) - set(summaries_by_activation)
-    require(
-        not missing_summaries,
-        f"missing attested-start summary for pid/module {sorted(missing_summaries)!r}",
-    )
     executable_pids = {
         "runtime:initdb": sorted(initdb_pids),
         "runtime:postgres": sorted(outer_postgres_pids),
@@ -675,7 +603,7 @@ def validate(
         record["mapping_cache_eviction_successes"] for record in records
     )
     hash_resident_bytes = sum(
-        record["residency_after_hash_inspect"]["resident_bytes"]
+        record["residency_after_hash_inspect"]["resident_bytes"] or 0
         for record in records
     )
     archive_resident_bytes = sum(
@@ -683,20 +611,21 @@ def validate(
         for record in records
     )
     source_before_eviction_bytes = sum(
-        record["source_residency_before_eviction"]["resident_bytes"]
+        record["source_residency_before_eviction"]["resident_bytes"] or 0
         for record in records
     )
     source_after_eviction_bytes = sum(
-        record["source_residency_after_eviction"]["resident_bytes"]
+        record["source_residency_after_eviction"]["resident_bytes"] or 0
         for record in records
     )
     eviction_resident_bytes = sum(
-        record["residency_after_eviction"]["resident_bytes"] for record in records
+        record["residency_after_eviction"]["resident_bytes"] or 0
+        for record in records
     )
     payload = (
         "schema_version\tstatus\trecords\taot_records\tmemory_records\t"
         "initdb_executions\tpostgres_executions\tinitdb_pids\tpostgres_pids\t"
-        "required_snapshot_mode\taudit_sha256\tmanifest_sha256\tvalidator_sha256\t"
+        "snapshot_policy\taudit_sha256\tmanifest_sha256\tvalidator_sha256\t"
         "read_advice_calls\tread_advice_successes\tsource_cache_eviction_calls\t"
         "source_cache_eviction_successes\tsnapshot_cache_eviction_calls\t"
         "snapshot_cache_eviction_successes\tmapping_cache_eviction_calls\t"
@@ -712,7 +641,7 @@ def validate(
         f"{expected_initdb_executions}\t{expected_postgres_executions}\t"
         f"{','.join(str(pid) for pid in executable_pids['runtime:initdb'])}\t"
         f"{','.join(str(pid) for pid in executable_pids['runtime:postgres'])}\t"
-        f"{required_snapshot_mode or 'any-direct'}\t"
+        f"{snapshot_policy}\t"
         f"{audit_sha}\t{manifest_sha}\t{validator_sha}\t"
         f"{read_calls}\t{read_successes}\t"
         f"{source_eviction_calls}\t{source_eviction_successes}\t"
@@ -741,7 +670,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--audit", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--required-snapshot-mode", choices=sorted(DIRECT_MODES))
+    parser.add_argument("--snapshot-policy", choices=sorted(SNAPSHOT_POLICIES), default="direct")
     parser.add_argument("--expected-initdb-executions", type=int, default=1)
     parser.add_argument("--expected-postgres-executions", type=int, default=1)
     arguments = parser.parse_args(argv)
@@ -750,7 +679,7 @@ def main(argv: list[str]) -> int:
             arguments.audit,
             arguments.manifest,
             arguments.output,
-            required_snapshot_mode=arguments.required_snapshot_mode,
+            snapshot_policy=arguments.snapshot_policy,
             expected_initdb_executions=arguments.expected_initdb_executions,
             expected_postgres_executions=arguments.expected_postgres_executions,
         )

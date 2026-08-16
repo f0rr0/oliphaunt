@@ -101,11 +101,13 @@ export const MOBILE_TARGETS = {
 
 const NATIVE_RUNTIME_TARGETS = { ...DESKTOP_TARGETS, ...MOBILE_TARGETS };
 const WASIX_TARGETS = new Set(["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
+const WASIX_POSTMASTER_TARGETS = new Set(["linux-x64-gnu", "macos-arm64"]);
 const BROKER_TARGETS = new Set(["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
 const NODE_DIRECT_TARGETS = BROKER_TARGETS;
 const PRODUCT_PRESETS = {
   "liboliphaunt-native": "liboliphaunt-native",
   "liboliphaunt-wasix": "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster": "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker": "broker-helper",
   "oliphaunt-node-direct": "node-direct-addon",
 };
@@ -540,6 +542,49 @@ function liboliphauntWasixRows(prefix) {
   return rows;
 }
 
+function liboliphauntWasixPostmasterRows(prefix) {
+  const product = "liboliphaunt-wasix-postmaster";
+  const rows = [];
+  for (const target of publishedTargets(
+    product,
+    PRODUCT_PRESETS[product],
+    WASIX_POSTMASTER_TARGETS,
+    prefix,
+  ).sort(compareText)) {
+    const platform = DESKTOP_TARGETS[target];
+    rows.push({
+      id: `${product}.${target}`,
+      product,
+      kind: "wasix-postmaster-runtime",
+      target,
+      triple: platform.triple,
+      runner: platform.runner,
+      asset: `${product}-{version}-${target}.tar.gz`,
+      surfaces: ["github-release"],
+      published: true,
+      binary_compatibility: requiredBinaryCompatibility(
+        target,
+        `${product} runtime`,
+        prefix,
+      ),
+      extension_artifacts: false,
+      _source_file: "Moon release metadata",
+    });
+  }
+  rows.push({
+    id: `${product}.checksums`,
+    product,
+    kind: "checksums",
+    target: "portable",
+    asset: `${product}-{version}-release-assets.sha256`,
+    surfaces: ["github-release"],
+    published: true,
+    extension_artifacts: false,
+    _source_file: "Moon release metadata",
+  });
+  return rows;
+}
+
 function brokerRows(prefix) {
   const product = "oliphaunt-broker";
   const rows = [];
@@ -618,6 +663,7 @@ export function rawArtifactTargetRows(prefix = "release-artifact-targets.mjs") {
   return [
     ...liboliphauntNativeRows(prefix),
     ...liboliphauntWasixRows(prefix),
+    ...liboliphauntWasixPostmasterRows(prefix),
     ...brokerRows(prefix),
     ...nodeDirectRows(prefix),
   ];

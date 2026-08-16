@@ -25,6 +25,7 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "../../../../tools/release/extension-upstream-licenses.mjs";
+import { assertWasixExtensionMemberInstall } from "../../../../tools/release/wasix-extension-install-contract.mjs";
 
 const OPTION_NAMES = new Set([
   "--root",
@@ -53,6 +54,7 @@ const EXTENSION_MEMBER_KEYS = new Set([
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
   "mobileReleaseReady",
   "desktopReleaseReady",
@@ -549,6 +551,11 @@ function validateMemberContract(member, expected, context) {
     }
   }
   if (!Array.isArray(member.assets)) fail(`${context}.assets must be an array`);
+  try {
+    assertWasixExtensionMemberInstall(member, { label: context });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const mobileGroups = new Map();
   for (const [index, asset] of member.assets.entries()) {
     if (!isObject(asset) || !MOBILE_TARGETS.has(asset.target)) continue;

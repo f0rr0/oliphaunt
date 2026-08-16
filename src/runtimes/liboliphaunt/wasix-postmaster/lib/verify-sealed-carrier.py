@@ -16,6 +16,7 @@ from typing import Any
 from guest_build_provenance import (
     ProvenanceError,
     REQUIRED_MODULES,
+    SIDE_MODULE_POLICY,
     installed_closure_identity_from_records,
 )
 from sealed_export_chain import (
@@ -60,16 +61,6 @@ DETERMINISTIC_START_PROOF_KEYS = {
     "ordinary-start-execution-per-instance",
     "first-instance-full-byte-validation",
 }
-FILE_CACHE_REQUESTED_POLICY_ID = (
-    "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.v5"
-)
-FILE_CACHE_APPROVED_CONFIG_ID = (
-    "oliphaunt.wasix-postmaster.file-cache.adaptive-linux.embedded-v4"
-)
-FILE_CACHE_CONFIG_SHA256 = (
-    "01668b856435cb8c34b2d2324ab55b7f1f5961b8b403c1ee49d9ee4b5c865f53"
-)
-FILE_CACHE_PORTABLE_FALLBACK_MODE = "observe-only"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 SIZE_RE = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 
@@ -99,7 +90,6 @@ TOP_LEVEL_MANIFEST_KEYS = {
     "executor-sha256",
     "executor-size",
     "linear-memory-profile",
-    "file-cache-policy",
     "wasm-features",
     "entrypoint",
     "artifacts",
@@ -115,12 +105,6 @@ LINEAR_MEMORY_PROFILE_KEYS = {
     "static-access-lowering",
     "install-receipt-path",
     "install-receipt-sha256",
-}
-FILE_CACHE_POLICY_KEYS = {
-    "requested-policy-id",
-    "approved-config-id",
-    "config-sha256",
-    "portable-fallback-mode",
 }
 ARTIFACT_KEYS = {
     "name",
@@ -223,7 +207,6 @@ RECEIPT_KEYS = (
     "llvm_version",
 )
 POSTMASTER_EXECUTOR_RECEIPT_PATH = "postmaster-executor.receipt"
-POSTMASTER_COMPILER_RECEIPT_PATH = "postmaster-compiler.receipt"
 POSTMASTER_EXECUTOR_RECEIPT_KEYS = (
     "schema",
     "build_recipe_sha256",
@@ -308,18 +291,9 @@ FINAL_CONCURRENCY_RECEIPT_KEYS = (
 EXPECTED_ARTIFACTS = (
     ("runtime:initdb", "executable", "bin/initdb", ["/bin/initdb"]),
     ("runtime:postgres", "executable", "bin/postgres", ["/bin/postgres"]),
-    ("runtime:libpq.so.5.18", "side-module", "lib/libpq.so.5.18", []),
-    (
-        "runtime:dict_snowball.so",
-        "side-module",
-        "lib/postgresql/dict_snowball.so",
-        [],
-    ),
-    (
-        "runtime:plpgsql.so",
-        "side-module",
-        "lib/postgresql/plpgsql.so",
-        [],
+    *(
+        (f"runtime:{PurePosixPath(relative).name}", "side-module", relative, [])
+        for relative, _aliases in SIDE_MODULE_POLICY
     ),
 )
 
@@ -589,18 +563,12 @@ def parse_postmaster_executor_receipt(
     root: Path,
     verified: dict[str, tuple[int, str]],
     wasmer_receipt: dict[str, str],
-) -> dict[str, str] | None:
-    product_role = POSTMASTER_EXECUTOR_RECEIPT_PATH in verified
-    compiler_role = POSTMASTER_COMPILER_RECEIPT_PATH in verified
+) -> dict[str, str]:
     require(
-        product_role != compiler_role,
-        "carrier must contain exactly one postmaster product build receipt",
+        POSTMASTER_EXECUTOR_RECEIPT_PATH in verified,
+        "carrier must contain the postmaster product executor receipt",
     )
-    relative = (
-        POSTMASTER_EXECUTOR_RECEIPT_PATH
-        if product_role
-        else POSTMASTER_COMPILER_RECEIPT_PATH
-    )
+    relative = POSTMASTER_EXECUTOR_RECEIPT_PATH
     data, info = read_regular(root / relative)
     require(
         (info.st_size, sha256_bytes(data)) == verified[relative],
@@ -693,11 +661,10 @@ def parse_postmaster_executor_receipt(
         receipt["cli_contract"] == "sealed-postmaster-run-v1",
         "postmaster executor CLI contract mismatch",
     )
-    if product_role:
-        require(
-            receipt["executor_binary_sha256"] == verified["bin/wasmer-headless"][1],
-            "postmaster executor receipt does not identify bin/wasmer-headless",
-        )
+    require(
+        receipt["executor_binary_sha256"] == verified["bin/wasmer-headless"][1],
+        "postmaster executor receipt does not identify bin/wasmer-headless",
+    )
     require(
         receipt["start_proof_binary"] == "oliphaunt-wasix-start-proof"
         and receipt["start_proof_features"] == "start-proof-tool"
@@ -719,7 +686,7 @@ def parse_postmaster_executor_receipt(
         and receipt["compiler_cpu_features"] == "none",
         "postmaster product compiler identity mismatch",
     )
-    return receipt if product_role else None
+    return receipt
 
 
 def parse_guest_build_receipt(
@@ -1055,20 +1022,12 @@ def guest_installed_closure_identity(
 def verify_layout(verified: dict[str, tuple[int, str]]) -> None:
     require(
         {path for path in verified if "/" not in path}
-        in (
-            {
-                "guest-build.receipt",
-                "manifest.json",
-                "postmaster-compiler.receipt",
-                "wasmer-build.receipt",
-            },
-            {
-                "guest-build.receipt",
-                "manifest.json",
-                "postmaster-executor.receipt",
-                "wasmer-build.receipt",
-            },
-        ),
+        == {
+            "guest-build.receipt",
+            "manifest.json",
+            "postmaster-executor.receipt",
+            "wasmer-build.receipt",
+        },
         "carrier root contains an unexpected inventoried file",
     )
     require(
@@ -1079,11 +1038,9 @@ def verify_layout(verified: dict[str, tuple[int, str]]) -> None:
     require(
         {path for path in verified if path.startswith("lib/")}
         == {
-            "lib/libpq.so",
-            "lib/libpq.so.5",
-            "lib/libpq.so.5.18",
-            "lib/postgresql/dict_snowball.so",
-            "lib/postgresql/plpgsql.so",
+            path
+            for relative, aliases in SIDE_MODULE_POLICY
+            for path in (relative, *aliases)
         },
         "carrier lib/ closure differs",
     )
@@ -1094,7 +1051,6 @@ def verify_layout(verified: dict[str, tuple[int, str]]) -> None:
             or path in {
                 "guest-build.receipt",
                 "manifest.json",
-                "postmaster-compiler.receipt",
                 "postmaster-executor.receipt",
                 "wasmer-build.receipt",
             }
@@ -1102,15 +1058,19 @@ def verify_layout(verified: dict[str, tuple[int, str]]) -> None:
         ),
         "carrier inventory contains a file outside the supported closure",
     )
-    libpq_identities = {verified[path] for path in ("lib/libpq.so", "lib/libpq.so.5", "lib/libpq.so.5.18")}
-    require(len(libpq_identities) == 1, "carrier libpq aliases do not contain identical bytes")
+    for relative, aliases in SIDE_MODULE_POLICY:
+        identities = {verified[path] for path in (relative, *aliases)}
+        require(
+            len(identities) == 1,
+            f"carrier aliases do not contain bytes identical to {relative}",
+        )
 
 
 def verify_manifest(
     root: Path,
     verified: dict[str, tuple[int, str]],
     receipt: dict[str, str],
-    postmaster_executor_receipt: dict[str, str] | None,
+    postmaster_executor_receipt: dict[str, str],
     guest_build_receipt: dict[str, str],
     expected_producer_recipe: str,
     postgres_version: str,
@@ -1169,11 +1129,7 @@ def verify_manifest(
     require(manifest["executor-engine"] == "engine-headless", "sealed executor engine mismatch")
     headless_size, headless_digest = verified["bin/wasmer-headless"]
     require(manifest["executor-sha256"] == headless_digest, "sealed executor SHA-256 mismatch")
-    expected_executor_digest = (
-        receipt["wasmer_headless_binary_sha256"]
-        if postmaster_executor_receipt is None
-        else postmaster_executor_receipt["executor_binary_sha256"]
-    )
+    expected_executor_digest = postmaster_executor_receipt["executor_binary_sha256"]
     require(
         manifest["executor-sha256"] == expected_executor_digest,
         "sealed executor differs from its role-selected receipt",
@@ -1337,34 +1293,6 @@ def verify_manifest(
         )
     except ExportChainError as error:
         fail(f"sealed-export predecessor chain differs: {error}")
-    file_cache_policy = manifest["file-cache-policy"]
-    require(isinstance(file_cache_policy, dict), "sealed file-cache policy must be an object")
-    require(
-        set(file_cache_policy) == FILE_CACHE_POLICY_KEYS,
-        "sealed file-cache policy fields differ",
-    )
-    require(
-        file_cache_policy["requested-policy-id"] == FILE_CACHE_REQUESTED_POLICY_ID,
-        "sealed file-cache requested policy is not approved",
-    )
-    require(
-        file_cache_policy["approved-config-id"] == FILE_CACHE_APPROVED_CONFIG_ID,
-        "sealed file-cache config identity is not approved",
-    )
-    require(
-        isinstance(file_cache_policy["config-sha256"], str)
-        and SHA256_RE.fullmatch(file_cache_policy["config-sha256"]) is not None,
-        "sealed file-cache config digest is not a SHA-256",
-    )
-    require(
-        file_cache_policy["config-sha256"] == FILE_CACHE_CONFIG_SHA256,
-        "sealed file-cache config digest is not approved",
-    )
-    require(
-        file_cache_policy["portable-fallback-mode"]
-        == FILE_CACHE_PORTABLE_FALLBACK_MODE,
-        "sealed file-cache portable fallback is not approved",
-    )
     require(manifest["wasm-features"] == ["exceptions", "threads"], "sealed Wasm features mismatch")
     require(manifest["entrypoint"] == "runtime:postgres", "sealed entrypoint mismatch")
     require(manifest["source-fingerprint"] == source_fingerprint(root, verified), "sealed source fingerprint mismatch")
@@ -1377,13 +1305,11 @@ def verify_manifest(
     artifacts = manifest["artifacts"]
     require(isinstance(artifacts, list) and len(artifacts) == len(EXPECTED_ARTIFACTS), "sealed artifact closure size mismatch")
     expected_aot: set[str] = set()
-    expected_memory: set[str] = set()
     seen_module_hashes: set[str] = set()
     for artifact, expected in zip(artifacts, EXPECTED_ARTIFACTS, strict=True):
         expected_name, expected_kind, expected_module_path, expected_aliases = expected
         require(isinstance(artifact, dict), f"sealed artifact {expected_name} must be an object")
-        expected_keys = ARTIFACT_KEYS | ({"preinitialized-memory"} if expected_kind == "executable" else set())
-        require(set(artifact) == expected_keys, f"sealed artifact fields differ for {expected_name}")
+        require(set(artifact) == ARTIFACT_KEYS, f"sealed artifact fields differ for {expected_name}")
         require(artifact["name"] == expected_name, f"sealed artifact name/order mismatch for {expected_name}")
         require(artifact["kind"] == expected_kind, f"sealed artifact kind mismatch for {expected_name}")
         require(artifact["module-path"] == expected_module_path, f"sealed module path mismatch for {expected_name}")
@@ -1423,52 +1349,13 @@ def verify_manifest(
         require(artifact["raw-sha256"] == actual_artifact_digest, f"raw AOT SHA-256 mismatch for {expected_name}")
         require(exact_int(artifact["raw-size"], f"raw AOT size for {expected_name}") == artifact_size, f"raw AOT size mismatch for {expected_name}")
 
-        if expected_kind != "executable":
-            continue
-        memory = artifact["preinitialized-memory"]
-        require(isinstance(memory, dict) and set(memory) == MEMORY_KEYS, f"memory image fields differ for {expected_name}")
-        image_path = f"memory/{module_digest.upper()}.bin"
-        image_receipt_path = f"memory/{module_digest.upper()}.receipt.json"
-        require(memory["path"] == image_path, f"memory image path mismatch for {expected_name}")
-        image_size, image_digest = inventory_identity(verified, image_path, f"memory image for {expected_name}")
-        inventory_identity(verified, image_receipt_path, f"memory receipt for {expected_name}")
-        expected_memory.update((image_path, image_receipt_path))
-        require(exact_int(memory["size"], f"memory image size for {expected_name}", minimum=1) == image_size, f"memory image size mismatch for {expected_name}")
-        require(memory["sha256"] == image_digest, f"memory image SHA-256 mismatch for {expected_name}")
-        require(memory["schema"] == MEMORY_SCHEMA, f"memory image schema mismatch for {expected_name}")
-        require(memory["module-sha256"] == module_digest, f"memory image module mismatch for {expected_name}")
-        validate_deterministic_start_proof(
-            memory["deterministic-start-proof"],
-            memory["deterministic-start-proof-output-sha256"],
-            module_digest,
-            f"deterministic-start proof for {expected_name}",
-        )
-        require(memory["runtime-abi-id"] == manifest["runtime-abi-id"], f"memory image runtime ABI mismatch for {expected_name}")
-        require(memory["phase"] == MEMORY_PHASE, f"memory image phase mismatch for {expected_name}")
-        require(exact_int(memory["mapping-alignment"], f"memory alignment for {expected_name}", minimum=1) == 65536, f"memory alignment mismatch for {expected_name}")
-        require(exact_int(memory["mapped-size"], f"mapped size for {expected_name}", minimum=1) == image_size, f"mapped memory size mismatch for {expected_name}")
-        require(type(memory["memory-shared"]) is bool and memory["memory-shared"], f"memory image must describe shared Wasm memory for {expected_name}")
-        for field in (
-            "memory-minimum-pages",
-            "memory-base",
-            "dylink-memory-size",
-            "dylink-memory-alignment",
-            "stack-low",
-        ):
-            exact_int(memory[field], f"{field} for {expected_name}")
-        maximum_pages = memory["memory-maximum-pages"]
-        require(maximum_pages == 4096, f"invalid maximum memory pages for {expected_name}")
-        image_receipt = verified_json(root, image_receipt_path, verified, f"memory receipt for {expected_name}")
-        require(isinstance(image_receipt, dict) and set(image_receipt) == MEMORY_RECEIPT_KEYS, f"memory receipt fields differ for {expected_name}")
-        require(image_receipt == {key: memory[key] for key in MEMORY_RECEIPT_KEYS}, f"memory receipt differs from manifest for {expected_name}")
-
     require(
         {path for path in verified if path.startswith("aot/")} == expected_aot,
         "carrier AOT directory differs from the manifest closure",
     )
     require(
-        {path for path in verified if path.startswith("memory/")} == expected_memory,
-        "carrier memory-image directory differs from the manifest closure",
+        not any(path.startswith("memory/") for path in verified),
+        "carrier contains unsupported preinitialized-memory payloads",
     )
 
 
@@ -1511,16 +1398,8 @@ def executor_selection(root: Path) -> None:
         manifest.get("executor-size") == executor_size,
         "sealed manifest selected executor size differs",
     )
-    if postmaster_receipt is None:
-        role = "full-headless"
-        receipt_path = "wasmer-build.receipt"
-        require(
-            executor_digest == wasmer_receipt["wasmer_headless_binary_sha256"],
-            "full-headless carrier executor differs from Wasmer receipt",
-        )
-    else:
-        role = "postmaster-product"
-        receipt_path = POSTMASTER_EXECUTOR_RECEIPT_PATH
+    role = "postmaster-product"
+    receipt_path = POSTMASTER_EXECUTOR_RECEIPT_PATH
     print(
         role,
         receipt_path,

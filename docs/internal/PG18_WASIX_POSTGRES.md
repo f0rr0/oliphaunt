@@ -2,8 +2,8 @@
 
 This runtime is the fresh PostgreSQL 18 WASIX build that keeps the released
 Oliphaunt WASM product shape: one embedded backend behind the direct Rust API
-and the local server wrapper.  It is not the concurrent full PostgreSQL WASIX
-experiment and should not take postmaster or multi-backend assumptions as a
+and the local server wrapper. It is the single-backend peer of the concurrent
+WASIX postmaster product and should not take multi-backend assumptions as a
 performance constraint.
 
 ## Target Shape
@@ -23,57 +23,40 @@ performance constraint.
 - Performance comparisons use the released PG17.5 WASIX lane on the existing
   benches; this document makes no replacement claim.
 
-## Research Assessment
+## Topology Decision
 
-The concurrent full-PostgreSQL WASIX experiment is useful for identifying
-Wasmer, WASIX libc, process, socket, shared-memory, and toolchain blockers, but
-replacing the released embedded product is outside its scope. The
-experiment evidence points to persistent process/shmem/socket/RSS costs
-before query execution, while the released product wins by keeping one backend,
-one host lifecycle, direct FE/BE pumping, prebuilt PGDATA, and AOT reuse.
-
-This assessment records the release-lane decision; it is not the current
-physical-memory conclusion for concurrent WASIX. The independent, non-release
-[`wasix-postmaster` research lane](../../src/runtimes/liboliphaunt/wasix-postmaster/README.md)
-now measures aliased process-tree RSS only as a diagnostic and uses Linux PSS
-plus cgroup accounting for physical-memory claims. Its
-[memory model](wasix-postmaster/rss-memory-model.md)
-and fresh-backend architecture remain research inputs and do not change the
-single-backend product or its release support boundary.
+The single-backend runtime and concurrent
+[`liboliphaunt-wasix-postmaster`](../../src/runtimes/liboliphaunt/wasix-postmaster/README.md)
+are peer release products. Neither replaces or silently falls back to the
+other. The single-backend product keeps one host lifecycle, direct FE/BE
+pumping, prebuilt PGDATA, and AOT reuse. The postmaster product owns sockets,
+shared memory, process handoff, and one isolated backend per connection.
 
 The practical direction is therefore:
 
-- Keep full concurrent PostgreSQL under WASIX as upstream/runtime research and
-  a correctness oracle for patches that should eventually make WASIX more
-  POSIX-like.
-- Build the replacement product as PG18 WASIX `wasix-dl`, preserving the
-  released Oliphaunt-style execution model and only taking runtime patches that
-  improve that model.
-- Treat the PG18 experiment's PostgreSQL hot-path patches as candidates after
-  parity is buildable.  The strongest candidates are WASIX-gated
-  `hash_bytes()` load folding, top-level `TransactionIdIsCurrentTransactionId`
-  short-circuiting, and narrow btree int4 comparator fast paths.  They attack
-  hot guest CPU paths without changing the host lifecycle.
+- Keep PG18 WASIX `wasix-dl` as the low-overhead embedded topology.
+- Keep concurrent PostgreSQL in the postmaster product, with its own guest
+  patch stack, carrier, target claims, and concurrency/recovery qualification.
+- Share source inputs and topology-neutral patches; do not import single-backend
+  spinlock, worker, process, or lifecycle assumptions into postmaster.
+- Treat topology-neutral PostgreSQL hot-path changes as candidates only after
+  focused regression coverage. `hash_bytes()` load folding, top-level
+  `TransactionIdIsCurrentTransactionId` short-circuiting, and narrow btree int4
+  comparator fast paths attack guest CPU paths without changing host lifecycle.
 - Keep diagnostic toggles, such as bottom-up btree delete disabling, out of the
   default product path unless benchmarks prove a production-safe default.
 - Defer broader planner/executor shortcuts, locale-sensitive LIKE shortcuts,
   and stack-allocation rewrites until they have focused regression coverage,
   because they can silently change SQL semantics or memory pressure.
-- Record every full-PG experiment patch in
+- Preserve the concluded cross-topology patch review in
   `src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml`
-  before porting or rejecting it.  The source-spine guard checks that manifest
-  so experiment patches cannot be copied into this runtime without a WASIX
-  rationale.
+  and require a fresh WASIX rationale before adopting any additional
+  postmaster-originated patch into the embedded runtime.
 
-For the replacement decision recorded here, the immediate conclusion is that a
-"proper" concurrent PostgreSQL under WASIX was not ready to match native
-PostgreSQL or released Oliphaunt-style WASM performance. A fresh PG18 WASIX
-runtime can plausibly beat the released PG17.5 lane because it keeps the
-low-overhead lifecycle while inheriting newer PostgreSQL, newer WASIX/Wasmer
-fixes, tighter host ABI boundaries, and targeted hot-path patches from the
-experiment. Concurrent-runtime viability is evaluated separately
-in its historical carrier and PSS/cgroup evidence ledger. No carrier produced
-from that project's current source is admitted.
+Current postmaster architecture and performance interpretation are maintained
+in [`docs/maintainers/wasix-postmaster.md`](../maintainers/wasix-postmaster.md).
+Historical carrier measurements are not current release evidence for either
+topology.
 
 ## PG17.5 Release-Lane Implementation Comparison
 
@@ -310,17 +293,17 @@ not by wholesale copying more upstream Oliphaunt code.
 22. Performance work: carry Wasmer, WASIX libc, LTO/codegen, file-system, and
    memory-growth improvements into this lane only after parity is testable.
 
-## Experiment Patch Disposition
+## Historical Patch Disposition
 
-The full-concurrent PG18 WASIX experiment remains useful prior art, but its
-patches are not the default source of truth for this lane.  The reviewed
-disposition manifest is:
+The postmaster product's early patch stack was useful prior art, but its
+topology-specific patches are not the source of truth for this lane. The
+reviewed historical disposition manifest is:
 
 ```sh
 src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml
 ```
 
-The manifest records each experiment patch by filename, whether it was applied,
+The manifest records each reviewed patch by filename, whether it was applied,
 adopted from current main, or rejected, and why that decision fits a
 single-backend WASIX product. The five compatible optimizations—hash-load,
 top-XID visibility, guarded btree int4 comparison, LIKE literal substring, and
@@ -332,10 +315,9 @@ and full concurrent-postmaster runtime patches remain outside the default
 single-backend lane. The postmaster keeps its narrow pg_dump LTO hygiene patch
 locally because it belongs to that build topology.
 
-When the full-PG experiment checkout exists locally, the source-spine guard
-also compares the disposition manifest against the actual experiment patch
-directory, so new experiment patches cannot appear without an explicit
-embedded-runtime decision.
+The source-spine guard keeps those concluded decisions explicit. New shared
+optimizations must be adopted through the canonical single-backend patch stack;
+postmaster lifecycle patches remain owned by the postmaster product.
 
 ## Current Slice
 

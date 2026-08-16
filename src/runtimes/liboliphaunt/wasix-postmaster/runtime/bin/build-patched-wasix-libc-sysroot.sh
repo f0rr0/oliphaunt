@@ -18,7 +18,7 @@ CARRIER_MANIFEST_NAME=".oliphaunt-patched-sysroots.manifest"
 
 usage() {
 	cat <<EOF
-usage: $0 [--no-build] [--output-prefix PATH]
+usage: $0 [--no-build] [--portable-inputs] [--output-prefix PATH]
 
 Builds the local wasix-libc checkout and overlays patched libc artifacts into a
 copy of the pinned wasixcc EH/PIC sysroot variants. The output contains only the
@@ -26,6 +26,8 @@ variants explicitly named by WASIX_LIBC_VARIANTS.
 
 --no-build reuses an already stamped carrier only after revalidating its exact
 payload, source state, patch, image identity, and build parameters.
+--portable-inputs permits --no-build to validate the stamped Docker image
+identity without requiring that Linux-only builder image on the current host.
 
 Environment:
   DOCKER_IMAGE      Docker image with wasixcc. Default: $DOCKER_IMAGE
@@ -219,7 +221,7 @@ write_variant_manifest() {
 
 reuse_existing_carrier() {
 	local carrier_manifest="$OUTPUT_PREFIX/$CARRIER_MANIFEST_NAME"
-	local validator="$UPSTREAM_SOURCE_ROOT/bin/run-blocker-probes.sh"
+	local validator="$UPSTREAM_SOURCE_ROOT/bin/validate-runtime-capabilities.sh"
 	local variant
 	local manifest
 
@@ -256,10 +258,15 @@ reuse_existing_carrier() {
 }
 
 BUILD=1
+PORTABLE_INPUTS=0
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--no-build)
 			BUILD=0
+			shift
+			;;
+		--portable-inputs)
+			PORTABLE_INPUTS=1
 			shift
 			;;
 		--output-prefix)
@@ -278,6 +285,8 @@ while [ "$#" -gt 0 ]; do
 			;;
 	esac
 done
+[ "$PORTABLE_INPUTS" -eq 0 ] || [ "$BUILD" -eq 0 ] ||
+	fail '--portable-inputs requires --no-build'
 
 normalize_variants
 SELECTED_VARIANTS=()
@@ -310,12 +319,25 @@ fi
 SOURCE_PATCH_SHA256="$(sha256_file "$WASIX_LIBC_PATCH")"
 SOURCE_WORKTREE_SHA256="$(source_worktree_sha256)"
 
-DOCKER_BIN="$(fresh_docker_bin)"
-if [ "$BUILD" -eq 1 ]; then
-	fresh_ensure_docker_image "$DOCKER_IMAGE"
+if [ "$PORTABLE_INPUTS" -eq 1 ]; then
+	first_variant_manifest="$OUTPUT_PREFIX/${SELECTED_VARIANTS[0]}/$VARIANT_MANIFEST_NAME"
+	DOCKER_IMAGE_ID="$(manifest_value "$first_variant_manifest" docker_image_id)" ||
+		fail "portable sysroot has no stamped Docker image identity: $first_variant_manifest"
+	case "$DOCKER_IMAGE_ID" in
+		sha256:*)
+			valid_sha256 "${DOCKER_IMAGE_ID#sha256:}" ||
+				fail 'portable sysroot Docker image identity is invalid'
+			;;
+		*) fail 'portable sysroot Docker image identity is invalid' ;;
+	esac
+else
+	DOCKER_BIN="$(fresh_docker_bin)"
+	if [ "$BUILD" -eq 1 ]; then
+		fresh_ensure_docker_image "$DOCKER_IMAGE"
+	fi
+	DOCKER_IMAGE_ID="$(fresh_wasix_builder_image_id "$DOCKER_IMAGE")" ||
+		fail "Docker image does not match the current builder recipe: $DOCKER_IMAGE"
 fi
-DOCKER_IMAGE_ID="$(fresh_wasix_builder_image_id "$DOCKER_IMAGE")" ||
-	fail "Docker image does not match the current builder recipe: $DOCKER_IMAGE"
 
 build_log_parent="$(dirname "$BUILD_LOG")"
 output_parent="$(dirname "$OUTPUT_PREFIX")"

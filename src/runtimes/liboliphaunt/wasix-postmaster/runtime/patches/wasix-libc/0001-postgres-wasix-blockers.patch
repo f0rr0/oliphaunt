@@ -123,19 +123,10 @@ index c98e42e..c76a2eb 100644
    // Create a sentinel region at the end of the new heap block
    Region *endSentinelRegion = (Region*)(endPtr - sizeof(Region));
 diff --git a/expected/wasm32-wasi-eh/defined-symbols.txt b/expected/wasm32-wasi-eh/defined-symbols.txt
-index 51b29a4..f281f23 100644
+index 51b29a4..29811fd 100644
 --- a/expected/wasm32-wasi-eh/defined-symbols.txt
 +++ b/expected/wasm32-wasi-eh/defined-symbols.txt
-@@ -1276,6 +1276,8 @@ pipe2
- poll
- popen
- posix_close
-+pg_wasix_fd_cache_offer_v1
-+pg_wasix_fd_cache_revoke_v1
- posix_fadvise
- posix_fallocate
- posix_memalign
-@@ -1650,6 +1652,7 @@ swprintf
+@@ -1650,6 +1650,7 @@ swprintf
  swscanf
  symlink
  symlinkat
@@ -144,33 +135,22 @@ index 51b29a4..f281f23 100644
  syslog
  system
 diff --git a/expected/wasm32-wasi-eh/undefined-symbols.txt b/expected/wasm32-wasi-eh/undefined-symbols.txt
-index 4f926be..7d449fa 100644
+index 4f926be..b03cc61 100644
 --- a/expected/wasm32-wasi-eh/undefined-symbols.txt
 +++ b/expected/wasm32-wasi-eh/undefined-symbols.txt
-@@ -10,6 +10,9 @@ __floatsitf
+@@ -10,6 +10,7 @@ __floatsitf
  __floatunsitf
  __getf2
  __gttf2
-+__imported_oliphaunt_postmaster_v1_fd_cache_offer
-+__imported_oliphaunt_postmaster_v1_fd_cache_revoke
 +__imported_oliphaunt_postmaster_v1_fd_sync_range
  __imported_wasi_snapshot_preview1_args_get
  __imported_wasi_snapshot_preview1_args_sizes_get
  __imported_wasi_snapshot_preview1_clock_res_get
 diff --git a/expected/wasm32-wasi-ehpic/defined-symbols.txt b/expected/wasm32-wasi-ehpic/defined-symbols.txt
-index 3885a66..7ed0f1f 100644
+index 3885a66..ddaacd9 100644
 --- a/expected/wasm32-wasi-ehpic/defined-symbols.txt
 +++ b/expected/wasm32-wasi-ehpic/defined-symbols.txt
-@@ -1284,6 +1284,8 @@ pipe2
- poll
- popen
- posix_close
-+pg_wasix_fd_cache_offer_v1
-+pg_wasix_fd_cache_revoke_v1
- posix_fadvise
- posix_fallocate
- posix_memalign
-@@ -1658,6 +1660,7 @@ swprintf
+@@ -1658,6 +1658,7 @@ swprintf
  swscanf
  symlink
  symlinkat
@@ -179,33 +159,22 @@ index 3885a66..7ed0f1f 100644
  syslog
  system
 diff --git a/expected/wasm32-wasi-ehpic/undefined-symbols.txt b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
-index 7af7e4c..b0a1e92 100644
+index 7af7e4c..49fbed2 100644
 --- a/expected/wasm32-wasi-ehpic/undefined-symbols.txt
 +++ b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
-@@ -11,6 +11,9 @@ __floatsitf
+@@ -11,6 +11,7 @@ __floatsitf
  __floatunsitf
  __getf2
  __gttf2
-+__imported_oliphaunt_postmaster_v1_fd_cache_offer
-+__imported_oliphaunt_postmaster_v1_fd_cache_revoke
 +__imported_oliphaunt_postmaster_v1_fd_sync_range
  __imported_wasi_snapshot_preview1_args_get
  __imported_wasi_snapshot_preview1_args_sizes_get
  __imported_wasi_snapshot_preview1_clock_res_get
 diff --git a/expected/wasm32-wasi-threads/defined-symbols.txt b/expected/wasm32-wasi-threads/defined-symbols.txt
-index c8996ef..2e0f849 100644
+index c8996ef..ad96b32 100644
 --- a/expected/wasm32-wasi-threads/defined-symbols.txt
 +++ b/expected/wasm32-wasi-threads/defined-symbols.txt
-@@ -1204,6 +1204,8 @@ pipe
- pipe2
- poll
- posix_close
-+pg_wasix_fd_cache_offer_v1
-+pg_wasix_fd_cache_revoke_v1
- posix_fadvise
- posix_fallocate
- posix_memalign
-@@ -1562,6 +1564,7 @@ swprintf
+@@ -1562,6 +1562,7 @@ swprintf
  swscanf
  symlink
  symlinkat
@@ -214,33 +183,22 @@ index c8996ef..2e0f849 100644
  syslog
  system
 diff --git a/expected/wasm32-wasi-threads/undefined-symbols.txt b/expected/wasm32-wasi-threads/undefined-symbols.txt
-index e4a2638..6e1d1ec 100644
+index e4a2638..9145830 100644
 --- a/expected/wasm32-wasi-threads/undefined-symbols.txt
 +++ b/expected/wasm32-wasi-threads/undefined-symbols.txt
-@@ -13,6 +13,9 @@ __getf2
+@@ -13,6 +13,7 @@ __getf2
  __global_base
  __gttf2
  __heap_base
-+__imported_oliphaunt_postmaster_v1_fd_cache_offer
-+__imported_oliphaunt_postmaster_v1_fd_cache_revoke
 +__imported_oliphaunt_postmaster_v1_fd_sync_range
  __imported_wasi_snapshot_preview1_args_get
  __imported_wasi_snapshot_preview1_args_sizes_get
  __imported_wasi_snapshot_preview1_clock_res_get
 diff --git a/expected/wasm32-wasi/defined-symbols.txt b/expected/wasm32-wasi/defined-symbols.txt
-index 6d33bff..d84b73d 100644
+index 6d33bff..a7e915b 100644
 --- a/expected/wasm32-wasi/defined-symbols.txt
 +++ b/expected/wasm32-wasi/defined-symbols.txt
-@@ -1282,6 +1282,8 @@ pipe2
- poll
- popen
- posix_close
-+pg_wasix_fd_cache_offer_v1
-+pg_wasix_fd_cache_revoke_v1
- posix_fadvise
- posix_fallocate
- posix_memalign
-@@ -1657,6 +1659,7 @@ swprintf
+@@ -1657,6 +1657,7 @@ swprintf
  swscanf
  symlink
  symlinkat
@@ -249,33 +207,22 @@ index 6d33bff..d84b73d 100644
  syslog
  system
 diff --git a/expected/wasm32-wasi/undefined-symbols.txt b/expected/wasm32-wasi/undefined-symbols.txt
-index 4f926be..7d449fa 100644
+index 4f926be..b03cc61 100644
 --- a/expected/wasm32-wasi/undefined-symbols.txt
 +++ b/expected/wasm32-wasi/undefined-symbols.txt
-@@ -10,6 +10,9 @@ __floatsitf
+@@ -10,6 +10,7 @@ __floatsitf
  __floatunsitf
  __getf2
  __gttf2
-+__imported_oliphaunt_postmaster_v1_fd_cache_offer
-+__imported_oliphaunt_postmaster_v1_fd_cache_revoke
 +__imported_oliphaunt_postmaster_v1_fd_sync_range
  __imported_wasi_snapshot_preview1_args_get
  __imported_wasi_snapshot_preview1_args_sizes_get
  __imported_wasi_snapshot_preview1_clock_res_get
 diff --git a/expected/wasm64-wasi/defined-symbols.txt b/expected/wasm64-wasi/defined-symbols.txt
-index cd3d45b..7ddc151 100644
+index cd3d45b..ca54a6d 100644
 --- a/expected/wasm64-wasi/defined-symbols.txt
 +++ b/expected/wasm64-wasi/defined-symbols.txt
-@@ -1240,6 +1240,8 @@ pipe2
- poll
- popen
- posix_close
-+pg_wasix_fd_cache_offer_v1
-+pg_wasix_fd_cache_revoke_v1
- posix_fadvise
- posix_fallocate
- posix_memalign
-@@ -1612,6 +1614,7 @@ swprintf
+@@ -1612,6 +1612,7 @@ swprintf
  swscanf
  symlink
  symlinkat
@@ -284,15 +231,13 @@ index cd3d45b..7ddc151 100644
  syslog
  system
 diff --git a/expected/wasm64-wasi/undefined-symbols.txt b/expected/wasm64-wasi/undefined-symbols.txt
-index ae7c7ff..6c7c3c0 100644
+index ae7c7ff..a70377f 100644
 --- a/expected/wasm64-wasi/undefined-symbols.txt
 +++ b/expected/wasm64-wasi/undefined-symbols.txt
-@@ -14,6 +14,9 @@ __getf2
+@@ -14,6 +14,7 @@ __getf2
  __global_base
  __gttf2
  __heap_base
-+__imported_oliphaunt_postmaster_v1_fd_cache_offer
-+__imported_oliphaunt_postmaster_v1_fd_cache_revoke
 +__imported_oliphaunt_postmaster_v1_fd_sync_range
  __imported_wasi_snapshot_preview1_args_get
  __imported_wasi_snapshot_preview1_args_sizes_get
@@ -311,45 +256,6 @@ index 06b7288..0526fce 100644
        __wasi_errno_t error =
            __wasi_fd_fdflags_set(fildes, fd_flags);
        if (error != 0) {
-diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/fd_cache_offer.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/fd_cache_offer.c
-new file mode 100644
-index 0000000..64dd7d3
---- /dev/null
-+++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/fd_cache_offer.c
-@@ -0,0 +1,33 @@
-+#include <errno.h>
-+#include <stdint.h>
-+#include <wasix/cache_offer.h>
-+
-+int32_t __imported_oliphaunt_postmaster_v1_fd_cache_offer(
-+    int32_t fd, int64_t offset, int64_t length, int32_t offer_class,
-+    int32_t flags) __attribute__((
-+    __import_module__("oliphaunt_postmaster_v1"),
-+    __import_name__("fd_cache_offer")));
-+
-+int32_t __imported_oliphaunt_postmaster_v1_fd_cache_revoke(
-+    int32_t fd, int32_t offer_class, int32_t flags) __attribute__((
-+    __import_module__("oliphaunt_postmaster_v1"),
-+    __import_name__("fd_cache_revoke")));
-+
-+int pg_wasix_fd_cache_offer_v1(int fd, int64_t offset, int64_t length,
-+                               uint32_t offer_class, uint32_t flags)
-+{
-+    int saved_errno = errno;
-+    int32_t result = __imported_oliphaunt_postmaster_v1_fd_cache_offer(
-+        (int32_t)fd, offset, length, (int32_t)offer_class, (int32_t)flags);
-+    errno = saved_errno;
-+    return (int)result;
-+}
-+
-+int pg_wasix_fd_cache_revoke_v1(int fd, uint32_t offer_class, uint32_t flags)
-+{
-+    int saved_errno = errno;
-+    int32_t result = __imported_oliphaunt_postmaster_v1_fd_cache_revoke(
-+        (int32_t)fd, (int32_t)offer_class, (int32_t)flags);
-+    errno = saved_errno;
-+    return (int)result;
-+}
 diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
 index 8e469c6..f7d8034 100644
 --- a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
@@ -467,70 +373,6 @@ index 5b02c4b..3963e83 100644
  /**
   * Returns the parent handle of a particular process
   */
-diff --git a/libc-bottom-half/headers/public/wasix/cache_offer.h b/libc-bottom-half/headers/public/wasix/cache_offer.h
-new file mode 100644
-index 0000000..74bee73
---- /dev/null
-+++ b/libc-bottom-half/headers/public/wasix/cache_offer.h
-@@ -0,0 +1,58 @@
-+#ifndef _WASIX_CACHE_OFFER_H
-+#define _WASIX_CACHE_OFFER_H
-+
-+#include <stdint.h>
-+
-+#ifdef __cplusplus
-+extern "C" {
-+#endif
-+
-+/*
-+ * Pointer-free version-1 product ABI. These values are shared with
-+ * oliphaunt_postmaster_v1.fd_cache_offer/fd_cache_revoke and are stable for
-+ * Wasm32/Wasm64.
-+ */
-+#define PG_WASIX_HAVE_FD_CACHE_OFFER_V1 1
-+#define PG_WASIX_HAVE_FD_CACHE_REVOKE_V1 1
-+
-+#define PG_WASIX_CACHE_OFFER_RELATION_READ_NORMAL 1U
-+#define PG_WASIX_CACHE_OFFER_RELATION_READ_BULK 2U
-+#define PG_WASIX_CACHE_OFFER_RELATION_READ_VACUUM 3U
-+#define PG_WASIX_CACHE_OFFER_RELATION_SYNC_CHECKPOINT 4U
-+#define PG_WASIX_CACHE_OFFER_RELATION_SYNC_IMMEDIATE 5U
-+#define PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE 6U
-+#define PG_WASIX_CACHE_OFFER_INACTIVE_WAL \
-+	PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE
-+
-+/*
-+ * Class-6-only hints. Bit 0 preserves the version-1 legacy low-reuse signal;
-+ * it is not a correctness proof. Bit 1 positively proves that the exact WAL
-+ * range is complete, durable, buffered, and therefore correctness-safe to
-+ * drop from page cache. Class 6 with flags zero remains valid observe-only
-+ * evidence and must be retained by any acting controller. An older host
-+ * rejects a newer bit with EINVAL, which is safe for this hint-only call.
-+ * Unknown bits and either class-6 bit on another class are invalid.
-+ */
-+#define PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE 0U
-+#define PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE (1U << 0)
-+#define PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE (1U << 1)
-+
-+/*
-+ * Returns zero or a positive errno value. This hint-only function preserves
-+ * the caller's thread-local errno on every path.
-+ */
-+int pg_wasix_fd_cache_offer_v1(int fd, int64_t offset, int64_t length,
-+                               uint32_t offer_class, uint32_t flags);
-+
-+/*
-+ * Synchronously revokes deferred offers for the exact file identity reached
-+ * through fd. Version 1 deliberately accepts only class 6 and flags zero.
-+ * Returns zero or a positive errno value and preserves thread-local errno.
-+ */
-+int pg_wasix_fd_cache_revoke_v1(int fd, uint32_t offer_class, uint32_t flags);
-+
-+#ifdef __cplusplus
-+}
-+#endif
-+
-+#endif
 diff --git a/libc-bottom-half/mman/mman.c b/libc-bottom-half/mman/mman.c
 index 7e26562..a156655 100644
 --- a/libc-bottom-half/mman/mman.c
@@ -1574,212 +1416,6 @@ index bdbce9f..3fbc3c5 100644
  	for (; n && *l == *r; n--, l++, r++);
  	return n ? *l-*r : 0;
  }
-diff --git a/test/wasix/c_fd_cache_offer/CMakeLists.txt b/test/wasix/c_fd_cache_offer/CMakeLists.txt
-new file mode 100644
-index 0000000..7396a6b
---- /dev/null
-+++ b/test/wasix/c_fd_cache_offer/CMakeLists.txt
-@@ -0,0 +1,4 @@
-+cmake_minimum_required(VERSION 3.5.0)
-+project(c_fd_cache_offer C)
-+
-+add_executable(main main.c)
-diff --git a/test/wasix/c_fd_cache_offer/check-import-signature.sh b/test/wasix/c_fd_cache_offer/check-import-signature.sh
-new file mode 100755
-index 0000000..7a7f62d
---- /dev/null
-+++ b/test/wasix/c_fd_cache_offer/check-import-signature.sh
-@@ -0,0 +1,41 @@
-+#!/bin/bash
-+
-+set -euo pipefail
-+
-+module="${1:-./main}"
-+wasm_dis="${WASM_DIS:-wasm-dis}"
-+expected_offer='(import "oliphaunt_postmaster_v1" "fd_cache_offer" (func $__imported_oliphaunt_postmaster_v1_fd_cache_offer (param i32 i64 i64 i32 i32) (result i32)))'
-+expected_revoke='(import "oliphaunt_postmaster_v1" "fd_cache_revoke" (func $__imported_oliphaunt_postmaster_v1_fd_cache_revoke (param i32 i32 i32) (result i32)))'
-+
-+command -v "$wasm_dis" >/dev/null 2>&1 || {
-+    echo "missing wasm disassembler: $wasm_dis" >&2
-+    exit 2
-+}
-+[ -f "$module" ] || {
-+    echo "missing Wasm module: $module" >&2
-+    exit 2
-+}
-+
-+"$wasm_dis" "$module" -o - | grep -F "$expected_offer" >/dev/null || {
-+    echo "fd_cache_offer import does not match the versioned pointer-free ABI" >&2
-+    exit 1
-+}
-+
-+"$wasm_dis" "$module" -o - | grep -F "$expected_revoke" >/dev/null || {
-+    echo "fd_cache_revoke import does not match the versioned pointer-free ABI" >&2
-+    exit 1
-+}
-+
-+if "$wasm_dis" "$module" -o - |
-+    grep -F '(import "wasix_32v1" "fd_cache_offer"' >/dev/null; then
-+    echo "fd_cache_offer must not be aliased into wasix_32v1" >&2
-+    exit 1
-+fi
-+
-+if "$wasm_dis" "$module" -o - |
-+    grep -F '(import "wasix_32v1" "fd_cache_revoke"' >/dev/null; then
-+    echo "fd_cache_revoke must not be aliased into wasix_32v1" >&2
-+    exit 1
-+fi
-+
-+echo "c_fd_cache_offer/revoke import signatures passed"
-diff --git a/test/wasix/c_fd_cache_offer/main.c b/test/wasix/c_fd_cache_offer/main.c
-new file mode 100644
-index 0000000..1a957e9
---- /dev/null
-+++ b/test/wasix/c_fd_cache_offer/main.c
-@@ -0,0 +1,127 @@
-+#include <errno.h>
-+#include <fcntl.h>
-+#include <stdint.h>
-+#include <stdio.h>
-+#include <unistd.h>
-+#include <wasix/cache_offer.h>
-+
-+_Static_assert(PG_WASIX_HAVE_FD_CACHE_OFFER_V1 == 1,
-+               "cache-offer availability macro changed");
-+_Static_assert(PG_WASIX_HAVE_FD_CACHE_REVOKE_V1 == 1,
-+               "cache-revoke availability macro changed");
-+_Static_assert(PG_WASIX_CACHE_OFFER_RELATION_READ_NORMAL == 1,
-+               "normal-read cache class changed");
-+_Static_assert(PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE == 6,
-+               "durable inactive-WAL cache class changed");
-+_Static_assert(PG_WASIX_CACHE_OFFER_INACTIVE_WAL ==
-+                   PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+               "inactive-WAL compatibility alias changed");
-+_Static_assert(PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE == 1,
-+               "WAL reclaim-eligibility flag changed");
-+_Static_assert(PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE == 2,
-+               "WAL cache-drop-safety flag changed");
-+
-+static int expect_result_preserves_errno(int fd, int64_t offset, int64_t length,
-+                                         uint32_t offer_class, uint32_t flags,
-+                                         int expected, const char *label)
-+{
-+    int result;
-+
-+    errno = EBUSY;
-+    result = pg_wasix_fd_cache_offer_v1(fd, offset, length, offer_class, flags);
-+    if (result != expected || errno != EBUSY) {
-+        fprintf(stderr, "%s: result=%d errno=%d\n", label, result, errno);
-+        return -1;
-+    }
-+    return 0;
-+}
-+
-+static int expect_revoke_preserves_errno(int fd, uint32_t offer_class,
-+                                         uint32_t flags, int expected,
-+                                         const char *label)
-+{
-+    int result;
-+
-+    errno = EBUSY;
-+    result = pg_wasix_fd_cache_revoke_v1(fd, offer_class, flags);
-+    if (result != expected || errno != EBUSY) {
-+        fprintf(stderr, "%s: result=%d errno=%d\n", label, result, errno);
-+        return -1;
-+    }
-+    return 0;
-+}
-+
-+int main(void)
-+{
-+    static const char path[] = "wasix-libc-cache-offer-test.dat";
-+    int fd;
-+
-+    unlink(path);
-+    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
-+    if (fd < 0) {
-+        perror("open");
-+        return 1;
-+    }
-+
-+    if (expect_result_preserves_errno(
-+            fd, 0, 4096, PG_WASIX_CACHE_OFFER_RELATION_READ_NORMAL,
-+            PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE, 0, "valid finite range") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 0, PG_WASIX_CACHE_OFFER_RELATION_SYNC_CHECKPOINT,
-+            PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE, 0, "valid through-EOF range") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 4096, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE, 0,
-+            "valid legacy low-reuse WAL range") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 4096, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE, 0,
-+            "valid cache-drop-safe WAL range") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 4096, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE |
-+                PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE,
-+            0, "valid low-reuse cache-drop-safe WAL range") < 0 ||
-+        expect_result_preserves_errno(fd, -1, 0, 1, 0, EINVAL,
-+                                      "negative offset") < 0 ||
-+        expect_result_preserves_errno(fd, 0, -1, 1, 0, EINVAL,
-+                                      "negative length") < 0 ||
-+        expect_result_preserves_errno(fd, 0, 0, 0, 0, EINVAL,
-+                                      "unknown class") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 0, PG_WASIX_CACHE_OFFER_RELATION_READ_NORMAL,
-+            PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_CACHE_DROP_SAFE, EINVAL,
-+            "WAL flag on relation class") < 0 ||
-+        expect_result_preserves_errno(
-+            fd, 0, 0, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE, 1U << 2,
-+            EINVAL, "unknown flags") < 0 ||
-+        expect_result_preserves_errno(-1, 0, 0, 1, 0, EBADF,
-+                                      "bad descriptor") < 0 ||
-+        expect_revoke_preserves_errno(
-+            fd, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE, 0,
-+            "valid inactive-WAL revoke") < 0 ||
-+        expect_revoke_preserves_errno(
-+            fd, PG_WASIX_CACHE_OFFER_RELATION_READ_NORMAL,
-+            PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE, EINVAL,
-+            "relation class revoke") < 0 ||
-+        expect_revoke_preserves_errno(
-+            fd, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAG_WAL_RECLAIM_ELIGIBLE, EINVAL,
-+            "nonzero revoke flags") < 0 ||
-+        expect_revoke_preserves_errno(
-+            -1, PG_WASIX_CACHE_CLASS_WAL_INACTIVE_DURABLE,
-+            PG_WASIX_CACHE_OFFER_V1_FLAGS_NONE, EBADF,
-+            "bad revoke descriptor") < 0) {
-+        close(fd);
-+        unlink(path);
-+        return 2;
-+    }
-+
-+    if (close(fd) < 0) {
-+        perror("close");
-+        return 3;
-+    }
-+    unlink(path);
-+    return 0;
-+}
-diff --git a/test/wasix/c_fd_cache_offer/test.sh b/test/wasix/c_fd_cache_offer/test.sh
-new file mode 100755
-index 0000000..71afed0
---- /dev/null
-+++ b/test/wasix/c_fd_cache_offer/test.sh
-@@ -0,0 +1,10 @@
-+#!/bin/bash
-+
-+wasmer run --verbose --enable-all ./main
-+RESULT=$?
-+if [ "$RESULT" != "0" ]; then
-+    echo "Test failed: different exit code ($RESULT vs. 0)" > /dev/stderr
-+    exit 1
-+fi
-+
-+echo "c_fd_cache_offer test passed"
 diff --git a/test/wasix/c_mmap_writeback/CMakeLists.txt b/test/wasix/c_mmap_writeback/CMakeLists.txt
 new file mode 100644
 index 0000000..eb29426

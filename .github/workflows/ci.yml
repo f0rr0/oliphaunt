@@ -71,6 +71,9 @@ env:
   WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
   WASMER_LLVM_LINUX_X64_SHA256: 5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906
   WASMER_LLVM_LINUX_X64_BYTES: 741670068
+  WASMER_LLVM_MACOS_ARM64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz
+  WASMER_LLVM_MACOS_ARM64_SHA256: f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847
+  WASMER_LLVM_MACOS_ARM64_BYTES: 479103872
   HEAVY_CACHE_SAVE_IF: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.save_heavy_caches) }}
   MOON_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
   MOON_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -1853,6 +1856,162 @@ jobs:
           path: target/oliphaunt-wasix/release-assets
           if-no-files-found: error
 
+  wasix-postmaster-linux:
+    name: Builds / wasix-postmaster (linux-x64-gnu)
+    needs:
+      - affected
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install Wasmer LLVM 22.1
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
+          sha256: ${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}
+          bytes: ${{ env.WASMER_LLVM_LINUX_X64_BYTES }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+
+      - name: Build, verify, qualify, and package WASIX postmaster
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=deep MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-postmaster
+
+      - name: Upload Linux WASIX postmaster release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-release-assets-linux-x64-gnu
+          path: target/oliphaunt-wasix-postmaster/release-assets/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload portable WASIX postmaster build inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-portable-build-inputs
+          path: target/oliphaunt-wasix-postmaster/portable-inputs/wasix-postmaster-portable-build-inputs.tar.gz
+          if-no-files-found: error
+
+  wasix-postmaster-macos:
+    name: Builds / wasix-postmaster (macos-arm64)
+    needs:
+      - affected
+      - wasix-postmaster-linux
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-linux.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install portable shell utilities
+        run: |
+          brew install bash coreutils findutils util-linux
+          {
+            echo "$(brew --prefix bash)/bin"
+            echo "$(brew --prefix coreutils)/libexec/gnubin"
+            echo "$(brew --prefix findutils)/libexec/gnubin"
+            echo "$(brew --prefix util-linux)/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Install Wasmer LLVM 22.1
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ env.WASMER_LLVM_MACOS_ARM64_URL }}
+          sha256: ${{ env.WASMER_LLVM_MACOS_ARM64_SHA256 }}
+          bytes: ${{ env.WASMER_LLVM_MACOS_ARM64_BYTES }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+
+      - name: Download portable WASIX postmaster build inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-postmaster-portable-build-inputs
+          path: target/oliphaunt-wasix-postmaster/portable-input-download
+
+      - name: Restore portable WASIX postmaster build inputs
+        run: |
+          archive=target/oliphaunt-wasix-postmaster/portable-input-download/wasix-postmaster-portable-build-inputs.tar.gz
+          test -f "$archive"
+          tar -xzf "$archive" --strip-components=1 \
+            -C target/oliphaunt-wasix-postmaster
+
+      - name: Build, verify, qualify, and package WASIX postmaster
+        env:
+          OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets
+
+      - name: Upload macOS WASIX postmaster release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-release-assets-macos-arm64
+          path: target/oliphaunt-wasix-postmaster/release-assets/*.tar.gz
+          if-no-files-found: error
+
+  wasix-postmaster:
+    name: Builds / wasix-postmaster
+    needs:
+      - affected
+      - wasix-postmaster-linux
+      - wasix-postmaster-macos
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-linux.result == 'success' && needs.wasix-postmaster-macos.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Download target WASIX postmaster release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-wasix-postmaster-release-assets-*
+          path: target/oliphaunt-wasix-postmaster/release-assets
+          merge-multiple: true
+
+      - name: Merge target WASIX postmaster release assets
+        run: bash src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh
+
+      - name: Upload complete WASIX postmaster release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-release-assets
+          path: target/oliphaunt-wasix-postmaster/release-assets
+          if-no-files-found: error
+
   native-extension-lifecycle:
     name: E2E / native extension lifecycle (shard ${{ matrix.shard }})
     needs:
@@ -2503,6 +2662,7 @@ jobs:
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
       - liboliphaunt-wasix-release-assets
+      - wasix-postmaster
       - wasix-release-regression
       - mobile-build-android
       - mobile-build-ios

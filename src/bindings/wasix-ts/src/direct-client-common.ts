@@ -55,6 +55,7 @@ const preparedRuntimes = new Map<string, Promise<PreparedWasixRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
 const initializedHosts = new WeakMap<object, Promise<void>>();
 const CHROMIUM_SYNC_WASM_LIMIT_BYTES = 8 * 1024 * 1024;
+const DIRECT_INSTANCE_DEADLINE_MS = 120_000;
 
 const defaultDependencies: DirectWasixDependencies = {
   prepareRuntime: prepareRuntimeCached,
@@ -128,14 +129,16 @@ export class DirectWasixSession implements WasixDatabaseSession {
       );
       baseDirectory = materialized.baseDirectory;
       const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
-      instance = await host.instantiateOliphauntDirect(module, prepared.layout.module, {
-        program: '/bin/oliphaunt',
-        moduleBytes: prepared.layout.module,
-        args: wasixPostgresArgs(runtimeOptions),
-        cwd: '/',
-        env: wasixPostgresEnvironment(runtimeOptions),
-        mount: materialized.mounts,
-      });
+      instance = await instantiateDirectWithDeadline(
+        host.instantiateOliphauntDirect(module, prepared.layout.module, {
+          program: '/bin/oliphaunt',
+          moduleBytes: prepared.layout.module,
+          args: wasixPostgresArgs(runtimeOptions),
+          cwd: '/',
+          env: wasixPostgresEnvironment(runtimeOptions),
+          mount: materialized.mounts,
+        }),
+      );
       const session = new DirectWasixSession(instance, storage, baseDirectory);
       opened = session;
       assertSuccessfulStartupResponse(
@@ -410,6 +413,43 @@ function initializeHost(host: DirectWasixHost): Promise<void> {
     });
   }
   return initialized;
+}
+
+/** Keep direct host startup observable to every JS event loop and bound genuine stalls. */
+function instantiateDirectWithDeadline(
+  operation: Promise<OliphauntDirectInstance>,
+): Promise<OliphauntDirectInstance> {
+  return new Promise((resolve, reject) => {
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      reject(new Error(`Oliphaunt WASIX direct startup exceeded ${DIRECT_INSTANCE_DEADLINE_MS}ms`));
+    }, DIRECT_INSTANCE_DEADLINE_MS);
+    void operation.then(
+      (instance) => {
+        if (expired) {
+          try {
+            instance.close();
+          } catch {
+            // Startup has already failed; continue to release the late allocation.
+          }
+          try {
+            instance.free();
+          } catch {
+            // The primary timeout remains the actionable failure.
+          }
+          return;
+        }
+        clearTimeout(timer);
+        resolve(instance);
+      },
+      (error) => {
+        if (expired) return;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function preparedRuntimeIdentity(options: SerializedOpenOptions): string {

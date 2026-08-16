@@ -52,13 +52,10 @@ expect_test_rejected() {
 for value in '' . .. -leading ../escape ../../victim '/absolute' 'contains space' $'line\nbreak'; do
   expect_rejected WASIX_REGRESS_SUITE_NAME \
     "$project_root/bin/run-wasix-regress-subset.sh" "$value"
-  expect_rejected NATIVE_REGRESS_SUITE_NAME \
-    "$project_root/bin/run-native-regress-subset.sh" "$value"
 done
 
 for value in --help -V ../boolean 'boolean case' 'boolean.sql' $'line\nbreak' 1boolean; do
   expect_test_rejected "$project_root/bin/run-wasix-regress-subset.sh" "$value"
-  expect_test_rejected "$project_root/bin/run-native-regress-subset.sh" "$value"
 done
 
 printf 'regression suite/test-name validation tests passed\n'

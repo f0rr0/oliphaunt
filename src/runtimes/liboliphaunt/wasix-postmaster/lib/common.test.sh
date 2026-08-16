@@ -4,6 +4,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-wasmer-receipt.XXXXXX")"
+test_root="$(cd "$test_root" && pwd -P)"
 guard_sandbox=""
 
 cleanup() {
@@ -76,8 +77,7 @@ for relative in \
   runtime/bin/prepare-upstream-checkouts.sh \
   runtime/bin/build-runtime.sh \
   runtime/bin/build-patched-wasix-libc-sysroot.sh \
-  runtime/bin/record-code-grounding.sh \
-  runtime/bin/run-blocker-probes.sh \
+  runtime/bin/validate-runtime-capabilities.sh \
   runtime/bin/verify-runtime-execution-ownership.py \
   runtime/bin/verify-runtime-state-ownership.py \
   runtime/bin/verify-source-lock.py; do
@@ -325,16 +325,17 @@ if expect_invalid_wasm_opt_default; then
 fi
 unset WASIXCC_WASM_OPT_SUPPRESS_DEFAULT
 
-cp /bin/true "$FRESH_UPSTREAM_WASMER_BIN"
-chmod +x "$FRESH_UPSTREAM_WASMER_BIN"
-cp /bin/true "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
-chmod +x "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
-cp /bin/true "$FRESH_POSTMASTER_EXECUTOR_BIN"
-chmod +x "$FRESH_POSTMASTER_EXECUTOR_BIN"
+true_bin="$(type -P true)"
+cp "$true_bin" "$FRESH_UPSTREAM_WASMER_BIN"
+chmod u+wx "$FRESH_UPSTREAM_WASMER_BIN"
+cp "$true_bin" "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
+chmod u+wx "$FRESH_UPSTREAM_WASMER_HEADLESS_BIN"
+cp "$true_bin" "$FRESH_POSTMASTER_EXECUTOR_BIN"
+chmod u+wx "$FRESH_POSTMASTER_EXECUTOR_BIN"
 cp "$project_root/testdata/fake-start-proof.py" "$FRESH_START_PROOF_BIN"
 chmod +x "$FRESH_START_PROOF_BIN"
-cp /bin/true "$FRESH_MEMORY_PROFILE_BIN"
-chmod +x "$FRESH_MEMORY_PROFILE_BIN"
+cp "$true_bin" "$FRESH_MEMORY_PROFILE_BIN"
+chmod u+wx "$FRESH_MEMORY_PROFILE_BIN"
 cp "$project_root/testdata/fake-postmaster-compiler.py" "$FRESH_POSTMASTER_COMPILER_BIN"
 chmod +x "$FRESH_POSTMASTER_COMPILER_BIN"
 
@@ -672,16 +673,16 @@ managed_root="$(fresh_managed_generated_root)"
 (
   unset \
     FRESH_WORK_ROOT \
-    NATIVE_BUILD_DIR \
-    NATIVE_INSTALL_DIR \
+    CLIENT_TOOLS_BUILD_DIR \
+    CLIENT_TOOLS_INSTALL_DIR \
     WASIX_BUILD_DIR \
     WASIX_INSTALL_DIR \
     REPORT_DIR \
     RUN_DIR
   source "$project_root/lib/common.sh"
   [ "$FRESH_WORK_ROOT" = "$(fresh_managed_generated_root)" ]
-  fresh_require_managed_generated_path "$NATIVE_BUILD_DIR" NATIVE_BUILD_DIR
-  fresh_require_managed_generated_path "$NATIVE_INSTALL_DIR" NATIVE_INSTALL_DIR
+  fresh_require_managed_generated_path "$CLIENT_TOOLS_BUILD_DIR" CLIENT_TOOLS_BUILD_DIR
+  fresh_require_managed_generated_path "$CLIENT_TOOLS_INSTALL_DIR" CLIENT_TOOLS_INSTALL_DIR
   fresh_require_managed_generated_path "$WASIX_BUILD_DIR" WASIX_BUILD_DIR
   fresh_require_managed_generated_path "$WASIX_INSTALL_DIR" WASIX_INSTALL_DIR
   fresh_require_managed_generated_path "$REPORT_DIR" REPORT_DIR
@@ -695,9 +696,9 @@ expect_failure fresh_require_managed_generated_path relative/build
 expect_failure fresh_require_managed_generated_path "$test_root/outside"
 expect_failure fresh_require_managed_generated_path "$managed_root-other/build"
 expect_failure fresh_require_managed_generated_path "$managed_root/builds/../outside"
-expect_failure fresh_require_managed_generated_path "$managed_root/builds/./native-oracle"
-expect_failure fresh_require_managed_generated_path "$managed_root//builds/native-oracle"
-expect_failure fresh_require_managed_generated_path "$managed_root/builds/native-oracle/"
+expect_failure fresh_require_managed_generated_path "$managed_root/builds/./native-client-tools"
+expect_failure fresh_require_managed_generated_path "$managed_root//builds/native-client-tools"
+expect_failure fresh_require_managed_generated_path "$managed_root/builds/native-client-tools/"
 
 mkdir -p "$managed_root" "$test_root/outside"
 guard_sandbox="$(mktemp -d "$managed_root/.common-path-guard.XXXXXX")"
@@ -736,16 +737,8 @@ fresh_require_patched_postmaster_compiler \
 
 default_cache_dir="$(fresh_wasmer_cache_dir "$FRESH_UPSTREAM_WASMER_BIN")"
 default_cache_bucket="$(fresh_wasmer_compiler_cache_bucket llvm aggressive 21)"
-export WASMER_LLVM_VOLATILE_MEMOPS=1
-volatile_cache_dir="$(fresh_wasmer_cache_dir "$FRESH_UPSTREAM_WASMER_BIN")"
-volatile_cache_bucket="$(fresh_wasmer_compiler_cache_bucket llvm aggressive 21)"
-[ "$default_cache_dir" != "$volatile_cache_dir" ]
-[ "$default_cache_bucket" != "$volatile_cache_bucket" ]
-mapfile -t volatile_compiler_args < <(
-  fresh_wasmer_compiler_args_for "" "" llvm aggressive ""
-)
-printf '%s\n' "${volatile_compiler_args[@]}" | grep -Fx -- '--disable-non-volatile-memops' >/dev/null
-unset WASMER_LLVM_VOLATILE_MEMOPS
+[ -n "$default_cache_dir" ]
+[ "$default_cache_bucket" = llvm-opta-v21 ]
 
 mv "$WASMER_BUILD_RECEIPT" "$test_root/receipt.saved"
 expect_failure fresh_require_patched_wasmer "$FRESH_UPSTREAM_WASMER_BIN"
@@ -850,8 +843,8 @@ rm "$WASMER_BUILD_RECEIPT"
 mv "$test_root/receipt.saved" "$WASMER_BUILD_RECEIPT"
 
 mkdir -p "$test_root/bin"
-cp /bin/true "$test_root/bin/wasmer"
-chmod +x "$test_root/bin/wasmer"
+cp "$true_bin" "$test_root/bin/wasmer"
+chmod u+wx "$test_root/bin/wasmer"
 FRESH_UPSTREAM_WASMER_BIN="$test_root/missing" \
   PATH="$test_root/bin:$PATH" \
   expect_failure fresh_wasmer_bin

@@ -100,7 +100,9 @@ def main() -> int:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_bytes(template)
+            # Keep fixture modules distinct so the carrier test also exercises
+            # one AOT identity per declared side module.
+            path.write_bytes(template + b"\nfixture:" + relative.encode())
 
     mandatory_hash = digest((policy_root / "sealed-main-runtime-exports.v1.txt").read_bytes())
     dlsym_hash = digest((policy_root / "sealed-main-dlsym-exports.v1.txt").read_bytes())
@@ -138,16 +140,6 @@ def main() -> int:
         "final-proof-sha256": digest(final_proof_data),
         "seed": snapshot(seed_sha, len(postgres) + 16),
         "final-module": snapshot(digest(postgres), len(postgres)),
-        "estimate": {
-            "classification": "structural-estimate-not-measured-rss",
-            "formula": "removed-local-functions * 32 + removed-local-globals * 48",
-            "removed-local-functions": 1,
-            "bytes-per-eager-local-funcref": 32,
-            "removed-local-globals": 0,
-            "bytes-per-eager-local-global": 48,
-            "estimated-bytes-per-instance": 32,
-            "caveat": "synthetic fixture",
-        },
         "sides": [{"path": side["path"], "sha256": side["sha256"]} for side in sides],
     }
     (share / "wasix-postmaster.sealed-export.structure.receipt").write_bytes(json_bytes(receipt))

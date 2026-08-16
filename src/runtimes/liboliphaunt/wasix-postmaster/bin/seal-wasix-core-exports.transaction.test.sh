@@ -133,16 +133,6 @@ receipt = {
     "final-proof-sha256": digest(final_proof_data),
     "seed": snapshot(seed_sha256, len(final_data) + 16),
     "final-module": snapshot(final_sha256, len(final_data)),
-    "estimate": {
-        "classification": "structural-estimate-not-measured-rss",
-        "formula": "removed-local-functions * 32 + removed-local-globals * 48",
-        "removed-local-functions": 1,
-        "bytes-per-eager-local-funcref": 32,
-        "removed-local-globals": 0,
-        "bytes-per-eager-local-global": 48,
-        "estimated-bytes-per-instance": 32,
-        "caveat": "synthetic transaction fixture",
-    },
     "sides": [
         {"path": side["path"], "sha256": side["sha256"]} for side in sides
     ],
@@ -565,14 +555,8 @@ def name(value: str) -> bytes:
 def function_type(parameters: tuple[int, ...]) -> bytes:
     return b"\x60" + vector([bytes([value]) for value in parameters]) + vector([b"\x7f"])
 
-types = [
-    function_type((0x7f, 0x7e, 0x7e, 0x7f)),
-    function_type((0x7f, 0x7e, 0x7e, 0x7f, 0x7f)),
-    function_type((0x7f, 0x7f, 0x7f)),
-]
-imports = []
-for index, symbol in enumerate(("fd_sync_range", "fd_cache_offer", "fd_cache_revoke")):
-    imports.append(name("oliphaunt_postmaster_v1") + name(symbol) + b"\x00" + uleb(index))
+types = [function_type((0x7f, 0x7e, 0x7e, 0x7f))]
+imports = [name("oliphaunt_postmaster_v1") + name("fd_sync_range") + b"\x00" + uleb(0)]
 
 def section(identifier: int, payload: bytes) -> bytes:
     return bytes([identifier]) + uleb(len(payload)) + payload

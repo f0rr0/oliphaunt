@@ -185,4 +185,36 @@ fresh_process_group_exists "$owned_pgid" && {
   exit 1
 }
 
+fresh_spawn_process_group -- bash -c \
+  'trap "exit 0" TERM; while :; do sleep 1; done'
+graceful_pid="$FRESH_PROCESS_GROUP_PID"
+graceful_pgid="$FRESH_PROCESS_GROUP_PGID"
+graceful_identity="$FRESH_PROCESS_GROUP_IDENTITY"
+fresh_stop_owned_process_group \
+  TERM "$graceful_pgid" "$graceful_pid" "$graceful_identity" 1000 3000
+fresh_process_group_exists "$graceful_pgid" && {
+  echo "gracefully stopped process group survived" >&2
+  exit 1
+}
+
+fresh_spawn_process_group -- bash -c \
+  'trap "" TERM; while :; do sleep 1; done'
+forced_pid="$FRESH_PROCESS_GROUP_PID"
+forced_pgid="$FRESH_PROCESS_GROUP_PGID"
+forced_identity="$FRESH_PROCESS_GROUP_IDENTITY"
+set +e
+fresh_stop_owned_process_group \
+  TERM "$forced_pgid" "$forced_pid" "$forced_identity" 100 3000
+forced_status=$?
+set -e
+[ "$forced_status" -eq 124 ] || {
+  printf 'forced process-group stop returned %s instead of 124\n' \
+    "$forced_status" >&2
+  exit 1
+}
+fresh_process_group_exists "$forced_pgid" && {
+  echo "force-stopped process group survived" >&2
+  exit 1
+}
+
 printf 'process supervision tests passed\n'

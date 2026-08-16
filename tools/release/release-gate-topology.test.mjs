@@ -12,7 +12,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { mutationTestEnvironment, mutationTests } from "./release-check.mjs";
+import {
+  MUTATION_TEST_PROCESS_CONCURRENCY,
+  mutationTestCommand,
+  mutationTestEnvironment,
+  mutationTests,
+  mutationTestWaves,
+} from "./release-check.mjs";
 import { uniqueValueFlag } from "./release-cli-utils.mjs";
 
 test("release CLI value flags reject ambiguous duplicate identities", () => {
@@ -77,6 +83,31 @@ test("mutation test discovery includes repository sources but excludes ignored d
     ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("mutation test waves preserve the exact ordered inventory across single-file processes", () => {
+  const inventory = Array.from(
+    { length: (MUTATION_TEST_PROCESS_CONCURRENCY * 2) + 3 },
+    (_, index) => `tools/release/fixture-${String(index).padStart(2, "0")}.test.mjs`,
+  );
+  const waves = mutationTestWaves(inventory);
+
+  assert.deepEqual(waves.map((wave) => wave.length), [
+    MUTATION_TEST_PROCESS_CONCURRENCY,
+    MUTATION_TEST_PROCESS_CONCURRENCY,
+    3,
+  ]);
+  assert.deepEqual(waves.flat(), inventory);
+  assert.deepEqual(mutationTestWaves([]), []);
+  assert.throws(
+    () => mutationTestWaves(inventory, 0),
+    /process concurrency must be a positive integer/u,
+  );
+  for (const testFile of inventory) {
+    const command = mutationTestCommand(testFile);
+    assert.equal(command.at(-1), testFile);
+    assert.equal(command.filter((argument) => argument.endsWith(".test.mjs")).length, 1);
   }
 });
 

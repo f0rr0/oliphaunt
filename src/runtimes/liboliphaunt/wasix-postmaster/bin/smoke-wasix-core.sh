@@ -33,7 +33,7 @@ fi
 wasmer_bin_hash="$(fresh_wasmer_bin_hash "$wasmer_bin")"
 wasmer_cache_dir="$(fresh_wasmer_cache_dir "$wasmer_bin")"
 wasmer_compiler="$(fresh_wasmer_compiler)"
-wasmer_llvm_opt_level="${WASMER_LLVM_OPT_LEVEL:-aggressive}"
+wasmer_llvm_opt_level=aggressive
 wasmer_stack_size="${WASMER_STACK_SIZE:-33554432}"
 wasmer_compiler_threads="${WASMER_COMPILER_THREADS:-$(fresh_jobs)}"
 fresh_require_wasmer_compiler_cli "$wasmer_bin" "$wasmer_compiler" run
@@ -78,8 +78,6 @@ wasmer_args+=(
   printf -- '- WASIX install dir: `%s`\n' "$WASIX_INSTALL_DIR"
   printf -- '- Wasmer compiler: `%s`\n' "$wasmer_compiler"
   printf -- '- Wasmer LLVM opt level: `%s`\n' "$wasmer_llvm_opt_level"
-  printf -- '- WASMER_LLVM_FULL_O3_PIPELINE: `%s`\n' "${WASMER_LLVM_FULL_O3_PIPELINE:-0}"
-  printf -- '- WASMER_LLVM_INDIRECT_CALL_CACHE: `%s`\n' "${WASMER_LLVM_INDIRECT_CALL_CACHE:-0}"
   printf -- '- Wasmer stack size: `%s`\n' "$wasmer_stack_size"
   printf -- '- Wasmer compiler threads: `%s`\n' "$wasmer_compiler_threads"
   printf -- '- Guest mapping: `%s:%s`\n' "$FRESH_WORK_ROOT" "$FRESH_WORK_ROOT"

@@ -16,11 +16,10 @@ REQUIRED_FILES = (
     Path("state/mod.rs"),
     Path("state/env.rs"),
     Path("state/builder.rs"),
-    Path("os/task/control_plane.rs"),
     Path("os/command/builtins/cmd_wasmer.rs"),
     Path("syscalls/wasix/proc_spawn.rs"),
 )
-EXPECTED_FORK_REGISTERED_CALLS = Counter(
+EXPECTED_FORK_WITH_CALLS = Counter(
     {
         Path("state/env.rs"): 1,
         Path("os/command/builtins/cmd_wasmer.rs"): 1,
@@ -38,12 +37,6 @@ EXPECTED_STATE_LITERALS = Counter(
         Path("state/mod.rs"): 1,
         Path("state/env.rs"): 1,
         Path("state/builder.rs"): 1,
-    }
-)
-EXPECTED_REGISTRATION_CALLS = Counter(
-    {
-        Path("state/mod.rs"): 2,
-        Path("state/env.rs"): 1,
     }
 )
 _MAX_SOURCE_BYTES = 16 * 1024 * 1024
@@ -342,8 +335,17 @@ def verify(wasmer_root: Path) -> None:
     state = sources[Path("state/mod.rs")]
     if len(re.findall(r"\bpub\s*\(\s*crate\s*\)\s+struct\s+WasiState\b", state)) != 1:
         raise VerificationError("WasiState must remain an exactly-once crate-private type")
-    if len(re.findall(r"runtime_state_registration\s*:\s*Option\s*<\s*WasiRuntimeStateRegistration\s*>", state)) != 1:
-        raise VerificationError("WasiState must own exactly one runtime-state registration guard")
+    retired_registry = re.compile(
+        r"\b(?:runtime_state_registration|register_runtime_state|runtime_states|WasiRuntimeStateRegistration)\b"
+    )
+    retired_locations = [
+        str(relative) for relative, code in sources.items() if retired_registry.search(code)
+    ]
+    if retired_locations:
+        raise VerificationError(
+            "retired runtime-state diagnostic registry remains in: "
+            + ", ".join(retired_locations)
+        )
     if re.search(r"\bpub(?:\s*\([^)]*\))?\s+(?:unsafe\s+)?fn\s+fork\s*\(", state):
         raise VerificationError("raw WasiState fork must remain private")
 
@@ -354,32 +356,35 @@ def verify(wasmer_root: Path) -> None:
         ),
         "private raw WasiState fork",
     )
-    if len(re.findall(r"runtime_state_registration\s*:\s*None\b", raw_fork)) != 1:
-        raise VerificationError("raw WasiState fork must create one unregistered value")
+    require_ordered(
+        raw_fork,
+        ("Ok(WasiState {", "fs: self.fs.fork(),"),
+        "private raw WasiState fork",
+    )
 
-    registered_fork = extract_function(
+    owned_fork = extract_function(
         state,
         re.compile(
-            r"(?ms)^\s*pub\s*\(\s*crate\s*\)\s+fn\s+fork_registered\s*\([^{}]*?\)\s*->\s*Result\s*<\s*Arc\s*<\s*Self\s*>\s*,\s*Errno\s*>\s*\{"
+            r"(?ms)^\s*pub\s*\(\s*crate\s*\)\s+fn\s+fork_with\s*\([^{}]*?\)\s*->\s*Result\s*<\s*Arc\s*<\s*Self\s*>\s*,\s*Errno\s*>\s*\{"
         ),
-        "registered WasiState fork",
+        "owned WasiState fork",
     )
     require_ordered(
-        registered_fork,
+        owned_fork,
         (
             "let mut state = self.fork()?;",
             "prepare(&mut state);",
-            "Ok(control_plane.register_runtime_state(state))",
+            "Ok(Arc::new(state))",
         ),
-        "registered WasiState fork",
+        "owned WasiState fork",
     )
-    registered_fork_definitions = sum(
-        len(re.findall(r"\bfn\s+fork_registered\s*\(", code)) for code in sources.values()
+    owned_fork_definitions = sum(
+        len(re.findall(r"\bfn\s+fork_with\s*\(", code)) for code in sources.values()
     )
-    if registered_fork_definitions != 1:
+    if owned_fork_definitions != 1:
         raise VerificationError(
-            "WasiState must expose exactly one registered fork boundary; "
-            f"found {registered_fork_definitions}"
+            "WasiState must expose exactly one owned fork boundary; "
+            f"found {owned_fork_definitions}"
         )
 
     env = sources[Path("state/env.rs")]
@@ -391,95 +396,53 @@ def verify(wasmer_root: Path) -> None:
         "guarded WasiEnv fork",
     )
     if not re.search(
-        r"\bself\s*\.\s*state\s*\.\s*fork_registered\s*"
-        r"\(\s*&self\s*\.\s*control_plane\s*,\s*\|_\|\s*\{\s*\}\s*\)",
+        r"\bself\s*\.\s*state\s*\.\s*fork_with\s*"
+        r"\(\s*\|_\|\s*\{\s*\}\s*\)",
         guarded_fork,
     ):
         raise VerificationError(
-            "guarded WasiEnv fork must directly cross the registered state boundary"
+            "guarded WasiEnv fork must directly cross the owned state boundary"
         )
 
     unfreeze = extract_function(
         state,
         re.compile(
-            r"(?ms)^\s*pub\s*\(\s*crate\s*\)\s+fn\s+unfreeze\s*\(\s*bytes\s*:\s*&\[u8\]\s*,\s*control_plane\s*:\s*&WasiControlPlane\s*,?\s*\)\s*->\s*Option\s*<\s*Arc\s*<\s*Self\s*>\s*>\s*\{"
+            r"(?ms)^\s*pub\s+fn\s+unfreeze\s*\(\s*bytes\s*:\s*&\[u8\]\s*,?\s*\)\s*->\s*Option\s*<\s*Self\s*>\s*\{"
         ),
-        "registered WasiState unfreeze",
+        "WasiState unfreeze",
     )
     if len(re.findall(r"\bfn\s+unfreeze\s*\(", state)) != 1:
-        raise VerificationError("WasiState must expose exactly one registered unfreeze boundary")
-    require_ordered(
-        unfreeze,
-        ("let state =", "control_plane.register_runtime_state(state)"),
-        "registered WasiState unfreeze",
-    )
+        raise VerificationError("WasiState must expose exactly one unfreeze boundary")
+    if "bincode::deserialize(bytes).ok()" not in re.sub(r"\s+", " ", unfreeze):
+        raise VerificationError("WasiState unfreeze must deserialize one owned value")
 
-    control_plane = sources[Path("os/task/control_plane.rs")]
-    register = extract_function(
-        control_plane,
-        re.compile(
-            r"(?ms)^\s*pub\s*\(\s*crate\s*\)\s+fn\s+register_runtime_state\s*\(\s*&self\s*,\s*state\s*:\s*WasiState\s*\)\s*->\s*Arc\s*<\s*WasiState\s*>\s*\{"
-        ),
-        "control-plane runtime-state registration",
-    )
-    require_ordered(
-        register,
-        (
-            "if !crate::perf::wait_dump_enabled()",
-            "return Arc::new(state);",
-            "self.register_runtime_state_inner(state)",
-        ),
-        "control-plane runtime-state registration",
-    )
-    inner = extract_function(
-        control_plane,
-        re.compile(r"(?ms)^\s*fn\s+register_runtime_state_inner\s*\([^{}]*?\)\s*->\s*Arc\s*<\s*WasiState\s*>\s*\{"),
-        "control-plane runtime-state registration implementation",
-    )
-    require_ordered(
-        inner,
-        (
-            "Arc::new_cyclic(",
-            "state.runtime_state_registration = Some(WasiRuntimeStateRegistration",
-            ".entries .insert(id, identity.clone())",
-        ),
-        "control-plane runtime-state registration implementation",
-    )
-
-    registered_calls: Counter[Path] = Counter()
-    registration_calls: Counter[Path] = Counter()
+    owned_fork_calls: Counter[Path] = Counter()
     raw_calls: Counter[tuple[Path, str]] = Counter()
     literals: Counter[Path] = Counter()
     for relative, code in sources.items():
-        registered_calls[relative] += len(re.findall(r"\.fork_registered\s*\(", code))
-        registration_calls[relative] += len(re.findall(r"\.register_runtime_state\s*\(", code))
+        owned_fork_calls[relative] += len(re.findall(r"\.fork_with\s*\(", code))
         for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_.]*)\s*\.fork\s*\(\s*\)", code):
             raw_calls[(relative, match.group(1))] += 1
         count = state_literal_count(code)
         if count:
             literals[relative] = count
 
-    registered_calls += Counter()
-    registration_calls += Counter()
+    owned_fork_calls += Counter()
     raw_calls += Counter()
     literals += Counter()
-    if registered_calls != EXPECTED_FORK_REGISTERED_CALLS:
+    if owned_fork_calls != EXPECTED_FORK_WITH_CALLS:
         raise VerificationError(
-            f"registered WasiState fork call-site inventory changed: {dict(registered_calls)}"
+            f"owned WasiState fork call-site inventory changed: {dict(owned_fork_calls)}"
         )
     if raw_calls != EXPECTED_RAW_FORK_CALLS:
         raise VerificationError(f"raw production fork inventory changed: {dict(raw_calls)}")
     if literals != EXPECTED_STATE_LITERALS:
         raise VerificationError(f"WasiState literal inventory changed: {dict(literals)}")
-    if registration_calls != EXPECTED_REGISTRATION_CALLS:
-        raise VerificationError(
-            f"runtime-state registration call-site inventory changed: {dict(registration_calls)}"
-        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify that every production WasiState ownership boundary is registered"
+        description="Verify every production WasiState ownership boundary"
     )
     parser.add_argument("--wasmer-root", required=True, type=Path)
     args = parser.parse_args()
@@ -488,7 +451,7 @@ def main() -> int:
     except (OSError, UnicodeError, VerificationError) as error:
         print(f"runtime-state ownership verification failed: {error}", file=sys.stderr)
         return 1
-    print("verified WASIX runtime-state ownership boundaries")
+    print("verified WASIX process-local runtime-state ownership boundaries")
     return 0
 
 

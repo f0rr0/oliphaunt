@@ -15,12 +15,51 @@ from typing import TypeAlias
 
 SCHEMA = "oliphaunt.wasix-postmaster.guest-installed-closure.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def load_side_module_policy() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    def policy_require(condition: bool, message: str) -> None:
+        if not condition:
+            raise RuntimeError(message)
+
+    policy = (
+        Path(__file__).resolve().parent.parent
+        / "runtime"
+        / "policies"
+        / "sealed-side-modules.v1.tsv"
+    )
+    rows: list[tuple[str, tuple[str, ...]]] = []
+    occupied: set[str] = set()
+    for line_number, line in enumerate(
+        policy.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        policy_require(len(fields) == 3, f"invalid side-module policy row {line_number}")
+        relative, raw_aliases, abi_policy = fields
+        policy_require(
+            relative.startswith("lib/") and relative.endswith((".so", ".so.5.18")),
+            f"invalid side-module policy path: {relative}",
+        )
+        policy_require(bool(abi_policy), f"empty side-module ABI policy: {relative}")
+        aliases = () if raw_aliases == "-" else tuple(raw_aliases.split(","))
+        for candidate in (relative, *aliases):
+            policy_require(
+                candidate.startswith("lib/") and candidate not in occupied,
+                f"duplicate or invalid side-module path: {candidate}",
+            )
+            occupied.add(candidate)
+        rows.append((relative, aliases))
+    policy_require(bool(rows), "sealed side-module policy is empty")
+    return tuple(rows)
+
+
+SIDE_MODULE_POLICY = load_side_module_policy()
 REQUIRED_MODULES = (
     "bin/initdb",
     "bin/postgres",
-    "lib/libpq.so.5.18",
-    "lib/postgresql/dict_snowball.so",
-    "lib/postgresql/plpgsql.so",
+    *(relative for relative, _aliases in SIDE_MODULE_POLICY),
 )
 REGULAR_OPEN_FLAGS = (
     os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)

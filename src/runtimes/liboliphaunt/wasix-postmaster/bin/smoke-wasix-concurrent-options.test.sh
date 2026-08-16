@@ -23,6 +23,28 @@ expect_rejected() {
   esac
 }
 
+expect_env_rejected() {
+  local variable="$1"
+  local value="$2"
+  local expected="$3"
+  local output status
+
+  set +e
+  output="$(env "$variable=$value" "$script" 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 2 ] || {
+    printf 'invalid environment option exited %s instead of 2: %s=%s\n' \
+      "$status" "$variable" "$value" >&2
+    exit 1
+  }
+  case "$output" in
+    *"$expected"*) ;;
+    *) printf 'missing diagnostic %q for %s=%s\n' \
+      "$expected" "$variable" "$value" >&2; exit 1 ;;
+  esac
+}
+
 for label in . .. -leading 'contains space' '../escape'; do
   expect_rejected '--label must start with a letter or number' --label "$label"
 done
@@ -34,17 +56,13 @@ for seconds in . 1.2.3 invalid -1; do
     --hold-seconds "$seconds"
 done
 
-set +e
-output="$(WASIX_CONCURRENT_VERIFY_TIMEOUT=0 "$script" 2>&1)"
-status=$?
-set -e
-[ "$status" -eq 2 ] &&
-  case "$output" in
-    *'WASIX_CONCURRENT_VERIFY_TIMEOUT requires a positive integer'*) true ;;
-    *) false ;;
-  esac || {
-  echo 'invalid verification timeout was not rejected before setup' >&2
-  exit 1
-}
+expect_env_rejected WASIX_CONCURRENT_VERIFY_TIMEOUT 0 \
+  'WASIX_CONCURRENT_VERIFY_TIMEOUT requires a positive integer'
+expect_env_rejected WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS 0 \
+  'WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS requires a positive integer'
+for delay in invalid -1 1.5; do
+  expect_env_rejected WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS "$delay" \
+    'WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS requires a nonnegative integer'
+done
 
 printf 'WASIX concurrent smoke option validation tests passed\n'

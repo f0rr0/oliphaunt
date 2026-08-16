@@ -53,10 +53,10 @@ class FakeOps:
 
 def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
     root = parent / "carrier"
-    for directory in ("aot", "memory", "bin"):
+    for directory in ("aot", "bin"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     artifacts = []
-    for index in range(5):
+    for index in range(MODULE.EXPECTED_AOT_COUNT):
         module_digest = f"{index + 1:064X}"
         artifact_path = f"aot/{module_digest}.bin"
         artifact_data = f"artifact-{index}\n".encode()
@@ -65,14 +65,6 @@ def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
             "path": artifact_path,
             "sha256": digest(artifact_data),
         }
-        if index < 2:
-            memory_path = f"memory/{module_digest}.bin"
-            memory_data = f"memory-{index}\n".encode()
-            (root / memory_path).write_bytes(memory_data)
-            artifact["preinitialized-memory"] = {
-                "path": memory_path,
-                "sha256": digest(memory_data),
-            }
         artifacts.append(artifact)
     manifest_data = (
         json.dumps(
@@ -115,7 +107,22 @@ def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
     return root.resolve(), expected
 
 
+class ImmutableCarrierPlatformTests(unittest.TestCase):
+    def test_non_linux_platform_is_rejected(self) -> None:
+        with mock.patch.object(sys, "platform", "darwin"):
+            with self.assertRaisesRegex(
+                MODULE.DeploymentError, "immutable deployment requires Linux"
+            ):
+                MODULE.require_linux()
+
+
 class ImmutableCarrierTests(unittest.TestCase):
+    def setUp(self) -> None:
+        if not sys.platform.startswith("linux"):
+            linux_guard = mock.patch.object(MODULE, "require_linux", return_value=None)
+            linux_guard.start()
+            self.addCleanup(linux_guard.stop)
+
     def test_deploy_verify_and_exact_remove_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
@@ -134,7 +141,9 @@ class ImmutableCarrierTests(unittest.TestCase):
             self.assertEqual(result["core_profile"], "release-o3")
             self.assertEqual(result["guest_build_recipe_sha256"], "9" * 64)
             self.assertGreater(len(result["entries"]), 7)
-            self.assertEqual(len(result["direct-loader-paths"]), 7)
+            self.assertEqual(
+                len(result["direct-loader-paths"]), MODULE.EXPECTED_AOT_COUNT
+            )
             self.assertTrue(
                 all(
                     entry["uid"] == os.geteuid() and entry["gid"] == os.getegid()

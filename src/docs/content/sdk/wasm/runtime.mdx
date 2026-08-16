@@ -56,6 +56,38 @@ Generated server URLs include `sslmode=disable`. `CancelRequest` and normal
 startup packets are supported. The server-compatible API still runs against the
 embedded WASIX backend for that database.
 
+## WASIX Postmaster
+
+`liboliphaunt-wasix-postmaster` is the peer concurrent runtime product. It
+runs one PostgreSQL 18 postmaster and creates an isolated WASIX backend process
+for each connection. Choose it when an application needs ordinary connection
+pooling or concurrent independent sessions instead of the single embedded
+backend described above.
+
+Public targets are Linux x64 GNU and macOS arm64. Download and extract the
+`liboliphaunt-wasix-postmaster-<version>-<target>.tar.gz` release asset matching
+the host,
+then run its supported launcher:
+
+```sh
+./bin/oliphaunt-wasix-postmaster start --data-dir "$PWD/pgdata"
+```
+
+An empty directory is initialized with trust authentication and the `postgres`
+superuser. The launcher prints
+`postgresql://postgres@127.0.0.1:5432/postgres`, stays in the foreground, and
+accepts SIGTERM for a clean shutdown. Use `--port`, `--username`, and repeated
+`--guc name=value` options when needed. Non-loopback listening requires
+`--allow-remote`; configure authentication before exposing the server.
+
+The release archive is compiler-free and self-contained. Every published
+carrier is verified for its sealed module/AOT/memory-image closure, initdb,
+concurrent clients, PostgreSQL regression cases, backend waves, and crash
+recovery before packaging and attestation. Browser code cannot launch the
+native executor or provide its process and fixed shared-memory contract.
+Browser applications use the single-backend product locally or connect through
+an explicitly deployed network gateway.
+
 ## Persistent-storage locking and lifecycle
 
 Persistent directories are locked while open. A second direct or server open
