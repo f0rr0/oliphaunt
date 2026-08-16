@@ -1250,7 +1250,7 @@ jobs:
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
-            target/oliphaunt-wasix-postmaster/release-assets/*.tar.gz
+            target/oliphaunt-wasix-postmaster/release-assets/*.tar.zst
             target/oliphaunt-wasix-postmaster/release-assets/*.sha256
 
       - name: Freeze exact GitHub release asset and attestation evidence

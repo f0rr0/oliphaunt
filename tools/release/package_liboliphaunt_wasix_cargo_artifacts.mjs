@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as zlibConstants, zstdCompressSync } from "node:zlib";
 import {
   chmodSync,
   copyFileSync,
@@ -30,6 +29,7 @@ import {
   portableMemberName,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
+  releaseZstdCompressSync,
 } from "./portable-archive.mjs";
 import { compareText } from "./release-graph.mjs";
 import {
@@ -229,11 +229,7 @@ function writeTarZstdArchive(sourceRoot, output, archiveRoot) {
   mkdirSync(path.dirname(output), { recursive: true });
   rmSync(output, { force: true });
   const tar = createDeterministicTar(sourceRoot, archiveRoot, { fail });
-  writeFileSync(output, zstdCompressSync(tar, {
-    params: {
-      [zlibConstants.ZSTD_c_compressionLevel]: 19,
-    },
-  }));
+  writeFileSync(output, releaseZstdCompressSync(tar));
 }
 
 function payloadFiles(sourceRoot) {

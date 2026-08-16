@@ -376,6 +376,45 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
   return { include };
 }
 
+function wasixHostTargetMatrixRow(target) {
+  if (!target.runner) {
+    fail(PREFIX, `${target.id} must declare runner`);
+  }
+  if (!target.triple) {
+    fail(PREFIX, `${target.id} must declare triple`);
+  }
+  if (!target.llvmUrl) {
+    fail(PREFIX, `${target.id} must declare llvm_url`);
+  }
+  if (!target.llvmSha256 || !/^[0-9a-f]{64}$/u.test(target.llvmSha256)) {
+    fail(PREFIX, `${target.id} must declare a lowercase 64-hex llvm_sha256`);
+  }
+  if (!Number.isSafeInteger(target.llvmBytes) || target.llvmBytes < 1 || target.llvmBytes > 2 * 1024 * 1024 * 1024) {
+    fail(PREFIX, `${target.id} must declare exact llvm_bytes between 1 and 2 GiB`);
+  }
+  return {
+    os: target.runner,
+    target: target.triple,
+    target_id: target.target,
+    llvm_url: target.llvmUrl,
+    llvm_sha256: target.llvmSha256,
+    llvm_bytes: target.llvmBytes,
+  };
+}
+
+function releaseAssetPath(target, root) {
+  const asset = target.asset;
+  if (
+    asset.includes("/")
+    || asset.includes("\\")
+    || (asset.match(/\{version\}/gu) ?? []).length !== 1
+    || /[*?[\]]/u.test(asset)
+  ) {
+    fail(PREFIX, `${target.id} must declare one flat, versioned release asset name`);
+  }
+  return `${root}/${asset.replace("{version}", "*")}`;
+}
+
 export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
   const include = [];
   for (const target of allArtifactTargets(
@@ -389,30 +428,10 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
     if (wasmTarget !== "all" && !new Set([target.target, target.triple]).has(wasmTarget)) {
       continue;
     }
-    if (!target.runner) {
-      fail(PREFIX, `${target.id} must declare runner`);
-    }
-    if (!target.triple) {
-      fail(PREFIX, `${target.id} must declare triple`);
-    }
-    if (!target.llvmUrl) {
-      fail(PREFIX, `${target.id} must declare llvm_url`);
-    }
-    if (!target.llvmSha256 || !/^[0-9a-f]{64}$/u.test(target.llvmSha256)) {
-      fail(PREFIX, `${target.id} must declare a lowercase 64-hex llvm_sha256`);
-    }
-    if (!Number.isSafeInteger(target.llvmBytes) || target.llvmBytes < 1 || target.llvmBytes > 2 * 1024 * 1024 * 1024) {
-      fail(PREFIX, `${target.id} must declare exact llvm_bytes between 1 and 2 GiB`);
-    }
     include.push({
-      os: target.runner,
-      target: target.triple,
-      target_id: target.target,
+      ...wasixHostTargetMatrixRow(target),
       package: `liboliphaunt-wasix-aot-${target.triple}`,
       artifact: `liboliphaunt-wasix-runtime-aot-${target.target}`,
-      llvm_url: target.llvmUrl,
-      llvm_sha256: target.llvmSha256,
-      llvm_bytes: target.llvmBytes,
     });
   }
   if (include.length === 0) {
@@ -427,6 +446,29 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
       .map((target) => target.target)
       .join(", ");
     fail(PREFIX, `unknown WASIX AOT runtime target ${wasmTarget}; expected one of: all, ${validTargets}`);
+  }
+  include.sort((left, right) => compareText(left.target_id, right.target_id));
+  return { include };
+}
+
+export function liboliphauntWasixPostmasterRuntimeMatrix() {
+  const include = allArtifactTargets(
+    {
+      product: "liboliphaunt-wasix-postmaster",
+      kind: "wasix-postmaster-runtime",
+    },
+    PREFIX,
+  ).map((target) => ({
+    ...wasixHostTargetMatrixRow(target),
+    artifact: `liboliphaunt-wasix-postmaster-release-assets-${target.target}`,
+    release_asset_path: releaseAssetPath(
+      target,
+      "target/oliphaunt-wasix-postmaster/release-assets",
+    ),
+    produces_artifact: target.published,
+  }));
+  if (!include.some(({ produces_artifact: producesArtifact }) => producesArtifact)) {
+    fail(PREFIX, "WASIX postmaster CI matrix must contain at least one published artifact producer");
   }
   include.sort((left, right) => compareText(left.target_id, right.target_id));
   return { include };
@@ -509,6 +551,8 @@ function matrixByName(name, options) {
       return extensionArtifactsWasixMatrix(options.wasmTarget, options.selectedProducts);
     case "liboliphaunt-wasix-aot-runtime":
       return liboliphauntWasixAotRuntimeMatrix(options.wasmTarget);
+    case "liboliphaunt-wasix-postmaster-runtime":
+      return liboliphauntWasixPostmasterRuntimeMatrix();
     case "broker-runtime":
       return brokerRuntimeMatrix(options.nativeTarget);
     case "node-direct-runtime":
@@ -539,6 +583,7 @@ Matrices:
   extension-artifacts-native
   extension-artifacts-wasix
   liboliphaunt-wasix-aot-runtime
+  liboliphaunt-wasix-postmaster-runtime
   broker-runtime
   node-direct-runtime
 

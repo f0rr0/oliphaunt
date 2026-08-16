@@ -5,16 +5,56 @@ import {test} from 'node:test';
 import {captureCommandOutput} from '../dev/capture-command-output.mjs';
 import {moonCommand} from '../dev/moon-command.mjs';
 import {affectedNames, triggeringProjectNames} from '../graph/affected.mjs';
-import {CI_JOB_TARGETS, planJobsForAffected} from '../graph/ci_plan.mjs';
+import {
+  CI_JOB_TARGETS,
+  planJobsForAffected,
+  renderPlanWithSelection,
+} from '../graph/ci_plan.mjs';
 import {buildPlan, loadGraph, normalizeFiles} from '../release/release-graph.mjs';
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 
 test('postmaster CI selects only terminal product roots', () => {
   assert.deepEqual(CI_JOB_TARGETS['wasix-postmaster'], [
+    'liboliphaunt-wasix-postmaster:aggregate-release-assets',
     'liboliphaunt-wasix-postmaster:portable-inputs',
     'liboliphaunt-wasix-postmaster:release-assets',
   ]);
+});
+
+test('postmaster planner renders published producers and the planned Windows no-op', () => {
+  const plan = renderPlanWithSelection({
+    jobs: new Set(['affected', 'wasix-postmaster']),
+    projects: new Set(),
+    tasks: new Set(CI_JOB_TARGETS['wasix-postmaster']),
+    reason: 'postmaster planner fixture',
+    selectedTargets: null,
+    selectedExtensionProducts: new Set(),
+  });
+  assert.deepEqual(
+    plan.liboliphaunt_wasix_postmaster_runtime_matrix.include.map(
+      ({target_id, produces_artifact}) => [target_id, produces_artifact],
+    ),
+    [
+      ['linux-arm64-gnu', true],
+      ['linux-x64-gnu', true],
+      ['macos-arm64', true],
+      ['windows-x64-msvc', false],
+    ],
+  );
+
+  const planWithoutPostmaster = renderPlanWithSelection({
+    jobs: new Set(['affected']),
+    projects: new Set(),
+    tasks: new Set(),
+    reason: 'non-postmaster planner fixture',
+    selectedTargets: null,
+    selectedExtensionProducts: new Set(),
+  });
+  assert.deepEqual(
+    planWithoutPostmaster.liboliphaunt_wasix_postmaster_runtime_matrix,
+    {include: []},
+  );
 });
 
 test('postmaster source preparation waits for the shared source fetch', () => {
@@ -96,4 +136,13 @@ test('postmaster runtime changes select its production builder and release', () 
   assertReleaseSelection(
     'src/runtimes/liboliphaunt/wasix-postmaster/runtime/capabilities.tsv',
   );
+});
+
+test('postmaster aggregate helper remains owned by the product CI graph', () => {
+  const effects = directEffects('tools/release/merge-product-release-assets.mjs');
+  assert.equal(effects.projects.includes('liboliphaunt-wasix-postmaster'), true);
+  assert.equal(effects.tasks.includes(
+    'liboliphaunt-wasix-postmaster:aggregate-release-assets',
+  ), true);
+  assert.equal(effects.jobs.includes('wasix-postmaster'), true);
 });

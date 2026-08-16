@@ -434,10 +434,10 @@ async function expectedAssets(product, version) {
   }
   if (product === "liboliphaunt-wasix-postmaster") {
     return [
-      `${product}-${version}-linux-x64-gnu.tar.gz`,
-      `${product}-${version}-macos-arm64.tar.gz`,
+      ...publishedTargets(product, "liboliphaunt-wasix-postmaster")
+        .map((target) => `${product}-${version}-${target}.tar.zst`),
       `${product}-${version}-release-assets.sha256`,
-    ];
+    ].sort(compareText);
   }
   if (product === "oliphaunt-broker") {
     return expectedDesktopAssets(product, "broker-helper", version, PREFIX);

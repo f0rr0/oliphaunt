@@ -20,6 +20,7 @@ import {
   liboliphauntNativeIosRuntimeMatrix,
   liboliphauntNativeRuntimeTargetsForSurface,
   liboliphauntWasixAotRuntimeMatrix,
+  liboliphauntWasixPostmasterRuntimeMatrix,
   nodeDirectRuntimeMatrix,
   reactNativeAndroidMobileAppMatrix,
 } from "../release/artifact_target_matrix.mjs";
@@ -907,6 +908,9 @@ export function renderPlanWithSelection({
       : emptyMatrix(),
     liboliphaunt_wasix_aot_runtime_matrix: jobs.has("liboliphaunt-wasix-aot")
       ? liboliphauntWasixAotRuntimeMatrix(wasmTarget)
+      : emptyMatrix(),
+    liboliphaunt_wasix_postmaster_runtime_matrix: jobs.has("wasix-postmaster")
+      ? liboliphauntWasixPostmasterRuntimeMatrix()
       : emptyMatrix(),
     extension_package_products: extensionProducts,
     extension_package_products_csv: extensionProducts.join(","),

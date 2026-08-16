@@ -24,7 +24,8 @@ and restarts the exact same carrier, PGDATA, and /dev/shm mount.
 Options:
   --sealed-carrier DIR       Compiler-free sealed carrier. Required.
   --target TARGET            Release target. Defaults to the current host;
-                             supported: linux-x64-gnu, macos-arm64.
+                             supported: linux-arm64-gnu, linux-x64-gnu,
+                             macos-arm64.
   --immutable-carrier-receipt FILE
                              External receipt created by
                              deploy-immutable-sealed-carrier.sh. Required on
@@ -219,7 +220,7 @@ release_target="${release_target:-$host_target}"
   exit 2
 }
 case "$release_target" in
-  linux-x64-gnu)
+  linux-arm64-gnu|linux-x64-gnu)
     hardened_qualification=1
     boundary_verification_scope=full-cryptographic-plus-immutable-receipt
     required_snapshot_policy=direct-immutable
