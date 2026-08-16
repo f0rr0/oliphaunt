@@ -24,7 +24,7 @@ Options:
   --connections N    Concurrent libpq clients per wave. Default: 4.
   --iterations N     Rows inserted and updated per client. Default: 32.
   --timeout SECONDS  Client fanout deadline per wave. Default: 90.
-  --start-port PORT  First TCP port. Default: PGPORT or 55820.
+  --start-port PORT  First TCP port candidate. Default: PGPORT or 55820.
   --label NAME       Report label prefix.
   --sealed-carrier DIR
                      Run every wave through the exact release carrier.
@@ -63,8 +63,8 @@ done
 for value in "$attempts" "$connections" "$iterations" "$timeout_seconds" "$start_port"; do
   case "$value" in ''|*[!0-9]*|0) echo 'numeric options require positive integers' >&2; exit 2 ;; esac
 done
-[ "$start_port" -le 65535 ] && [ $((start_port + attempts - 1)) -le 65535 ] || {
-  echo 'backend-wave port range exceeds 65535' >&2
+[ "$start_port" -le 65535 ] || {
+  echo 'backend-wave start port exceeds 65535' >&2
   exit 2
 }
 case "$label" in
@@ -80,15 +80,41 @@ esac
 }
 sealed_carrier="$(cd "$sealed_carrier" && pwd -P)"
 
+select_available_port() {
+  local candidate="$1"
+
+  python3 - "$candidate" <<'PY'
+import socket
+import sys
+
+candidate = int(sys.argv[1])
+for port in range(candidate, 65536):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        print(port)
+        raise SystemExit(0)
+raise SystemExit("no available backend-wave TCP port remains")
+PY
+}
+
+next_port="$start_port"
 for ((attempt = 1; attempt <= attempts; attempt++)); do
+  port="$(select_available_port "$next_port")"
+  if [ "$port" -ne "$next_port" ]; then
+    printf 'backend-wave port %s is occupied; selected %s\n' "$next_port" "$port"
+  fi
+  next_port=$((port + 1))
   printf '==> WASIX backend wave %s/%s\n' "$attempt" "$attempts"
   WASIX_SKIP_PRECOMPILE=1 \
     "$FRESH_ROOT/bin/smoke-wasix-concurrent-connections.sh" \
       --connections "$connections" \
       --iterations "$iterations" \
-      --hold-seconds 0.05 \
+      --hold-seconds 0.5 \
       --timeout "$timeout_seconds" \
-      --port "$((start_port + attempt - 1))" \
+      --port "$port" \
       --label "$label-$attempt" \
       --skip-build \
       --skip-precompile \

@@ -53,7 +53,7 @@ class FakeOps:
 
 def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
     root = parent / "carrier"
-    for directory in ("aot", "memory", "bin"):
+    for directory in ("aot", "bin"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     artifacts = []
     for index in range(MODULE.EXPECTED_AOT_COUNT):
@@ -65,14 +65,6 @@ def make_carrier(parent: Path) -> tuple[Path, dict[str, str]]:
             "path": artifact_path,
             "sha256": digest(artifact_data),
         }
-        if index < 2:
-            memory_path = f"memory/{module_digest}.bin"
-            memory_data = f"memory-{index}\n".encode()
-            (root / memory_path).write_bytes(memory_data)
-            artifact["preinitialized-memory"] = {
-                "path": memory_path,
-                "sha256": digest(memory_data),
-            }
         artifacts.append(artifact)
     manifest_data = (
         json.dumps(
@@ -135,7 +127,7 @@ class ImmutableCarrierTests(unittest.TestCase):
             self.assertEqual(result["guest_build_recipe_sha256"], "9" * 64)
             self.assertGreater(len(result["entries"]), 7)
             self.assertEqual(
-                len(result["direct-loader-paths"]), MODULE.EXPECTED_AOT_COUNT + 2
+                len(result["direct-loader-paths"]), MODULE.EXPECTED_AOT_COUNT
             )
             self.assertTrue(
                 all(

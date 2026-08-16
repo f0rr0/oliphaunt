@@ -4,18 +4,9 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$project_root/lib/common.sh"
+source "$project_root/lib/sealed-carrier.sh"
 
-carriers=()
-while IFS= read -r carrier; do
-  carriers+=("$carrier")
-done < <(find "$FRESH_WORK_ROOT/carriers" -mindepth 1 -maxdepth 1 -type d \
-  -name 'wasix-postmaster-*' -print | LC_ALL=C sort)
-[ "${#carriers[@]}" -eq 1 ] || {
-  printf 'expected exactly one sealed carrier for recovery qualification, found %s\n' \
-    "${#carriers[@]}" >&2
-  exit 2
-}
-carrier="${carriers[0]}"
+carrier="$(fresh_select_current_sealed_carrier)"
 target="$(fresh_release_target)"
 
 bash "$project_root/bin/build-native-client-tools.sh"

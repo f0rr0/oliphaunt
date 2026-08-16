@@ -169,7 +169,6 @@ def manifest_module_evidence(
         "sealed manifest artifact closure is incomplete",
     )
     modules: dict[str, str] = {}
-    attested_memory: dict[str, dict[str, Any]] = {}
     for artifact in artifacts:
         require(isinstance(artifact, dict), "sealed manifest artifact must be an object")
         name = artifact.get("name")
@@ -182,59 +181,11 @@ def manifest_module_evidence(
         require(name not in modules, f"duplicate manifest artifact: {name}")
         require(module_hash not in modules.values(), f"duplicate manifest module hash: {module_hash}")
         modules[name] = module_hash
-        if name not in EXECUTABLE_NAMES:
-            continue
-        memory = artifact.get("preinitialized-memory")
-        require(isinstance(memory, dict), f"missing preinitialized-memory metadata for {name}")
-        require(
-            memory.get("schema") == MEMORY_IMAGE_SCHEMA,
-            f"preinitialized-memory schema differs for {name}",
-        )
-        require(
-            memory.get("module-sha256") == module_hash,
-            f"preinitialized-memory module SHA-256 differs for {name}",
-        )
-        mapped_size = memory.get("mapped-size")
-        require(
-            type(mapped_size) is int and 0 < mapped_size <= MAX_U64,
-            f"preinitialized-memory mapped size is invalid for {name}",
-        )
-        proof = memory.get("deterministic-start-proof")
-        require(isinstance(proof, dict), f"missing deterministic-start proof for {name}")
-        require(
-            proof.get("schema") == DETERMINISTIC_START_PROOF_SCHEMA,
-            f"deterministic-start proof schema differs for {name}",
-        )
-        require(
-            proof.get("module-sha256") == module_hash,
-            f"deterministic-start proof module SHA-256 differs for {name}",
-        )
-        proof_sha256 = proof.get("proof-sha256")
-        proof_output_sha256 = memory.get("deterministic-start-proof-output-sha256")
-        require(
-            isinstance(proof_sha256, str) and SHA256_RE.fullmatch(proof_sha256),
-            f"deterministic-start proof SHA-256 is invalid for {name}",
-        )
-        require(
-            isinstance(proof_output_sha256, str)
-            and SHA256_RE.fullmatch(proof_output_sha256),
-            f"deterministic-start proof output SHA-256 is invalid for {name}",
-        )
-        attested_memory[module_hash] = {
-            "memory_image_schema": memory["schema"],
-            "proof_sha256": proof_sha256,
-            "proof_output_sha256": proof_output_sha256,
-            "mapped_size": mapped_size,
-        }
     require(
         all(name in modules for name in EXECUTABLE_NAMES),
         "sealed manifest executable closure differs",
     )
-    require(
-        set(attested_memory) == {modules[name] for name in EXECUTABLE_NAMES},
-        "sealed manifest attested executable closure differs",
-    )
-    return modules, attested_memory
+    return modules, {}
 
 
 def exact_nonnegative(value: Any, label: str) -> int:
@@ -347,37 +298,10 @@ def parse_audit(
         require(isinstance(record, dict), f"audit record must be an object on line {line_number}")
         schema = record.get("schema")
         require(isinstance(schema, str), f"audit schema is missing on line {line_number}")
-        if schema == SUMMARY_SCHEMA:
-            require(set(record) == SUMMARY_FIELDS, f"attested-start summary fields differ on line {line_number}")
-            require(type(record["pid"]) is int and record["pid"] > 0, f"invalid summary pid on line {line_number}")
-            require(
-                record["artifact_kind"] == "attested-start-runtime-summary",
-                f"invalid summary artifact kind on line {line_number}",
-            )
-            require(record["terminal"] is True, f"attested-start summary is not terminal on line {line_number}")
-            for field in ("module_sha256", "proof_sha256", "proof_output_sha256"):
-                require(
-                    isinstance(record[field], str) and SHA256_RE.fullmatch(record[field]),
-                    f"invalid summary {field} on line {line_number}",
-                )
-            require(
-                record["memory_image_schema"] == MEMORY_IMAGE_SCHEMA,
-                f"unknown summary memory image schema on line {line_number}",
-            )
-            require(
-                exact_u64(record["mapped_size"], f"summary mapped_size line {line_number}") > 0,
-                f"summary mapped_size must be positive on line {line_number}",
-            )
-            for field in SUMMARY_COUNTER_FIELDS:
-                exact_u64(record[field], f"summary {field} line {line_number}")
-            exact_bool(record["counter_overflow"], f"summary counter_overflow line {line_number}")
-            summaries.append((line_number, record))
-            continue
-
         require(schema == SCHEMA, f"unknown audit schema on line {line_number}: {schema!r}")
         require(set(record) == FIELDS, f"loader audit fields differ on line {line_number}")
         require(type(record["pid"]) is int and record["pid"] > 0, f"invalid audit pid on line {line_number}")
-        require(record["artifact_kind"] in ("aot", "preinitialized-memory"), f"invalid artifact kind on line {line_number}")
+        require(record["artifact_kind"] == "aot", f"invalid artifact kind on line {line_number}")
         require(isinstance(record["module_sha256"], str) and SHA256_RE.fullmatch(record["module_sha256"]), f"invalid module SHA-256 on line {line_number}")
         if portable:
             expected_mode = PORTABLE_MODES[record["artifact_kind"]]
@@ -438,7 +362,7 @@ def parse_audit(
             record,
             prefix="mapping_cache_eviction",
             errno_field="mapping_cache_eviction_errno",
-            expected_applicable=record["artifact_kind"] == "preinitialized-memory",
+            expected_applicable=False,
             expected_calls=1,
             allow_unsupported=portable,
             line_number=line_number,
@@ -489,7 +413,6 @@ def parse_audit(
         require(record["write_policy"] == expected_write_policy, f"write policy differs on line {line_number}")
         records.append((line_number, record))
     require(records, "sealed loader audit contains no loader receipts")
-    require(summaries, "sealed loader audit contains no attested-start summaries")
     return records, summaries
 
 
@@ -606,11 +529,6 @@ def validate(
             record["module_sha256"] in allowed_module_hashes,
             f"audit module SHA-256 is not in sealed manifest on line {line_number}",
         )
-    for line_number, summary in parsed_summaries:
-        require(
-            summary["module_sha256"] in allowed_module_hashes,
-            f"summary module SHA-256 is not in sealed manifest on line {line_number}",
-        )
     by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for record in records:
         by_key.setdefault((record["module_sha256"], record["artifact_kind"]), []).append(record)
@@ -626,12 +544,8 @@ def validate(
     activation_pids: dict[str, set[int]] = {}
     for name, module_hash in expected.items():
         aot = by_key.get((module_hash, "aot"), [])
-        memory = by_key.get((module_hash, "preinitialized-memory"), [])
         aot_pids = [record["pid"] for record in aot]
-        memory_pids = [record["pid"] for record in memory]
         require(len(set(aot_pids)) == len(aot_pids), f"{name} AOT audit pids are not unique")
-        require(len(set(memory_pids)) == len(memory_pids), f"{name} memory audit pids are not unique")
-        require(set(aot_pids) == set(memory_pids), f"{name} AOT and memory audit pids differ")
         activation_pids[name] = set(aot_pids)
 
     initdb_pids = activation_pids["runtime:initdb"]
@@ -655,43 +569,6 @@ def validate(
         "runtime:postgres activation population differs from initdb bootstrap plus outer executions",
     )
 
-    memory_activations: dict[tuple[int, str], int] = {}
-    for line_number, record in parsed_records:
-        if record["artifact_kind"] != "preinitialized-memory":
-            continue
-        module_hash = record["module_sha256"]
-        require(
-            module_hash in manifest_attested_memory,
-            f"preinitialized-memory activation has no attested v2 manifest metadata on line {line_number}",
-        )
-        require(
-            record["logical_bytes"] == manifest_attested_memory[module_hash]["mapped_size"],
-            f"preinitialized-memory activation size differs from sealed manifest on line {line_number}",
-        )
-        key = (record["pid"], module_hash)
-        require(key not in memory_activations, f"duplicate preinitialized-memory activation for pid/module {key}")
-        memory_activations[key] = line_number
-
-    summaries_by_activation: dict[tuple[int, str], dict[str, Any]] = {}
-    for line_number, summary in parsed_summaries:
-        key = (summary["pid"], summary["module_sha256"])
-        require(key not in summaries_by_activation, f"duplicate attested-start summary for pid/module {key}")
-        require(key in memory_activations, f"orphan attested-start summary for pid/module {key}")
-        require(
-            line_number > memory_activations[key],
-            f"attested-start summary precedes its memory activation for pid/module {key}",
-        )
-        validate_attested_start_summary(
-            summary,
-            manifest_attested_memory[summary["module_sha256"]],
-            line_number=line_number,
-        )
-        summaries_by_activation[key] = summary
-    missing_summaries = set(memory_activations) - set(summaries_by_activation)
-    require(
-        not missing_summaries,
-        f"missing attested-start summary for pid/module {sorted(missing_summaries)!r}",
-    )
     executable_pids = {
         "runtime:initdb": sorted(initdb_pids),
         "runtime:postgres": sorted(outer_postgres_pids),

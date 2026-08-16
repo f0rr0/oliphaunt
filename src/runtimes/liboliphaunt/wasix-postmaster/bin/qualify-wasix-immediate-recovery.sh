@@ -853,10 +853,7 @@ capture_and_validate_settings() {
       "$conn" -XAtq -F $'\t' -v ON_ERROR_STOP=1 -c "
         SELECT name, setting, coalesce(unit, ''), source
         FROM pg_settings
-        WHERE name IN (
-          'io_method', 'shared_buffers', 'max_connections',
-          'fsync', 'full_page_writes', 'synchronous_commit'
-        )
+        WHERE source = 'command line'
         ORDER BY name
       "
   } >"$settings" 2>"$settings.stderr"

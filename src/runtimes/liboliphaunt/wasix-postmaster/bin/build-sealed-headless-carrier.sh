@@ -27,7 +27,6 @@ Options:
                             Product-specific sealed-postmaster executor
   --postmaster-executor-receipt FILE
                             Exact product executor build receipt
-  --start-proof-tool FILE   Receipt-bound deterministic-start analyzer
   --cache-bucket DIR        Exact precompiled AOT bucket
   --receipt FILE            Canonical Wasmer build receipt
   -h, --help                Show this help
@@ -46,13 +45,12 @@ install_dir="$WASIX_INSTALL_DIR"
 postmaster_compiler="$FRESH_POSTMASTER_COMPILER_BIN"
 postmaster_executor="$FRESH_POSTMASTER_EXECUTOR_BIN"
 postmaster_executor_receipt="$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT"
-start_proof_tool="$FRESH_START_PROOF_BIN"
 receipt="${WASMER_BUILD_RECEIPT:-$FRESH_WASMER_BUILD_RECEIPT}"
 cache_bucket=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --output|--install-dir|--postmaster-compiler|--postmaster-executor|--postmaster-executor-receipt|--start-proof-tool|--cache-bucket|--receipt)
+    --output|--install-dir|--postmaster-compiler|--postmaster-executor|--postmaster-executor-receipt|--cache-bucket|--receipt)
       option="$1"
       shift
       [ "$#" -gt 0 ] || fail "$option requires a value"
@@ -62,7 +60,6 @@ while [ "$#" -gt 0 ]; do
         --postmaster-compiler) postmaster_compiler="$1" ;;
         --postmaster-executor) postmaster_executor="$1" ;;
         --postmaster-executor-receipt) postmaster_executor_receipt="$1" ;;
-        --start-proof-tool) start_proof_tool="$1" ;;
         --cache-bucket) cache_bucket="$1" ;;
         --receipt) receipt="$1" ;;
       esac
@@ -80,13 +77,8 @@ done
 
 selected_executor="$postmaster_executor"
 
-# Memory-image v2 proof generation is a carrier-build concern independent of
-# which runtime executable will later validate the sealed carrier.
-fresh_require_start_proof_tool "$start_proof_tool" "$postmaster_executor_receipt"
-
 fresh_require_command python3
 fresh_require_command cp
-fresh_require_command cmp
 fresh_require_command find
 fresh_require_command flock
 fresh_require_command sort
@@ -298,11 +290,11 @@ share_source="$install_dir/share/postgresql"
 
 compiler="$(fresh_wasmer_compiler)"
 llvm_opt_level=aggressive
-capture_stack_size="${WASMER_STACK_SIZE:-33554432}"
-case "$capture_stack_size" in
+runtime_stack_size="${WASMER_STACK_SIZE:-33554432}"
+case "$runtime_stack_size" in
   ''|*[!0-9]*) fail "WASMER_STACK_SIZE must be a positive integer" ;;
 esac
-[ "$capture_stack_size" -gt 0 ] || fail "WASMER_STACK_SIZE must be greater than zero"
+[ "$runtime_stack_size" -gt 0 ] || fail "WASMER_STACK_SIZE must be greater than zero"
 compiler_config="$(fresh_wasmer_compiler_cache_bucket \
   "$compiler" "$llvm_opt_level" "$FRESH_WASMER_ARTIFACT_ABI_VERSION")"
 [ -z "${FRESH_PINNED_WASMER_CACHE_DIR:-}" ] || {
@@ -388,16 +380,13 @@ mkdir -p \
   "$staging/bin" \
   "$staging/lib/postgresql" \
   "$staging/share/postgresql" \
-  "$staging/aot" \
-  "$staging/memory"
+  "$staging/aot"
 cp -p "$selected_executor" "$staging/bin/wasmer-headless"
 chmod 0555 "$staging/bin/wasmer-headless"
 cp -pR "$share_source/." "$staging/share/postgresql/"
 
 artifact_rows="$staging/.artifact-rows.tsv"
-memory_rows="$staging/.memory-rows.tsv"
 : >"$artifact_rows"
-: >"$memory_rows"
 
 copy_artifact() {
   local name="$1"
@@ -577,14 +566,11 @@ producer_recipe_sha256="$(fresh_aot_producer_recipe_sha256 \
 fresh_is_sha256 "$producer_recipe_sha256" || fail "failed to compute AOT producer recipe identity"
 
 write_sealed_manifest() {
-  local mode="$1"
-  local output_path="$2"
+  local output_path="$1"
 
   python3 - \
     "$artifact_rows" \
-    "$memory_rows" \
     "$staging" \
-    "$mode" \
     "$output_path" \
     "$source_fingerprint" \
     "$core_profile" \
@@ -612,9 +598,7 @@ import sys
 
 (
     rows_path,
-    memory_rows_path,
     carrier_root,
-    mode,
     output_path,
     source_fingerprint,
     core_profile,
@@ -636,9 +620,6 @@ import sys
     linear_memory_receipt_path,
     linear_memory_receipt_sha256,
 ) = sys.argv[1:]
-
-if mode not in {"capture", "final"}:
-    raise SystemExit(f"invalid manifest mode: {mode}")
 
 with open(os.path.join(carrier_root, linear_memory_receipt_path), "r", encoding="utf-8") as stream:
     linear_memory_receipt = json.load(stream)
@@ -665,27 +646,7 @@ for record in linear_memory_receipt.get("modules", []):
         raise SystemExit("linear-memory install receipt has invalid module paths")
     linear_memory_modules[path] = record
 
-memory_images = {}
-if mode == "final":
-    with open(memory_rows_path, "r", encoding="utf-8", newline="") as rows:
-        for line_number, line in enumerate(rows, 1):
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) != 5:
-                raise SystemExit(f"invalid memory-image metadata row {line_number}")
-            name, image_path, image_hash, image_size, receipt_path = fields
-            if name in memory_images:
-                raise SystemExit(f"duplicate memory image for {name}")
-            with open(os.path.join(carrier_root, receipt_path), "r", encoding="utf-8") as stream:
-                receipt = json.load(stream)
-            memory_images[name] = {
-                "path": image_path,
-                "size": int(image_size),
-                "sha256": image_hash,
-                **receipt,
-            }
-
 artifacts = []
-executable_names = set()
 with open(rows_path, "r", encoding="utf-8", newline="") as rows:
     for line_number, line in enumerate(rows, 1):
         fields = line.rstrip("\n").split("\t")
@@ -716,28 +677,11 @@ with open(rows_path, "r", encoding="utf-8", newline="") as rows:
             "compressed": False,
             "exec-aliases": [alias] if alias else [],
         }
-        if kind == "executable":
-            executable_names.add(name)
-            if mode == "final":
-                try:
-                    artifact["preinitialized-memory"] = memory_images[name]
-                except KeyError:
-                    raise SystemExit(f"final manifest executable has no memory image: {name}")
-        elif name in memory_images:
-            raise SystemExit(f"side module unexpectedly has a memory image: {name}")
         artifacts.append(artifact)
 
-if mode == "final" and set(memory_images) != executable_names:
-    unexpected = sorted(set(memory_images) - executable_names)
-    raise SystemExit(f"memory images do not match executable closure: unexpected={unexpected}")
-
 manifest = {
-    "format-version": 4 if mode == "capture" else 6,
-    "schema": (
-        "oliphaunt.wasix-postmaster.sealed-aot.v3"
-        if mode == "capture"
-        else "oliphaunt.wasix-postmaster.sealed-aot.v5"
-    ),
+    "format-version": 6,
+    "schema": "oliphaunt.wasix-postmaster.sealed-aot.v5",
     "source-lane": "wasix-postmaster",
     "source-fingerprint": source_fingerprint,
     "core-profile": core_profile,
@@ -782,384 +726,11 @@ with open(output_path, "x", encoding="utf-8", newline="\n") as output:
 PY
 }
 
-capture_manifest="$staging/.capture-manifest.json"
-write_sealed_manifest capture "$capture_manifest"
-chmod 0444 "$capture_manifest"
-
-upgrade_memory_image_receipt() {
-  local receipt_path="$1"
-  local proof_path="$2"
-  local module_sha256="$3"
-
-  python3 - "$receipt_path" "$proof_path" "$module_sha256" "$runtime_abi_id" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-receipt_path, proof_path, module_sha256, runtime_abi_id = sys.argv[1:]
-with open(receipt_path, "r", encoding="utf-8") as stream:
-    receipt = json.load(stream)
-with open(proof_path, "r", encoding="utf-8") as stream:
-    proof = json.load(stream)
-
-v1_keys = {
-    "schema", "module-sha256", "runtime-abi-id", "phase",
-    "mapping-alignment", "mapped-size", "memory-minimum-pages",
-    "memory-maximum-pages", "memory-shared", "memory-base",
-    "dylink-memory-size", "dylink-memory-alignment", "stack-low",
-}
-proof_keys = {
-    "schema", "analyzer-policy", "module-sha256", "proof-sha256",
-    "start-function-index", "start-function-export",
-    "transitive-function-indices", "imported-function-calls",
-    "memory-reads", "memory-effects", "global-effects", "table-effects",
-    "requires-fresh-zeroed-memory", "ordinary-start-execution-per-instance",
-    "first-instance-full-byte-validation",
-}
-if set(receipt) != v1_keys:
-    raise SystemExit("capture receipt is not the exact memory-image v1 shape")
-if receipt["schema"] != "oliphaunt.wasix-postmaster.memory-image.v1":
-    raise SystemExit("capture receipt is not memory-image v1")
-if receipt["module-sha256"] != module_sha256.lower():
-    raise SystemExit("capture receipt module digest mismatch")
-if receipt["runtime-abi-id"] != runtime_abi_id:
-    raise SystemExit("capture receipt runtime ABI mismatch")
-if set(proof) != proof_keys:
-    raise SystemExit("deterministic-start proof fields differ")
-if proof["schema"] != "oliphaunt.wasix-postmaster.deterministic-start-proof.v1":
-    raise SystemExit("deterministic-start proof schema mismatch")
-if proof["analyzer-policy"] != "llvm-shared-memory-init-restricted-effects.v1":
-    raise SystemExit("deterministic-start analyzer policy mismatch")
-if proof["module-sha256"] != module_sha256.lower():
-    raise SystemExit("deterministic-start proof module digest mismatch")
-if proof["imported-function-calls"] != 0:
-    raise SystemExit("deterministic-start proof admits imported calls")
-if proof["memory-reads"] != "fresh-zero-atomic-guard-only":
-    raise SystemExit("deterministic-start proof memory-read policy mismatch")
-if proof["memory-effects"] != "passive-data-init-zero-fill-atomic-guard-only":
-    raise SystemExit("deterministic-start proof memory-effect policy mismatch")
-if proof["global-effects"] != "local-numeric-relocations-only":
-    raise SystemExit("deterministic-start proof global-effect policy mismatch")
-if proof["table-effects"] != "none":
-    raise SystemExit("deterministic-start proof admits table effects")
-for field in (
-    "requires-fresh-zeroed-memory",
-    "ordinary-start-execution-per-instance",
-    "first-instance-full-byte-validation",
-):
-    if proof[field] is not True:
-        raise SystemExit(f"deterministic-start proof requires {field}=true")
-if type(proof["start-function-index"]) is not int or proof["start-function-index"] < 0:
-    raise SystemExit("deterministic-start start function index is invalid")
-if proof["start-function-export"] != "__wasm_init_memory":
-    raise SystemExit("deterministic-start export mismatch")
-closure = proof["transitive-function-indices"]
-if (
-    not isinstance(closure, list)
-    or not closure
-    or any(type(index) is not int or index < 0 for index in closure)
-    or closure != sorted(set(closure))
-    or proof["start-function-index"] not in closure
-):
-    raise SystemExit("deterministic-start function closure is invalid")
-digest = proof["proof-sha256"]
-if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-    raise SystemExit("deterministic-start proof digest is not lowercase SHA-256")
-
-receipt["schema"] = "oliphaunt.wasix-postmaster.memory-image.v2"
-receipt["deterministic-start-proof"] = proof
-canonical_proof = json.dumps(
-    proof,
-    ensure_ascii=False,
-    sort_keys=True,
-    separators=(",", ":"),
-).encode("utf-8")
-receipt["deterministic-start-proof-output-sha256"] = hashlib.sha256(
-    canonical_proof
-).hexdigest()
-temporary = receipt_path + ".v2"
-with open(temporary, "x", encoding="utf-8", newline="\n") as stream:
-    json.dump(receipt, stream, ensure_ascii=False, indent=2)
-    stream.write("\n")
-    stream.flush()
-    os.fsync(stream.fileno())
-os.replace(temporary, receipt_path)
-PY
-}
-
-validate_memory_image_receipt() {
-  local receipt_path="$1"
-  local image_path="$2"
-  local module_sha256="$3"
-
-  python3 - "$receipt_path" "$image_path" "$module_sha256" "$runtime_abi_id" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-receipt_path, image_path, module_sha256, runtime_abi_id = sys.argv[1:]
-with open(receipt_path, "r", encoding="utf-8") as stream:
-    receipt = json.load(stream)
-
-expected_keys = {
-    "schema",
-    "module-sha256",
-    "runtime-abi-id",
-    "phase",
-    "mapping-alignment",
-    "mapped-size",
-    "memory-minimum-pages",
-    "memory-maximum-pages",
-    "memory-shared",
-    "memory-base",
-    "dylink-memory-size",
-    "dylink-memory-alignment",
-    "stack-low",
-    "deterministic-start-proof",
-    "deterministic-start-proof-output-sha256",
-}
-if set(receipt) != expected_keys:
-    raise SystemExit(
-        f"memory image receipt fields differ: missing={sorted(expected_keys - set(receipt))} "
-        f"unknown={sorted(set(receipt) - expected_keys)}"
-    )
-if receipt["schema"] != "oliphaunt.wasix-postmaster.memory-image.v2":
-    raise SystemExit("memory image receipt schema mismatch")
-if receipt["module-sha256"] != module_sha256.lower():
-    raise SystemExit("memory image receipt module digest mismatch")
-if receipt["runtime-abi-id"] != runtime_abi_id:
-    raise SystemExit("memory image receipt runtime ABI mismatch")
-if receipt["phase"] != "post-module-start-pre-link-relocations-v1":
-    raise SystemExit("memory image receipt phase mismatch")
-
-proof = receipt["deterministic-start-proof"]
-proof_keys = {
-    "schema", "analyzer-policy", "module-sha256", "proof-sha256",
-    "start-function-index", "start-function-export",
-    "transitive-function-indices", "imported-function-calls",
-    "memory-reads", "memory-effects", "global-effects", "table-effects",
-    "requires-fresh-zeroed-memory", "ordinary-start-execution-per-instance",
-    "first-instance-full-byte-validation",
-}
-if not isinstance(proof, dict) or set(proof) != proof_keys:
-    raise SystemExit("memory image deterministic-start proof fields differ")
-if proof["schema"] != "oliphaunt.wasix-postmaster.deterministic-start-proof.v1":
-    raise SystemExit("memory image deterministic-start proof schema mismatch")
-if proof["analyzer-policy"] != "llvm-shared-memory-init-restricted-effects.v1":
-    raise SystemExit("memory image deterministic-start analyzer policy mismatch")
-if proof["module-sha256"] != module_sha256.lower():
-    raise SystemExit("memory image deterministic-start module digest mismatch")
-if proof["imported-function-calls"] != 0:
-    raise SystemExit("memory image deterministic-start proof admits imported calls")
-if proof["memory-reads"] != "fresh-zero-atomic-guard-only":
-    raise SystemExit("memory image deterministic-start read policy mismatch")
-if proof["memory-effects"] != "passive-data-init-zero-fill-atomic-guard-only":
-    raise SystemExit("memory image deterministic-start memory policy mismatch")
-if proof["global-effects"] != "local-numeric-relocations-only" or proof["table-effects"] != "none":
-    raise SystemExit("memory image deterministic-start non-memory effects mismatch")
-if any(proof[field] is not True for field in (
-    "requires-fresh-zeroed-memory",
-    "ordinary-start-execution-per-instance",
-    "first-instance-full-byte-validation",
-)):
-    raise SystemExit("memory image deterministic-start execution contract mismatch")
-closure = proof["transitive-function-indices"]
-if (
-    type(proof["start-function-index"]) is not int
-    or proof["start-function-index"] < 0
-    or proof["start-function-export"] != "__wasm_init_memory"
-    or not isinstance(closure, list)
-    or not closure
-    or any(type(index) is not int or index < 0 for index in closure)
-    or closure != sorted(set(closure))
-    or proof["start-function-index"] not in closure
-):
-    raise SystemExit("memory image deterministic-start function closure mismatch")
-proof_digest = proof["proof-sha256"]
-if not isinstance(proof_digest, str) or len(proof_digest) != 64 or any(c not in "0123456789abcdef" for c in proof_digest):
-    raise SystemExit("memory image deterministic-start digest is not lowercase SHA-256")
-canonical_proof = json.dumps(
-    proof,
-    ensure_ascii=False,
-    sort_keys=True,
-    separators=(",", ":"),
-).encode("utf-8")
-expected_output_digest = hashlib.sha256(canonical_proof).hexdigest()
-if receipt["deterministic-start-proof-output-sha256"] != expected_output_digest:
-    raise SystemExit("memory image deterministic-start analyzer output digest mismatch")
-
-integer_fields = (
-    "mapping-alignment",
-    "mapped-size",
-    "memory-minimum-pages",
-    "memory-base",
-    "dylink-memory-size",
-    "dylink-memory-alignment",
-    "stack-low",
-)
-for field in integer_fields:
-    if type(receipt[field]) is not int or receipt[field] < 0:
-        raise SystemExit(f"memory image receipt {field} must be a nonnegative integer")
-maximum_pages = receipt["memory-maximum-pages"]
-if maximum_pages is not None and (type(maximum_pages) is not int or maximum_pages < 0):
-    raise SystemExit("memory image receipt memory-maximum-pages must be null or nonnegative")
-if type(receipt["memory-shared"]) is not bool or not receipt["memory-shared"]:
-    raise SystemExit("WASIX PostgreSQL memory images require shared linear memory")
-
-alignment = receipt["mapping-alignment"]
-mapped_size = receipt["mapped-size"]
-minimum_pages = receipt["memory-minimum-pages"]
-memory_base = receipt["memory-base"]
-dylink_size = receipt["dylink-memory-size"]
-dylink_alignment = receipt["dylink-memory-alignment"]
-stack_low = receipt["stack-low"]
-if alignment != 65536 or mapped_size == 0 or mapped_size % alignment:
-    raise SystemExit("memory image receipt has an invalid 64-KiB mapped range")
-if os.path.getsize(image_path) != mapped_size:
-    raise SystemExit("captured memory image size does not match receipt")
-if minimum_pages == 0 or mapped_size > minimum_pages * 65536:
-    raise SystemExit("captured memory image exceeds the initial linear memory")
-if maximum_pages is not None and maximum_pages < minimum_pages:
-    raise SystemExit("memory image maximum pages are below the minimum")
-if dylink_alignment > 63 or memory_base % (1 << dylink_alignment):
-    raise SystemExit("memory image dylink memory base is misaligned")
-initialized_end = memory_base + dylink_size
-if not mapped_size <= initialized_end <= stack_low:
-    raise SystemExit("memory image range, dylink data, and stack are inconsistent")
-if not mapped_size <= stack_low < mapped_size + alignment:
-    raise SystemExit("memory image mapped size is not the 64-KiB floor of stack-low")
-
-with open(image_path, "rb", buffering=0) as stream:
-    digest = hashlib.sha256()
-    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-        digest.update(chunk)
-if len(digest.digest()) != 32:
-    raise SystemExit("failed to hash captured memory image")
-PY
-}
-
-capture_memory_image() {
-  local artifact_name="$1"
-  local module_relative="$2"
-  local module_sha256="$3"
-  local capture_name="${artifact_name#runtime:}"
-  local capture_root="$staging/.memory-capture/$capture_name"
-  local attempt
-  local attempt_root
-  local image_path
-  local receipt_path
-  local proof_path
-  local proof_log
-  local proof_status
-  local capture_log
-  local capture_status
-
-  for attempt in 1 2; do
-    attempt_root="$capture_root/$attempt"
-    mkdir -p "$attempt_root/home" "$attempt_root/cache"
-    image_path="$attempt_root/image.bin"
-    receipt_path="$attempt_root/receipt.json"
-    proof_path="$attempt_root/start-proof.json"
-    proof_log="$attempt_root/start-proof.log"
-    capture_log="$attempt_root/capture.log"
-    [ "$(fresh_wasmer_bin_hash "$staging/$module_relative")" = "$module_sha256" ] || {
-      fail "raw module changed before deterministic-start analysis $attempt for $artifact_name"
-    }
-    set +e
-    "$start_proof_tool" "$staging/$module_relative" >"$proof_path" 2>"$proof_log"
-    proof_status=$?
-    set -e
-    if [ "$proof_status" -ne 0 ]; then
-      sed 's/^/deterministic-start analysis: /' "$proof_log" >&2
-      fail "deterministic-start analysis $attempt failed for $artifact_name"
-    fi
-    [ -f "$proof_path" ] && [ ! -L "$proof_path" ] && [ -s "$proof_path" ] || {
-      fail "deterministic-start analysis $attempt did not emit a regular proof for $artifact_name"
-    }
-    [ "$(fresh_wasmer_bin_hash "$staging/$module_relative")" = "$module_sha256" ] || {
-      fail "raw module changed during deterministic-start analysis $attempt for $artifact_name"
-    }
-    set +e
-    env \
-      WASMER_DIR="$attempt_root/home" \
-      WASMER_CACHE_DIR="$attempt_root/cache" \
-      "$staging/bin/wasmer-headless" run \
-        --disable-cache \
-        --stack-size "$capture_stack_size" \
-        --sealed-module-manifest "$capture_manifest" \
-        --emit-preinitialized-memory-image "$image_path" \
-        --emit-preinitialized-memory-receipt "$receipt_path" \
-        --enable-exceptions \
-        --enable-threads \
-        --net \
-        --volume "$staging/lib:/lib" \
-        "$staging/$module_relative" -- --version >"$capture_log" 2>&1
-    capture_status=$?
-    set -e
-    if [ "$capture_status" -ne 0 ]; then
-      sed 's/^/memory image capture: /' "$capture_log" >&2
-      fail "headless executor failed memory image capture $attempt for $artifact_name"
-    fi
-    [ -f "$image_path" ] && [ ! -L "$image_path" ] && [ -s "$image_path" ] || {
-      fail "memory image capture $attempt did not emit a regular image for $artifact_name"
-    }
-    [ -f "$receipt_path" ] && [ ! -L "$receipt_path" ] && [ -s "$receipt_path" ] || {
-      fail "memory image capture $attempt did not emit a regular receipt for $artifact_name"
-    }
-    [ "$(fresh_wasmer_bin_hash "$staging/$module_relative")" = "$module_sha256" ] || {
-      fail "raw module changed during memory image capture $attempt for $artifact_name"
-    }
-    upgrade_memory_image_receipt "$receipt_path" "$proof_path" "$module_sha256" || {
-      fail "could not bind deterministic-start proof to memory image receipt $attempt for $artifact_name"
-    }
-    validate_memory_image_receipt "$receipt_path" "$image_path" "$module_sha256" || {
-      fail "invalid memory image receipt $attempt for $artifact_name"
-    }
-  done
-
-  cmp -s "$capture_root/1/image.bin" "$capture_root/2/image.bin" || {
-    fail "independent memory image captures differ for $artifact_name"
-  }
-  cmp -s "$capture_root/1/receipt.json" "$capture_root/2/receipt.json" || {
-    fail "independent memory image receipts differ for $artifact_name"
-  }
-  local module_hash="${module_sha256^^}"
-  local image_relative="memory/$module_hash.bin"
-  local receipt_relative="memory/$module_hash.receipt.json"
-  local image_sha256
-  local image_size
-
-  cp -p "$capture_root/1/image.bin" "$staging/$image_relative"
-  cp -p "$capture_root/1/receipt.json" "$staging/$receipt_relative"
-  chmod 0444 "$staging/$image_relative" "$staging/$receipt_relative"
-  image_sha256="$(fresh_wasmer_bin_hash "$staging/$image_relative")"
-  image_size="$(wc -c <"$staging/$image_relative" | tr -d '[:space:]')"
-  [ "$image_sha256" = "$(fresh_wasmer_bin_hash "$capture_root/1/image.bin")" ] || {
-    fail "memory image changed while packaging $artifact_name"
-  }
-  [ "$(fresh_wasmer_bin_hash "$staging/$receipt_relative")" = \
-    "$(fresh_wasmer_bin_hash "$capture_root/1/receipt.json")" ] || {
-    fail "memory image receipt changed while packaging $artifact_name"
-  }
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$artifact_name" "$image_relative" "$image_sha256" "$image_size" \
-    "$receipt_relative" >>"$memory_rows"
-}
-
-capture_memory_image \
-  runtime:initdb bin/initdb "$(fresh_wasmer_bin_hash "$staging/bin/initdb")"
-capture_memory_image \
-  runtime:postgres bin/postgres "$(fresh_wasmer_bin_hash "$staging/bin/postgres")"
-
-rm -rf -- "$staging/.memory-capture"
-rm -f -- "$capture_manifest"
-write_sealed_manifest final "$staging/manifest.json"
-rm "$artifact_rows" "$memory_rows"
+write_sealed_manifest "$staging/manifest.json"
+rm "$artifact_rows"
 chmod 0444 "$staging/manifest.json"
 
-# Exercise the final memory-image-bearing carrier before publication.  A
+# Exercise the final sealed carrier before publication. A
 # version probe is sufficient for the postgres entrypoint, but initdb must run
 # its real bootstrap lifecycle: it reads the packaged share tree, loads libpq,
 # creates writable relation files, and EXEC_BACKEND-spawns the sealed postgres
@@ -1236,7 +807,7 @@ fresh_is_sha256 "$validation_fingerprint" || fail "failed to fingerprint carrier
 validation_common_args=(
   run
   --disable-cache
-  --stack-size "$capture_stack_size"
+  --stack-size "$runtime_stack_size"
   --sealed-module-manifest "$staging/manifest.json"
   --enable-exceptions
   --enable-threads
@@ -1259,7 +830,7 @@ postgres_validation_status=$?
 set -e
 if [ "$postgres_validation_status" -ne 0 ]; then
   sed 's/^/sealed postgres load check: /' "$postgres_validation_log" >&2
-  fail "headless executor rejected sealed postgres with its memory image"
+  fail "headless executor rejected sealed postgres"
 fi
 
 initdb_validation_log="$validation_root/initdb.log"
@@ -1375,7 +946,7 @@ PY
 
 # Reconsume the finished staging tree through the same verifier used by every
 # sealed runtime entrypoint. This proves that the inventory is exact and that
-# its manifest, receipt, executor, modules, AOT, and memory images form one
+# its manifest, receipt, executor, modules, and AOT artifacts form one
 # internally consistent closure before any path is published.
 fresh_verify_sealed_headless_carrier "$staging" || {
   fail "finished sealed carrier failed complete payload verification"
@@ -1453,5 +1024,4 @@ printf 'executor role: postmaster-product\n'
 printf 'runtime ABI ID: %s\n' "$runtime_abi_id"
 printf 'source fingerprint: %s\n' "$source_fingerprint"
 printf 'payload inventory SHA-256: %s\n' "$payload_inventory_sha256"
-printf 'preinitialized memory images: %s\n' "$output/memory"
 printf 'payload inventory: %s\n' "$output/payload.files"

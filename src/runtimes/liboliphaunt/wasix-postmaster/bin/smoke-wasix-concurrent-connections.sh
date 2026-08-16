@@ -4,6 +4,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$FRESH_ROOT/lib/sealed-carrier.sh"
+source "$FRESH_ROOT/lib/process-supervision.sh"
 
 usage() {
   cat <<'USAGE'
@@ -32,8 +33,10 @@ USAGE
 connections="${WASIX_CONCURRENT_CONNECTIONS:-2}"
 iterations="${WASIX_CONCURRENT_ITERATIONS:-4}"
 hold_seconds="${WASIX_CONCURRENT_HOLD_SECONDS:-1}"
+launch_delay_seconds="${WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS:-2}"
 client_timeout="${WASIX_CONCURRENT_TIMEOUT:-60}"
 verify_timeout="${WASIX_CONCURRENT_VERIFY_TIMEOUT:-20}"
+shutdown_timeout_ms="${WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS:-5000}"
 port="${PGPORT:-55445}"
 label="${WASIX_CONCURRENT_LABEL:-wasix-concurrent-connections}"
 skip_build=0
@@ -141,8 +144,10 @@ done
 
 case "$connections" in ''|*[!0-9]*|0) echo "--connections requires a positive integer" >&2; exit 2 ;; esac
 case "$iterations" in ''|*[!0-9]*|0) echo "--iterations requires a positive integer" >&2; exit 2 ;; esac
+case "$launch_delay_seconds" in ''|*[!0-9]*) echo "WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS requires a nonnegative integer" >&2; exit 2 ;; esac
 case "$client_timeout" in ''|*[!0-9]*|0) echo "--timeout requires a positive integer" >&2; exit 2 ;; esac
 case "$verify_timeout" in ''|*[!0-9]*|0) echo "WASIX_CONCURRENT_VERIFY_TIMEOUT requires a positive integer" >&2; exit 2 ;; esac
+case "$shutdown_timeout_ms" in ''|*[!0-9]*|0) echo "WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS requires a positive integer" >&2; exit 2 ;; esac
 case "$port" in ''|*[!0-9]*) echo "--port requires a port number from 1 through 65535" >&2; exit 2 ;; esac
 [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || {
   echo "--port requires a port number from 1 through 65535" >&2
@@ -216,6 +221,7 @@ server_log="$report_dir/server.log"
 wait_log="$report_dir/wait.log"
 setup_log="$report_dir/setup.log"
 verify_log="$report_dir/verify.log"
+timeout_activity_log="$report_dir/timeout-activity.log"
 verify_sql="$suite_root/verify.sql"
 summary="$report_dir/summary.md"
 summary_tsv="$report_dir/summary.tsv"
@@ -232,8 +238,10 @@ fresh_write_report_header "$summary" "WASIX Concurrent Connections Smoke"
   printf -- '- Connections: `%s`\n' "$connections"
   printf -- '- Iterations per connection: `%s`\n' "$iterations"
   printf -- '- Hold seconds: `%s`\n' "$hold_seconds"
+  printf -- '- Synchronized launch delay: `%s seconds`\n' "$launch_delay_seconds"
   printf -- '- Client fanout timeout: `%s seconds`\n' "$client_timeout"
   printf -- '- Verification timeout: `%s seconds`\n' "$verify_timeout"
+  printf -- '- Graceful shutdown timeout: `%s milliseconds`\n' "$shutdown_timeout_ms"
   printf -- '- Port: `%s`\n' "$port"
   printf -- '- PGDATA: `%s`\n' "$pgdata"
   printf -- '- Report dir: `%s`\n' "$report_dir"
@@ -314,6 +322,10 @@ cat >"$client_sql" <<'SQL'
 \set ON_ERROR_STOP 1
 \pset tuples_only on
 \pset format unaligned
+select pg_sleep(greatest(
+  0::double precision,
+  :launch_at_epoch::double precision - extract(epoch from clock_timestamp())
+));
 begin;
 select pg_backend_pid() as backend_pid \gset
 insert into wasix_concurrent_probe(client_id, iteration, backend_pid, started_at, payload)
@@ -385,13 +397,27 @@ env "${wasmer_env[@]}" \
     >"$initdb_log" 2>&1
 
 server_pid=""
+server_pgid=""
+server_identity=""
 cleanup() {
-  if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+  local status=$?
+  local cleanup_status=0
+
+  trap - EXIT HUP INT TERM
+  if [ -n "$server_pid" ]; then
+    fresh_stop_owned_process_group \
+      TERM "$server_pgid" "$server_pid" "$server_identity" \
+      "$shutdown_timeout_ms" 3000 || cleanup_status=$?
   fi
+  if [ "$status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+    status="$cleanup_status"
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 postgres_args=(
   -D "$pgdata"
@@ -408,12 +434,12 @@ if [ "${#postgres_gucs[@]}" -gt 0 ]; then
   done
 fi
 
-set +e
-env "${wasmer_env[@]}" \
+fresh_spawn_process_group -- env "${wasmer_env[@]}" \
   "$wasmer_bin" "${wasmer_args[@]}" "$runtime_root/bin/postgres" -- \
-    "${postgres_args[@]}" >"$server_log" 2>&1 &
-server_pid=$!
-set -e
+    "${postgres_args[@]}" >"$server_log" 2>&1
+server_pid="$FRESH_PROCESS_GROUP_PID"
+server_pgid="$FRESH_PROCESS_GROUP_PGID"
+server_identity="$FRESH_PROCESS_GROUP_IDENTITY"
 
 conn="postgresql://wasix@127.0.0.1:$port/postgres"
 : >"$wait_log"
@@ -465,6 +491,7 @@ SQL
 
 client_pids=()
 client_logs=()
+launch_at_epoch=$(( $(date +%s) + launch_delay_seconds ))
 for client in $(seq 1 "$connections"); do
   client_log="$report_dir/client-$client.log"
   client_logs+=("$client_log")
@@ -474,6 +501,7 @@ for client in $(seq 1 "$connections"); do
     -v "client_id=$client" \
     -v "iterations=$iterations" \
     -v "hold_seconds=$hold_seconds" \
+    -v "launch_at_epoch=$launch_at_epoch" \
     -f "$client_sql" \
     >"$client_log" 2>&1 &
   client_pids+=("$!")
@@ -523,6 +551,20 @@ for index in "${!client_pids[@]}"; do
     client_status=1
   fi
 done
+
+if [ "$timed_out" -eq 1 ]; then
+  run_logged_timeout "$verify_timeout" "$timeout_activity_log" \
+    "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
+      -X -q -A -t -F $'\t' \
+      -v ON_ERROR_STOP=1 \
+      -c "
+        SELECT pid, backend_type, state,
+               coalesce(wait_event_type, ''), coalesce(wait_event, ''),
+               left(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 240)
+        FROM pg_stat_activity
+        ORDER BY pid
+      " || true
+fi
 
 set +e
 run_logged_timeout "$verify_timeout" "$verify_log" \
@@ -579,6 +621,9 @@ esac
   printf -- '- Distinct backend PIDs: `%s`\n' "${backends_seen:-}"
   printf -- '- All clients overlapped: `%s`\n' "${all_clients_overlapped:-}"
   printf -- '- Client fanout timed out: `%s`\n' "$timed_out"
+  if [ "$timed_out" -eq 1 ]; then
+    printf -- '- Timeout activity: `%s`\n' "$timeout_activity_log"
+  fi
   printf -- '- Verify exit code: `%s`\n' "$verify_status"
   printf -- '- Client summary TSV: `%s`\n' "$summary_tsv"
   printf -- '- Verify log: `%s`\n' "$verify_log"

@@ -312,24 +312,12 @@ def direct_loader_paths(manifest: dict[str, Any]) -> list[tuple[str, str, str]]:
         digest = parse_expected_hash(artifact.get("sha256"), f"manifest artifact {index} SHA-256")
         require(AOT_RE.fullmatch(path) is not None, f"non-canonical AOT path: {path}")
         selected.append((path, "aot", digest))
-        memory = artifact.get("preinitialized-memory")
-        if memory is None:
-            continue
-        require(isinstance(memory, dict), f"manifest artifact {index} memory image is not an object")
-        memory_path = checked_relative(memory.get("path"), f"manifest artifact {index} memory path")
-        memory_digest = parse_expected_hash(memory.get("sha256"), f"manifest artifact {index} memory SHA-256")
-        require(MEMORY_RE.fullmatch(memory_path) is not None, f"non-canonical memory image path: {memory_path}")
-        selected.append((memory_path, "memory-image", memory_digest))
     selected.sort()
     paths = [item[0] for item in selected]
     require(len(paths) == len(set(paths)), "manifest direct-loader paths are not unique")
     require(
         sum(kind == "aot" for _, kind, _ in selected) == EXPECTED_AOT_COUNT,
         "immutable policy requires the complete AOT closure",
-    )
-    require(
-        sum(kind == "memory-image" for _, kind, _ in selected) == 2,
-        "immutable policy requires two executable memory images",
     )
     return selected
 
@@ -987,7 +975,7 @@ def parse_receipt_entries(
         previous = path
         require(entry["entry-type"] in ("file", "directory"), f"invalid entry type: {path}")
         require(
-            entry["direct-loader-kind"] in ("none", "aot", "memory-image"),
+            entry["direct-loader-kind"] in ("none", "aot"),
             f"invalid direct-loader kind: {path}",
         )
         if entry["direct-loader-kind"] != "none":
@@ -1022,7 +1010,6 @@ def parse_receipt_entries(
         == EXPECTED_AOT_COUNT,
         "receipt AOT file count differs",
     )
-    require(sum(entry["direct-loader-kind"] == "memory-image" for entry in result) == 2, "receipt memory-image count differs")
     return result
 
 

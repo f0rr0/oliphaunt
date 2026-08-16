@@ -5,6 +5,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 repo_root="$(git -C "$project_root" rev-parse --show-toplevel)"
 source "$project_root/lib/common.sh"
+source "$project_root/lib/sealed-carrier.sh"
 
 carrier_dir="${OLIPHAUNT_WASIX_POSTMASTER_CARRIER_DIR:-}"
 release_target="${OLIPHAUNT_WASIX_POSTMASTER_RELEASE_TARGET:-}"
@@ -48,17 +49,7 @@ actual_release_target="$(fresh_release_target)"
 }
 
 if [ -z "$carrier_dir" ]; then
-  carriers=()
-  while IFS= read -r candidate; do
-    carriers+=("$candidate")
-  done < <(find "$FRESH_WORK_ROOT/carriers" -mindepth 1 -maxdepth 1 -type d \
-    -name 'wasix-postmaster-*' -print 2>/dev/null | LC_ALL=C sort)
-  [ "${#carriers[@]}" -eq 1 ] || {
-    printf 'expected exactly one content-addressed carrier, found %s; use --carrier-dir\n' \
-      "${#carriers[@]}" >&2
-    exit 2
-  }
-  carrier_dir="${carriers[0]}"
+  carrier_dir="$(fresh_select_current_sealed_carrier)"
 fi
 
 [ -d "$carrier_dir" ] && [ ! -L "$carrier_dir" ] || {

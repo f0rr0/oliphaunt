@@ -253,14 +253,13 @@ tasks:
 
   regression:
     tags: ["runtime", "wasix", "postgres", "regression"]
-    command: "WASIX_SKIP_PRECOMPILE=1 WASIX_REGRESS_SUITE_NAME=wasix-regress-acceptance bash src/runtimes/liboliphaunt/wasix-postmaster/bin/run-wasix-regress-subset.sh test_setup create_function_c boolean case copy"
+    command: "WASIX_SKIP_PRECOMPILE=1 WASIX_REGRESS_SUITE_NAME=wasix-regress-acceptance bash src/runtimes/liboliphaunt/wasix-postmaster/bin/run-wasix-regress-subset.sh boolean case copy"
     deps:
       - "liboliphaunt-wasix-postmaster:smoke"
     inputs:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/build-wasix-regress-support.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/run-wasix-regress-subset.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/wasix-make.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
@@ -272,6 +271,7 @@ tasks:
   carrier:
     tags: ["runtime", "artifact"]
     script: |
+      export WASIX_CORE_PROFILE=release-o3
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/precompile-wasix-core.sh
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/build-sealed-headless-carrier.sh
     deps:
@@ -323,16 +323,11 @@ tasks:
   backend-wave-stress:
     tags: ["runtime", "wasix", "postgres", "reliability"]
     script: |
-      carriers=()
-      while IFS= read -r carrier; do
-        carriers+=("$carrier")
-      done < <(find target/oliphaunt-wasix-postmaster/carriers -mindepth 1 -maxdepth 1 -type d -name 'wasix-postmaster-*' -print | LC_ALL=C sort)
-      if [ "${#carriers[@]}" -ne 1 ]; then
-        printf 'expected exactly one sealed carrier for stress qualification, found %s\n' "${#carriers[@]}" >&2
-        exit 2
-      fi
+      source src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh
+      source "$FRESH_ROOT/lib/sealed-carrier.sh"
+      carrier="$(fresh_select_current_sealed_carrier)"
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/stress-wasix-backend-waves.sh \
-        --sealed-carrier "${carriers[0]}" \
+        --sealed-carrier "$carrier" \
         --attempts 10
     deps:
       - "liboliphaunt-wasix-postmaster:carrier"
@@ -367,6 +362,7 @@ tasks:
       - "/src/sources/third-party/wasix-postmaster/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/archive_dir.mjs"
+      - "/tools/release/materialize-release-symlinks.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*"
       - "/target/oliphaunt-wasix-postmaster/runtime/build/patched-wasixcc-sysroot/**/*"

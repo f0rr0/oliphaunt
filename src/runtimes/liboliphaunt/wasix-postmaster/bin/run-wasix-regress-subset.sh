@@ -40,7 +40,6 @@ pg_regress_bin="$CLIENT_TOOLS_BUILD_DIR/src/test/regress/pg_regress"
 if [ ! -x "$WASIX_INSTALL_DIR/bin/postgres" ]; then
   "$FRESH_ROOT/bin/build-wasix-core.sh"
 fi
-"$FRESH_ROOT/bin/build-wasix-regress-support.sh" >/dev/null
 fresh_lock_postgres_baseline shared
 baseline_fingerprint="$(fresh_postgres_baseline_fingerprint)"
 fresh_require_postgres_baseline "$baseline_fingerprint" || {
@@ -115,7 +114,6 @@ wasmer_args+=(
   printf -- '- Wasmer LLVM opt level: `%s`\n' "$wasmer_llvm_opt_level"
   printf -- '- Wasmer stack size: `%s`\n' "$wasmer_stack_size"
   printf -- '- Wasmer compiler threads: `%s`\n' "$wasmer_compiler_threads"
-  printf -- '- Dynamic library path: `%s`\n' "$WASIX_INSTALL_DIR/lib/postgresql"
 } >"$summary"
 
 env "${wasmer_env[@]}" \
@@ -176,7 +174,6 @@ set +e
     --user=wasix \
     --dbname=postgres \
     --bindir="$CLIENT_TOOLS_INSTALL_DIR/bin" \
-    --dlpath="$WASIX_INSTALL_DIR/lib/postgresql" \
     --inputdir="$BASELINE_DIR/src/test/regress" \
     --outputdir="$regress_out" \
     "${tests[@]}"

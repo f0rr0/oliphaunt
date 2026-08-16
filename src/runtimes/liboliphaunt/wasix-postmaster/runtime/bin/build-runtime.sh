@@ -249,6 +249,28 @@ cargo test \
 	--no-default-features \
 	--features sys-minimal,wasmer/cranelift \
 	state::linker::single_slot_broadcast_tests
+listed_tests="$(cargo test \
+	--locked \
+	--target-dir "$WASMER_TARGET_DIR" \
+	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
+	--lib \
+	--no-default-features \
+	--features sys-minimal,host-fs,wasmer/cranelift \
+	fs::tests::host_file_size_refresh_observes_another_process_extension \
+	-- \
+	--list)"
+require_listed_test "$listed_tests" \
+	'fs::tests::host_file_size_refresh_observes_another_process_extension'
+cargo test \
+	--locked \
+	--target-dir "$WASMER_TARGET_DIR" \
+	--manifest-path "$WASMER_ROOT/lib/wasix/Cargo.toml" \
+	--lib \
+	--no-default-features \
+	--features sys-minimal,host-fs,wasmer/cranelift \
+	fs::tests::host_file_size_refresh_observes_another_process_extension \
+	-- \
+	--exact
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -283,22 +305,6 @@ cargo test \
 	--target-dir "$WASMER_TARGET_DIR" \
 	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
 	file_advice
-listed_tests="$(cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
-	cache_advice_generation_is_descriptor_relative_and_detects_mutation \
-	-- \
-	--list)"
-require_listed_test "$listed_tests" \
-	'host_fs::tests::cache_advice_generation_is_descriptor_relative_and_detects_mutation'
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
-	host_fs::tests::cache_advice_generation_is_descriptor_relative_and_detects_mutation \
-	-- \
-	--exact
 listed_tests="$(cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -409,7 +415,6 @@ require_listed_test "$listed_tests" 'syscalls::wasix::fd_sync_range::tests::fd_s
 require_listed_tests "$listed_tests" \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_maps_all_exact_flag_combinations' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_rejects_negative_overflowing_and_unknown_ranges' \
-	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_observability_classifies_the_complete_signed_range' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_preserves_zero_length_and_maximum_finite_range' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_maps_unsupported_backends_to_nosys' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_preserves_linux_writeback_errnos'
@@ -462,7 +467,6 @@ require_listed_test "$listed_tests" 'os::task::control_plane::tests::retirement_
 require_listed_test "$listed_tests" 'os::task::control_plane::tests::tentative_process_is_invisible_and_abort_releases_last_object'
 require_listed_test "$listed_tests" 'os::task::control_plane::tests::unpublished_process_guard_rolls_back_registry_and_parent_link'
 require_listed_test "$listed_tests" 'os::task::control_plane::tests::child_adoption_rejects_a_permit_for_a_different_parent_without_panic'
-require_listed_test "$listed_tests" 'os::task::control_plane::tests::process_topology_snapshot_exposes_retained_children_and_execution_ownership'
 require_listed_tests "$listed_tests" \
 	'os::task::control_plane::tests::child_execution_admission_requires_exact_publication' \
 	'os::task::control_plane::tests::failed_launch_rollback_waits_for_real_execution_quiescence' \
@@ -626,9 +630,6 @@ listed_tests="$(cargo test \
 	--list)"
 require_listed_tests "$listed_tests" \
 	'state::tests::shared_memory_mapping_splits_reuse_futex_registry' \
-	'state::tests::runtime_state_snapshot_reports_compact_occupancy_without_pruning' \
-	'state::tests::runtime_state_snapshot_exposes_an_unregistered_observer' \
-	'state::tests::runtime_state_snapshot_aggregates_retained_backend_local_state' \
 	'state::tests::shared_futex_registry_uses_containing_mapping_only' \
 	'state::tests::shared_file_identity_survives_file_clone' \
 	'state::tests::shared_futex_registry_reuses_same_live_file' \
@@ -747,7 +748,6 @@ listed_tests="$(cargo test \
 	--list)"
 require_listed_test "$listed_tests" 'os::epoll::tests::failed_older_mod_cannot_rollback_over_later_subscription'
 require_listed_test "$listed_tests" 'os::epoll::tests::ofd_aware_keys_allow_dup_backed_old_watch_and_reused_numeric_fd'
-require_listed_test "$listed_tests" 'os::epoll::tests::lifecycle_counts_cover_subscriptions_queue_bits_and_join_guards'
 require_listed_test "$listed_tests" 'syscalls::wasix::epoll_ctl::tests::failed_mod_rebuilds_active_old_subscription_with_fresh_identity'
 cargo test \
 	--locked \
@@ -898,8 +898,7 @@ listed_tests="$(cargo test \
 	-- \
 	--list)"
 require_listed_tests "$listed_tests" \
-	'commands::run::tests::headless_stack_size_sets_vm_and_guest_limit' \
-	'commands::run::tests::preinitialized_memory_capture_requires_a_sealed_manifest_and_paired_outputs'
+	'commands::run::tests::headless_stack_size_sets_vm_and_guest_limit'
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -923,8 +922,6 @@ require_listed_tests "$listed_tests" \
 	'args::tests::required_abi_and_cache_assertions_fail_closed' \
 	'execute::tests::product_runtime_policy_is_declared_at_the_execution_boundary' \
 	'execute::tests::product_runner_applies_the_same_guest_and_host_task_budget' \
-	'execute::tests::process_tree_join_precedes_one_shot_product_evidence_finalization' \
-	'sealed::tests::attested_start_terminal_summary_uses_the_bounded_atomic_receipt_path' \
 	'runtime::tests::blocking_worker_growth_is_bounded_by_the_host_task_budget' \
 	'runtime::tests::runtime_policy_identity_is_stable' \
 	'runtime::tests::runtime_has_exactly_two_tokio_workers'

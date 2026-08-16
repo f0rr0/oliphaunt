@@ -338,56 +338,6 @@ then
 fi
 mv "$test_root/plpgsql-aot.saved" "$cache_bucket/$plpgsql_hash.bin"
 
-if FAKE_WASMER_NONDETERMINISTIC=1 \
-  "$project_root/bin/build-sealed-headless-carrier.sh" \
-    --output "$test_root/nondeterministic-memory-carrier" \
-    --cache-bucket "$cache_bucket" >/dev/null 2>&1
-then
-  printf 'carrier builder accepted divergent independent memory captures\n' >&2
-  exit 1
-fi
-[ ! -e "$test_root/nondeterministic-memory-carrier" ]
-
-if FAKE_WASMER_RECEIPT_MISMATCH=1 \
-  "$project_root/bin/build-sealed-headless-carrier.sh" \
-    --output "$test_root/nondeterministic-receipt-carrier" \
-    --cache-bucket "$cache_bucket" >/dev/null 2>&1
-then
-  printf 'carrier builder accepted divergent independent memory receipts\n' >&2
-  exit 1
-fi
-[ ! -e "$test_root/nondeterministic-receipt-carrier" ]
-
-if FAKE_WASMER_INVALID_RECEIPT=1 \
-  "$project_root/bin/build-sealed-headless-carrier.sh" \
-    --output "$test_root/invalid-receipt-carrier" \
-    --cache-bucket "$cache_bucket" >/dev/null 2>&1
-then
-  printf 'carrier builder accepted a self-consistent but invalid memory receipt\n' >&2
-  exit 1
-fi
-[ ! -e "$test_root/invalid-receipt-carrier" ]
-
-if FAKE_START_PROOF_INVALID=1 \
-  "$project_root/bin/build-sealed-headless-carrier.sh" \
-    --output "$test_root/invalid-start-proof-carrier" \
-    --cache-bucket "$cache_bucket" >/dev/null 2>&1
-then
-  printf 'carrier builder accepted analyzer output outside the restricted policy\n' >&2
-  exit 1
-fi
-[ ! -e "$test_root/invalid-start-proof-carrier" ]
-
-if FAKE_START_PROOF_WRONG_MODULE=1 \
-  "$project_root/bin/build-sealed-headless-carrier.sh" \
-    --output "$test_root/wrong-module-start-proof-carrier" \
-    --cache-bucket "$cache_bucket" >/dev/null 2>&1
-then
-  printf 'carrier builder accepted analyzer output bound to another module\n' >&2
-  exit 1
-fi
-[ ! -e "$test_root/wrong-module-start-proof-carrier" ]
-
 : >"$FAKE_WASMER_VALIDATION_LOG"
 failed_validation_output="$test_root/failed-initdb-carrier"
 if FAKE_WASMER_FAIL_FINAL_INITDB=1 \
@@ -490,11 +440,6 @@ done <"$project_root/runtime/policies/sealed-side-modules.v1.tsv"
 side_module_count="$(awk -F '\t' '!/^#/ && NF { count += 1 } END { print count + 0 }' \
   "$project_root/runtime/policies/sealed-side-modules.v1.tsv")"
 [ "$(find "$output/aot" -type f -name '*.bin' | wc -l | tr -d '[:space:]')" -eq "$((side_module_count + 2))" ]
-[ "$(find "$output/memory" -type f -name '*.bin' | wc -l | tr -d '[:space:]')" -eq 2 ]
-[ "$(find "$output/memory" -type f -name '*.receipt.json' | wc -l | tr -d '[:space:]')" -eq 2 ]
-[ "$(wc -l <"$FAKE_WASMER_CAPTURE_LOG" | tr -d '[:space:]')" -eq 4 ]
-[ "$(grep -c '^initdb[[:space:]]' "$FAKE_WASMER_CAPTURE_LOG")" -eq 2 ]
-[ "$(grep -c '^postgres[[:space:]]' "$FAKE_WASMER_CAPTURE_LOG")" -eq 2 ]
 [ "$(wc -l <"$FAKE_WASMER_VALIDATION_LOG" | tr -d '[:space:]')" -eq 2 ]
 [ "$(stat -c %a "$output" 2>/dev/null || stat -f %Lp "$output")" = 555 ]
 [ "$(stat -c %a "$output/share/postgresql/postgresql.conf.sample" 2>/dev/null || stat -f %Lp "$output/share/postgresql/postgresql.conf.sample")" = 444 ]
@@ -561,66 +506,8 @@ assert {tuple(item["exec-aliases"]) for item in manifest["artifacts"] if item["k
     ("/bin/initdb",),
     ("/bin/postgres",),
 }
-expected_receipt_keys = {
-    "schema",
-    "module-sha256",
-    "runtime-abi-id",
-    "phase",
-    "mapping-alignment",
-    "mapped-size",
-    "memory-minimum-pages",
-    "memory-maximum-pages",
-    "memory-shared",
-    "memory-base",
-    "dylink-memory-size",
-    "dylink-memory-alignment",
-    "stack-low",
-    "deterministic-start-proof",
-    "deterministic-start-proof-output-sha256",
-}
 for artifact in manifest["artifacts"]:
-    assert artifact["linear-memory"] == {
-        "profile-id": linear_profile["id"],
-        "source-module-sha256": artifact["linear-memory"]["source-module-sha256"],
-        "install-receipt-sha256": linear_profile["install-receipt-sha256"],
-    }
-    memory = artifact.get("preinitialized-memory")
-    if artifact["kind"] == "side-module":
-        assert memory is None
-        continue
-    assert set(memory) == {"path", "size", "sha256"}.union(expected_receipt_keys)
-    assert memory["schema"] == "oliphaunt.wasix-postmaster.memory-image.v2"
-    assert memory["module-sha256"] == artifact["module-sha256"]
-    assert memory["runtime-abi-id"] == manifest["runtime-abi-id"]
-    assert memory["phase"] == "post-module-start-pre-link-relocations-v1"
-    assert memory["mapping-alignment"] == 65536
-    assert memory["mapped-size"] == memory["size"] == 65536
-    assert memory["memory-shared"] is True
-    assert memory["memory-maximum-pages"] == 4096
-    proof = memory["deterministic-start-proof"]
-    assert proof["module-sha256"] == artifact["module-sha256"]
-    assert proof["analyzer-policy"] == "llvm-shared-memory-init-restricted-effects.v1"
-    canonical_proof = json.dumps(
-        proof,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    assert memory["deterministic-start-proof-output-sha256"] == hashlib.sha256(
-        canonical_proof
-    ).hexdigest()
-    image_path = os.path.join(root, memory["path"])
-    assert os.path.getsize(image_path) == memory["size"]
-    with open(image_path, "rb") as image:
-        assert hashlib.sha256(image.read()).hexdigest() == memory["sha256"]
-    receipt_path = os.path.join(
-        root,
-        "memory",
-        f"{artifact['module-sha256'].upper()}.receipt.json",
-    )
-    with open(receipt_path, encoding="utf-8") as stream:
-        receipt = json.load(stream)
-    assert receipt == {key: memory[key] for key in expected_receipt_keys}
+    assert "preinitialized-memory" not in artifact
 with open(os.path.join(root, "payload.files"), encoding="utf-8") as stream:
     assert stream.readline().strip() == "schema=oliphaunt.wasix-postmaster.payload-files.v1"
     listed_payloads = set()
@@ -791,7 +678,7 @@ sed 's/^rustc_version=.*/rustc_version=alternate-test-rustc/' \
     "$compiler_config" \
     "$target_triple" \
     "$manifest_source_fingerprint")" ] || {
-  printf 'AOT producer recipe does not bind the memory capture stack size\n' >&2
+  printf 'AOT producer recipe does not bind the runtime stack size\n' >&2
   exit 1
 }
 if fresh_aot_producer_recipe_sha256 \
@@ -837,6 +724,10 @@ expected_default_output="$FRESH_WORK_ROOT/carriers/wasix-postmaster-$POSTGRES_VE
 }
 grep -Fx "payload inventory SHA-256: $default_payload_sha256" "$default_build_log" >/dev/null
 "$project_root/bin/verify-sealed-headless-carrier.sh" "$default_output" >/dev/null
+[ "$(fresh_select_current_sealed_carrier)" = "$default_output" ] || {
+  printf 'current carrier selection did not resolve the receipt-bound output\n' >&2
+  exit 1
+}
 if "$project_root/bin/build-sealed-headless-carrier.sh" \
   --cache-bucket "$cache_bucket" >/dev/null 2>&1
 then
@@ -949,7 +840,8 @@ expect_verifier_failure tampered-payload "$tampered"
 missing="$test_root/verifier-missing"
 cp -a "$output" "$missing"
 chmod u+w "$missing/share/postgresql"
-rm "$missing/share/postgresql/postgresql.conf.sample"
+mv "$missing/share/postgresql/postgresql.conf.sample" \
+  "$test_root/missing-postgresql.conf.sample"
 chmod 0555 "$missing/share/postgresql"
 expect_verifier_failure missing-payload "$missing"
 
@@ -1048,7 +940,8 @@ expect_verifier_failure product-receipt-executor-identity "$wrong_product_receip
 missing_product_receipt="$test_root/verifier-missing-product-receipt"
 cp -a "$output" "$missing_product_receipt"
 chmod u+w "$missing_product_receipt"
-rm "$missing_product_receipt/postmaster-executor.receipt"
+mv "$missing_product_receipt/postmaster-executor.receipt" \
+  "$test_root/missing-postmaster-executor.receipt"
 chmod 0555 "$missing_product_receipt"
 reindex_carrier "$missing_product_receipt"
 expect_verifier_failure missing-product-role-sidecar "$missing_product_receipt"

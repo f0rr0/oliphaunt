@@ -11,10 +11,10 @@ usage() {
   cat <<'USAGE'
 Usage: deploy-immutable-sealed-carrier.sh --sealed-carrier DIR --receipt FILE [--remove]
 
-Deploy the exact sealed carrier's complete AOT closure and executable memory
-images as Linux ext-family immutable inodes. This command requires effective
-UID 0 and CAP_LINUX_IMMUTABLE. The canonical receipt is written outside the
-carrier before any inode flag changes and doubles as a crash-recovery journal.
+Deploy the exact sealed carrier's complete AOT closure as Linux ext-family
+immutable inodes. This command requires effective UID 0 and
+CAP_LINUX_IMMUTABLE. The canonical receipt is written outside the carrier
+before any inode flag changes and doubles as a crash-recovery journal.
 
 --remove restores only the exact receipt-bound inodes to their recorded
 pre-deployment flags and then removes that exact receipt. It never traverses or

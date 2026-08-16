@@ -30,6 +30,7 @@ grep -Fq 'expected_outer_initdb_invocations' "$qualifier"
 grep -Fq 'expected_outer_postgres_invocations' "$qualifier"
 grep -Fq 'postgres and dynamic modules' <<<"$help_output"
 grep -Fq 'immediate-recovery-evidence.v5' "$qualifier"
+grep -Fq "WHERE source = 'command line'" "$qualifier"
 if grep -Eq 'adaptive|cache-offers|CACHE_OFFER' "$qualifier"; then
   echo 'recovery qualifier still contains cache experiment machinery' >&2
   exit 1

@@ -1305,13 +1305,11 @@ def verify_manifest(
     artifacts = manifest["artifacts"]
     require(isinstance(artifacts, list) and len(artifacts) == len(EXPECTED_ARTIFACTS), "sealed artifact closure size mismatch")
     expected_aot: set[str] = set()
-    expected_memory: set[str] = set()
     seen_module_hashes: set[str] = set()
     for artifact, expected in zip(artifacts, EXPECTED_ARTIFACTS, strict=True):
         expected_name, expected_kind, expected_module_path, expected_aliases = expected
         require(isinstance(artifact, dict), f"sealed artifact {expected_name} must be an object")
-        expected_keys = ARTIFACT_KEYS | ({"preinitialized-memory"} if expected_kind == "executable" else set())
-        require(set(artifact) == expected_keys, f"sealed artifact fields differ for {expected_name}")
+        require(set(artifact) == ARTIFACT_KEYS, f"sealed artifact fields differ for {expected_name}")
         require(artifact["name"] == expected_name, f"sealed artifact name/order mismatch for {expected_name}")
         require(artifact["kind"] == expected_kind, f"sealed artifact kind mismatch for {expected_name}")
         require(artifact["module-path"] == expected_module_path, f"sealed module path mismatch for {expected_name}")
@@ -1351,52 +1349,13 @@ def verify_manifest(
         require(artifact["raw-sha256"] == actual_artifact_digest, f"raw AOT SHA-256 mismatch for {expected_name}")
         require(exact_int(artifact["raw-size"], f"raw AOT size for {expected_name}") == artifact_size, f"raw AOT size mismatch for {expected_name}")
 
-        if expected_kind != "executable":
-            continue
-        memory = artifact["preinitialized-memory"]
-        require(isinstance(memory, dict) and set(memory) == MEMORY_KEYS, f"memory image fields differ for {expected_name}")
-        image_path = f"memory/{module_digest.upper()}.bin"
-        image_receipt_path = f"memory/{module_digest.upper()}.receipt.json"
-        require(memory["path"] == image_path, f"memory image path mismatch for {expected_name}")
-        image_size, image_digest = inventory_identity(verified, image_path, f"memory image for {expected_name}")
-        inventory_identity(verified, image_receipt_path, f"memory receipt for {expected_name}")
-        expected_memory.update((image_path, image_receipt_path))
-        require(exact_int(memory["size"], f"memory image size for {expected_name}", minimum=1) == image_size, f"memory image size mismatch for {expected_name}")
-        require(memory["sha256"] == image_digest, f"memory image SHA-256 mismatch for {expected_name}")
-        require(memory["schema"] == MEMORY_SCHEMA, f"memory image schema mismatch for {expected_name}")
-        require(memory["module-sha256"] == module_digest, f"memory image module mismatch for {expected_name}")
-        validate_deterministic_start_proof(
-            memory["deterministic-start-proof"],
-            memory["deterministic-start-proof-output-sha256"],
-            module_digest,
-            f"deterministic-start proof for {expected_name}",
-        )
-        require(memory["runtime-abi-id"] == manifest["runtime-abi-id"], f"memory image runtime ABI mismatch for {expected_name}")
-        require(memory["phase"] == MEMORY_PHASE, f"memory image phase mismatch for {expected_name}")
-        require(exact_int(memory["mapping-alignment"], f"memory alignment for {expected_name}", minimum=1) == 65536, f"memory alignment mismatch for {expected_name}")
-        require(exact_int(memory["mapped-size"], f"mapped size for {expected_name}", minimum=1) == image_size, f"mapped memory size mismatch for {expected_name}")
-        require(type(memory["memory-shared"]) is bool and memory["memory-shared"], f"memory image must describe shared Wasm memory for {expected_name}")
-        for field in (
-            "memory-minimum-pages",
-            "memory-base",
-            "dylink-memory-size",
-            "dylink-memory-alignment",
-            "stack-low",
-        ):
-            exact_int(memory[field], f"{field} for {expected_name}")
-        maximum_pages = memory["memory-maximum-pages"]
-        require(maximum_pages == 4096, f"invalid maximum memory pages for {expected_name}")
-        image_receipt = verified_json(root, image_receipt_path, verified, f"memory receipt for {expected_name}")
-        require(isinstance(image_receipt, dict) and set(image_receipt) == MEMORY_RECEIPT_KEYS, f"memory receipt fields differ for {expected_name}")
-        require(image_receipt == {key: memory[key] for key in MEMORY_RECEIPT_KEYS}, f"memory receipt differs from manifest for {expected_name}")
-
     require(
         {path for path in verified if path.startswith("aot/")} == expected_aot,
         "carrier AOT directory differs from the manifest closure",
     )
     require(
-        {path for path in verified if path.startswith("memory/")} == expected_memory,
-        "carrier memory-image directory differs from the manifest closure",
+        not any(path.startswith("memory/") for path in verified),
+        "carrier contains unsupported preinitialized-memory payloads",
     )
 
 

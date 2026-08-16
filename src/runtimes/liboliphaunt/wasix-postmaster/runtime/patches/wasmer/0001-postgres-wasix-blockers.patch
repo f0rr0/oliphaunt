@@ -1968,7 +1968,7 @@ index 5896d6f..eeeaaa9 100644
  }
  
 diff --git a/lib/cli/src/commands/run/mod.rs b/lib/cli/src/commands/run/mod.rs
-index cc9a3b0..7124f15 100644
+index cc9a3b0..8ffcb13 100644
 --- a/lib/cli/src/commands/run/mod.rs
 +++ b/lib/cli/src/commands/run/mod.rs
 @@ -20,15 +20,16 @@ use std::{
@@ -2072,7 +2072,7 @@ index cc9a3b0..7124f15 100644
  
  /// The unstable `wasmer run` subcommand.
  #[derive(Debug, Parser)]
-@@ -95,6 +139,18 @@ pub struct Run {
+@@ -95,6 +139,10 @@ pub struct Run {
      /// Set the default stack size (default is 1048576)
      #[clap(long = "stack-size")]
      stack_size: Option<usize>,
@@ -2080,18 +2080,10 @@ index cc9a3b0..7124f15 100644
 +    #[cfg(feature = "headless")]
 +    #[clap(long = "sealed-module-manifest", value_name = "PATH")]
 +    sealed_module_manifest: Option<PathBuf>,
-+    /// Capture the selected sealed module's post-start memory image.
-+    #[cfg(feature = "headless")]
-+    #[clap(long = "emit-preinitialized-memory-image", value_name = "PATH")]
-+    emit_preinitialized_memory_image: Option<PathBuf>,
-+    /// Write the descriptor for --emit-preinitialized-memory-image.
-+    #[cfg(feature = "headless")]
-+    #[clap(long = "emit-preinitialized-memory-receipt", value_name = "PATH")]
-+    emit_preinitialized_memory_receipt: Option<PathBuf>,
      /// The entrypoint module for webc packages.
      #[clap(short, long, aliases = &["command", "command-name"])]
      entrypoint: Option<String>,
-@@ -115,6 +171,47 @@ pub struct Run {
+@@ -115,6 +163,17 @@ pub struct Run {
  }
  
  impl Run {
@@ -2106,40 +2098,10 @@ index cc9a3b0..7124f15 100644
 +        }
 +    }
 +
-+    fn preinitialized_memory_capture_paths(&self) -> Result<Option<(&Path, &Path)>, Error> {
-+        #[cfg(feature = "headless")]
-+        {
-+            match (
-+                self.emit_preinitialized_memory_image.as_deref(),
-+                self.emit_preinitialized_memory_receipt.as_deref(),
-+            ) {
-+                (None, None) => Ok(None),
-+                (Some(image), Some(receipt)) => {
-+                    ensure!(
-+                        self.sealed_module_manifest.is_some(),
-+                        "preinitialized memory capture requires --sealed-module-manifest"
-+                    );
-+                    ensure!(
-+                        image != receipt,
-+                        "memory image and receipt paths must be distinct"
-+                    );
-+                    Ok(Some((image, receipt)))
-+                }
-+                _ => bail!(
-+                    "--emit-preinitialized-memory-image and --emit-preinitialized-memory-receipt must be used together"
-+                ),
-+            }
-+        }
-+        #[cfg(not(feature = "headless"))]
-+        {
-+            Ok(None)
-+        }
-+    }
-+
      #[cfg(feature = "napi-v8")]
      fn module_needs_napi(module: &Module) -> bool {
          let (napi_version, napi_extension_version) = wasmer_napi::module_needs_napi(module);
-@@ -187,9 +284,29 @@ impl Run {
+@@ -187,9 +246,28 @@ impl Run {
  
          pb.set_message("Initializing the WebAssembly VM");
  
@@ -2147,7 +2109,6 @@ index cc9a3b0..7124f15 100644
 -            .enable_all()
 -            .build()?;
 +        let sealed_manifest_path = self.sealed_manifest_path().map(Path::to_path_buf);
-+        let capture_memory_image = self.preinitialized_memory_capture_paths()?.is_some();
 +        let sealed_manifest = sealed_manifest_path
 +            .as_deref()
 +            .map(|manifest| {
@@ -2155,7 +2116,7 @@ index cc9a3b0..7124f15 100644
 +                    CliPackageSource::File(path) => path.as_path(),
 +                    _ => bail!("--sealed-module-manifest requires a local executable file input"),
 +                };
-+                sealed::prepare_with_capture_mode(manifest, input, capture_memory_image)
++                sealed::prepare(manifest, input)
 +            })
 +            .transpose()?;
 +        let sealed_runtime_identity = sealed_manifest
@@ -2172,7 +2133,7 @@ index cc9a3b0..7124f15 100644
          let handle = runtime.handle().clone();
  
          // Check for the preferred webc version.
-@@ -210,7 +327,9 @@ impl Run {
+@@ -210,7 +288,9 @@ impl Run {
  
          // Try to detect WebAssembly features before selecting a backend
          tracing::info!("Input source: {:?}", self.input);
@@ -2183,7 +2144,7 @@ index cc9a3b0..7124f15 100644
              tracing::info!("Input file path: {}", path.display());
  
              // Try to read and detect any file that exists, regardless of extension
-@@ -275,20 +394,24 @@ impl Run {
+@@ -275,20 +355,24 @@ impl Run {
          let engine_kind = engine.deterministic_id();
          tracing::info!("Executing on backend {engine_kind:?}");
  
@@ -2214,12 +2175,12 @@ index cc9a3b0..7124f15 100644
          )?;
  
          // This is a slow operation, so let's temporarily wrap the runtime with
-@@ -301,7 +424,22 @@ impl Run {
+@@ -301,7 +385,20 @@ impl Run {
          let runtime: Arc<dyn Runtime + Send + Sync> = monitoring_runtime.runtime.clone();
          let monitoring_runtime: Arc<dyn Runtime + Send + Sync> = monitoring_runtime;
  
 -        let target = self.input.resolve_target(&monitoring_runtime, &pb)?;
-+        let (target, sealed_executables, entrypoint_memory_image) = match sealed_modules {
++        let (target, sealed_executables) = match sealed_modules {
 +            Some(sealed) => (
 +                ExecutableTarget::WebAssembly {
 +                    module: sealed.module,
@@ -2227,18 +2188,16 @@ index cc9a3b0..7124f15 100644
 +                    path: sealed.path,
 +                },
 +                sealed.executables,
-+                sealed.entrypoint_memory_image,
 +            ),
 +            None => (
 +                self.input.resolve_target(&monitoring_runtime, &pb)?,
 +                Vec::new(),
-+                None,
 +            ),
 +        };
  
          if let ExecutableTarget::Package(ref pkg) = target {
              self.wasi
-@@ -320,7 +458,14 @@ impl Run {
+@@ -320,7 +417,13 @@ impl Run {
                      module,
                      module_hash,
                      path,
@@ -2249,12 +2208,11 @@ index cc9a3b0..7124f15 100644
 +                    module_hash,
 +                    runtime.clone(),
 +                    sealed_executables,
-+                    entrypoint_memory_image,
 +                ),
                  ExecutableTarget::Package(pkg) => {
                      // Check if we should update the engine based on the WebC package features
                      if let Some(cmd) = pkg.get_entrypoint_command()
-@@ -359,15 +504,18 @@ impl Run {
+@@ -359,15 +462,17 @@ impl Run {
                                          &self.env,
                                          &self.input,
                                      )?;
@@ -2272,35 +2230,22 @@ index cc9a3b0..7124f15 100644
                                      self.rt.compiler_debug_dir.is_some(),
 +                                    new_resource_limits,
 +                                    None,
-+                                    None,
                                  )?;
  
                                  let new_runtime = Arc::new(MonitoringRuntime::new(
-@@ -405,9 +553,22 @@ impl Run {
+@@ -405,9 +510,10 @@ impl Run {
          module: Module,
          module_hash: ModuleHash,
          runtime: Arc<dyn Runtime + Send + Sync>,
-+        sealed_executables: Vec<(
-+            String,
-+            ModuleHash,
-+            Option<wasmer_wasix::PreinitializedMemoryImageHandle>,
-+        )>,
-+        entrypoint_memory_image: Option<wasmer_wasix::PreinitializedMemoryImageHandle>,
++        sealed_executables: Vec<(String, ModuleHash)>,
      ) -> Result<(), Error> {
          if wasmer_wasix::is_wasi_module(&module) || wasmer_wasix::is_wasix_module(&module) {
 -            self.execute_wasi_module(path, module, module_hash, runtime)
-+            self.execute_wasi_module(
-+                path,
-+                module,
-+                module_hash,
-+                runtime,
-+                sealed_executables,
-+                entrypoint_memory_image,
-+            )
++            self.execute_wasi_module(path, module, module_hash, runtime, sealed_executables)
          } else {
              self.execute_pure_wasm_module(&module)
          }
-@@ -495,6 +656,7 @@ impl Run {
+@@ -495,6 +601,7 @@ impl Run {
  
          // Assume webcs are always WASIX
          let mut runner = self.build_wasi_runner(&runtime, true)?;
@@ -2308,16 +2253,11 @@ index cc9a3b0..7124f15 100644
          #[cfg(feature = "napi-v8")]
          self.configure_wasi_runner_for_napi(&module, &mut runner);
          Runner::run_command(&mut runner, command_name, pkg, runtime)
-@@ -696,12 +858,48 @@ impl Run {
+@@ -696,12 +803,17 @@ impl Run {
          module: Module,
          module_hash: ModuleHash,
          runtime: Arc<dyn Runtime + Send + Sync>,
-+        sealed_executables: Vec<(
-+            String,
-+            ModuleHash,
-+            Option<wasmer_wasix::PreinitializedMemoryImageHandle>,
-+        )>,
-+        entrypoint_memory_image: Option<wasmer_wasix::PreinitializedMemoryImageHandle>,
++        sealed_executables: Vec<(String, ModuleHash)>,
      ) -> Result<(), Error> {
          let program_name = wasm_path.display().to_string();
          let runtime = self.maybe_wrap_runtime_with_napi(&module, runtime)?;
@@ -2325,39 +2265,13 @@ index cc9a3b0..7124f15 100644
          let mut runner =
              self.build_wasi_runner(&runtime, wasmer_wasix::is_wasix_module(&module))?;
 +        attach_cli_host_lifecycle(&mut runner)?;
-+        for (guest_path, sealed_hash, image) in sealed_executables {
-+            runner.with_sealed_module(guest_path, sealed_hash, image);
-+        }
-+        let preinitialized_memory_image =
-+            if let Some((image_path, receipt_path)) = self.preinitialized_memory_capture_paths()? {
-+                ensure!(
-+                    entrypoint_memory_image.is_none(),
-+                    "capture manifests must not contain a preinitialized memory image"
-+                );
-+                Some(wasmer_wasix::PreinitializedMemoryImageMode::Capture(
-+                    wasmer_wasix::PreinitializedMemoryImageCapture {
-+                        image_path: image_path.to_path_buf(),
-+                        receipt_path: receipt_path.to_path_buf(),
-+                        module_hash,
-+                    },
-+                ))
-+            } else {
-+                entrypoint_memory_image
-+                    .map(|image| {
-+                        image
-+                            .load()
-+                            .map(wasmer_wasix::PreinitializedMemoryImageMode::Apply)
-+                            .map_err(Error::msg)
-+                    })
-+                    .transpose()?
-+            };
-+        if let Some(image) = preinitialized_memory_image {
-+            runner.with_preinitialized_memory_image(image);
++        for (guest_path, sealed_hash) in sealed_executables {
++            runner.with_sealed_module(guest_path, sealed_hash, None);
 +        }
          self.configure_wasi_runner_for_napi(&module, &mut runner);
          runner.run_wasm(
              RuntimeOrEngine::Runtime(runtime),
-@@ -905,3 +1103,81 @@ fn get_exit_code(
+@@ -905,3 +1017,34 @@ fn get_exit_code(
  
      None
  }
@@ -2390,53 +2304,6 @@ index cc9a3b0..7124f15 100644
 +
 +        assert_eq!(wasmer_vm::get_stack_size(), 33_554_432);
 +        assert_eq!(limits.stack, Some(4_194_304));
-+    }
-+
-+    #[test]
-+    fn preinitialized_memory_capture_requires_a_sealed_manifest_and_paired_outputs() {
-+        let image_only = Run::try_parse_from([
-+            "run",
-+            "--sealed-module-manifest",
-+            "manifest.json",
-+            "--emit-preinitialized-memory-image",
-+            "memory.bin",
-+            "probe.wasm",
-+        ])
-+        .unwrap();
-+        assert!(image_only.preinitialized_memory_capture_paths().is_err());
-+
-+        let without_manifest = Run::try_parse_from([
-+            "run",
-+            "--emit-preinitialized-memory-image",
-+            "memory.bin",
-+            "--emit-preinitialized-memory-receipt",
-+            "memory.json",
-+            "probe.wasm",
-+        ])
-+        .unwrap();
-+        assert!(
-+            without_manifest
-+                .preinitialized_memory_capture_paths()
-+                .is_err()
-+        );
-+
-+        let capture = Run::try_parse_from([
-+            "run",
-+            "--sealed-module-manifest",
-+            "manifest.json",
-+            "--emit-preinitialized-memory-image",
-+            "memory.bin",
-+            "--emit-preinitialized-memory-receipt",
-+            "memory.json",
-+            "probe.wasm",
-+        ])
-+        .unwrap();
-+        let (image, receipt) = capture
-+            .preinitialized_memory_capture_paths()
-+            .unwrap()
-+            .unwrap();
-+        assert_eq!(image, Path::new("memory.bin"));
-+        assert_eq!(receipt, Path::new("memory.json"));
 +    }
 +}
 diff --git a/lib/cli/src/commands/run/runtime.rs b/lib/cli/src/commands/run/runtime.rs
@@ -6733,10 +6600,10 @@ index 0000000..29fbc87
 +runtime-compilation = false
 diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/args.rs b/lib/oliphaunt-wasix-postmaster-executor/src/args.rs
 new file mode 100644
-index 0000000..5768adf
+index 0000000..0a9b33b
 --- /dev/null
 +++ b/lib/oliphaunt-wasix-postmaster-executor/src/args.rs
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,436 @@
 +//! Strict command-line contract for the sealed PostgreSQL executor.
 +
 +use std::{collections::HashSet, ffi::OsString, path::PathBuf};
@@ -6750,15 +6617,6 @@ index 0000000..5768adf
 +    Version,
 +    /// Execute one member of an exact sealed PostgreSQL carrier.
 +    Run(RunOptions),
-+}
-+
-+/// Paired output paths for preinitialized-memory capture.
-+#[derive(Debug, Clone, PartialEq, Eq)]
-+pub struct MemoryCaptureOutputs {
-+    /// Captured memory image path.
-+    pub image: PathBuf,
-+    /// Captured memory image receipt path.
-+    pub receipt: PathBuf,
 +}
 +
 +/// One explicit host-to-guest directory mapping.
@@ -6785,8 +6643,6 @@ index 0000000..5768adf
 +    pub input: PathBuf,
 +    /// Arguments passed to the selected PostgreSQL executable.
 +    pub guest_args: Vec<String>,
-+    /// Optional, paired preinitialized-memory capture outputs.
-+    pub memory_capture: Option<MemoryCaptureOutputs>,
 +}
 +
 +#[derive(Default)]
@@ -6798,8 +6654,6 @@ index 0000000..5768adf
 +    exceptions: bool,
 +    threads: bool,
 +    networking: bool,
-+    image: bool,
-+    receipt: bool,
 +}
 +
 +impl SeenOptions {
@@ -6836,8 +6690,6 @@ index 0000000..5768adf
 +    let mut manifest = None;
 +    let mut stack_size = None;
 +    let mut volumes = Vec::new();
-+    let mut image = None;
-+    let mut receipt = None;
 +    let mut input = None;
 +    let mut index = 0;
 +
@@ -6904,24 +6756,6 @@ index 0000000..5768adf
 +                let value = take_utf8_value(arguments, &mut index, name, inline_value)?;
 +                volumes.push(parse_volume(&value)?);
 +            }
-+            "--emit-preinitialized-memory-image" => {
-+                SeenOptions::once(&mut seen.image, name)?;
-+                image = Some(PathBuf::from(take_os_value(
-+                    arguments,
-+                    &mut index,
-+                    name,
-+                    inline_value,
-+                )?));
-+            }
-+            "--emit-preinitialized-memory-receipt" => {
-+                SeenOptions::once(&mut seen.receipt, name)?;
-+                receipt = Some(PathBuf::from(take_os_value(
-+                    arguments,
-+                    &mut index,
-+                    name,
-+                    inline_value,
-+                )?));
-+            }
 +            _ => bail!("unsupported product executor option '{name}'"),
 +        }
 +        index += 1;
@@ -6969,20 +6803,6 @@ index 0000000..5768adf
 +
 +    let manifest = manifest.context("--sealed-module-manifest is required")?;
 +    let stack_size = stack_size.context("--stack-size is required")?;
-+    let memory_capture = match (image, receipt) {
-+        (None, None) => None,
-+        (Some(image), Some(receipt)) => {
-+            ensure!(
-+                image != receipt,
-+                "memory image and receipt paths must be distinct"
-+            );
-+            Some(MemoryCaptureOutputs { image, receipt })
-+        }
-+        _ => bail!(
-+            "--emit-preinitialized-memory-image and --emit-preinitialized-memory-receipt must be used together"
-+        ),
-+    };
-+
 +    let mut guest_mounts = HashSet::new();
 +    for volume in &volumes {
 +        ensure!(
@@ -6999,7 +6819,6 @@ index 0000000..5768adf
 +        volumes,
 +        input,
 +        guest_args,
-+        memory_capture,
 +    })
 +}
 +
@@ -7116,7 +6935,6 @@ index 0000000..5768adf
 +        assert_eq!(run.input, PathBuf::from("/carrier/bin/postgres"));
 +        assert_eq!(run.guest_args, ["-D", "/pgdata"]);
 +        assert_eq!(run.volumes.len(), 2);
-+        assert!(run.memory_capture.is_none());
 +    }
 +
 +    #[test]
@@ -7187,49 +7005,6 @@ index 0000000..5768adf
 +            [OsString::from("--volume"), OsString::from("/other:/lib")],
 +        );
 +        assert!(parse_from(duplicate_mount).is_err());
-+    }
-+
-+    #[test]
-+    fn capture_outputs_are_atomic_as_a_pair() {
-+        let mut paired = valid_args();
-+        paired.splice(
-+            2..2,
-+            [
-+                OsString::from("--emit-preinitialized-memory-image"),
-+                OsString::from("/tmp/image"),
-+                OsString::from("--emit-preinitialized-memory-receipt"),
-+                OsString::from("/tmp/receipt"),
-+            ],
-+        );
-+        let Command::Run(run) = parse_from(paired).unwrap() else {
-+            panic!("expected run command");
-+        };
-+        assert_eq!(
-+            run.memory_capture.unwrap().image,
-+            PathBuf::from("/tmp/image")
-+        );
-+
-+        let mut unpaired = valid_args();
-+        unpaired.splice(
-+            2..2,
-+            [
-+                OsString::from("--emit-preinitialized-memory-image"),
-+                OsString::from("/tmp/image"),
-+            ],
-+        );
-+        assert!(parse_from(unpaired).is_err());
-+
-+        let mut same = valid_args();
-+        same.splice(
-+            2..2,
-+            [
-+                OsString::from("--emit-preinitialized-memory-image"),
-+                OsString::from("/tmp/output"),
-+                OsString::from("--emit-preinitialized-memory-receipt"),
-+                OsString::from("/tmp/output"),
-+            ],
-+        );
-+        assert!(parse_from(same).is_err());
 +    }
 +
 +    #[test]
@@ -8114,16 +7889,15 @@ index 0000000..558aa5c
 +}
 diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/execute.rs b/lib/oliphaunt-wasix-postmaster-executor/src/execute.rs
 new file mode 100644
-index 0000000..9656111
+index 0000000..dc3eaad
 --- /dev/null
 +++ b/lib/oliphaunt-wasix-postmaster-executor/src/execute.rs
-@@ -0,0 +1,339 @@
+@@ -0,0 +1,246 @@
 +use std::{collections::HashSet, io::Write as _, sync::Arc};
 +
 +use anyhow::{Context, Error, ensure};
 +use wasmer_wasix::{
-+    PreinitializedMemoryImageCapture, PreinitializedMemoryImageMode, Runtime, WasiError,
-+    WasiRuntimeError,
++    Runtime, WasiError, WasiRuntimeError,
 +    runners::{
 +        MappedDirectory,
 +        wasi::{RuntimeOrEngine, WasiRunner},
@@ -8172,12 +7946,6 @@ index 0000000..9656111
 +        !options.volumes.is_empty(),
 +        "at least one explicit host volume is required"
 +    );
-+    if let Some(outputs) = &options.memory_capture {
-+        ensure!(
-+            outputs.image != outputs.receipt,
-+            "memory image and receipt paths must be distinct"
-+        );
-+    }
 +    let resource_limits = configure_stack(options.stack_size);
 +    // This owner must remain in this stack frame until `run_wasm` has joined
 +    // the root and all fresh EXEC_BACKEND tasks. The task manager intentionally
@@ -8186,9 +7954,7 @@ index 0000000..9656111
 +    let handle = tokio_runtime.handle().clone();
 +    let _runtime_guard = handle.enter();
 +
-+    let capture_memory = options.memory_capture.is_some();
-+    let prepared =
-+        sealed::prepare_with_capture_mode(&options.manifest, &options.input, capture_memory)?;
++    let prepared = sealed::prepare(&options.manifest, &options.input)?;
 +    prepared
 +        .runtime_identity()
 +        .context("sealed manifest selected no product runtime identity")?;
@@ -8204,14 +7970,6 @@ index 0000000..9656111
 +    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 +    let engine = headless_engine(None)?;
 +    let loaded = sealed::load(prepared, &engine)?;
-+    let mut attested_start_audit_handles = loaded
-+        .executables
-+        .iter()
-+        .filter_map(|(_, _, image)| image.clone())
-+        .collect::<Vec<_>>();
-+    if let Some(image) = loaded.entrypoint_memory_image.as_ref() {
-+        attested_start_audit_handles.push(image.clone());
-+    }
 +
 +    // This scope-owned guard restores host terminal state after every normal
 +    // return, error propagation, or unwind, independent of runtime Arc clones.
@@ -8232,36 +7990,8 @@ index 0000000..9656111
 +        .with_args(options.guest_args)
 +        .with_mapped_directories(mapped_directories);
 +    attach_host_lifecycle(&mut runner)?;
-+    for (guest_path, module_hash, image) in loaded.executables {
-+        runner.with_sealed_module(guest_path, module_hash, image);
-+    }
-+
-+    let entrypoint_image = match options.memory_capture {
-+        Some(outputs) => {
-+            ensure!(
-+                loaded.entrypoint_memory_image.is_none(),
-+                "capture manifests must not contain a preinitialized memory image"
-+            );
-+            Some(PreinitializedMemoryImageMode::Capture(
-+                PreinitializedMemoryImageCapture {
-+                    image_path: outputs.image,
-+                    receipt_path: outputs.receipt,
-+                    module_hash: loaded.module_hash,
-+                },
-+            ))
-+        }
-+        None => loaded
-+            .entrypoint_memory_image
-+            .map(|image| {
-+                image
-+                    .load()
-+                    .map(PreinitializedMemoryImageMode::Apply)
-+                    .map_err(Error::msg)
-+            })
-+            .transpose()?,
-+    };
-+    if let Some(image) = entrypoint_image {
-+        runner.with_preinitialized_memory_image(image);
++    for (guest_path, module_hash) in loaded.executables {
++        runner.with_sealed_module(guest_path, module_hash, None);
 +    }
 +
 +    ensure!(
@@ -8269,33 +7999,12 @@ index 0000000..9656111
 +        "sealed PostgreSQL entrypoint is not a WASIX module"
 +    );
 +    let program_name = loaded.path.display().to_string();
-+    // `run_wasm` returns only after the sealed process tree has joined. That
-+    run_wasm_then_finalize_runtime_audit(
-+        || {
-+            runner.run_wasm(
-+                RuntimeOrEngine::Runtime(runtime),
-+                &program_name,
-+                loaded.module,
-+                loaded.module_hash,
-+            )
-+        },
-+        || sealed::finalize_attested_start_runtime_audit(&attested_start_audit_handles),
++    runner.run_wasm(
++        RuntimeOrEngine::Runtime(runtime),
++        &program_name,
++        loaded.module,
++        loaded.module_hash,
 +    )
-+}
-+
-+fn run_wasm_then_finalize_runtime_audit(
-+    run_wasm: impl FnOnce() -> Result<(), Error>,
-+    finalize_attested_start_audit: impl FnOnce() -> Result<(), Error>,
-+) -> Result<(), Error> {
-+    // Both closures are `FnOnce`: this boundary cannot rerun the process tree
-+    // or publish a second supposedly authoritative runtime audit.
-+    let result = run_wasm();
-+    let start_evidence = finalize_attested_start_audit()
-+        .context("publish sealed WASIX-postmaster attested-start runtime audit");
-+    if result.is_ok() {
-+        start_evidence?;
-+    }
-+    result
 +}
 +
 +fn apply_host_task_budget(runner: &mut WasiRunner) {
@@ -8428,33 +8137,6 @@ index 0000000..9656111
 +            guest: "/data".to_owned(),
 +        };
 +        assert!(resolve_volumes(&[missing]).is_err());
-+    }
-+
-+    #[test]
-+    fn process_tree_join_precedes_one_shot_product_evidence_finalization() {
-+        use std::cell::{Cell, RefCell};
-+
-+        let events = RefCell::new(Vec::new());
-+        let finalization_calls = Cell::new(0_u32);
-+        let result = run_wasm_then_finalize_runtime_audit(
-+            || {
-+                events.borrow_mut().push("process-tree-joined");
-+                Ok(())
-+            },
-+            || {
-+                assert_eq!(events.borrow().as_slice(), ["process-tree-joined"]);
-+                finalization_calls.set(finalization_calls.get() + 1);
-+                events.borrow_mut().push("attested-start-finalized");
-+                Ok(())
-+            },
-+        );
-+
-+        assert!(result.is_ok());
-+        assert_eq!(finalization_calls.get(), 1);
-+        assert_eq!(
-+            events.into_inner(),
-+            ["process-tree-joined", "attested-start-finalized"]
-+        );
 +    }
 +}
 diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/lib.rs b/lib/oliphaunt-wasix-postmaster-executor/src/lib.rs
@@ -9674,10 +9356,10 @@ index 0000000..267665b
 +}
 diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs b/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs
 new file mode 100644
-index 0000000..89bcdbb
+index 0000000..36680f7
 --- /dev/null
 +++ b/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs
-@@ -0,0 +1,3925 @@
+@@ -0,0 +1,3379 @@
 +//! Exact-five sealed carrier admission and immutable lazy AOT activation.
 +
 +use std::{
@@ -9698,10 +9380,7 @@ index 0000000..89bcdbb
 +};
 +use wasmer_types::{ModuleHash, target::Target};
 +use wasmer_wasix::{
-+    IntrinsicFileImmutability, PreinitializedMemoryImage, PreinitializedMemoryImageBacking,
-+    PreinitializedMemoryImageHandle, PreinitializedMemoryImageLoader,
-+    PreinitializedMemoryImageMetadata, PreinitializedMemoryImageRuntimeAudit,
-+    intrinsic_file_immutability,
++    IntrinsicFileImmutability, intrinsic_file_immutability,
 +    runtime::{
 +        module_cache::{CacheError, ModuleCache},
 +        sealed_loader_audit::{
@@ -9717,8 +9396,6 @@ index 0000000..89bcdbb
 +
 +const MANIFEST_SCHEMA: &str = "oliphaunt.wasix-postmaster.sealed-aot.v5";
 +const MANIFEST_FORMAT_VERSION: u32 = 6;
-+const CAPTURE_MANIFEST_SCHEMA: &str = "oliphaunt.wasix-postmaster.sealed-aot.v3";
-+const CAPTURE_MANIFEST_FORMAT_VERSION: u32 = 4;
 +const ARTIFACT_ABI_VERSION: u32 = 21;
 +const LINEAR_MEMORY_INSTALL_RECEIPT_SCHEMA: &str =
 +    "oliphaunt.wasix-postmaster.linear-memory-install.v1";
@@ -9862,11 +9539,9 @@ index 0000000..89bcdbb
 +    /// Exact host spelling of the selected carrier executable.
 +    pub path: PathBuf,
 +    /// Closed executable alias registry shared by all fresh EXEC_BACKEND environments.
-+    pub executables: Vec<(String, ModuleHash, Option<PreinitializedMemoryImageHandle>)>,
++    pub executables: Vec<(String, ModuleHash)>,
 +    /// Authoritative, immutable full-closure AOT cache.
 +    pub module_cache: Arc<SealedModuleCache>,
-+    /// Optional selected entrypoint image, lazily loaded after admission.
-+    pub entrypoint_memory_image: Option<PreinitializedMemoryImageHandle>,
 +}
 +
 +/// The manifest and path identities captured by the single authoritative read.
@@ -9876,7 +9551,6 @@ index 0000000..89bcdbb
 +    carrier_root: PathBuf,
 +    input_path: PathBuf,
 +    input_canonical: PathBuf,
-+    capture_memory_image: bool,
 +    runtime_identity: Option<SealedRuntimeIdentity>,
 +}
 +
@@ -10383,61 +10057,6 @@ index 0000000..89bcdbb
 +    record: &'a LoaderAuditRecord,
 +}
 +
-+#[derive(Serialize)]
-+struct AttestedStartRuntimeSummaryEnvelope<'a> {
-+    schema: &'static str,
-+    pid: u32,
-+    artifact_kind: &'static str,
-+    terminal: bool,
-+    #[serde(flatten)]
-+    record: &'a PreinitializedMemoryImageRuntimeAudit,
-+}
-+
-+/// Append one bounded terminal summary for every attested image that this
-+/// executor actually loaded. Calling this after `run_wasm` returns observes
-+/// the complete, joined process tree and never activates an unused image.
-+pub fn finalize_attested_start_runtime_audit(
-+    handles: &[PreinitializedMemoryImageHandle],
-+) -> Result<(), Error> {
-+    let Some(path) = std::env::var_os(SEALED_LOADER_AUDIT_FILE_ENV) else {
-+        return Ok(());
-+    };
-+    let path = PathBuf::from(path);
-+    ensure!(
-+        !path.as_os_str().is_empty(),
-+        "{SEALED_LOADER_AUDIT_FILE_ENV} must not be empty"
-+    );
-+
-+    let mut by_module = BTreeMap::<String, PreinitializedMemoryImageRuntimeAudit>::new();
-+    for handle in handles {
-+        let Some(audit) = handle.runtime_audit_if_loaded() else {
-+            continue;
-+        };
-+        match by_module.entry(audit.module_sha256.clone()) {
-+            std::collections::btree_map::Entry::Vacant(entry) => {
-+                entry.insert(audit);
-+            }
-+            std::collections::btree_map::Entry::Occupied(entry) => ensure!(
-+                entry.get() == &audit,
-+                "attested start counters differ across handles for module {}",
-+                entry.key()
-+            ),
-+        }
-+    }
-+
-+    for audit in by_module.values() {
-+        let envelope = AttestedStartRuntimeSummaryEnvelope {
-+            schema: "oliphaunt.wasix-postmaster.attested-start-runtime-summary.v1",
-+            pid: std::process::id(),
-+            artifact_kind: "attested-start-runtime-summary",
-+            terminal: true,
-+            record: audit,
-+        };
-+        append_sealed_loader_audit_record(&path, &envelope)?;
-+    }
-+    Ok(())
-+}
-+
 +fn emit_loader_audit(record: LoaderAuditRecord) -> Result<(), Error> {
 +    let Some(path) = std::env::var_os(SEALED_LOADER_AUDIT_FILE_ENV) else {
 +        return Ok(());
@@ -10693,8 +10312,6 @@ index 0000000..89bcdbb
 +    linear_memory: SealedArtifactLinearMemory,
 +    compressed: bool,
 +    exec_aliases: Vec<String>,
-+    #[serde(default)]
-+    preinitialized_memory: Option<SealedPreinitializedMemory>,
 +}
 +
 +#[derive(Debug, Deserialize)]
@@ -10706,31 +10323,11 @@ index 0000000..89bcdbb
 +    install_receipt_sha256: String,
 +}
 +
-+#[derive(Debug, Deserialize)]
-+#[cfg_attr(test, derive(serde::Serialize))]
-+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-+struct SealedPreinitializedMemory {
-+    path: String,
-+    sha256: String,
-+    size: u64,
-+    #[serde(flatten)]
-+    metadata: PreinitializedMemoryImageMetadata,
-+}
-+
 +/// Read and structurally admit an exact sealed manifest for one local executable.
 +pub fn prepare(manifest_path: &Path, input_path: &Path) -> Result<PreparedSealedManifest, Error> {
-+    prepare_with_capture_mode(manifest_path, input_path, false)
-+}
-+
-+/// Read and admit a sealed manifest, selecting normal or capture schema exactly.
-+pub fn prepare_with_capture_mode(
-+    manifest_path: &Path,
-+    input_path: &Path,
-+    capture_memory_image: bool,
-+) -> Result<PreparedSealedManifest, Error> {
 +    let manifest = read_manifest(manifest_path)?;
 +    ensure!(
-+        has_exact_wasix_postmaster_identity(&manifest, capture_memory_image),
++        has_exact_wasix_postmaster_identity(&manifest),
 +        "sealed manifest is not the exact WASIX-postmaster artifact closure"
 +    );
 +    let carrier_root = manifest_path
@@ -10762,7 +10359,6 @@ index 0000000..89bcdbb
 +        carrier_root,
 +        input_path: input_path.to_path_buf(),
 +        input_canonical,
-+        capture_memory_image,
 +        runtime_identity,
 +    })
 +}
@@ -10846,20 +10442,6 @@ index 0000000..89bcdbb
 +
 +#[derive(Debug, Deserialize)]
 +#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-+#[allow(dead_code)] // Receipt schema fields are authenticated even when not consumed at runtime.
-+struct SealedExportEstimate {
-+    classification: String,
-+    formula: String,
-+    removed_local_functions: u32,
-+    bytes_per_eager_local_funcref: u64,
-+    removed_local_globals: u32,
-+    bytes_per_eager_local_global: u64,
-+    estimated_bytes_per_instance: u64,
-+    caveat: String,
-+}
-+
-+#[derive(Debug, Deserialize)]
-+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 +struct SealedExportSideIdentity {
 +    path: String,
 +    sha256: String,
@@ -10884,7 +10466,6 @@ index 0000000..89bcdbb
 +    final_proof_sha256: String,
 +    seed: SealedExportSnapshot,
 +    final_module: SealedExportSnapshot,
-+    estimate: SealedExportEstimate,
 +    sides: Vec<SealedExportSideIdentity>,
 +}
 +
@@ -11228,17 +10809,9 @@ index 0000000..89bcdbb
 +        .with_context(|| format!("parse sealed manifest {}", manifest_path.display()))
 +}
 +
-+fn has_exact_wasix_postmaster_identity(
-+    manifest: &SealedManifest,
-+    capture_memory_image: bool,
-+) -> bool {
-+    let (format_version, schema) = if capture_memory_image {
-+        (CAPTURE_MANIFEST_FORMAT_VERSION, CAPTURE_MANIFEST_SCHEMA)
-+    } else {
-+        (MANIFEST_FORMAT_VERSION, MANIFEST_SCHEMA)
-+    };
-+    if manifest.format_version != format_version
-+        || manifest.schema != schema
++fn has_exact_wasix_postmaster_identity(manifest: &SealedManifest) -> bool {
++    if manifest.format_version != MANIFEST_FORMAT_VERSION
++        || manifest.schema != MANIFEST_SCHEMA
 +        || manifest.source_lane != WASIX_POSTMASTER_SOURCE_LANE
 +        || !matches!(manifest.core_profile.as_str(), "release-o3" | "safe-o2")
 +        || parse_sha256(
@@ -11265,7 +10838,7 @@ index 0000000..89bcdbb
 +    let mut module_paths = HashSet::new();
 +    let mut artifact_paths = HashSet::new();
 +    for (index, artifact) in manifest.artifacts.iter().enumerate() {
-+        let (kind, module_path, exec_aliases, executable) =
++        let (kind, module_path, exec_aliases, _executable) =
 +            if let Some(expected) = EXPECTED_WASIX_POSTMASTER_EXECUTABLES.get(index) {
 +                (
 +                    expected.kind,
@@ -11289,19 +10862,7 @@ index 0000000..89bcdbb
 +                .map_or(module_path, |(_, basename)| basename)
 +        );
 +        let expected_aliases = exec_aliases.iter().copied();
-+        let has_expected_preinitialized_memory = executable.is_some() && !capture_memory_image;
 +        let module_digest_is_valid = parse_sha256("module-sha256", &artifact.module_sha256).is_ok();
-+        let preinitialized_memory_is_canonical = if has_expected_preinitialized_memory {
-+            artifact
-+                .preinitialized_memory
-+                .as_ref()
-+                .is_some_and(|image| {
-+                    image.path
-+                        == format!("memory/{}.bin", artifact.module_sha256.to_ascii_uppercase())
-+                })
-+        } else {
-+            artifact.preinitialized_memory.is_none()
-+        };
 +        let expected_artifact_path =
 +            format!("aot/{}.bin", artifact.module_sha256.to_ascii_uppercase());
 +        if artifact.name != expected_name
@@ -11312,7 +10873,6 @@ index 0000000..89bcdbb
 +                .iter()
 +                .map(String::as_str)
 +                .ne(expected_aliases)
-+            || !preinitialized_memory_is_canonical
 +            || artifact.compressed
 +            || artifact.linear_memory.profile_id != manifest.linear_memory_profile.id
 +            || artifact.linear_memory.install_receipt_sha256
@@ -11344,10 +10904,9 @@ index 0000000..89bcdbb
 +        carrier_root,
 +        input_path,
 +        input_canonical,
-+        capture_memory_image,
 +        runtime_identity: _,
 +    } = prepared;
-+    validate_manifest_identity(&manifest, engine, capture_memory_image)?;
++    validate_manifest_identity(&manifest, engine)?;
 +    let activation_policy = SealedActivationPolicy::from_environment()?;
 +    audit_executor_trust_boundary(&manifest);
 +
@@ -11362,7 +10921,7 @@ index 0000000..89bcdbb
 +    let mut executables = Vec::new();
 +    let mut artifacts = HashMap::new();
 +    let mut declared_entrypoint = false;
-+    let mut selected: Option<(ModuleHash, Option<PreinitializedMemoryImageHandle>)> = None;
++    let mut selected: Option<ModuleHash> = None;
 +    let input_name = input_path.to_string_lossy();
 +
 +    for artifact in &manifest.artifacts {
@@ -11397,26 +10956,6 @@ index 0000000..89bcdbb
 +            ensure!(
 +                artifact.exec_aliases.is_empty(),
 +                "sealed side module '{}' must not declare executable aliases",
-+                artifact.name
-+            );
-+        }
-+
-+        if artifact.kind == "side-module" {
-+            ensure!(
-+                artifact.preinitialized_memory.is_none(),
-+                "sealed side module '{}' must not declare a preinitialized memory image",
-+                artifact.name
-+            );
-+        } else if capture_memory_image {
-+            ensure!(
-+                artifact.preinitialized_memory.is_none(),
-+                "capture manifest executable '{}' must not already declare a preinitialized memory image",
-+                artifact.name
-+            );
-+        } else {
-+            ensure!(
-+                artifact.preinitialized_memory.is_some(),
-+                "sealed executable '{}' has no preinitialized memory image",
 +                artifact.name
 +            );
 +        }
@@ -11506,54 +11045,6 @@ index 0000000..89bcdbb
 +            "prepared sealed artifact descriptor"
 +        );
 +
-+        let preinitialized_memory_image = artifact
-+            .preinitialized_memory
-+            .as_ref()
-+            .map(|image| {
-+                let expected_image_path = format!(
-+                    "memory/{}.bin",
-+                    artifact.module_sha256.to_ascii_uppercase()
-+                );
-+                ensure!(
-+                    image.path == expected_image_path,
-+                    "sealed preinitialized memory image path must be canonical: artifact='{}' expected='{}' actual='{}'",
-+                    artifact.name,
-+                    expected_image_path,
-+                    image.path
-+                );
-+                lazy_preinitialized_memory_image(
-+                    &carrier_root,
-+                    image,
-+                    module_hash,
-+                    activation_policy,
-+                )
-+                .with_context(|| {
-+                    format!(
-+                        "prepare preinitialized memory image for '{}'",
-+                        artifact.name
-+                    )
-+                })
-+            })
-+            .transpose()?;
-+        if let Some(image) = &artifact.preinitialized_memory {
-+            tracing::debug!(
-+                target: "wasmer_cli::sealed_loader_audit",
-+                audit_schema = "oliphaunt.wasix-postmaster.sealed-loader-audit.v1",
-+                artifact_name = artifact.name.as_str(),
-+                artifact_kind = "preinitialized-memory",
-+                module_sha256 = %module_hash,
-+                activation_state = "inactive",
-+                snapshot_mode = "deferred-open-fd",
-+                logical_bytes = image.size,
-+                source_bytes_read = 0_u64,
-+                snapshot_bytes_written = 0_u64,
-+                mapping_bytes_hashed = 0_u64,
-+                sync_calls = 0_u64,
-+                write_policy = "none",
-+                "prepared sealed preinitialized memory descriptor"
-+            );
-+        }
-+
 +        let input_matches = artifact.kind == "executable" && module_path == input_canonical;
 +        if artifact.kind == "executable" {
 +            let carrier_exec_path = module_path.to_string_lossy().into_owned();
@@ -11563,11 +11054,7 @@ index 0000000..89bcdbb
 +                    .is_none(),
 +                "sealed manifest contains duplicate executable alias '{carrier_exec_path}'"
 +            );
-+            executables.push((
-+                carrier_exec_path,
-+                module_hash,
-+                preinitialized_memory_image.clone(),
-+            ));
++            executables.push((carrier_exec_path, module_hash));
 +        }
 +        for alias in &artifact.exec_aliases {
 +            validate_guest_alias(alias)?;
@@ -11575,11 +11062,7 @@ index 0000000..89bcdbb
 +                aliases.insert(alias.clone(), module_hash).is_none(),
 +                "sealed manifest contains duplicate executable alias '{alias}'"
 +            );
-+            executables.push((
-+                alias.clone(),
-+                module_hash,
-+                preinitialized_memory_image.clone(),
-+            ));
++            executables.push((alias.clone(), module_hash));
 +        }
 +
 +        // The host input path selects an executable by its carrier-relative
@@ -11596,11 +11079,7 @@ index 0000000..89bcdbb
 +                ),
 +                None => {
 +                    aliases.insert(input_name.to_string(), module_hash);
-+                    executables.push((
-+                        input_name.to_string(),
-+                        module_hash,
-+                        preinitialized_memory_image.clone(),
-+                    ));
++                    executables.push((input_name.to_string(), module_hash));
 +                }
 +            }
 +        }
@@ -11635,7 +11114,7 @@ index 0000000..89bcdbb
 +                "input '{}' matches more than one sealed executable",
 +                input_path.display()
 +            );
-+            selected = Some((module_hash, preinitialized_memory_image));
++            selected = Some(module_hash);
 +        }
 +    }
 +
@@ -11644,7 +11123,7 @@ index 0000000..89bcdbb
 +        "sealed manifest entrypoint '{}' is not present in artifacts",
 +        manifest.entrypoint
 +    );
-+    let (module_hash, entrypoint_memory_image) = selected.with_context(|| {
++    let module_hash = selected.with_context(|| {
 +        format!(
 +            "input '{}' is not an alias of any sealed executable",
 +            input_path.display()
@@ -11664,28 +11143,18 @@ index 0000000..89bcdbb
 +        path: input_path.clone(),
 +        executables,
 +        module_cache,
-+        entrypoint_memory_image,
 +    })
 +}
 +
-+fn validate_manifest_identity(
-+    manifest: &SealedManifest,
-+    engine: &Engine,
-+    capture_memory_image: bool,
-+) -> Result<(), Error> {
-+    let (format_version, schema) = if capture_memory_image {
-+        (CAPTURE_MANIFEST_FORMAT_VERSION, CAPTURE_MANIFEST_SCHEMA)
-+    } else {
-+        (MANIFEST_FORMAT_VERSION, MANIFEST_SCHEMA)
-+    };
++fn validate_manifest_identity(manifest: &SealedManifest, engine: &Engine) -> Result<(), Error> {
 +    ensure!(
-+        manifest.format_version == format_version,
-+        "sealed manifest format mismatch: manifest={} runtime={format_version}",
++        manifest.format_version == MANIFEST_FORMAT_VERSION,
++        "sealed manifest format mismatch: manifest={} runtime={MANIFEST_FORMAT_VERSION}",
 +        manifest.format_version
 +    );
 +    ensure!(
-+        manifest.schema == schema,
-+        "sealed manifest schema mismatch: manifest={} runtime={schema}",
++        manifest.schema == MANIFEST_SCHEMA,
++        "sealed manifest schema mismatch: manifest={} runtime={MANIFEST_SCHEMA}",
 +        manifest.schema
 +    );
 +    ensure!(
@@ -12293,227 +11762,6 @@ index 0000000..89bcdbb
 +    bail!("immutable sealed AOT snapshots are not implemented on this host")
 +}
 +
-+#[derive(Debug)]
-+struct LazyPreinitializedMemoryImage {
-+    source: Mutex<Option<File>>,
-+    expected_digest: [u8; 32],
-+    module_hash: ModuleHash,
-+    metadata: PreinitializedMemoryImageMetadata,
-+    logical_bytes: u64,
-+    policy: SealedActivationPolicy,
-+    activation: OnceLock<Result<Arc<PreinitializedMemoryImage>, Arc<str>>>,
-+    #[cfg(test)]
-+    activation_attempts: std::sync::atomic::AtomicUsize,
-+}
-+
-+impl PreinitializedMemoryImageLoader for LazyPreinitializedMemoryImage {
-+    fn load(&self) -> Result<Arc<PreinitializedMemoryImage>, String> {
-+        self.activation
-+            .get_or_init(|| {
-+                #[cfg(test)]
-+                self.activation_attempts
-+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-+                let source = self
-+                    .source
-+                    .lock()
-+                    .map_err(|_| Arc::<str>::from("memory-image source lock poisoned"))?
-+                    .take()
-+                    .ok_or_else(|| Arc::<str>::from("memory-image source already consumed"))?;
-+                let eviction_fd = source.try_clone().map_err(|error| {
-+                    Arc::<str>::from(format!(
-+                        "duplicate preinitialized memory-image source descriptor: {error}"
-+                    ))
-+                })?;
-+                let use_direct = match intrinsic_file_immutability(&source) {
-+                    Ok(_) => true,
-+                    Err(error) if self.policy.requires_direct_immutable() => {
-+                        return Err(Arc::<str>::from(format!(
-+                            "{REQUIRE_ZERO_WRITE_AOT_ENV}=1 requires a direct immutable preinitialized memory-image source: {error}"
-+                        )));
-+                    }
-+                    Err(_) => false,
-+                };
-+                let read_advice = advise_file_for_one_shot_read(&eviction_fd);
-+                let image_result = if use_direct {
-+                    PreinitializedMemoryImage::from_verified_immutable_file(
-+                        source,
-+                        self.expected_digest,
-+                        self.module_hash,
-+                        self.metadata.clone(),
-+                    )
-+                } else {
-+                    PreinitializedMemoryImage::from_verified_reader(
-+                        &source,
-+                        self.expected_digest,
-+                        self.module_hash,
-+                        self.metadata.clone(),
-+                    )
-+                };
-+                // Compatibility-copy loaders do not retain the source mapping,
-+                // so this immediate descriptor-only checkpoint is their exact
-+                // post-hash boundary. Direct loaders retain the earlier probe
-+                // captured while their verified mapping was still live.
-+                let fallback_residency_after_hash_inspect =
-+                    file_residency(&eviction_fd, self.logical_bytes);
-+                // Always release clean carrier-source pages after the exact
-+                // copy/hash attempt, including integrity and size failures.
-+                let source_cache_eviction = advise_file_away(&eviction_fd);
-+                let residency_after_eviction =
-+                    file_residency(&eviction_fd, self.logical_bytes);
-+                let image = image_result.map_err(Arc::<str>::from)?;
-+                let backing = image.backing();
-+                let image_load_audit = image.load_audit();
-+                let residency_after_hash_inspect = image_load_audit
-+                    .source_residency_after_hash_inspect
-+                    .unwrap_or(fallback_residency_after_hash_inspect);
-+                let residency_after_archive_release =
-+                    FileResidencyAudit::not_applicable();
-+                let mapping_cache_eviction = image_load_audit.mapping_cache_eviction;
-+                let snapshot_cache_eviction = FileAdviceAudit::not_applicable();
-+                let direct = matches!(
-+                    backing,
-+                    PreinitializedMemoryImageBacking::DirectIntrinsic(_)
-+                );
-+                let snapshot_bytes_written = if direct { 0 } else { self.logical_bytes };
-+                tracing::debug!(
-+                    target: "wasmer_cli::sealed_loader_audit",
-+                    audit_schema = "oliphaunt.wasix-postmaster.sealed-loader-audit.v2",
-+                    artifact_kind = "preinitialized-memory",
-+                    module_sha256 = %self.module_hash,
-+                    activation_state = "active",
-+                    snapshot_mode = backing.audit_mode(),
-+                    logical_bytes = self.logical_bytes,
-+                    source_bytes_read = self.logical_bytes,
-+                    source_bytes_written = 0_u64,
-+                    snapshot_bytes_written,
-+                    mapping_bytes_hashed = self.logical_bytes,
-+                    sync_calls = 0_u64,
-+                    read_advice_supported = read_advice.supported,
-+                    read_advice_calls = read_advice.calls,
-+                    read_advice_successes = read_advice.successes,
-+                    read_advice_first_errno = read_advice.first_errno,
-+                    source_cache_eviction_supported = source_cache_eviction.supported,
-+                    source_cache_eviction_calls = source_cache_eviction.calls,
-+                    source_cache_eviction_successes = source_cache_eviction.successes,
-+                    source_cache_eviction_errno = source_cache_eviction.first_errno,
-+                    mapping_cache_eviction_supported = mapping_cache_eviction.supported,
-+                    mapping_cache_eviction_calls = mapping_cache_eviction.calls,
-+                    mapping_cache_eviction_successes = mapping_cache_eviction.successes,
-+                    mapping_cache_eviction_errno = mapping_cache_eviction.first_errno,
-+                    residency_after_hash_inspect_state = residency_after_hash_inspect.state.as_str(),
-+                    residency_after_hash_inspect_pages = residency_after_hash_inspect.resident_pages,
-+                    residency_after_eviction_state = residency_after_eviction.state.as_str(),
-+                    residency_after_eviction_pages = residency_after_eviction.resident_pages,
-+                    write_policy = if direct { "none-immutable-source" } else { "private-sealed-backing-no-sync" },
-+                    "activated sealed preinitialized memory image"
-+                );
-+                emit_loader_audit(LoaderAuditRecord {
-+                    artifact_kind: "preinitialized-memory",
-+                    module_sha256: canonical_module_sha256(self.module_hash),
-+                    snapshot_mode: backing.audit_mode(),
-+                    logical_bytes: self.logical_bytes,
-+                    source_bytes_read: self.logical_bytes,
-+                    source_bytes_written: 0,
-+                    snapshot_bytes_written,
-+                    mapping_bytes_hashed: self.logical_bytes,
-+                    sync_calls: 0,
-+                    read_advice_applicable: true,
-+                    read_advice_supported: read_advice.supported,
-+                    read_advice_calls: read_advice.calls,
-+                    read_advice_successes: read_advice.successes,
-+                    read_advice_first_errno: read_advice.first_errno,
-+                    source_cache_eviction_applicable: true,
-+                    source_cache_eviction_supported: source_cache_eviction.supported,
-+                    source_cache_eviction_calls: source_cache_eviction.calls,
-+                    source_cache_eviction_successes: source_cache_eviction.successes,
-+                    source_cache_eviction_errno: source_cache_eviction.first_errno,
-+                    snapshot_cache_eviction_applicable: false,
-+                    snapshot_cache_eviction_supported: snapshot_cache_eviction.supported,
-+                    snapshot_cache_eviction_calls: snapshot_cache_eviction.calls,
-+                    snapshot_cache_eviction_successes: snapshot_cache_eviction.successes,
-+                    snapshot_cache_eviction_errno: snapshot_cache_eviction.first_errno,
-+                    mapping_cache_eviction_applicable: true,
-+                    mapping_cache_eviction_supported: mapping_cache_eviction.supported,
-+                    mapping_cache_eviction_calls: mapping_cache_eviction.calls,
-+                    mapping_cache_eviction_successes: mapping_cache_eviction.successes,
-+                    mapping_cache_eviction_errno: mapping_cache_eviction.first_errno,
-+                    residency_after_hash_inspect: residency_after_hash_inspect.into(),
-+                    residency_after_archive_release: residency_after_archive_release.into(),
-+                    source_residency_before_eviction: residency_after_hash_inspect.into(),
-+                    source_residency_after_eviction: residency_after_eviction.into(),
-+                    residency_after_eviction: residency_after_eviction.into(),
-+                    write_policy: if direct {
-+                        "none-immutable-source"
-+                    } else {
-+                        "private-sealed-backing-no-sync"
-+                    },
-+                })
-+                .map_err(|error| {
-+                    Arc::<str>::from(format!("write sealed loader audit receipt: {error:#}"))
-+                })?;
-+                Ok(Arc::new(image))
-+            })
-+            .clone()
-+            .map_err(|message| message.to_string())
-+    }
-+
-+    fn runtime_audit_if_loaded(&self) -> Option<PreinitializedMemoryImageRuntimeAudit> {
-+        self.activation
-+            .get()
-+            .and_then(|result| result.as_ref().ok())
-+            .and_then(|image| image.runtime_audit())
-+    }
-+}
-+
-+fn lazy_preinitialized_memory_image(
-+    carrier_root: &Path,
-+    image: &SealedPreinitializedMemory,
-+    module_hash: ModuleHash,
-+    policy: SealedActivationPolicy,
-+) -> Result<PreinitializedMemoryImageHandle, Error> {
-+    #[cfg(not(unix))]
-+    {
-+        let _ = (carrier_root, image, module_hash, policy);
-+        bail!(
-+            "sealed preinitialized memory images are not supported on this host; the Windows placeholder mapper is not implemented"
-+        )
-+    }
-+
-+    #[cfg(unix)]
-+    {
-+        ensure!(
-+            image.size == image.metadata.mapped_size,
-+            "preinitialized memory image packaged size does not match mapped size"
-+        );
-+        PreinitializedMemoryImage::validate_metadata(&image.metadata, module_hash)
-+            .map_err(Error::msg)?;
-+        let path = carrier_file_path(carrier_root, &image.path)?;
-+        let source = open_regular(&path)?;
-+        let source_size = source.metadata()?.len();
-+        ensure!(
-+            source_size == image.size,
-+            "size mismatch for {}: manifest={} actual={}",
-+            path.display(),
-+            image.size,
-+            source_size
-+        );
-+        let expected = parse_sha256("preinitialized-memory.sha256", &image.sha256)?;
-+        Ok(PreinitializedMemoryImageHandle::new(Arc::new(
-+            LazyPreinitializedMemoryImage {
-+                source: Mutex::new(Some(source)),
-+                expected_digest: expected,
-+                module_hash,
-+                metadata: image.metadata.clone(),
-+                logical_bytes: image.size,
-+                policy,
-+                activation: OnceLock::new(),
-+                #[cfg(test)]
-+                activation_attempts: std::sync::atomic::AtomicUsize::new(0),
-+            },
-+        )))
-+    }
-+}
-+
 +fn open_regular(path: &Path) -> Result<File, Error> {
 +    let mut options = OpenOptions::new();
 +    options.read(true);
@@ -12615,28 +11863,6 @@ index 0000000..89bcdbb
 +    fn test_artifact(expected: ExpectedWasixPostmasterArtifact, digest_byte: u8) -> SealedArtifact {
 +        let module_sha256 = format!("{digest_byte:02x}").repeat(32);
 +        let artifact_sha256 = format!("{:02x}", digest_byte.wrapping_add(32)).repeat(32);
-+        let preinitialized_memory = expected.executable.map(|_| SealedPreinitializedMemory {
-+            path: format!("memory/{}.bin", module_sha256.to_ascii_uppercase()),
-+            sha256: format!("{:02x}", digest_byte.wrapping_add(64)).repeat(32),
-+            size: 65_536,
-+            metadata: PreinitializedMemoryImageMetadata {
-+                schema: PreinitializedMemoryImageMetadata::SCHEMA.to_string(),
-+                module_sha256: module_sha256.clone(),
-+                runtime_abi_id: "runtime-abi".to_string(),
-+                phase: wasmer_wasix::PREINITIALIZED_MEMORY_IMAGE_PHASE.to_string(),
-+                mapping_alignment: 65_536,
-+                mapped_size: 65_536,
-+                memory_minimum_pages: 1,
-+                memory_maximum_pages: Some(4_096),
-+                memory_shared: true,
-+                memory_base: 4_096,
-+                dylink_memory_size: 1,
-+                dylink_memory_alignment: 1,
-+                stack_low: 8_192,
-+                deterministic_start_proof: None,
-+                deterministic_start_proof_output_sha256: None,
-+            },
-+        });
 +        SealedArtifact {
 +            name: format!(
 +                "runtime:{}",
@@ -12664,7 +11890,6 @@ index 0000000..89bcdbb
 +                .iter()
 +                .map(|alias| (*alias).to_string())
 +                .collect(),
-+            preinitialized_memory,
 +        }
 +    }
 +
@@ -12877,16 +12102,6 @@ index 0000000..89bcdbb
 +            "final-proof-sha256": hex::encode(Sha256::digest(&final_proof_bytes)),
 +            "seed": snapshot(seed_sha256),
 +            "final-module": snapshot(final_sha256),
-+            "estimate": {
-+                "classification": "structural-estimate-not-measured-rss",
-+                "formula": "removed-local-functions * 32 + removed-local-globals * 48",
-+                "removed-local-functions": 1,
-+                "bytes-per-eager-local-funcref": 32,
-+                "removed-local-globals": 0,
-+                "bytes-per-eager-local-global": 48,
-+                "estimated-bytes-per-instance": 32,
-+                "caveat": "fixture"
-+            },
 +            "sides": side_identities
 +        });
 +        let export_receipt_bytes = serde_json::to_vec(&export_receipt).unwrap();
@@ -12970,67 +12185,37 @@ index 0000000..89bcdbb
 +    #[test]
 +    fn runtime_policy_identity_requires_the_exact_postmaster_closure() {
 +        assert!(has_exact_wasix_postmaster_identity(
-+            &test_wasix_postmaster_manifest(),
-+            false
++            &test_wasix_postmaster_manifest()
 +        ));
 +
 +        let mut missing = test_wasix_postmaster_manifest();
 +        missing.artifacts.pop();
-+        assert!(!has_exact_wasix_postmaster_identity(&missing, false));
++        assert!(!has_exact_wasix_postmaster_identity(&missing));
 +
 +        let mut duplicate_path = test_wasix_postmaster_manifest();
 +        duplicate_path.artifacts[1].module_path = duplicate_path.artifacts[0].module_path.clone();
-+        assert!(!has_exact_wasix_postmaster_identity(&duplicate_path, false));
++        assert!(!has_exact_wasix_postmaster_identity(&duplicate_path));
 +
 +        let mut reordered = test_wasix_postmaster_manifest();
 +        reordered.artifacts.swap(0, 1);
-+        assert!(!has_exact_wasix_postmaster_identity(&reordered, false));
-+
-+        let mut noncanonical_memory = test_wasix_postmaster_manifest();
-+        noncanonical_memory.artifacts[0]
-+            .preinitialized_memory
-+            .as_mut()
-+            .unwrap()
-+            .path = "memory/alias.bin".to_string();
-+        assert!(!has_exact_wasix_postmaster_identity(
-+            &noncanonical_memory,
-+            false
-+        ));
++        assert!(!has_exact_wasix_postmaster_identity(&reordered));
 +
 +        let mut extra_feature = test_wasix_postmaster_manifest();
 +        extra_feature.wasm_features.push("simd".to_string());
-+        assert!(!has_exact_wasix_postmaster_identity(&extra_feature, false));
++        assert!(!has_exact_wasix_postmaster_identity(&extra_feature));
 +
 +        let mut unsupported_profile = test_wasix_postmaster_manifest();
 +        unsupported_profile.core_profile = "o3".to_string();
-+        assert!(!has_exact_wasix_postmaster_identity(
-+            &unsupported_profile,
-+            false
-+        ));
++        assert!(!has_exact_wasix_postmaster_identity(&unsupported_profile));
 +
 +        let mut invalid_guest_recipe = test_wasix_postmaster_manifest();
 +        invalid_guest_recipe.guest_build_recipe_sha256 = "not-a-digest".to_string();
-+        assert!(!has_exact_wasix_postmaster_identity(
-+            &invalid_guest_recipe,
-+            false
-+        ));
++        assert!(!has_exact_wasix_postmaster_identity(&invalid_guest_recipe));
 +
 +        let mut superseded_schema = test_wasix_postmaster_manifest();
 +        superseded_schema.format_version = 5;
 +        superseded_schema.schema = "oliphaunt.wasix-postmaster.sealed-aot.v4".to_string();
-+        assert!(!has_exact_wasix_postmaster_identity(
-+            &superseded_schema,
-+            false
-+        ));
-+
-+        let mut capture_schema = test_wasix_postmaster_manifest();
-+        capture_schema.format_version = CAPTURE_MANIFEST_FORMAT_VERSION;
-+        capture_schema.schema = CAPTURE_MANIFEST_SCHEMA.to_string();
-+        for artifact in &mut capture_schema.artifacts {
-+            artifact.preinitialized_memory = None;
-+        }
-+        assert!(has_exact_wasix_postmaster_identity(&capture_schema, true));
-+        assert!(!has_exact_wasix_postmaster_identity(&capture_schema, false));
++        assert!(!has_exact_wasix_postmaster_identity(&superseded_schema));
 +    }
 +
 +    #[test]
@@ -13365,55 +12550,6 @@ index 0000000..89bcdbb
 +            fs::metadata(path).unwrap().permissions().mode() & 0o777,
 +            0o600
 +        );
-+    }
-+
-+    #[cfg(unix)]
-+    #[test]
-+    fn attested_start_terminal_summary_uses_the_bounded_atomic_receipt_path() {
-+        let root = tempfile::tempdir().unwrap();
-+        let path = root.path().join("attested-start.jsonl");
-+        let audit = PreinitializedMemoryImageRuntimeAudit {
-+            module_sha256: "ab".repeat(32),
-+            memory_image_schema: "oliphaunt.wasix-postmaster.memory-image.v2".to_string(),
-+            proof_sha256: "cd".repeat(32),
-+            proof_output_sha256: "ef".repeat(32),
-+            mapped_size: 65_536,
-+            ordinary_start_completed_instances: 4,
-+            fresh_zeroed_instances: 4,
-+            nonfresh_instances: 0,
-+            validation_attempts: 4,
-+            full_compare_attempts: 1,
-+            full_compare_successes: 1,
-+            full_compare_failures: 0,
-+            compared_bytes: 65_536,
-+            reuse_successes: 3,
-+            reuse_failures: 0,
-+            skipped_bytes: 196_608,
-+            remap_successes: 4,
-+            remap_failures: 0,
-+            counter_overflow: false,
-+        };
-+        let envelope = AttestedStartRuntimeSummaryEnvelope {
-+            schema: "oliphaunt.wasix-postmaster.attested-start-runtime-summary.v1",
-+            pid: std::process::id(),
-+            artifact_kind: "attested-start-runtime-summary",
-+            terminal: true,
-+            record: &audit,
-+        };
-+        append_sealed_loader_audit_record(&path, &envelope).unwrap();
-+
-+        let text = fs::read_to_string(path).unwrap();
-+        assert!(text.ends_with('\n'));
-+        assert_eq!(text.lines().count(), 1);
-+        assert!(text.len() <= 4096);
-+        let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-+        assert_eq!(parsed["artifact_kind"], "attested-start-runtime-summary");
-+        assert_eq!(parsed["terminal"], true);
-+        assert_eq!(parsed["ordinary_start_completed_instances"], 4);
-+        assert_eq!(parsed["full_compare_attempts"], 1);
-+        assert_eq!(parsed["reuse_successes"], 3);
-+        assert_eq!(parsed["skipped_bytes"], 196_608);
-+        assert_eq!(parsed["counter_overflow"], false);
 +    }
 +
 +    #[test]
@@ -19326,7 +18462,7 @@ index 9071afa..8b53f98 100644
  webc_runner_rt_wcgi = [
  	"hyper",
 diff --git a/lib/wasix/src/bin_factory/exec.rs b/lib/wasix/src/bin_factory/exec.rs
-index 4e60ee0..146514b 100644
+index 4e60ee0..637be9e 100644
 --- a/lib/wasix/src/bin_factory/exec.rs
 +++ b/lib/wasix/src/bin_factory/exec.rs
 @@ -10,9 +10,11 @@ use crate::{
@@ -19372,7 +18508,7 @@ index 4e60ee0..146514b 100644
      // Create a new task manager
      let tasks = runtime.task_manager();
  
-@@ -139,20 +164,21 @@ pub fn spawn_exec_module(
+@@ -139,20 +164,23 @@ pub fn spawn_exec_module(
          // Create a thread that will run this process
          let tasks_outer = tasks.clone();
  
@@ -19390,13 +18526,16 @@ index 4e60ee0..146514b 100644
 -                error!("wasi[{}]::failed to launch module - {}", pid, err);
 -                SpawnError::Other(Box::new(err))
 -            })?
-+        let mut task = TaskWasm::new(Box::new(run_exec), env, module, true, true).with_pre_run(
-+            Box::new(|ctx, store| {
++        let accepted_run_exec = move |props| {
++            shared_memory_exec.commit();
++            run_exec(props);
++        };
++        let mut task = TaskWasm::new(Box::new(accepted_run_exec), env, module, true, true)
++            .with_pre_run(Box::new(|ctx, store| {
 +                Box::pin(async move {
 +                    ctx.data(store).state.fs.close_cloexec_fds().await;
 +                })
-+            }),
-+        );
++            }));
 +        if let Some(image) = preinitialized_memory_image {
 +            task = task.with_preinitialized_memory_image(image);
 +        }
@@ -19404,11 +18543,10 @@ index 4e60ee0..146514b 100644
 +            error!("wasi[{}]::failed to launch module - {}", pid, err);
 +            SpawnError::Other(Box::new(err))
 +        })?;
-+        shared_memory_exec.commit();
      };
  
      Ok(join_handle)
-@@ -163,9 +189,15 @@ pub fn spawn_exec_module(
+@@ -163,9 +191,15 @@ pub fn spawn_exec_module(
  /// otherwise it will cause a panic
  unsafe fn run_recycle(
      callback: Option<Box<TaskWasmRecycle>>,
@@ -19424,7 +18562,7 @@ index 4e60ee0..146514b 100644
      if let Some(callback) = callback {
          let env = ctx.data_mut(&mut store);
          let memory = unsafe { env.memory() }.clone();
-@@ -186,6 +218,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
+@@ -186,6 +220,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
      // Create the WasiFunctionEnv
      let thread = WasiThreadRunGuard::new(ctx.data(&store).thread.clone());
      let recycle = props.recycle;
@@ -19432,7 +18570,7 @@ index 4e60ee0..146514b 100644
  
      // Perform the initialization
      // If this module exports an _initialize function, run that first.
-@@ -206,7 +239,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
+@@ -206,7 +241,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
              thread.thread.set_status_finished(Err(err.into()));
              ctx.data(&store)
                  .blocking_on_exit(Some(Errno::Noexec.into()));
@@ -19441,7 +18579,7 @@ index 4e60ee0..146514b 100644
              return;
          }
      }
-@@ -221,7 +254,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
+@@ -221,7 +256,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
              thread.thread.set_status_finished(Err(err));
              ctx.data(&store)
                  .blocking_on_exit(Some(Errno::Noexec.into()));
@@ -19450,7 +18588,7 @@ index 4e60ee0..146514b 100644
              return;
          }
      };
-@@ -231,7 +264,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
+@@ -231,7 +266,7 @@ pub fn run_exec(props: TaskWasmRunProperties) {
      // TODO: rewrite to use crate::run_wasi_func
  
      // Call the module
@@ -19459,7 +18597,7 @@ index 4e60ee0..146514b 100644
  }
  
  fn get_start(ctx: &WasiFunctionEnv, store: &Store) -> Option<Function> {
-@@ -252,6 +285,7 @@ fn call_module(
+@@ -252,6 +287,7 @@ fn call_module(
      handle: WasiThreadRunGuard,
      rewind_state: Option<(RewindState, RewindResultType)>,
      recycle: Option<Box<TaskWasmRecycle>>,
@@ -19467,7 +18605,7 @@ index 4e60ee0..146514b 100644
  ) {
      let env = ctx.data(&store);
      let pid = env.pid();
-@@ -272,7 +306,15 @@ fn call_module(
+@@ -272,7 +308,15 @@ fn call_module(
              );
              if res != Errno::Success {
                  ctx.data().blocking_on_exit(Some(res.into()));
@@ -19484,7 +18622,7 @@ index 4e60ee0..146514b 100644
                  return;
              }
          } else {
-@@ -285,7 +327,15 @@ fn call_module(
+@@ -285,7 +329,15 @@ fn call_module(
              );
              if res != Errno::Success {
                  ctx.data().blocking_on_exit(Some(res.into()));
@@ -19501,7 +18639,7 @@ index 4e60ee0..146514b 100644
                  return;
              }
          };
-@@ -297,7 +347,8 @@ fn call_module(
+@@ -297,7 +349,8 @@ fn call_module(
          debug!("wasi[{}]::exec-failed: missing _start function", pid);
          ctx.data(&store)
              .blocking_on_exit(Some(Errno::Noexec.into()));
@@ -19511,7 +18649,7 @@ index 4e60ee0..146514b 100644
          return;
      };
  
-@@ -335,8 +386,9 @@ fn call_module(
+@@ -335,8 +388,9 @@ fn call_module(
              Ok(WasiError::DeepSleep(deep)) => {
                  // Create the callback that will be invoked when the thread respawns after a deep sleep
                  let rewind = deep.rewind;
@@ -19522,7 +18660,7 @@ index 4e60ee0..146514b 100644
                          // Call the thread
                          call_module(
                              ctx,
-@@ -344,15 +396,26 @@ fn call_module(
+@@ -344,15 +398,26 @@ fn call_module(
                              handle,
                              Some((rewind, RewindResultType::RewindWithResult(rewind_result))),
                              recycle,
@@ -19550,7 +18688,7 @@ index 4e60ee0..146514b 100644
                  }
                  return;
              }
-@@ -366,6 +429,7 @@ fn call_module(
+@@ -366,6 +431,7 @@ fn call_module(
                  runtime.on_taint(TaintReason::DlSymbolResolutionFailed(symbol.clone()));
                  Err(WasiError::DlSymbolResolutionFailed(symbol).into())
              }
@@ -19558,7 +18696,7 @@ index 4e60ee0..146514b 100644
              Err(err) => {
                  runtime.on_taint(TaintReason::RuntimeError(err.clone()));
                  Err(WasiRuntimeError::from(err))
-@@ -391,10 +455,9 @@ fn call_module(
+@@ -391,10 +457,9 @@ fn call_module(
  
      // Cleanup the environment
      ctx.data(&store).blocking_on_exit(Some(code));
@@ -19570,7 +18708,7 @@ index 4e60ee0..146514b 100644
  }
  
  #[allow(clippy::type_complexity)]
-@@ -417,6 +480,7 @@ fn resume_vfork(
+@@ -417,6 +482,7 @@ fn resume_vfork(
              Some(WasiError::ThreadExit) => (None, wasmer_wasix_types::wasi::ExitCode::from(0u16)),
              Some(WasiError::UnknownWasiVersion) => (None, Errno::Noexec.into()),
              Some(WasiError::DlSymbolResolutionFailed(_)) => (None, Errno::Nolink.into()),
@@ -19578,7 +18716,7 @@ index 4e60ee0..146514b 100644
              None => (
                  Some(WasiRuntimeError::from(err.clone())),
                  Errno::Unknown.into(),
-@@ -447,10 +511,16 @@ fn resume_vfork(
+@@ -447,10 +513,16 @@ fn resume_vfork(
          vfork.env.swap_inner(ctx.data_mut(&mut store));
          std::mem::swap(vfork.env.as_mut(), ctx.data_mut(&mut store));
          let mut child_env = *vfork.env;
@@ -19597,7 +18735,7 @@ index 4e60ee0..146514b 100644
  
          // If the vfork contained a context-switching environment, exit now
          if ctx.data(&store).context_switching_environment.is_some() {
-@@ -522,3 +592,85 @@ fn resume_vfork(
+@@ -522,3 +594,85 @@ fn resume_vfork(
          (store, Ok(None))
      }
  }
@@ -20787,7 +19925,7 @@ index 61ec5f6..9130b6b 100644
          for in_event in iterate_poll_events(self.peb) {
              match in_event {
 diff --git a/lib/wasix/src/fs/mod.rs b/lib/wasix/src/fs/mod.rs
-index 508dbef..5cb7044 100644
+index 508dbef..abc23b6 100644
 --- a/lib/wasix/src/fs/mod.rs
 +++ b/lib/wasix/src/fs/mod.rs
 @@ -46,6 +46,7 @@ use wasmer_wasix_types::{
@@ -20991,7 +20129,42 @@ index 508dbef..5cb7044 100644
                      fd_flags: Fdflagsext::empty(),
                  },
                  open_flags: 0,
-@@ -1650,6 +1753,24 @@ impl WasiFs {
+@@ -1556,9 +1659,32 @@ impl WasiFs {
+             .map(|a| a.inode.clone())
+     }
+ 
++    /// Return the current backing-file length and refresh the inode cache.
++    /// Host-mounted files can be extended by another WASIX process, so the
++    /// per-inode snapshot is not authoritative for SEEK_END or filestat.
++    pub(crate) fn authoritative_fd_size(fd: &Fd) -> u64 {
++        let handle = {
++            let guard = fd.inode.read();
++            match guard.deref() {
++                Kind::File {
++                    handle: Some(handle),
++                    ..
++                } => Some(handle.clone()),
++                _ => None,
++            }
++        };
++        let Some(handle) = handle else {
++            return fd.inode.stat.read().unwrap().st_size;
++        };
++        let size = handle.read().unwrap().size();
++        fd.inode.stat.write().unwrap().st_size = size;
++        size
++    }
++
+     pub fn filestat_fd(&self, fd: WasiFd) -> Result<Filestat, Errno> {
+-        let inode = self.get_fd_inode(fd)?;
+-        let guard = inode.stat.read().unwrap();
++        let fd = self.get_fd(fd)?;
++        Self::authoritative_fd_size(&fd);
++        let guard = fd.inode.stat.read().unwrap();
+         Ok(*guard.deref())
+     }
+ 
+@@ -1650,6 +1776,24 @@ impl WasiFs {
          }
      }
  
@@ -21016,7 +20189,7 @@ index 508dbef..5cb7044 100644
      #[allow(clippy::await_holding_lock)]
      pub async fn flush(&self, fd: WasiFd) -> Result<(), Errno> {
          match fd {
-@@ -1702,6 +1823,108 @@ impl WasiFs {
+@@ -1702,6 +1846,108 @@ impl WasiFs {
          Ok(())
      }
  
@@ -21125,7 +20298,7 @@ index 508dbef..5cb7044 100644
      /// Creates an inode and inserts it given a Kind and some extra data
      pub(crate) fn create_inode(
          &self,
-@@ -1841,6 +2064,21 @@ impl WasiFs {
+@@ -1841,6 +2087,21 @@ impl WasiFs {
          idx: Option<WasiFd>,
          exclusive: bool,
      ) -> Result<WasiFd, Errno> {
@@ -21147,7 +20320,7 @@ index 508dbef..5cb7044 100644
          let is_stdio = matches!(
              idx,
              Some(__WASI_STDIN_FILENO) | Some(__WASI_STDOUT_FILENO) | Some(__WASI_STDERR_FILENO)
-@@ -1851,6 +2089,8 @@ impl WasiFs {
+@@ -1851,6 +2112,8 @@ impl WasiFs {
                  rights_inheriting,
                  flags: fs_flags,
                  offset: Arc::new(AtomicU64::new(0)),
@@ -21156,7 +20329,7 @@ index 508dbef..5cb7044 100644
                  fd_flags,
              },
              open_flags,
-@@ -1858,17 +2098,20 @@ impl WasiFs {
+@@ -1858,17 +2121,20 @@ impl WasiFs {
              is_stdio,
          };
  
@@ -21184,7 +20357,7 @@ index 508dbef..5cb7044 100644
          }
      }
  
-@@ -1890,6 +2133,8 @@ impl WasiFs {
+@@ -1890,6 +2156,8 @@ impl WasiFs {
                      rights_inheriting: fd.inner.rights_inheriting,
                      flags: fd.inner.flags,
                      offset: fd.inner.offset.clone(),
@@ -21193,7 +20366,7 @@ index 508dbef..5cb7044 100644
                      fd_flags: match cloexec {
                          None => fd.inner.fd_flags,
                          Some(cloexec) => {
-@@ -2201,23 +2446,30 @@ impl WasiFs {
+@@ -2201,23 +2469,30 @@ impl WasiFs {
                  kind: RwLock::new(kind),
              })
          };
@@ -21240,7 +20413,7 @@ index 508dbef..5cb7044 100644
      }
  
      pub fn get_stat_for_kind(&self, kind: &Kind) -> Result<Filestat, Errno> {
-@@ -2291,23 +2543,22 @@ impl WasiFs {
+@@ -2291,23 +2566,22 @@ impl WasiFs {
  
      /// Closes an open FD, handling all details such as FD being preopen
      pub(crate) fn close_fd(&self, fd: WasiFd) -> Result<(), Errno> {
@@ -21279,7 +20452,7 @@ index 508dbef..5cb7044 100644
          Ok(())
      }
  }
-@@ -2461,6 +2712,7 @@ pub fn fs_error_into_wasi_err(fs_error: FsError) -> Errno {
+@@ -2461,6 +2735,7 @@ pub fn fs_error_into_wasi_err(fs_error: FsError) -> Errno {
  mod tests {
      use super::*;
      use once_cell::sync::OnceCell;
@@ -21287,7 +20460,7 @@ index 508dbef..5cb7044 100644
      use tempfile::tempdir;
      use virtual_fs::{RootFileSystemBuilder, TmpFileSystem};
      use wasmer::Engine;
-@@ -2556,6 +2808,91 @@ mod tests {
+@@ -2556,6 +2831,149 @@ mod tests {
          );
      }
  
@@ -21339,6 +20512,64 @@ index 508dbef..5cb7044 100644
 +        assert_eq!(wasi_fs.sync_blocking(duplicate, true), Ok(Some(())));
 +        assert_eq!(wasi_fs.sync_blocking(duplicate, false), Ok(Some(())));
 +        assert_eq!(wasi_fs.sync(duplicate, true).await, Ok(()));
++    }
++
++    #[cfg(feature = "host-fs")]
++    #[tokio::test]
++    async fn host_file_size_refresh_observes_another_process_extension() {
++        let root_dir = tempdir().unwrap();
++        let relation = root_dir.path().join("relation");
++        std::fs::write(&relation, b"old").unwrap();
++
++        let host_fs = virtual_fs::host_fs::FileSystem::new(
++            tokio::runtime::Handle::current(),
++            root_dir.path(),
++        )
++        .unwrap();
++        let inodes = WasiInodes::new();
++        let fs_backing = WasiFsRoot::from_filesystem(Arc::new(host_fs));
++        let wasi_fs = WasiFs::new_init(fs_backing, &inodes, FS_ROOT_INO).unwrap();
++        let handle = wasi_fs
++            .root_fs
++            .new_open_options()
++            .read(true)
++            .write(true)
++            .open(Path::new("/relation"))
++            .unwrap();
++        let inode = wasi_fs
++            .create_inode(
++                &inodes,
++                Kind::File {
++                    handle: Some(Arc::new(RwLock::new(handle))),
++                    path: PathBuf::from("/relation"),
++                    fd: None,
++                },
++                false,
++                "relation".to_string(),
++            )
++            .unwrap();
++        let fd = wasi_fs
++            .create_fd(
++                Rights::FD_FILESTAT_GET | Rights::FD_SEEK,
++                Rights::empty(),
++                Fdflags::empty(),
++                Fdflagsext::empty(),
++                0,
++                inode,
++            )
++            .unwrap();
++        let fd_entry = wasi_fs.get_fd(fd).unwrap();
++        assert_eq!(fd_entry.inode.stat.read().unwrap().st_size, 3);
++
++        std::fs::OpenOptions::new()
++            .write(true)
++            .open(&relation)
++            .unwrap()
++            .set_len(8192)
++            .unwrap();
++        assert_eq!(fd_entry.inode.stat.read().unwrap().st_size, 3);
++        assert_eq!(WasiFs::authoritative_fd_size(&fd_entry), 8192);
++        assert_eq!(wasi_fs.filestat_fd(fd).unwrap().st_size, 8192);
 +    }
 +
 +    #[tokio::test]
@@ -34074,7 +33305,7 @@ index 0abec18..4090d25 100644
 +    }
 +}
 diff --git a/lib/wasix/src/state/mod.rs b/lib/wasix/src/state/mod.rs
-index fc3463c..6dfdd9e 100644
+index fc3463c..cc02524 100644
 --- a/lib/wasix/src/state/mod.rs
 +++ b/lib/wasix/src/state/mod.rs
 @@ -21,12 +21,14 @@ mod env;
@@ -34112,7 +33343,7 @@ index fc3463c..6dfdd9e 100644
      types::*,
  };
  pub use crate::fs::{InodeGuard, InodeWeakGuard};
-@@ -121,6 +135,537 @@ pub(crate) struct WasiFutexState {
+@@ -121,6 +135,561 @@ pub(crate) struct WasiFutexState {
      pub futexes: HashMap<u64, WasiFutex>,
  }
  
@@ -34361,9 +33592,16 @@ index fc3463c..6dfdd9e 100644
 +
 +    fn same_exec_reservation(&self, candidate: &Self) -> bool {
 +        self.start == candidate.start
-+            && self.len == candidate.len
-+            && self.file_offset == candidate.file_offset
-+            && Arc::ptr_eq(&self.futexs, &candidate.futexs)
++            && self.same_exec_backing(candidate.len, candidate.file_offset, &candidate.futexs)
++    }
++
++    fn same_exec_backing(
++        &self,
++        len: u64,
++        file_offset: u64,
++        futexs: &Arc<WasiSharedFutexRegistry>,
++    ) -> bool {
++        self.len == len && self.file_offset == file_offset && Arc::ptr_eq(&self.futexs, futexs)
 +    }
 +}
 +
@@ -34424,6 +33662,17 @@ index fc3463c..6dfdd9e 100644
 +        self.mappings
 +            .iter()
 +            .position(|mapping| mapping.same_exec_reservation(candidate))
++    }
++
++    fn exec_backing_reservation_index(
++        &self,
++        len: u64,
++        file_offset: u64,
++        futexs: &Arc<WasiSharedFutexRegistry>,
++    ) -> Option<usize> {
++        self.mappings
++            .iter()
++            .position(|mapping| mapping.same_exec_backing(len, file_offset, futexs))
 +    }
 +
 +    fn replacing(&self, mapping: WasiSharedMemoryMapping) -> Result<Self, Errno> {
@@ -34548,6 +33797,12 @@ index fc3463c..6dfdd9e 100644
 +    GuestFixed,
 +}
 +
++#[derive(Debug, Clone, Copy, Eq, PartialEq)]
++pub(crate) enum WasiSharedMemoryRuntimePlacement {
++    Fresh { minimum_start: u64 },
++    Inherited { start: u64 },
++}
++
 +/// Serializes the address-space handoff from an old process image to a fresh
 +/// EXEC_BACKEND image. The two independent completion conditions are recorded
 +/// explicitly: the linker must install the reserved address window, and the
@@ -34650,7 +33905,7 @@ index fc3463c..6dfdd9e 100644
  /// Top level data type containing all* the state with which WASI can
  /// interact.
  ///
-@@ -139,7 +684,14 @@ pub(crate) struct WasiState {
+@@ -139,7 +708,14 @@ pub(crate) struct WasiState {
      pub args: Mutex<Vec<String>>,
      pub envs: Mutex<Vec<Vec<u8>>>,
      pub signals: Mutex<HashMap<Signal, Disposition>>,
@@ -34666,7 +33921,7 @@ index fc3463c..6dfdd9e 100644
      // TODO: should not be here, since this requires active work to resolve.
      // State should only hold active runtime state that can be reproducibly re-created.
      pub preopen: Vec<String>,
-@@ -210,6 +762,423 @@ impl WasiState {
+@@ -210,6 +786,455 @@ impl WasiState {
          self.fs.root_fs.new_open_options()
      }
  
@@ -34889,32 +34144,30 @@ index fc3463c..6dfdd9e 100644
 +        Ok(())
 +    }
 +
-+    /// Atomically reserves and installs an address selected by the runtime for
-+    /// an original non-fixed `mmap`. `reserve_and_remap` must use WebAssembly
-+    /// memory.grow and return its old end, which is a unique range even when
-+    /// another guest thread grows the heap concurrently. Holding the mapping
-+    /// locks across that operation serializes it with fixed remaps and keeps
-+    /// the registry publication atomic.
++    /// Atomically installs an original non-fixed `mmap`. During exec, a
++    /// request for an inherited backing consumes its matching reservation and
++    /// reuses that address; otherwise `reserve_and_remap` must use WebAssembly
++    /// memory.grow and return its old end, which is unique even when another
++    /// guest thread grows the heap concurrently. Holding the mapping locks
++    /// across either operation serializes it with fixed remaps and keeps the
++    /// registry publication atomic.
 +    pub(crate) fn install_runtime_selected_shared_memory_mapping(
 +        &self,
 +        len: u64,
 +        file: Arc<std::fs::File>,
 +        file_offset: u64,
 +        futexs: Arc<WasiSharedFutexRegistry>,
-+        reserve_and_remap: impl FnOnce(u64) -> Result<u64, Errno>,
++        reserve_and_remap: impl FnOnce(WasiSharedMemoryRuntimePlacement) -> Result<u64, Errno>,
 +    ) -> Result<u64, Errno> {
 +        if len == 0 {
 +            return Err(Errno::Inval);
 +        }
 +
-+        let phase = self
++        let mut phase = self
 +            .shared_memory_exec_phase
 +            .lock()
 +            .unwrap_or_else(|err| err.into_inner());
-+        if *phase != WasiSharedMemoryExecPhase::Normal {
-+            return Err(Errno::Busy);
-+        }
-+        let reservations = self
++        let mut reservations = self
 +            .shared_memory_exec_reservations
 +            .lock()
 +            .unwrap_or_else(|err| err.into_inner());
@@ -34922,13 +34175,47 @@ index fc3463c..6dfdd9e 100644
 +            .shared_memory_mappings
 +            .lock()
 +            .unwrap_or_else(|err| err.into_inner());
++
++        if let WasiSharedMemoryExecPhase::Transition {
++            reservations_installed: true,
++            successor_committed,
++        } = *phase
++        {
++            let reservation_index = reservations
++                .exec_backing_reservation_index(len, file_offset, &futexs)
++                .ok_or(Errno::Busy)?;
++            let start = reservations.mappings[reservation_index].start;
++            let mapping = WasiSharedMemoryMapping {
++                start,
++                len,
++                file,
++                file_offset,
++                futexs,
++            };
++            let updated_active = active.replacing(mapping)?;
++            let selected =
++                reserve_and_remap(WasiSharedMemoryRuntimePlacement::Inherited { start })?;
++            if selected != start {
++                return Err(Errno::Inval);
++            }
++            reservations.mappings.remove(reservation_index);
++            *active = updated_active;
++            if reservations.mappings.is_empty() && successor_committed {
++                *phase = WasiSharedMemoryExecPhase::Normal;
++            }
++            return Ok(start);
++        }
++        if *phase != WasiSharedMemoryExecPhase::Normal {
++            return Err(Errno::Busy);
++        }
++
 +        let minimum_start = reservations
 +            .max_end()?
 +            .into_iter()
 +            .chain(active.max_end()?)
 +            .max()
 +            .unwrap_or(0);
-+        let start = reserve_and_remap(minimum_start)?;
++        let start = reserve_and_remap(WasiSharedMemoryRuntimePlacement::Fresh { minimum_start })?;
 +        let _end = start.checked_add(len).ok_or(Errno::Overflow)?;
 +        if start < minimum_start
 +            || reservations.overlaps(start, len)?
@@ -35090,7 +34377,7 @@ index fc3463c..6dfdd9e 100644
      /// Turn the WasiState into bytes
      #[cfg(feature = "enable-serde")]
      pub fn freeze(&self) -> Option<Vec<u8>> {
-@@ -251,9 +1220,44 @@ impl WasiState {
+@@ -251,9 +1276,44 @@ impl WasiState {
          Ok(ret)
      }
  
@@ -35138,7 +34425,7 @@ index fc3463c..6dfdd9e 100644
              fs: self.fs.fork(),
              secret: self.secret,
              inodes: self.inodes.clone(),
-@@ -262,7 +1266,1010 @@ impl WasiState {
+@@ -262,7 +1322,1117 @@ impl WasiState {
              args: Mutex::new(self.args.lock().unwrap().clone()),
              envs: Mutex::new(self.envs.lock().unwrap().clone()),
              signals: Mutex::new(self.signals.lock().unwrap().clone()),
@@ -35581,8 +34868,13 @@ index fc3463c..6dfdd9e 100644
 +                bad_selection.file,
 +                bad_selection.file_offset,
 +                bad_selection.futexs,
-+                |minimum_start| {
-+                    assert_eq!(minimum_start, original.start + original.len);
++                |placement| {
++                    assert_eq!(
++                        placement,
++                        WasiSharedMemoryRuntimePlacement::Fresh {
++                            minimum_start: original.start + original.len,
++                        }
++                    );
 +                    Err(Errno::Inval)
 +                },
 +            ),
@@ -35596,8 +34888,13 @@ index fc3463c..6dfdd9e 100644
 +                selected_mapping.file,
 +                selected_mapping.file_offset,
 +                selected_mapping.futexs,
-+                |minimum_start| {
-+                    assert_eq!(minimum_start, original.start + original.len);
++                |placement| {
++                    assert_eq!(
++                        placement,
++                        WasiSharedMemoryRuntimePlacement::Fresh {
++                            minimum_start: original.start + original.len,
++                        }
++                    );
 +                    remap_called = true;
 +                    Ok(0x80_000)
 +                },
@@ -35606,6 +34903,103 @@ index fc3463c..6dfdd9e 100644
 +        assert!(remap_called);
 +        assert_eq!(selected, 0x80_000);
 +        assert_eq!(state.shared_memory_mappings()[1].start, selected);
++    }
++
++    #[test]
++    fn runtime_selected_exec_reattach_consumes_matching_inherited_backing() {
++        #[cfg(not(target_arch = "wasm32"))]
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        #[cfg(not(target_arch = "wasm32"))]
++        let _runtime_guard = runtime.enter();
++        let state = test_state("shared-memory-runtime-exec-reattach-test");
++        let main = mapping(0x20_000, 0x10_000, 0);
++        let dsm = mapping(0x40_000, 0x20_000, 0);
++        state.replace_shared_memory_mapping(main.clone()).unwrap();
++        state.replace_shared_memory_mapping(dsm.clone()).unwrap();
++
++        let transition = state.prepare_shared_memory_for_exec().unwrap();
++        state
++            .mark_shared_memory_exec_reservations_installed()
++            .unwrap();
++        state
++            .install_shared_memory_mapping(main, WasiSharedMemoryMapOrigin::GuestFixed, || Ok(()))
++            .unwrap();
++        transition.commit();
++
++        let mut observed_placement = None;
++        let selected = state
++            .install_runtime_selected_shared_memory_mapping(
++                dsm.len,
++                dsm.file.clone(),
++                dsm.file_offset,
++                dsm.futexs.clone(),
++                |placement| {
++                    observed_placement = Some(placement);
++                    match placement {
++                        WasiSharedMemoryRuntimePlacement::Inherited { start } => Ok(start),
++                        WasiSharedMemoryRuntimePlacement::Fresh { .. } => Err(Errno::Inval),
++                    }
++                },
++            )
++            .unwrap();
++
++        assert_eq!(selected, dsm.start);
++        assert_eq!(
++            observed_placement,
++            Some(WasiSharedMemoryRuntimePlacement::Inherited { start: dsm.start })
++        );
++        assert!(state.shared_memory_exec_reservations().is_empty());
++        assert_eq!(state.shared_memory_mappings().len(), 2);
++        assert_eq!(
++            *state.shared_memory_exec_phase.lock().unwrap(),
++            WasiSharedMemoryExecPhase::Normal
++        );
++    }
++
++    #[test]
++    fn runtime_selected_exec_reattach_rolls_back_before_admission() {
++        #[cfg(not(target_arch = "wasm32"))]
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        #[cfg(not(target_arch = "wasm32"))]
++        let _runtime_guard = runtime.enter();
++        let state = test_state("shared-memory-runtime-exec-rollback-test");
++        let original = mapping(0x40_000, 0x20_000, 0x10_000);
++        state
++            .replace_shared_memory_mapping(original.clone())
++            .unwrap();
++
++        let transition = state.prepare_shared_memory_for_exec().unwrap();
++        state
++            .mark_shared_memory_exec_reservations_installed()
++            .unwrap();
++        state
++            .install_runtime_selected_shared_memory_mapping(
++                original.len,
++                original.file.clone(),
++                original.file_offset,
++                original.futexs.clone(),
++                |placement| match placement {
++                    WasiSharedMemoryRuntimePlacement::Inherited { start } => Ok(start),
++                    WasiSharedMemoryRuntimePlacement::Fresh { .. } => Err(Errno::Inval),
++                },
++            )
++            .unwrap();
++
++        drop(transition);
++        let restored = state.shared_memory_mappings();
++        assert_eq!(restored.len(), 1);
++        assert!(restored[0].same_exec_reservation(&original));
++        assert!(state.shared_memory_exec_reservations().is_empty());
++        assert_eq!(
++            *state.shared_memory_exec_phase.lock().unwrap(),
++            WasiSharedMemoryExecPhase::Normal
++        );
 +    }
 +
 +    #[test]
@@ -39058,10 +38452,16 @@ index 4dc700f..c7253f5 100644
  
      if let Some(file) = flush_target {
 diff --git a/lib/wasix/src/syscalls/wasi/fd_seek.rs b/lib/wasix/src/syscalls/wasi/fd_seek.rs
-index 35fdf7a..1ce32b1 100644
+index 35fdf7a..38b3cd5 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_seek.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_seek.rs
-@@ -55,7 +55,6 @@ pub(crate) fn fd_seek_internal(
+@@ -1,4 +1,5 @@
+ use super::*;
++use crate::WasiFs;
+ use crate::syscalls::*;
+ 
+ /// ### `fd_seek()`
+@@ -55,7 +56,6 @@ pub(crate) fn fd_seek_internal(
  ) -> Result<Result<Filesize, Errno>, WasiError> {
      let env = ctx.data();
      let state = env.state.clone();
@@ -39069,7 +38469,7 @@ index 35fdf7a..1ce32b1 100644
      let fd_entry = wasi_try_ok_ok!(state.fs.get_fd(fd));
  
      if !fd_entry.inner.rights.contains(Rights::FD_SEEK) {
-@@ -85,55 +84,15 @@ pub(crate) fn fd_seek_internal(
+@@ -85,55 +85,15 @@ pub(crate) fn fd_seek_internal(
              }
          }
          Whence::End => {
@@ -39122,7 +38522,7 @@ index 35fdf7a..1ce32b1 100644
 -                }
 -            }
 -            fd_entry.inner.offset.load(Ordering::Acquire)
-+            let end = fd_entry.inode.stat.read().unwrap().st_size;
++            let end = WasiFs::authoritative_fd_size(&fd_entry);
 +            let new_offset = if offset >= 0 {
 +                end.checked_add(offset as u64).ok_or(Errno::Overflow)
 +            } else {
@@ -41185,7 +40585,7 @@ index 0000000..eb479ab
 +    }
 +}
 diff --git a/lib/wasix/src/syscalls/wasix/futex_wait.rs b/lib/wasix/src/syscalls/wasix/futex_wait.rs
-index c9e78a9..a800ce7 100644
+index c9e78a9..7154d3d 100644
 --- a/lib/wasix/src/syscalls/wasix/futex_wait.rs
 +++ b/lib/wasix/src/syscalls/wasix/futex_wait.rs
 @@ -1,37 +1,36 @@
@@ -41225,21 +40625,21 @@ index c9e78a9..a800ce7 100644
 -
 -        // Check for timeout
 -        drop(guard);
-+        let registered = self.registry.with(|guard| {
++        let poll_state = self.registry.with(|guard| {
 +            // If the futex itself is no longer registered then it was likely
 +            // woken by a wake call.
 +            let Some(futex) = guard.futexes.get_mut(&self.futex_idx) else {
-+                return false;
++                return 0;
 +            };
 +            let Some(waker) = futex.wakers.get_mut(&self.poller_idx) else {
-+                return false;
++                return 1;
 +            };
 +
 +            // Register the waker.
 +            waker.replace(cx.waker().clone());
-+            true
++            2
 +        });
-+        if !registered {
++        if poll_state != 2 {
 +            return Poll::Ready(true);
 +        }
 +
@@ -41353,7 +40753,7 @@ index c9e78a9..a800ce7 100644
      Ok(Errno::Success)
  }
 diff --git a/lib/wasix/src/syscalls/wasix/futex_wake.rs b/lib/wasix/src/syscalls/wasix/futex_wake.rs
-index ae2020d..239afea 100644
+index ae2020d..b63f1ba 100644
 --- a/lib/wasix/src/syscalls/wasix/futex_wake.rs
 +++ b/lib/wasix/src/syscalls/wasix/futex_wake.rs
 @@ -1,6 +1,19 @@
@@ -41401,7 +40801,7 @@ index ae2020d..239afea 100644
 +    let (woken, waker_to_wake) = registry.with(|guard| {
 +        if let Some(futex) = guard.futexes.get_mut(&futex_idx) {
 +            let mut waker_to_wake = None;
-+            if let Some((poller_idx, waker)) = remove_waiter_to_wake(futex) {
++            if let Some((_poller_idx, waker)) = remove_waiter_to_wake(futex) {
 +                match waker {
 +                    Some(w) => {
 +                        waker_to_wake = Some(w);
@@ -41517,12 +40917,12 @@ index 8a74714..88621cc 100644
          false => Bool::False,
 diff --git a/lib/wasix/src/syscalls/wasix/mem_mmap.rs b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
 new file mode 100644
-index 0000000..cff4624
+index 0000000..7a197de
 --- /dev/null
 +++ b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,453 @@
 +use super::*;
-+use crate::state::WasiSharedMemoryMapOrigin;
++use crate::state::{WasiSharedMemoryMapOrigin, WasiSharedMemoryRuntimePlacement};
 +use crate::syscalls::*;
 +
 +const PROT_READ: u32 = 0x01;
@@ -41693,35 +41093,56 @@ index 0000000..cff4624
 +            file.clone(),
 +            offset,
 +            futexs,
-+            |minimum_start| {
-+                // memory.grow is the reservation primitive: its returned old
-+                // page count is unique with respect to concurrent guest growth.
-+                let old_pages =
-+                    memory
-+                        .grow(&mut ctx.as_store_mut(), delta_pages)
-+                        .map_err(|err| {
-+                            tracing::warn!(
-+                                error = &err as &dyn std::error::Error,
-+                                delta_pages,
-+                                "failed to reserve guest pages for shared mapping"
++            |placement| {
++                let (selected, selected_end) = match placement {
++                    WasiSharedMemoryRuntimePlacement::Fresh { minimum_start } => {
++                        // memory.grow is the reservation primitive: its returned old
++                        // page count is unique with respect to concurrent guest growth.
++                        let old_pages =
++                            memory
++                                .grow(&mut ctx.as_store_mut(), delta_pages)
++                                .map_err(|err| {
++                                    tracing::warn!(
++                                        error = &err as &dyn std::error::Error,
++                                        delta_pages,
++                                        "failed to reserve guest pages for shared mapping"
++                                    );
++                                    Errno::Nomem
++                                })?;
++                        let selected = u64::from(old_pages.0)
++                            .checked_mul(WASM_PAGE_SIZE as u64)
++                            .ok_or(Errno::Overflow)?;
++                        let selected_end = selected
++                            .checked_add(mapped_len as u64)
++                            .ok_or(Errno::Overflow)?;
++                        if selected < minimum_start {
++                            tracing::error!(
++                                selected,
++                                selected_end,
++                                minimum_start,
++                                "WebAssembly memory end is below tracked shared mappings"
 +                            );
-+                            Errno::Nomem
-+                        })?;
-+                let selected = u64::from(old_pages.0)
-+                    .checked_mul(WASM_PAGE_SIZE as u64)
-+                    .ok_or(Errno::Overflow)?;
-+                let selected_end = selected
-+                    .checked_add(mapped_len as u64)
-+                    .ok_or(Errno::Overflow)?;
-+                if selected < minimum_start {
-+                    tracing::error!(
-+                        selected,
-+                        selected_end,
-+                        minimum_start,
-+                        "WebAssembly memory end is below tracked shared mappings"
-+                    );
-+                    return Err(Errno::Inval);
-+                }
++                            return Err(Errno::Inval);
++                        }
++                        (selected, selected_end)
++                    }
++                    WasiSharedMemoryRuntimePlacement::Inherited { start } => {
++                        let selected_end = start
++                            .checked_add(mapped_len as u64)
++                            .ok_or(Errno::Overflow)?;
++                        memory
++                            .grow_at_least(&mut ctx.as_store_mut(), selected_end)
++                            .map_err(|err| {
++                                tracing::warn!(
++                                    error = &err as &dyn std::error::Error,
++                                    selected_end,
++                                    "failed to cover inherited shared mapping reservation"
++                                );
++                                Errno::Nomem
++                            })?;
++                        (start, selected_end)
++                    }
++                };
 +                let selected_usize: usize = selected.try_into().map_err(|_| Errno::Overflow)?;
 +                // SAFETY: memory.grow reserved this unique range for the currently leased
 +                // continuation, no MemoryView is live, and the mapping registry retains the file

@@ -18,7 +18,7 @@ contains:
 - the compiler-free postmaster executor;
 - `initdb`, `postgres`, and every side module declared by
   `runtime/policies/sealed-side-modules.v1.tsv`;
-- receipt-bound AOT artifacts and immutable post-start memory images;
+- receipt-bound AOT artifacts for every admitted executable module;
 - PostgreSQL support files, build receipts, a complete payload inventory, and
   the sealed manifest.
 
