@@ -17,6 +17,37 @@ test('postmaster CI selects only terminal product roots', () => {
   ]);
 });
 
+test('postmaster source preparation waits for the shared source fetch', () => {
+  const environment = {...process.env, MOON_CACHE: 'off'};
+  const result = captureCommandOutput(
+    moonCommand(environment),
+    [
+      'query',
+      'tasks',
+      '--project',
+      'liboliphaunt-wasix-postmaster',
+      '--id',
+      'prepare-postgres',
+    ],
+    {
+      cwd: ROOT,
+      env: environment,
+      label: 'Moon WASIX postmaster prepare-postgres dependency graph',
+    },
+  );
+  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+  assert.equal(result.status, 0, result.stderr);
+  const task = JSON.parse(result.stdout).tasks['liboliphaunt-wasix-postmaster'][
+    'prepare-postgres'
+  ];
+  assert.equal(
+    task.deps.some(
+      ({target}) => target === 'liboliphaunt-wasix-postmaster:source-fetch',
+    ),
+    true,
+  );
+});
+
 function directEffects(relativePath) {
   const environment = {...process.env, MOON_CACHE: 'off'};
   delete environment.MOON_BASE;

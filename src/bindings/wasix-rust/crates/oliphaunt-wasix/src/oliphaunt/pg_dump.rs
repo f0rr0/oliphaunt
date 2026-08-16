@@ -1195,6 +1195,14 @@ mod tests {
             .await
             .context("server should remain usable after pg_dump")?;
         assert_eq!(row.try_get::<i32, _>("count")?, 2);
+        let sequence_state = sqlx::query(
+            "SELECT last_value::int8 AS last_value, is_called FROM public.dump_items_seq",
+        )
+        .fetch_one(&mut usable)
+        .await
+        .context("read source sequence state after pg_dump")?;
+        let source_last_value = sequence_state.try_get::<i64, _>("last_value")?;
+        assert!(sequence_state.try_get::<bool, _>("is_called")?);
         usable.close().await?;
 
         server.shutdown()?;
@@ -1220,11 +1228,11 @@ mod tests {
             )?;
             assert_eq!(view.rows[0]["count"], json!(2));
             let sequence = restored.query(
-                "SELECT nextval('public.dump_items_seq')::int AS next_value",
+                "SELECT nextval('public.dump_items_seq')::bigint AS next_value",
                 &[],
                 None,
             )?;
-            assert_eq!(sequence.rows[0]["next_value"], json!(11));
+            assert_eq!(sequence.rows[0]["next_value"], json!(source_last_value + 1),);
             restored.close()?;
             Ok(())
         })

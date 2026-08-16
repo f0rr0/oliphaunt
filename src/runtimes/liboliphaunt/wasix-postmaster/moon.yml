@@ -103,6 +103,7 @@ tasks:
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/apply-wasix-core-overlay.sh"
     deps:
       - "liboliphaunt-wasix-postmaster:check"
+      - "liboliphaunt-wasix-postmaster:source-fetch"
     inputs:
       - "/src/postgres/versions/18/source.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**/*"

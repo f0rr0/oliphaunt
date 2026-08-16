@@ -61,6 +61,7 @@ import {
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
 import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
+import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -104,6 +105,7 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
   "mobileReleaseReady",
   "desktopReleaseReady",
@@ -131,6 +133,7 @@ const EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
   "mobileReleaseReady",
   "desktopReleaseReady",
@@ -1394,6 +1397,14 @@ function requireSortedUniqueStrings(value, context) {
   }
 }
 
+function validateMemberWasixInstall(member, context) {
+  try {
+    assertWasixExtensionMemberInstall(member, { label: context });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function publicExtensionBundleMember(member) {
   return {
     ...Object.fromEntries(Object.entries(member).filter(([key]) => key !== "assets")),
@@ -1479,6 +1490,7 @@ function validateBundleMemberMetadata(member, manifest, stagedTargets) {
       fail(`${rel(manifest)} member ${member.sqlName}.${field} must be boolean`);
     }
   }
+  validateMemberWasixInstall(member, `${rel(manifest)} member ${member.sqlName}`);
   const stagesIos = stagedTargets.has("ios-xcframework");
   if (member.nativeModuleStem === null) {
     if (member.iosNativeDependencies.length > 0 || member.iosRegistration !== null) {
@@ -1986,6 +1998,7 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
   if (!stagesIos && (iosDependencies.length > 0 || data.iosRegistration !== null)) {
     fail(`${rel(manifest)} must not claim iOS dependency/registration metadata without staging the iOS target`);
   }
+  validateMemberWasixInstall(data, rel(manifest));
   const expectedRoles = [];
   const targetsToCheck = requireFullTargets ? allowedTargets : stagedTargets;
   for (const target of [...targetsToCheck].sort(compareText)) {
@@ -2030,6 +2043,7 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
     nativeModuleStem: data.nativeModuleStem,
     iosNativeDependencies: data.iosNativeDependencies,
     iosRegistration: data.iosRegistration,
+    wasixInstall: data.wasixInstall,
     sharedPreloadLibraries: data.sharedPreloadLibraries,
     mobileReleaseReady: data.mobileReleaseReady,
     desktopReleaseReady: data.desktopReleaseReady,

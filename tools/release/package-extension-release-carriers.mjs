@@ -73,6 +73,7 @@ import {
 import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstall,
+  assertWasixExtensionMemberInstall,
   EXTENSION_RUNTIME_CONTRACT_PATH,
   EXTENSION_RUNTIME_CONTRACT_SCHEMA,
   WASIX_EXTENSION_INSTALL_SCHEMA,
@@ -889,9 +890,23 @@ function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
     const releaseMatches = Array.isArray(releaseMember.assets)
       ? releaseMember.assets.filter(select)
       : [];
-    if (matches.length === 0 && releaseMatches.length === 0) return null;
+    let install;
+    let releaseInstall;
+    try {
+      install = assertWasixExtensionMemberInstall(member, {
+        label: `${product}@${version}/${sqlName} CI member`,
+      });
+      releaseInstall = assertWasixExtensionMemberInstall(releaseMember, {
+        label: `${product}@${version}/${sqlName} release member`,
+      });
+    } catch (error) {
+      fail(TOOL, error instanceof Error ? error.message : String(error));
+    }
+    if (install === null && releaseInstall === null) return null;
     if (
-      matches.length !== 1
+      install === null
+      || releaseInstall === null
+      || matches.length !== 1
       || releaseMatches.length !== 1
       || !sameFrozenValue(
         extensionRuntimeAssetContract(matches[0]),
@@ -903,20 +918,6 @@ function portableWasixExtensionAssets(extensionDir, manifest, releaseManifest) {
     const asset = matches[0];
     if (asset.identity !== null) {
       fail(TOOL, `${product}@${version}/${sqlName} portable WASIX runtime asset must declare identity=null`);
-    }
-    let install;
-    let releaseInstall;
-    try {
-      install = assertWasixExtensionInstall(member.wasixInstall, {
-        expectedSqlName: sqlName,
-        label: `${product}@${version}/${sqlName} CI WASIX install`,
-      });
-      releaseInstall = assertWasixExtensionInstall(releaseMember.wasixInstall, {
-        expectedSqlName: sqlName,
-        label: `${product}@${version}/${sqlName} release WASIX install`,
-      });
-    } catch (error) {
-      fail(TOOL, error instanceof Error ? error.message : String(error));
     }
     if (!sameFrozenValue(install, releaseInstall)) {
       fail(TOOL, `${product}@${version}/${sqlName} CI and release WASIX install contracts differ`);
