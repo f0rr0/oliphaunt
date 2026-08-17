@@ -363,11 +363,7 @@ def load_source_names() -> set[str]:
 @lru_cache(maxsize=1)
 def native_component_inventory() -> dict:
     result = subprocess.run(
-        [
-            str(ROOT / "tools/dev/bun.sh"),
-            str(NATIVE_COMPONENT_TOOL),
-            "inventory",
-        ],
+        bun_command(rel(NATIVE_COMPONENT_TOOL), "inventory"),
         cwd=ROOT,
         check=False,
         capture_output=True,

@@ -62,7 +62,7 @@ fn shared_fixture_path() -> Option<PathBuf> {
         }
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../src/shared/fixtures/protocol/query-response-cases.json");
+        .join("../../../../shared/fixtures/protocol/query-response-cases.json");
     path.is_file().then_some(path)
 }
 
