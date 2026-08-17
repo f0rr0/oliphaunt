@@ -73,7 +73,7 @@ function contribManifest(version) {
 
 function writeCarrierDescriptor(root) {
   mkdirSync(path.join(root, "src/extensions/contrib"), { recursive: true });
-  mkdirSync(path.join(root, "src/extensions/contrib/amcheck/targets"), { recursive: true });
+  mkdirSync(path.join(root, "tools/release"), { recursive: true });
   mkdirSync(path.join(root, "src/postgres/versions/18"), { recursive: true });
   mkdirSync(path.join(root, "src/shared/extension-runtime-contract"), { recursive: true });
   writeFileSync(
@@ -93,8 +93,8 @@ function writeCarrierDescriptor(root) {
     contribManifest("18.4"),
   );
   writeFileSync(
-    path.join(root, "src/extensions/contrib/amcheck/targets/artifacts.toml"),
-    'schema = "oliphaunt-extension-artifact-targets-v1"\n',
+    path.join(root, "tools/release/extension-target-profiles.toml"),
+    'schema = "oliphaunt-extension-artifact-target-profiles-v1"\n',
   );
   writeFileSync(path.join(root, "src/postgres/versions/18/source.toml"), 'version = "18.4"\n');
   writeFileSync(path.join(root, "src/shared/extension-runtime-contract/contract.toml"), 'schema = "v1"\n');

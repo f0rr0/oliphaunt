@@ -10,7 +10,6 @@ projects:
     - "src/bindings/*/moon.yml"
     - "src/extensions/artifacts/*/moon.yml"
     - "src/extensions/contrib/moon.yml"
-    - "src/extensions/contrib/*/moon.yml"
     - "src/extensions/external/*/moon.yml"
     - "src/extensions/model/moon.yml"
     - "src/postgres/versions/*/moon.yml"

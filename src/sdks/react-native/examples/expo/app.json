@@ -42,9 +42,6 @@
           "launchMode": "most-recent"
         }
       ],
-      "expo-image",
-      "expo-router",
-      "expo-web-browser",
       "expo-sqlite"
     ],
     "experiments": {

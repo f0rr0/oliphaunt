@@ -28,11 +28,8 @@ The canonical model is composed from:
 Do not maintain a second hand-written package matrix. Query the catalog and inspect the lock. Dynamic package identities are forbidden except crates.io payload `part-N` carriers whose parent is declared and whose size requires splitting.
 
 A product-local `release.toml` activates an external extension as a public
-release product. It is not a harmless description of a build candidate. An
-extension deferred by `publication-blocker.toml` must remain absent from
-`release.toml`, Release Please, Moon release ownership, generated public SDK
-catalogs, the publication catalog, and every lock. Build recipes and target
-profiles may remain active solely for job-local qualification.
+release product. Incomplete extension work stays on a branch; main contains no
+deferred, promoted, planned, blocker, or qualification-only extension state.
 
 ## Carrier license and notice checks
 
@@ -75,8 +72,7 @@ and participates in the same carrier checks as other public products.
   separately versioned release products.
 - active external extension products are `upstream-bound` and own independent
   packaging SemVer. Their upstream version/commit and compatible runtime
-  versions are separate metadata. A publication-deferred external extension
-  has no packaging version until it is promoted into the active product graph.
+  versions are separate metadata.
 - Native/default extension npm identities stay unsuffixed. A portable WASIX npm
   carrier adds only the `-wasix` suffix and uses the same exact packaging
   SemVer, release tag, and changelog as every other carrier owned by that
@@ -632,11 +628,9 @@ contract is the GNU architecture and symbol-version floor, not a distro name.
 
 Every release-ready exact extension has stable ecosystem façades. PostgreSQL
 contrib carriers belong to the matching native or WASIX runtime product; each
-active external extension owns its independent product. A build-only or
-publication-deferred extension owns neither. Each active
-exact SQL member's `targets/artifacts.toml` explicitly declares
-supported/unpublished targets and evidence. The runtime target matrix bounds
-possible values but never creates extension support by default.
+active external extension owns its independent product. The global extension
+target-profile contract applies to every public SQL member and is checked
+against the runtime target matrix.
 
 ## Recovery
 
@@ -668,12 +662,6 @@ publish selects no release changes and performs no registry work. A change to a
 compiler, SDK, linker, build command, source selection, target, or packaging
 output requires the affected versions to advance even when the change lives in
 CI.
-
-A deferred extension is never a recoverable missing publication. If it appears
-in a release PR, dry-run artifact set, or lock, reject that candidate, remove
-the extension from the active public graph, and qualify a new exact SHA. Do not
-bootstrap its reserved identity, publish its job-local outputs, or bypass the
-declared blocker to resume another product.
 
 ## Handoff evidence
 

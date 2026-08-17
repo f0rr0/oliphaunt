@@ -162,7 +162,6 @@ JSON
     "$root/tools/policy/source-fetch-core.mjs" \
     "$scratch_root/tools/policy/source-fetch-core.mjs"
   cp \
-    "$root/tools/release/extension-qualification-candidates.mjs" \
     "$root/tools/release/extension-upstream-licenses.mjs" \
     "$root/tools/release/portable-archive.mjs" \
     "$root/tools/release/release-directory-safety.mjs" \
@@ -174,7 +173,20 @@ JSON
     "$root/tools/test/run-js-tests.mjs" \
     "$scratch_root/tools/test/"
   cp "$root/LICENSE" "$root/THIRD_PARTY_NOTICES.md" "$scratch_root/"
-  rsync -a --delete "$root/src/extensions/" "$scratch_root/src/extensions/"
+  rm -rf "$scratch_root/src/extensions"
+  mkdir -p \
+    "$scratch_root/src/extensions/external" \
+    "$scratch_root/src/extensions/generated/mobile" \
+    "$scratch_root/src/extensions/generated/sdk"
+  rsync -a --delete \
+    "$root/src/extensions/external/" \
+    "$scratch_root/src/extensions/external/"
+  rsync -a --delete \
+    "$root/src/extensions/generated/mobile/" \
+    "$scratch_root/src/extensions/generated/mobile/"
+  rsync -a --delete \
+    "$root/src/extensions/generated/sdk/" \
+    "$scratch_root/src/extensions/generated/sdk/"
   cp \
     "$root/src/postgres/versions/18/source.toml" \
     "$scratch_root/src/postgres/versions/18/source.toml"
@@ -194,6 +206,13 @@ JSON
     --exclude android/build \
     --exclude ios/vendor \
     "$source_package_dir/" "$package_dir/"
+  mkdir -p "$package_dir/src/generated"
+  cp \
+    "$root/src/extensions/generated/sdk/extensions.json" \
+    "$package_dir/src/generated/extensions.json"
+  cp \
+    "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
+    "$package_dir/src/generated/ios-static-dependencies.json"
   rm -rf "$scratch_root/node_modules" "$package_dir/node_modules"
   # PNPM_CONFIG_LOCKFILE=false remains honored by pnpm for callers that need to
   # disable scratch lockfile writes, but the normal path records one.
@@ -523,6 +542,8 @@ for required in \
   "lib/module/protocol.js" \
   "lib/typescript/index.d.ts" \
   "lib/typescript/smoke.d.ts" \
+  "src/generated/extensions.json" \
+  "src/generated/ios-static-dependencies.json" \
   "src/smoke.ts" \
   "lib/typescript/specs/NativeOliphaunt.d.ts"
 do

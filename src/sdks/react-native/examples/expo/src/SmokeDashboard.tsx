@@ -13,14 +13,11 @@ import {
   type ReactNativeBenchmarkWorkload,
 } from '@oliphaunt/react-native';
 import {
-  runPostgresGamutWorkload,
-  runPostgresLifecycleResumeCheck,
+  runMobileBindingProof,
   runMobileReleaseExtensionProof,
-  type ActivityItem,
+  runPostgresLifecycleResumeCheck,
   type OperationCheck,
-  type PerfReport,
-  type ProjectRollup,
-} from './postgres-workload';
+} from './mobile-smoke';
 import {
   runExpoSQLiteBenchmark,
   type ExpoSQLiteBenchmarkReport,
@@ -59,7 +56,6 @@ type SmokeReport = {
 
 type AppReport = {
   smoke?: SmokeReport;
-  perf?: PerfReport;
   benchmark?: ReactNativeBenchmarkReport;
   sqliteBenchmark?: ExpoSQLiteBenchmarkReport;
   crashRecovery?: {
@@ -72,8 +68,6 @@ type AppReport = {
   modes?: EngineModeSupport[];
   capabilities?: EngineCapabilities;
   packageSize?: PackageSizeReport | null;
-  projects?: ProjectRollup[];
-  activity?: ActivityItem[];
   checks?: OperationCheck[];
   lifecycle?: OperationCheck;
   icuProof?: OperationCheck;
@@ -201,19 +195,14 @@ export default function HomeScreen() {
         const parameterized = await db.query('SELECT $1::text AS value', ['hello']);
         const parameterRoundTrip = parameterized.getText(0, 'value') ?? '';
         stage('query:parameter:done', { value: parameterRoundTrip });
-        stage('workload:start');
-        const workload = await runPostgresGamutWorkload(db, databaseOpen.openMs, {
-          extensions,
-          onCheckStage: check =>
-            stage(`workload:${check.status}`, {
+        const bindingProof = await runMobileBindingProof(
+          db,
+          check =>
+            stage(`binding:${check.status}`, {
               name: check.name,
               checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
             }),
-        });
-        stage('workload:done', {
-          checks: workload.checks.length,
-          rows: workload.perf.rows,
-        });
+        );
         const icuProof = await runSelectedIcuRuntimeProof(
           db,
           packageSize?.runtimeFeatures ?? [],
@@ -223,11 +212,10 @@ export default function HomeScreen() {
         liveness.stop();
         const checks = [
           ...extensionProof,
-          ...workload.checks,
+          ...bindingProof,
           ...(icuProof ? [icuProof] : []),
           ...(lifecycle ? [lifecycle] : []),
         ];
-        const perf = { ...workload.perf, checks: String(checks.length) };
 
         const smoke = {
           engine: capabilities.engine,
@@ -239,12 +227,9 @@ export default function HomeScreen() {
         };
         const nextReport = {
           smoke,
-          perf,
           modes,
           capabilities,
           packageSize,
-          projects: workload.projects,
-          activity: workload.activity,
           checks,
           lifecycle,
           icuProof,
@@ -313,7 +298,7 @@ export default function HomeScreen() {
           <View style={styles.header}>
             <View style={styles.headerText}>
               <Text style={styles.eyebrow}>liboliphaunt React Native</Text>
-              <Text style={styles.title}>Field ops task board</Text>
+              <Text style={styles.title}>Installed runtime smoke</Text>
             </View>
             <View
               accessibilityLabel={`liboliphaunt-smoke-status-${state}`}
@@ -333,15 +318,13 @@ export default function HomeScreen() {
               value={report.smoke?.engine ?? firstAvailableMode(report.modes) ?? 'pending'}
             />
             <Metric label="transport" value={report.smoke?.rawProtocolTransport ?? 'pending'} />
-            <Metric label="rows" value={report.perf?.rows ?? 'pending'} />
+            <Metric label="contract" value={report.smoke ? 'passed' : 'pending'} />
             <Metric
               label={report.benchmark ? 'typed p90' : 'SELECT p90'}
               value={
                 report.benchmark
                   ? formatLatency(benchmarkWorkload(report.benchmark, 'typed_select_rtt'))
-                  : report.perf
-                    ? `${report.perf.selectP90Ms.toFixed(2)} ms`
-                    : 'pending'
+                  : 'not benchmarked'
               }
             />
             <Metric
@@ -353,7 +336,7 @@ export default function HomeScreen() {
               }
             />
             <Metric label="package" value={formatBytes(report.packageSize?.packageBytes)} />
-            <Metric label="checks" value={report.perf?.checks ?? 'pending'} />
+            <Metric label="checks" value={report.checks ? String(report.checks.length) : 'pending'} />
           </View>
 
           <View style={styles.panel}>
@@ -371,34 +354,6 @@ export default function HomeScreen() {
                 {formatResult(report)}
               </Text>
             )}
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Project Rollup</Text>
-            {(report.projects ?? []).map((project) => (
-              <View key={project.name} style={styles.row}>
-                <View style={styles.rowMain}>
-                  <Text style={styles.rowTitle}>{project.name}</Text>
-                  <Text style={styles.rowMeta}>
-                    {project.done}/{project.total} done, {project.blocked} blocked
-                  </Text>
-                </View>
-                <Text style={styles.rowValue}>{project.estimate} pts</Text>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Current Queue</Text>
-            {(report.activity ?? []).map((item) => (
-              <View key={`${item.title}-${item.owner}`} style={styles.row}>
-                <View style={styles.rowMain}>
-                  <Text style={styles.rowTitle}>{item.title}</Text>
-                  <Text style={styles.rowMeta}>{item.owner}</Text>
-                </View>
-                <Text style={styles.statusBadge}>{item.status}</Text>
-              </View>
-            ))}
           </View>
 
           <View style={styles.section}>
@@ -425,7 +380,7 @@ export default function HomeScreen() {
             ]}
           >
             <Text style={styles.buttonText}>
-              {state === 'running' ? 'Running workload' : 'Run workload'}
+              {state === 'running' ? 'Running smoke' : 'Run smoke'}
             </Text>
           </Pressable>
         </ScrollView>
@@ -1000,27 +955,13 @@ function formatResult(report: AppReport): string {
       `elapsed = ${report.crashRecovery.elapsedMs.toFixed(2)} ms`,
     ].join('\n');
   }
-  if (!report.smoke || !report.perf) {
-    return 'Waiting for native workload results.';
+  if (!report.smoke) {
+    return 'Waiting for native smoke results.';
   }
   return [
     `SELECT 1 = ${report.smoke.selectOne}`,
     `parameter = ${report.smoke.parameterRoundTrip}`,
-    `done = ${report.perf.doneRows}`,
-    `blocked = ${report.perf.blockedRows}`,
-    `checksum = ${report.perf.checksum}`,
-    `events = ${report.perf.events}`,
-    `checks = ${report.perf.checks}`,
-    `backup = ${formatBytes(Number(report.perf.backupBytes))}`,
-    `stream = ${formatBytes(Number(report.perf.streamBytes))}`,
-    `raw protocol = ${formatBytes(Number(report.perf.rawBytes))}`,
-    `constraint SQLSTATE = ${report.perf.constraintSqlstate}`,
-    `cancel SQLSTATE = ${report.perf.cancelSqlstate}`,
-    `open = ${report.perf.openMs.toFixed(2)} ms`,
-    `schema = ${report.perf.schemaMs.toFixed(2)} ms`,
-    `seed = ${report.perf.seedMs.toFixed(2)} ms`,
-    `update = ${report.perf.updateMs.toFixed(2)} ms`,
-    `select p50/p90/p99 = ${report.perf.selectP50Ms.toFixed(2)} / ${report.perf.selectP90Ms.toFixed(2)} / ${report.perf.selectP99Ms.toFixed(2)} ms`,
+    `checks = ${report.checks?.length ?? 0}`,
     `JS timer ticks = ${report.smoke.jsTimerTicks}`,
     `elapsed = ${report.smoke.elapsedMs.toFixed(2)} ms`,
   ].join('\n');
@@ -1272,19 +1213,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     textTransform: 'uppercase',
   },
-  row: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dde4',
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
-    minHeight: 64,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
   checkRow: {
     alignItems: 'flex-start',
     backgroundColor: '#ffffff',
@@ -1319,18 +1247,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0,
-  },
-  statusBadge: {
-    backgroundColor: '#e7edf3',
-    borderRadius: 8,
-    color: '#263747',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0,
-    overflow: 'hidden',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    textTransform: 'uppercase',
   },
   button: {
     alignItems: 'center',

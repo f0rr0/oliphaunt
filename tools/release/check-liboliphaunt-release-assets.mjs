@@ -124,7 +124,7 @@ function validateChecksums(assetDir, checksumFile) {
 }
 
 function generatedExtensionMetadata() {
-  const metadataPath = path.join(ROOT, "src/extensions/generated/sdk/rust.json");
+  const metadataPath = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
   let metadata;
   try {
     metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
@@ -316,14 +316,12 @@ async function validateNativeTargetArtifacts(assetDir, version) {
       product: PRODUCT,
       kind: "native-runtime",
       surface: "rust-native-direct",
-      publishedOnly: true,
     }).map((target) => target.target),
   );
   for (const target of allArtifactTargets({
     product: PRODUCT,
     kind: "native-runtime",
     surface: "github-release",
-    publishedOnly: true,
   })) {
     await validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
       requireRuntime: runtimeTargets.has(target.target),
@@ -334,7 +332,6 @@ async function validateNativeTargetArtifacts(assetDir, version) {
     product: PRODUCT,
     kind: "native-tools",
     surface: "github-release",
-    publishedOnly: true,
   })) {
     await validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
       requireRuntime: true,
@@ -474,7 +471,6 @@ function validateReleaseNoticeClosure(assetDir, version) {
   for (const target of allArtifactTargets({
     product: PRODUCT,
     surface: "github-release",
-    publishedOnly: true,
   })) {
     assertLiboliphauntArtifactReleaseNotices(
       path.join(assetDir, assetName(target, version)),
@@ -562,7 +558,6 @@ function expectedGithubAssets(version) {
   return allArtifactTargets({
     product: PRODUCT,
     surface: "github-release",
-    publishedOnly: true,
   }).map((target) => assetName(target, version)).sort(compareText);
 }
 

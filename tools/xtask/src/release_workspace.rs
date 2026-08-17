@@ -17,8 +17,6 @@ const RELEASE_RELEVANT_UNTRACKED_PATHS: &[&str] = &[
 ];
 const SPLIT_WASIX_TOOL_PAYLOAD_FILES: &[&str] = &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"];
 const SPLIT_WASIX_TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
-const QUALIFICATION_ONLY_EXTENSION_METADATA: &[&str] =
-    &["mobile/qualification-static-extensions.tsv"];
 
 fn stage_release_notices(staging: &Path, profile: &str) -> Result<()> {
     let mut command = command_for_host("bun");
@@ -170,24 +168,6 @@ fn copy_core_wasix_asset_payload(
     }
     strip_core_asset_manifest_extensions(&destination.join("manifest.json"))?;
     ensure_core_wasix_asset_payload(destination, retain_split_tools)
-}
-
-fn copy_public_extension_generated_metadata(source: &Path, destination: &Path) -> Result<()> {
-    copy_dir_all(source, destination)?;
-    for relative in QUALIFICATION_ONLY_EXTENSION_METADATA {
-        let candidate = destination.join(relative);
-        if candidate.exists() {
-            fs::remove_file(&candidate).with_context(|| {
-                format!("remove qualification-only metadata {}", candidate.display())
-            })?;
-        }
-        ensure!(
-            !candidate.exists(),
-            "public WASIX runtime metadata must not contain qualification-only file {}",
-            candidate.display()
-        );
-    }
-    Ok(())
 }
 
 fn remove_split_wasix_tool_payload(root: &Path) -> Result<()> {
@@ -483,7 +463,7 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
     copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR), true)?;
-    copy_public_extension_generated_metadata(
+    copy_dir_all(
         Path::new("src/extensions/generated"),
         &staging.join("src/extensions/generated"),
     )?;
@@ -762,23 +742,13 @@ mod tests {
         let generated = root.join("generated");
         fs::create_dir_all(generated.join("mobile"))?;
         fs::write(generated.join("mobile/static-extensions.tsv"), b"public\n")?;
-        fs::write(
-            generated.join("mobile/qualification-static-extensions.tsv"),
-            b"example_deferred\n",
-        )?;
         let public_generated = root.join("public-generated");
-        copy_public_extension_generated_metadata(&generated, &public_generated)?;
+        copy_dir_all(&generated, &public_generated)?;
         assert!(
             public_generated
                 .join("mobile/static-extensions.tsv")
                 .is_file()
         );
-        assert!(
-            !public_generated
-                .join("mobile/qualification-static-extensions.tsv")
-                .exists()
-        );
-
         fs::remove_dir_all(root)?;
         Ok(())
     }

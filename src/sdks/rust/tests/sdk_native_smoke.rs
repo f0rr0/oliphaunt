@@ -159,6 +159,25 @@ fn native_liboliphaunt_runtime_select_one_when_env_is_available() {
     block_on(reopened.close()).unwrap();
 }
 
+#[test]
+fn native_postgres_behavior_matches_shared_contract_when_env_is_available() {
+    if native_runtime_env_is_unavailable() {
+        eprintln!("skipping native PostgreSQL behavior contract: native runtime env is incomplete");
+        return;
+    }
+
+    let root = unique_temp_root("oliphaunt-native-postgres-contract");
+    let db = block_on(
+        Oliphaunt::builder()
+            .directory(&root)
+            .runtime(OliphauntRuntime::from_env())
+            .open(),
+    )
+    .unwrap();
+    assert_postgres_behavior_contract(&db);
+    block_on(db.close()).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn native_direct_crash_consistency_survives_process_death_when_env_is_available() {
@@ -1825,6 +1844,30 @@ fn assert_physical_archive(artifact: &oliphaunt::BackupArtifact, mode: &str) {
         names.iter().any(|name| name.starts_with("pgdata/base/")),
         "{mode} physical archive is missing relation storage"
     );
+}
+
+fn assert_postgres_behavior_contract(db: &Oliphaunt) {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../shared/fixtures/postgres/behavior-contract.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["schemaVersion"], 1);
+
+    for statement in fixture["statements"].as_array().unwrap() {
+        block_on(db.execute(statement.as_str().unwrap())).unwrap();
+    }
+
+    let assertion = fixture["assertion"].as_object().unwrap();
+    let result = block_on(db.query(assertion["sql"].as_str().unwrap())).unwrap();
+    let column = assertion["column"].as_str().unwrap();
+    assert_eq!(
+        result.get_text(0, column).unwrap(),
+        assertion["expected"].as_str()
+    );
+
+    for statement in fixture["cleanupStatements"].as_array().unwrap() {
+        block_on(db.execute(statement.as_str().unwrap())).unwrap();
+    }
 }
 
 fn unique_temp_root(prefix: &str) -> PathBuf {

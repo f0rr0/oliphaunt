@@ -520,7 +520,7 @@ async function main() {
   await fs.writeFile(frozenOldCarrierFile, `${JSON.stringify(frozenOldCarrier, null, 2)}\n`);
   const mutableNewCatalogFile = path.join(root, "mutable-new-swift-catalog.json");
   await fs.writeFile(mutableNewCatalogFile, `${JSON.stringify({
-    consumer: "swift",
+    "format-version": 1,
     extensions: [{
       "sql-name": "pgtap",
       "artifact-product": "oliphaunt-extension-pgtap",

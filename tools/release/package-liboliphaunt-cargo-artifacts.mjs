@@ -1173,12 +1173,12 @@ async function main(argv) {
   mkdirSync(args.outputDir, { recursive: true });
 
   let targets = allArtifactTargets(
-    { product: PRODUCT, kind: KIND, surface: SURFACE, publishedOnly: true },
+    { product: PRODUCT, kind: KIND, surface: SURFACE },
     PREFIX,
   );
   const toolsTargets = new Map(
     allArtifactTargets(
-      { product: PRODUCT, kind: TOOLS_KIND, surface: SURFACE, publishedOnly: true },
+      { product: PRODUCT, kind: TOOLS_KIND, surface: SURFACE },
       PREFIX,
     ).map((target) => [target.target, target]),
   );

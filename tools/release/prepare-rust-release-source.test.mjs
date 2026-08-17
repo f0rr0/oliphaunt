@@ -54,7 +54,6 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
       product: "liboliphaunt-native",
       kind: "native-runtime",
       surface: "rust-native-direct",
-      publishedOnly: true,
     }, "prepare-rust-release-source.test.mjs");
     assert.equal(targets.length, 4);
     assert.match(manifest, /^license = "MIT"$/mu);

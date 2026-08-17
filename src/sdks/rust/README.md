@@ -272,7 +272,7 @@ manifest. Swift/Kotlin/React Native bridges register that generated table before
 `oliphaunt_init`. Selected extension preload requirements are recorded as
 `sharedPreloadLibraries` in the generated runtime manifest.
 
-The runtime-resource CLI only accepts exact release-ready extension names. External
+The runtime-resource CLI only accepts exact public extension names. External
 candidate metadata, such as pgGraph and ParadeDB, remains internal until the
 extension has pinned artifacts, redistribution clearance, and direct, broker,
 server, restart, backup, restore, and mobile static-registry evidence.

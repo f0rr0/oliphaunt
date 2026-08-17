@@ -20,7 +20,7 @@ project:
     packagePath: "src/runtimes/liboliphaunt/native"
     artifactTargets:
       preset: "liboliphaunt-native"
-      publishedTargets:
+      targets:
         - "android-arm64-v8a"
         - "android-x86_64"
         - "ios-xcframework"
@@ -28,9 +28,6 @@ project:
         - "linux-x64-gnu"
         - "macos-arm64"
         - "windows-x64-msvc"
-      plannedTargets:
-        macos-x64:
-          unsupportedReason: "macOS x64 native runtime is planned but not published until CI, release asset packaging, and SDK resolver smoke coverage exist."
 
 owners:
   defaultOwner: "@oliphaunt/core"
@@ -305,7 +302,7 @@ tasks:
     inputs:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
-      - "/src/extensions/generated/sdk/rust.json"
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-liboliphaunt-release-assets.mjs"
@@ -314,6 +311,8 @@ tasks:
       - "/tools/release/platform-compatibility-policy.test.mjs"
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release_graph_query.mjs"

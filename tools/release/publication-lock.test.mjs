@@ -188,7 +188,6 @@ function githubReleaseFixture(root, product) {
   const rows = allArtifactTargets({
     product: product.id,
     surface: "github-release",
-    publishedOnly: true,
   }, "publication-lock.test").map((target) => ({
     target,
     name: target.asset.replaceAll("{version}", product.version),
@@ -232,7 +231,7 @@ function extensionGithubReleaseFixture(
     ? {}
     : { releaseProduct: product.id, family: family ?? "combined" };
   const compatibility = releaseMetadata.compatibility;
-  const generated = JSON.parse(readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/sdk/react-native.json"), "utf8"));
+  const generated = JSON.parse(readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/sdk/extensions.json"), "utf8"));
   const staticLines = readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/mobile/static-extensions.tsv"), "utf8")
     .split(/\r?\n/u)
     .filter((line) => line.length > 0 && !line.startsWith("#"));
@@ -250,7 +249,7 @@ function extensionGithubReleaseFixture(
       ? []
       : (staticRow?.["ios-static-dependencies"] ?? "").split(",").filter(Boolean).sort();
     const memberAssets = [];
-    for (const target of extensionArtifactTargets({ product: artifactProduct, publishedOnly: true }, "publication-lock.test")
+    for (const target of extensionArtifactTargets({ product: artifactProduct }, "publication-lock.test")
       .filter((row) => row.sqlName === sqlName && (family === null || row.family === family))) {
       const roles = target.family === "wasix"
         ? ["wasix-runtime"]
@@ -303,7 +302,6 @@ function extensionGithubReleaseFixture(
       dataFiles: [...extension["runtime-share-data-files"]].sort(),
       extensionSqlFileNames: [...extension["extension-sql-file-names"]].sort(),
       extensionSqlFilePrefixes: [...extension["extension-sql-file-prefixes"]].sort(),
-      nativeDependencies: [...extension["native-dependencies"]].sort(),
       nativeModuleStem,
       iosNativeDependencies,
       iosRegistration: nativeModuleStem === null ? null : {
@@ -318,8 +316,6 @@ function extensionGithubReleaseFixture(
         ? wasixInstall(sqlName, dependencies, createsExtension)
         : null,
       sharedPreloadLibraries: [...extension["shared-preload-libraries"]].sort(),
-      mobileReleaseReady: extension["mobile-release-ready"] === true,
-      desktopReleaseReady: extension["desktop-release-ready"] === true,
       assets: memberAssets,
     });
   }
@@ -493,14 +489,11 @@ function extensionGithubReleaseFixture(
           dataFiles: extensions[0].dataFiles,
           extensionSqlFileNames: extensions[0].extensionSqlFileNames,
           extensionSqlFilePrefixes: extensions[0].extensionSqlFilePrefixes,
-          nativeDependencies: extensions[0].nativeDependencies,
           nativeModuleStem: extensions[0].nativeModuleStem,
           iosNativeDependencies: extensions[0].iosNativeDependencies,
           iosRegistration: extensions[0].iosRegistration,
           wasixInstall: extensions[0].wasixInstall,
           sharedPreloadLibraries: extensions[0].sharedPreloadLibraries,
-          mobileReleaseReady: extensions[0].mobileReleaseReady,
-          desktopReleaseReady: extensions[0].desktopReleaseReady,
           assets: assets.map(({ name, family, target, kind, identity, sha256, bytes }) => ({
             name,
             family,
@@ -864,7 +857,7 @@ describe("publication artifact discovery and freezing", () => {
     const artifacts = discoverProductArtifacts([root], [product]);
     expect(artifacts).toHaveLength(assets.length + 4);
     expect(new Set(artifacts.filter((artifact) => artifact.role === "github-release-asset").map((artifact) => artifact.target))).toEqual(
-      new Set(extensionArtifactTargets({ product: product.id, publishedOnly: true }, "publication-lock.test").map((target) => target.target)),
+      new Set(extensionArtifactTargets({ product: product.id }, "publication-lock.test").map((target) => target.target)),
     );
 
     const swiftCarrierPath = path.join(directory, swiftCarrierName);
@@ -1069,7 +1062,7 @@ describe("publication artifact discovery and freezing", () => {
       writeFileSync(
         path.join(sdk, "extension-generator", name),
         name === "extension-owner-catalog.json"
-          ? readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/sdk/swift.json"))
+          ? readFileSync(path.join(import.meta.dir, "../../src/extensions/generated/sdk/extensions.json"))
           : name === "extension-resource-inventory.mjs"
             ? readFileSync(path.join(import.meta.dir, "../../src/sdks/swift/tools/extension-resource-inventory.mjs"))
             : `${name}\n`,

@@ -10,7 +10,7 @@ function invariant(condition, message) {
   if (!condition) throw new Error(`${TOOL}: ${message}`);
 }
 
-export function promotedExtensionFeatures(manifest) {
+export function extensionFeatures(manifest) {
   invariant(manifest !== null && typeof manifest === "object" && !Array.isArray(manifest), "asset manifest must be an object");
   invariant(Array.isArray(manifest.extensions), "asset manifest must contain an extensions array");
 
@@ -18,21 +18,19 @@ export function promotedExtensionFeatures(manifest) {
   const sqlNames = new Set();
   for (const extension of manifest.extensions) {
     invariant(extension !== null && typeof extension === "object" && !Array.isArray(extension), "extension manifest rows must be objects");
-    if (extension["smoke-status"]?.promoted !== true) continue;
-
     const sqlName = extension["sql-name"];
-    invariant(typeof sqlName === "string" && SQL_NAME_RE.test(sqlName), "promoted extensions must have a portable sql-name");
-    invariant(!sqlNames.has(sqlName), `asset manifest repeats promoted extension ${sqlName}`);
+    invariant(typeof sqlName === "string" && SQL_NAME_RE.test(sqlName), "extensions must have a portable sql-name");
+    invariant(!sqlNames.has(sqlName), `asset manifest repeats extension ${sqlName}`);
     sqlNames.add(sqlName);
     features.push(`extension-${sqlName.replaceAll("_", "-")}`);
   }
 
-  invariant(features.length > 0, "full WASIX evidence requires at least one promoted extension");
+  invariant(features.length > 0, "full WASIX evidence requires at least one extension");
   return features.sort();
 }
 
 export function fullEvidenceFeatures(manifest) {
-  return ["extensions", "tools", ...promotedExtensionFeatures(manifest)].join(",");
+  return ["extensions", "tools", ...extensionFeatures(manifest)].join(",");
 }
 
 function main(argv) {

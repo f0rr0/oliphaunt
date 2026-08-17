@@ -664,7 +664,7 @@ mod tests {
             Path::new("/tmp/oliphaunt-preload/pgdata"),
             15432,
             &config,
-            &[Extension::PgSearch, Extension::PgSearch],
+            &[Extension::PgTextsearch, Extension::PgTextsearch],
             Some(Path::new("/tmp/oliphaunt-preload-socket")),
         )
         .unwrap();
@@ -673,10 +673,10 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_search");
+        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_search")
+                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
                 .count(),
             1,
             "preload libraries must be deduplicated in server startup args"

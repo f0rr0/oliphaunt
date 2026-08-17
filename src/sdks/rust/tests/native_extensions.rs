@@ -18,15 +18,12 @@ const DIRECT_CHILD_EXTENSION_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_CHILD";
 const DIRECT_CHILD_ACTION_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ACTION";
 const DIRECT_CHILD_ROOT_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ROOT";
 const DIRECT_CHILD_BACKUP_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_BACKUP";
-const EXTERNAL_MATRIX_ENV: &str = "OLIPHAUNT_EXTERNAL_EXTENSION_MATRIX";
-const EXTERNAL_MATRIX_MODES_ENV: &str = "OLIPHAUNT_EXTERNAL_EXTENSION_MODES";
 const RELEASE_PROOF_RUNNER_ENV: &str = "OLIPHAUNT_NATIVE_EXTENSION_PROOF_RUNNER";
 
 #[test]
 fn native_release_proof_catalog_has_the_expected_first_release_total() {
     let names = NATIVE_EXTENSION_MANIFEST
         .iter()
-        .filter(|entry| entry.extension.desktop_release_ready())
         .map(|entry| entry.sql_name)
         .collect::<Vec<_>>();
     assert_eq!(names.len(), 39);
@@ -36,7 +33,7 @@ fn native_release_proof_catalog_has_the_expected_first_release_total() {
     );
     assert!(
         names.windows(2).all(|pair| pair[0] < pair[1]),
-        "release-ready native proof manifest must remain sorted by SQL name"
+        "native proof manifest must remain sorted by SQL name"
     );
 }
 
@@ -60,10 +57,7 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         Path::new(&broker).is_file(),
         "native extension release proof broker does not exist: {broker}"
     );
-    let release_ready_manifest = NATIVE_EXTENSION_MANIFEST
-        .iter()
-        .filter(|entry| entry.extension.desktop_release_ready())
-        .collect::<Vec<_>>();
+    let public_manifest = NATIVE_EXTENSION_MANIFEST.iter().collect::<Vec<_>>();
     let requested_raw = std::env::var("OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES")
         .expect("native extension release proof requires the planner-owned extension SQL-name set");
     let requested = requested_raw
@@ -79,14 +73,14 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         requested_raw.split(',').count(),
         "planned native extension proof set contains empty or duplicate SQL names"
     );
-    let release_manifest = release_ready_manifest
+    let release_manifest = public_manifest
         .into_iter()
         .filter(|entry| requested.contains(entry.sql_name))
         .collect::<Vec<_>>();
     assert_eq!(
         release_manifest.len(),
         requested.len(),
-        "planned native extension proof set contains a non-release-ready or unknown SQL name"
+        "planned native extension proof set contains an unknown SQL name"
     );
     let planned_count = release_manifest.len();
     let names = release_manifest
@@ -189,124 +183,6 @@ fn native_extension_matrix_when_enabled() {
         run_extension_smoke(EngineMode::NativeBroker, Some(broker), entry.extension).unwrap();
         run_extension_smoke(EngineMode::NativeServer, None, entry.extension).unwrap();
     }
-}
-
-#[test]
-fn native_external_extension_matrix_when_enabled() {
-    let Some(selection) = std::env::var(EXTERNAL_MATRIX_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty() && value.trim() != "0")
-    else {
-        eprintln!(
-            "skipping native external extension matrix: set {EXTERNAL_MATRIX_ENV}=graph,pg_search or all"
-        );
-        return;
-    };
-    if native_runtime_env_is_unavailable() {
-        eprintln!("skipping native external extension matrix: no native library env var is set");
-        return;
-    }
-
-    let modes = selected_external_modes();
-    let broker_from_env = std::env::var("OLIPHAUNT_BROKER").ok();
-    let broker = if modes.contains(&EngineMode::NativeBroker) {
-        Some(
-            option_env!("CARGO_BIN_EXE_oliphaunt-broker")
-                .or(broker_from_env.as_deref())
-                .expect(
-                    "external broker extension matrix needs a Cargo broker binary or OLIPHAUNT_BROKER",
-                ),
-        )
-    } else {
-        None
-    };
-
-    for extension in selected_external_extensions(&selection) {
-        assert!(
-            !extension.first_party_artifact(),
-            "{} is not an external extension",
-            extension.sql_name()
-        );
-        for mode in &modes {
-            match mode {
-                EngineMode::NativeDirect => run_direct_extension_smoke(extension),
-                EngineMode::NativeBroker => {
-                    run_extension_smoke(EngineMode::NativeBroker, broker, extension).unwrap()
-                }
-                EngineMode::NativeServer => {
-                    run_extension_smoke(EngineMode::NativeServer, None, extension).unwrap()
-                }
-            }
-        }
-    }
-}
-
-fn selected_external_modes() -> Vec<EngineMode> {
-    let raw = std::env::var(EXTERNAL_MATRIX_MODES_ENV).unwrap_or_else(|_| "direct".to_owned());
-    let mut selected = Vec::new();
-    for mode in raw.split(',') {
-        let mode = mode.trim();
-        if mode.is_empty() {
-            continue;
-        }
-        let parsed = match mode {
-            "all" => {
-                for mode in [
-                    EngineMode::NativeDirect,
-                    EngineMode::NativeBroker,
-                    EngineMode::NativeServer,
-                ] {
-                    if !selected.contains(&mode) {
-                        selected.push(mode);
-                    }
-                }
-                continue;
-            }
-            "direct" | "native-direct" => EngineMode::NativeDirect,
-            "broker" | "native-broker" => EngineMode::NativeBroker,
-            "server" | "native-server" => EngineMode::NativeServer,
-            _ => panic!(
-                "unknown external extension matrix mode in {EXTERNAL_MATRIX_MODES_ENV}: {mode}"
-            ),
-        };
-        if !selected.contains(&parsed) {
-            selected.push(parsed);
-        }
-    }
-    assert!(
-        !selected.is_empty(),
-        "{EXTERNAL_MATRIX_MODES_ENV} did not select any native modes"
-    );
-    selected
-}
-
-fn selected_external_extensions(selection: &str) -> Vec<Extension> {
-    if selection.trim() == "all" {
-        return Extension::EXTERNAL_PG18_SUPPORTED.to_vec();
-    }
-
-    let mut selected = Vec::new();
-    for raw in selection.split(',') {
-        let name = raw.trim();
-        if name.is_empty() {
-            continue;
-        }
-        let extension = Extension::by_sql_name(name).unwrap_or_else(|| {
-            panic!("unknown external extension in {EXTERNAL_MATRIX_ENV}: {name}")
-        });
-        assert!(
-            Extension::EXTERNAL_PG18_SUPPORTED.contains(&extension),
-            "{name} is not an external PostgreSQL 18 extension"
-        );
-        selected.push(extension);
-    }
-    selected.sort_unstable();
-    selected.dedup();
-    assert!(
-        !selected.is_empty(),
-        "{EXTERNAL_MATRIX_ENV} did not select any external extensions"
-    );
-    selected
 }
 
 fn run_direct_extension_smoke(extension: Extension) {
@@ -645,75 +521,6 @@ fn setup_extension_functional_smoke(
     extension: Extension,
 ) -> Result<()> {
     match extension {
-        Extension::Graph => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional setup",
-            r#"
-SELECT graph.reset();
-DROP TABLE IF EXISTS liboliphaunt_graph_people CASCADE;
-DROP TABLE IF EXISTS liboliphaunt_graph_companies CASCADE;
-CREATE TABLE liboliphaunt_graph_companies (
-  id text PRIMARY KEY,
-  name text NOT NULL
-);
-CREATE TABLE liboliphaunt_graph_people (
-  id text PRIMARY KEY,
-  name text NOT NULL,
-  company_id text REFERENCES liboliphaunt_graph_companies(id)
-);
-INSERT INTO liboliphaunt_graph_companies VALUES
-  ('c1', 'Acme Bank'),
-  ('c2', 'Northwind Trading');
-INSERT INTO liboliphaunt_graph_people VALUES
-  ('p1', 'Alice', 'c1'),
-  ('p2', 'Bob', 'c1'),
-  ('p3', 'Carol', 'c2');
-SELECT graph.add_table(
-  'public.liboliphaunt_graph_people'::regclass,
-  id_column := 'id',
-  columns := ARRAY['name']
-);
-SELECT graph.add_table(
-  'public.liboliphaunt_graph_companies'::regclass,
-  id_column := 'id',
-  columns := ARRAY['name']
-);
-SELECT graph.add_edge(
-  from_table := 'public.liboliphaunt_graph_people'::regclass,
-  from_column := 'company_id',
-  to_table := 'public.liboliphaunt_graph_companies'::regclass,
-  to_column := 'id',
-  label := 'works_at',
-  bidirectional := true
-);
-SELECT * FROM graph.build();
-"#,
-        )
-        .map(|_| ()),
-        Extension::PgSearch => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional setup",
-            r#"
-DROP TABLE IF EXISTS liboliphaunt_pg_search_docs CASCADE;
-CREATE TABLE liboliphaunt_pg_search_docs (
-  id serial8 NOT NULL PRIMARY KEY,
-  body text NOT NULL
-);
-INSERT INTO liboliphaunt_pg_search_docs (body) VALUES
-  ('embedded postgres search with oliphaunt'),
-  ('sqlite compatibility layer notes'),
-  ('postgres full text search on mobile');
-CREATE INDEX liboliphaunt_pg_search_docs_bm25
-  ON liboliphaunt_pg_search_docs
-  USING bm25 (id, body)
-  WITH (key_field = 'id');
-"#,
-        )
-        .map(|_| ()),
         Extension::PgTextsearch => exec_extension_sql(
             db,
             mode,
@@ -745,177 +552,6 @@ fn assert_extension_functional_smoke(
     extension: Extension,
 ) -> Result<()> {
     match extension {
-        Extension::Graph => {
-            let traverse = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional graph.traverse",
-                r#"
-SELECT CASE WHEN count(*) >= 1 THEN 'ok' ELSE 'fail' END AS graph_traverse
-FROM graph.traverse(
-  'public.liboliphaunt_graph_people'::regclass,
-  'p1',
-  2,
-  hydrate := false
-);
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                traverse.as_bytes(),
-                mode,
-                extension,
-                "functional graph.traverse",
-                &["ok"],
-            );
-
-            let status = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional graph.status",
-                r#"
-SELECT CASE WHEN node_count = 5 AND edge_count >= 4 THEN 'ok' ELSE 'fail' END AS graph_status
-FROM graph.status();
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                status.as_bytes(),
-                mode,
-                extension,
-                "functional graph.status",
-                &["ok"],
-            );
-
-            let search = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "regression graph.search exact",
-                r#"
-SELECT COALESCE(string_agg(node_id, ',' ORDER BY node_id), '') AS graph_search
-FROM graph.search(
-  'name',
-  'Alice',
-  table_filter := 'public.liboliphaunt_graph_people'::regclass,
-  mode := 'exact',
-  hydrate := false
-);
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                search.as_bytes(),
-                mode,
-                extension,
-                "regression graph.search exact",
-                &["p1"],
-            );
-
-            let path = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "regression graph.shortest_path",
-                r#"
-SELECT CASE WHEN count(*) >= 2 AND bool_or(node_id = 'c1') THEN 'ok' ELSE 'fail' END AS graph_path
-FROM graph.shortest_path(
-  'public.liboliphaunt_graph_people'::regclass,
-  'p1',
-  'public.liboliphaunt_graph_companies'::regclass,
-  'c1',
-  hydrate := false
-);
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                path.as_bytes(),
-                mode,
-                extension,
-                "regression graph.shortest_path",
-                &["ok"],
-            );
-            Ok(())
-        }
-        Extension::PgSearch => {
-            let response = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional bm25 query",
-                r#"
-SELECT COALESCE(string_agg(id::text, ',' ORDER BY id), '') AS hits
-FROM liboliphaunt_pg_search_docs
-WHERE body @@@ 'postgres';
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                response.as_bytes(),
-                mode,
-                extension,
-                "functional bm25 query",
-                &["1,3"],
-            );
-
-            let all = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "regression paradedb.all",
-                r#"
-SELECT count(*)::text AS all_docs
-FROM liboliphaunt_pg_search_docs
-WHERE id @@@ paradedb.all();
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                all.as_bytes(),
-                mode,
-                extension,
-                "regression paradedb.all",
-                &["3"],
-            );
-
-            let scored = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "regression pdb.score",
-                r#"
-SELECT CASE WHEN count(*) = 2 AND count(pdb.score(id)) = 2 THEN 'ok' ELSE 'fail' END AS scored
-FROM liboliphaunt_pg_search_docs
-WHERE body @@@ 'postgres';
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                scored.as_bytes(),
-                mode,
-                extension,
-                "regression pdb.score",
-                &["ok"],
-            );
-
-            let tokenize = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "regression paradedb.tokenize stopwords",
-                r#"
-SELECT COALESCE(string_agg(token, ',' ORDER BY token), '') AS tokens
-FROM paradedb.tokenize(
-  paradedb.tokenizer('default', stopwords => ARRAY['stopword']),
-  'something, stopword, else'
-);
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                tokenize.as_bytes(),
-                mode,
-                extension,
-                "regression paradedb.tokenize stopwords",
-                &["else,something"],
-            );
-            Ok(())
-        }
         Extension::PgTextsearch => {
             let response = exec_extension_sql(
                 db,
@@ -1119,16 +755,7 @@ fn assert_physical_archive_contains_extension_catalog(
     );
 }
 
-fn assert_extension_root_artifacts(root: &Path, mode: EngineMode, extension: Extension) {
-    if extension == Extension::Graph {
-        let graph_file = root.join("pgdata/graph/main.pggraph");
-        assert!(
-            graph_file.is_file(),
-            "{mode:?} extension graph did not persist its graph artifact under the database root at {}",
-            graph_file.display()
-        );
-    }
-}
+fn assert_extension_root_artifacts(_root: &Path, _mode: EngineMode, _extension: Extension) {}
 
 fn native_runtime_env_is_unavailable() -> bool {
     std::env::var_os("LIBOLIPHAUNT_PATH").is_none()

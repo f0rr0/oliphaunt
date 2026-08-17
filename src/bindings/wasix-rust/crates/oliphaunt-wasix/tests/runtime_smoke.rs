@@ -121,41 +121,35 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 }
 
 #[test]
-fn core_english_snowball_text_search_loads_runtime_module_and_data() -> anyhow::Result<()> {
+fn postgres_behavior_matches_shared_contract() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder().open()?;
-    let result = db.query(
-        "SELECT CASE WHEN \
-         to_tsvector('pg_catalog.english', 'the quick foxes running') \
-         @@ to_tsquery('pg_catalog.english', 'run & fox') \
-         THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
-        &[],
-        None,
-    )?;
-    assert_eq!(first_row(&result)?["value"], json!("english-snowball-ok"));
-    Ok(())
-}
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../shared/fixtures/postgres/behavior-contract.json"
+    ))?;
+    assert_eq!(fixture["schemaVersion"], json!(1));
 
-#[test]
-fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().open()?;
-    let mut ids = Vec::new();
-
-    for _ in 0..4 {
-        let result = db.query("SELECT gen_random_uuid()::text AS id", &[], None)?;
-        ids.push(
-            first_row(&result)?["id"]
-                .as_str()
-                .expect("uuid text result")
-                .to_owned(),
-        );
+    for statement in fixture["statements"]
+        .as_array()
+        .expect("contract statements")
+    {
+        db.exec(statement.as_str().expect("SQL statement"), None)?;
     }
 
-    let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
+    let assertion = fixture["assertion"]
+        .as_object()
+        .expect("contract assertion");
+    let result = db.query(assertion["sql"].as_str().expect("assertion SQL"), &[], None)?;
     assert_eq!(
-        unique.len(),
-        ids.len(),
-        "expected gen_random_uuid() to produce unique values across queries, got {ids:?}"
+        first_row(&result)?[assertion["column"].as_str().expect("assertion column")],
+        assertion["expected"]
     );
+
+    for statement in fixture["cleanupStatements"]
+        .as_array()
+        .expect("contract cleanup statements")
+    {
+        db.exec(statement.as_str().expect("cleanup SQL statement"), None)?;
+    }
     Ok(())
 }
 

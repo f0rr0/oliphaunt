@@ -2828,7 +2828,7 @@ public final class OliphauntExtensionCatalogContractTest {
   private static Path repositoryRoot() {
     Path candidate = Path.of("").toAbsolutePath().normalize();
     while (candidate != null) {
-      if (Files.isRegularFile(candidate.resolve("src/extensions/generated/sdk/kotlin.json"))) {
+      if (Files.isRegularFile(candidate.resolve("src/extensions/generated/sdk/extensions.json"))) {
         return candidate;
       }
       candidate = candidate.getParent();

@@ -463,7 +463,7 @@ function validateCatalogAndTargets(graph) {
   const runtimeTargets = allArtifactTargets({}, TOOL);
   assert(runtimeTargets.length > 0, "runtime artifact target catalog must not be empty");
   const carriers = declaredCarrierMap(catalog);
-  for (const target of runtimeTargets.filter((row) => row.published && row.npmPackage !== undefined)) {
+  for (const target of runtimeTargets.filter((row) => row.npmPackage !== undefined)) {
     assert(carriers.get(`npm:${target.npmPackage}`)?.product === target.product, `${target.id} npm package must be declared by ${target.product}`);
   }
 
@@ -477,8 +477,8 @@ function validateCatalogAndTargets(graph) {
     const metadata = extensionMetadata(product, TOOL);
     extensionSourceIdentity(product, TOOL);
     const targets = extensionArtifactTargets({ product }, TOOL);
-    assert(targets.some((target) => target.family === "native" && target.published), `${product} must publish at least one native target`);
-    assert(targets.some((target) => target.family === "wasix" && target.published), `${product} must publish at least one WASIX target`);
+    assert(targets.some((target) => target.family === "native"), `${product} must publish at least one native target`);
+    assert(targets.some((target) => target.family === "wasix"), `${product} must publish at least one WASIX target`);
     const targetSets = extensionRegistryPackageTargetSets(product, TOOL);
     const expected = extensionRegistryPackageStrings({
       product,
@@ -576,9 +576,9 @@ function validateWasixContract(graph, catalog) {
 }
 
 function validateNativeContract(graph) {
-  const targets = allArtifactTargets({ product: "liboliphaunt-native", publishedOnly: true }, TOOL);
-  assert(targets.some((target) => target.kind === "native-runtime"), "liboliphaunt-native must publish runtime targets");
-  assert(targets.some((target) => target.kind === "native-tools"), "liboliphaunt-native must publish split tool targets");
+  const targets = allArtifactTargets({ product: "liboliphaunt-native" }, TOOL);
+  assert(targets.some((target) => target.kind === "native-runtime"), "liboliphaunt-native must declare runtime targets");
+  assert(targets.some((target) => target.kind === "native-tools"), "liboliphaunt-native must declare split tool targets");
   assert(currentProductVersionSync("liboliphaunt-native", TOOL) === graph.products["liboliphaunt-native"].version, "native C product version must match the release graph");
 }
 

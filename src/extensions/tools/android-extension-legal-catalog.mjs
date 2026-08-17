@@ -16,7 +16,7 @@ import {
 } from "../../../tools/release/extension-upstream-licenses.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const INPUT = path.join(ROOT, "src/extensions/generated/sdk/kotlin.json");
+const INPUT = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
 const OUTPUT = path.join(
   ROOT,
   "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json",
@@ -37,7 +37,7 @@ function canonicalMetadata(metadata) {
     metadata === null
     || typeof metadata !== "object"
     || Array.isArray(metadata)
-    || metadata.consumer !== "kotlin"
+    || metadata["format-version"] !== 1
     || typeof metadata["extension-catalog-sha256"] !== "string"
     || !/^[0-9a-f]{64}$/u.test(metadata["extension-catalog-sha256"])
     || !Array.isArray(metadata.extensions)
@@ -53,11 +53,8 @@ function canonicalMetadata(metadata) {
       || !/^[A-Za-z0-9._-]{1,128}$/u.test(sqlName)
       || typeof product !== "string"
       || !/^oliphaunt-extension-[A-Za-z0-9._-]+$/u.test(product)
-      || row.public !== true
-      || row.stable !== true
-      || row["mobile-release-ready"] !== true
     ) {
-      fail(`generated Kotlin extension row ${index} is not one public mobile contract`);
+      fail(`generated extension row ${index} is not a supported package contract`);
     }
     return Object.freeze({ sqlName, product });
   });

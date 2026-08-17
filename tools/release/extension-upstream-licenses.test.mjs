@@ -32,7 +32,6 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
   extensionMavenLicenses,
-  extensionQualificationLegalContract,
   extensionRegistryLicense,
   stageExtensionUpstreamLicenses,
   extensionUpstreamLicenseFileInventory,
@@ -261,13 +260,6 @@ test("registry metadata derives external and contrib SPDX expressions from the s
       packageSpdx: "MIT AND Apache-2.0 AND GPL-2.0-or-later AND LGPL-2.1-or-later AND blessing",
     },
   );
-  assert.throws(
-    () => extensionQualificationLegalContract("postgis", {
-      family: "native",
-      target: "android-arm64-v8a",
-    }),
-    /postgis is not a canonical publication-deferred qualification candidate/u,
-  );
   assert.deepEqual(
     extensionRegistryLicense("oliphaunt-extension-contrib-pg18", ["hstore", "pgcrypto"]),
     {
@@ -318,13 +310,6 @@ test("carrier legal roles derive exact contrib and external payload closure", ()
     { family: "native", target: "android-arm64-v8a" },
   );
   assert.equal(postgis.profile, "external-native");
-  assert.throws(
-    () => extensionQualificationLegalContract(
-      "postgis",
-      { family: "native", target: "unsupported-target" },
-    ),
-    /postgis is not a canonical publication-deferred qualification candidate/u,
-  );
   assert.deepEqual(postgis.upstreamMembers, ["postgis"]);
   assert.deepEqual(postgis.licenseFiles, [
     "share/licenses/geos/COPYING",

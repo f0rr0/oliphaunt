@@ -702,7 +702,12 @@ tasks.register("prepareOliphauntAndroidAssets", PrepareOliphauntAndroidAssetsTas
   runtimeResourcesDirPath.set(packagedRuntimeResourcesDir ?: "")
   selectedExtensions.set(packagedExtensions)
   mobileStaticModuleStems.set(packagedMobileStaticModules)
-  generatedExtensionMetadata.from(file("../src/generated/extensions.json"))
+  def packagedMetadata = file("../src/generated/extensions.json")
+  generatedExtensionMetadata.from(
+    packagedMetadata.isFile()
+      ? packagedMetadata
+      : file("../../../extensions/generated/sdk/extensions.json")
+  )
   if (packagedRuntimeResourcesDir != null && !packagedRuntimeResourcesDir.isBlank()) {
     sourceDirectories.from(file(packagedRuntimeResourcesDir))
   }

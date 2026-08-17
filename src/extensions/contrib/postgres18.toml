@@ -177,9 +177,6 @@ sql-name = "pgcrypto"
 contrib-dir = "pgcrypto"
 module-file = "pgcrypto.so"
 default-version = "1.4"
-mobile-static-dependencies = ["openssl"]
-mobile-static-include-dependencies = ["openssl"]
-mobile-static-hash-source-dependencies = ["openssl"]
 
 [[extensions]]
 id = "seg"
@@ -230,7 +227,6 @@ sql-name = "uuid-ossp"
 contrib-dir = "uuid-ossp"
 module-file = "uuid-ossp.so"
 default-version = "1.1"
-mobile-static-dependencies = ["uuid"]
 mobile-static-include-dirs = ["src/runtimes/liboliphaunt/native/portable-uuid/include"]
 mobile-static-cflags = ["-DHAVE_UUID_E2FS=1", "-DHAVE_UUID_UUID_H=1"]
 mobile-static-hash-dirs = ["src/runtimes/liboliphaunt/native/portable-uuid"]

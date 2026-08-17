@@ -146,7 +146,7 @@ test("shared contrib source directly selects both runtime owners and no contrib 
   assert.equal(graph.moon_projects[WASIX].dependencies.some(({ id }) => id === NATIVE), false);
   for (const file of [
     "src/postgres/versions/18/source.toml",
-    "src/extensions/contrib/amcheck/targets/artifacts.toml",
+    "tools/release/extension-target-profiles.toml",
     "src/shared/extension-runtime-contract/contract.toml",
   ]) {
     assert.deepEqual(
@@ -154,7 +154,7 @@ test("shared contrib source directly selects both runtime owners and no contrib 
       [NATIVE, WASIX],
     );
   }
-  for (const file of ["src/extensions/contrib/amcheck/moon.yml", "src/extensions/contrib/moon.yml"]) {
+  for (const file of ["src/extensions/contrib/moon.yml"]) {
     const metadataPlan = buildPlan(graph, [file], "release-dependent-candidates.test");
     assert.deepEqual(metadataPlan.directProducts, []);
     assert.deepEqual(metadataPlan.releaseProducts, []);

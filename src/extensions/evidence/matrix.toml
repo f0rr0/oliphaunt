@@ -1,15 +1,12 @@
 format-version = 1
 source-digest-inputs = [
   "src/postgres/versions/18/source.toml",
-  "src/extensions/catalog/extensions.promoted.toml",
-  "src/extensions/catalog/extensions.smoke.toml",
   "src/extensions/catalog/extensions.source.json",
+  "src/extensions/catalog/native-components.toml",
   "src/extensions/contrib/postgres18.toml",
   "src/extensions/generated/extensions.catalog.json",
-  "src/extensions/generated/extensions.build-plan.json",
   "src/extensions/generated/contrib-build.tsv",
   "src/extensions/generated/pgxs-build.tsv",
-  "src/extensions/external/age/source.toml",
   "src/extensions/external/pg_hashids/source.toml",
   "src/extensions/external/pg_ivm/source.toml",
   "src/extensions/external/pg_textsearch/source.toml",
@@ -32,7 +29,6 @@ source-digest-inputs = [
   "src/extensions/external/pg_textsearch/recipe.toml",
   "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
   "src/extensions/external/pg_textsearch/tests/smoke.sql",
-  "src/extensions/external/pg_textsearch/tests/upstream.toml",
   "src/extensions/external/pg_textsearch/upstream-license-data.json",
   "src/extensions/external/pg_uuidv7/upstream-license-data.json",
   "src/extensions/external/pgtap/recipe.toml",
@@ -40,10 +36,7 @@ source-digest-inputs = [
   "src/extensions/external/pgtap/targets/native.toml",
   "src/extensions/external/pgtap/targets/wasix.toml",
   "src/extensions/external/pgtap/tests/smoke.sql",
-  "src/extensions/external/pgtap/tests/upstream.toml",
   "src/extensions/external/pgtap/upstream-license-data.json",
-  "src/extensions/external/postgis/blockers.toml",
-  "src/extensions/external/postgis/deps.toml",
   "src/extensions/external/postgis/patches/README.md",
   "src/extensions/external/postgis/recipe.toml",
   "src/extensions/external/postgis/targets/native-static-registry.toml",
@@ -51,7 +44,6 @@ source-digest-inputs = [
   "src/extensions/external/postgis/targets/wasix.toml",
   "src/extensions/external/postgis/tests/regression.sql",
   "src/extensions/external/postgis/tests/smoke.sql",
-  "src/extensions/external/postgis/tests/upstream.toml",
   "src/extensions/external/postgis/tools/build_wasix.sh",
   "src/extensions/external/postgis/tools/reproducible-bin/date",
   "src/extensions/external/postgis/tools/reproducible-time.sh",
@@ -66,7 +58,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "auto_explain"
@@ -75,7 +66,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "bloom"
@@ -84,7 +74,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "btree_gin"
@@ -93,7 +82,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "btree_gist"
@@ -102,7 +90,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "citext"
@@ -111,7 +98,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "cube"
@@ -120,7 +106,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "dict_int"
@@ -129,7 +114,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "dict_xsyn"
@@ -138,7 +122,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "earthdistance"
@@ -147,7 +130,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "file_fdw"
@@ -156,7 +138,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "fuzzystrmatch"
@@ -165,7 +146,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "hstore"
@@ -174,7 +154,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "intarray"
@@ -183,7 +162,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "isn"
@@ -192,7 +170,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "lo"
@@ -201,7 +178,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "ltree"
@@ -210,7 +186,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pageinspect"
@@ -219,7 +194,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_buffercache"
@@ -228,7 +202,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_freespacemap"
@@ -237,7 +210,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_hashids"
@@ -246,7 +218,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_ivm"
@@ -255,7 +226,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_surgery"
@@ -264,7 +234,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_textsearch"
@@ -273,7 +242,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_trgm"
@@ -282,7 +250,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_uuidv7"
@@ -291,7 +258,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_visibility"
@@ -300,7 +266,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pg_walinspect"
@@ -309,7 +274,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pgcrypto"
@@ -318,7 +282,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "pgtap"
@@ -327,7 +290,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "postgis"
@@ -336,7 +298,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "seg"
@@ -345,7 +306,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "tablefunc"
@@ -354,7 +314,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "tcn"
@@ -363,7 +322,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "tsm_system_rows"
@@ -372,7 +330,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "tsm_system_time"
@@ -381,7 +338,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "unaccent"
@@ -390,7 +346,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "uuid_ossp"
@@ -399,7 +354,6 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true
 
 [[claims]]
 extension = "vector"
@@ -408,4 +362,3 @@ artifact-family = "wasix-runtime"
 platform-targets = ["portable"]
 runtime-modes = ["direct", "server", "restart", "dump-restore"]
 evidence-required = ["wasix-full-lifecycle-v1"]
-public = true

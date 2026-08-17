@@ -44,8 +44,8 @@ fi
 
 oliphaunt_wasix_cargo_test() {
   if [ "$asset_mode" = "full" ]; then
-    # The public extension evidence contract includes pg_dump/restore.  Keep the
-    # tools feature and every promoted extension feature enabled whenever the
+    # The extension evidence contract includes pg_dump/restore. Keep the tools
+    # feature and every catalogued extension feature enabled whenever the
     # full extension asset set is under test.
     cargo test -p oliphaunt-wasix --locked --no-default-features \
       --features "$full_evidence_features" "$@"
@@ -74,7 +74,7 @@ oliphaunt_wasix_cargo_test \
   --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
-  # These library tests iterate every promoted extension through direct,
+  # These library tests iterate every catalogued extension through direct,
   # server, restart, materialization, and dump/restore paths.  Do not replace
   # this with a small representative integration-test subset: the evidence
   # matrix makes product-by-product claims.

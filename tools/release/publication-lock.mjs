@@ -635,7 +635,6 @@ function fixedGithubReleaseArtifacts(files, product) {
   const targets = allArtifactTargets({
     product: product.id,
     surface: "github-release",
-    publishedOnly: true,
   }, "publication-lock");
   if (targets.length === 0) {
     return [];
@@ -711,7 +710,7 @@ function exactExtensionIosContract(product, sqlName) {
   if (!extensionSqlNames(product, "publication-lock").includes(sqlName)) {
     throw error(`${product} does not own extension SQL name ${sqlName}`);
   }
-  const generated = JSON.parse(readFileSync(path.join(ROOT, "src/extensions/generated/sdk/react-native.json"), "utf8"));
+  const generated = JSON.parse(readFileSync(path.join(ROOT, "src/extensions/generated/sdk/extensions.json"), "utf8"));
   const row = generated.extensions?.find((item) => item?.["sql-name"] === sqlName);
   if (row === undefined) {
     throw error(`${product} is absent from generated React Native extension metadata`);
@@ -740,7 +739,7 @@ function exactExtensionIosContract(product, sqlName) {
 
 function extensionRequiredArtifactRows(product) {
   const rows = [];
-  for (const target of extensionArtifactTargets({ product, publishedOnly: true }, "publication-lock")) {
+  for (const target of extensionArtifactTargets({ product }, "publication-lock")) {
     const sqlName = target.sqlName ?? target.sql_name;
     const ios = exactExtensionIosContract(product, sqlName);
     if (target.family === "wasix") {
@@ -776,7 +775,7 @@ export function extensionRequiredAssetKeys(product) {
 
 function extensionBundleCarrierRows(product, family = null) {
   const groups = new Map();
-  for (const row of extensionArtifactTargets({ product, publishedOnly: true }, "publication-lock")) {
+  for (const row of extensionArtifactTargets({ product }, "publication-lock")) {
     if (family !== null && row.family !== family) continue;
     const key = `${row.family}\0${row.target}`;
     if (!groups.has(key)) {
@@ -881,11 +880,8 @@ function validateExtensionManifestRow(product, manifestPath, member) {
     || stableJson(sortedStrings(member.dataFiles)) !== stableJson([...(iosContract.metadata["runtime-share-data-files"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.extensionSqlFileNames)) !== stableJson([...(iosContract.metadata["extension-sql-file-names"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.extensionSqlFilePrefixes)) !== stableJson([...(iosContract.metadata["extension-sql-file-prefixes"] ?? [])].sort(compareText))
-    || stableJson(sortedStrings(member.nativeDependencies)) !== stableJson([...(iosContract.metadata["native-dependencies"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.sharedPreloadLibraries)) !== stableJson([...(iosContract.metadata["shared-preload-libraries"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.iosNativeDependencies)) !== stableJson(iosContract.dependencies)
-    || member.mobileReleaseReady !== (iosContract.metadata["mobile-release-ready"] === true)
-    || member.desktopReleaseReady !== (iosContract.metadata["desktop-release-ready"] === true)
   ) {
     throw error(`${rel(manifestPath)} ${member.sqlName} semantic extension metadata is not canonical generated metadata`);
   }
@@ -921,14 +917,11 @@ function publicExtensionMember(member) {
     dataFiles: member.dataFiles,
     extensionSqlFileNames: member.extensionSqlFileNames,
     extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
-    nativeDependencies: member.nativeDependencies,
     nativeModuleStem: member.nativeModuleStem,
     iosNativeDependencies: member.iosNativeDependencies,
     iosRegistration: member.iosRegistration,
     wasixInstall,
     sharedPreloadLibraries: member.sharedPreloadLibraries,
-    mobileReleaseReady: member.mobileReleaseReady,
-    desktopReleaseReady: member.desktopReleaseReady,
     assets: member.assets.map(publicExtensionAsset),
   };
 }
@@ -1324,7 +1317,7 @@ function extensionGithubReleaseArtifacts(files, product) {
     .sort(compareText);
   const actualKeys = [...rows.keys()].sort(compareText);
   if (stableJson(expectedKeys) !== stableJson(actualKeys)) {
-    throw error(`${product.id} extension asset roles do not exactly cover declared published targets: expected=${JSON.stringify(expectedKeys)}, actual=${JSON.stringify(actualKeys)}`);
+    throw error(`${product.id} extension asset roles do not exactly cover declared targets: expected=${JSON.stringify(expectedKeys)}, actual=${JSON.stringify(actualKeys)}`);
   }
   const publicManifestFile = path.join(directory, `${product.id}-${product.version}-manifest.json`);
   let publicManifest;
@@ -1353,14 +1346,11 @@ function extensionGithubReleaseArtifacts(files, product) {
     dataFiles: publicMember.dataFiles,
     extensionSqlFileNames: publicMember.extensionSqlFileNames,
     extensionSqlFilePrefixes: publicMember.extensionSqlFilePrefixes,
-    nativeDependencies: publicMember.nativeDependencies,
     nativeModuleStem: publicMember.nativeModuleStem,
     iosNativeDependencies: publicMember.iosNativeDependencies,
     iosRegistration: publicMember.iosRegistration,
     wasixInstall: publicMember.wasixInstall,
     sharedPreloadLibraries: publicMember.sharedPreloadLibraries,
-    mobileReleaseReady: publicMember.mobileReleaseReady,
-    desktopReleaseReady: publicMember.desktopReleaseReady,
     assets: publicMember.assets,
   };
   if (stableJson(publicManifest) !== stableJson(expectedPublicManifest)) {
@@ -1462,12 +1452,12 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     });
   });
   const ownerCatalogArtifact = artifacts.find(({ kind }) => kind === "swiftpm-extension-owner-catalog");
-  const canonicalOwnerCatalog = path.join(ROOT, "src/extensions/generated/sdk/swift.json");
+  const canonicalOwnerCatalog = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
   if (
     ownerCatalogArtifact === undefined
     || !readFileSync(path.resolve(ROOT, ownerCatalogArtifact.path)).equals(readFileSync(canonicalOwnerCatalog))
   ) {
-    throw error(`${product.id} frozen extension-owner-catalog.json must exactly match src/extensions/generated/sdk/swift.json`);
+    throw error(`${product.id} frozen extension-owner-catalog.json must exactly match src/extensions/generated/sdk/extensions.json`);
   }
   const resourceInventoryArtifact = artifacts.find(({ kind }) => kind === "swiftpm-extension-resource-inventory");
   const canonicalResourceInventory = path.join(ROOT, "src/sdks/swift/tools/extension-resource-inventory.mjs");
@@ -1992,7 +1982,6 @@ function validateProductArtifactInventory(product, artifacts, { hasSelectedExten
   const targets = allArtifactTargets({
     product: product.id,
     surface: "github-release",
-    publishedOnly: true,
   }, "publication-lock");
   const expected = targets.map((target) => `github-release:${target.asset.replaceAll("{version}", product.version)}`);
   if (product.id === "oliphaunt-swift") {

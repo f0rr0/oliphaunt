@@ -15,7 +15,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "amcheck.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "amcheck"
     },
@@ -38,7 +41,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "auto_explain.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "auto_explain"
     },
@@ -57,7 +63,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "bloom.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "bloom"
     },
@@ -76,7 +85,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "btree_gin.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "btree_gin"
     },
@@ -95,7 +107,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "btree_gist.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "btree_gist"
     },
@@ -114,7 +129,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "citext.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "citext"
     },
@@ -133,7 +151,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "cube.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "cube"
     },
@@ -152,7 +173,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "dict_int.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "dict_int"
     },
@@ -171,7 +195,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "dict_xsyn.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "dict_xsyn"
     },
@@ -192,7 +219,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "earthdistance.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "earthdistance"
     },
@@ -211,7 +241,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "file_fdw.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "file_fdw"
     },
@@ -230,7 +263,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "fuzzystrmatch.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "fuzzystrmatch"
     },
@@ -249,7 +285,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "hstore.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "hstore"
     },
@@ -268,7 +307,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "_int.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "intarray"
     },
@@ -287,7 +329,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "isn.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "isn"
     },
@@ -306,7 +351,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "lo.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "lo"
     },
@@ -325,7 +373,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "ltree.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "ltree"
     },
@@ -344,7 +395,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pageinspect.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pageinspect"
     },
@@ -363,7 +417,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_buffercache.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_buffercache"
     },
@@ -382,7 +439,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_freespacemap.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_freespacemap"
     },
@@ -401,7 +461,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_hashids.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_hashids"
     },
@@ -420,7 +483,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_ivm.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_ivm"
     },
@@ -439,7 +505,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_surgery.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_surgery"
     },
@@ -460,7 +529,10 @@
         ]
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_textsearch.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_textsearch"
     },
@@ -479,7 +551,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_trgm.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_trgm"
     },
@@ -498,7 +573,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_uuidv7.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_uuidv7"
     },
@@ -517,7 +595,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_visibility.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_visibility"
     },
@@ -536,7 +617,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "pg_walinspect.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pg_walinspect"
     },
@@ -554,7 +638,14 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [
+        "openssl"
+      ],
+      "native-link-units": [
+        "openssl"
+      ],
       "native-module-file": "pgcrypto.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pgcrypto"
     },
@@ -575,7 +666,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": null,
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "pgtap"
     },
@@ -595,7 +689,28 @@
       "load-order": [
         "lib/postgresql/postgis-3.so"
       ],
+      "native-components": [
+        "geos",
+        "sqlite",
+        "proj",
+        "libxml2",
+        "json-c",
+        "libiconv"
+      ],
+      "native-link-units": [
+        "geos-c",
+        "geos",
+        "proj",
+        "sqlite",
+        "libxml2",
+        "json-c",
+        "libiconv",
+        "libcharset"
+      ],
       "native-module-file": "postgis-3.so",
+      "native-runtime-files": [
+        "proj/proj.db"
+      ],
       "native-support-modules": [
         {
           "aot-file": "postgis_deps-llvm-opta.bin.zst",
@@ -621,7 +736,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "seg.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "seg"
     },
@@ -640,7 +758,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "tablefunc.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "tablefunc"
     },
@@ -659,7 +780,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "tcn.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "tcn"
     },
@@ -678,7 +802,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "tsm_system_rows.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "tsm_system_rows"
     },
@@ -697,7 +824,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "tsm_system_time.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "tsm_system_time"
     },
@@ -716,7 +846,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "unaccent.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "unaccent"
     },
@@ -735,7 +868,14 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [
+        "portable-uuid"
+      ],
+      "native-link-units": [
+        "uuid"
+      ],
       "native-module-file": "uuid-ossp.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "uuid-ossp"
     },
@@ -754,7 +894,10 @@
         "startup-config": []
       },
       "load-order": [],
+      "native-components": [],
+      "native-link-units": [],
       "native-module-file": "vector.so",
+      "native-runtime-files": [],
       "native-support-modules": [],
       "sql-name": "vector"
     }
@@ -764,6 +907,10 @@
     {
       "name": "extension-catalog",
       "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "native-components",
+      "path": "src/extensions/catalog/native-components.toml"
     },
     {
       "name": "extension-definitions",

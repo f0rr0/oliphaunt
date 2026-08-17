@@ -80,7 +80,7 @@ const SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT = path.join(
 const SWIFT_SOURCE_FIXTURE_ARCHIVE_ROOT = "package/Tests/Fixtures/swiftpm-extension-resources";
 const REACT_NATIVE_EXTENSION_METADATA = path.join(
   ROOT,
-  "src/extensions/generated/sdk/react-native.json",
+  "src/extensions/generated/sdk/extensions.json",
 );
 const MOBILE_STATIC_REGISTRY = path.join(
   ROOT,
@@ -101,14 +101,11 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "dataFiles",
   "extensionSqlFileNames",
   "extensionSqlFilePrefixes",
-  "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
   "wasixInstall",
   "sharedPreloadLibraries",
-  "mobileReleaseReady",
-  "desktopReleaseReady",
   "assets",
 ]);
 const PUBLIC_EXTENSION_BUNDLE_RELEASE_MANIFEST_KEYS = new Set([
@@ -129,14 +126,11 @@ const EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   "dataFiles",
   "extensionSqlFileNames",
   "extensionSqlFilePrefixes",
-  "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
   "wasixInstall",
   "sharedPreloadLibraries",
-  "mobileReleaseReady",
-  "desktopReleaseReady",
   "assets",
 ]);
 const PUBLIC_EXTENSION_RELEASE_ASSET_KEYS = new Set([
@@ -641,7 +635,7 @@ function exactSortedStrings(label, actual, expected) {
 }
 
 function rustSdkArtifactTargets(product, kind, surface) {
-  return allArtifactTargets({ product, kind, surface, publishedOnly: true }, PREFIX);
+  return allArtifactTargets({ product, kind, surface }, PREFIX);
 }
 
 function requireRegistryTargetDependency(crate, dependencies, cfg, name, version) {
@@ -1223,7 +1217,7 @@ async function checkSdkProduct(product, { require }) {
     }
     const generatorRoot = path.join(root, "extension-generator");
     for (const [name, source] of [
-      ["extension-owner-catalog.json", path.join(ROOT, "src/extensions/generated/sdk/swift.json")],
+      ["extension-owner-catalog.json", path.join(ROOT, "src/extensions/generated/sdk/extensions.json")],
       ["extension-resource-inventory.mjs", path.join(ROOT, "src/sdks/swift/tools/extension-resource-inventory.mjs")],
       ["render-extension-products.mjs", path.join(ROOT, "src/sdks/swift/tools/render-extension-products.mjs")],
       ["swift-carrier-resolver.mjs", path.join(ROOT, "src/sdks/swift/tools/swift-carrier-resolver.mjs")],
@@ -1476,7 +1470,6 @@ function validateBundleMemberMetadata(member, manifest, stagedTargets) {
     "dataFiles",
     "extensionSqlFileNames",
     "extensionSqlFilePrefixes",
-    "nativeDependencies",
     "iosNativeDependencies",
     "sharedPreloadLibraries",
   ]) {
@@ -1484,11 +1477,6 @@ function validateBundleMemberMetadata(member, manifest, stagedTargets) {
   }
   if (!(member.nativeModuleStem === null || typeof member.nativeModuleStem === "string" && member.nativeModuleStem)) {
     fail(`${rel(manifest)} member ${member.sqlName}.nativeModuleStem must be null or a non-empty string`);
-  }
-  for (const field of ["mobileReleaseReady", "desktopReleaseReady"]) {
-    if (typeof member[field] !== "boolean") {
-      fail(`${rel(manifest)} member ${member.sqlName}.${field} must be boolean`);
-    }
   }
   validateMemberWasixInstall(member, `${rel(manifest)} member ${member.sqlName}`);
   const stagesIos = stagedTargets.has("ios-xcframework");
@@ -1551,7 +1539,7 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { fami
     fail(`${rel(manifest)} bundle members must exactly match release metadata: expected=${JSON.stringify(expectedSqlNames)}, actual=${JSON.stringify(actualSqlNames)}`);
   }
 
-  const targetRows = extensionArtifactTargets({ product, publishedOnly: true }, PREFIX)
+  const targetRows = extensionArtifactTargets({ product }, PREFIX)
     .filter((row) => family === null || row.family === family);
   const allowedTargetFamilies = new Map();
   for (const row of targetRows) {
@@ -1620,7 +1608,7 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { fami
   if (requireFullTargets) {
     const missing = [...allowedTargets].filter((target) => !stagedTargets.has(target)).sort(compareText);
     if (missing.length > 0) {
-      fail(`${product} is missing aggregate carriers for published targets: ${missing.join(", ")}`);
+      fail(`${product} is missing aggregate carriers for declared targets: ${missing.join(", ")}`);
     }
   }
 
@@ -1833,12 +1821,9 @@ async function checkExtensionBundleProduct(product, root, manifest, data, { fami
     expectedProperties[`${prefix}.dataFiles`] = member.dataFiles.join(",");
     expectedProperties[`${prefix}.extensionSqlFileNames`] = member.extensionSqlFileNames.join(",");
     expectedProperties[`${prefix}.extensionSqlFilePrefixes`] = member.extensionSqlFilePrefixes.join(",");
-    expectedProperties[`${prefix}.nativeDependencies`] = member.nativeDependencies.join(",");
     expectedProperties[`${prefix}.nativeModuleStem`] = member.nativeModuleStem ?? "";
     expectedProperties[`${prefix}.iosNativeDependencies`] = member.iosNativeDependencies.join(",");
     expectedProperties[`${prefix}.sharedPreloadLibraries`] = member.sharedPreloadLibraries.join(",");
-    expectedProperties[`${prefix}.mobileReleaseReady`] = member.mobileReleaseReady ? "true" : "false";
-    expectedProperties[`${prefix}.desktopReleaseReady`] = member.desktopReleaseReady ? "true" : "false";
     for (const asset of member.assets) {
       const identity = asset.identity === null ? "" : `.${asset.identity}`;
       expectedProperties[`asset.${member.sqlName}.${asset.family}.${asset.target}.${asset.kind}${identity}`]
@@ -1906,7 +1891,6 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
     "dataFiles",
     "extensionSqlFileNames",
     "extensionSqlFilePrefixes",
-    "nativeDependencies",
     "sharedPreloadLibraries",
   ]) {
     requireSortedUniqueStrings(data[field], `${rel(manifest)}.${field}`);
@@ -1918,7 +1902,7 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
   const seenNames = new Set();
   const seenRoles = new Set();
   const stagedTargets = new Set();
-  const allowedTargets = new Set(extensionArtifactTargets({ product, publishedOnly: true }, PREFIX).map((target) => target.target));
+  const allowedTargets = new Set(extensionArtifactTargets({ product }, PREFIX).map((target) => target.target));
   for (const asset of assets) {
     if (asset === null || Array.isArray(asset) || typeof asset !== "object") {
       fail(`${rel(manifest)} contains a non-object asset entry`);
@@ -2039,14 +2023,11 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
     dataFiles: data.dataFiles,
     extensionSqlFileNames: data.extensionSqlFileNames,
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
-    nativeDependencies: data.nativeDependencies,
     nativeModuleStem: data.nativeModuleStem,
     iosNativeDependencies: data.iosNativeDependencies,
     iosRegistration: data.iosRegistration,
     wasixInstall: data.wasixInstall,
     sharedPreloadLibraries: data.sharedPreloadLibraries,
-    mobileReleaseReady: data.mobileReleaseReady,
-    desktopReleaseReady: data.desktopReleaseReady,
     assets: assets.map(publicExtensionAsset),
   };
   requireExactKeys(
@@ -2107,12 +2088,9 @@ async function checkExtensionProductVariant(product, root, manifest, data, { fam
     dataFiles: data.dataFiles.join(","),
     extensionSqlFileNames: data.extensionSqlFileNames.join(","),
     extensionSqlFilePrefixes: data.extensionSqlFilePrefixes.join(","),
-    nativeDependencies: data.nativeDependencies.join(","),
     nativeModuleStem: data.nativeModuleStem ?? "",
     iosNativeDependencies: data.iosNativeDependencies.join(","),
     sharedPreloadLibraries: data.sharedPreloadLibraries.join(","),
-    mobileReleaseReady: data.mobileReleaseReady ? "true" : "false",
-    desktopReleaseReady: data.desktopReleaseReady ? "true" : "false",
   };
   for (const asset of assets) {
     const identity = asset.identity === null ? "" : `.${asset.identity}`;
