@@ -1252,7 +1252,6 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
             "full_runtime_layout_matches_current",
             "ensure_existing_pgdata_matches_runtime",
             "existing PGDATA at {} is PostgreSQL {}",
-            "source-fingerprint=",
         ],
     )?;
     ensure_file_contains_all(

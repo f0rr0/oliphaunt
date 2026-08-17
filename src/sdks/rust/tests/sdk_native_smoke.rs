@@ -165,6 +165,10 @@ fn native_postgres_behavior_matches_shared_contract_when_env_is_available() {
         eprintln!("skipping native PostgreSQL behavior contract: native runtime env is incomplete");
         return;
     }
+    let Some(fixture_path) = shared_postgres_behavior_fixture_path() else {
+        eprintln!("skipping shared PostgreSQL behavior fixture outside the monorepo package");
+        return;
+    };
 
     let root = unique_temp_root("oliphaunt-native-postgres-contract");
     let db = block_on(
@@ -174,7 +178,7 @@ fn native_postgres_behavior_matches_shared_contract_when_env_is_available() {
             .open(),
     )
     .unwrap();
-    assert_postgres_behavior_contract(&db);
+    assert_postgres_behavior_contract(&db, &fixture_path);
     block_on(db.close()).unwrap();
 }
 
@@ -1846,11 +1850,11 @@ fn assert_physical_archive(artifact: &oliphaunt::BackupArtifact, mode: &str) {
     );
 }
 
-fn assert_postgres_behavior_contract(db: &Oliphaunt) {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../shared/fixtures/postgres/behavior-contract.json"
-    ))
-    .unwrap();
+fn assert_postgres_behavior_contract(db: &Oliphaunt, fixture_path: &Path) {
+    let fixture: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_path).expect("read shared PostgreSQL behavior fixture"),
+    )
+    .expect("parse shared PostgreSQL behavior fixture");
     assert_eq!(fixture["schemaVersion"], 1);
 
     for statement in fixture["statements"].as_array().unwrap() {
@@ -1868,6 +1872,18 @@ fn assert_postgres_behavior_contract(db: &Oliphaunt) {
     for statement in fixture["cleanupStatements"].as_array().unwrap() {
         block_on(db.execute(statement.as_str().unwrap())).unwrap();
     }
+}
+
+fn shared_postgres_behavior_fixture_path() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("OLIPHAUNT_SHARED_FIXTURES") {
+        let path = PathBuf::from(root).join("postgres/behavior-contract.json");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../shared/fixtures/postgres/behavior-contract.json");
+    path.is_file().then_some(path)
 }
 
 fn unique_temp_root(prefix: &str) -> PathBuf {

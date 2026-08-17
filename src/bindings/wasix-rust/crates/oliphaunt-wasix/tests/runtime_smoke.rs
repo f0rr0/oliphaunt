@@ -6,6 +6,7 @@ use oliphaunt_wasix::{
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -100,10 +101,12 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 
 #[test]
 fn postgres_behavior_matches_shared_contract() -> anyhow::Result<()> {
+    let Some(fixture_path) = shared_postgres_behavior_fixture_path() else {
+        eprintln!("skipping shared PostgreSQL behavior fixture outside the monorepo package");
+        return Ok(());
+    };
     let mut db = Oliphaunt::builder().open()?;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../shared/fixtures/postgres/behavior-contract.json"
-    ))?;
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(fixture_path)?)?;
     assert_eq!(fixture["schemaVersion"], json!(1));
 
     for statement in fixture["statements"]
@@ -129,6 +132,18 @@ fn postgres_behavior_matches_shared_contract() -> anyhow::Result<()> {
         db.exec(statement.as_str().expect("cleanup SQL statement"), None)?;
     }
     Ok(())
+}
+
+fn shared_postgres_behavior_fixture_path() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("OLIPHAUNT_SHARED_FIXTURES") {
+        let path = PathBuf::from(root).join("postgres/behavior-contract.json");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../shared/fixtures/postgres/behavior-contract.json");
+    path.is_file().then_some(path)
 }
 
 #[test]
