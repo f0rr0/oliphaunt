@@ -34,13 +34,16 @@ Direct and server builders expose the same storage choices:
 
 - `DatabaseStorage::Memory` is the default and keeps PGDATA in Wasmer's memory
   filesystem;
-- `Directory(path)` is caller-owned persistent host storage;
-- `ApplicationData(identity)` resolves a retained platform app-data directory;
-- `TemporaryDirectory` allocates and owns a disposable host directory.
+- `Directory(path)` is caller-owned host storage. Resolve temporary or platform
+  app-data paths before passing them to the builder.
 
 Storage says where mutable files live. `DatabaseInitialization` independently
 chooses the packaged template, a fresh WASIX `initdb`, or a compatible physical
 archive. Reopening initialized persistent storage validates and reuses it.
+
+Extension selection is runtime configuration. When reopening a `Directory`
+database whose catalog uses an extension, select that extension on the new
+builder too so its runtime files are available before PostgreSQL starts.
 
 ## Operational Limits
 
@@ -147,7 +150,7 @@ to open.
 guest with direct or worker-isolated execution in browsers, Node.js, Bun, and
 Deno, and defaults to memory. IndexedDB is a selective browser adapter. Node,
 Bun, and Deno selectively expose
-snapshot-backed directory persistence through the matching `storage/node`,
+delta-backed raw-PGDATA persistence through the matching `storage/node`,
 `storage/bun`, or `storage/deno` subpath.
 Shared runtime carriers do not imply API parity, and the package
 does not route through the TypeScript product's native runtime.

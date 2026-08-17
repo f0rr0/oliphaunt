@@ -46,7 +46,7 @@ pub use proxy::{
     ProtocolStatsSnapshot, disable_protocol_stats, protocol_stats_snapshot, reset_protocol_stats,
 };
 pub use server::{OliphauntServer, OliphauntServerBuilder};
-pub use storage::{ApplicationData, DatabaseInitialization, DatabaseStorage};
+pub use storage::{DatabaseInitialization, DatabaseStorage};
 pub use templating::{QueryTemplate, TemplatedQuery, format_query, quote_identifier};
 #[doc(hidden)]
 pub use timing::{PhaseTiming, capture_phase_timings, measure_phase, record_phase_timing};

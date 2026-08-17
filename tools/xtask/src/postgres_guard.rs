@@ -94,6 +94,8 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         "0034-oliphaunt-wasix-set-embedded-postmaster-environment.patch",
         "0040-oliphaunt-wasix-use-single-backend-spinlocks.patch",
         "0041-oliphaunt-wasix-specialize-single-backend-atomics.patch",
+        "0042-oliphaunt-wasix-buffer-strong-random.patch",
+        "0043-oliphaunt-wasix-disable-unsupported-writeback-hints.patch",
     ] {
         ensure!(
             series.contains(&required),
@@ -151,6 +153,29 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
             "volatile uint64 value pg_attribute_aligned(8);",
             "PG_HAVE_8BYTE_SINGLE_COPY_ATOMICITY",
             "*expected = current;",
+        ],
+    )?;
+
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR).join("0042-oliphaunt-wasix-buffer-strong-random.patch"),
+        &[
+            "defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "#include <sys/random.h>",
+            "WASIX_STRONG_RANDOM_POOL_SIZE 4096",
+            "getrandom(wasix_strong_random_pool + filled",
+            "if (errno == EINTR)",
+            "return false;",
+        ],
+    )?;
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR)
+            .join("0043-oliphaunt-wasix-disable-unsupported-writeback-hints.patch"),
+        &[
+            "src/backend/storage/file/fd.c",
+            "src/common/file_utils.c",
+            "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "Actual fsync/fdatasync durability remains enabled.",
+            "#elif defined(HAVE_SYNC_FILE_RANGE)",
         ],
     )?;
 
@@ -683,8 +708,8 @@ fn collect_pg18_legacy_symbol_leaks(
 
 fn check_postgres_patch_series_hygiene(patches: &[(String, String)]) -> Result<()> {
     ensure!(
-        patches.len() == 41,
-        "PG18 WASIX patch series should stay reviewable at exactly 41 audited patches; got {}",
+        patches.len() == 43,
+        "PG18 WASIX patch series should stay reviewable at exactly 43 audited patches; got {}",
         patches.len()
     );
     for (index, (patch_name, patch_text)) in patches.iter().enumerate() {
@@ -988,6 +1013,25 @@ fn check_postgres_applied_runtime_abi(source: &Path) -> Result<()> {
 }
 
 fn check_postgres_applied_perf_patches(source: &Path) -> Result<()> {
+    for relative in ["src/backend/storage/file/fd.c", "src/common/file_utils.c"] {
+        ensure_file_contains_all(
+            source.join(relative),
+            &[
+                "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
+                "Actual fsync/fdatasync durability remains enabled.",
+                "#elif defined(HAVE_SYNC_FILE_RANGE)",
+            ],
+        )?;
+    }
+    ensure_file_contains_all(
+        source.join("src/port/pg_strong_random.c"),
+        &[
+            "#elif defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "WASIX_STRONG_RANDOM_POOL_SIZE 4096",
+            "getrandom(wasix_strong_random_pool + filled",
+            "wasix_strong_random_used = sizeof(wasix_strong_random_pool)",
+        ],
+    )?;
     ensure_file_contains_all(
         source.join("src/common/hashfn.c"),
         &[

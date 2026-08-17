@@ -7,7 +7,7 @@ use crate::oliphaunt::base::InstallOutcome;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::engine::EngineCapabilities;
 #[cfg(feature = "extensions")]
-use crate::oliphaunt::extensions::{Extension, extension_session_setup_sql, extension_setup_sql};
+use crate::oliphaunt::extensions::{Extension, extension_setup_sql};
 use crate::oliphaunt::interface::DataTransferContainer;
 use crate::oliphaunt::postgres_mod::{
     PostgresMod, ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse,
@@ -35,8 +35,6 @@ pub(crate) struct WasixBackendSession {
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     kind: BackendOpenKind,
-    #[cfg(feature = "extensions")]
-    preinstalled_extensions: Vec<String>,
     #[cfg(feature = "extensions")]
     preloaded_extensions: Vec<Extension>,
 }
@@ -88,7 +86,6 @@ impl WasixBackendSession {
         extensions: &[Extension],
     ) -> Result<Self> {
         let _open_guard = wasix_backend_open_guard();
-        let preinstalled_extensions = outcome.preinstalled_extensions.clone();
         let pg = Self::new_postgres(
             outcome.clone(),
             postgres_config.clone(),
@@ -106,7 +103,6 @@ impl WasixBackendSession {
             postgres_config,
             startup_config,
             kind,
-            preinstalled_extensions,
             preloaded_extensions: extensions.to_vec(),
         })
     }
@@ -148,7 +144,6 @@ impl WasixBackendSession {
                 BackendOpenKind::Proxy => "proxy.backend_postgres_new",
             });
             PostgresMod::new_prepared_with_config(
-                outcome.paths,
                 outcome.runtime_layout,
                 outcome.pgdata_storage,
                 postgres_config,
@@ -176,8 +171,8 @@ impl WasixBackendSession {
         Ok((pg, transport))
     }
 
-    pub(crate) fn paths(&self) -> &crate::oliphaunt::base::OliphauntPaths {
-        self.pg.paths()
+    pub(crate) fn runtime_storage(&self) -> &crate::oliphaunt::storage::StorageRoot {
+        &self.outcome.runtime_layout.mutable_root
     }
 
     pub(crate) fn pgdata_template_root(&self) -> Option<&std::path::Path> {
@@ -250,20 +245,9 @@ impl WasixBackendSession {
     }
 
     #[cfg(feature = "extensions")]
-    pub(crate) fn preload_installed_extension(&mut self, extension: Extension) -> Result<()> {
-        self.preload_extension_module(extension)
-    }
-
-    #[cfg(feature = "extensions")]
     pub(crate) fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
         for extension in extensions {
-            let setup_sql = if self.has_preinstalled_extension(*extension) {
-                self.preload_installed_extension(*extension)?;
-                extension_session_setup_sql(*extension)
-            } else {
-                extension_setup_sql(*extension)
-            };
-            for sql in setup_sql {
+            for sql in extension_setup_sql(*extension) {
                 let response = self
                     .send_buffered(&simple_query_message(&sql), None)
                     .with_context(|| {
@@ -278,13 +262,6 @@ impl WasixBackendSession {
             }
         }
         Ok(())
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn has_preinstalled_extension(&self, extension: Extension) -> bool {
-        self.preinstalled_extensions
-            .iter()
-            .any(|sql_name| sql_name == extension.sql_name())
     }
 
     pub(crate) fn supports_protocol_pump(&self) -> bool {
@@ -368,8 +345,8 @@ impl BackendSession {
         EngineCapabilities::wasix(self.0.supports_protocol_pump())
     }
 
-    pub(crate) fn paths(&self) -> &crate::oliphaunt::base::OliphauntPaths {
-        self.0.paths()
+    pub(crate) fn runtime_storage(&self) -> &crate::oliphaunt::storage::StorageRoot {
+        self.0.runtime_storage()
     }
 
     pub(crate) fn pgdata_template_root(&self) -> Option<&std::path::Path> {

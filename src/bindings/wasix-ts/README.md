@@ -38,9 +38,9 @@ that opening a missing database returns a `FATAL` `PostgresError` with SQLSTATE
 `3D000`. It then activates `pgtap`, runs `plan`/`ok`/`finish`, reports two
 different query errors with SQLSTATEs `42601` and `22012`, returns to
 `ReadyForQuery` after each one, executes `SELECT 40 + 2 AS answer` on the same
-handle, calls `pgtap_version()` again, persists one row through explicit
-`checkpoint()`, persists a second later row only through clean `close()`,
-reopens both, accepts Terminate, and requires Wasmer's final process result to
+handle, calls `pgtap_version()` again, verifies operation-boundary persistence,
+runs an explicit `checkpoint()`, reopens the data, accepts Terminate, and
+requires Wasmer's final process result to
 be successful with exit code zero. This proves the checked-in source and carrier
 pairing, not arbitrary Wasmer or WASIX versions.
 
@@ -143,7 +143,7 @@ await database.close();
 ```
 
 Browser worker execution remains the default because archive preparation,
-PostgreSQL work, extension setup, and persistent snapshots stay off the
+PostgreSQL work, extension setup, and persistent delta publication stay off the
 caller's JavaScript agent. Latency-sensitive applications can run PostgreSQL
 in that agent without changing database semantics or importing another class:
 
@@ -234,7 +234,11 @@ Concurrent calls queued outside the callback wait until it finishes. Inside the
 callback, use only `tx`; database-level work rejects instead of deadlocking. If
 the callback or `COMMIT` fails, the binding attempts `ROLLBACK` and preserves
 the original failure. The transaction handle becomes inactive when the callback
-finishes.
+finishes. Persistent storage publication is deferred for `BEGIN`, callback
+operations, and `COMMIT`/`ROLLBACK`, then performed exactly once after the
+confirmed final transaction boundary. The Promise does not resolve until that
+publication succeeds; a failure after `COMMIT` rejects and poisons the handle
+because PostgreSQL has committed but host durability is unknown.
 
 `OliphauntDatabase` also implements `AsyncDisposable`, so TypeScript projects with
 explicit resource management enabled can bind worker and storage cleanup to a
@@ -271,11 +275,15 @@ Use `@oliphaunt/wasix-ts/storage/bun` under Bun and
 read and write access to the selected directory; worker placement inherits the
 application's permissions.
 
-The adapter keeps PostgreSQL in Wasmer memory while it is open, then publishes
-a complete PGDATA directory generation after `checkpoint()` and clean `close()`.
-Publication swaps whole directories and keeps the prior complete generation
-recoverable across an interrupted swap. On a local filesystem, an exclusive
-lock prevents two workers or processes on the same host from opening one path.
+The selected path is raw PGDATA: `PG_VERSION`, `global/pg_control`, and relation
+files live directly below it, with one `.oliphaunt-wasix.json` compatibility
+sidecar. PostgreSQL runs against Wasmer memory, but after every completed
+protocol operation the shared mutation journal publishes only changed paths
+before the operation Promise resolves. WAL is made durable before ordinary
+files and `global/pg_control`; files and parent directories are fsynced. An
+explicit `checkpoint()` additionally runs PostgreSQL `CHECKPOINT`, and clean
+`close()` flushes any remaining delta. On a local filesystem, an exclusive lock
+prevents two workers or processes on the same host from opening one path.
 One fixed atomic lock slot publishes a complete unique owner identity including
 the Linux host, boot, and PID namespace. Proven-dead same-boot owners and leases
 from an earlier boot of the same host are reaped by exact-owner removal; other
@@ -289,18 +297,18 @@ up its child database worker after an unexpected exit.
 Runtime, PostgreSQL, template, and extension identities must match on reopen;
 symbolic links, partial generations, and unsafe paths fail closed.
 
-This is intentionally not a direct host mount or per-transaction durability.
-Process termination can lose changes since the last explicit checkpoint. The
-adapter touches only its `.oliphaunt-wasix-ts` state directory and retains at
-most one prior complete generation for rollback. That prior generation is
-removed after the replacement validates or when a later publish begins;
-unrelated application files are never treated as adapter state.
+This is not a direct guest mount or a cross-file transaction. A publication
+failure therefore reports unknown durability and poisons the live handle;
+PostgreSQL recovery owns an interrupted raw-PGDATA update. A successful
+operation does not return before its storage boundary. The adapter rejects
+unrelated files, symbolic links, the retired `.oliphaunt-wasix-ts` snapshot
+layout, and network or cross-host shared filesystems.
 
 ## Persistent browser storage
 
-Persistence is an optional, selectively imported adapter. Applications name an
-origin-scoped IndexedDB database; they do not configure runtime archives, PGDATA
-template URLs, filesystem mount paths, or a generic `temporary` boolean:
+Persistence is optional and selectively imported. Applications choose
+origin-scoped IndexedDB or OPFS storage; they do not configure runtime archives,
+PGDATA template URLs, filesystem mount paths, or a generic `temporary` boolean:
 
 ```ts
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
@@ -316,11 +324,12 @@ let database = await Oliphaunt.open({
 
 await database.query('create table if not exists todo (title text not null)');
 await database.query('insert into todo values ($1)', ['write the docs']);
+// The row and its WAL delta are persisted before the Promise above resolves.
 
-// Optional while the database remains open: PostgreSQL CHECKPOINT reaches
-// ReadyForQuery before the adapter atomically publishes a complete PGDATA copy.
+// Optional maintenance: PostgreSQL CHECKPOINT reaches ReadyForQuery before the
+// adapter runs the same operation-boundary delta publication.
 await database.checkpoint();
-await database.close(); // Also publishes PGDATA after a clean PostgreSQL exit.
+await database.close(); // Publishes any final delta after a clean exit.
 
 database = await Oliphaunt.open({ storage, extensions: [pgtap] });
 console.log((await database.query('select * from todo')).rows.length);
@@ -332,7 +341,7 @@ fetches and verifies the selected runtime in its isolated realm. Direct
 execution reuses only a previously verified immutable prepared-runtime
 identity. Every open creates fresh `/home` and `/tmp` mounts and reconstructs
 `/bin`, `/lib`, and `/share` from the runtime plus the selectively imported
-`-wasix` extension carriers. The IndexedDB database records the exact runtime,
+`-wasix` extension carriers. The persistent store records the exact runtime,
 PostgreSQL, template, manifest, and extension-carrier identities that created
 its current generation. Reopen fails closed with `WasixStorageError` code
 `incompatible` if any of those identities change or a previously selected
@@ -350,36 +359,53 @@ names, and direct execution follows the same per-database ownership rule.
 Lifecycle semantics are fixed rather than dynamically reported:
 `multipleInstances = true` in both placements when databases use memory or
 different persistent store names, `sameInstanceLogicalReopen = false`,
-`instanceSwitchable = true`, and `crashRestartable = false`. A given IndexedDB
+`instanceSwitchable = true`, and `crashRestartable = false`. A given persistent
 name remains exclusively leased despite support for separate instances.
 
-This first persistence contract is intentionally narrower than a direct
-filesystem:
+The browser providers share one source-pinned Wasmer mutation journal and delta
+lifecycle:
 
-- `checkpoint()` and a successful `close()` recursively copy the complete
-  Wasmer `/base` memory directory into one atomic IndexedDB record;
+- after every completed protocol operation, journaled file/directory upserts
+  and removals are published before the Promise resolves. Callback transactions
+  defer their internal operation boundaries and publish once after confirmed
+  `COMMIT` or `ROLLBACK`. Writes and truncates through descriptors retained
+  across calls are journaled too. Multi-statement SQL in one pgwire operation
+  has one boundary;
+- every logical IndexedDB store uses its own physical IndexedDB database. It
+  stores one row per PGDATA path and commits the complete delta plus
+  compatibility metadata in one atomic read-write transaction using the
+  browser's default durability policy. A rejected transaction
+  leaves the prior generation current and activity in another named database
+  cannot contend on the same IndexedDB transaction or object stores;
+- OPFS stores raw files under an origin-private directory, publishes WAL before
+  ordinary files and `global/pg_control`, then removals, and reports unknown
+  durability if a cross-file update stops partway through;
 - a PostgreSQL statement error still completes recovery through `ReadyForQuery`
   and remains an ordinary `PostgresError`; it does not poison persistence;
-- a snapshot failure is a distinct `WasixStorageError`. The previous generation
-  remains current and the handle is poisoned because application commits may
-  exist in memory even though they were not published;
-- browser or worker termination between checkpoints loses changes since the
-  last published generation. This is clean-close/checkpoint persistence, not
-  per-query flush or crash-durability; and
-- OPFS is deliberately absent. The current Wasmer `Directory` API exposes a
-  memory filesystem and recursive reads/writes, but no dirty-file feed or
-  synchronous OPFS mount. An adapter that merely renamed the same snapshot
-  behavior would be misleading.
+- a persistence failure is a distinct `WasixStorageError` and poisons the live
+  handle because retrying a PostgreSQL operation whose commit already ran is
+  unsafe; and
+- OPFS is a delta-backed persistence provider, not a synchronous-access-handle
+  guest mount. That distinction keeps its failure semantics honest.
+
+Choose OPFS when a browser-native file hierarchy is preferable:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
+
+const database = await Oliphaunt.open({ storage: opfs('todos') });
+```
 
 There is likewise no browser `temporaryDirectory()` spelling: omitted storage
-already means anonymous in-memory lifetime. Rust WASIX
-`DatabaseStorage::TemporaryDirectory` is a different, disk-backed lifetime
-policy, and must not be projected into this API
-as if it meant memory. This clean-break API accepts no `root`, `temporary`, or
-generic persistence compatibility aliases. Node, Bun, and Deno use the same
-memory default, reject the browser-only IndexedDB adapter, and expose snapshot
-directory providers through their matching `storage/node`, `storage/bun`, or
-`storage/deno` subpath. No host routes through the native public product.
+already means anonymous in-memory lifetime. Rust WASIX follows the same minimal
+model: `Memory` or a caller-supplied `Directory(path)`. Applications that need a
+disposable disk directory resolve and own that path themselves. This clean-break
+API accepts no `root`, `temporary`, or generic persistence compatibility aliases.
+Node, Bun, and Deno use the same memory default, reject browser-only adapters,
+and expose raw-PGDATA directory providers through their matching `storage/node`,
+`storage/bun`, or `storage/deno` subpath. No host routes through the native
+public product.
 
 The default runtime descriptor keeps the runtime archive, PGDATA template, and
 manifest as one product/version identity. The binding validates the descriptor,
@@ -472,13 +498,12 @@ runtime artifact URL bookkeeping.
 - One serialized WASIX database session per open. Placement is
   selected by `execution: 'worker' | 'direct'`; worker remains the default. Its
   active filesystem is always Wasmer memory; storage adapters control how PGDATA
-  is hydrated and checkpointed around that process.
+  is hydrated and incrementally published around that process.
 - A prepopulated PGDATA template is required; browser `initdb` is not run.
-- Omitted storage is fresh memory. The optional IndexedDB adapter proves exact
-  compatible reopen, exclusive ownership, explicit checkpoint, clean-close
-  persistence, SQL-error recovery, and extension reconstruction. It does not
-  claim per-query synchronization, crash durability, OPFS, multi-tab proxying,
-  or extension migrations.
+- Omitted storage is fresh memory. IndexedDB, OPFS, and server-directory
+  adapters prove exact compatible reopen, exclusive ownership,
+  operation-boundary persistence, SQL-error recovery, and extension
+  reconstruction. They do not claim multi-tab proxying or extension migrations.
 - Extensions are selected by imported, runtime-discriminated WASIX
   descriptors. Each descriptor owns its exact SQL identity, archive hash/size,
   dependency closure, install inventory, lifecycle, required core exports, and
@@ -514,7 +539,7 @@ runtime artifact URL bookkeeping.
 - PostgreSQL errors retain `PostgresError`, SQLSTATE, and backend fields across
   the worker boundary, including startup database rejection and failures in
   selected-extension lifecycle SQL during `open()`. Storage ownership and
-  snapshot failures remain the separate `WasixStorageError` family.
+  persistence failures remain the separate `WasixStorageError` family.
 - Like the Rust WASIX binding, a non-default `username` selects an existing
   role with `SET ROLE` after the fixed `postgres` bootstrap. It does not create
   roles or replace the single-user bootstrap identity.

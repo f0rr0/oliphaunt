@@ -7,6 +7,7 @@ import { PostgresError } from '../query.js';
 import { deserializeWorkerError, serializeWorkerError } from '../rpc.js';
 import { indexedDB } from '../storage/indexed-db.js';
 import { directory } from '../storage/node.js';
+import { opfs } from '../storage/opfs.js';
 import { memory, serializeWasixStorage, type WasixStorage } from '../storage.js';
 
 type MainPackage = typeof import('../index.js');
@@ -15,7 +16,7 @@ const mainPackageOmitsIndexedDb: 'indexedDB' extends keyof MainPackage ? false :
 describe('WASIX storage descriptors', () => {
   it('defaults to memory and keeps storage values opaque', () => {
     expect(serializeWasixStorage(undefined)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v1',
+      schema: 'oliphaunt-wasix-storage-v2',
       kind: 'memory',
     });
 
@@ -23,7 +24,7 @@ describe('WASIX storage descriptors', () => {
     expect(Object.isFrozen(descriptor)).toBe(true);
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v1',
+      schema: 'oliphaunt-wasix-storage-v2',
       kind: 'memory',
     });
   });
@@ -33,7 +34,7 @@ describe('WASIX storage descriptors', () => {
     const descriptor = indexedDB('todos');
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v1',
+      schema: 'oliphaunt-wasix-storage-v2',
       kind: 'indexed-db',
       name: 'todos',
     });
@@ -43,18 +44,32 @@ describe('WASIX storage descriptors', () => {
     expect(() => indexedDB('bad\0name')).toThrow('without NUL bytes');
   });
 
+  it('constructs an OPFS descriptor with a path-safe database name', () => {
+    const descriptor = opfs('todos-v2');
+    expect(Object.keys(descriptor)).toEqual([]);
+    expect(serializeWasixStorage(descriptor)).toEqual({
+      schema: 'oliphaunt-wasix-storage-v2',
+      kind: 'opfs',
+      name: 'todos-v2',
+    });
+
+    expect(() => opfs('')).toThrow('must be 1-100 ASCII');
+    expect(() => opfs('../escape')).toThrow('must be 1-100 ASCII');
+    expect(() => opfs('space name')).toThrow('must be 1-100 ASCII');
+  });
+
   it('requires selective Node directory construction and validates its path', () => {
     const descriptor = directory('./data/with spaces');
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v1',
-      kind: 'node-directory',
+      schema: 'oliphaunt-wasix-storage-v2',
+      kind: 'directory',
       path: './data/with spaces',
     });
     const fileUrl = new URL('file:///tmp/data%20space');
     expect(serializeWasixStorage(directory(fileUrl))).toEqual({
-      schema: 'oliphaunt-wasix-storage-v1',
-      kind: 'node-directory',
+      schema: 'oliphaunt-wasix-storage-v2',
+      kind: 'directory',
       path: fileURLToPath(fileUrl),
     });
     expect(() => directory(new URL('https://example.com/data'))).toThrow(
@@ -67,7 +82,7 @@ describe('WASIX storage descriptors', () => {
   it('rejects user-authored and structured-cloned lookalikes', () => {
     expect(() =>
       serializeWasixStorage({
-        schema: 'oliphaunt-wasix-storage-v1',
+        schema: 'oliphaunt-wasix-storage-v2',
         kind: 'memory',
       } as unknown as WasixStorage),
     ).toThrow('must come from @oliphaunt/wasix-ts');

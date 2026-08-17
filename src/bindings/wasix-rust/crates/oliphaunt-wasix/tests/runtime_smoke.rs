@@ -88,28 +88,6 @@ fn raw_backend_message_name(message: &oliphaunt_wasix::BackendMessage) -> &'stat
     }
 }
 
-fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
-    let runtime = root.join("tmp/oliphaunt");
-    assert!(
-        runtime.join(".oliphaunt-wasix-mountfs-runtime").is_file(),
-        "expected shared runtime overlay marker under {}",
-        runtime.display()
-    );
-    assert!(
-        !runtime.join("bin").exists(),
-        "core binaries should be served from the lower cached runtime, not linked into {}",
-        runtime.display()
-    );
-    assert!(
-        !runtime.join("lib").exists(),
-        "core runtime libraries should stay in the lower cached runtime"
-    );
-    assert!(
-        !runtime.join("share").exists(),
-        "core catalog, timezone, and extension metadata should stay in the lower cached runtime"
-    );
-}
-
 #[test]
 fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder()
@@ -549,7 +527,7 @@ fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
 }
 
 #[test]
-fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<()> {
+fn persistent_directory_is_raw_pgdata_without_runtime_assets() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
         let mut pg = Oliphaunt::builder()
@@ -565,8 +543,42 @@ fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<
         assert_eq!(first_row(&result)?.get("utc_zones"), Some(&json!(1)));
         pg.close()?;
     }
+    {
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
+        let result = reopened.query("SELECT 18 AS postgres_major", &[], None)?;
+        assert_eq!(first_row(&result)?["postgres_major"], json!(18));
+        reopened.close()?;
+    }
 
-    assert_core_runtime_assets_stay_in_lower_mount(root.path());
+    assert!(root.path().join("PG_VERSION").is_file());
+    assert!(root.path().join("global/pg_control").is_file());
+    assert!(root.path().join("base/1").is_dir());
+    assert!(
+        !root
+            .path()
+            .join(".oliphaunt-wasix-pgdata-overlay.json")
+            .exists()
+    );
+    assert!(!root.path().join("tmp/oliphaunt").exists());
+    Ok(())
+}
+
+#[test]
+fn persistent_fresh_initdb_uses_the_locked_raw_directory() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    let mut pg = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .initialization(DatabaseInitialization::FreshInitdb)
+        .open()?;
+    let result = pg.query("SELECT 1 AS value", &[], None)?;
+    assert_eq!(first_row(&result)?["value"], json!(1));
+    pg.close()?;
+
+    assert!(root.path().join("PG_VERSION").is_file());
+    assert!(root.path().join("global/pg_control").is_file());
+    assert!(!root.path().join("tmp/oliphaunt").exists());
     Ok(())
 }
 
@@ -618,7 +630,7 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
         pg.close()?;
     }
 
-    let pgdata = root.path().join("tmp/oliphaunt/base");
+    let pgdata = root.path();
     std::fs::write(
         pgdata.join("postmaster.pid"),
         b"stale pid from interrupted run",
@@ -645,8 +657,7 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
 #[test]
 fn persistent_template_rejects_nonempty_incomplete_pgdata_without_marker() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let pgdata = root.path().join("tmp/oliphaunt/base");
-    std::fs::create_dir_all(&pgdata)?;
+    let pgdata = root.path();
     std::fs::write(pgdata.join("postmaster.pid"), b"interrupted pid")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 
@@ -672,8 +683,7 @@ fn persistent_template_rejects_nonempty_incomplete_pgdata_without_marker() -> an
 #[test]
 fn persistent_template_rejects_nonempty_pgdata_with_incomplete_markers() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let pgdata = root.path().join("tmp/oliphaunt/base");
-    std::fs::create_dir_all(&pgdata)?;
+    let pgdata = root.path();
     std::fs::write(pgdata.join("PG_VERSION"), b"17\n")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 

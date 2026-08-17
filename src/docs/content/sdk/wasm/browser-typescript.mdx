@@ -93,8 +93,8 @@ await database.close();
 
 Importing the IndexedDB adapter is valid package resolution on these runtimes,
 but passing it to `open()` fails before a worker starts. Use the matching
-runtime-only directory adapter when checkpoint/clean-close snapshot persistence
-fits the application.
+runtime-only directory adapter when journaled raw-PGDATA persistence fits the
+application.
 
 Persistent directory storage is a selective import. The example below uses
 Node; replace the final subpath with `storage/bun` or `storage/deno` for those
@@ -165,14 +165,17 @@ Concurrent calls queued outside the callback wait behind the transaction. Use
 the provided `tx` handle inside the callback; database-level calls reject there
 instead of deadlocking. A rejected callback or failed `COMMIT` automatically
 attempts `ROLLBACK` without masking the original failure. The handle rejects
-further work after the callback finishes. `OliphauntDatabase` also implements
+further work after the callback finishes. Persistent adapters publish once
+after the confirmed `COMMIT` or `ROLLBACK`, not after each statement inside the
+callback. A publication failure after `COMMIT` rejects and poisons the database
+handle. `OliphauntDatabase` also implements
 `AsyncDisposable`, enabling `await using` in TypeScript projects that use
 explicit resource management.
 
 ## Opt into IndexedDB
 
-Import persistence separately when checkpoint and clean-close snapshots match
-the application's durability needs:
+Import persistence separately when origin-scoped delta durability matches the
+application's needs:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -197,10 +200,11 @@ await database.close();
 ```
 
 `checkpoint()` first reaches PostgreSQL `ReadyForQuery`, then atomically
-publishes a complete PGDATA generation. A successful `close()` publishes once
-more. Browser or Worker termination can lose changes after the last published
-generation; this is snapshot persistence, not per-transaction crash durability.
-Only one open database may own a named IndexedDB database at a time.
+publishes the journaled PGDATA delta. A successful `close()` publishes any
+remaining delta. Ordinary operations and confirmed transaction boundaries do
+the same before their Promises settle. Each logical name uses an independent
+physical IndexedDB database, while a Web Lock prevents two open handles from
+owning the same name.
 
 Reopen with the same runtime and exact extension selection. A missing, added,
 or changed carrier fails closed until an explicit extension-migration contract
@@ -264,9 +268,9 @@ exclusively leased despite support for separate instances.
 
 ## Current host boundary
 
-IndexedDB is the only persistent browser adapter. OPFS is intentionally absent,
-and omitted storage already covers temporary in-memory use. Node, Bun, and Deno
-offer direct or `worker_threads` placement with memory plus explicit snapshot
+IndexedDB and OPFS are selectively imported persistent browser adapters, and
+omitted storage already covers temporary in-memory use. Node, Bun, and Deno
+offer direct or `worker_threads` placement with memory plus explicit raw-PGDATA
 directory storage. No host routes through native `@oliphaunt/ts`.
 
 Use [Rust WASIX](./index) when Rust owns the portable host. Use

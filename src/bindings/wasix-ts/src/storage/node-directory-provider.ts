@@ -1,42 +1,37 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { WasixDirectoryMount } from '../archive.js';
-import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
-import { acquireNodeDirectoryLock, type HeldNodeDirectoryLock } from '../node-directory-lock.js';
+import { WasixStorageError } from '../errors.js';
+import { acquireNodeDirectoryLock } from '../node-directory-lock.js';
+import { isNodeError, syncNodeDirectory } from '../node-fs-durability.js';
 import {
+  NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX,
   NODE_DIRECTORY_LOCK_SLOT,
-  nodeDirectoryLockCandidateToken,
 } from '../node-lock-identity.js';
 import {
   canonicalStorageContract,
-  type StorageDirectory,
   type WasixStorageCompatibility,
   type WasixStorageLease,
 } from '../storage-provider.js';
 import {
-  requireRecord,
-  type StoredDatabase,
+  type StorageDelta,
   type StoredSnapshot,
-  snapshotStorageDirectory,
-  snapshotToMount,
+  splitStorageDeltaDeletes,
   validateStoredSnapshot,
+  VOLATILE_DATABASE_FILES,
 } from '../storage-snapshot.js';
+import { acquireIncrementalStorage } from './incremental-storage.js';
 
-const FORMAT = 'oliphaunt-wasix-node-directory-v1';
-const STATE_DIRECTORY = '.oliphaunt-wasix-ts';
-const STATE_FILE = `.${FORMAT}`;
-const CURRENT_DIRECTORY = 'current';
-const PREVIOUS_DIRECTORY = '.previous';
-const FORMAT_FILE = 'oliphaunt.json';
-const SNAPSHOT_DIRECTORY = 'pgdata';
+const FORMAT = 'oliphaunt-wasix-directory-v2';
+const METADATA_FILE = '.oliphaunt-wasix.json';
+const WRITE_TEMP_MARKER = '.oliphaunt-write-';
 
-type NodeDirectoryMetadata = {
+type DirectoryMetadata = {
   schema: typeof FORMAT;
   compatibility: WasixStorageCompatibility;
-  snapshotSha256: string;
 };
 
 export async function acquireNodeDirectoryStorage(
@@ -46,118 +41,19 @@ export async function acquireNodeDirectoryStorage(
   ownerToken = randomBytes(16).toString('hex'),
 ): Promise<WasixStorageLease> {
   const root = await prepareRoot(path);
-  const lock = await acquireNodeDirectoryLock(root, ownerToken);
-  try {
-    const stored = await readStoredDatabase(root, compatibility);
-    return new NodeDirectoryStorageLease(
-      root,
-      lock,
-      compatibility,
-      stored === undefined ? 'new' : 'existing',
-      stored === undefined ? template : snapshotToMount(stored.snapshot),
-      stored !== undefined,
-    );
-  } catch (error) {
-    const primary =
-      error instanceof WasixStorageError
-        ? error
-        : unavailable(root, `could not open: ${describeError(error)}`, error);
-    try {
-      await lock.release();
-    } catch (releaseError) {
-      throw composeWasixStorageFailure(primary, 'ownership release also failed', releaseError);
-    }
-    throw primary;
-  }
-}
-
-class NodeDirectoryStorageLease implements WasixStorageLease {
-  readonly state: 'new' | 'existing';
-  readonly mount: WasixDirectoryMount;
-  readonly #root: string;
-  readonly #lock: HeldNodeDirectoryLock;
-  readonly #compatibility: WasixStorageCompatibility;
-  #closed = false;
-  #hasStoredGeneration: boolean;
-
-  constructor(
-    root: string,
-    lock: HeldNodeDirectoryLock,
-    compatibility: WasixStorageCompatibility,
-    state: 'new' | 'existing',
-    mount: WasixDirectoryMount,
-    hasStoredGeneration: boolean,
-  ) {
-    this.#root = root;
-    this.#lock = lock;
-    this.#compatibility = compatibility;
-    this.state = state;
-    this.mount = mount;
-    this.#hasStoredGeneration = hasStoredGeneration;
-  }
-
-  async checkpoint(directory: StorageDirectory): Promise<void> {
-    if (this.#closed) throw unavailable(this.#root, 'is closed');
-    try {
-      const snapshot = validateStoredSnapshot(
-        await snapshotStorageDirectory(directory),
-        this.#compatibility.runtime.postgresVersion.split('.')[0] ?? '',
-        {
-          label: `Node directory storage ${JSON.stringify(this.#root)}`,
-          corrupt: (detail, cause) =>
-            new WasixStorageError(
-              `could not checkpoint Node directory storage ${JSON.stringify(this.#root)}: ${detail}`,
-              { code: 'checkpoint-failed', durability: 'not-persisted', cause },
-            ),
-        },
-      );
-      await publishGeneration(this.#root, snapshot, this.#compatibility);
-      this.#hasStoredGeneration = true;
-    } catch (error) {
-      if (error instanceof WasixStorageError) throw error;
-      throw new WasixStorageError(
-        `could not checkpoint Node directory storage ${JSON.stringify(this.#root)}: ${describeError(error)}`,
-        { code: 'checkpoint-failed', durability: 'not-persisted', cause: error },
-      );
-    }
-  }
-
-  async close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void> {
-    if (this.#closed) return;
-    let failure: unknown;
-    try {
-      if (outcome === 'clean') {
-        if (directory === undefined) {
-          throw new WasixStorageError(
-            `cannot checkpoint Node directory storage ${JSON.stringify(this.#root)} without PGDATA`,
-            { code: 'checkpoint-failed', durability: 'not-persisted' },
-          );
-        }
-        await this.checkpoint(directory);
-      }
-    } catch (error) {
-      failure = error;
-    } finally {
-      this.#closed = true;
-      try {
-        await this.#lock.release();
-      } catch (error) {
-        const releaseFailure = new WasixStorageError(
-          `Node directory storage ${JSON.stringify(this.#root)} closed but its ownership lock could not be released`,
-          {
-            code: 'unavailable',
-            durability: this.#hasStoredGeneration ? 'persisted' : 'unchanged',
-            cause: error,
-          },
-        );
-        failure =
-          failure instanceof Error
-            ? composeWasixStorageFailure(failure, 'ownership release also failed', releaseFailure)
-            : releaseFailure;
-      }
-    }
-    if (failure !== undefined) throw failure;
-  }
+  const label = `directory PGDATA ${JSON.stringify(root)}`;
+  return acquireIncrementalStorage(label, template, {
+    writeFailureDurability: 'unknown',
+    acquireLock: () => acquireNodeDirectoryLock(root, ownerToken),
+    async openStore() {
+      await removeInterruptedWrites(root);
+      return {
+        read: () => readHostPgData(root, compatibility),
+        apply: (delta) => publishHostDelta(root, delta, compatibility),
+        close() {},
+      };
+    },
+  });
 }
 
 async function prepareRoot(input: string): Promise<string> {
@@ -169,290 +65,170 @@ async function prepareRoot(input: string): Promise<string> {
     if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error('path is not a real directory');
     }
-    const applicationRoot = await realpath(absolute);
-    const stateRoot = join(applicationRoot, STATE_DIRECTORY);
-    await mkdir(stateRoot, { recursive: true, mode: 0o700 });
-    const stateInfo = await lstat(stateRoot);
-    if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink()) {
-      throw new Error(`${STATE_DIRECTORY} is not a real directory`);
-    }
-    const canonicalStateRoot = await realpath(stateRoot);
-    assertContained(applicationRoot, canonicalStateRoot);
-    await establishStateIdentity(canonicalStateRoot);
-    await syncDirectory(applicationRoot);
-    return canonicalStateRoot;
+    return await realpath(absolute);
   } catch (error) {
     throw unavailable(absolute, `could not prepare the directory: ${describeError(error)}`, error);
   }
 }
 
-async function establishStateIdentity(root: string): Promise<void> {
-  const marker = join(root, STATE_FILE);
-  if (await validateStateMarker(marker)) return;
-  const entries = await readdir(root);
-  if (entries.includes(STATE_FILE)) {
-    await validateStateMarker(marker, true);
-    return;
-  }
-  if (entries.length > 0) {
-    throw new Error(`${STATE_DIRECTORY} exists without a recognized storage identity`);
-  }
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(marker, 'wx', 0o600);
-    await handle.sync();
-  } catch (error) {
-    if (!isNodeError(error, 'EEXIST')) throw error;
-  } finally {
-    await handle?.close();
-  }
-  await validateStateMarker(marker, true);
-  await syncDirectory(root);
-}
-
-async function readStoredDatabase(
+async function readHostPgData(
   root: string,
   compatibility: WasixStorageCompatibility,
-): Promise<StoredDatabase | undefined> {
-  await recoverInterruptedPublish(root);
-  const current = join(root, CURRENT_DIRECTORY);
-  const previous = join(root, PREVIOUS_DIRECTORY);
-  const [hasCurrent, hasPrevious] = await Promise.all([exists(current), exists(previous)]);
-  if (!hasCurrent && !hasPrevious) return undefined;
-  if (!hasCurrent) {
-    await rename(previous, current);
-    await syncDirectory(root);
+): Promise<StoredSnapshot | undefined> {
+  const top = await readdir(root, { withFileTypes: true });
+  const dataEntries = top.filter((entry) => !isInternalRootEntry(entry.name));
+  const hasMetadata = top.some((entry) => entry.name === METADATA_FILE);
+  const hasPgVersion = dataEntries.some((entry) => entry.name === 'PG_VERSION' && entry.isFile());
+  if (!hasPgVersion) {
+    if (dataEntries.some((entry) => entry.name === '.oliphaunt-wasix-ts')) {
+      throw corrupt(
+        root,
+        'contains retired snapshot storage; select a new empty PGDATA directory (v1 migration is intentionally unsupported)',
+      );
+    }
+    if (hasMetadata) {
+      throw corrupt(root, `contains ${METADATA_FILE} without a complete PGDATA`);
+    }
+    if (dataEntries.length === 0) return undefined;
+    throw corrupt(root, 'contains a non-empty incomplete PGDATA');
   }
 
-  try {
-    const stored = await readGeneration(root, current, compatibility);
-    if (hasPrevious) {
-      // The new generation is proven complete. Old-generation cleanup is
-      // deliberately post-commit and best-effort.
-      await rm(previous, { recursive: true, force: true }).catch(() => undefined);
-      await syncDirectory(root).catch(() => undefined);
-    }
-    return stored;
-  } catch (error) {
-    if (
-      !(error instanceof WasixStorageError) ||
-      error.code !== 'corrupt' ||
-      !(await exists(previous))
-    ) {
-      throw error;
-    }
-    let stored: StoredDatabase;
-    try {
-      stored = await readGeneration(root, previous, compatibility);
-    } catch (previousError) {
-      throw corrupt(root, 'has no complete recoverable generation', {
-        current: error,
-        previous: previousError,
-      });
-    }
-    await rm(current, { recursive: true, force: true });
-    await rename(previous, current);
-    await syncDirectory(root);
-    return stored;
-  }
-}
-
-async function readGeneration(
-  root: string,
-  generation: string,
-  compatibility: WasixStorageCompatibility,
-): Promise<StoredDatabase> {
-  await requireRealDirectory(root, generation, 'published generation');
-  const metadataPath = join(generation, FORMAT_FILE);
-  const pgdataPath = join(generation, SNAPSHOT_DIRECTORY);
-  const [metadataExists, pgdataExists] = await Promise.all([
-    exists(metadataPath),
-    exists(pgdataPath),
-  ]);
-  if (!metadataExists || !pgdataExists) {
-    throw corrupt(root, 'contains an incomplete published generation');
-  }
-  await requireRealFile(root, metadataPath, FORMAT_FILE);
-  await requireRealDirectory(root, pgdataPath, SNAPSHOT_DIRECTORY);
-
-  let metadata: NodeDirectoryMetadata;
-  try {
-    metadata = JSON.parse(
-      (await readRealFile(metadataPath, FORMAT_FILE)).toString('utf8'),
-    ) as NodeDirectoryMetadata;
-  } catch (error) {
-    throw corrupt(root, `contains unreadable metadata: ${describeError(error)}`, error);
-  }
-  if (metadata.schema !== FORMAT) throw corrupt(root, 'uses an unsupported storage format');
-  if (!/^[0-9a-f]{64}$/u.test(metadata.snapshotSha256)) {
-    throw corrupt(root, 'has a missing or malformed snapshot digest');
-  }
-  let storedCompatibility: Record<string, unknown>;
-  try {
-    storedCompatibility = requireRecord(
-      metadata.compatibility,
-      `Node directory storage ${JSON.stringify(root)} compatibility`,
-    );
-  } catch (error) {
-    throw corrupt(root, `has malformed compatibility metadata: ${describeError(error)}`, error);
-  }
-  let storedContract: string;
-  try {
-    storedContract = canonicalStorageContract(storedCompatibility);
-  } catch (error) {
-    throw corrupt(root, `has malformed compatibility metadata: ${describeError(error)}`, error);
-  }
-  if (storedContract !== canonicalStorageContract(compatibility)) {
+  const metadata = await readMetadata(root);
+  if (
+    canonicalStorageContract(metadata.compatibility) !== canonicalStorageContract(compatibility)
+  ) {
     throw new WasixStorageError(
-      `Node directory storage ${JSON.stringify(root)} is incompatible with the selected runtime or extensions`,
+      `directory PGDATA ${JSON.stringify(root)} is incompatible with the selected runtime or extensions`,
       { code: 'incompatible', durability: 'unchanged' },
     );
   }
 
-  const snapshot = await readHostSnapshot(root, pgdataPath, compatibility);
-  if (snapshotSha256(snapshot) !== metadata.snapshotSha256) {
-    throw corrupt(root, 'does not match its published snapshot digest');
-  }
-  return {
-    schema: 'oliphaunt-wasix-stored-database-v1',
-    compatibility,
-    snapshot,
-  };
-}
-
-async function readHostSnapshot(
-  root: string,
-  pgdataPath: string,
-  compatibility: WasixStorageCompatibility,
-): Promise<StoredSnapshot> {
   const directories: string[] = [];
   const files: { path: string; bytes: Uint8Array }[] = [];
-  const walk = async (parent: string): Promise<void> => {
-    const hostParent = parent.length === 0 ? pgdataPath : join(pgdataPath, ...parent.split('/'));
+  const walk = async (relative: string): Promise<void> => {
+    const hostParent = relative.length === 0 ? root : join(root, ...relative.split('/'));
     const entries = await readdir(hostParent, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
-      const relative = parent.length === 0 ? entry.name : `${parent}/${entry.name}`;
-      const hostPath = join(pgdataPath, ...relative.split('/'));
+      if (relative.length === 0 && isInternalRootEntry(entry.name)) continue;
+      if (relative.length === 0 && VOLATILE_DATABASE_FILES.has(entry.name)) continue;
+      if (entry.name.includes(WRITE_TEMP_MARKER)) continue;
+      const path = relative.length === 0 ? entry.name : `${relative}/${entry.name}`;
+      const hostPath = join(root, ...path.split('/'));
+      const info = await lstat(hostPath);
+      if (info.isSymbolicLink())
+        throw corrupt(root, `contains symbolic link ${JSON.stringify(path)}`);
       const resolved = await realpath(hostPath);
-      assertContained(pgdataPath, resolved);
-      if (entry.isSymbolicLink())
-        throw corrupt(root, `contains symbolic link ${JSON.stringify(relative)}`);
+      assertContained(root, resolved);
       if (entry.isDirectory()) {
-        directories.push(relative);
-        await walk(relative);
+        directories.push(path);
+        await walk(path);
       } else if (entry.isFile()) {
-        files.push({
-          path: relative,
-          bytes: new Uint8Array(await readRealFile(hostPath, relative)),
-        });
+        files.push({ path, bytes: new Uint8Array(await readRealFile(hostPath, path)) });
       } else {
-        throw corrupt(root, `contains unsupported entry ${JSON.stringify(relative)}`);
+        throw corrupt(root, `contains unsupported entry ${JSON.stringify(path)}`);
       }
     }
   };
-  try {
-    await walk('');
-  } catch (error) {
-    if (error instanceof WasixStorageError) throw error;
-    throw corrupt(root, `could not read PGDATA: ${describeError(error)}`, error);
-  }
+  await walk('');
   return validateStoredSnapshot(
     { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
     compatibility.runtime.postgresVersion.split('.')[0] ?? '',
     {
-      label: `Node directory storage ${JSON.stringify(root)}`,
+      label: `directory PGDATA ${JSON.stringify(root)}`,
       corrupt: (detail, cause) => corrupt(root, detail, cause),
     },
   );
 }
 
-async function publishGeneration(
+async function readMetadata(root: string): Promise<DirectoryMetadata> {
+  const path = join(root, METADATA_FILE);
+  let value: unknown;
+  try {
+    value = JSON.parse((await readRealFile(path, METADATA_FILE)).toString('utf8'));
+  } catch (error) {
+    throw corrupt(root, `has missing or unreadable ${METADATA_FILE}`, error);
+  }
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (value as { schema?: unknown }).schema !== FORMAT ||
+    (value as { compatibility?: unknown }).compatibility === null ||
+    typeof (value as { compatibility?: unknown }).compatibility !== 'object' ||
+    Array.isArray((value as { compatibility?: unknown }).compatibility)
+  ) {
+    throw corrupt(root, `has unsupported ${METADATA_FILE}`);
+  }
+  return value as DirectoryMetadata;
+}
+
+async function publishHostDelta(
   root: string,
-  snapshot: StoredSnapshot,
+  delta: StorageDelta,
   compatibility: WasixStorageCompatibility,
 ): Promise<void> {
-  const token = `${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
-  const staging = join(root, `.oliphaunt-stage-${token}`);
-  const previous = join(root, PREVIOUS_DIRECTORY);
-  const current = join(root, CURRENT_DIRECTORY);
-  const pgdata = join(staging, SNAPSHOT_DIRECTORY);
-  let movedCurrent = false;
-  let committed = false;
-  try {
-    await mkdir(pgdata, { recursive: true, mode: 0o700 });
-    for (const relative of snapshot.directories) {
-      await mkdir(join(pgdata, ...relative.split('/')), { recursive: true, mode: 0o700 });
-    }
-    for (const file of snapshot.files) {
-      const target = join(pgdata, ...file.path.split('/'));
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      await writeDurableFile(target, file.bytes);
-    }
-    await writeDurableFile(
-      join(staging, FORMAT_FILE),
-      `${JSON.stringify({ schema: FORMAT, compatibility, snapshotSha256: snapshotSha256(snapshot) })}\n`,
-    );
-    for (const relative of [...snapshot.directories].sort(compareDirectoryDepthDescending)) {
-      await syncDirectory(join(pgdata, ...relative.split('/')));
-    }
-    await syncDirectory(pgdata);
-    await syncDirectory(staging);
-    await syncDirectory(root);
-    await rm(previous, { recursive: true, force: true });
-    await syncDirectory(root);
-    if (await exists(current)) {
-      await rename(current, previous);
-      movedCurrent = true;
-      await syncDirectory(root);
-    }
-    await rename(staging, current);
-    committed = true;
-    // `current` is the commit point. Retain the rollback generation until a
-    // later open has validated the new one.
-    await syncDirectory(root);
-  } catch (error) {
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    if (committed) {
-      throw new WasixStorageError(
-        `Node directory storage ${JSON.stringify(root)} published a visible generation but could not confirm its host durability: ${describeError(error)}`,
-        { code: 'checkpoint-failed', durability: 'unknown', cause: error },
-      );
-    }
-    if (movedCurrent && !(await exists(current)) && (await exists(previous))) {
-      await rename(previous, current).catch(() => undefined);
-    }
-    throw error;
+  const deletes = splitStorageDeltaDeletes(delta);
+  for (const relative of deletes.replacements) {
+    const target = hostPath(root, relative);
+    await requireContainedParent(root, target);
+    await rm(target, { recursive: true, force: true });
+    await syncNodeDirectory(dirname(target));
+  }
+
+  const syncedParents = new Set<string>([root]);
+  for (const relative of delta.directories) {
+    const target = await ensureContainedDirectory(root, relative);
+    syncedParents.add(dirname(target));
+  }
+
+  // Make WAL durable before relation/control-file changes. This preserves the
+  // same recovery ordering PostgreSQL relies on when host publication stops
+  // partway through a boundary.
+  const files = [...delta.files].sort(
+    (left, right) =>
+      durabilityOrder(left.path) - durabilityOrder(right.path) ||
+      left.path.localeCompare(right.path),
+  );
+  for (const file of files) {
+    const target = hostPath(root, file.path);
+    await ensureContainedDirectory(root, file.path.split('/').slice(0, -1).join('/'));
+    await replaceDurableFile(target, file.bytes);
+    syncedParents.add(dirname(target));
+  }
+
+  for (const relative of deletes.removals) {
+    const target = hostPath(root, relative);
+    await requireContainedParent(root, target);
+    await rm(target, { recursive: true, force: true });
+    syncedParents.add(dirname(target));
+  }
+
+  await writeMetadata(root, { schema: FORMAT, compatibility });
+  for (const parent of [...syncedParents].sort(comparePathDepthDescending)) {
+    await syncNodeDirectory(parent);
   }
 }
 
-async function recoverInterruptedPublish(root: string): Promise<void> {
-  const current = join(root, CURRENT_DIRECTORY);
-  const previous = join(root, PREVIOUS_DIRECTORY);
-  const entries = await readdir(root, { withFileTypes: true });
-  const unexpected = entries.filter(
-    (entry) =>
-      !(
-        (entry.name === STATE_FILE && entry.isFile()) ||
-        (entry.name === CURRENT_DIRECTORY && entry.isDirectory()) ||
-        (entry.name === PREVIOUS_DIRECTORY && entry.isDirectory()) ||
-        (entry.name === NODE_DIRECTORY_LOCK_SLOT && entry.isDirectory()) ||
-        (nodeDirectoryLockCandidateToken(entry.name) !== undefined && entry.isDirectory()) ||
-        (entry.name.startsWith('.oliphaunt-stage-') && entry.isDirectory())
-      ),
-  );
-  if (unexpected.length > 0) {
-    throw corrupt(root, `contains unexpected state entry ${JSON.stringify(unexpected[0]?.name)}`);
-  }
-  await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith('.oliphaunt-stage-'))
-      .map((entry) => rm(join(root, entry.name), { recursive: true, force: true })),
-  );
-  const [hasCurrent, hasPrevious] = await Promise.all([exists(current), exists(previous)]);
-  if (!hasCurrent && hasPrevious) {
-    await rename(previous, current);
-    await syncDirectory(root);
+function durabilityOrder(path: string): number {
+  if (path === 'pg_wal' || path.startsWith('pg_wal/')) return 0;
+  if (path === 'global/pg_control') return 2;
+  return 1;
+}
+
+async function writeMetadata(root: string, metadata: DirectoryMetadata): Promise<void> {
+  const target = join(root, METADATA_FILE);
+  await replaceDurableFile(target, `${JSON.stringify(metadata)}\n`);
+}
+
+async function replaceDurableFile(path: string, contents: string | Uint8Array): Promise<void> {
+  const temporary = `${path}${WRITE_TEMP_MARKER}${randomBytes(8).toString('hex')}`;
+  try {
+    await writeDurableFile(temporary, contents);
+    await rename(temporary, path);
+    await syncNodeDirectory(dirname(path));
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
   }
 }
 
@@ -466,25 +242,66 @@ async function writeDurableFile(path: string, contents: string | Uint8Array): Pr
   }
 }
 
-async function validateStateMarker(path: string, required = false): Promise<boolean> {
-  let info: Awaited<ReturnType<typeof lstat>>;
-  try {
-    info = await lstat(path);
-  } catch (error) {
-    if (!required && isNodeError(error, 'ENOENT')) return false;
-    throw error;
+async function removeInterruptedWrites(root: string): Promise<void> {
+  const walk = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink())
+        throw corrupt(root, `contains symbolic link ${JSON.stringify(path)}`);
+      if (entry.name.includes(WRITE_TEMP_MARKER)) {
+        await rm(path, { recursive: true, force: true });
+      } else if (entry.isDirectory() && !isLockRootEntry(entry.name)) {
+        await walk(path);
+      }
+    }
+  };
+  await walk(root);
+}
+
+function hostPath(root: string, relative: string): string {
+  if (
+    relative.length === 0 ||
+    relative.startsWith('/') ||
+    relative.includes('\\') ||
+    relative.includes('\0') ||
+    relative.split('/').some((part) => part.length === 0 || part === '.' || part === '..')
+  ) {
+    throw new Error(`unsafe PGDATA path ${JSON.stringify(relative)}`);
   }
-  if (!info.isFile() || info.isSymbolicLink() || info.size !== 0) {
-    throw new Error(`${STATE_FILE} is not the empty ${FORMAT} identity marker`);
+  return join(root, ...relative.split('/'));
+}
+
+async function requireContainedParent(root: string, path: string): Promise<void> {
+  await requireContainedRealDirectory(root, dirname(path));
+}
+
+async function ensureContainedDirectory(root: string, relative: string): Promise<string> {
+  let current = root;
+  if (relative === '') return current;
+  for (const segment of relative.split('/')) {
+    const next = join(current, segment);
+    try {
+      await mkdir(next, { mode: 0o700 });
+    } catch (error) {
+      if (!isNodeError(error, 'EEXIST')) throw error;
+    }
+    await requireContainedRealDirectory(root, next);
+    current = next;
   }
-  return true;
+  return current;
+}
+
+async function requireContainedRealDirectory(root: string, path: string): Promise<void> {
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink())
+    throw new Error(`${path} is not a real directory`);
+  assertContained(root, await realpath(path));
 }
 
 async function readRealFile(path: string, label: string): Promise<Buffer> {
   const before = await lstat(path);
-  if (!before.isFile() || before.isSymbolicLink()) {
+  if (!before.isFile() || before.isSymbolicLink())
     throw new Error(`${label} is not a regular file`);
-  }
   const handle = await open(path, 'r');
   try {
     const opened = await handle.stat();
@@ -497,69 +314,17 @@ async function readRealFile(path: string, label: string): Promise<Buffer> {
   }
 }
 
-async function syncDirectory(path: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(path, 'r');
-    await handle.sync();
-  } catch (error) {
-    // Some supported filesystems do not allow directory handles. File data is
-    // still synced; directory fsync remains mandatory wherever the host offers it.
-    if (!['EINVAL', 'EISDIR', 'ENOTSUP', 'EPERM'].some((code) => isNodeError(error, code))) {
-      throw error;
-    }
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
+function isInternalRootEntry(name: string): boolean {
+  return (
+    name === METADATA_FILE ||
+    name === NODE_DIRECTORY_LOCK_SLOT ||
+    name.startsWith(NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX) ||
+    name.includes(WRITE_TEMP_MARKER)
+  );
 }
 
-function compareDirectoryDepthDescending(left: string, right: string): number {
-  return right.split('/').length - left.split('/').length || right.localeCompare(left);
-}
-
-function snapshotSha256(snapshot: StoredSnapshot): string {
-  const hash = createHash('sha256');
-  hash.update(`${snapshot.schema}\0`);
-  for (const path of snapshot.directories) hash.update(`d\0${path}\0`);
-  for (const file of snapshot.files) {
-    hash.update(`f\0${file.path}\0${file.bytes.byteLength}\0`);
-    hash.update(file.bytes);
-  }
-  return hash.digest('hex');
-}
-
-async function requireRealDirectory(root: string, path: string, label: string): Promise<void> {
-  let info: Awaited<ReturnType<typeof lstat>>;
-  try {
-    info = await lstat(path);
-  } catch (error) {
-    throw corrupt(root, `could not inspect ${label}: ${describeError(error)}`, error);
-  }
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw corrupt(root, `contains non-directory ${label}`);
-  }
-}
-
-async function requireRealFile(root: string, path: string, label: string): Promise<void> {
-  let info: Awaited<ReturnType<typeof lstat>>;
-  try {
-    info = await lstat(path);
-  } catch (error) {
-    throw corrupt(root, `could not inspect ${label}: ${describeError(error)}`, error);
-  }
-  if (!info.isFile() || info.isSymbolicLink()) {
-    throw corrupt(root, `contains non-file ${label}`);
-  }
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false;
-    throw error;
-  }
+function isLockRootEntry(name: string): boolean {
+  return name === NODE_DIRECTORY_LOCK_SLOT || name.startsWith(NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX);
 }
 
 function assertContained(root: string, path: string): void {
@@ -569,8 +334,12 @@ function assertContained(root: string, path: string): void {
   }
 }
 
+function comparePathDepthDescending(left: string, right: string): number {
+  return right.split(sep).length - left.split(sep).length || right.localeCompare(left);
+}
+
 function corrupt(root: string, detail: string, cause?: unknown): WasixStorageError {
-  return new WasixStorageError(`Node directory storage ${JSON.stringify(root)} ${detail}`, {
+  return new WasixStorageError(`directory PGDATA ${JSON.stringify(root)} ${detail}`, {
     code: 'corrupt',
     durability: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
@@ -578,17 +347,11 @@ function corrupt(root: string, detail: string, cause?: unknown): WasixStorageErr
 }
 
 function unavailable(root: string, detail: string, cause?: unknown): WasixStorageError {
-  return new WasixStorageError(`Node directory storage ${JSON.stringify(root)} ${detail}`, {
+  return new WasixStorageError(`directory PGDATA ${JSON.stringify(root)} ${detail}`, {
     code: 'unavailable',
     durability: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
   });
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return (
-    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code
-  );
 }
 
 function describeError(error: unknown): string {

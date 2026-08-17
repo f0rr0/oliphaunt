@@ -25,6 +25,12 @@ export class Directory {
   writeFile(path: string, contents: string | Uint8Array): Promise<void>;
   removeDir(path: string): Promise<void>;
   removeFile(path: string): Promise<void>;
+  /** List paths mutated since the last successful acknowledgement. */
+  changedPaths(): string[];
+  /** Discard the current mutation journal. */
+  clearChanges(): void;
+  /** Inspect a path without exception-based missing-entry detection. */
+  entryType(path: string): string;
 }
 
 export class Instance {

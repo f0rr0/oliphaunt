@@ -70,15 +70,6 @@ impl PostgresConfig {
             .filter(|(name, _)| single_backend_guc_value(name).is_none())
             .map(|(name, value)| (name.as_str(), value.as_str()))
     }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn stable_entries(&self) -> Vec<(String, String)> {
-        self.settings
-            .iter()
-            .filter(|(name, _)| single_backend_guc_value(name).is_none())
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

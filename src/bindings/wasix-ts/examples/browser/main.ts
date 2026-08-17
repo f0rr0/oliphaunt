@@ -4,9 +4,11 @@ import Oliphaunt, {
   type QueryParam,
   type OliphauntDatabase,
   type WasixExtensionDescriptor,
+  type WasixStorage,
   WasixStorageError,
 } from '@oliphaunt/wasix-ts';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
+import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');
@@ -35,14 +37,15 @@ try {
   status.textContent = `PostgreSQL 18 is running with ${smoke ? 'direct' : 'worker'} execution.`;
   if (smoke) {
     await expectConcurrentDirectExecution(database);
-    await expectExclusiveOwnership(storage, extensions);
+    await expectExclusiveOwnership(storage, extensions, 'IndexedDB');
     const pgtapVersion = await exercisePgtap(database);
     const firstUuid = pgUuidv7Canary ? await readPgUuidv7(database) : undefined;
     await database.query('CREATE TABLE browser_reopen_probe (answer integer NOT NULL)');
     await database.query('INSERT INTO browser_reopen_probe VALUES (42)');
     await database.checkpoint();
-    // This row is intentionally newer than the explicit checkpoint. Reopening
-    // it proves the independent clean-close publication path.
+    // This row is intentionally newer than the explicit checkpoint. Its query
+    // Promise includes an operation storage boundary; clean close also drains
+    // the journal before releasing ownership.
     await database.query('INSERT INTO browser_reopen_probe VALUES (43)');
     await expectSqlstate(database, 'SELEC 1', '42601');
     await expectAnswer(database);
@@ -67,7 +70,7 @@ try {
       [','],
     );
     if (reopened.getText(0, 'answers') !== '42,43') {
-      throw new Error('browser smoke did not reopen checkpointed and clean-close PGDATA');
+      throw new Error('browser smoke did not reopen operation-persisted raw PGDATA');
     }
     if ((await readPgtapVersion(database)) !== pgtapVersion) {
       throw new Error('browser smoke did not reconstruct the selected pgtap carrier on reopen');
@@ -76,9 +79,11 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    const opfsAnswers = await expectOpfsPersistence(extensions);
     status.textContent = 'Browser smoke passed.';
     output.textContent = JSON.stringify({
       answers: [42, 43],
+      opfsAnswers,
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
@@ -204,17 +209,47 @@ async function expectFailedDirectOpenRecovery(): Promise<void> {
 }
 
 async function expectExclusiveOwnership(
-  storage: ReturnType<typeof indexedDB>,
+  storage: WasixStorage,
   extensions: readonly WasixExtensionDescriptor[],
+  provider: string,
 ): Promise<void> {
   try {
     const duplicate = await Oliphaunt.open({ execution: 'direct', storage, extensions });
     await duplicate.close();
-    throw new Error('browser smoke opened one IndexedDB database twice');
+    throw new Error(`browser smoke opened one ${provider} database twice`);
   } catch (error) {
     if (!(error instanceof WasixStorageError) || error.code !== 'busy') {
       throw error;
     }
+  }
+}
+
+async function expectOpfsPersistence(
+  extensions: readonly WasixExtensionDescriptor[],
+): Promise<string> {
+  const storage = opfs('browser-smoke');
+  let database = await Oliphaunt.open({ execution: 'direct', storage, extensions });
+  await expectExclusiveOwnership(storage, extensions, 'OPFS');
+  await database.query('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
+  await database.query('INSERT INTO opfs_reopen_probe VALUES (1)');
+  // PostgreSQL normally retains the relation and WAL descriptors. This second
+  // operation proves that the host journal observes writes after initial open.
+  await database.query('INSERT INTO opfs_reopen_probe VALUES (2)');
+  await database.close();
+
+  database = await Oliphaunt.open({ execution: 'worker', storage, extensions });
+  try {
+    const reopened = await database.query(
+      'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
+      [','],
+    );
+    const answers = reopened.getText(0, 'answers');
+    if (answers !== '1,2') {
+      throw new Error(`browser smoke did not reopen OPFS delta PGDATA: ${answers}`);
+    }
+    return answers;
+  } finally {
+    await database.close();
   }
 }
 

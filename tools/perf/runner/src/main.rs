@@ -200,29 +200,29 @@ fn perf_cold(args: &[String]) -> Result<()> {
         "First explicit runtime preload in this xtask process. With --reset-cache, this includes first-install cache bootstrap.",
         cache_state_at_start,
         "cold",
-        "internal_preload_temp_root",
+        "process_runtime_cache",
         "not_a_query",
         "runtime_preload",
         "operation.total",
         Oliphaunt::preload,
     )?);
     operations.push(capture_operation(
-        "process_warm_new_temp_direct_first_query",
-        "First direct query for a newly opened temporary database after runtime preload in the same process.",
+        "process_warm_new_memory_direct_first_query",
+        "First direct query for a newly opened memory database after runtime preload in the same process.",
         "warm_after_runtime_preload",
         "warm",
-        "new_temporary_root",
+        "new_memory_root",
         "first_query_after_open",
         "direct_select_with_bind",
         "visible.direct_open_to_first_query",
         run_direct_select_one,
     )?);
     operations.push(capture_operation(
-        "process_warm_second_new_temp_direct_first_query",
-        "Repeat first direct query for a second newly opened temporary database in the same warm process.",
+        "process_warm_second_new_memory_direct_first_query",
+        "Repeat first direct query for a second newly opened memory database in the same warm process.",
         "warm_after_runtime_preload",
         "warm",
-        "second_new_temporary_root",
+        "second_new_memory_root",
         "first_query_after_open",
         "direct_select_with_bind",
         "visible.direct_open_to_first_query",
@@ -233,35 +233,35 @@ fn perf_cold(args: &[String]) -> Result<()> {
         "Explicit preload of the representative extension artifact after runtime preload.",
         "warm_after_runtime_preload",
         "warm",
-        "internal_preload_temp_root",
+        "process_runtime_cache",
         "not_a_query",
         "vector_extension_preload",
         "operation.total",
         || Oliphaunt::preload_extensions([extensions::VECTOR]),
     )?);
     operations.push(capture_operation(
-        "process_warm_new_temp_direct_vector_first_query",
-        "First vector-backed direct query for a newly opened temporary database after vector preload.",
+        "process_warm_new_memory_direct_vector_first_query",
+        "First vector-backed direct query for a newly opened memory database after vector preload.",
         "warm_after_vector_preload",
         "warm",
-        "new_temporary_root_with_requested_vector",
+        "new_memory_root_with_requested_vector",
         "first_extension_backed_query_after_open",
         "direct_vector_distance",
         "visible.direct_open_to_first_query",
         run_direct_vector_query,
     )?);
     operations.push(capture_operation(
-        "process_warm_new_temp_server_tokio_postgres_first_query",
-        "First tokio-postgres query against a new temporary OliphauntServer in the warm process.",
+        "process_warm_new_memory_server_tokio_postgres_first_query",
+        "First tokio-postgres query against a new memory OliphauntServer in the warm process.",
         "warm_after_runtime_preload",
         "warm",
-        "new_temporary_server_root",
+        "new_memory_server_root",
         "first_client_query_after_server_start",
         "tokio_postgres_select_with_bind",
         "visible.server_start_to_first_tokio_postgres_query",
         || {
             let visible_started = Instant::now();
-            let server = measure_phase("server.start", temporary_wasix_server)?;
+            let server = measure_phase("server.start", memory_wasix_server)?;
             let uri = server.connection_uri();
             let runtime = measure_phase("client.tokio_runtime_create", || {
                 tokio::runtime::Builder::new_current_thread()
@@ -301,22 +301,22 @@ fn perf_cold(args: &[String]) -> Result<()> {
         },
     )?);
     operations.push(capture_operation(
-        "process_warm_new_temp_server_sqlx_first_query",
-        "First SQLx query against a new temporary OliphauntServer in the warm process.",
+        "process_warm_new_memory_server_sqlx_first_query",
+        "First SQLx query against a new memory OliphauntServer in the warm process.",
         "warm_after_runtime_preload",
         "warm",
-        "new_temporary_server_root",
+        "new_memory_server_root",
         "first_client_query_after_server_start",
         "sqlx_select_with_bind",
         "visible.server_start_to_first_sqlx_query",
         run_server_sqlx_select_one,
     )?);
     operations.push(capture_operation(
-        "process_warm_new_temp_server_sqlx_vector_first_query",
-        "First vector-backed SQLx query against a new extension-enabled temporary OliphauntServer.",
+        "process_warm_new_memory_server_sqlx_vector_first_query",
+        "First vector-backed SQLx query against a new extension-enabled memory OliphauntServer.",
         "warm_after_vector_preload",
         "warm",
-        "new_temporary_server_root_with_requested_vector",
+        "new_memory_server_root_with_requested_vector",
         "first_extension_backed_client_query_after_server_start",
         "sqlx_vector_distance",
         "visible.server_start_to_first_sqlx_query",
@@ -324,7 +324,7 @@ fn perf_cold(args: &[String]) -> Result<()> {
             let visible_started = Instant::now();
             let server = measure_phase("server.start", || {
                 OliphauntServer::builder()
-                    .storage(DatabaseStorage::TemporaryDirectory)
+                    .storage(DatabaseStorage::Memory)
                     .extension(extensions::VECTOR)
                     .start()
             })?;
@@ -580,10 +580,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_direct_repeated_scalar_queries",
-        "Repeated direct API scalar extended-protocol queries on one already-open temporary database.",
+        "Repeated direct API scalar extended-protocol queries on one already-open memory database.",
         "warm_after_preload",
         "warm",
-        "long_lived_temporary_direct_root",
+        "long_lived_memory_direct_root",
         "steady_state_queries",
         "direct_select_with_bind",
         "warm.direct_repeated_scalar_queries.total",
@@ -591,10 +591,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_direct_transaction_batch",
-        "Repeated direct API scalar queries inside one transaction on an already-open temporary database.",
+        "Repeated direct API scalar queries inside one transaction on an already-open memory database.",
         "warm_after_preload",
         "warm",
-        "long_lived_temporary_direct_root",
+        "long_lived_memory_direct_root",
         "steady_state_transaction_batch",
         "direct_transaction_select_with_bind",
         "warm.direct_transaction_batch.total",
@@ -602,10 +602,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_direct_repeated_vector_queries",
-        "Repeated direct API extension-backed queries on one already-open extension-enabled temporary database.",
+        "Repeated direct API extension-backed queries on one already-open extension-enabled memory database.",
         "warm_after_vector_preload",
         "warm",
-        "long_lived_temporary_direct_root_with_vector",
+        "long_lived_memory_direct_root_with_vector",
         "steady_state_extension_queries",
         "direct_vector_distance",
         "warm.direct_repeated_vector_queries.total",
@@ -613,10 +613,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_server_sqlx_single_connection_repeated_queries",
-        "Repeated SQLx queries over one connection to one long-lived temporary server.",
+        "Repeated SQLx queries over one connection to one long-lived memory server.",
         "warm_after_preload",
         "warm",
-        "long_lived_temporary_server_root",
+        "long_lived_memory_server_root",
         "steady_state_single_connection_queries",
         "sqlx_select_with_bind",
         "warm.server_sqlx_single_connection_repeated_queries.total",
@@ -624,10 +624,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_server_sqlx_repeated_connections",
-        "Repeated SQLx connect-query-close cycles against one long-lived temporary server.",
+        "Repeated SQLx connect-query-close cycles against one long-lived memory server.",
         "warm_after_preload",
         "warm",
-        "long_lived_temporary_server_root",
+        "long_lived_memory_server_root",
         "steady_state_repeated_connections",
         "sqlx_connect_query_close",
         "warm.server_sqlx_repeated_connections.total",
@@ -635,10 +635,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_server_sqlx_vector_single_connection_repeated_queries",
-        "Repeated SQLx extension-backed queries over one connection to one long-lived extension-enabled temporary server.",
+        "Repeated SQLx extension-backed queries over one connection to one long-lived extension-enabled memory server.",
         "warm_after_vector_preload",
         "warm",
-        "long_lived_temporary_server_root_with_vector",
+        "long_lived_memory_server_root_with_vector",
         "steady_state_extension_queries",
         "sqlx_vector_distance",
         "warm.server_sqlx_vector_single_connection_repeated_queries.total",
@@ -646,10 +646,10 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
     operations.push(capture_operation(
         "warm_server_tokio_postgres_single_connection_repeated_queries",
-        "Repeated tokio-postgres queries over one connection to one long-lived temporary server.",
+        "Repeated tokio-postgres queries over one connection to one long-lived memory server.",
         "warm_after_preload",
         "warm",
-        "long_lived_temporary_server_root",
+        "long_lived_memory_server_root",
         "steady_state_single_connection_queries",
         "tokio_postgres_select_with_bind",
         "warm.server_tokio_postgres_single_connection_repeated_queries.total",

@@ -1,0 +1,232 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index dc2cfe4..1e9c0dc 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -156,6 +156,11 @@ features = [
+ ]
+ optional = true
+ 
++[dependencies.instant]
++version = "0.1"
++features = ["wasm-bindgen"]
++optional = true
++
+ [dependencies.js-sys]
+ version = "0.3.64"
+ optional = true
+@@ -432,6 +437,7 @@ js = [
+     "virtual-fs/js",
+     "getrandom/js",
+     "chrono",
++    "instant",
+     "js-sys",
+     "wasm-bindgen",
+     "wasm-bindgen-futures",
+diff --git a/src/state/env.rs b/src/state/env.rs
+index a9701e1..6895971 100644
+--- a/src/state/env.rs
++++ b/src/state/env.rs
+@@ -139,6 +139,14 @@ pub struct WasiEnv {
+     pub vfork: Option<WasiVFork>,
+     /// Seed used to rotate around the events returned by `poll_oneoff`
+     pub poll_seed: u64,
++    /// Cached Oliphaunt runtime profile. This avoids locking and scanning the
++    /// guest environment on high-frequency syscall paths.
++    pub(crate) oliphaunt_single_backend: bool,
++    /// Counts fast clock reads so pending signals are still serviced at a
++    /// bounded interval without paying that cost on every timing sample.
++    pub(crate) oliphaunt_fast_clock_calls: u16,
++    /// Whether this environment has installed a synthetic WASI clock offset.
++    pub(crate) oliphaunt_clock_offset_active: bool,
+     /// Shared state of the WASI system. Manages all the data that the
+     /// executing WASI program can see.
+     pub(crate) state: Arc<WasiState>,
+@@ -193,6 +201,9 @@ impl Clone for WasiEnv {
+             control_plane: self.control_plane.clone(),
+             process: self.process.clone(),
+             poll_seed: self.poll_seed,
++            oliphaunt_single_backend: self.oliphaunt_single_backend,
++            oliphaunt_fast_clock_calls: 0,
++            oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
+             thread: self.thread.clone(),
+             layout: self.layout.clone(),
+             vfork: self.vfork.clone(),
+@@ -237,6 +248,9 @@ impl WasiEnv {
+             layout: self.layout.clone(),
+             vfork: None,
+             poll_seed: 0,
++            oliphaunt_single_backend: self.oliphaunt_single_backend,
++            oliphaunt_fast_clock_calls: 0,
++            oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
+             bin_factory,
+             state,
+             inner: Default::default(),
+@@ -348,6 +362,18 @@ impl WasiEnv {
+         init: WasiEnvInit,
+         module_hash: ModuleHash,
+     ) -> Result<Self, WasiRuntimeError> {
++        const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] =
++            b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
++
++        let oliphaunt_single_backend = init
++            .state
++            .envs
++            .lock()
++            .map(|envs| {
++                envs.iter()
++                    .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
++            })
++            .unwrap_or(true);
+         let process = if let Some(p) = init.process {
+             p
+         } else {
+@@ -375,6 +401,9 @@ impl WasiEnv {
+             layout,
+             vfork: None,
+             poll_seed: 0,
++            oliphaunt_single_backend,
++            oliphaunt_fast_clock_calls: 0,
++            oliphaunt_clock_offset_active: false,
+             state: Arc::new(init.state),
+             inner: Default::default(),
+             owned_handles: Vec::new(),
+diff --git a/src/syscalls/wasi/clock_time_get.rs b/src/syscalls/wasi/clock_time_get.rs
+index 434bd95..4400a63 100644
+--- a/src/syscalls/wasi/clock_time_get.rs
++++ b/src/syscalls/wasi/clock_time_get.rs
+@@ -28,20 +28,31 @@ pub fn clock_time_get<M: MemorySize>(
+     precision: Timestamp,
+     time: WasmPtr<Timestamp, M>,
+ ) -> Result<Errno, WasiError> {
+-    WasiEnv::do_pending_operations(&mut ctx)?;
+-
+-    ctx = wasi_try_ok!(maybe_backoff::<M>(ctx)?);
++    let oliphaunt_fast_path = ctx.data().oliphaunt_single_backend;
++    if oliphaunt_fast_path {
++        let check_pending = {
++            let env = ctx.data_mut();
++            env.oliphaunt_fast_clock_calls = env.oliphaunt_fast_clock_calls.wrapping_add(1);
++            env.oliphaunt_fast_clock_calls & 0x03ff == 0
++        };
++        if check_pending {
++            WasiEnv::do_pending_operations(&mut ctx)?;
++        }
++    } else {
++        WasiEnv::do_pending_operations(&mut ctx)?;
++        ctx = wasi_try_ok!(maybe_backoff::<M>(ctx)?);
++    }
+ 
+     let env = ctx.data();
+     let memory = unsafe { env.memory_view(&ctx) };
+ 
+     let mut t_out = wasi_try_ok!(platform_clock_time_get(clock_id, precision));
+-    {
++    if !oliphaunt_fast_path || env.oliphaunt_clock_offset_active {
+         let guard = env.state.clock_offset.lock().unwrap();
+         if let Some(offset) = guard.get(&clock_id) {
+             t_out += *offset;
+         }
+-    };
++    }
+     wasi_try_mem_ok!(time.write(&memory, t_out as Timestamp));
+     Ok(Errno::Success)
+ }
+diff --git a/src/syscalls/wasi/clock_time_set.rs b/src/syscalls/wasi/clock_time_set.rs
+index 2c1354e..db9996f 100644
+--- a/src/syscalls/wasi/clock_time_set.rs
++++ b/src/syscalls/wasi/clock_time_set.rs
+@@ -47,5 +47,7 @@ pub fn clock_time_set_internal(
+ 
+     let mut guard = env.state.clock_offset.lock().unwrap();
+     guard.insert(clock_id, t_offset);
++    drop(guard);
++    ctx.data_mut().oliphaunt_clock_offset_active = true;
+     Errno::Success
+ }
+diff --git a/src/syscalls/wasix/mod.rs b/src/syscalls/wasix/mod.rs
+index ac01c1f..d11763e 100644
+--- a/src/syscalls/wasix/mod.rs
++++ b/src/syscalls/wasix/mod.rs
+@@ -176,15 +176,6 @@ use tracing::{debug_span, field, instrument, trace_span, Span};
+ 
+ use crate::WasiEnv;
+ 
+-const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] = b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
+-
+ fn oliphaunt_single_backend_requested(env: &WasiEnv) -> bool {
+-    env.state
+-        .envs
+-        .lock()
+-        .map(|envs| {
+-            envs.iter()
+-                .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
+-        })
+-        .unwrap_or(true)
++    env.oliphaunt_single_backend
+ }
+diff --git a/src/syscalls/wasm.rs b/src/syscalls/wasm.rs
+index dd731f0..1cac381 100644
+--- a/src/syscalls/wasm.rs
++++ b/src/syscalls/wasm.rs
+@@ -1,6 +1,5 @@
+-use std::mem;
+-
+-use chrono::prelude::*;
++use instant::Instant;
++use once_cell::sync::Lazy;
+ use wasmer::WasmRef;
+ 
+ use crate::syscalls::types::{
+@@ -8,15 +7,21 @@ use crate::syscalls::types::{
+     *,
+ };
+ 
++static MONOTONIC_EPOCH: Lazy<Instant> = Lazy::new(Instant::now);
++
++fn monotonic_time_ns() -> Result<i64, Errno> {
++    i64::try_from(MONOTONIC_EPOCH.elapsed().as_nanos()).map_err(|_| Errno::Overflow)
++}
++
+ pub fn platform_clock_res_get(
+     clock_id: Snapshot0Clockid,
+     resolution: WasmRef<Timestamp>,
+ ) -> Result<i64, Errno> {
+     let t_out = match clock_id {
+-        Snapshot0Clockid::Monotonic => 10_000_000,
+-        Snapshot0Clockid::Realtime => 1,
+-        Snapshot0Clockid::ProcessCputimeId => 1,
+-        Snapshot0Clockid::ThreadCputimeId => 1,
++        Snapshot0Clockid::Monotonic => 1_000_000,
++        Snapshot0Clockid::Realtime => 1_000_000,
++        Snapshot0Clockid::ProcessCputimeId => 1_000_000,
++        Snapshot0Clockid::ThreadCputimeId => 1_000_000,
+         _ => return Err(Errno::Inval),
+     };
+     Ok(t_out)
+@@ -24,10 +29,21 @@ pub fn platform_clock_res_get(
+ 
+ pub fn platform_clock_time_get(
+     clock_id: Snapshot0Clockid,
+-    precision: Timestamp,
++    _precision: Timestamp,
+ ) -> Result<i64, Errno> {
+-    Local::now()
+-        .timestamp_nanos_opt()
+-        .map(|ts| ts as i64)
+-        .ok_or(Errno::Overflow)
++    match clock_id {
++        Snapshot0Clockid::Realtime => {
++            let millis = js_sys::Date::now();
++            if !millis.is_finite() || millis < 0.0 || millis > i64::MAX as f64 {
++                return Err(Errno::Overflow);
++            }
++            (millis as i64)
++                .checked_mul(1_000_000)
++                .ok_or(Errno::Overflow)
++        }
++        Snapshot0Clockid::Monotonic
++        | Snapshot0Clockid::ProcessCputimeId
++        | Snapshot0Clockid::ThreadCputimeId => monotonic_time_ns(),
++        _ => Err(Errno::Inval),
++    }
+ }

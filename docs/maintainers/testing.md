@@ -373,7 +373,7 @@ Use logical dumps, not physical archives, when you need a portable export.
 Use `oliphaunt-wasix-proxy` when the test process lives outside Rust:
 
 ```sh
-oliphaunt-wasix-proxy --temporary-directory --tcp 127.0.0.1:0 --print-uri
+oliphaunt-wasix-proxy --memory --tcp 127.0.0.1:0 --print-uri
 ```
 
 Pass the printed URI to Python `psycopg`, Go `pgx`, Node `pg`, or another
