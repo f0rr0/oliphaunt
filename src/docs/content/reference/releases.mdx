@@ -44,9 +44,10 @@ the declared iOS XCFramework plus the macOS arm64 runtime carrier. WASIX ships a
 portable carrier and AOT carriers for the supported desktop hosts.
 
 macOS x64, Windows ARM64, Linux musl, Android 32-bit, and undeclared Apple
-architectures are not first-release targets. An extension can support a smaller
-set: its own explicit target manifest and published carrier metadata are
-authoritative.
+architectures are not first-release targets. Every extension on `main` supports
+the complete canonical target profile. Exact extension carrier metadata is
+generated from that shared profile; uncatalogued branch work has no release
+surface.
 
 ### Consumer Compatibility Floors
 

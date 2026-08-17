@@ -15,10 +15,6 @@ import { fileURLToPath } from "node:url";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { archiveTreeDigest } from "../policy/source-fetch-core.mjs";
 import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from "./release-directory-safety.mjs";
-import {
-  extensionQualificationCandidates,
-  qualificationCandidateTargets,
-} from "./extension-qualification-candidates.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import {
   hasCanonicalReleaseStagingMode,
@@ -394,9 +390,6 @@ export function extensionUpstreamLicenseRow(sqlName) {
 }
 
 export function externalReleaseExtensionSqlNames() {
-  const qualificationCandidates = new Map(
-    extensionQualificationCandidates().map((candidate) => [candidate.extensionId, candidate]),
-  );
   const sqlNames = [];
   for (const entry of readdirSync(path.join(ROOT, "src/extensions/external"), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -414,11 +407,9 @@ export function externalReleaseExtensionSqlNames() {
       sqlNames.push(release.extension_sql_name);
       continue;
     }
-    const candidate = qualificationCandidates.get(entry.name);
-    if (candidate !== undefined) sqlNames.push(candidate.sqlName);
   }
   const canonical = [...new Set(sqlNames)].sort(compareText);
-  if (canonical.length !== sqlNames.length) fail("external release and qualification SQL names must be unique");
+  if (canonical.length !== sqlNames.length) fail("external release SQL names must be unique");
   return Object.freeze(canonical);
 }
 
@@ -625,10 +616,7 @@ function validateCheckout(source) {
 
 export function stageExtensionUpstreamLicenses(sqlName, filesRoot) {
   const externalRoot = path.join(ROOT, "src/extensions/external", sqlName);
-  if (
-    !existsSync(path.join(externalRoot, "release.toml"))
-    && !existsSync(path.join(externalRoot, "publication-blocker.toml"))
-  ) return Object.freeze([]);
+  if (!existsSync(path.join(externalRoot, "release.toml"))) return Object.freeze([]);
   const row = extensionUpstreamLicenseRow(sqlName);
   const blobs = productLicenseBlobs(sqlName, row.files.map((file) => file.sha256));
   const stagingRoot = requireSafeDirectoryChain(filesRoot);
@@ -830,30 +818,6 @@ export function extensionCarrierLegalFileInventory(
   }
 
   return Object.freeze([...files.values()].sort((left, right) => compareText(left.path, right.path)));
-}
-
-export function extensionQualificationLegalContract(
-  sqlName,
-  { family, target } = {},
-) {
-  const candidate = extensionQualificationCandidates().find((row) => row.sqlName === sqlName);
-  if (candidate === undefined) {
-    fail(`${sqlName} is not a canonical publication-deferred qualification candidate`);
-  }
-  if (!new Set(["native", "wasix"]).has(family) || typeof target !== "string" || !target) {
-    fail("qualification legal lookup requires family=native|wasix and an exact target");
-  }
-  if (!qualificationCandidateTargets(candidate).some((row) => row.family === family && row.target === target)) {
-    fail(`${sqlName} is not declared for qualification target ${family}:${target}`);
-  }
-  const row = checkedLicenseRows([sqlName])[0];
-  return Object.freeze({
-    profile: `external-${family}`,
-    packageSpdx: row.packageSpdx,
-    upstreamMembers: Object.freeze([sqlName]),
-    licenseFiles: Object.freeze([...expectedLicenseFiles([sqlName]).keys()].sort(compareText)),
-    qualificationOnly: true,
-  });
 }
 
 function checkedArchivePrefix(value = "") {

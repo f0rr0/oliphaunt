@@ -81,7 +81,6 @@ function repoPath(value) {
 function nativeRuntimeArtifactTargets(version) {
   return allArtifactTargets({
     product: "liboliphaunt-native",
-    publishedOnly: true,
   }, PREFIX)
     .filter((target) => target.surfaces.includes("maven"))
     .map((target) => ({
@@ -267,7 +266,6 @@ async function extensionRows(extensionRoot, selectedProducts) {
     const targets = [...new Map(releaseExtensionArtifactTargets({
       product,
       family: "native",
-      publishedOnly: true,
     }, PREFIX).filter((target) =>
       target.kind === "native-static-registry" && target.target.startsWith("android-"))
       .map((target) => [target.target, target])).values()];

@@ -519,14 +519,15 @@ extension_build_fingerprint() {
       shasum -a 256 \
         "$postgis_time_helper" \
         "$repo_root/src/extensions/external/postgis/tools/reproducible-bin/date"
-      for dependency in geos proj sqlite json-c libxml2; do
+      while IFS= read -r dependency; do
+        [ -n "$dependency" ] || continue
         if [ -d "$repo_root/target/oliphaunt-sources/checkouts/$dependency" ]; then
           printf 'postgis-dependency:%s\n' "$dependency"
           local dependency_checkout="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
           exact_checkout_identity "postgis_dependency.$dependency" "$dependency_checkout" || return 1
           hash_extension_source_tree "$dependency_checkout"
         fi
-      done
+      done < <(native_extension_component_sources postgis)
     fi
     hash_extension_source_tree "$portable_uuid_dir"
   } | shasum -a 256 | awk '{print $1}'
@@ -1050,22 +1051,45 @@ build_native_uuid_dependency() {
   [ -s "$native_uuid_archive" ] || fail "portable UUID native build did not produce $native_uuid_archive"
 }
 
+native_extension_component_field() {
+  local extension="${1:?missing extension}"
+  local field="${2:?missing native component field}"
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    field "$extension" native native-dynamic "$target_id" "$field"
+}
+
+native_extension_components() {
+  native_extension_component_field "$1" components
+}
+
+native_extension_component_sources() {
+  native_extension_component_field "$1" sources
+}
+
 build_contrib_extension() {
   local extension="$1"
   local -a extra_make_args=()
   local -a embedded_extra_make_args=()
   local embedded_pg_ldflags="$embedded_module_be_dllibs"
-  local arg
-  if [ "$extension" = "pgcrypto" ]; then
-    configure_pgcrypto_make_args
-    extra_make_args=("${pgcrypto_make_args[@]}")
-  elif [ "$extension" = "uuid-ossp" ]; then
-    build_native_uuid_dependency
-    extra_make_args=(
-      "PG_CPPFLAGS=-I$portable_uuid_dir/include -DHAVE_UUID_E2FS=1 -DHAVE_UUID_UUID_H=1"
-      "UUID_LIBS=$native_uuid_archive"
-    )
-  fi
+  local arg component
+  while IFS= read -r component; do
+    case "$component" in
+      openssl)
+        configure_pgcrypto_make_args
+        extra_make_args+=("${pgcrypto_make_args[@]}")
+        ;;
+      portable-uuid)
+        build_native_uuid_dependency
+        extra_make_args+=(
+          "PG_CPPFLAGS=-I$portable_uuid_dir/include -DHAVE_UUID_E2FS=1 -DHAVE_UUID_UUID_H=1"
+          "UUID_LIBS=$native_uuid_archive"
+        )
+        ;;
+      "") ;;
+      *) fail "unsupported native contrib component for $extension/$target_id: $component" ;;
+    esac
+  done < <(native_extension_components "$extension")
   for arg in "${extra_make_args[@]}"; do
     case "$arg" in
       PG_LDFLAGS=*)
@@ -1211,13 +1235,15 @@ native_postgis_dependency_fingerprint() {
     shasum -a 256 "$script_dir/$(basename "$0")"
     shasum -a 256 "$script_dir/postgis-dependency-cache.sh"
     shasum -a 256 "$source_manifest"
+    shasum -a 256 "$repo_root/src/extensions/catalog/native-components.toml"
 
     local dependency source_dir
-    for dependency in geos proj sqlite json-c libxml2; do
+    while IFS= read -r dependency; do
+      [ -n "$dependency" ] || continue
       source_dir="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
       exact_checkout_identity "dependency.$dependency" "$source_dir" || return 1
       hash_extension_source_tree "$source_dir"
-    done
+    done < <(native_extension_component_sources postgis)
   } | shasum -a 256 | awk '{print $1}'
 }
 
@@ -1362,11 +1388,18 @@ build_native_postgis_dependencies() {
     "${native_postgis_dependency_build_roots[@]}"
   mkdir -p "$(dirname "$postgis_dependency_log")"
   : > "$postgis_dependency_log"
-  build_native_postgis_jsonc_dependency
-  build_native_postgis_sqlite_dependency
-  build_native_postgis_geos_dependency
-  build_native_postgis_libxml2_dependency
-  build_native_postgis_proj_dependency
+  local component
+  while IFS= read -r component; do
+    case "$component" in
+      geos) build_native_postgis_geos_dependency ;;
+      sqlite) build_native_postgis_sqlite_dependency ;;
+      proj) build_native_postgis_proj_dependency ;;
+      libxml2) build_native_postgis_libxml2_dependency ;;
+      json-c) build_native_postgis_jsonc_dependency ;;
+      "") ;;
+      *) fail "unsupported native PostGIS component for $target_id: $component" ;;
+    esac
+  done < <(native_extension_components postgis)
   oliphaunt_postgis_dependency_cache_commit \
     "$native_postgis_dependency_root" \
     "$wanted" \

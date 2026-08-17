@@ -35,7 +35,7 @@ export CI_HEAD_SHA="$(git rev-parse HEAD)"
 
 receipt_json_for_platform() {
   local icu_runtime_proof="${2:-$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU}"
-  node - "$root/src/extensions/generated/sdk/react-native.json" "$1" "$icu_runtime_proof" <<'NODE'
+  node - "$root/src/extensions/generated/sdk/extensions.json" "$1" "$icu_runtime_proof" <<'NODE'
 const fs = require('node:fs');
 const metadata = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const platform = process.argv[3];
@@ -44,9 +44,6 @@ if (icuRuntimeProof !== '0' && icuRuntimeProof !== '1') {
   throw new Error(`invalid ICU runtime proof fixture: ${icuRuntimeProof}`);
 }
 const extensions = (metadata.extensions ?? [])
-  .filter(row => row['mobile-release-ready'] === true && (
-    row.support?.mobile?.[platform] === undefined || row.support.mobile[platform] === 'supported'
-  ))
   .map(row => row['sql-name'])
   .sort();
 process.stdout.write(JSON.stringify({

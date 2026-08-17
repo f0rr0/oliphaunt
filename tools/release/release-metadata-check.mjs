@@ -23,7 +23,6 @@ function main(argv) {
   parseArgs(argv);
   run(TOOL, [process.execPath, "tools/release/check_release_please_config.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check_artifact_targets.mjs"]);
-  run(TOOL, [process.execPath, "tools/release/check-extension-publication-legal-clearance.mjs"]);
   run(TOOL, [process.execPath, "tools/release/sync-release-pr.mjs", "--check"]);
   run(TOOL, [process.execPath, "tools/release/check_release_pr_coverage.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check-release-metadata.mjs"]);

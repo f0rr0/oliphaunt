@@ -24,8 +24,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -58,8 +56,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -92,8 +88,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -126,8 +120,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -160,8 +152,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -194,8 +184,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -228,8 +216,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -262,8 +248,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -296,8 +280,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -330,8 +312,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -364,8 +344,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -398,8 +376,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -432,8 +408,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -466,8 +440,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -500,8 +472,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -534,8 +504,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -568,8 +536,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -602,8 +568,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -636,8 +600,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -670,8 +632,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -704,8 +664,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -738,8 +696,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -772,8 +728,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -806,8 +760,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -840,8 +792,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -874,8 +824,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -908,8 +856,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -942,8 +888,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -976,8 +920,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1010,8 +952,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1044,8 +984,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1078,8 +1016,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1112,8 +1048,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1146,8 +1080,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1180,8 +1112,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1214,8 +1144,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1248,8 +1176,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1282,8 +1208,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1316,8 +1240,6 @@
         "portable"
       ],
       "postgres-major": 18,
-      "public": true,
-      "qualification-status": "requires-current-ci",
       "runtime-modes": [
         "direct",
         "server",
@@ -1344,21 +1266,17 @@
   ],
   "qualification-authority": {
     "collector": "src/extensions/tools/collect-wasix-evidence.sh",
-    "current-source-status": "requires-current-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:3e3be66d355cf8937d2734358a9d0a779fe653cf8630b6f646ed63639d0b60f4",
+  "source-digest": "sha256:f4130ad63a10ef74089c556dbc57fe5ab66126ce8cc3ac44515e3f0517ec75ed",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
-    "src/extensions/catalog/extensions.promoted.toml",
-    "src/extensions/catalog/extensions.smoke.toml",
     "src/extensions/catalog/extensions.source.json",
+    "src/extensions/catalog/native-components.toml",
     "src/extensions/contrib/postgres18.toml",
     "src/extensions/generated/extensions.catalog.json",
-    "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
-    "src/extensions/external/age/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",
     "src/extensions/external/pg_textsearch/source.toml",
@@ -1381,7 +1299,6 @@
     "src/extensions/external/pg_textsearch/recipe.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/smoke.sql",
-    "src/extensions/external/pg_textsearch/tests/upstream.toml",
     "src/extensions/external/pg_textsearch/upstream-license-data.json",
     "src/extensions/external/pg_uuidv7/upstream-license-data.json",
     "src/extensions/external/pgtap/recipe.toml",
@@ -1389,10 +1306,7 @@
     "src/extensions/external/pgtap/targets/native.toml",
     "src/extensions/external/pgtap/targets/wasix.toml",
     "src/extensions/external/pgtap/tests/smoke.sql",
-    "src/extensions/external/pgtap/tests/upstream.toml",
     "src/extensions/external/pgtap/upstream-license-data.json",
-    "src/extensions/external/postgis/blockers.toml",
-    "src/extensions/external/postgis/deps.toml",
     "src/extensions/external/postgis/patches/README.md",
     "src/extensions/external/postgis/recipe.toml",
     "src/extensions/external/postgis/targets/native-static-registry.toml",
@@ -1400,7 +1314,6 @@
     "src/extensions/external/postgis/targets/wasix.toml",
     "src/extensions/external/postgis/tests/regression.sql",
     "src/extensions/external/postgis/tests/smoke.sql",
-    "src/extensions/external/postgis/tests/upstream.toml",
     "src/extensions/external/postgis/tools/build_wasix.sh",
     "src/extensions/external/postgis/tools/reproducible-bin/date",
     "src/extensions/external/postgis/tools/reproducible-time.sh",

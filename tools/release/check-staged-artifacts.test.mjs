@@ -65,7 +65,7 @@ const REPOSITORY_ROOT = path.join(
 const ARCHIVE_ROOT = "package/Tests/Fixtures/swiftpm-extension-resources";
 const REACT_NATIVE_METADATA = JSON.parse(readFileSync(path.join(
   import.meta.dir,
-  "../../src/extensions/generated/sdk/react-native.json",
+  "../../src/extensions/generated/sdk/extensions.json",
 ), "utf8"));
 const MOBILE_STATIC_REGISTRY = JSON.parse(readFileSync(path.join(
   import.meta.dir,
@@ -615,12 +615,9 @@ test("renders every single-extension asset identity into the public properties m
       dataFiles: ["contrib/postgis-3.6/postgis.sql", "proj/proj.db"],
       extensionSqlFileNames: ["uninstall_postgis.sql"],
       extensionSqlFilePrefixes: ["postgis_comments", "rtpostgis"],
-      nativeDependencies: [],
       nativeModuleStem: "postgis-3",
       iosNativeDependencies: dependencyIdentities,
       sharedPreloadLibraries: [],
-      mobileReleaseReady: true,
-      desktopReleaseReady: true,
       assets,
     },
     releaseData: {
@@ -668,12 +665,9 @@ test("freezes each bundle member desktop inventory in the public properties mani
         dataFiles: [],
         extensionSqlFileNames: ["uninstall_pgtap.sql"],
         extensionSqlFilePrefixes: ["pgtap-core", "pgtap-schema"],
-        nativeDependencies: [],
         nativeModuleStem: null,
         iosNativeDependencies: [],
         sharedPreloadLibraries: [],
-        mobileReleaseReady: true,
-        desktopReleaseReady: true,
         assets: [],
       }],
     },

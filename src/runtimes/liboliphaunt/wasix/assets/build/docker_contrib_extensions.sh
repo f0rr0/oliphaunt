@@ -124,20 +124,34 @@ fi
       echo "building contrib extension $id from contrib/$contrib_dir"
       test -d "$BUILD_DIR/contrib/$contrib_dir"
       extra_make_args=()
-      if [ "$id" = "pgcrypto" ]; then
-        if [ -z "$OPENSSL_PREFIX" ]; then
-          OPENSSL_PREFIX="$("$CONTAINER_ROOT/build_wasix_openssl.sh")"
-        fi
-        extra_make_args+=("PG_CPPFLAGS=-I$OPENSSL_PREFIX/include")
-        extra_make_args+=("SHLIB_LINK=$OPENSSL_PREFIX/lib/libcrypto.a")
-        make -s -C "$BUILD_DIR/contrib/$contrib_dir" "${extra_make_args[@]}" clean >/dev/null 2>&1 || true
-      fi
-      if [ "$id" = "uuid_ossp" ]; then
-        if [ -z "$UUID_PREFIX" ]; then
-          UUID_PREFIX="$(build_portable_uuid)"
-        fi
-        extra_make_args+=("PG_CPPFLAGS=-I$UUID_PREFIX/include -DHAVE_UUID_E2FS=1 -DHAVE_UUID_UUID_H=1")
-        extra_make_args+=("UUID_LIBS=$UUID_PREFIX/lib/libuuid.a")
+      while IFS= read -r component; do
+        case "$component" in
+          "") ;;
+          openssl)
+            if [ -z "$OPENSSL_PREFIX" ]; then
+              OPENSSL_PREFIX="$("$CONTAINER_ROOT/build_wasix_openssl.sh")"
+            fi
+            extra_make_args+=("PG_CPPFLAGS=-I$OPENSSL_PREFIX/include")
+            extra_make_args+=("SHLIB_LINK=$OPENSSL_PREFIX/lib/libcrypto.a")
+            ;;
+          portable-uuid)
+            if [ -z "$UUID_PREFIX" ]; then
+              UUID_PREFIX="$(build_portable_uuid)"
+            fi
+            extra_make_args+=("PG_CPPFLAGS=-I$UUID_PREFIX/include -DHAVE_UUID_E2FS=1 -DHAVE_UUID_UUID_H=1")
+            extra_make_args+=("UUID_LIBS=$UUID_PREFIX/lib/libuuid.a")
+            ;;
+          *)
+            echo "unsupported WASIX contrib native component for $sql_name: $component" >&2
+            exit 1
+            ;;
+        esac
+      done < <(
+        /work/tools/dev/bun.sh \
+          /work/src/extensions/tools/native-component-contract.mjs \
+          field "$sql_name" wasix wasix-runtime wasix-portable components
+      )
+      if [ "${#extra_make_args[@]}" -gt 0 ]; then
         make -s -C "$BUILD_DIR/contrib/$contrib_dir" "${extra_make_args[@]}" clean >/dev/null 2>&1 || true
       fi
       make -s -j"$JOBS" -C "$BUILD_DIR/contrib/$contrib_dir" "${extra_make_args[@]}" all

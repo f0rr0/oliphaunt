@@ -1,9 +1,7 @@
 schema = "oliphaunt-extension-target-v1"
 artifact_family = "wasix-side-module"
-status = "supported"
 build_kind = "autotools"
 build_script = "src/extensions/external/postgis/tools/build_wasix.sh"
-dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
 module_files = [
   "lib/postgresql/postgis-3.so",
   "lib/postgresql/liboliphaunt_postgis_deps.so",

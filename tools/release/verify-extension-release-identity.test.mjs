@@ -12,7 +12,7 @@ import {
 import { assertCanonicalExtensionReleaseIdentity } from "./verify_github_release_attestations.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
-const generated = JSON.parse(readFileSync(path.join(ROOT, "src/extensions/generated/sdk/react-native.json"), "utf8"));
+const generated = JSON.parse(readFileSync(path.join(ROOT, "src/extensions/generated/sdk/extensions.json"), "utf8"));
 const staticLines = readFileSync(path.join(ROOT, "src/extensions/generated/mobile/static-extensions.tsv"), "utf8")
   .split(/\r?\n/u)
   .filter((line) => line.length > 0 && !line.startsWith("#"));
@@ -36,7 +36,6 @@ function member(product, sqlName) {
     dataFiles: [...row["runtime-share-data-files"]].sort(),
     extensionSqlFileNames: [...row["extension-sql-file-names"]].sort(),
     extensionSqlFilePrefixes: [...row["extension-sql-file-prefixes"]].sort(),
-    nativeDependencies: [...row["native-dependencies"]].sort(),
     nativeModuleStem,
     iosNativeDependencies: nativeModuleStem === null
       ? []
@@ -50,8 +49,6 @@ function member(product, sqlName) {
       symbols: [],
     },
     sharedPreloadLibraries: [...row["shared-preload-libraries"]].sort(),
-    mobileReleaseReady: row["mobile-release-ready"] === true,
-    desktopReleaseReady: row["desktop-release-ready"] === true,
     assets: [],
   };
 }
@@ -100,10 +97,6 @@ describe("canonical extension release identity", () => {
     const forgedVersioning = manifest(product);
     forgedVersioning.versioning = "independent";
     expect(() => assertCanonicalExtensionReleaseIdentity(product, forgedVersioning.version, forgedVersioning)).toThrow(/versioning differs/u);
-
-    const forgedMember = manifest(product);
-    forgedMember.extensions[0].desktopReleaseReady = !forgedMember.extensions[0].desktopReleaseReady;
-    expect(() => assertCanonicalExtensionReleaseIdentity(product, forgedMember.version, forgedMember)).toThrow(/desktopReleaseReady differs/u);
 
     const forgedInventory = manifest(product);
     forgedInventory.extensions[0].dataFiles = [...forgedInventory.extensions[0].dataFiles, "undeclared/foreign.sql"].sort();

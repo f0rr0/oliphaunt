@@ -232,7 +232,7 @@ test("native lifecycle product merges accept identical files and reject differin
   }
 });
 
-test("three machine shard receipts aggregate to the exact artifact-bound release-ready catalog", () => {
+test("three machine shard receipts aggregate to the exact artifact-bound public catalog", () => {
   const value = fixture();
   try {
     for (

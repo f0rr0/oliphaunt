@@ -761,8 +761,7 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
         "read src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
     )?;
 
-    let mut packaged_constants = BTreeMap::new();
-    let mut promoted_constants = BTreeMap::new();
+    let mut supported_constants = BTreeMap::new();
     for entry in catalog
         .get("extensions")
         .and_then(|value| value.as_array())
@@ -776,116 +775,52 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
             .get("rust-constant")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("extension {sql_name} is missing rust-constant"))?;
-        let requested = entry
-            .pointer("/promotion/requested")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        let packaged = entry
-            .pointer("/promotion/packaged")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        let has_archive = entry
-            .pointer("/promotion/archive")
-            .and_then(|value| value.as_str())
-            .is_some();
-        if requested && packaged && has_archive {
-            packaged_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
-        }
-        let promoted = entry
-            .pointer("/promotion/promoted")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        if promoted {
-            promoted_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
-        }
+        supported_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
     }
 
-    let manifest_packaged_sql_names = manifest
+    let manifest_sql_names = manifest
         .extensions
         .iter()
         .map(|extension| extension.sql_name.clone())
         .collect::<BTreeSet<_>>();
-    let catalog_packaged_sql_names = packaged_constants.keys().cloned().collect::<BTreeSet<_>>();
-    if manifest_packaged_sql_names != catalog_packaged_sql_names {
+    let catalog_sql_names = supported_constants.keys().cloned().collect::<BTreeSet<_>>();
+    if manifest_sql_names != catalog_sql_names {
         bail!(
-            "packaged extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
-            manifest_packaged_sql_names
-                .difference(&catalog_packaged_sql_names)
-                .collect::<Vec<_>>(),
-            catalog_packaged_sql_names
-                .difference(&manifest_packaged_sql_names)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    let manifest_promoted_sql_names = manifest
-        .extensions
-        .iter()
-        .filter(|extension| extension.smoke_status.promoted)
-        .map(|extension| extension.sql_name.clone())
-        .collect::<BTreeSet<_>>();
-    let catalog_sql_names = promoted_constants.keys().cloned().collect::<BTreeSet<_>>();
-    if manifest_promoted_sql_names != catalog_sql_names {
-        bail!(
-            "promoted extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
-            manifest_promoted_sql_names
+            "supported extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
+            manifest_sql_names
                 .difference(&catalog_sql_names)
                 .collect::<Vec<_>>(),
             catalog_sql_names
-                .difference(&manifest_promoted_sql_names)
+                .difference(&manifest_sql_names)
                 .collect::<Vec<_>>()
         );
     }
 
     for extension in &manifest.extensions {
-        let rust_constant = packaged_constants.get(&extension.sql_name).ok_or_else(|| {
-            anyhow!(
-                "extension {} missing from packaged catalog",
-                extension.sql_name
-            )
-        })?;
-        let candidate_const = format!("CANDIDATE_{rust_constant}");
+        let rust_constant = supported_constants
+            .get(&extension.sql_name)
+            .ok_or_else(|| {
+                anyhow!(
+                    "extension {} missing from supported catalog",
+                    extension.sql_name
+                )
+            })?;
+        let definition_const = format!("DEFINITION_{rust_constant}");
         for (needle, description) in [
             (
-                format!("pub(crate) const {candidate_const}: Extension ="),
-                "packaged candidate extension constant",
+                format!("const {definition_const}: Extension ="),
+                "extension definition constant",
             ),
             (
-                format!("    {candidate_const},"),
-                "extensions::CANDIDATES entry",
+                format!("pub const {rust_constant}: Extension = {definition_const};"),
+                "public extension constant",
             ),
+            (format!("    {rust_constant},"), "extensions::ALL entry"),
             (format!("{:?}", extension.sql_name), "extension SQL name"),
             (format!("{:?}", extension.archive), "extension archive path"),
         ] {
             if !generated.contains(&needle) {
                 bail!("generated extension API is stale: missing {description} {needle}");
-            }
-        }
-        if extension.smoke_status.promoted {
-            for (needle, description) in [
-                (
-                    format!("pub const {rust_constant}: Extension = {candidate_const};"),
-                    "public extension constant",
-                ),
-                (format!("    {rust_constant},"), "extensions::ALL entry"),
-            ] {
-                if !generated.contains(&needle) {
-                    bail!("generated extension API is stale: missing {description} {needle}");
-                }
-            }
-        }
-        if extension.smoke_status.promoted {
-            for status in [
-                &extension.smoke_status.direct,
-                &extension.smoke_status.server,
-                &extension.smoke_status.restart,
-                &extension.smoke_status.dump_restore,
-            ] {
-                ensure_eq(
-                    status,
-                    "passed",
-                    &format!("extension {} smoke status", extension.sql_name),
-                )?;
             }
         }
     }

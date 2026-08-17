@@ -478,8 +478,8 @@ require_text src/sdks/rust/tests/sdk_shape.rs "cloned_handles_queue_fifo_on_one_
   "Rust SDK tests must prove cloned handles queue fairly on one owner executor for direct/broker/server"
 require_text src/sdks/rust/tests/sdk_extensions.rs "native_extension_manifest_covers_every_supported_pg18_extension" \
   "Rust SDK extension tests must lock the PG18 extension manifest"
-require_text src/sdks/rust/tests/sdk_extensions.rs "release_ready_extension_catalog_is_exact_and_excludes_external_candidates" \
-  "Rust SDK extension tests must prevent external candidates from entering release packages implicitly"
+require_text src/sdks/rust/tests/sdk_extensions.rs "supported_extension_catalog_is_exact" \
+  "Rust SDK extension tests must pin the exact canonical extension catalog"
 require_text src/sdks/rust/tests/sdk_native_smoke.rs "native_liboliphaunt_runtime_select_one_when_env_is_available" \
   "Rust SDK native smoke tests must cover direct liboliphaunt runtime selection"
 require_text src/sdks/rust/README.md "never creates an independent PostgreSQL connection" \

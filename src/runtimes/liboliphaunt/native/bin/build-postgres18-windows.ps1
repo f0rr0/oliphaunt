@@ -70,6 +70,7 @@ $VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-cl
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
 $OpenSslSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/openssl.toml"
+$NativeComponentTool = Join-Path $RepoRoot "src/extensions/tools/native-component-contract.mjs"
 $PgxsBuildPlan = Join-Path $RepoRoot "src/extensions/generated/pgxs-build.tsv"
 $PortableUuidDir = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/portable-uuid"
 $PortableUuidIncludeDir = Join-Path $PortableUuidDir "include"
@@ -190,6 +191,23 @@ function Invoke-Python([string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) {
         Fail "python command failed: $($Arguments -join ' ')"
     }
+}
+
+function Get-NativeExtensionComponentField([string]$SqlName, [string]$Field) {
+    Require-Command bun
+    $values = @(& bun $NativeComponentTool field $SqlName native native-dynamic $TargetId $Field)
+    if ($LASTEXITCODE -ne 0) {
+        Fail "native component $Field resolution failed for $SqlName/$TargetId"
+    }
+    return @($values | Where-Object { $_ })
+}
+
+function Get-NativeExtensionComponents([string]$SqlName) {
+    return @(Get-NativeExtensionComponentField $SqlName "components")
+}
+
+function Get-NativeExtensionComponentSources([string]$SqlName) {
+    return @(Get-NativeExtensionComponentField $SqlName "sources")
 }
 
 function Add-PythonUserScriptsToPath {
@@ -499,8 +517,9 @@ function Get-DesiredHash {
     foreach ($source in $LiboliphauntSources) {
         $parts.Add("source:$source=$(Get-FileSha256 $source)")
     }
-    foreach ($source in @(
+    $sourceInputs = @(
         $OpenSslSourceManifest,
+        (Join-Path $RepoRoot "src/extensions/catalog/native-components.toml"),
         $PgxsBuildPlan,
         (Join-Path $PortableUuidDir "portable_uuid.c"),
         (Join-Path $PortableUuidIncludeDir "uuid/uuid.h"),
@@ -509,15 +528,13 @@ function Get-DesiredHash {
         (Join-Path $RepoRoot "src/extensions/external/pg_textsearch/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/pg_uuidv7/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/postgis/source.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/deps.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/geos/source.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/json-c/source.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/libxml2/source.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/proj/source.toml"),
-        (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/sqlite/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/pgtap/source.toml"),
         (Join-Path $RepoRoot "src/extensions/external/vector/source.toml")
-    )) {
+    )
+    foreach ($dependency in @(Get-NativeExtensionComponentSources "postgis")) {
+        $sourceInputs += (Join-Path $RepoRoot "src/extensions/external/postgis/dependencies/$dependency/source.toml")
+    }
+    foreach ($source in $sourceInputs) {
         if (Test-Path $source) {
             $parts.Add("source-input:$source=$(Get-FileSha256 $source)")
         }
@@ -925,11 +942,16 @@ function Build-WindowsPostgisDependencies {
     if (-not (NativeExtension-Selected "postgis")) {
         return
     }
-    Build-WindowsPostgisSqliteDependency
-    Build-WindowsPostgisJsonCDependency
-    Build-WindowsPostgisGeosDependency
-    Build-WindowsPostgisLibxml2Dependency
-    Build-WindowsPostgisProjDependency
+    foreach ($component in @(Get-NativeExtensionComponents "postgis")) {
+        switch ($component) {
+            "geos" { Build-WindowsPostgisGeosDependency }
+            "sqlite" { Build-WindowsPostgisSqliteDependency }
+            "proj" { Build-WindowsPostgisProjDependency }
+            "libxml2" { Build-WindowsPostgisLibxml2Dependency }
+            "json-c" { Build-WindowsPostgisJsonCDependency }
+            default { Fail "unsupported native PostGIS component for ${TargetId}: $component" }
+        }
+    }
 }
 
 function Read-PostgisVersionConfig([string]$PostgisSourceDir) {
@@ -1940,6 +1962,10 @@ function Add-PgcryptoMesonProducer {
     if (-not (NativeExtension-Selected "pgcrypto")) {
         return
     }
+    $components = @(Get-NativeExtensionComponents "pgcrypto")
+    if (($components -join ",") -ne "openssl") {
+        Fail "pgcrypto/$TargetId native component closure must be exactly openssl"
+    }
     Build-WindowsOpenSslDependency
     $opensslInclude = Meson-Path (Join-Path $OpenSslDependencyPrefix "include")
     $libCrypto = Meson-Path (Join-Path $OpenSslDependencyPrefix "lib/libcrypto.lib")
@@ -1988,6 +2014,10 @@ function Add-PgcryptoMesonProducer {
 function Add-UuidOsspMesonProducer {
     if (-not (NativeExtension-Selected "uuid-ossp")) {
         return
+    }
+    $components = @(Get-NativeExtensionComponents "uuid-ossp")
+    if (($components -join ",") -ne "portable-uuid") {
+        Fail "uuid-ossp/$TargetId native component closure must be exactly portable-uuid"
     }
     $destination = Join-Path $OliphauntContribDir "uuid_ossp"
     New-Item -ItemType Directory -Force -Path $destination | Out-Null

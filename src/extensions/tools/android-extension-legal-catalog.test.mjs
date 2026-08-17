@@ -129,9 +129,9 @@ test("malformed generated Kotlin metadata cannot produce an Android legal catalo
   duplicate.extensions = [duplicate.extensions[0], clone(duplicate.extensions[0])];
   assert.throws(() => androidExtensionLegalCatalog(duplicate), /sorted and unique/u);
 
-  const privateRow = clone(metadata);
-  privateRow.extensions[0].public = false;
-  assert.throws(() => androidExtensionLegalCatalog(privateRow), /not one public mobile contract/u);
+  const invalidProduct = clone(metadata);
+  invalidProduct.extensions[0]["artifact-product"] = "invalid";
+  assert.throws(() => androidExtensionLegalCatalog(invalidProduct), /not a supported package contract/u);
 
   const invalidDigest = clone(metadata);
   invalidDigest["extension-catalog-sha256"] = "not-a-digest";

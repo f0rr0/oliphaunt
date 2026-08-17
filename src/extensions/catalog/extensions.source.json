@@ -2,47 +2,6 @@
   "format-version": 1,
   "extensions": [
     {
-      "id": "age",
-      "sql-name": "age",
-      "rust-constant": "AGE",
-      "display-name": "Apache AGE",
-      "source-kind": "oliphaunt-other-extension",
-      "upstream-import-name": "age",
-      "package-export": "./age",
-      "tags": [
-        "postgres extension"
-      ],
-      "bundle-size": 141551,
-      "control-file": "target/oliphaunt-sources/checkouts/age/age.control",
-      "control": {
-        "module-pathname": "$libdir/age",
-        "requires": [],
-        "schema": "ag_catalog"
-      },
-      "dependencies": [],
-      "native-dependencies": [],
-      "load-order": [],
-      "lifecycle": {
-        "create-extension": true,
-        "create-schema": "ag_catalog",
-        "load-sql": [
-          "LOAD 'age';"
-        ],
-        "post-create-sql": [
-          "SET search_path = ag_catalog, \"$user\", public;"
-        ],
-        "startup-config": [],
-        "preload-required": false,
-        "restart-required": false,
-        "shared-memory-required": false
-      },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/age.test.ts"
-      ],
-      "native-module-file": "age.so",
-      "notes": []
-    },
-    {
       "id": "amcheck",
       "sql-name": "amcheck",
       "rust-constant": "AMCHECK",
@@ -62,7 +21,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -94,7 +52,6 @@
       ],
       "bundle-size": 3125,
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": false,
@@ -136,7 +93,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -174,7 +130,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -212,7 +167,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -250,7 +204,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -288,7 +241,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -326,7 +278,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -364,7 +315,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -406,7 +356,6 @@
       "dependencies": [
         "cube"
       ],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -444,7 +393,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -482,7 +430,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -520,7 +467,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -558,7 +504,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -596,7 +541,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -634,7 +578,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -672,7 +615,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -710,7 +652,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -748,7 +689,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -786,7 +726,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -823,7 +762,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -861,7 +799,6 @@
         "schema": "pg_catalog"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -899,7 +836,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -926,8 +862,7 @@
       "upstream-import-name": "pg_textsearch",
       "package-export": "./pg_textsearch",
       "tags": [
-        "postgres extension",
-        "experimental"
+        "postgres extension"
       ],
       "bundle-size": 55062,
       "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
@@ -937,7 +872,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -977,7 +911,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1014,7 +947,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1052,7 +984,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1090,7 +1021,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1128,9 +1058,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [
-        "openssl:3.5.6-libcrypto-wasix-static"
-      ],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1169,7 +1096,6 @@
       "dependencies": [
         "plpgsql"
       ],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1194,8 +1120,7 @@
       "source-kind": "postgis",
       "upstream-import-name": "postgis",
       "tags": [
-        "postgres extension",
-        "experimental"
+        "postgres extension"
       ],
       "bundle-size": 8551161,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
@@ -1205,14 +1130,6 @@
         "relocatable": "false"
       },
       "dependencies": [],
-      "native-dependencies": [
-        "geos:3.14.1-static",
-        "proj:9.8.1-static",
-        "sqlite:3.53.1-static",
-        "libxml2:2.14.6-static",
-        "json-c:0.18-static",
-        "libiconv:1.19-static"
-      ],
       "load-order": [
         "lib/postgresql/postgis-3.so"
       ],
@@ -1251,7 +1168,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1289,7 +1205,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1327,7 +1242,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1365,7 +1279,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1403,7 +1316,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1441,7 +1353,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1479,7 +1390,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1516,7 +1426,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,

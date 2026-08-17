@@ -31,6 +31,7 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/extensions/external/**/upstream-license-data.json"
       - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
       - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
@@ -51,6 +52,7 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/extensions/external/**/upstream-license-data.json"
       - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
       - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
@@ -91,6 +93,7 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
@@ -108,6 +111,7 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
@@ -119,13 +123,14 @@ tasks:
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-qualification-candidates.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/ios-carrier-manifest.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/prepare-rust-release-source.mjs"
       - "/tools/release/prepare-swift-release-consumer.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-cli-utils.mjs"
       - "/tools/release/release-graph.mjs"
@@ -161,6 +166,7 @@ tasks:
       - "liboliphaunt-native:check"
       - "liboliphaunt-native:release-runtime"
     inputs:
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
@@ -175,6 +181,7 @@ tasks:
     tags: ["bench", "plan"]
     command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --quick --platform android"
     inputs:
+      - "/src/extensions/generated/sdk/extensions.json"
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
       - "/src/sdks/rust/extension-artifact-archive-policy.properties"

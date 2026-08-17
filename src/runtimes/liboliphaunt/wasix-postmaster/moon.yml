@@ -23,13 +23,10 @@ project:
     packagePath: "src/runtimes/liboliphaunt/wasix-postmaster"
     artifactTargets:
       preset: "liboliphaunt-wasix-postmaster"
-      publishedTargets:
+      targets:
         - "linux-arm64-gnu"
         - "linux-x64-gnu"
         - "macos-arm64"
-      plannedTargets:
-        windows-x64-msvc:
-          unsupportedReason: "Windows x64 remains a CI no-op until sealed AOT activation, fixed shared-memory remapping, launcher packaging, and lifecycle qualification are implemented."
 
 owners:
   defaultOwner: "@oliphaunt/wasix"

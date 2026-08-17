@@ -29,7 +29,7 @@ pg_uuidv7	pg_uuidv7	external	target/oliphaunt-sources/checkouts/pg_uuidv7
 pg_visibility	pg_visibility	contrib	contrib/pg_visibility
 pg_walinspect	pg_walinspect	contrib	contrib/pg_walinspect
 pgcrypto	pgcrypto	contrib	contrib/pgcrypto	openssl	openssl	openssl	openssl			openssl	openssl	openssl
-postgis	postgis-3	external	target/oliphaunt-sources/checkouts/postgis	geos,geos-c,json-c,libcharset,libiconv,libxml2,proj,sqlite	geos,geos-c,json-c,libxml2,proj,sqlite	geos,geos-c,json-c,libcharset,libiconv,libxml2,proj,sqlite				geos,json-c,libiconv,libxml2,proj,sqlite	geos,json-c,libxml2,proj,sqlite	geos,json-c,libiconv,libxml2,proj,sqlite
+postgis	postgis-3	external	target/oliphaunt-sources/checkouts/postgis	geos,geos-c,json-c,libcharset,libiconv,libxml2,proj,sqlite	geos,geos-c,json-c,libxml2,proj,sqlite	geos,geos-c,json-c,libcharset,libiconv,libxml2,proj,sqlite	geos,json-c,libiconv,libxml2,proj,sqlite			geos,json-c,libiconv,libxml2,proj,sqlite	geos,json-c,libxml2,proj,sqlite	geos,json-c,libiconv,libxml2,proj,sqlite
 seg	seg	contrib	contrib/seg
 tablefunc	tablefunc	contrib	contrib/tablefunc
 tcn	tcn	contrib	contrib/tcn

@@ -1106,18 +1106,6 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
         "stable AOT artifact path drifted"
     );
 
-    let extension_catalog = fs::read_to_string("tools/xtask/src/extension_catalog.rs")
-        .context("read tools/xtask/src/extension_catalog.rs for source-lane isolation guard")?;
-    for marker in [
-        "manifest_metadata_by_sql_name_from_generated_plan",
-        "extension_discovery_inputs_available(false)?",
-        "extension discovery inputs are unavailable, so generated build plan fallback is required",
-    ] {
-        ensure!(
-            extension_catalog.contains(marker),
-            "extension catalog source-lane isolation guard is missing marker {marker:?}"
-        );
-    }
     let source_lane_sh =
         fs::read_to_string("src/runtimes/liboliphaunt/wasix/assets/build/source_lane.sh")
             .context("read src/runtimes/liboliphaunt/wasix/assets/build/source_lane.sh")?;
@@ -1318,8 +1306,8 @@ fn check_postgres_packaging_inputs(source: &Path) -> Result<()> {
         ensure_file(&source.join(required))?;
     }
 
-    let promoted_specs = extension_catalog::promoted_build_specs()?;
-    for extension in promoted_specs
+    let extension_specs = extension_catalog::extension_build_specs()?;
+    for extension in extension_specs
         .iter()
         .filter(|extension| extension.source_kind == "postgis")
     {
@@ -1332,7 +1320,7 @@ fn check_postgres_packaging_inputs(source: &Path) -> Result<()> {
 
     let mut checked_contrib = 0usize;
     let mut missing = Vec::new();
-    for extension in promoted_specs
+    for extension in extension_specs
         .iter()
         .filter(|extension| extension.build_kind == "postgres-contrib")
     {
@@ -1382,7 +1370,7 @@ fn check_postgres_packaging_inputs(source: &Path) -> Result<()> {
 
     ensure!(
         checked_contrib > 0,
-        "PG18 packaging input guard did not find any promoted postgres-contrib extensions"
+        "PG18 packaging input guard did not find any public postgres-contrib extensions"
     );
     ensure!(
         missing.is_empty(),
@@ -1397,7 +1385,7 @@ fn check_postgres_pgxs_packaging_inputs() -> Result<()> {
     let manifest = load_sources_manifest()?;
     let mut checked_pgxs = 0usize;
     let mut missing = Vec::new();
-    for extension in extension_catalog::promoted_build_specs()?
+    for extension in extension_catalog::extension_build_specs()?
         .iter()
         .filter(|extension| extension_catalog::is_pgxs_style_build_kind(&extension.build_kind))
     {
@@ -1480,7 +1468,7 @@ fn check_postgres_pgxs_packaging_inputs() -> Result<()> {
 
     ensure!(
         checked_pgxs > 0,
-        "PG18 packaging input guard did not find any promoted PGXS external extensions"
+        "PG18 packaging input guard did not find any public PGXS external extensions"
     );
     ensure!(
         missing.is_empty(),

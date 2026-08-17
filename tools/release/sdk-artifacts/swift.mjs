@@ -107,7 +107,7 @@ export function stageArtifacts(artifactRoot, workRoot) {
     );
   }
   copyFileSync(
-    path.join(ROOT, "src/extensions/generated/sdk/swift.json"),
+    path.join(ROOT, "src/extensions/generated/sdk/extensions.json"),
     path.join(generatorRoot, "extension-owner-catalog.json"),
   );
 }

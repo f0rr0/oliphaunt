@@ -112,6 +112,11 @@ const WASIX_AOT = Object.freeze([
   ["macos-arm64", "aarch64-apple-darwin", "macos-26", "llvm-darwin-aarch64.tar.xz", 479103872, "f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847"],
   ["windows-x64-msvc", "x86_64-pc-windows-msvc", "windows-2025-vs2026", "llvm-windows-amd64.tar.xz", 757929860, "19ff22b0cf74b53dad2fc717db2209f8162b768fc6dede9e2caa6a83c724496e"],
 ]);
+const WASIX_POSTMASTER_TARGETS = new Set([
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+]);
 
 function invariant(condition, message) {
   if (!condition) throw new Error(`${TOOL}: ${message}`);
@@ -162,7 +167,6 @@ function targetRow({
   target,
   asset,
   surfaces,
-  published = true,
   triple = null,
   runner = null,
   library = null,
@@ -183,7 +187,6 @@ function targetRow({
     kind,
     target,
     asset,
-    published,
     surfaces: sorted(surfaces),
     triple,
     runner,
@@ -259,19 +262,6 @@ export function expectedArtifactTargetContract() {
     );
   }
   rows.push(
-    targetRow({
-      product: "liboliphaunt-native",
-      id: "macos-x64",
-      kind: "native-runtime",
-      target: "macos-x64",
-      asset: "liboliphaunt-{version}-macos-x64.tar.gz",
-      surfaces: DESKTOP_SURFACES,
-      published: false,
-      triple: "x86_64-apple-darwin",
-      runner: "macos-26",
-      library: "lib/liboliphaunt.dylib",
-      tier: "planned",
-    }),
     targetRow({
       product: "liboliphaunt-native",
       id: "android-arm64-v8a",
@@ -368,22 +358,22 @@ export function expectedArtifactTargetContract() {
       llvmSha256,
       llvmBytes,
     }));
-    rows.push(targetRow({
-      product: "liboliphaunt-wasix-postmaster",
-      id: target,
-      kind: "wasix-postmaster-runtime",
-      target,
-      asset: `liboliphaunt-wasix-postmaster-{version}-${target}.tar.zst`,
-      surfaces: [GITHUB],
-      published: target !== "windows-x64-msvc",
-      triple,
-      runner,
-      llvm: `https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/${llvmArchive}`,
-      llvmSha256,
-      llvmBytes,
-      tier: target === "windows-x64-msvc" ? "planned" : null,
-      extensionArtifacts: false,
-    }));
+    if (WASIX_POSTMASTER_TARGETS.has(target)) {
+      rows.push(targetRow({
+        product: "liboliphaunt-wasix-postmaster",
+        id: target,
+        kind: "wasix-postmaster-runtime",
+        target,
+        asset: `liboliphaunt-wasix-postmaster-{version}-${target}.tar.zst`,
+        surfaces: [GITHUB],
+        triple,
+        runner,
+        llvm: `https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/${llvmArchive}`,
+        llvmSha256,
+        llvmBytes,
+        extensionArtifacts: false,
+      }));
+    }
   }
   return rows.sort((left, right) => compareText(left.id, right.id));
 }
@@ -395,7 +385,6 @@ function projectTarget(target) {
     kind: target.kind,
     target: target.target,
     asset: target.asset,
-    published: target.published,
     surfaces: sorted(target.surfaces),
     triple: target.triple ?? null,
     runner: target.runner ?? null,
@@ -423,15 +412,10 @@ export function validateArtifactTargetContract(actualTargets, expectedTargets = 
     const wanted = expectedById.get(row.id);
     invariant(JSON.stringify(row) === JSON.stringify(wanted), `${row.id} public target contract differs: expected ${JSON.stringify(wanted)}, got ${JSON.stringify(row)}`);
     invariant(row.asset.includes("{version}"), `${row.id} asset must bind the product version`);
-    if (row.published && row.surfaces.includes(GITHUB)) {
+    if (row.surfaces.includes(GITHUB)) {
       const key = `${row.product}\0${row.asset}`;
       invariant(!seenAssets.has(key), `${row.product} publishes duplicate asset ${row.asset}`);
       seenAssets.add(key);
-    }
-    if (!row.published) {
-      const source = actualTargets.find(({ id }) => id === row.id);
-      invariant(row.tier === "planned", `${row.id} must be explicitly planned when unpublished`);
-      invariant((source.unsupportedReason ?? source.unsupported_reason ?? "").trim().length >= 40, `${row.id} must explain why it is not published`);
     }
   }
 }
@@ -439,10 +423,10 @@ export function validateArtifactTargetContract(actualTargets, expectedTargets = 
 export function validateExtensionCoverage(runtimeTargets, products, extensionTargets) {
   invariant(products.length > 0 && new Set(products).size === products.length, "extension product ids must be a non-empty unique set");
   const nativeTargets = runtimeTargets
-    .filter((row) => row.product === "liboliphaunt-native" && row.kind === "native-runtime" && row.published && row.extensionArtifacts)
+    .filter((row) => row.product === "liboliphaunt-native" && row.kind === "native-runtime" && row.extensionArtifacts)
     .map(({ target }) => target);
   const wasixTargets = runtimeTargets
-    .filter((row) => row.product === "liboliphaunt-wasix" && row.kind === "wasix-runtime" && row.published)
+    .filter((row) => row.product === "liboliphaunt-wasix" && row.kind === "wasix-runtime")
     .map(({ target }) => target === "portable" ? "wasix-portable" : target);
   const expectedPairs = new Set(products.flatMap((product) => extensionSqlNames(product, TOOL).flatMap((sqlName) => [
     ...nativeTargets.map((target) => `${product}\0${sqlName}\0native\0${target}`),
@@ -452,7 +436,6 @@ export function validateExtensionCoverage(runtimeTargets, products, extensionTar
   assertSameStrings(actualPairs, expectedPairs, "exact-extension product/member/family/target pairs");
   invariant(actualPairs.size === extensionTargets.length, "exact-extension target rows must be unique");
   for (const row of extensionTargets) {
-    invariant(row.published && row.status === "supported", `${row.product}/${row.target} must be supported and published`);
     const expectedKind = row.family === "wasix"
       ? "wasix-runtime"
       : row.target === "ios-xcframework" || row.target.startsWith("android-")
@@ -472,10 +455,10 @@ function matrixPairs(matrix, { productField = "extensions_csv" } = {}) {
 }
 
 export function validateMatrixCoverage(targets, extensions, matrices) {
-  const published = (product, kind) => targets.filter((row) => row.product === product && row.kind === kind && row.published);
+  const selected = (product, kind) => targets.filter((row) => row.product === product && row.kind === kind);
   assertSameStrings(
     matrices.native.include.map(({ target }) => target),
-    published("liboliphaunt-native", "native-runtime").map(({ target }) => target),
+    selected("liboliphaunt-native", "native-runtime").map(({ target }) => target),
     "native runtime CI matrix",
   );
   const partitions = [matrices.nativeDesktop, matrices.nativeAndroid, matrices.nativeIos];
@@ -483,14 +466,14 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
   invariant(new Set(partitions.flatMap(({ include }) => include.map(({ target }) => target))).size === matrices.native.include.length, "native runtime CI partitions must not overlap");
   assertSameStrings(
     matrices.reactNativeAndroid.include.map(({ target }) => target),
-    published("liboliphaunt-native", "native-runtime").filter(({ surfaces }) => surfaces.includes("react-native-android")).map(({ target }) => target),
+    selected("liboliphaunt-native", "native-runtime").filter(({ surfaces }) => surfaces.includes("react-native-android")).map(({ target }) => target),
     "React Native Android CI matrix",
   );
-  assertSameStrings(matrices.broker.include.map(({ target }) => target), published("oliphaunt-broker", "broker-helper").map(({ target }) => target), "broker CI matrix");
-  assertSameStrings(matrices.nodeDirect.include.map(({ target }) => target), published("oliphaunt-node-direct", "node-direct-addon").map(({ target }) => target), "Node direct CI matrix");
-  assertSameStrings(matrices.wasixAot.include.map(({ target_id }) => target_id), published("liboliphaunt-wasix", "wasix-aot-runtime").map(({ target }) => target), "WASIX AOT CI matrix");
+  assertSameStrings(matrices.broker.include.map(({ target }) => target), selected("oliphaunt-broker", "broker-helper").map(({ target }) => target), "broker CI matrix");
+  assertSameStrings(matrices.nodeDirect.include.map(({ target }) => target), selected("oliphaunt-node-direct", "node-direct-addon").map(({ target }) => target), "Node direct CI matrix");
+  assertSameStrings(matrices.wasixAot.include.map(({ target_id }) => target_id), selected("liboliphaunt-wasix", "wasix-aot-runtime").map(({ target }) => target), "WASIX AOT CI matrix");
   const wasixAotTargets = new Map(
-    published("liboliphaunt-wasix", "wasix-aot-runtime").map((target) => [target.target, target]),
+    selected("liboliphaunt-wasix", "wasix-aot-runtime").map((target) => [target.target, target]),
   );
   for (const row of matrices.wasixAot.include) {
     const target = wasixAotTargets.get(row.target_id);
@@ -534,10 +517,6 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
       `WASIX postmaster CI matrix ${row.target_id} must bind its catalog-derived release asset path`,
     );
     invariant(
-      row.produces_artifact === target.published,
-      `WASIX postmaster CI matrix ${row.target_id} production status must match publication metadata`,
-    );
-    invariant(
       row.llvm_url === target.llvmUrl
         && row.llvm_sha256 === target.llvmSha256
         && row.llvm_bytes === target.llvmBytes,
@@ -546,23 +525,23 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
   }
   assertSameStrings(
     new Set(matrixPairs(matrices.extensionNative)),
-    new Set(extensions.filter(({ family, published: isPublished }) => family === "native" && isPublished).map(({ product, target }) => `${product}\0${target}`)),
+    new Set(extensions.filter(({ family }) => family === "native").map(({ product, target }) => `${product}\0${target}`)),
     "native extension CI matrix",
   );
   assertSameStrings(
     new Set(matrixPairs(matrices.extensionWasix)),
-    new Set(extensions.filter(({ family, published: isPublished }) => family === "wasix" && isPublished).map(({ product, target }) => `${product}\0${target}`)),
+    new Set(extensions.filter(({ family }) => family === "wasix").map(({ product, target }) => `${product}\0${target}`)),
     "WASIX extension CI matrix",
   );
   const matrixSqlPairs = (matrix) => matrix.include.flatMap((row) => String(row.sql_names_csv ?? "").split(",").filter(Boolean).map((sqlName) => `${sqlName}\0${row.target}`));
   assertSameStrings(
     matrixSqlPairs(matrices.extensionNative),
-    extensions.filter(({ family, published: isPublished }) => family === "native" && isPublished).map(({ sqlName, target }) => `${sqlName}\0${target}`),
+    extensions.filter(({ family }) => family === "native").map(({ sqlName, target }) => `${sqlName}\0${target}`),
     "native extension member CI matrix",
   );
   assertSameStrings(
     matrixSqlPairs(matrices.extensionWasix),
-    extensions.filter(({ family, published: isPublished }) => family === "wasix" && isPublished).map(({ sqlName, target }) => `${sqlName}\0${target}`),
+    extensions.filter(({ family }) => family === "wasix").map(({ sqlName, target }) => `${sqlName}\0${target}`),
     "WASIX extension member CI matrix",
   );
 }
@@ -580,7 +559,7 @@ export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, r
     const actual = catalog.carriers.filter((row) => row.product === product && row.ecosystem === "npm").map((row) => row.name);
     assertSameStrings(actual, expected, `${product} npm carrier identities`);
   }
-  for (const target of targets.filter((row) => row.published && row.npmPackage)) {
+  for (const target of targets.filter((row) => row.npmPackage)) {
     const carrier = carriers.get(`npm:${target.npmPackage}`);
     invariant(carrier?.product === target.product && carrier.version === graph.products[target.product].version, `${target.id} npm carrier is missing or version-skewed`);
     if (target.npmOs === undefined) continue;
@@ -737,8 +716,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowProducer(workflow, "broker-runtime", "oliphaunt-broker-release-assets-${{ matrix.target }}", matrixRows.broker, releaseAssets("oliphaunt-broker", "broker-helper"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-release-assets-${{ matrix.target }}", matrixRows.nodeDirect, releaseAssets("oliphaunt-node-direct", "node-direct-addon"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-npm-package-${{ matrix.target }}", matrixRows.nodeDirect, npmPackages("oliphaunt-node-direct", "node-direct-addon"));
-  const nativeExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family, published }) => family === "native" && published).map(({ target }) => `liboliphaunt-native-extension-artifacts-${target}`)));
-  const wasixExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family, published }) => family === "wasix" && published).map(({ target }) => `liboliphaunt-wasix-extension-artifacts-${target}`)));
+  const nativeExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family }) => family === "native").map(({ target }) => `liboliphaunt-native-extension-artifacts-${target}`)));
+  const wasixExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family }) => family === "wasix").map(({ target }) => `liboliphaunt-wasix-extension-artifacts-${target}`)));
   validateWorkflowProducer(workflow, "extension-artifacts-native", "liboliphaunt-native-extension-artifacts-${{ matrix.target }}", matrixRows.extensionNative, nativeExtensionArtifacts);
   validateWorkflowProducer(workflow, "extension-artifacts-wasix", "liboliphaunt-wasix-extension-artifacts-${{ matrix.target }}", matrixRows.extensionWasix, wasixExtensionArtifacts);
   const wasixAot = matrixRows.wasixAot.map(({ target_id }) => `liboliphaunt-wasix-runtime-aot-${target_id}`);
@@ -758,12 +737,11 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     "liboliphaunt-wasix-postmaster",
     "wasix-postmaster-runtime",
   );
-  const postmasterProducers = matrixRows.wasixPostmaster.filter(({ produces_artifact: producesArtifact }) => producesArtifact);
   validateWorkflowProducer(
     workflow,
     "wasix-postmaster-target",
     "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}",
-    postmasterProducers,
+    matrixRows.wasixPostmaster,
     postmasterReleaseAssets,
   );
   validateWorkflowProducer(
@@ -785,22 +763,15 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   invariant(
     targetPostmasterQualification?.run?.includes("--upstream deep")
       && targetPostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:release-assets")
-      && targetPostmasterQualification.if === "${{ matrix.produces_artifact == true }}",
-    "target WASIX postmaster qualification must execute its complete Moon dependency graph only for artifact producers",
+      && targetPostmasterQualification.if === undefined,
+    "every WASIX postmaster target must execute its complete Moon dependency graph",
   );
   const postmasterUpload = actionSteps(workflow, "wasix-postmaster-target", "actions/upload-artifact@")
     .find((step) => step.with?.name === "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}");
   invariant(
-    postmasterUpload?.if === "${{ matrix.produces_artifact == true }}"
+    postmasterUpload?.if === undefined
       && postmasterUpload.with?.path === "${{ matrix.release_asset_path }}",
-    "WASIX postmaster targets must upload only their catalog-derived release asset path",
-  );
-  const plannedPostmasterStep = workflowJob(workflow, "wasix-postmaster-target").steps
-    .find((step) => step.name === "Record planned WASIX postmaster target");
-  invariant(
-    plannedPostmasterStep?.if === "${{ matrix.produces_artifact == false }}"
-      && String(plannedPostmasterStep.run ?? "").includes("intentionally produces no artifact"),
-    "planned WASIX postmaster targets must execute only an explicit no-op",
+    "every WASIX postmaster target must upload its catalog-derived release asset path",
   );
   invariant(
     actionSteps(workflow, "wasix-postmaster", "./.github/actions/setup-moon").length === 1,
@@ -902,7 +873,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
 }
 
 function platformPackageManifests(graph, targets) {
-  const names = new Set(targets.filter(({ published, npmPackage }) => published && npmPackage).map(({ npmPackage }) => npmPackage));
+  const names = new Set(targets.filter(({ npmPackage }) => npmPackage).map(({ npmPackage }) => npmPackage));
   const manifests = new Map();
   for (const config of Object.values(graph.products)) {
     for (const relativePath of config.version_files ?? []) {
@@ -919,12 +890,12 @@ function platformPackageManifests(graph, targets) {
 function validateStructuredExtensionRecipes(products, extensions, graph) {
   for (const product of products) {
     for (const sqlName of extensionSqlNames(product, TOOL)) {
-      const mobile = extensions.some(({ product: owner, sqlName: member, kind, published }) => owner === product && member === sqlName && kind === "native-static-registry" && published);
+      const mobile = extensions.some(({ product: owner, sqlName: member, kind }) => owner === product && member === sqlName && kind === "native-static-registry");
       if (!mobile) continue;
       const recipe = path.join(extensionMemberPath(product, sqlName, TOOL), "targets/native-static-registry.toml");
       if (!existsSync(path.join(ROOT, recipe))) continue;
       invariant(statSync(path.join(ROOT, recipe)).isFile(), `${recipe} must be a file`);
-      invariant(readToml(recipe).status === "supported", `${recipe} must be supported while mobile artifacts are published`);
+      invariant(readToml(recipe).status === undefined, `${recipe} must not carry an intermediate support status`);
     }
   }
 }

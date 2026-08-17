@@ -135,7 +135,6 @@ function expectedPublicExtensions(catalogPath) {
   const { value: catalog } = strictJson(catalogPath, "extension catalog");
   assert(Array.isArray(catalog.extensions), "extension catalog extensions must be a list");
   return catalog.extensions
-    .filter((extension) => extension?.promotion?.promoted === true)
     .map((extension) => extension.id)
     .sort();
 }
@@ -216,7 +215,7 @@ export function wasixEvidenceBinding(
   const expectedExtensions = expectedPublicExtensions(catalogPath);
   assert(
     JSON.stringify(extensions) === JSON.stringify(expectedExtensions),
-    "WASIX evidence results must cover every and only promoted public extension",
+    "WASIX evidence results must cover every and only public extension",
   );
 
   return {

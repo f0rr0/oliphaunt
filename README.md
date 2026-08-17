@@ -35,7 +35,7 @@ Oliphaunt is a multi-product monorepo, not one repository-wide version:
 - Rust, Swift, Kotlin/Android, React Native, TypeScript, and WASIX Rust are
   separately versioned SDK products.
 - Broker and Node-direct helpers are separately versioned runtime products.
-- Every promoted SQL extension remains exactly selectable. PostgreSQL 18
+- Every SQL extension in the catalog remains exactly selectable. PostgreSQL 18
   contrib members share one logical artifact bundle whose native and WASIX
   carriers belong to their respective runtime releases; each external extension
   is a separately tagged, independently versioned product.
@@ -46,7 +46,7 @@ that product; they use the product version and are not extra products.
 
 ## First-release target envelope
 
-The published target manifests currently declare:
+The release target manifests currently declare:
 
 | Surface | Declared release targets |
 | --- | --- |

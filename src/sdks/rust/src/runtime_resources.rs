@@ -1490,7 +1490,7 @@ fn visit_runtime_resource_extension(
                 .collect::<Vec<_>>(),
         )
     } else {
-        let Some(extension) = Extension::by_release_ready_sql_name(sql_name) else {
+        let Some(extension) = Extension::by_sql_name(sql_name) else {
             return Err(Error::InvalidConfig(format!(
                 "selected extension '{sql_name}' is neither built into this Oliphaunt release nor provided as a prebuilt extension artifact"
             )));
@@ -1541,7 +1541,7 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
             .required_shared_preload_library()
             .map(|library| vec![library.to_owned()])
             .unwrap_or_default(),
-        mobile_prebuilt: extension.mobile_release_ready(),
+        mobile_prebuilt: true,
         mobile_static_archives: Vec::new(),
         mobile_static_dependency_archives: Vec::new(),
         static_symbol_prefix: None,
@@ -1880,20 +1880,6 @@ mod tests {
     }
 
     #[test]
-    fn mobile_static_registry_metadata_rejects_unavailable_mobile_artifacts() {
-        let extensions = runtime_resource_extensions(&[Extension::Graph]);
-        let error =
-            mobile_static_registry_metadata(&extensions, &["graph".to_owned()]).unwrap_err();
-        assert_eq!(
-            error,
-            Error::InvalidConfig(
-                "selected extension 'graph' does not have release-ready iOS/Android static artifacts; app bundles cannot mark module stem 'graph' complete without a prebuilt mobile artifact"
-                    .to_owned()
-            )
-        );
-    }
-
-    #[test]
     fn mobile_static_registry_metadata_rejects_unknown_registered_modules() {
         let extensions = runtime_resource_extensions(&[Extension::Vector]);
         let error =
@@ -1932,7 +1918,8 @@ mod tests {
 
     #[test]
     fn manifest_records_required_shared_preload_libraries() {
-        let extensions = runtime_resource_extensions(&[Extension::PgSearch, Extension::PgSearch]);
+        let extensions =
+            runtime_resource_extensions(&[Extension::PgTextsearch, Extension::PgTextsearch]);
         let preload = shared_preload_libraries(&extensions);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         let manifest = RuntimeResourceManifest {
@@ -1945,9 +1932,9 @@ mod tests {
             mobile_static_registry: &metadata,
         };
         let text = manifest_text(&manifest);
-        assert!(text.contains("selectedExtensions=pg_search\n"));
-        assert!(text.contains("extensions=pg_search\n"));
-        assert!(text.contains("sharedPreloadLibraries=pg_search\n"));
+        assert!(text.contains("selectedExtensions=pg_textsearch\n"));
+        assert!(text.contains("extensions=pg_textsearch\n"));
+        assert!(text.contains("sharedPreloadLibraries=pg_textsearch\n"));
     }
 
     #[test]

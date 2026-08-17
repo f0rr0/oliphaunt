@@ -53,22 +53,22 @@ function packageSection(text) {
   return parts[1].split("\n[", 1)[0];
 }
 
-function publishedArtifactTargets({ product, kind, surface }) {
-  return allArtifactTargets({ product, kind, surface, publishedOnly: true }, TOOL);
+function artifactTargets({ product, kind, surface }) {
+  return allArtifactTargets({ product, kind, surface }, TOOL);
 }
 
 function nativeSdkArtifactTargets() {
-  const nativeTargets = publishedArtifactTargets({
+  const nativeTargets = artifactTargets({
     product: LIBOLIPHAUNT_NATIVE_PRODUCT,
     kind: "native-runtime",
     surface: "rust-native-direct",
   });
-  const toolsTargets = publishedArtifactTargets({
+  const toolsTargets = artifactTargets({
     product: LIBOLIPHAUNT_NATIVE_PRODUCT,
     kind: "native-tools",
     surface: "rust-native-direct",
   });
-  const brokerTargets = publishedArtifactTargets({
+  const brokerTargets = artifactTargets({
     product: BROKER_PRODUCT,
     kind: "broker-helper",
     surface: "rust-broker",

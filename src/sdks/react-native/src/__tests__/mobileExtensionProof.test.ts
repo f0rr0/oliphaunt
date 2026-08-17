@@ -9,7 +9,7 @@ import {
 } from '../mobileExtensionProof';
 
 function completeReport(): PackageSizeReport {
-  const rows = GENERATED_EXTENSION_METADATA.filter((row) => row.mobileReleaseReady);
+  const rows = GENERATED_EXTENSION_METADATA;
   return {
     packageBytes: 2_000,
     runtimeBytes: 1_000,
@@ -35,19 +35,11 @@ function extensionSize(report: PackageSizeReport, sqlName: string) {
   return extension;
 }
 
-test('installed mobile proof covers all release-ready extensions and keeps dependencies ordered', () => {
-  const inheritedPlatformSupport = GENERATED_EXTENSION_METADATA.find(
-    (row) => row.mobileReleaseReady && !('mobile' in row.support),
-  );
-  assert(
-    inheritedPlatformSupport,
-    'fixture must prove that absent per-platform support inherits mobile release readiness',
-  );
+test('installed mobile proof covers all public extensions and keeps dependencies ordered', () => {
   for (const platform of ['android', 'ios'] as const) {
     const plan = mobileReleaseExtensionProofPlan(completeReport(), platform);
     assert.equal(plan.length, MOBILE_RELEASE_EXTENSION_PROOF_COUNT);
     assert.equal(new Set(plan.map((row) => row.sqlName)).size, plan.length);
-    assert(plan.some((row) => row.sqlName === inheritedPlatformSupport.sqlName));
     assert(plan.some((row) => row.sqlName === 'pgtap' && row.nativeModuleStem === null));
     const cube = plan.findIndex((row) => row.sqlName === 'cube');
     const earthdistance = plan.findIndex((row) => row.sqlName === 'earthdistance');

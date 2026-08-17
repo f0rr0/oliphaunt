@@ -1,0 +1,1490 @@
+{
+  "extension-catalog-sha256": "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3",
+  "extensions": [
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "amcheck",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "amcheck",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "amcheck",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "amcheck"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": false,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "auto_explain",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "auto_explain",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "auto_explain",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "auto_explain"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "bloom",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "bloom",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "bloom",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "bloom"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "btree_gin",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "btree_gin",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "btree_gin",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "btree_gin"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "btree_gist",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "btree_gist",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "btree_gist",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "btree_gist"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "citext",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "citext",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "citext",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "citext"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "cube",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "cube",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "cube",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "cube"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "dict_int",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "dict_int",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "dict_int",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "dict_int"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [
+        "share/postgresql/tsearch_data/xsyn_sample.rules"
+      ],
+      "dependencies": [],
+      "display-name": "dict_xsyn",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "dict_xsyn",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "dict_xsyn",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [
+        "tsearch_data/xsyn_sample.rules"
+      ],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "dict_xsyn"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [
+        "cube"
+      ],
+      "display-name": "earthdistance",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "earthdistance",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "earthdistance",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [
+        "cube"
+      ],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "earthdistance"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "file_fdw",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "file_fdw",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "file_fdw",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "file_fdw"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "fuzzystrmatch",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "fuzzystrmatch",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "fuzzystrmatch",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "fuzzystrmatch"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "hstore",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "hstore",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "hstore",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "hstore"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "intarray",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "intarray",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "_int",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "intarray"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "isn",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "isn",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "isn",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "isn"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "lo",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "lo",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "lo",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "lo"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "ltree",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "ltree",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "ltree",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "ltree"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pageinspect",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pageinspect",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pageinspect",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pageinspect"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_buffercache",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_buffercache",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_buffercache",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_buffercache"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_freespacemap",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_freespacemap",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_freespacemap",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_freespacemap"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pg-hashids",
+      "cargo-package": "oliphaunt-extension-pg-hashids",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_hashids",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_hashids",
+      "maven-artifact": "oliphaunt-extension-pg-hashids",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_hashids",
+      "npm-package": "@oliphaunt/extension-pg-hashids",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pg-hashids",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_hashids"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pg-ivm",
+      "cargo-package": "oliphaunt-extension-pg-ivm",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_ivm",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_ivm",
+      "maven-artifact": "oliphaunt-extension-pg-ivm",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_ivm",
+      "npm-package": "@oliphaunt/extension-pg-ivm",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pg-ivm",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_ivm"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_surgery",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_surgery",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_surgery",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_surgery"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pg-textsearch",
+      "cargo-package": "oliphaunt-extension-pg-textsearch",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_textsearch",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_textsearch",
+      "maven-artifact": "oliphaunt-extension-pg-textsearch",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_textsearch",
+      "npm-package": "@oliphaunt/extension-pg-textsearch",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pg-textsearch",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [
+        "pg_textsearch"
+      ],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_textsearch"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_trgm",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_trgm",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_trgm",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_trgm"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pg-uuidv7",
+      "cargo-package": "oliphaunt-extension-pg-uuidv7",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_uuidv7",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_uuidv7",
+      "maven-artifact": "oliphaunt-extension-pg-uuidv7",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_uuidv7",
+      "npm-package": "@oliphaunt/extension-pg-uuidv7",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pg-uuidv7",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pg_uuidv7"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_visibility",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_visibility",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_visibility",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_visibility"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pg_walinspect",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pg_walinspect",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "pg_walinspect",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pg_walinspect"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pgcrypto",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "pgcrypto",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "linux-arm64-gnu"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "linux-x64-gnu"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "macos-arm64"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "windows-x64-msvc"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "android-arm64-v8a"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "android-x86_64"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "ios-xcframework"
+        },
+        {
+          "components": [
+            "openssl"
+          ],
+          "family": "wasix",
+          "kind": "wasix-runtime",
+          "link-units": [
+            "openssl"
+          ],
+          "runtime-files": [],
+          "target": "wasix-portable"
+        }
+      ],
+      "native-components": [
+        "openssl"
+      ],
+      "native-module-stem": "pgcrypto",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "pgcrypto"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-pgtap",
+      "cargo-package": "oliphaunt-extension-pgtap",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [
+        "plpgsql"
+      ],
+      "display-name": "pgtap",
+      "extension-sql-file-names": [
+        "uninstall_pgtap.sql"
+      ],
+      "extension-sql-file-prefixes": [
+        "pgtap-core",
+        "pgtap-schema"
+      ],
+      "id": "pgtap",
+      "maven-artifact": "oliphaunt-extension-pgtap",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": null,
+      "npm-package": "@oliphaunt/extension-pgtap",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-pgtap",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "pgtap"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-postgis",
+      "cargo-package": "oliphaunt-extension-postgis",
+      "creates-extension": true,
+      "data-files": [
+        "share/postgresql/contrib/postgis-3.6/legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+        "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis.sql",
+        "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+        "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+        "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+        "share/postgresql/proj/proj.db"
+      ],
+      "dependencies": [],
+      "display-name": "PostGIS",
+      "extension-sql-file-names": [
+        "uninstall_postgis.sql"
+      ],
+      "extension-sql-file-prefixes": [
+        "postgis_comments",
+        "postgis_proc_set_search_path",
+        "rtpostgis"
+      ],
+      "id": "postgis",
+      "maven-artifact": "oliphaunt-extension-postgis",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "linux-arm64-gnu"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "linux-x64-gnu"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "macos-arm64"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "windows-x64-msvc"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c",
+            "libiconv"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c",
+            "libiconv",
+            "libcharset"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "android-arm64-v8a"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c",
+            "libiconv"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c",
+            "libiconv",
+            "libcharset"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "android-x86_64"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "ios-xcframework"
+        },
+        {
+          "components": [
+            "geos",
+            "sqlite",
+            "proj",
+            "libxml2",
+            "json-c",
+            "libiconv"
+          ],
+          "family": "wasix",
+          "kind": "wasix-runtime",
+          "link-units": [
+            "geos-c",
+            "geos",
+            "proj",
+            "sqlite",
+            "libxml2",
+            "json-c",
+            "libiconv",
+            "libcharset"
+          ],
+          "runtime-files": [
+            "proj/proj.db"
+          ],
+          "target": "wasix-portable"
+        }
+      ],
+      "native-components": [
+        "geos",
+        "json-c",
+        "libiconv",
+        "libxml2",
+        "proj",
+        "sqlite"
+      ],
+      "native-module-stem": "postgis-3",
+      "npm-package": "@oliphaunt/extension-postgis",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-postgis",
+      "runtime-bound": false,
+      "runtime-environment": [
+        {
+          "name": "PROJ_DATA",
+          "path": "share/postgresql/proj",
+          "required_file": "proj.db"
+        }
+      ],
+      "runtime-share-data-files": [
+        "contrib/postgis-3.6/legacy.sql",
+        "contrib/postgis-3.6/legacy_gist.sql",
+        "contrib/postgis-3.6/legacy_minimal.sql",
+        "contrib/postgis-3.6/postgis.sql",
+        "contrib/postgis-3.6/postgis_upgrade.sql",
+        "contrib/postgis-3.6/spatial_ref_sys.sql",
+        "contrib/postgis-3.6/uninstall_legacy.sql",
+        "contrib/postgis-3.6/uninstall_postgis.sql",
+        "proj/proj.db"
+      ],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgis",
+      "sql-name": "postgis"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "seg",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "seg",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "seg",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "seg"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "tablefunc",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "tablefunc",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "tablefunc",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "tablefunc"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "tcn",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "tcn",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "tcn",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "tcn"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "tsm_system_rows",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "tsm_system_rows",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "tsm_system_rows",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "tsm_system_rows"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "tsm_system_time",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "tsm_system_time",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "tsm_system_time",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "tsm_system_time"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [
+        "share/postgresql/tsearch_data/unaccent.rules"
+      ],
+      "dependencies": [],
+      "display-name": "unaccent",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "unaccent",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "unaccent",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [
+        "tsearch_data/unaccent.rules"
+      ],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "unaccent"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-contrib-pg18",
+      "cargo-package": "oliphaunt-extension-contrib-pg18",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "uuid-ossp",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "uuid_ossp",
+      "maven-artifact": "oliphaunt-extension-contrib-pg18",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "linux-arm64-gnu"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "linux-x64-gnu"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "macos-arm64"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-dynamic",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "windows-x64-msvc"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "android-arm64-v8a"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "android-x86_64"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "native",
+          "kind": "native-static-registry",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "ios-xcframework"
+        },
+        {
+          "components": [
+            "portable-uuid"
+          ],
+          "family": "wasix",
+          "kind": "wasix-runtime",
+          "link-units": [
+            "uuid"
+          ],
+          "runtime-files": [],
+          "target": "wasix-portable"
+        }
+      ],
+      "native-components": [
+        "portable-uuid"
+      ],
+      "native-module-stem": "uuid-ossp",
+      "npm-package": "@oliphaunt/extension-contrib-pg18",
+      "postgres-major": 18,
+      "release-product": "liboliphaunt-native",
+      "runtime-bound": true,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "postgres-contrib",
+      "sql-name": "uuid-ossp"
+    },
+    {
+      "artifact-product": "oliphaunt-extension-vector",
+      "cargo-package": "oliphaunt-extension-vector",
+      "creates-extension": true,
+      "data-files": [],
+      "dependencies": [],
+      "display-name": "pgvector",
+      "extension-sql-file-names": [],
+      "extension-sql-file-prefixes": [],
+      "id": "vector",
+      "maven-artifact": "oliphaunt-extension-vector",
+      "maven-group": "dev.oliphaunt.extensions",
+      "native-component-requirements": [],
+      "native-components": [],
+      "native-module-stem": "vector",
+      "npm-package": "@oliphaunt/extension-vector",
+      "postgres-major": 18,
+      "release-product": "oliphaunt-extension-vector",
+      "runtime-bound": false,
+      "runtime-environment": [],
+      "runtime-share-data-files": [],
+      "selected-extension-dependencies": [],
+      "shared-preload-libraries": [],
+      "source-kind": "oliphaunt-other-extension",
+      "sql-name": "vector"
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "native-components",
+      "path": "src/extensions/catalog/native-components.toml"
+    },
+    {
+      "name": "extension-recipes",
+      "path": "src/extensions"
+    },
+    {
+      "name": "release-products",
+      "path": "src"
+    }
+  ]
+}

@@ -88,13 +88,9 @@ pub struct ExtensionAsset {
     pub native_modules: Vec<BinaryAsset>,
     pub size: u64,
     #[serde(default)]
-    pub stable: bool,
-    #[serde(default)]
     pub control_files: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
-    #[serde(default)]
-    pub native_dependencies: Vec<String>,
     #[serde(default)]
     pub load_order: Vec<String>,
     #[serde(default)]
@@ -107,8 +103,6 @@ pub struct ExtensionAsset {
     pub unresolved_imports: Vec<WasmImport>,
     #[serde(default)]
     pub installed_files: Vec<String>,
-    #[serde(default)]
-    pub smoke_status: Option<ExtensionSmokeStatus>,
     #[serde(default)]
     pub link: Option<WasmLinkMetadata>,
 }
@@ -131,16 +125,6 @@ pub struct ExtensionLifecycle {
     pub restart_required: bool,
     #[serde(default)]
     pub shared_memory_required: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub struct ExtensionSmokeStatus {
-    pub promoted: bool,
-    pub direct: String,
-    pub server: String,
-    pub restart: String,
-    pub dump_restore: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

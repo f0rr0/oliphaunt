@@ -1,9 +1,0 @@
-$schema: "https://moonrepo.dev/schemas/project.json"
-
-id: "extension-age"
-language: "unknown"
-layer: "configuration"
-stack: "systems"
-tags: ["extensions", "external"]
-dependsOn:
-  - "extension-runtime-contract"

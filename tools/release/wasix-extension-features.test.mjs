@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  extensionFeatures,
   fullEvidenceFeatures,
-  promotedExtensionFeatures,
 } from "./wasix-extension-features.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -28,39 +28,38 @@ test("the live WASIX public surface includes the PostGIS product", () => {
   }
 });
 
-test("full WASIX evidence enables every and only promoted extension feature", () => {
+test("full WASIX evidence enables every extension feature", () => {
   const manifest = {
     extensions: [
-      { "sql-name": "vector", "smoke-status": { promoted: true } },
-      { "sql-name": "pg_trgm", "smoke-status": { promoted: true } },
-      { "sql-name": "candidate_only", "smoke-status": { promoted: false } },
+      { "sql-name": "vector" },
+      { "sql-name": "pg_trgm" },
     ],
   };
 
-  assert.deepEqual(promotedExtensionFeatures(manifest), ["extension-pg-trgm", "extension-vector"]);
+  assert.deepEqual(extensionFeatures(manifest), ["extension-pg-trgm", "extension-vector"]);
   assert.equal(
     fullEvidenceFeatures(manifest),
     "extensions,tools,extension-pg-trgm,extension-vector",
   );
 });
 
-test("full WASIX evidence rejects empty or ambiguous promoted extension identities", () => {
+test("full WASIX evidence rejects empty or ambiguous extension identities", () => {
   assert.throws(
-    () => promotedExtensionFeatures({ extensions: [] }),
-    /at least one promoted extension/u,
+    () => extensionFeatures({ extensions: [] }),
+    /at least one extension/u,
   );
   assert.throws(
-    () => promotedExtensionFeatures({
+    () => extensionFeatures({
       extensions: [
-        { "sql-name": "vector", "smoke-status": { promoted: true } },
-        { "sql-name": "vector", "smoke-status": { promoted: true } },
+        { "sql-name": "vector" },
+        { "sql-name": "vector" },
       ],
     }),
-    /repeats promoted extension vector/u,
+    /repeats extension vector/u,
   );
   assert.throws(
-    () => promotedExtensionFeatures({
-      extensions: [{ "sql-name": "bad/name", "smoke-status": { promoted: true } }],
+    () => extensionFeatures({
+      extensions: [{ "sql-name": "bad/name" }],
     }),
     /portable sql-name/u,
   );

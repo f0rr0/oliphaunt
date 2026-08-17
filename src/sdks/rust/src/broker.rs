@@ -1304,7 +1304,7 @@ mod tests {
         config.mode = EngineMode::NativeBroker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
-        config.extensions = vec![Extension::PgSearch, Extension::PgSearch];
+        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
             listen: "127.0.0.1:0".to_owned(),
@@ -1323,10 +1323,10 @@ mod tests {
 
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
-        assert_arg_pair(&args, "--extension", "pg_search");
+        assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)
-                .filter(|window| window[0] == "--extension" && window[1] == "pg_search")
+                .filter(|window| window[0] == "--extension" && window[1] == "pg_textsearch")
                 .count(),
             1,
             "broker must forward deduplicated resolved extensions to the helper"

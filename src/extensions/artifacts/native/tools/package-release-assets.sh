@@ -37,11 +37,6 @@ esac
 require awk
 require bun
 native_extension_runtime_kind="$(bun "$native_asset_index_contract" runtime-kind)"
-qualification_only="${OLIPHAUNT_EXTENSION_QUALIFICATION_ONLY:-0}"
-case "$qualification_only" in
-  0|1) ;;
-  *) fail "OLIPHAUNT_EXTENSION_QUALIFICATION_ONLY must be 0 or 1" ;;
-esac
 
 case "$target_id" in
   windows-x64-msvc) ;;
@@ -61,16 +56,7 @@ if [ -n "$extension_product" ]; then
   fi
 fi
 selected_sql_names=""
-if [ "$qualification_only" = "1" ]; then
-  [ -z "$extension_product" ] && [ -z "$extension_products" ] ||
-    fail "qualification-only builds select SQL names from deferred candidate policy, not release products"
-  selected_sql_names="$(bun tools/release/extension-qualification-candidates.mjs --target "$target_id" --family native --format csv)"
-  if [ -z "$selected_sql_names" ]; then
-    echo "no deferred native extension candidates target $target_id"
-    exit 0
-  fi
-  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
-elif [ -n "$extension_products" ]; then
+if [ -n "$extension_products" ]; then
   selected_sql_names="$(bun "$packager" selected-sql-names "$extension_products")"
 else
   selected_sql_names="$({
@@ -78,28 +64,12 @@ else
   } | LC_ALL=C sort -u | paste -sd ',' -)"
   [ -n "$selected_sql_names" ] || fail "the public extension catalog selected no SQL names"
 fi
-qualification_sql_names="$(bun tools/release/extension-qualification-candidates.mjs --target "$target_id" --family native --format csv)"
-if [ "${OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES+x}" = "x" ] &&
-   [ "$qualification_sql_names" != "$OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES" ]; then
-  fail "CI matrix qualification candidates '$OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES' do not match canonical target candidates '$qualification_sql_names'"
-fi
-build_sql_names="$({
-  printf '%s\n' "$selected_sql_names" | tr ',' '\n'
-  printf '%s\n' "$qualification_sql_names" | tr ',' '\n'
-} | sed '/^$/d' | LC_ALL=C sort -u | paste -sd ',' -)"
-if [ -n "$qualification_sql_names" ]; then
-  export OLIPHAUNT_MOBILE_STATIC_SPECS_TSV="$root/src/extensions/generated/mobile/qualification-static-extensions.tsv"
-fi
+build_sql_names="$selected_sql_names"
 
 version="${OLIPHAUNT_EXTENSION_RELEASE_VERSION:-$(bun "$packager" product-version liboliphaunt-native)}"
 native_runtime_version="$(tr -d '[:space:]' < "$root/src/runtimes/liboliphaunt/native/VERSION")"
-if [ "$qualification_only" = "1" ]; then
-  default_out_dir="$root/target/extensions/native/qualification-only/$target_id"
-  default_stage_root="$root/target/extensions/native/qualification-stage/$target_id"
-else
-  default_out_dir="$root/target/extensions/native/release-assets/$target_id"
-  default_stage_root="$root/target/extensions/native/release-stage/$target_id"
-fi
+default_out_dir="$root/target/extensions/native/release-assets/$target_id"
+default_stage_root="$root/target/extensions/native/release-stage/$target_id"
 if [ -n "$extension_product" ] && [ -z "${OLIPHAUNT_EXTENSION_PRODUCTS:-}" ]; then
   default_out_dir="$default_out_dir/$extension_product"
   default_stage_root="$default_stage_root/$extension_product"
@@ -109,29 +79,7 @@ stage_root="${OLIPHAUNT_EXTENSION_RELEASE_STAGE_ROOT:-$default_stage_root}"
 catalog_file="$stage_root/extension-catalog.tsv"
 legacy_extension_index="$out_dir/liboliphaunt-${version}-extension-assets.tsv"
 native_asset_index="$out_dir/liboliphaunt-${version}-native-extension-assets.tsv"
-mobile_extension_work_root="${OLIPHAUNT_MOBILE_EXTENSION_WORK_ROOT:-$root/target/liboliphaunt-mobile-extension-$([ "$qualification_only" = "1" ] && printf qualification || printf release)}"
-
-if [ "$qualification_only" = "1" ]; then
-  case "$target_id" in
-    macos-arm64)
-      export OLIPHAUNT_WORK_ROOT="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-extension-qualification-$target_id}"
-      ;;
-    linux-x64-gnu|linux-arm64-gnu)
-      export OLIPHAUNT_LINUX_WORK_ROOT="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-qualification}"
-      ;;
-    windows-x64-msvc)
-      export OLIPHAUNT_WINDOWS_WORK_ROOT="${OLIPHAUNT_WINDOWS_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-qualification}"
-      ;;
-    ios-xcframework)
-      export OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-qualification-$target_id}"
-      export OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT:-$OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT/install}"
-      ;;
-    android-*)
-      export OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-linux-x64-gnu-extension-qualification}"
-      export OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT="${OLIPHAUNT_EXTENSION_HOST_RUNTIME_ROOT:-$OLIPHAUNT_EXTENSION_LINUX_RUNTIME_ROOT/install}"
-      ;;
-  esac
-fi
+mobile_extension_work_root="${OLIPHAUNT_MOBILE_EXTENSION_WORK_ROOT:-$root/target/liboliphaunt-mobile-extension-release}"
 
 rm -rf "$stage_root"
 mkdir -p "$out_dir" "$stage_root"
@@ -145,19 +93,7 @@ catalog_rows() {
 }
 
 mobile_module_extensions_csv() {
-  if [ "$qualification_only" = "1" ]; then
-    local extension
-    IFS=',' read -r -a qualification_extensions <<<"$selected_sql_names"
-    for extension in "${qualification_extensions[@]}"; do
-      [ -n "$extension" ] || continue
-      oliphaunt_mobile_static_extension_spec "$extension" >/dev/null ||
-        fail "deferred candidate $extension has no generated mobile qualification spec"
-    done
-    printf '%s\n' "$selected_sql_names"
-    return 0
-  fi
-  {
-    catalog_rows | awk -F '\t' -v selected="$selected_sql_names" '
+  catalog_rows | awk -F '\t' -v selected="$selected_sql_names" '
     function selected_match(sql_name, selected, parts, count, i) {
       if (selected == "") {
         return 1
@@ -171,9 +107,7 @@ mobile_module_extensions_csv() {
       return 0
     }
     $8 == "yes" && $9 == "yes" && $4 != "-" && selected_match($1, selected) { print $1 }
-    '
-    printf '%s\n' "$qualification_sql_names" | tr ',' '\n' | sed '/^$/d'
-  } | LC_ALL=C sort -u | csv_join
+    ' | LC_ALL=C sort -u | csv_join
 }
 
 selected_sql_name_matches() {
@@ -618,13 +552,6 @@ package_desktop_target() {
   if [[ "$target_id" == linux-*-gnu ]]; then
     tools/release/check-linux-consumer-baseline.sh --target "$target_id" --root "$runtime"
   fi
-  if [ -n "$qualification_sql_names" ]; then
-    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
-  fi
-  if [ "$qualification_only" = "1" ]; then
-    return 0
-  fi
-
   local module_suffix
   module_suffix="$(module_suffix_for_target)"
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact
@@ -673,13 +600,6 @@ package_ios_target() {
     --target "$target_id" \
     --root "$ios_xcframework_root/out" \
     --required-apple-platforms macos,ios,ios-simulator
-  if [ -n "$qualification_sql_names" ]; then
-    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
-  fi
-  if [ "$qualification_only" = "1" ]; then
-    return 0
-  fi
-
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact ios_artifact static_prefix registration_artifact dependency dependency_xcframework dependency_artifact
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -787,13 +707,6 @@ package_android_target() {
     *) fail "Android target packager called for $target_id" ;;
   esac
   tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$android_root/out"
-  if [ -n "$qualification_sql_names" ]; then
-    echo "qualified deferred native extension candidate(s) $qualification_sql_names for $target_id"
-  fi
-  if [ "$qualification_only" = "1" ]; then
-    return 0
-  fi
-
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
@@ -828,10 +741,8 @@ package_android_target() {
 
 fetch_extension_source_assets
 echo "==> Reading exact extension catalog"
-bun "$packager" list-catalog --qualification-target "$target_id" >"$catalog_file"
-if [ "$qualification_only" = "0" ]; then
-  write_indexes
-fi
+bun "$packager" list-catalog >"$catalog_file"
+write_indexes
 
 case "$target_id" in
   macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc)
@@ -844,8 +755,6 @@ case "$target_id" in
     package_android_target
     ;;
 esac
-
-[ "$qualification_only" = "1" ] && exit 0
 
 [ "$(wc -l <"$native_asset_index" | awk '{ print $1 }')" -gt 1 ] ||
   fail "no native exact-extension artifacts were produced for target $target_id${extension_product:+ product $extension_product}"

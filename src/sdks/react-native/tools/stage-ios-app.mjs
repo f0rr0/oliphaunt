@@ -65,7 +65,16 @@ const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
   "files",
 ]);
 const GENERATED_EXTENSION_CATALOG = JSON.parse(
-  await fs.readFile(new URL("../src/generated/extensions.json", import.meta.url), "utf8"),
+  await fs.readFile(
+    await Promise.any([
+      new URL("../src/generated/extensions.json", import.meta.url),
+      new URL("../../../extensions/generated/sdk/extensions.json", import.meta.url),
+    ].map(async (url) => {
+      await fs.access(url);
+      return url;
+    })),
+    "utf8",
+  ),
 );
 
 function compareText(left, right) {
@@ -213,9 +222,6 @@ function generatedExtensionCatalog(value) {
     );
     if (!artifactProduct.startsWith("oliphaunt-extension-")) {
       fail(`generated artifact product for ${sqlName} must be an extension product`);
-    }
-    if (row["mobile-release-ready"] !== true) {
-      fail(`generated React Native extension ${sqlName} must be mobile release ready`);
     }
     if (typeof row["runtime-bound"] !== "boolean") {
       fail(`generated runtime-bound flag for ${sqlName} must be boolean`);

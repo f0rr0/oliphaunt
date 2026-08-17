@@ -38,11 +38,10 @@ export function loadContribCarriers(root, prefix = "contrib-carriers") {
   }
   const ids = members.map(({ id }) => id);
   if (new Set(ids).size !== ids.length) fail(prefix, `${memberManifest}.extensions ids must be unique`);
-  const memberRoot = path.posix.dirname(memberManifest);
   const inputFiles = [
     CONTRIB_CARRIERS_PATH,
     memberManifest,
-    ...ids.map((id) => `${memberRoot}/${id}/targets/artifacts.toml`),
+    "tools/release/extension-target-profiles.toml",
     source,
     contract,
   ];

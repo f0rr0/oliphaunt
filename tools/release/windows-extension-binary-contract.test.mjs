@@ -88,11 +88,11 @@ const postgisRow = [
   "-",
   "first-party",
 ];
-const deferredQualificationRow = [
-  "deferred_extension",
+const desktopOnlyRow = [
+  "desktop_extension",
   "18",
   "yes",
-  "deferred_extension",
+  "desktop_extension",
   "-",
   "-",
   "yes",
@@ -267,7 +267,7 @@ describe("desktop exact-extension post-strip binary qualification", () => {
 });
 
 describe("Windows exact-extension binary-contract staging", () => {
-  test("validates the public and deferred build union while excluding every development/archive class", async () => {
+  test("validates an explicitly selected desktop extension set while excluding every development/archive class", async () => {
     const root = await fixture("selected");
     const runtime = path.join(root, "install");
     const output = path.join(root, "contract-view");
@@ -279,7 +279,7 @@ describe("Windows exact-extension binary-contract staging", () => {
     );
     await writeRuntimeFile(
       runtime,
-      "lib/postgresql/deferred_extension.dll",
+      "lib/postgresql/desktop_extension.dll",
       pe({ imports: HOSTED_EARTHDISTANCE_IMPORTS }),
     );
     await writeRuntimeFile(
@@ -330,8 +330,8 @@ describe("Windows exact-extension binary-contract staging", () => {
 
     const result = await stageWindowsExtensionBinaryContract({
       runtimeRoot: runtime,
-      catalogText: catalog(vectorRow, postgisRow, deferredQualificationRow),
-      selectedSqlNames: "vector,deferred_extension",
+      catalogText: catalog(vectorRow, postgisRow, desktopOnlyRow),
+      selectedSqlNames: "vector,desktop_extension",
       outputRoot: output,
     });
 
@@ -341,17 +341,17 @@ describe("Windows exact-extension binary-contract staging", () => {
     expect(result.standaloneBackendProvider).toBe("postgres.exe");
     expect(result.forbiddenEmbeddedBackendProvider).toBe("oliphaunt.dll");
     expect(result.extensionModules).toEqual([
-      "deferred_extension.dll",
+      "desktop_extension.dll",
       "vector.dll",
     ]);
     expect(result.serverBoundExtensionModules).toEqual(["vector.dll"]);
-    expect(result.hostNeutralServerModules).toEqual(["deferred_extension.dll"]);
+    expect(result.hostNeutralServerModules).toEqual(["desktop_extension.dll"]);
     expect(result.providerRuntimeDlls).toEqual([...WINDOWS_VC_RUNTIME_DLLS]);
     expect(await relativeFiles(output)).toEqual(
       [
         ...WINDOWS_VC_RUNTIME_DLLS.map((name) => `bin/${name}`),
         "binary-contract-manifest.json",
-        "lib/postgresql/deferred_extension.dll",
+        "lib/postgresql/desktop_extension.dll",
         "lib/postgresql/vector.dll",
       ].sort(),
     );
@@ -360,7 +360,7 @@ describe("Windows exact-extension binary-contract staging", () => {
       windowsVcRuntimeProfile: "provider",
     });
     expect(inspected.files).toContain("lib/postgresql/vector.dll");
-    expect(inspected.files).toContain("lib/postgresql/deferred_extension.dll");
+    expect(inspected.files).toContain("lib/postgresql/desktop_extension.dll");
     expect(inspected.files).not.toContain("lib/postgresql/postgis-3.dll");
     for (const relative of installedDevelopmentArchives) {
       expect(inspected.files).not.toContain(relative);

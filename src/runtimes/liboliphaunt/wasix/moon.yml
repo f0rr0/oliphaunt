@@ -22,7 +22,7 @@ project:
     packagePath: "src/runtimes/liboliphaunt/wasix"
     artifactTargets:
       preset: "liboliphaunt-wasix"
-      publishedTargets:
+      targets:
         - "portable"
         - "linux-arm64-gnu"
         - "linux-x64-gnu"

@@ -66,16 +66,3 @@ licenses = [
 name = "PROJ_DATA"
 path = "share/postgresql/proj"
 required_file = "proj.db"
-
-[support.native]
-direct = "supported"
-broker = "supported"
-server = "supported"
-
-[support.wasix]
-direct = "supported"
-server = "supported"
-
-[support.mobile]
-ios = "supported"
-android = "supported"

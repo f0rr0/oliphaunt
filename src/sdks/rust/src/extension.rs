@@ -11,24 +11,6 @@ impl Extension {
     pub const FIRST_PARTY_PG18_SUPPORTED: &'static [Self] =
         generated_extensions::FIRST_PARTY_PG18_SUPPORTED;
 
-    /// PostgreSQL 18 extensions that public release packaging may ship as
-    /// exact prebuilt app-bundle assets today.
-    pub const RELEASE_READY_PG18_SUPPORTED: &'static [Self] =
-        generated_extensions::RELEASE_READY_PG18_SUPPORTED;
-
-    /// PostgreSQL 18 extensions that have release-ready mobile artifacts today.
-    ///
-    /// SQL-only extensions do not need a mobile static registry. Native-module
-    /// extensions appear here only after the iOS and Android release builds can
-    /// link their prebuilt static objects without application developers
-    /// compiling extension source.
-    pub const MOBILE_RELEASE_READY_PG18_SUPPORTED: &'static [Self] =
-        generated_extensions::MOBILE_RELEASE_READY_PG18_SUPPORTED;
-
-    /// Externally sourced PostgreSQL 18 extensions known to the native lane.
-    pub const EXTERNAL_PG18_SUPPORTED: &'static [Self] =
-        generated_extensions::EXTERNAL_PG18_SUPPORTED;
-
     /// All PostgreSQL 18 extensions known to the native lane.
     pub const ALL_PG18_SUPPORTED: &'static [Self] = generated_extensions::ALL_PG18_SUPPORTED;
 
@@ -80,17 +62,6 @@ impl Extension {
         matches!(self.artifact_policy(), ExtensionArtifactPolicy::FirstParty)
     }
 
-    /// Whether desktop release artifacts may include this extension today.
-    pub const fn desktop_release_ready(self) -> bool {
-        generated_extensions::desktop_release_ready(self)
-    }
-
-    /// Whether iOS and Android release artifacts may include this extension
-    /// without app developers building extension source.
-    pub const fn mobile_release_ready(self) -> bool {
-        generated_extensions::mobile_release_ready(self)
-    }
-
     /// Whether this extension needs a mobile static-registry row when selected
     /// for iOS or Android.
     pub const fn requires_mobile_static_registry(self) -> bool {
@@ -109,16 +80,6 @@ impl Extension {
             .iter()
             .copied()
             .find(|extension| extension.sql_name() == sql_name)
-    }
-
-    /// Resolve a public release-ready extension by exact SQL name.
-    ///
-    /// This intentionally does not accept catalog labels, aliases, or grouped
-    /// selectors. App artifacts are selected one extension at a time so
-    /// unrequested extensions cannot be shipped accidentally.
-    pub fn by_release_ready_sql_name(sql_name: &str) -> Option<Self> {
-        let extension = Self::by_sql_name(sql_name)?;
-        extension.desktop_release_ready().then_some(extension)
     }
 
     /// Static release manifest row for this extension.

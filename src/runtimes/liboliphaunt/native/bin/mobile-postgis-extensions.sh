@@ -339,12 +339,22 @@ build_postgis_libiconv_dependency() {
 build_postgis_mobile_static_dependencies() {
   oliphaunt_postgis_selected || return 0
   oliphaunt_postgis_require_tools
-  build_postgis_jsonc_dependency
-  build_postgis_sqlite_dependency
-  build_postgis_geos_dependency
-  build_postgis_libxml2_dependency
-  build_postgis_proj_dependency
-  build_postgis_libiconv_dependency
+  local component
+  while IFS= read -r component; do
+    case "$component" in
+      geos) build_postgis_geos_dependency ;;
+      sqlite) build_postgis_sqlite_dependency ;;
+      proj) build_postgis_proj_dependency ;;
+      libxml2) build_postgis_libxml2_dependency ;;
+      json-c) build_postgis_jsonc_dependency ;;
+      libiconv) build_postgis_libiconv_dependency ;;
+      "") ;;
+      *) oliphaunt_postgis_fail "unsupported native component in contract: $component" ;;
+    esac
+  done < <(
+    oliphaunt_mobile_static_extension_components_for_target \
+      postgis "${oliphaunt_mobile_target:?missing oliphaunt mobile target}"
+  )
 }
 
 oliphaunt_postgis_host_alias() {

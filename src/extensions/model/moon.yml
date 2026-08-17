@@ -15,6 +15,8 @@ tasks:
   check:
     tags: ["quality", "static"]
     command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    deps:
+      - "extension-model:native-component-test"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -31,8 +33,9 @@ tasks:
       - "/src/sources/third-party/shared/openssl.toml"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/release/extension-qualification-candidates.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/release_graph_query.mjs"
@@ -43,6 +46,20 @@ tasks:
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  native-component-test:
+    tags: ["quality", "unit"]
+    command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mjs"
+    inputs:
+      - "/src/extensions/catalog/native-components.toml"
+      - "/src/extensions/catalog/extensions.source.json"
+      - "/src/extensions/tools/native-component-contract.mjs"
+      - "/src/extensions/tools/native-component-contract.test.mjs"
+      - "/src/runtimes/liboliphaunt/native/portable-uuid/**/*"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-target-profiles.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

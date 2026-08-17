@@ -58,7 +58,7 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     let mut built_in_extensions = Vec::new();
     let mut indexed_extensions = Vec::new();
     for extension in args.extensions {
-        if let Some(extension) = Extension::by_release_ready_sql_name(&extension) {
+        if let Some(extension) = Extension::by_sql_name(&extension) {
             built_in_extensions.push(extension);
         } else {
             indexed_extensions.push(extension);
@@ -1114,8 +1114,8 @@ fn print_extension_catalog(args: &PackageArgs) -> oliphaunt::Result<()> {
             module_stem,
             empty_as_dash(&dependencies),
             shared_preload,
-            yes_no(entry.extension.desktop_release_ready()),
-            yes_no(entry.extension.mobile_release_ready()),
+            "yes",
+            "yes",
             yes_no(entry.extension.requires_mobile_static_registry()),
             empty_as_dash(&entry.data_files.join(",")),
             artifact_label(entry.artifact_policy),
@@ -1321,7 +1321,7 @@ package-size.tsv records the runtime/template/static-registry byte footprint,
 the de-duplicated selected extension asset bytes, and each selected extension's
 asset bytes.
 
-Use --list-extensions to print the release-ready exact extension catalog
+Use --list-extensions to print the exact public extension catalog
 without requiring a local PostgreSQL build. When --extension-index is also
 provided, signed external index metadata is listed for --extension-target
 without downloading artifacts or building extension source. desktop_prebuilt=yes
