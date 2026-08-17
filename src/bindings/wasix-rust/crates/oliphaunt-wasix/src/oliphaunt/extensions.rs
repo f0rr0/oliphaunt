@@ -342,14 +342,6 @@ fn extension_setup_sql_with_schema_policy(extension: Extension) -> Vec<String> {
     statements
 }
 
-pub(crate) fn extension_session_setup_sql(extension: Extension) -> Vec<String> {
-    let setup = extension.setup();
-    let mut statements = Vec::new();
-    statements.extend(setup.load_sql.iter().map(|sql| (*sql).to_owned()));
-    statements.extend(setup.post_create_sql.iter().map(|sql| (*sql).to_owned()));
-    statements
-}
-
 #[cfg(test)]
 mod startup_config_tests {
     use super::*;
@@ -547,10 +539,15 @@ mod extension_tests {
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open lifecycle database with extension {name}"))?;
+            let runtime_root = db
+                .runtime_storage()
+                .host_path()
+                .context("directory database should use a host runtime workspace")?;
+            assert_only_resolved_extension_libraries_are_materialized(runtime_root, extension)?;
             db.close()
                 .with_context(|| format!("close lifecycle database with extension {name}"))?;
         }
-        assert_only_resolved_extension_libraries_are_materialized(root.path(), extension)
+        Ok(())
     }
 
     #[cfg(feature = "tools")]
@@ -693,7 +690,7 @@ mod extension_tests {
     }
 
     fn assert_only_resolved_extension_libraries_are_materialized(
-        root: &Path,
+        runtime_root: &Path,
         extension: Extension,
     ) -> Result<()> {
         let expected = resolve_extension_set(&[extension])?
@@ -715,7 +712,7 @@ mod extension_tests {
                 modules
             })
             .collect::<BTreeSet<_>>();
-        let actual = relative_files(&root.join("tmp/oliphaunt/lib/postgresql"))
+        let actual = relative_files(&runtime_root.join("lib/postgresql"))
             .into_iter()
             .collect::<BTreeSet<_>>();
         ensure!(

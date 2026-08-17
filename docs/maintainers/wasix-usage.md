@@ -28,10 +28,23 @@ extension carriers.
 
 `DatabaseStorage` owns the mutable PGDATA lifetime:
 
-- `Memory` is the default and uses a true Wasmer memory filesystem;
-- `TemporaryDirectory` is an SDK-owned disposable host directory;
-- `Directory(path)` is a caller-owned persistent host directory;
-- `ApplicationData(identity)` resolves a retained platform app-data directory.
+- `Memory` is the default and uses Wasmer memory filesystems for PGDATA and
+  every mutable guest runtime directory;
+- `Directory(path)` is a caller-owned host directory. Applications resolve
+  temporary or platform app-data paths before passing them to the SDK.
+
+Memory storage creates no host temporary workspace. Its per-instance runtime
+upper layer and PGDATA are separate memory filesystems over one process-shared
+immutable memory runtime. Runtime source assets and compiled AOT artifacts may
+still use process-wide host caches, but they are not writable guest storage.
+
+For retained storage, the selected directory is PGDATA itself. Extensions,
+`/home`, `/tmp`, and other mutable overlay state use a separate SDK-owned runtime
+workspace. Host directory `fd_sync` calls reach `sync_all`, namespace changes
+sync parent directories, and normal durability keeps PostgreSQL `fsync` enabled.
+Retained paths contain the complete cluster. The retired nested
+`tmp/oliphaunt/base` and PGDATA-overlay layouts are rejected rather than silently
+migrated.
 
 `DatabaseInitialization` is orthogonal:
 
@@ -107,6 +120,11 @@ Generated extension metadata resolves mandatory dependencies and startup
 requirements before PostgreSQL starts. Post-open activation fails closed for an
 extension whose lifecycle requires preload or restart.
 
+Extension selection belongs to each runtime open, not to PGDATA. Reopening a
+`Directory` whose catalog uses an extension must select that extension again;
+the catalog persists, while its exact runtime package files are supplied by the
+new builder.
+
 ### Server and data movement
 
 `OliphauntServer::builder().start()` also defaults to memory. Select the same
@@ -156,19 +174,25 @@ or another database class. Each open owns an independent database process;
 in-memory databases and distinct persistent store names can remain open in
 either placement on every host.
 
-The adapter snapshots the complete memory-backed PGDATA into one atomic
-IndexedDB record after explicit `checkpoint()` and clean `close()`. Web Locks
-enforce one open owner per persistent database. SQL errors recover through
-`ReadyForQuery` without poisoning storage. Snapshot failure retains the previous
-generation and poisons the live handle because newer commits may exist only in
-memory.
+The source-pinned Wasmer host records current-state PGDATA mutations, including
+writes and truncates through descriptors PostgreSQL keeps open across calls.
+After each completed protocol operation reaches `ReadyForQuery`, persistent
+providers publish only those paths before resolving the operation. Callback
+transactions suppress the internal boundaries and publish once after confirmed
+`COMMIT` or `ROLLBACK`; a post-commit publication failure rejects and poisons
+the handle. Each logical IndexedDB name owns an independent physical IndexedDB
+database and commits its path rows atomically. OPFS and server directories
+publish WAL first, ordinary files second, `global/pg_control` last, then
+removals. Explicit `checkpoint()` runs PostgreSQL `CHECKPOINT` and then one
+storage boundary. Web Locks enforce one browser owner per name. SQL errors
+recover without poisoning storage; storage failures poison the handle because
+retrying a commit is unsafe.
 
-This is checkpoint/clean-close persistence, not per-query or crash durability.
-OPFS is absent because the current Wasmer browser filesystem cannot expose a
-truthful direct synchronous mount. Node, Bun, and Deno add selectively imported
-`storage/node`, `storage/bun`, and `storage/deno` directory adapters with the
-same honest snapshot boundary and an
-exclusive cross-process path lock for local filesystems on one host. Linux
+OPFS is an honest asynchronous delta provider, not a claimed synchronous guest
+mount, and reports unknown durability after partial cross-file failure.
+Node, Bun, and Deno add selectively imported `storage/node`, `storage/bun`, and
+`storage/deno` raw-PGDATA adapters with an exclusive cross-process path lock for
+local filesystems on one host. Linux
 leases include host, boot, and PID namespace identities, so only locally
 proven-dead owners are reaped; foreign scope leases fail closed as `busy`.
 Network and cross-host shared filesystems are unsupported, and persistent
@@ -185,11 +209,15 @@ release line of its owning extension product.
 ## Guest and host patch ownership
 
 Optimize at the narrowest shared layer that owns the invariant. PostgreSQL
-patches 0040 and 0041 specialize backend spinlocks and atomics because every
-released WASIX database uses one PostgreSQL backend per WebAssembly instance.
-They are compiled into the canonical guest once, so the Rust binding's AOT
-artifacts and the portable module used by browser direct, browser worker, and
-Node/Bun/Deno worker execution all benefit. They are not host-specific patches.
+patches 0040 and 0041 specialize backend spinlocks and atomics, patch 0042
+batches checked secure-random reads, and patch 0043 disables only the optional
+writeback hint that WASIX rejects on PostgreSQL's read-only startup
+descriptors. Real `fsync`/`fdatasync` remains active. These patches are valid
+because every released WASIX database uses one PostgreSQL backend per
+WebAssembly instance. They are compiled into the canonical guest once, so the
+Rust binding's AOT artifacts and the portable module used by browser direct,
+browser worker, and Node/Bun/Deno worker execution all benefit. They are not
+host-specific patches.
 
 Transport remains host-specific. PostgreSQL patch 0039 adds an opt-in stdio
 pgwire entry point to the shared guest, but only browser-worker execution sets
@@ -239,5 +267,5 @@ module; it is not a generic dynamic-extension support claim.
 
 The Node, Bun, and Deno smokes each pack the SDK, runtime carrier, and selected
 extension carrier, install them in a fresh external project, and prove the
-runtime's conditional export, package-relative asset, extension, recovery, and
-clean-close behavior.
+runtime's conditional export, package-relative asset, extension, recovery,
+operation-boundary persistence, and clean-close behavior.

@@ -236,13 +236,21 @@ caller-realm atexit cleanup. The browser-only
 `pg_uuidv7` canary executes on both sides of recovery, but generic 0.702 or
 native-module compatibility is not claimed.
 
-Memory is the zero-configuration default on every host. A selectively imported
-IndexedDB adapter owns exclusive browser persistence and publishes complete
-PGDATA snapshots on explicit checkpoint or clean close; it does not claim
-per-query or crash durability. Node, Bun, and Deno add selectively imported
-snapshot-backed directory adapters with the same boundary. OPFS and extension migration remain
-absent until their real contracts exist. The binding README is the detailed
-divergence record.
+Memory is the zero-configuration default on every host. Selectively imported
+persistent adapters own one exclusive database lease and synchronize changed
+PGDATA paths after each completed protocol exchange, including an error that
+PostgreSQL has recovered through `ReadyForQuery`. Callback transactions defer
+their internal publications and synchronize exactly once after confirmed
+`COMMIT` or `ROLLBACK`. Each IndexedDB identity owns one physical IndexedDB
+database, stores one row per normalized path, and commits metadata, upserts,
+and deletes atomically in a single transaction. Node, Bun, and Deno expose the selected directory as raw
+PGDATA and durably apply the same delta (WAL first and `pg_control` last).
+Browser OPFS exposes raw PGDATA with the same ordering and Web Lock ownership;
+because OPFS has no cross-file transaction, an interrupted publication is
+reported as unknown durability and the session is poisoned. Explicit
+`checkpoint()` remains a PostgreSQL `CHECKPOINT` followed by the same storage
+boundary. Extension migration remains absent until its real contract exists.
+The binding README is the detailed divergence record.
 
 ## Current Platform Stance
 
@@ -250,7 +258,7 @@ divergence record.
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
 | WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
-| WASIX TypeScript | cross-origin-isolated browsers, Node.js, Bun, and Deno | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on every host | exact error-recovery, selected-extension, and memory paths are proven in both placements; browser IndexedDB and Node/Bun/Deno directory checkpoint/reopen use explicit snapshot adapters; no OPFS, generic native-extension contract, or tool/server/backup surface; explicit runtime replacement is advanced-only |
+| WASIX TypeScript | cross-origin-isolated browsers, Node.js, Bun, and Deno | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on every host | exact error-recovery, selected-extension, and memory paths are proven in both placements; IndexedDB, OPFS, and Node/Bun/Deno raw-directory adapters publish changed paths at successful operation boundaries; no generic native-extension contract or tool/server/backup surface; explicit runtime replacement is advanced-only |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct | Host-native compilations are development/parity evidence and are not published; JVM runtime is explicitly unavailable; Android common defaults require the `OliphauntAndroid` Context facade; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |

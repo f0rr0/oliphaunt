@@ -8,13 +8,18 @@ import type { OliphauntTransaction } from '../types.js';
 describe('WASIX database recovery state', () => {
   it('pins callback transactions, commits results, and expires the transaction handle', async () => {
     const statements: string[] = [];
+    const persistenceModes: Array<string | undefined> = [];
+    const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
-      async exec(input) {
+      async exec(input, persistence) {
         const statement = simpleQuerySql(input);
         statements.push(statement);
+        persistenceModes.push(persistence);
         return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
-      async checkpoint() {},
+      async sync(boundary) {
+        syncBoundaries.push(boundary);
+      },
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -30,6 +35,8 @@ describe('WASIX database recovery state', () => {
 
     expect(value).toBe(42);
     expect(statements).toEqual(['BEGIN', 'SELECT inside', 'COMMIT']);
+    expect(persistenceModes).toEqual(['defer', 'defer', 'defer']);
+    expect(syncBoundaries).toEqual(['operation']);
     if (expired === undefined) throw new Error('transaction test handle was not captured');
     await expect(expired.query('SELECT too_late')).rejects.toThrow(/no longer active/);
     await database.close();
@@ -37,12 +44,17 @@ describe('WASIX database recovery state', () => {
 
   it('rolls back callback failures and leaves the database usable', async () => {
     const statements: string[] = [];
+    const persistenceModes: Array<string | undefined> = [];
+    const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
-      async exec(input) {
+      async exec(input, persistence) {
         statements.push(simpleQuerySql(input));
+        persistenceModes.push(persistence);
         return ready();
       },
-      async checkpoint() {},
+      async sync(boundary) {
+        syncBoundaries.push(boundary);
+      },
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -57,6 +69,69 @@ describe('WASIX database recovery state', () => {
     await database.query('SELECT recovered');
 
     expect(statements).toEqual(['BEGIN', 'SELECT before_failure', 'ROLLBACK', 'SELECT recovered']);
+    expect(persistenceModes).toEqual(['defer', 'defer', 'defer', 'sync']);
+    expect(syncBoundaries).toEqual(['operation']);
+    await database.close();
+  });
+
+  it('rejects and poisons the handle when publication fails after COMMIT', async () => {
+    const statements: string[] = [];
+    const storageFailure = new WasixStorageError('commit generation failed', {
+      code: 'checkpoint-failed',
+      durability: 'unknown',
+    });
+    const session: WasixDatabaseSession = {
+      async exec(input, persistence) {
+        const statement = simpleQuerySql(input);
+        statements.push(`${statement}:${persistence}`);
+        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+      },
+      async sync() {
+        throw storageFailure;
+      },
+      async close() {},
+    };
+    const database = new WasixDatabaseImpl(session);
+
+    await expect(database.transaction(async () => 42)).rejects.toBe(storageFailure);
+    expect(statements).toEqual(['BEGIN:defer', 'COMMIT:defer']);
+    await expect(database.query('SELECT never_runs')).rejects.toMatchObject({
+      name: 'WasixStorageError',
+      code: 'checkpoint-failed',
+    });
+    expect(statements).toEqual(['BEGIN:defer', 'COMMIT:defer']);
+    await database.close();
+  });
+
+  it('keeps rollback publication failure primary while retaining the callback error', async () => {
+    const callbackFailure = new Error('body failed');
+    const storageFailure = new WasixStorageError('rollback generation failed', {
+      code: 'checkpoint-failed',
+      durability: 'not-persisted',
+    });
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        statements.push(simpleQuerySql(input));
+        return ready();
+      },
+      async sync() {
+        throw storageFailure;
+      },
+      async close() {},
+    });
+
+    await expect(
+      database.transaction(async () => {
+        throw callbackFailure;
+      }),
+    ).rejects.toMatchObject({
+      name: 'WasixStorageError',
+      code: 'checkpoint-failed',
+      durability: 'not-persisted',
+      message: expect.stringContaining('transaction also failed: body failed'),
+    });
+    expect(statements).toEqual(['BEGIN', 'ROLLBACK']);
     await database.close();
   });
 
@@ -76,7 +151,7 @@ describe('WASIX database recovery state', () => {
         }
         return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -108,7 +183,7 @@ describe('WASIX database recovery state', () => {
         }
         return ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -153,7 +228,7 @@ describe('WASIX database recovery state', () => {
         }
         return ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -187,7 +262,7 @@ describe('WASIX database recovery state', () => {
         }
         return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -220,7 +295,7 @@ describe('WASIX database recovery state', () => {
           ? concatenate(backendError('XX000', `${failedStatement} failed`), ready())
           : ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -250,7 +325,7 @@ describe('WASIX database recovery state', () => {
           ? concatenate(backendError('XX000', 'rollback failed'), ready())
           : ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -271,7 +346,7 @@ describe('WASIX database recovery state', () => {
       async exec() {
         return ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     });
     let attempt: Promise<unknown> | undefined;
@@ -290,7 +365,7 @@ describe('WASIX database recovery state', () => {
         executions.push(input);
         return ready();
       },
-      async checkpoint() {},
+      async sync() {},
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
@@ -317,7 +392,7 @@ describe('WASIX database recovery state', () => {
       async exec() {
         return ready();
       },
-      async checkpoint() {},
+      async sync() {},
       close() {
         closes += 1;
         closeStarted?.();
@@ -360,7 +435,7 @@ describe('WASIX database recovery state', () => {
         exec() {
           return new Promise(() => undefined);
         },
-        async checkpoint() {},
+        async sync() {},
         async close() {},
         abort() {
           aborts += 1;
@@ -388,7 +463,7 @@ describe('WASIX database recovery state', () => {
         exec() {
           return new Promise(() => undefined);
         },
-        async checkpoint() {},
+        async sync() {},
         async close() {},
         abort() {
           aborts += 1;
@@ -409,7 +484,7 @@ describe('WASIX database recovery state', () => {
     }
   });
 
-  it('poisons queued and later work after persistent snapshot publication fails', async () => {
+  it('poisons queued and later work after persistent delta publication fails', async () => {
     let rejectPublication: ((error: Error) => void) | undefined;
     let publicationStarted: (() => void) | undefined;
     const started = new Promise<void>((resolve) => {
@@ -421,8 +496,8 @@ describe('WASIX database recovery state', () => {
         requests.push('exec');
         return ready();
       },
-      checkpoint() {
-        requests.push('checkpoint');
+      sync() {
+        requests.push('sync');
         publicationStarted?.();
         return new Promise((_, reject) => {
           rejectPublication = reject;
@@ -444,7 +519,7 @@ describe('WASIX database recovery state', () => {
       name: 'WasixStorageError',
       code: 'checkpoint-failed',
       durability: 'not-persisted',
-      message: expect.stringContaining('cannot be used after a persistence checkpoint failed'),
+      message: expect.stringContaining('cannot be used after a persistence boundary failed'),
     });
     rejectPublication?.(storageFailure);
 
@@ -454,12 +529,36 @@ describe('WASIX database recovery state', () => {
       name: 'WasixStorageError',
       code: 'checkpoint-failed',
       durability: 'not-persisted',
-      message: expect.stringContaining('cannot be used after a persistence checkpoint failed'),
+      message: expect.stringContaining('cannot be used after a persistence boundary failed'),
     });
-    expect(requests).toEqual(['exec', 'checkpoint']);
+    expect(requests).toEqual(['exec', 'sync']);
 
     await database.close();
-    expect(requests).toEqual(['exec', 'checkpoint', 'close']);
+    expect(requests).toEqual(['exec', 'sync', 'close']);
+  });
+
+  it('retains a typed persistence failure from an ordinary operation boundary', async () => {
+    let executions = 0;
+    const storageFailure = new WasixStorageError('OPFS publication stopped', {
+      code: 'checkpoint-failed',
+      durability: 'unknown',
+    });
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        executions += 1;
+        throw storageFailure;
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(database.query('insert into t values (1)')).rejects.toBe(storageFailure);
+    await expect(database.query('select 1')).rejects.toMatchObject({
+      code: 'checkpoint-failed',
+      durability: 'unknown',
+    });
+    expect(executions).toBe(1);
+    await database.close();
   });
 
   it('does not poison the handle for an ordinary PostgreSQL CHECKPOINT error', async () => {
@@ -474,8 +573,8 @@ describe('WASIX database recovery state', () => {
         }
         return ready();
       },
-      async checkpoint() {
-        requests.push('checkpoint');
+      async sync() {
+        requests.push('sync');
       },
       async close() {},
     };

@@ -79,9 +79,7 @@ Direct API query failures downcast to `OliphauntError`. Its
 an asset manifest and consumers do not provide runtime archive URLs.
 
 ```rust,no_run
-use oliphaunt_wasix::{
-    ApplicationData, DatabaseInitialization, DatabaseStorage, Oliphaunt,
-};
+use oliphaunt_wasix::{DatabaseInitialization, DatabaseStorage, Oliphaunt};
 
 # fn example() -> anyhow::Result<()> {
 // Default: true WASIX memory storage, initialized from the packaged template.
@@ -94,11 +92,10 @@ let mut local_db = Oliphaunt::builder()
     .open()?;
 local_db.close()?;
 
-// Or let the platform resolve an application-data directory.
+// Applications resolve platform-specific data directories themselves and pass
+// the resulting path through the same Directory variant.
 let mut app_db = Oliphaunt::builder()
-    .storage(DatabaseStorage::ApplicationData(ApplicationData::new(
-        "dev", "Oliphaunt", "Example",
-    )))
+    .storage(DatabaseStorage::Directory("./app-data/example".into()))
     .initialization(DatabaseInitialization::PackagedTemplate)
     .open()?;
 app_db.close()?;
@@ -106,13 +103,25 @@ app_db.close()?;
 # }
 ```
 
-`DatabaseStorage::TemporaryDirectory` remains available when a real host
-directory with instance lifetime is useful. It is distinct from `Memory`:
-memory PGDATA lives in Wasmer's virtual filesystem and never gets materialized
-under the temporary runtime workspace. Initialization is independent and may
-use the packaged template, a fresh WASIX `initdb`, or a compatible physical
-backup. A caller-owned directory that contains an incomplete cluster fails
-closed; Oliphaunt never deletes or silently reinitializes it.
+`DatabaseStorage` deliberately has only `Memory` and `Directory(path)`. Callers
+that want a disposable host directory can create one with their preferred
+temporary-directory library, pass its path as `Directory`, and retain its guard
+for the database lifetime. Memory PGDATA and the database's writable runtime
+directories live in Wasmer memory filesystems, so opening a memory database
+creates no host temporary workspace. The immutable runtime tree is shared in
+memory across instances; package assets and compiled AOT artifacts may still
+use process-wide host caches. Initialization is independent and may use the
+packaged template, a fresh WASIX `initdb`, or a compatible physical backup. A
+caller-owned directory that contains an incomplete cluster fails closed;
+Oliphaunt never deletes or silently reinitializes it.
+
+Persistent `Directory` paths are PGDATA themselves, not containers for a
+private runtime tree. Runtime overlays live in a separate
+SDK-owned workspace. PostgreSQL keeps `fsync` enabled, WASIX `fd_sync` reaches host
+`sync_all`, and namespace changes sync their parent directories. Unix locks the
+PGDATA directory inode directly; hosts without portable directory locking use a
+stable sibling lock file. The database path therefore stays raw and `initdb`
+retains its normal empty-directory contract while one native process owns it.
 
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseInitialization, DatabaseStorage, Oliphaunt};
@@ -132,12 +141,12 @@ restored.close()?;
 # }
 ```
 
-The current memory boundary is PGDATA, not the whole engine process. Wasmer
-still uses an SDK-owned temporary workspace for runtime overlay files and may
-use process resources such as threads, sockets, and its AOT cache. Likewise,
-`try_clone()` takes a quiesced physical snapshot into a new memory filesystem;
-it is not a zero-copy clone of a resource-free runtime. This is the deliberate
-first implementation of the broader resource-free cloning request in issue
+Memory storage covers the complete mutable guest filesystem, not the whole
+engine process. Wasmer may still use process resources such as threads, sockets,
+and its process-wide AOT cache. Likewise, `try_clone()` takes a quiesced physical
+snapshot into a new memory filesystem; it is not a zero-copy clone of a
+resource-free runtime. This is the deliberate implementation boundary of the
+broader resource-free cloning request in issue
 [#90](https://github.com/f0rr0/oliphaunt/issues/90).
 
 ## Why oliphaunt-wasix ✨
@@ -187,7 +196,10 @@ and consistently performs better than vanilla Oliphaunt.
 
 WASIX extensions are exact package artifacts. The base runtime does not include
 optional extension payloads. Applications select only the extension packages
-they use.
+they use. Extension selection is runtime configuration: when reopening a
+`Directory` database whose catalog uses an extension, select that extension on
+the new builder as well so its runtime files are available before PostgreSQL
+starts.
 
 ## Docs
 

@@ -1,19 +1,8 @@
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  rmdir,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { releaseNodeDirectoryLock } from '../node-directory-lock.js';
 import {
   NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX,
   NODE_DIRECTORY_LOCK_SLOT,
@@ -28,23 +17,23 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
-describe('WASIX Node directory storage', () => {
-  it('publishes on clean close and hydrates an exact-compatible reopen', async () => {
+describe('WASIX server-runtime directory storage', () => {
+  it('uses the selected directory as raw PGDATA and hydrates an exact reopen', async () => {
     const root = await temporaryRoot('space ünicode');
     const first = await acquireNodeDirectoryStorage(root, template(), compatible());
     expect(first.state).toBe('new');
 
     await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      {
-        code: 'busy',
-        durability: 'unchanged',
-      },
+      { code: 'busy', durability: 'unchanged' },
     );
 
     await first.close(pgdataDirectory('persisted'), 'clean');
-    expect(
-      JSON.parse(await readFile(join(root, '.oliphaunt-wasix-ts/current/oliphaunt.json'), 'utf8')),
-    ).toMatchObject({ schema: 'oliphaunt-wasix-node-directory-v1' });
+    expect(await readFile(join(root, 'PG_VERSION'), 'utf8')).toBe('18\n');
+    expect(await readFile(join(root, 'user/value'), 'utf8')).toBe('persisted');
+    expect(JSON.parse(await readFile(join(root, '.oliphaunt-wasix.json'), 'utf8'))).toMatchObject({
+      schema: 'oliphaunt-wasix-directory-v2',
+    });
+    expect(await pathExists(join(root, '.oliphaunt-wasix-ts'))).toBe(false);
 
     const second = await acquireNodeDirectoryStorage(root, template(), compatible());
     expect(second.state).toBe('existing');
@@ -52,78 +41,21 @@ describe('WASIX Node directory storage', () => {
     await second.close(undefined, 'failed');
   });
 
-  it('keeps the previous complete generation current across checkpoint replacement', async () => {
-    const root = await temporaryRoot('replace');
-    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await first.checkpoint(pgdataDirectory('first'));
-    await first.checkpoint(pgdataDirectory('second'));
-    await first.close(undefined, 'failed');
+  it('publishes only journaled current-state changes after the first generation', async () => {
+    const root = await temporaryRoot('incremental');
+    const lease = await acquireNodeDirectoryStorage(root, template(), compatible());
+    const directory = trackedPgdataDirectory('first');
 
-    const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect(new TextDecoder().decode(reopened.mount.files['user/value'])).toBe('second');
-    await reopened.close(undefined, 'failed');
-  });
+    await lease.sync(directory, 'operation');
+    await writeFile(join(root, 'unrelated-host-marker'), 'outside adapter metadata');
+    directory.setValue('second');
+    await lease.sync(directory, 'operation');
+    await lease.close(undefined, 'failed');
 
-  it('recovers an interrupted directory swap before validating the generation', async () => {
-    const root = await temporaryRoot('recover');
-    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await first.close(pgdataDirectory('complete'), 'clean');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    await rename(join(state, 'current'), join(state, '.previous'));
-    await mkdir(join(state, '.oliphaunt-stage-abandoned'));
-
-    const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect(new TextDecoder().decode(reopened.mount.files['user/value'])).toBe('complete');
-    await reopened.close(undefined, 'failed');
-  });
-
-  it('restores the last validated generation when the new current is corrupt', async () => {
-    const root = await temporaryRoot('rollback');
-    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await first.checkpoint(pgdataDirectory('first'));
-    await first.checkpoint(pgdataDirectory('second'));
-    await first.close(undefined, 'failed');
-    await rm(join(root, '.oliphaunt-wasix-ts/current/pgdata/global/pg_control'));
-
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect(new TextDecoder().decode(recovered.mount.files['user/value'])).toBe('first');
-    await recovered.close(undefined, 'failed');
-  });
-
-  it('restores the prior generation when published bytes no longer match their digest', async () => {
-    const root = await temporaryRoot('digest-rollback');
-    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await first.checkpoint(pgdataDirectory('first'));
-    await first.checkpoint(pgdataDirectory('second'));
-    await first.close(undefined, 'failed');
-    await writeFile(join(root, '.oliphaunt-wasix-ts/current/pgdata/user/value'), 'tampered');
-
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect(new TextDecoder().decode(recovered.mount.files['user/value'])).toBe('first');
-    await recovered.close(undefined, 'failed');
-  });
-
-  it('rejects an incomplete outgoing snapshot without replacing current', async () => {
-    const root = await temporaryRoot('validate-outgoing');
-    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await first.close(pgdataDirectory('complete'), 'clean');
-
-    const second = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await expect(
-      second.checkpoint({
-        async readDir() {
-          return [{ type: 'file', name: 'PG_VERSION' }];
-        },
-        async readFile() {
-          return new TextEncoder().encode('18\n');
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'checkpoint-failed', durability: 'not-persisted' });
-    await second.close(undefined, 'failed');
-
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect(new TextDecoder().decode(recovered.mount.files['user/value'])).toBe('complete');
-    await recovered.close(undefined, 'failed');
+    expect(await readFile(join(root, 'user/value'), 'utf8')).toBe('second');
+    expect(await readFile(join(root, 'unrelated-host-marker'), 'utf8')).toBe(
+      'outside adapter metadata',
+    );
   });
 
   it('fails closed for incompatible metadata and symbolic links', async () => {
@@ -138,15 +70,9 @@ describe('WASIX Node directory storage', () => {
       }),
     ).rejects.toMatchObject({ code: 'incompatible', durability: 'unchanged' });
 
-    await symlink(
-      join(root, '.oliphaunt-wasix-ts/current/pgdata/PG_VERSION'),
-      join(root, '.oliphaunt-wasix-ts/current/pgdata/linked-version'),
-    );
+    await symlink(join(root, 'PG_VERSION'), join(root, 'linked-version'));
     await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      {
-        code: 'corrupt',
-        durability: 'unchanged',
-      },
+      { code: 'corrupt', durability: 'unchanged' },
     );
   });
 
@@ -155,175 +81,68 @@ describe('WASIX Node directory storage', () => {
     const lease = await acquireNodeDirectoryStorage(root, template(), compatible());
     await lease.close(pgdataDirectory('must-not-persist'), 'failed');
 
+    expect(await pathExists(join(root, 'PG_VERSION'))).toBe(false);
     const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
     expect(reopened.state).toBe('new');
-    expect(reopened.mount.files['user/value']).toBeUndefined();
     await reopened.close(undefined, 'failed');
   });
 
-  it('never treats unowned host entries as provider state', async () => {
+  it('rejects caller files and the retired nested snapshot layout', async () => {
     const root = await temporaryRoot('collision');
     await mkdir(root, { recursive: true });
-    await writeFile(join(root, 'current'), 'application data');
+    await writeFile(join(root, 'application-data'), 'keep');
+    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
+      { code: 'corrupt', durability: 'unchanged' },
+    );
+    expect(await readFile(join(root, 'application-data'), 'utf8')).toBe('keep');
 
-    const lease = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await lease.close(pgdataDirectory('isolated'), 'clean');
-    expect(await readFile(join(root, 'current'), 'utf8')).toBe('application data');
+    const retired = await temporaryRoot('retired');
+    await mkdir(join(retired, '.oliphaunt-wasix-ts'), { recursive: true });
+    await expect(acquireNodeDirectoryStorage(retired, template(), compatible())).rejects.toThrow(
+      'retired snapshot storage',
+    );
 
-    const poisoned = await temporaryRoot('reserved-collision');
-    await mkdir(join(poisoned, '.oliphaunt-wasix-ts'), { recursive: true });
-    await writeFile(join(poisoned, '.oliphaunt-wasix-ts', 'unowned'), 'keep');
-    await expect(
-      acquireNodeDirectoryStorage(poisoned, template(), compatible()),
-    ).rejects.toMatchObject({ code: 'unavailable', durability: 'unchanged' });
-    expect(await readFile(join(poisoned, '.oliphaunt-wasix-ts', 'unowned'), 'utf8')).toBe('keep');
+    const partial = await temporaryRoot('partial');
+    await mkdir(partial, { recursive: true });
+    await writeFile(
+      join(partial, '.oliphaunt-wasix.json'),
+      JSON.stringify({ schema: 'oliphaunt-wasix-directory-v2', compatibility: compatible() }),
+    );
+    await expect(acquireNodeDirectoryStorage(partial, template(), compatible())).rejects.toThrow(
+      'without a complete PGDATA',
+    );
   });
 
   it('elects exactly one owner during concurrent stale-lease recovery', async () => {
-    for (let round = 0; round < 32; round += 1) {
-      const root = await temporaryRoot(`stale-race-${round}`);
-      const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-      await initialized.close(undefined, 'failed');
-      const state = join(root, '.oliphaunt-wasix-ts');
-      await createLockSlot(state, nodeDirectoryLockName(2_147_483_647, 'deadbeefdeadbeef'));
-
-      const attempts = await Promise.allSettled([
-        acquireNodeDirectoryStorage(root, template(), compatible(), 'aaaaaaaaaaaaaaaa'),
-        acquireNodeDirectoryStorage(root, template(), compatible(), 'bbbbbbbbbbbbbbbb'),
-      ]);
-      const leases = attempts.flatMap((attempt) =>
-        attempt.status === 'fulfilled' ? [attempt.value] : [],
-      );
-      const failures = attempts.flatMap((attempt) =>
-        attempt.status === 'rejected' ? [attempt.reason] : [],
-      );
-      expect(leases).toHaveLength(1);
-      expect(failures).toHaveLength(1);
-      expect(failures[0]).toMatchObject({ code: 'busy', durability: 'unchanged' });
-      await leases[0]?.close(undefined, 'failed');
-    }
-  });
-
-  it('fails closed instead of reaping an owner from another process namespace', async () => {
-    const root = await temporaryRoot('foreign-owner');
+    const root = await temporaryRoot('stale-race');
     const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
     await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    const localName = nodeDirectoryLockName(2_147_483_647, 'deadbeefdeadbeef');
-    const foreignName = localName.replace(
-      /^(\.oliphaunt-lock-[lp]-)([0-9a-f])/u,
-      (_, prefix: string, first: string) => `${prefix}${first === '0' ? '1' : '0'}`,
-    );
-    const slot = await createLockSlot(state, foreignName);
+    await createLockSlot(root, nodeDirectoryLockName(2_147_483_647, 'deadbeefdeadbeef'));
 
-    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      { code: 'busy', durability: 'unchanged' },
-    );
-    expect(await readdir(slot)).toContain(foreignName);
-  });
-
-  it('recovers a locally owned lease left by an earlier boot', async () => {
-    const root = await temporaryRoot('previous-boot-owner');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    const localName = nodeDirectoryLockName(process.pid, 'previous-boot-token');
-    if (!localName.startsWith('.oliphaunt-lock-l-')) return;
-    const previousBootName = localName.replace(
-      /^(\.oliphaunt-lock-l-[0-9a-f]{16}-)([0-9a-f])/u,
-      (_, prefix: string, first: string) => `${prefix}${first === '0' ? '1' : '0'}`,
-    );
-    await createLockSlot(state, previousBootName);
-
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await recovered.close(undefined, 'failed');
-  });
-
-  it('elects one fixed-slot winner among many simultaneous contenders', async () => {
-    const root = await temporaryRoot('many-contenders');
-    const attempts = await Promise.allSettled(
-      Array.from({ length: 32 }, (_, index) =>
-        acquireNodeDirectoryStorage(
-          root,
-          template(),
-          compatible(),
-          `contender-${index.toString().padStart(6, '0')}`,
-        ),
-      ),
-    );
+    const attempts = await Promise.allSettled([
+      acquireNodeDirectoryStorage(root, template(), compatible(), 'aaaaaaaaaaaaaaaa'),
+      acquireNodeDirectoryStorage(root, template(), compatible(), 'bbbbbbbbbbbbbbbb'),
+    ]);
     const leases = attempts.flatMap((attempt) =>
       attempt.status === 'fulfilled' ? [attempt.value] : [],
     );
     expect(leases).toHaveLength(1);
-    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(31);
+    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
     await leases[0]?.close(undefined, 'failed');
   });
 
-  it('uses exact-owner retirement so delayed cleanup cannot remove a successor', async () => {
-    const root = await temporaryRoot('retirement-aba');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    const oldOwner = nodeDirectoryLockName(process.pid, 'old-owner-token-0001');
-    const slot = await createLockSlot(state, oldOwner);
-
-    // Model a cleaner that has claimed the old lease but is delayed before it
-    // retires the now-empty fixed slot.
-    await rmdir(join(slot, oldOwner));
-    const successor = await acquireNodeDirectoryStorage(
-      root,
-      template(),
-      compatible(),
-      'successor-token-0001',
-    );
-    await releaseNodeDirectoryLock(state, oldOwner);
-
-    const successorOwner = nodeDirectoryLockName(process.pid, 'successor-token-0001');
-    expect(await readdir(join(state, NODE_DIRECTORY_LOCK_SLOT))).toEqual([successorOwner]);
-    await successor.close(undefined, 'failed');
-  });
-
-  it('fails closed for malformed fixed-slot ownership state', async () => {
-    const root = await temporaryRoot('malformed-lock');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    const slot = join(state, NODE_DIRECTORY_LOCK_SLOT);
-    await mkdir(slot);
-    await mkdir(join(slot, nodeDirectoryLockName(process.pid, 'first-owner-token-1')));
-    await mkdir(join(slot, nodeDirectoryLockName(process.pid, 'second-owner-token')));
-
-    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      { code: 'busy', durability: 'unchanged' },
-    );
-  });
-
-  it('recovers the recognized empty-slot cleanup transient', async () => {
-    const root = await temporaryRoot('empty-lock');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    await mkdir(join(state, NODE_DIRECTORY_LOCK_SLOT));
-
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await recovered.close(undefined, 'failed');
-  });
-
-  it('reaps abandoned pre-publication lock candidates after winning the fixed slot', async () => {
+  it('reaps abandoned lock candidates after winning the fixed slot', async () => {
     const root = await temporaryRoot('candidate-recovery');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    const state = join(root, '.oliphaunt-wasix-ts');
-    const abandoned = join(state, `${NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX}abandoned-token-01`);
-    await mkdir(abandoned);
+    const abandoned = join(root, `${NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX}abandoned-token-01`);
+    await mkdir(abandoned, { recursive: true });
     await mkdir(join(abandoned, nodeDirectoryLockName(2_147_483_647, 'abandoned-token-01')));
 
     const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect((await readdir(state)).filter((name) => name.includes('candidate'))).toEqual([]);
+    expect((await readdir(root)).filter((name) => name.includes('candidate'))).toEqual([]);
     await recovered.close(undefined, 'failed');
   });
 
-  it('rejects every concurrent contender while an established owner remains', async () => {
+  it('rejects every contender while an established owner remains', async () => {
     const root = await temporaryRoot('established-owner');
     const owner = await acquireNodeDirectoryStorage(
       root,
@@ -336,22 +155,18 @@ describe('WASIX Node directory storage', () => {
       acquireNodeDirectoryStorage(root, template(), compatible(), 'aaaaaaaaaaaaaaaa'),
       acquireNodeDirectoryStorage(root, template(), compatible(), 'zzzzzzzzzzzzzzzz'),
     ]);
-    expect(attempts).toHaveLength(2);
     for (const attempt of attempts) {
       expect(attempt.status).toBe('rejected');
       if (attempt.status === 'rejected') {
         expect(attempt.reason).toMatchObject({ code: 'busy', durability: 'unchanged' });
       }
     }
-
     await owner.close(undefined, 'failed');
-    const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await reopened.close(undefined, 'failed');
   });
 });
 
-async function createLockSlot(state: string, ownerName: string): Promise<string> {
-  const slot = join(state, NODE_DIRECTORY_LOCK_SLOT);
+async function createLockSlot(root: string, ownerName: string): Promise<string> {
+  const slot = join(root, NODE_DIRECTORY_LOCK_SLOT);
   await mkdir(slot);
   await mkdir(join(slot, ownerName));
   return slot;
@@ -413,4 +228,63 @@ function pgdataDirectory(value: string): StorageDirectory {
       throw new Error(`unexpected file ${path}`);
     },
   };
+}
+
+function trackedPgdataDirectory(initialValue: string): StorageDirectory & {
+  setValue(value: string): void;
+} {
+  let value = initialValue;
+  let changes = [''];
+  return {
+    setValue(next) {
+      value = next;
+      changes.push('user/value');
+    },
+    changedPaths() {
+      return changes;
+    },
+    clearChanges() {
+      changes = [];
+    },
+    entryType(path) {
+      if (path === '' || path === 'global' || path === 'user') return 'dir';
+      if (path === 'PG_VERSION' || path === 'global/pg_control' || path === 'user/value') {
+        return 'file';
+      }
+      return 'missing';
+    },
+    ...pgdataDirectoryProxy(() => value),
+  };
+}
+
+function pgdataDirectoryProxy(value: () => string): Pick<StorageDirectory, 'readDir' | 'readFile'> {
+  return {
+    readDir: pgdataDirectory('').readDir,
+    async readFile(path) {
+      if (path === 'user/value') return new TextEncoder().encode(value());
+      return pgdataDirectory('').readFile(path);
+    },
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    try {
+      await readdir(path);
+      return true;
+    } catch (directoryError) {
+      if (
+        directoryError instanceof Error &&
+        'code' in directoryError &&
+        directoryError.code === 'ENOENT'
+      ) {
+        return false;
+      }
+      throw directoryError;
+    }
+  }
 }

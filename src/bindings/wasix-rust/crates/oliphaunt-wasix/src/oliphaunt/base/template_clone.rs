@@ -15,6 +15,15 @@ pub(super) fn clone_pgdata_template_dir(source_pgdata: &Path, dest_pgdata: &Path
     copy_pgdata_template_dir_inner(source_pgdata, dest_pgdata)
 }
 
+/// Populate an already-created, ownership-locked PGDATA directory without
+/// replacing its inode. The caller has already proved the directory empty.
+pub(super) fn clone_pgdata_template_dir_into_existing(
+    source_pgdata: &Path,
+    dest_pgdata: &Path,
+) -> Result<()> {
+    copy_pgdata_template_dir_inner(source_pgdata, dest_pgdata)
+}
+
 fn copy_pgdata_template_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> Result<()> {
     fs::create_dir_all(dest_pgdata)
         .with_context(|| format!("create directory {}", dest_pgdata.display()))?;

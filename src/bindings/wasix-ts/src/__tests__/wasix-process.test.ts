@@ -297,7 +297,7 @@ function fakeLease(
   return {
     state,
     mount: pgdataMount(),
-    async checkpoint() {},
+    async sync() {},
     close,
   };
 }
@@ -363,7 +363,7 @@ function openOptions(): SerializedOpenOptions {
     username: 'postgres',
     database: 'postgres',
     startupGUCs: {},
-    storage: { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
+    storage: { schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' },
   };
 }
 

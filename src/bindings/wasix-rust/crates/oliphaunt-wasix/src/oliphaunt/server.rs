@@ -354,8 +354,6 @@ impl OliphauntServerBuilder {
         let prepared_database = {
             let _phase = timing::phase("server.storage_prepare");
             let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
-            #[cfg(feature = "extensions")]
-            let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
             run_blocking("oliphaunt-storage-prepare", move || prepare_database(plan))?
         };
         let PreparedDatabase {

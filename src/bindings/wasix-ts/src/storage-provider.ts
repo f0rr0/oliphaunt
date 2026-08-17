@@ -1,7 +1,7 @@
 import type { WasixDirectoryMount } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import type { SerializedWasixStorage } from './storage.js';
-import { validateIndexedDbDatabaseName } from './storage.js';
+import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './storage.js';
 
 export type WasixStorageCompatibility = Readonly<{
   schema: 'oliphaunt-wasix-pgdata-compatibility-v1';
@@ -33,14 +33,21 @@ export type StorageDirectoryEntry = Readonly<{
 export type StorageDirectory = {
   readDir(path: string): Promise<StorageDirectoryEntry[]>;
   readFile(path: string): Promise<Uint8Array>;
+  /** Host-patched mutation journal. Older/untracked directories fall back to a full scan. */
+  changedPaths?(): readonly string[] | Promise<readonly string[]>;
+  clearChanges?(): void | Promise<void>;
+  entryType?(path: string): string | Promise<string>;
 };
 
+export type WasixStorageSyncBoundary = 'operation' | 'checkpoint' | 'close';
+
 export type WasixStorageLease = {
-  /** Whether PGDATA came from the packaged template or a prior checkpoint. */
+  /** Whether PGDATA came from the packaged template or a durable generation. */
   readonly state: 'new' | 'existing';
   /** Initial contents for the worker-owned `/base` Wasmer memory mount. */
   readonly mount: WasixDirectoryMount;
-  checkpoint(directory: StorageDirectory): Promise<void>;
+  /** Publish journaled mutations at a PostgreSQL-safe host boundary. */
+  sync(directory: StorageDirectory, boundary: WasixStorageSyncBoundary): Promise<void>;
   close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void>;
 };
 
@@ -63,7 +70,7 @@ export async function acquireWasixStorage(
   template: WasixDirectoryMount,
   compatibility: WasixStorageCompatibility,
 ): Promise<WasixStorageLease> {
-  if (storage.schema !== 'oliphaunt-wasix-storage-v1') {
+  if (storage.schema !== 'oliphaunt-wasix-storage-v2') {
     throw new WasixStorageError('WASIX storage descriptor has an unsupported schema', {
       code: 'unavailable',
       durability: 'unchanged',
@@ -77,10 +84,15 @@ export async function acquireWasixStorage(
       const { acquireIndexedDbStorage } = await import('./storage/indexed-db-provider.js');
       return acquireIndexedDbStorage(storage.name, template, compatibility);
     }
-    case 'node-directory':
+    case 'opfs': {
+      validateOpfsDatabaseName(storage.name);
+      const { acquireOpfsStorage } = await import('./storage/opfs-provider.js');
+      return acquireOpfsStorage(storage.name, template, compatibility);
+    }
+    case 'directory':
       if (acquireNodeDirectory === undefined) {
         throw new WasixStorageError(
-          'Node directory storage is unavailable in this @oliphaunt/wasix-ts host',
+          'directory storage is unavailable in this @oliphaunt/wasix-ts host',
           {
             code: 'unavailable',
             durability: 'unchanged',
@@ -132,7 +144,7 @@ function memoryLease(template: WasixDirectoryMount): WasixStorageLease {
   return {
     state: 'new',
     mount: template,
-    async checkpoint() {},
+    async sync() {},
     async close() {},
   };
 }

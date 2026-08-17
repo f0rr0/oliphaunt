@@ -96,9 +96,12 @@ side modules remain supported.
    extension carrier's install-contract files into separate `/bin`, `/lib`, `/share`,
    writable `/base`, `/home`, and `/tmp` Wasmer memory mounts. Before `/base` is
    materialized, a storage provider lease supplies either the packaged PGDATA
-   template or an exact-compatible IndexedDB checkpoint. The source-pinned
+   template or an exact-compatible persistent PGDATA. The source-pinned
    host adds ephemeral `/dev/shm` and a real Wasmer `RandomFile` at
-   `/dev/urandom`. Worker execution passes the verified precompiled main module
+   `/dev/urandom`. Its narrow `Directory` mutation journal records successful
+   writes and truncates through already-open descriptors as well as file,
+   directory, remove, and rename paths for every placement and provider.
+   Worker execution passes the verified precompiled main module
    and its original bytes to `runWasix`; direct execution gives the same pair to
    `instantiateOliphauntDirect` and keeps the resulting Store in the caller
    realm.
@@ -119,17 +122,21 @@ side modules remain supported.
    serialized `query`, `execute`, `execProtocolRaw`, `checkpoint`, and
    callback-scoped `transaction` calls through one database contract. The same
    contract supports explicit `close()` and `await using` disposal.
-   `checkpoint` first sends PostgreSQL `CHECKPOINT`, validates the normal pgwire
-   result after `ReadyForQuery`, then asks the provider to publish a complete
-   `/base` snapshot. If a
+   Every successfully completed protocol operation reaches `ReadyForQuery`, then
+   asks a persistent provider to publish only journaled `/base` paths before the
+   Promise resolves. A callback transaction defers publication for `BEGIN`, its
+   body, and `COMMIT`/`ROLLBACK`, then publishes exactly once after the confirmed
+   final boundary. `checkpoint` sends PostgreSQL `CHECKPOINT` without an
+   intermediate publication, validates the normal pgwire result, then runs one
+   checkpoint provider boundary. If a
    PostgreSQL `ERROR` crosses either host boundary, the transport-scoped host
    invokes `PostgresMainLongJmp`, sends and flushes readiness, and continues
    through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
    top-level cleanup as trapping errors.
 7. Worker `close` writes PostgreSQL Terminate, closes stdin, and waits for a
    successful zero process exit. Direct `close` deactivates the embedded
-   lifecycle and runs its atexit exports synchronously. Only a successful close
-   publishes a final persistent snapshot. Every outcome closes the provider,
+   lifecycle and runs its atexit exports synchronously. A successful close
+   publishes any remaining persistent delta. Every outcome closes the provider,
    releases its exclusive database lease, and frees its placement-owned host
    resources.
 
@@ -153,12 +160,11 @@ and explicitly accepts blocking the calling JavaScript thread. Descriptor valida
 archive verification, extension installation, query serialization, close
 semantics, and the memory default are not forked by placement.
 
-IndexedDB remains browser-only and is rejected before a server-runtime worker
-starts. Directory persistence is exposed through matching `storage/node`,
-`storage/bun`, and `storage/deno` entrypoints backed by one portable,
-snapshot-backed provider
-with exclusive path ownership. Direct host filesystem mounts, server mode,
-OPFS, and any fallback to native `@oliphaunt/ts` are intentionally absent.
+IndexedDB and OPFS remain browser-only and are rejected before a server-runtime
+worker starts. Directory persistence is exposed through matching
+`storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
+portable raw-PGDATA provider with exclusive path ownership. No host falls back
+to native `@oliphaunt/ts`.
 
 ## Browser storage boundary
 
@@ -178,24 +184,37 @@ opaque storage descriptor
  PostgreSQL ReadyForQuery / clean exit
           |
           v
- atomic checkpoint + release
+ journaled delta publication + release
 ```
 
-The main package owns the fresh-memory descriptor and default. IndexedDB is a
-selective `./storage/indexed-db` entrypoint whose implementation is loaded only
-when its opaque descriptor reaches the worker. Raw serialized descriptors are
-not accepted from consumers. The internal lease exposes `state`, one initial
-PGDATA mount, `checkpoint(directory)`, and `close(directory, outcome)`; it does
-not own runtime or extension assets.
+The main package owns the fresh-memory descriptor and default. IndexedDB and
+OPFS are selective `./storage/indexed-db` and `./storage/opfs` entrypoints whose
+implementations load only when an opaque descriptor reaches the execution
+realm. Raw serialized descriptors are not accepted from consumers. The
+internal lease exposes `state`, one initial PGDATA mount,
+`sync(directory, boundary)`, and `close(directory, outcome)`; it does not own
+runtime or extension assets.
 
-An IndexedDB checkpoint recursively reads the current Wasmer `Directory`, omits
-process-lifetime `postmaster.pid` and `postmaster.opts`, and stores the complete
-file/directory set with its exact compatibility envelope in a single object
-store transaction. Replacing one database record is the atomic publication
-point: an interrupted or rejected write leaves its preceding generation intact.
-This is deliberately a full snapshot because the current public Wasmer
-JavaScript API provides `readDir` and `readFile`, but no dirty-path list, host
-filesystem mount, metadata-preserving snapshot, or flush hook.
+The source-pinned Wasmer `Directory` exposes a compact current-state mutation
+journal. Write-capable files are wrapped so a PostgreSQL descriptor retained
+across multiple operations records every later write, not only its initial
+open. The shared delta layer drains the journal only at PostgreSQL-safe host
+boundaries, collapses overlapping paths, reads changed files and subtrees, and
+expresses removals explicitly. A provider without that host capability falls
+back to a full scan, so correctness does not depend on the optimization.
+Process-lifetime `postmaster.pid` and `postmaster.opts` never enter persistent
+storage.
+
+Each logical IndexedDB name owns a separate physical IndexedDB database with
+fixed metadata and one row per PGDATA path. Each boundary applies upserts and
+removals in one atomic read-write transaction using the browser's default
+durability policy; an aborted write leaves the preceding generation intact,
+and distinct logical databases do not share an object-store transaction. OPFS
+stores raw PGDATA files plus one
+sidecar identity and publishes WAL first, ordinary files second,
+`global/pg_control` last, then removals. OPFS has native-filesystem recovery
+ordering but no cross-file transaction, so a failed publication reports unknown
+durability instead of claiming that nothing changed.
 
 Compatibility includes the exact runtime product/version, manifest, runtime
 archive, PGDATA template, module, source fingerprint, PostgreSQL version, and
@@ -211,13 +230,13 @@ the single-owner invariant rather than suggesting that one single-user
 PostgreSQL backend represents independent connections. There is no leader
 proxy or multi-tab transaction ownership yet.
 
-Provider acquisition and hydration happen before PostgreSQL starts. Snapshot
+Provider acquisition and hydration happen before PostgreSQL starts. Delta
 publication happens only after pgwire recovery returns `ReadyForQuery`, so
 ordinary PostgreSQL errors retain their existing `PostgresError` identity. A
-host snapshot failure is instead a typed storage error and poisons the live
-handle: committed work may be present in its memory directory while the prior
-IndexedDB generation remains current, so retrying the application operation is
-not known to be safe.
+host persistence failure is instead a typed storage error and poisons the live
+handle: committed work may be present in its memory directory while publication
+failed or was partial, so retrying the application operation is not known to be
+safe.
 
 ## Selective extension descriptor contract
 
@@ -300,7 +319,7 @@ into `lib/host`; direct browser execution imports the host in the caller realm,
 while browser and Node/Bun/Deno direct/worker placements import the same
 package-relative module.
 
-This is not a general backport of WASIX 0.702 to Wasmer 0.601. The eleven patches:
+This is not a general backport of WASIX 0.702 to Wasmer 0.601. The thirteen patches:
 
 1. compile the large module asynchronously, preserve raw module bytes across
    the blocking worker, and launch the configured `WasiEnvBuilder` rather than
@@ -331,7 +350,22 @@ This is not a general backport of WASIX 0.702 to Wasmer 0.601. The eleven patche
     that integrity-pinned dependency graph without lockfile mutation; and
 11. deny guest process replacement, process creation, and thread creation in
     every TypeScript placement while the explicit single-backend contract is
-    active; the separate stdio-pgwire marker remains transport-only.
+    active; the separate stdio-pgwire marker remains transport-only;
+12. remove the retired `wasm32-wasi` target from the pinned Wasmer JS build;
+    and
+13. cache the single-backend profile and use distinct realtime and monotonic
+    JavaScript clocks, while amortizing pending-signal checks across high-volume
+    PostgreSQL timing samples; and
+14. expose a current-state mutation journal whose write-file wrapper records
+    later writes and truncates through PostgreSQL descriptors retained across
+    protocol operations.
+
+The clock specialization is intentionally narrower than a general syscall
+shortcut. Realtime uses the JavaScript epoch clock, monotonic and CPU-time
+compatibility IDs use the host's monotonic clock, synthetic clock offsets
+remain honored after `clock_time_set`, and pending WASIX operations are checked
+at a bounded interval. Other WASIX programs retain the complete upstream
+per-call path.
 
 The exact pairing is qualified for the single-process stdio-pgwire and direct
 Oliphaunt export paths, including repeated PostgreSQL `ERROR` recovery. The
@@ -398,10 +432,10 @@ This binding keeps the following deliberate divergences:
 - selecting an extension also runs its canonical lifecycle while the bootstrap
   superuser is active, whereas PGlite normally stages it for an explicit
   `CREATE EXTENSION`; and
-- IndexedDB uses a full checkpoint/clean-close snapshot rather than PGlite's
-  Emscripten dirty-file synchronization. OPFS, per-query flush, and multi-tab
-  leadership are unsupported without corresponding Wasmer/WASIX host contracts
-  and are not inherited from PGlite's browser filesystem.
+- IndexedDB and OPFS now use source-pinned dirty-path synchronization at each
+  completed protocol operation, matching PGlite's useful durability boundary
+  without importing Emscripten FS. Oliphaunt keeps explicit provider-specific
+  atomicity and exclusive ownership; multi-tab leadership remains unsupported.
 
 The manifest's native `load-order` metadata is retained but is not driven by
 this host. Selection therefore rejects nonempty `load-order` and
@@ -465,7 +499,8 @@ adapters; all support direct and Worker placement without changing the consumer 
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
-continue with `42` on the same handle, checkpoint IndexedDB, and close with a
+continue with `42` on the same handle, persist through IndexedDB operation
+boundaries, run an explicit checkpoint, and close with a
 successful zero exit status. Each server-runtime smoke installs packed release
 candidates into a fresh external project, verifies the runtime selects its conditional export,
 starts the same portable runtime with package-relative assets, activates

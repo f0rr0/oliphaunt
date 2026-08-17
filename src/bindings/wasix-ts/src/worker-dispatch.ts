@@ -1,17 +1,19 @@
+import type { WasixPersistenceMode } from './database.js';
 import {
   type SerializedOpenOptions,
   serializeWorkerError,
   type WorkerRequest,
   type WorkerResponse,
 } from './rpc.js';
+import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import { type WasixHost, WasixProcess } from './wasix-process.js';
 import { prepareTransferableBytes } from './worker-transfer.js';
 
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
 type WorkerSession = Readonly<{
-  exec(input: Uint8Array): Promise<Uint8Array>;
-  checkpoint(): Promise<void>;
+  exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
+  sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   close(): Promise<void>;
 }>;
 
@@ -41,13 +43,13 @@ export function createWorkerSessionDispatcher(
           return;
         case 'exec': {
           const response = prepareTransferableBytes(
-            await requireProcess(process).exec(request.input),
+            await requireProcess(process).exec(request.input, request.persistence),
           );
           respond({ id: request.id, ok: true, value: response.value }, response.transfer);
           return;
         }
-        case 'checkpoint':
-          await requireProcess(process).checkpoint();
+        case 'sync':
+          await requireProcess(process).sync(request.boundary);
           respond({ id: request.id, ok: true });
           return;
         case 'close':

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::extensions;
-use oliphaunt_wasix::{ApplicationData, DatabaseInitialization, DatabaseStorage, OliphauntServer};
+use oliphaunt_wasix::{DatabaseInitialization, DatabaseStorage, OliphauntServer};
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -73,34 +73,11 @@ fn parse_args() -> Result<Args> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--memory" => storage = DatabaseStorage::Memory,
-            "--temporary-directory" => storage = DatabaseStorage::TemporaryDirectory,
             "--directory" => {
                 let value = args
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--directory requires a path"))?;
                 storage = DatabaseStorage::Directory(PathBuf::from(value));
-            }
-            "--application-data" => {
-                let qualifier = args.next().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "--application-data requires QUALIFIER ORGANIZATION APPLICATION"
-                    )
-                })?;
-                let organization = args.next().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "--application-data requires QUALIFIER ORGANIZATION APPLICATION"
-                    )
-                })?;
-                let application = args.next().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "--application-data requires QUALIFIER ORGANIZATION APPLICATION"
-                    )
-                })?;
-                storage = DatabaseStorage::ApplicationData(ApplicationData::new(
-                    qualifier,
-                    organization,
-                    application,
-                ));
             }
             "--packaged-template" => {
                 initialization = DatabaseInitialization::PackagedTemplate;
@@ -166,14 +143,10 @@ fn parse_args() -> Result<Args> {
 
 fn print_usage() {
     eprintln!(
-        "Usage: oliphaunt-wasix-proxy [--memory | --temporary-directory | --directory PATH | --application-data QUALIFIER ORGANIZATION APPLICATION] [--packaged-template | --fresh-initdb | --physical-archive PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--postgres-config NAME=VALUE] [--extension NAME]"
+        "Usage: oliphaunt-wasix-proxy [--memory | --directory PATH] [--packaged-template | --fresh-initdb | --physical-archive PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--postgres-config NAME=VALUE] [--extension NAME]"
     );
     eprintln!("  --memory          Store PGDATA in memory. This is the default");
-    eprintln!("  --temporary-directory");
-    eprintln!("                    Store PGDATA in a host directory removed on exit");
     eprintln!("  --directory PATH  Store PGDATA in a retained host directory");
-    eprintln!("  --application-data QUALIFIER ORGANIZATION APPLICATION");
-    eprintln!("                    Store PGDATA in the platform application-data directory");
     eprintln!("  --packaged-template  Initialize an empty database from the packaged template");
     eprintln!("  --fresh-initdb       Initialize an empty database with WASIX initdb");
     eprintln!("  --physical-archive PATH  Initialize empty storage from a physical backup");

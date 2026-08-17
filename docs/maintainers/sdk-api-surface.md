@@ -114,7 +114,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ## Rust WASIX: oliphaunt-wasix
 
-- `oliphaunt_wasix::ApplicationData`
 - `oliphaunt_wasix::BackendMessage`
 - `oliphaunt_wasix::DataTransferContainer`
 - `oliphaunt_wasix::DatabaseInitialization`

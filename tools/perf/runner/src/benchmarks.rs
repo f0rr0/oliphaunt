@@ -48,7 +48,7 @@ impl SpeedSqlSource {
 pub(super) fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
@@ -214,7 +214,7 @@ pub(super) fn run_speed_direct_benchmark(
 ) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
@@ -302,7 +302,7 @@ pub(super) fn run_speed_server_sqlx_benchmark(
 #[cfg(feature = "legacy-oliphaunt")]
 fn benchmark_oliphaunt_server() -> Result<OliphauntServer> {
     OliphauntServer::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .database("postgres")
         .start()
 }

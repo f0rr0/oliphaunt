@@ -145,8 +145,25 @@ for policy_source in \
   grep -Fq 'oliphaunt_single_backend_requested' "$policy_source"
 done
 grep -Fq 'OLIPHAUNT_WASIX_SINGLE_BACKEND=1' \
-  "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs"
-grep -Fq '.unwrap_or(true)' "$wasmer_wasix_dir/src/syscalls/wasix/mod.rs"
+  "$wasmer_wasix_dir/src/state/env.rs"
+grep -Fq '.unwrap_or(true)' "$wasmer_wasix_dir/src/state/env.rs"
+grep -Fq 'oliphaunt_fast_clock_calls' "$wasmer_wasix_dir/src/state/env.rs"
+grep -Fq 'env.oliphaunt_fast_clock_calls & 0x03ff == 0' \
+  "$wasmer_wasix_dir/src/syscalls/wasi/clock_time_get.rs"
+grep -Fq 'js_sys::Date::now()' "$wasmer_wasix_dir/src/syscalls/wasm.rs"
+grep -Fq 'MONOTONIC_EPOCH.elapsed()' "$wasmer_wasix_dir/src/syscalls/wasm.rs"
+if grep -Fq 'Local::now()' "$wasmer_wasix_dir/src/syscalls/wasm.rs"; then
+  echo "wasix-ts host build: WASM clock regressed to the timezone-aware wall clock" >&2
+  exit 1
+fi
+grep -Fq 'js_name = "changedPaths"' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'js_name = "entryType"' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'record_change(&changes, &from)' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'struct ChangeTrackingFile' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'Pin::new(&mut *self.file).poll_write(cx, buffer)' \
+  "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'conf.truncate || conf.create_new || (conf.create && !existed)' \
+  "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'key != "OLIPHAUNT_WASIX_STDIO_PGWIRE"' "$wasmer_js_dir/src/options.rs"
 if grep -Fq 'key != "OLIPHAUNT_WASIX_SINGLE_BACKEND"' "$wasmer_js_dir/src/options.rs"; then
   echo "wasix-ts host build: direct execution discarded the single-backend invariant" >&2

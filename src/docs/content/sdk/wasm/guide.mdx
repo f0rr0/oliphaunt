@@ -93,10 +93,10 @@ let database = Oliphaunt::builder()
     .open()?;
 ```
 
-`DatabaseStorage::Memory` is the default. `Directory` retains a caller-owned
-host directory, `ApplicationData` resolves platform app-data storage, and
-`TemporaryDirectory` creates a real disposable host directory. Initialization
-is a separate choice through `DatabaseInitialization`.
+`DatabaseStorage::Memory` is the default. `Directory` uses a caller-owned host
+directory; applications resolve temporary or platform app-data paths with
+their preferred host library. Initialization is a separate choice through
+`DatabaseInitialization`.
 
 </Step>
 <Step>

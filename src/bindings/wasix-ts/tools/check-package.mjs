@@ -69,8 +69,14 @@ try {
     'lib/host/wasmer_js_bg.wasm',
     'lib/host/provenance.json',
     'lib/host/LICENSE',
+    'lib/node-fs-durability.js',
     'lib/storage/indexed-db.js',
     'lib/storage/indexed-db.d.ts',
+    'lib/storage/incremental-storage.js',
+    'lib/storage/opfs.js',
+    'lib/storage/opfs.d.ts',
+    'lib/storage/opfs-provider.js',
+    'lib/storage/web-lock.js',
     'lib/storage/bun.js',
     'lib/storage/bun.d.ts',
     'lib/storage/deno.js',
@@ -112,6 +118,7 @@ try {
     './storage/deno',
     './storage/indexed-db',
     './storage/node',
+    './storage/opfs',
   ];
   if (JSON.stringify(Object.keys(exports).sort()) !== JSON.stringify(expectedExports.sort())) {
     throw new Error('WASIX TypeScript package exports do not match its clean public surface');
@@ -145,8 +152,14 @@ try {
   ) {
     throw new Error('WASIX TypeScript package omitted its Deno-only directory adapter');
   }
-  if (exports['./storage/opfs'] !== undefined) {
-    throw new Error('WASIX TypeScript package exposes an unimplemented storage adapter');
+  if (
+    exports['./storage/opfs']?.types !== './lib/storage/opfs.d.ts' ||
+    exports['./storage/opfs']?.default !== './lib/storage/opfs.js' ||
+    Object.keys(exports['./storage/opfs'] ?? {}).some(
+      (condition) => !['types', 'default'].includes(condition),
+    )
+  ) {
+    throw new Error('WASIX TypeScript package omitted its selective OPFS adapter');
   }
   const rootExport = exports['.'];
   if (
