@@ -1,6 +1,11 @@
-import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
+import {
+  WasixDatabaseImpl,
+  type WasixDatabaseSession,
+  type WasixPersistenceMode,
+} from './database.js';
 import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from './rpc.js';
 import { deserializeWorkerError } from './rpc.js';
+import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
 
 type WorkerRequestWithoutId = WorkerRequest extends infer Request
@@ -119,16 +124,18 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     this.#rpc = rpc;
   }
 
-  async exec(input: Uint8Array): Promise<Uint8Array> {
-    const response = await this.#rpc.request({ method: 'exec', input }, [input.buffer]);
+  async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
+    const response = await this.#rpc.request({ method: 'exec', input, persistence }, [
+      input.buffer,
+    ]);
     if (!(response instanceof Uint8Array)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid protocol response');
     }
     return response;
   }
 
-  async checkpoint(): Promise<void> {
-    await this.#rpc.request({ method: 'checkpoint' });
+  async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
+    await this.#rpc.request({ method: 'sync', boundary });
   }
 
   close(): Promise<void> {

@@ -1,6 +1,8 @@
+import type { WasixPersistenceMode } from './database.js';
 import { WasixStorageError } from './errors.js';
 import { PostgresError, type PostgresErrorField } from './query.js';
 import type { SerializedWasixStorage } from './storage.js';
+import type { WasixStorageSyncBoundary } from './storage-provider.js';
 
 export type SerializedAssetSource = string | Uint8Array;
 
@@ -85,8 +87,8 @@ export type WorkerOpenOptions = SerializedOpenOptions;
 
 export type WorkerRequest =
   | { id: number; method: 'open'; options: SerializedOpenOptions }
-  | { id: number; method: 'exec'; input: Uint8Array }
-  | { id: number; method: 'checkpoint' }
+  | { id: number; method: 'exec'; input: Uint8Array; persistence: WasixPersistenceMode }
+  | { id: number; method: 'sync'; boundary: WasixStorageSyncBoundary }
   | { id: number; method: 'close' };
 
 export type SerializedWorkerError =

@@ -1,8 +1,9 @@
 import { rmdirSync, rmSync } from 'node:fs';
-import { lstat, mkdir, open, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { WasixStorageError } from './errors.js';
+import { isNodeError, syncNodeDirectory } from './node-fs-durability.js';
 import {
   NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX,
   NODE_DIRECTORY_LOCK_SLOT,
@@ -37,15 +38,15 @@ export async function acquireNodeDirectoryLock(
     await mkdir(candidate, { mode: 0o700 });
     candidateExists = true;
     await mkdir(join(candidate, ownerName), { mode: 0o700 });
-    await syncDirectory(candidate);
-    await syncDirectory(root);
+    await syncNodeDirectory(candidate);
+    await syncNodeDirectory(root);
 
     for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
       try {
         await rename(candidate, slot);
         candidateExists = false;
         published = true;
-        await syncDirectory(root);
+        await syncNodeDirectory(root);
         await reapLockCandidates(root);
         let released = false;
         return {
@@ -87,7 +88,7 @@ export async function releaseNodeDirectoryLock(root: string, ownerName: string):
     // A successor may atomically replace the now-empty slot. Never remove it.
     if (!isRetiredSlotRace(error)) throw error;
   }
-  await syncDirectory(root);
+  await syncNodeDirectory(root);
 }
 
 /** Last-resort exact-owner cleanup from the caller's worker exit handler. */
@@ -125,7 +126,7 @@ async function reapLockCandidates(root: string): Promise<void> {
     await rm(join(root, entry.name), { force: true, recursive: true });
     removed = true;
   }
-  if (removed) await syncDirectory(root);
+  if (removed) await syncNodeDirectory(root);
 }
 
 async function reapStaleSlot(root: string, slot: string): Promise<boolean> {
@@ -173,7 +174,7 @@ async function reapStaleSlot(root: string, slot: string): Promise<boolean> {
   } catch (error) {
     if (!isRetiredSlotRace(error)) throw busy(root);
   }
-  await syncDirectory(root);
+  await syncNodeDirectory(root);
   return true;
 }
 
@@ -185,20 +186,6 @@ function isRenameContention(error: unknown): boolean {
 
 function isRetiredSlotRace(error: unknown): boolean {
   return ['EEXIST', 'ENOENT', 'ENOTEMPTY'].some((code) => isNodeError(error, code));
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(path, 'r');
-    await handle.sync();
-  } catch (error) {
-    if (!['EINVAL', 'EISDIR', 'ENOTSUP', 'EPERM'].some((code) => isNodeError(error, code))) {
-      throw error;
-    }
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
 }
 
 function busy(root: string): WasixStorageError {
@@ -214,12 +201,6 @@ function unavailable(root: string, detail: string, cause?: unknown): WasixStorag
     durability: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
   });
-}
-
-function isNodeError(error: unknown, code: string): boolean {
-  return (
-    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code
-  );
 }
 
 function describeError(error: unknown): string {

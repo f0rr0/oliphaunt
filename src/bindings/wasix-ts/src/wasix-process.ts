@@ -1,4 +1,5 @@
 import type { WasixDirectoryMount, WasixRuntimeLayout } from './archive.js';
+import type { WasixPersistenceMode } from './database.js';
 import { WasixStorageError } from './errors.js';
 import { type PreparedWasixRuntime, prepareWasixRuntime } from './extensions.js';
 import type { Directory, Instance, WasmerInitOptions } from './host/index.mjs';
@@ -6,7 +7,11 @@ import { assertSuccessfulStartupResponse, PgwireStream, startupPacket } from './
 import { simpleQuery } from './protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import { acquireWasixStorage, type WasixStorageLease } from './storage-provider.js';
+import {
+  acquireWasixStorage,
+  type WasixStorageLease,
+  type WasixStorageSyncBoundary,
+} from './storage-provider.js';
 
 export type WasixHost = Readonly<{
   Directory: typeof Directory;
@@ -184,7 +189,7 @@ export class WasixProcess {
     }
   }
 
-  async exec(input: Uint8Array): Promise<Uint8Array> {
+  async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
     if (this.#closed) {
       throw new Error('Oliphaunt WASIX process is closed');
     }
@@ -192,9 +197,14 @@ export class WasixProcess {
       throw new Error('Oliphaunt WASIX process failed; close this database and open a new one');
     }
     try {
-      return await this.#wire.exchange(input);
+      const response = await this.#wire.exchange(input);
+      if (persistence === 'sync') {
+        await this.#storage.sync(this.#baseDirectory, 'operation');
+      }
+      return response;
     } catch (error) {
       this.#failed = true;
+      if (error instanceof WasixStorageError) throw error;
       const detail = await this.#stderrSnapshot();
       throw new Error(
         `${describeError(error)}; this database can no longer be used and must be reopened${detail}`,
@@ -202,7 +212,7 @@ export class WasixProcess {
     }
   }
 
-  async checkpoint(): Promise<void> {
+  async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
     if (this.#closed) {
       throw new Error('Oliphaunt WASIX process is closed');
     }
@@ -210,16 +220,16 @@ export class WasixProcess {
       throw new Error('Oliphaunt WASIX process failed; close this database and open a new one');
     }
     try {
-      await this.#storage.checkpoint(this.#baseDirectory);
+      await this.#storage.sync(this.#baseDirectory, boundary);
     } catch (error) {
       // The preceding PostgreSQL CHECKPOINT may already include committed
       // application work. Do not allow another query or encourage an unsafe
-      // retry after the atomic host snapshot failed to publish.
+      // retry after the host delta failed to publish.
       this.#failed = true;
       if (error instanceof WasixStorageError) {
         throw error;
       }
-      throw new WasixStorageError(`WASIX PGDATA checkpoint failed: ${describeError(error)}`, {
+      throw new WasixStorageError(`WASIX PGDATA ${boundary} failed: ${describeError(error)}`, {
         code: 'checkpoint-failed',
         durability: 'unknown',
         cause: error,
@@ -379,7 +389,9 @@ function compareDirectoryDepth(left: string, right: string): number {
 
 /** @internal PostgreSQL argv shared by both execution placements. */
 export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
-  const args = ['--single', '-F', '-O', '-j'];
+  const args = ['--single'];
+  if (options.storage.kind === 'memory') args.push('-F');
+  args.push('-O', '-j');
   const startupGUCs = { ...options.startupGUCs };
   for (const [configuredName, configuredValue] of Object.entries(startupGUCs)) {
     const managed = Object.entries(SINGLE_BACKEND_GUCS).find(

@@ -16,6 +16,26 @@ export type StoredDatabase = {
   snapshot: StoredSnapshot;
 };
 
+/** A current-state delta. Deletions and upserts are committed as one boundary. */
+export type StorageDelta = {
+  directories: string[];
+  files: { path: string; bytes: Uint8Array }[];
+  deleted: string[];
+};
+
+export type StorageEntryType = 'dir' | 'file';
+
+export function splitStorageDeltaDeletes(delta: StorageDelta): {
+  replacements: string[];
+  removals: string[];
+} {
+  const upserts = new Set([...delta.directories, ...delta.files.map(({ path }) => path)]);
+  return {
+    replacements: delta.deleted.filter((path) => upserts.has(path)),
+    removals: delta.deleted.filter((path) => !upserts.has(path)),
+  };
+}
+
 export type SnapshotErrorContext = Readonly<{
   label: string;
   corrupt(detail: string, cause?: unknown): WasixStorageError;
@@ -54,6 +74,86 @@ export async function snapshotStorageDirectory(
     directories,
     files,
   };
+}
+
+/**
+ * Read only journaled PGDATA paths, falling back to a complete snapshot when
+ * the host does not expose mutation tracking or no durable generation exists.
+ */
+export async function snapshotStorageDelta(
+  directory: StorageDirectory,
+  persistedEntries: ReadonlyMap<string, StorageEntryType>,
+  forceFull = false,
+): Promise<StorageDelta> {
+  if (forceFull || directory.changedPaths === undefined || directory.entryType === undefined) {
+    const snapshot = await snapshotStorageDirectory(directory);
+    const current = new Map<string, StorageEntryType>([
+      ...snapshot.directories.map((path) => [path, 'dir'] as const),
+      ...snapshot.files.map(({ path }) => [path, 'file'] as const),
+    ]);
+    return {
+      directories: snapshot.directories,
+      files: snapshot.files,
+      deleted: [...persistedEntries]
+        .filter(([path, type]) => current.get(path) !== type)
+        .map(([path]) => path)
+        .sort(comparePathDepthDescending),
+    };
+  }
+
+  const touched = collapseTouchedPaths(await directory.changedPaths());
+  if (touched.length === 0) {
+    return { directories: [], files: [], deleted: [] };
+  }
+
+  const directories = new Map<string, string>();
+  const files = new Map<string, { path: string; bytes: Uint8Array }>();
+  const current = new Map<string, StorageEntryType>();
+  const inspect = async (path: string): Promise<void> => {
+    if (isVolatilePath(path)) return;
+    const type = await directory.entryType?.(path);
+    if (type === 'missing') return;
+    if (type !== 'dir' && type !== 'file') {
+      throw new Error(`Wasmer cannot persist PGDATA entry ${JSON.stringify(path)} of unknown type`);
+    }
+    if (path.length > 0) current.set(path, type);
+    if (type === 'file') {
+      files.set(path, { path, bytes: (await directory.readFile(path)).slice() });
+      return;
+    }
+    if (path.length > 0) directories.set(path, path);
+    const entries = [...(await directory.readDir(path))].sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+    for (const entry of entries) {
+      validateDirectoryEntryName(entry.name);
+      const child = path.length === 0 ? entry.name : `${path}/${entry.name}`;
+      await inspect(child);
+    }
+  };
+
+  for (const path of touched) await inspect(path);
+  const deleted = [...persistedEntries]
+    .filter(
+      ([path, type]) =>
+        touched.some((root) => pathIsWithin(path, root)) && current.get(path) !== type,
+    )
+    .map(([path]) => path)
+    .sort(comparePathDepthDescending);
+  return {
+    directories: [...directories.keys()].sort(compareDirectoryDepth),
+    files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)),
+    deleted,
+  };
+}
+
+export function applyStorageDeltaToEntries(
+  persistedEntries: Map<string, StorageEntryType>,
+  delta: StorageDelta,
+): void {
+  for (const path of delta.deleted) persistedEntries.delete(path);
+  for (const path of delta.directories) persistedEntries.set(path, 'dir');
+  for (const { path } of delta.files) persistedEntries.set(path, 'file');
 }
 
 export function validateStoredSnapshot(
@@ -174,7 +274,7 @@ function validateSnapshotSemantics(
   }
 }
 
-function validateDirectoryEntryName(name: string): void {
+export function validateDirectoryEntryName(name: string): void {
   if (
     name.length === 0 ||
     name === '.' ||
@@ -215,6 +315,42 @@ function parentPaths(path: string): string[] {
 
 function compareDirectoryDepth(left: string, right: string): number {
   return left.split('/').length - right.split('/').length || left.localeCompare(right);
+}
+
+function collapseTouchedPaths(values: readonly string[]): string[] {
+  const paths = [...new Set(values.map(validateTouchedPath))].sort(compareDirectoryDepth);
+  return paths.filter(
+    (path, index) => !paths.slice(0, index).some((parent) => pathIsWithin(path, parent)),
+  );
+}
+
+function validateTouchedPath(path: string): string {
+  if (path === '') return path;
+  if (typeof path !== 'string' || path.startsWith('/')) {
+    throw new Error(`Wasmer returned an unsafe changed PGDATA path ${JSON.stringify(path)}`);
+  }
+  const segments = path.split('/');
+  if (
+    path.includes('\\') ||
+    path.includes('\0') ||
+    segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) {
+    throw new Error(`Wasmer returned an unsafe changed PGDATA path ${JSON.stringify(path)}`);
+  }
+  return path;
+}
+
+function pathIsWithin(path: string, root: string): boolean {
+  return root.length === 0 || path === root || path.startsWith(`${root}/`);
+}
+
+function isVolatilePath(path: string): boolean {
+  const root = path.split('/')[0];
+  return root !== undefined && VOLATILE_DATABASE_FILES.has(root);
+}
+
+function comparePathDepthDescending(left: string, right: string): number {
+  return right.split('/').length - left.split('/').length || right.localeCompare(left);
 }
 
 function describeError(error: unknown): string {

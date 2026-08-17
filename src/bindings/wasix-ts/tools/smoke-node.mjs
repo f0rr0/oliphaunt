@@ -193,7 +193,7 @@ console.log(JSON.stringify({
   placements: { direct, worker },
   extension: 'pgtap',
   version: direct.version,
-  storage: runtime + '-directory-snapshot',
+  storage: runtime + '-raw-pgdata-delta',
   busy,
   workerPersistedRows,
   directPersistedRows,

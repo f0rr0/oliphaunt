@@ -1,40 +1,47 @@
 import type { WasixDirectoryMount } from '../archive.js';
-import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
+import { WasixStorageError } from '../errors.js';
 import {
   canonicalStorageContract,
-  type StorageDirectory,
   type WasixStorageCompatibility,
   type WasixStorageLease,
 } from '../storage-provider.js';
 import {
   requireRecord,
+  type StorageDelta,
   type StoredSnapshot,
-  snapshotStorageDirectory,
-  snapshotToMount,
   validateStoredSnapshot,
 } from '../storage-snapshot.js';
+import { acquireIncrementalStorage, type ExclusiveStorageLock } from './incremental-storage.js';
+import { acquireExclusiveWebLock } from './web-lock.js';
 
-const DATABASE_NAME = '@oliphaunt/wasix-ts:indexed-db:v1';
+const DATABASE_PREFIX = '@oliphaunt/wasix-ts:indexed-db:v3:';
 const DATABASE_VERSION = 1;
-const DATABASE_STORE = 'databases';
-export type StoredDatabase = {
-  schema: 'oliphaunt-wasix-indexed-db-database-v1';
+const METADATA_STORE = 'metadata';
+const ENTRY_STORE = 'entries';
+const METADATA_KEY = 'database';
+
+type StoredMetadata = {
+  schema: 'oliphaunt-wasix-indexed-db-v3';
   name: string;
   compatibility: WasixStorageCompatibility;
-  snapshot: StoredSnapshot;
 };
 
-export type HeldLock = { release(): Promise<void> };
+type StoredEntry =
+  | { path: string; type: 'dir' }
+  | { path: string; type: 'file'; bytes: Uint8Array };
+
+export type StoredDatabase = StoredMetadata & { entries: StoredEntry[] };
+export type HeldLock = ExclusiveStorageLock;
 
 export type StoredDatabaseStore = {
-  read(name: string): Promise<unknown | undefined>;
-  write(database: StoredDatabase): Promise<void>;
+  read(): Promise<unknown | undefined>;
+  apply(compatibility: WasixStorageCompatibility, delta: StorageDelta): Promise<void>;
   close(): void;
 };
 
 export type IndexedDbStorageBackend = {
   acquireLock(name: string): Promise<HeldLock>;
-  openDatabase(): Promise<StoredDatabaseStore>;
+  openDatabase(name: string): Promise<StoredDatabaseStore>;
 };
 
 export async function acquireIndexedDbStorage(
@@ -52,169 +59,32 @@ export async function acquireIndexedDbStorageWithBackend(
   compatibility: WasixStorageCompatibility,
   backend: IndexedDbStorageBackend,
 ): Promise<WasixStorageLease> {
-  const lock = await backend.acquireLock(name);
-  let database: StoredDatabaseStore | undefined;
-  try {
-    database = await backend.openDatabase();
-    const stored = await database.read(name);
-    if (stored === undefined) {
-      return new IndexedDbStorageLease(name, database, lock, compatibility, 'new', template);
-    }
-    const snapshot = validateStoredDatabase(stored, name, compatibility);
-    return new IndexedDbStorageLease(
-      name,
-      database,
-      lock,
-      compatibility,
-      'existing',
-      snapshotToMount(snapshot),
-    );
-  } catch (error) {
-    let primary: Error =
-      error instanceof WasixStorageError
-        ? error
-        : new WasixStorageError(
-            `could not open IndexedDB storage ${JSON.stringify(name)}: ${describeError(error)}`,
-            { code: 'unavailable', durability: 'unchanged', cause: error },
-          );
-    try {
-      database?.close();
-    } catch (closeError) {
-      primary = composeWasixStorageFailure(
-        primary,
-        'database connection cleanup also failed',
-        closeError,
-      );
-    }
-    try {
-      await lock.release();
-    } catch (releaseError) {
-      throw composeWasixStorageFailure(primary, 'ownership release also failed', releaseError);
-    }
-    throw primary;
-  }
-}
-
-class IndexedDbStorageLease implements WasixStorageLease {
-  readonly state: 'new' | 'existing';
-  readonly mount: WasixDirectoryMount;
-  readonly #name: string;
-  readonly #database: StoredDatabaseStore;
-  readonly #lock: HeldLock;
-  readonly #compatibility: WasixStorageCompatibility;
-  #closed = false;
-  #hasStoredGeneration: boolean;
-
-  constructor(
-    name: string,
-    database: StoredDatabaseStore,
-    lock: HeldLock,
-    compatibility: WasixStorageCompatibility,
-    state: 'new' | 'existing',
-    mount: WasixDirectoryMount,
-  ) {
-    this.#name = name;
-    this.#database = database;
-    this.#lock = lock;
-    this.#compatibility = compatibility;
-    this.state = state;
-    this.mount = mount;
-    this.#hasStoredGeneration = state === 'existing';
-  }
-
-  async checkpoint(directory: StorageDirectory): Promise<void> {
-    if (this.#closed) {
-      throw new WasixStorageError(`IndexedDB storage ${JSON.stringify(this.#name)} is closed`, {
-        code: 'unavailable',
-        durability: 'unchanged',
-      });
-    }
-    try {
-      const snapshot = await snapshotStorageDirectory(directory);
-      await this.#database.write({
-        schema: 'oliphaunt-wasix-indexed-db-database-v1',
-        name: this.#name,
-        compatibility: this.#compatibility,
-        snapshot,
-      });
-      this.#hasStoredGeneration = true;
-    } catch (error) {
-      if (error instanceof WasixStorageError) {
-        throw error;
-      }
-      throw new WasixStorageError(
-        `could not checkpoint IndexedDB storage ${JSON.stringify(this.#name)}: ${describeError(error)}`,
-        { code: 'checkpoint-failed', durability: 'not-persisted', cause: error },
-      );
-    }
-  }
-
-  async close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    let failure: unknown;
-    try {
-      if (outcome === 'clean') {
-        if (directory === undefined) {
-          throw new WasixStorageError(
-            `cannot checkpoint IndexedDB storage ${JSON.stringify(this.#name)} without PGDATA`,
-            { code: 'checkpoint-failed', durability: 'not-persisted' },
-          );
-        }
-        await this.checkpoint(directory);
-      }
-    } catch (error) {
-      failure = error;
-    } finally {
-      this.#closed = true;
-      try {
-        this.#database.close();
-      } catch (error) {
-        const closeFailure = new WasixStorageError(
-          `IndexedDB storage ${JSON.stringify(this.#name)} could not close its database connection`,
-          {
-            code: 'unavailable',
-            durability: this.#hasStoredGeneration ? 'persisted' : 'unchanged',
-            cause: error,
-          },
-        );
-        failure =
-          failure instanceof Error
-            ? composeWasixStorageFailure(
-                failure,
-                'database connection cleanup also failed',
-                closeFailure,
-              )
-            : closeFailure;
-      }
-      try {
-        await this.#lock.release();
-      } catch (error) {
-        const releaseFailure = new WasixStorageError(
-          `IndexedDB storage ${JSON.stringify(this.#name)} closed but its ownership lock could not be released`,
-          {
-            code: 'unavailable',
-            durability: this.#hasStoredGeneration ? 'persisted' : 'unchanged',
-            cause: error,
-          },
-        );
-        failure =
-          failure instanceof Error
-            ? composeWasixStorageFailure(failure, 'ownership release also failed', releaseFailure)
-            : releaseFailure;
-      }
-    }
-    if (failure !== undefined) {
-      throw failure;
-    }
-  }
+  return acquireIncrementalStorage(`IndexedDB storage ${JSON.stringify(name)}`, template, {
+    acquireLock: () => backend.acquireLock(name),
+    async openStore() {
+      const database = await backend.openDatabase(name);
+      return {
+        async read() {
+          const stored = await database.read();
+          return stored === undefined
+            ? undefined
+            : validateStoredDatabase(stored, name, compatibility);
+        },
+        apply: (delta) => database.apply(compatibility, delta),
+        close: () => database.close(),
+      };
+    },
+  });
 }
 
 function browserBackend(): IndexedDbStorageBackend {
   return {
-    acquireLock: acquireExclusiveLock,
-    async openDatabase() {
+    acquireLock: (name) =>
+      acquireExclusiveWebLock(
+        `@oliphaunt/wasix-ts:indexed-db:${name}`,
+        `IndexedDB storage ${JSON.stringify(name)}`,
+      ),
+    async openDatabase(name) {
       const factory = globalThis.indexedDB;
       if (factory === undefined) {
         throw new WasixStorageError('IndexedDB is unavailable in this @oliphaunt/wasix-ts host', {
@@ -222,41 +92,36 @@ function browserBackend(): IndexedDbStorageBackend {
           durability: 'unchanged',
         });
       }
-      const database = await openStorageDatabase(factory);
+      const database = await openStorageDatabase(factory, name);
       return {
-        read: (name) => readStoredDatabase(database, name),
-        write: (storedDatabase) => writeStoredDatabase(database, storedDatabase),
+        read: () => readStoredDatabase(database, name),
+        apply: (compatibility, delta) =>
+          applyStoredDatabaseDelta(database, name, compatibility, delta),
         close: () => database.close(),
       };
     },
   };
 }
 
-/** @internal Exported for deterministic unit coverage of the Wasmer directory boundary. */
-export { snapshotStorageDirectory } from '../storage-snapshot.js';
-
-/** @internal Validate an IndexedDB value before any bytes reach Wasmer. */
+/** @internal Validate IndexedDB rows before any bytes reach Wasmer. */
 export function validateStoredDatabase(
   value: unknown,
   name: string,
   compatibility: WasixStorageCompatibility,
 ): StoredSnapshot {
-  let storedDatabase: Record<string, unknown>;
+  let stored: Record<string, unknown>;
   try {
-    storedDatabase = requireRecord(value, `IndexedDB storage ${JSON.stringify(name)}`);
+    stored = requireRecord(value, `IndexedDB storage ${JSON.stringify(name)}`);
   } catch (error) {
     throw corrupt(name, `has a malformed database record: ${describeError(error)}`, error);
   }
-  if (
-    storedDatabase.schema !== 'oliphaunt-wasix-indexed-db-database-v1' ||
-    storedDatabase.name !== name
-  ) {
+  if (stored.schema !== 'oliphaunt-wasix-indexed-db-v3' || stored.name !== name) {
     throw corrupt(name, 'has an unsupported or mismatched database record');
   }
   let storedCompatibility: Record<string, unknown>;
   try {
     storedCompatibility = requireRecord(
-      storedDatabase.compatibility,
+      stored.compatibility,
       `IndexedDB storage ${JSON.stringify(name)} compatibility`,
     );
   } catch (error) {
@@ -269,24 +134,32 @@ export function validateStoredDatabase(
     throw corrupt(name, `has malformed compatibility metadata: ${describeError(error)}`, error);
   }
   if (storedContract !== canonicalStorageContract(compatibility)) {
-    let storedRuntime: Record<string, unknown>;
-    try {
-      storedRuntime = requireRecord(
-        storedCompatibility.runtime,
-        `IndexedDB storage ${JSON.stringify(name)} runtime compatibility`,
-      );
-    } catch (error) {
-      throw corrupt(name, `has malformed runtime compatibility: ${describeError(error)}`, error);
-    }
-    const requested = `${compatibility.runtime.product}@${compatibility.runtime.version}`;
-    const previous = `${String(storedRuntime.product)}@${String(storedRuntime.version)}`;
     throw new WasixStorageError(
-      `IndexedDB storage ${JSON.stringify(name)} is incompatible: it was checkpointed with ${previous} and extensions ${extensionNames(storedCompatibility.extensions)}, but this open selected ${requested} and extensions ${extensionNames(compatibility.extensions)}`,
+      `IndexedDB storage ${JSON.stringify(name)} is incompatible with the selected runtime or extensions`,
       { code: 'incompatible', durability: 'unchanged' },
     );
   }
+  if (!Array.isArray(stored.entries)) throw corrupt(name, 'has malformed entry rows');
+  const directories: string[] = [];
+  const files: { path: string; bytes: Uint8Array }[] = [];
+  for (const candidate of stored.entries) {
+    let entry: Record<string, unknown>;
+    try {
+      entry = requireRecord(candidate, `IndexedDB storage ${JSON.stringify(name)} entry`);
+    } catch (error) {
+      throw corrupt(name, `contains a malformed entry row: ${describeError(error)}`, error);
+    }
+    if (typeof entry.path !== 'string') throw corrupt(name, 'contains a mismatched entry row');
+    if (entry.type === 'dir') {
+      directories.push(entry.path);
+    } else if (entry.type === 'file' && entry.bytes instanceof Uint8Array) {
+      files.push({ path: entry.path, bytes: entry.bytes });
+    } else {
+      throw corrupt(name, `contains malformed entry ${JSON.stringify(entry.path)}`);
+    }
+  }
   return validateStoredSnapshot(
-    storedDatabase.snapshot,
+    { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
     compatibility.runtime.postgresVersion.split('.')[0] ?? '',
     {
       label: `IndexedDB storage ${JSON.stringify(name)}`,
@@ -295,96 +168,22 @@ export function validateStoredDatabase(
   );
 }
 
-async function acquireExclusiveLock(name: string): Promise<HeldLock> {
-  const locks = (
-    globalThis.navigator as typeof globalThis.navigator & {
-      locks?: {
-        request<T>(
-          name: string,
-          options: { mode: 'exclusive'; ifAvailable: true },
-          callback: (lock: unknown | null) => Promise<T> | T,
-        ): Promise<T>;
-      };
-    }
-  ).locks;
-  if (locks === undefined) {
-    throw new WasixStorageError('IndexedDB storage requires the browser Web Locks API', {
-      code: 'unavailable',
-      durability: 'unchanged',
-    });
-  }
-
-  let releaseHold: (() => void) | undefined;
-  const hold = new Promise<void>((resolve) => {
-    releaseHold = resolve;
-  });
-  let acquisitionSettled = false;
-  let resolveAcquisition: ((acquired: boolean) => void) | undefined;
-  let rejectAcquisition: ((error: unknown) => void) | undefined;
-  const acquired = new Promise<boolean>((resolve, reject) => {
-    resolveAcquisition = resolve;
-    rejectAcquisition = reject;
-  });
-  const request = locks
-    .request(
-      `@oliphaunt/wasix-ts:indexed-db:${name}`,
-      { mode: 'exclusive', ifAvailable: true },
-      async (lock) => {
-        acquisitionSettled = true;
-        if (lock === null) {
-          resolveAcquisition?.(false);
-          return;
-        }
-        resolveAcquisition?.(true);
-        await hold;
-      },
-    )
-    .catch((error) => {
-      if (!acquisitionSettled) {
-        rejectAcquisition?.(error);
-      }
-      throw error;
-    });
-
-  let available: boolean;
-  try {
-    available = await acquired;
-  } catch (error) {
-    void request.catch(() => undefined);
-    throw new WasixStorageError(
-      `could not acquire ownership of IndexedDB storage ${JSON.stringify(name)}: ${describeError(error)}`,
-      { code: 'unavailable', durability: 'unchanged', cause: error },
-    );
-  }
-  if (!available) {
-    await request;
-    throw new WasixStorageError(
-      `IndexedDB storage ${JSON.stringify(name)} is already open in this origin`,
-      { code: 'busy', durability: 'unchanged' },
-    );
-  }
-
-  let released = false;
-  return {
-    async release() {
-      if (released) {
-        return;
-      }
-      released = true;
-      releaseHold?.();
-      await request;
-    },
-  };
+/** @internal Stable physical IndexedDB name for one logical Oliphaunt database. */
+export function indexedDbDatabaseName(name: string): string {
+  return `${DATABASE_PREFIX}${name}`;
 }
 
-function openStorageDatabase(factory: IDBFactory): Promise<IDBDatabase> {
+function openStorageDatabase(factory: IDBFactory, name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(DATABASE_NAME, DATABASE_VERSION);
+    const request = factory.open(indexedDbDatabaseName(name), DATABASE_VERSION);
     let settled = false;
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(DATABASE_STORE)) {
-        database.createObjectStore(DATABASE_STORE, { keyPath: 'name' });
+      if (!database.objectStoreNames.contains(METADATA_STORE)) {
+        database.createObjectStore(METADATA_STORE);
+      }
+      if (!database.objectStoreNames.contains(ENTRY_STORE)) {
+        database.createObjectStore(ENTRY_STORE, { keyPath: 'path' });
       }
     };
     request.onerror = () => {
@@ -393,12 +192,15 @@ function openStorageDatabase(factory: IDBFactory): Promise<IDBDatabase> {
     };
     request.onblocked = () => {
       settled = true;
-      reject(new Error('IndexedDB schema upgrade is blocked by another page'));
+      reject(
+        new Error(
+          `IndexedDB schema creation for ${JSON.stringify(name)} is blocked by another page`,
+        ),
+      );
     };
     request.onsuccess = () => {
-      if (settled) {
-        request.result.close();
-      } else {
+      if (settled) request.result.close();
+      else {
         settled = true;
         resolve(request.result);
       }
@@ -409,21 +211,59 @@ function openStorageDatabase(factory: IDBFactory): Promise<IDBDatabase> {
 export async function readStoredDatabase(
   database: IDBDatabase,
   name: string,
-): Promise<unknown | undefined> {
-  const transaction = database.transaction(DATABASE_STORE, 'readonly');
+): Promise<StoredDatabase | undefined> {
+  const transaction = database.transaction([METADATA_STORE, ENTRY_STORE], 'readonly');
   const complete = transactionComplete(transaction);
-  const request = transaction.objectStore(DATABASE_STORE).get(name);
-  const result = await requestValue(request);
-  await complete;
-  return result;
+  const metadataRequest = transaction.objectStore(METADATA_STORE).get(METADATA_KEY);
+  const entriesRequest = transaction.objectStore(ENTRY_STORE).getAll();
+  let metadata: unknown;
+  let entries: unknown[];
+  try {
+    [metadata, entries] = await Promise.all([
+      requestValue(metadataRequest),
+      requestValue(entriesRequest),
+    ]);
+    await complete;
+  } catch (error) {
+    // Observe the transaction promise even when an individual request fails;
+    // otherwise its later abort becomes an unhandled rejection in the host.
+    await complete.catch(() => undefined);
+    throw error;
+  }
+  if (metadata === undefined) {
+    if (entries.length > 0) throw corrupt(name, 'contains entries without compatibility metadata');
+    return undefined;
+  }
+  return { ...(metadata as StoredMetadata), entries: entries as StoredEntry[] };
 }
 
-export async function writeStoredDatabase(
+export async function applyStoredDatabaseDelta(
   database: IDBDatabase,
-  storedDatabase: StoredDatabase,
+  name: string,
+  compatibility: WasixStorageCompatibility,
+  delta: StorageDelta,
 ): Promise<void> {
-  const transaction = database.transaction(DATABASE_STORE, 'readwrite');
-  transaction.objectStore(DATABASE_STORE).put(storedDatabase);
+  const transaction = database.transaction([METADATA_STORE, ENTRY_STORE], 'readwrite');
+  transaction.objectStore(METADATA_STORE).put(
+    {
+      schema: 'oliphaunt-wasix-indexed-db-v3',
+      name,
+      compatibility,
+    } satisfies StoredMetadata,
+    METADATA_KEY,
+  );
+  const entries = transaction.objectStore(ENTRY_STORE);
+  for (const path of delta.deleted) entries.delete(path);
+  for (const path of delta.directories) {
+    entries.put({ path, type: 'dir' } satisfies StoredEntry);
+  }
+  for (const { path, bytes } of delta.files) {
+    entries.put({
+      path,
+      type: 'file',
+      bytes,
+    } satisfies StoredEntry);
+  }
   await transactionComplete(transaction);
 }
 
@@ -442,22 +282,6 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
     transaction.onabort = () =>
       reject(transaction.error ?? new Error('IndexedDB transaction aborted'));
   });
-}
-
-function extensionNames(value: unknown): string {
-  if (!Array.isArray(value)) {
-    return '[invalid metadata]';
-  }
-  const names = value.map((entry) => {
-    if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-      const sqlName = (entry as Record<string, unknown>).sqlName;
-      if (typeof sqlName === 'string') {
-        return sqlName;
-      }
-    }
-    return '[invalid]';
-  });
-  return `[${names.join(', ')}]`;
 }
 
 function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {

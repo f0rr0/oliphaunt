@@ -139,8 +139,6 @@ impl OliphauntBuilder {
         postgres_config.validate()?;
         self.startup_config.validate()?;
         let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
-        #[cfg(feature = "extensions")]
-        let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
         let prepared = prepare_database(plan)?;
         #[cfg(feature = "extensions")]
         {

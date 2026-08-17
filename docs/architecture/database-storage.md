@@ -17,7 +17,7 @@ or initialization policy.
 | Temporary directory | Native process/runtime lifetime | SDK | Native |
 | Directory | Until the application removes it | Application | Never |
 | Application data | Until the application removes it | Application | Never |
-| IndexedDB | Until the origin removes it | Application/origin | Never |
+| IndexedDB / OPFS | Until the origin removes it | Application/origin | Never |
 
 Native SDKs default to an SDK-owned temporary directory because native
 PostgreSQL requires a real PGDATA directory. WASIX SDKs default to a true
@@ -49,21 +49,22 @@ configuration schema.
 | Swift | `.temporaryDirectory` | `.directory(url)` |
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
 | React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
-| Rust WASIX | `DatabaseStorage::Memory` | `Directory` or `ApplicationData` |
-| TypeScript WASIX | omitted `storage` | `indexedDB(name)` in browsers or `directory(path)` on Node, Bun, and Deno |
+| Rust WASIX | `DatabaseStorage::Memory` | `DatabaseStorage::Directory(path)` |
+| TypeScript WASIX | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, and Deno |
 
 The React Native `applicationData` case is intentional. JavaScript has no
 portable API for constructing an iOS/Android app-sandbox path, so the native
 adapter resolves one portable name. Swift and Kotlin callers already have URL
-and File APIs and do not need a second path abstraction. Rust WASIX retains the
-idiomatic `directories` project identity for host applications.
+and File APIs and do not need a second path abstraction. Rust WASIX callers
+likewise resolve temporary or application-data paths with their preferred host
+crate and pass the result through `Directory(path)`.
 
 TypeScript WASIX does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
-Node, Bun, and Deno worker-thread hosts use the same memory default and
-selectively expose snapshot-backed directory providers. Those providers hydrate Wasmer memory and
-publishes complete generations on checkpoint/clean close; it is not described
-as a direct host mount. Portable `@oliphaunt/wasix-ts` and native
+hosts use the same memory default and selectively expose delta-backed browser
+or raw-directory providers. Those providers hydrate Wasmer memory and publish
+journaled changes at PostgreSQL-safe boundaries; they are not described as
+direct guest mounts. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
@@ -89,34 +90,39 @@ Restore uses `destination`, not `root`. A restore destination is an external
 filesystem location receiving a backup artifact; it is not an open database's
 storage selector. Replacement must remain explicit.
 
-## WASIX snapshot contract
+## WASIX persistence contract
 
 `@oliphaunt/wasix-ts` follows the useful parts of PGlite's filesystem model:
 memory is the zero-configuration default, and host persistence is an explicit,
-selectively imported filesystem adapter. PGlite's IndexedDB layer
-loads files into memory and flushes changed whole files after queries. Oliphaunt
-currently publishes one complete PGDATA snapshot atomically on
-`checkpoint()` and clean `close()` because Wasmer's browser `Directory` API does
-not expose a dirty-file feed.
+selectively imported filesystem adapter. A source-pinned Wasmer mutation
+journal lets the adapters publish only changed PGDATA paths. Ordinary protocol
+operations publish after `ReadyForQuery`; callback transactions defer their
+internal publications and publish exactly once after confirmed `COMMIT` or
+`ROLLBACK`. Explicit `checkpoint()` runs PostgreSQL `CHECKPOINT` and then one
+provider boundary.
 
-Node applies the same complete-generation model to an application-owned
-directory. All adapter state lives below `.oliphaunt-wasix-ts`; snapshot files
-and containing directories are synced where the host filesystem supports it,
-then whole generations are renamed at one commit point. The last generation is
-retained until a later open validates the new one.
+Each logical IndexedDB name owns an independent physical IndexedDB database.
+Compatibility metadata and path rows change in one atomic read-write
+transaction using the browser's default durability policy, so an aborted
+publication leaves the prior generation current. OPFS, Node, Bun, and Deno
+expose raw PGDATA layouts and apply WAL before ordinary files,
+`global/pg_control` last, and removals after upserts.
 
 Consequences are part of the public contract:
 
-- one open database owns an IndexedDB database at a time, enforced with the Web
-  Locks API;
+- one open database owns a persistent identity at a time, enforced with Web
+  Locks in browsers or an exact local owner lease for host directories;
+- distinct IndexedDB names use distinct physical databases and never share
+  their metadata/path object-store transaction;
 - a PostgreSQL statement error recovers through `ReadyForQuery` and does not
   poison storage;
-- an IndexedDB load, compatibility, ownership, or snapshot failure is a
+- an IndexedDB load, compatibility, ownership, or publication failure is a
   distinct storage error;
-- a failed snapshot leaves the last complete generation current and poisons the
+- a failed IndexedDB transaction leaves the last complete generation current and poisons the
   live handle, because newer commits may exist only in memory; and
-- browser termination loses changes after the last successful checkpoint or
-  clean close. This is not per-query or crash durability.
+- a successful operation or callback transaction does not settle before its
+  persistence boundary; abrupt termination may lose only work whose boundary
+  had not completed;
 - one fixed atomic Node lock slot owns a local-filesystem directory; its
   published child is the complete unique lease identity, concurrent or
   cross-process opens on one host fail `busy`, proven-dead local owners and
@@ -128,9 +134,9 @@ Consequences are part of the public contract:
 - Node rejects symlinked or foreign adapter state and never treats unrelated
   files in the application directory as generations.
 
-OPFS is intentionally absent. The current host cannot provide a truthful direct
-synchronous mount across supported browsers, and an OPFS-branded copy of the
-same snapshot mechanism would misstate its behavior.
+OPFS is deliberately an asynchronous delta provider rather than a claimed
+synchronous guest mount. Its cross-file failure durability is `unknown`, while
+IndexedDB can report `not-persisted` when its atomic transaction aborts.
 
 ## Capabilities
 

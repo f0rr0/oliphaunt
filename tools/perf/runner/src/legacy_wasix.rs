@@ -1,9 +1,9 @@
 use super::*;
 
 #[cfg(feature = "legacy-oliphaunt")]
-pub(super) fn temporary_wasix_server() -> Result<OliphauntServer> {
+pub(super) fn memory_wasix_server() -> Result<OliphauntServer> {
     OliphauntServer::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .start()
 }
 
@@ -57,7 +57,7 @@ pub(super) fn oliphaunt_wasix_cache_dir() -> Result<PathBuf> {
 pub(super) fn run_direct_select_one() -> Result<()> {
     let visible_started = Instant::now();
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .open()?;
     let result = db.query(
         "SELECT $1::int4 + 1 AS answer",
@@ -76,7 +76,7 @@ pub(super) fn run_direct_select_one() -> Result<()> {
 pub(super) fn run_direct_vector_query() -> Result<()> {
     let visible_started = Instant::now();
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .extension(extensions::VECTOR)
         .open()?;
     let result = db.query(
@@ -97,7 +97,7 @@ pub(super) fn run_direct_vector_query() -> Result<()> {
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_server_sqlx_select_one() -> Result<()> {
     let visible_started = Instant::now();
-    let server = measure_phase("server.start", temporary_wasix_server)?;
+    let server = measure_phase("server.start", memory_wasix_server)?;
     let uri = server.connection_uri();
     let runtime = measure_phase("client.tokio_runtime_create", || {
         tokio::runtime::Builder::new_current_thread()
@@ -135,7 +135,7 @@ pub(super) fn run_server_sqlx_select_one() -> Result<()> {
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_direct_repeated_selects(iterations: usize) -> Result<()> {
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .open()?;
     run_direct_scalar_query(&mut db, 41)?;
     let started = Instant::now();
@@ -154,7 +154,7 @@ pub(super) fn run_direct_repeated_selects(iterations: usize) -> Result<()> {
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_direct_transaction_batch(iterations: usize) -> Result<()> {
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .open()?;
     run_direct_scalar_query(&mut db, 41)?;
     let started = Instant::now();
@@ -181,7 +181,7 @@ pub(super) fn run_direct_transaction_batch(iterations: usize) -> Result<()> {
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_direct_repeated_vector_queries(iterations: usize) -> Result<()> {
     let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::TemporaryDirectory)
+        .storage(DatabaseStorage::Memory)
         .extension(extensions::VECTOR)
         .open()?;
     run_direct_vector_distance_query(&mut db)?;
@@ -223,7 +223,7 @@ fn run_direct_vector_distance_query(db: &mut Oliphaunt) -> Result<()> {
 
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_server_sqlx_single_connection_repeated_queries(iterations: usize) -> Result<()> {
-    let server = measure_phase("server.start", temporary_wasix_server)?;
+    let server = measure_phase("server.start", memory_wasix_server)?;
     let uri = server.connection_uri();
     let runtime = measure_phase("client.tokio_runtime_create", || {
         tokio::runtime::Builder::new_current_thread()
@@ -254,7 +254,7 @@ pub(super) fn run_server_sqlx_single_connection_repeated_queries(iterations: usi
 
 #[cfg(feature = "legacy-oliphaunt")]
 pub(super) fn run_server_sqlx_repeated_connections(iterations: usize) -> Result<()> {
-    let server = measure_phase("server.start", temporary_wasix_server)?;
+    let server = measure_phase("server.start", memory_wasix_server)?;
     let uri = server.connection_uri();
     let runtime = measure_phase("client.tokio_runtime_create", || {
         tokio::runtime::Builder::new_current_thread()
@@ -288,7 +288,7 @@ pub(super) fn run_server_sqlx_vector_single_connection_repeated_queries(
 ) -> Result<()> {
     let server = measure_phase("server.start", || {
         OliphauntServer::builder()
-            .storage(DatabaseStorage::TemporaryDirectory)
+            .storage(DatabaseStorage::Memory)
             .extension(extensions::VECTOR)
             .start()
     })?;
@@ -324,7 +324,7 @@ pub(super) fn run_server_sqlx_vector_single_connection_repeated_queries(
 pub(super) fn run_server_tokio_postgres_single_connection_repeated_queries(
     iterations: usize,
 ) -> Result<()> {
-    let server = measure_phase("server.start", temporary_wasix_server)?;
+    let server = measure_phase("server.start", memory_wasix_server)?;
     let uri = server.connection_uri();
     let runtime = measure_phase("client.tokio_runtime_create", || {
         tokio::runtime::Builder::new_current_thread()

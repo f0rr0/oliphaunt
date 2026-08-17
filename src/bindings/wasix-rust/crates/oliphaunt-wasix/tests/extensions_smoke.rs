@@ -276,6 +276,19 @@ fn vector_extension_direct_smoke() -> Result<()> {
 }
 
 #[test]
+fn lo_extension_direct_memory_smoke() -> Result<()> {
+    let mut db = Oliphaunt::builder().extension(extensions::LO).open()?;
+    let result = db.query(
+        "SELECT count(*)::int AS installed FROM pg_extension WHERE extname = 'lo'",
+        &[],
+        None,
+    )?;
+    assert_eq!(result.rows[0]["installed"], json!(1));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
 fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
     let _trace = TestTrace::new("pure_mountfs_materializes_only_requested_extension_assets");
     let root = tempfile::TempDir::new()?;
@@ -411,30 +424,17 @@ fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> R
 }
 
 #[test]
-fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Result<()> {
-    let _trace =
-        TestTrace::new("vector_extension_install_is_demand_driven_idempotent_and_persistent");
+fn vector_extension_install_is_demand_driven_idempotent_and_reopens_when_selected() -> Result<()> {
+    let _trace = TestTrace::new(
+        "vector_extension_install_is_demand_driven_idempotent_and_reopens_when_selected",
+    );
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .open()?;
-        assert!(
-            !root
-                .path()
-                .join("tmp/oliphaunt/lib/postgresql/vector.so")
-                .exists(),
-            "vector side module should not be installed before it is requested"
-        );
-
         db.enable_extension(extensions::VECTOR)?;
         db.enable_extension(extensions::VECTOR)?;
-        assert!(
-            root.path()
-                .join("tmp/oliphaunt/lib/postgresql/vector.so")
-                .exists(),
-            "vector side module should be installed after enable_extension"
-        );
 
         let installed = db.query(
             "SELECT count(*)::int AS count FROM pg_extension WHERE extname = 'vector'",
@@ -448,6 +448,7 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
     {
         let mut reopened = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .extension(extensions::VECTOR)
             .open()?;
         let result = reopened.query("SELECT '[1,2,3]'::vector::text AS value", &[], None)?;
         assert_eq!(result.rows[0]["value"], json!("[1,2,3]"));
@@ -520,8 +521,28 @@ fn hstore_extension_direct_smoke() -> Result<()> {
 }
 
 #[test]
-fn hstore_extension_reopens_cleanly() -> Result<()> {
-    let _trace = TestTrace::new("hstore_extension_reopens_cleanly");
+fn hstore_extension_dynamic_memory_smoke() -> Result<()> {
+    let mut db = Oliphaunt::open()?;
+    db.enable_extension(extensions::HSTORE)?;
+    let result = db.query("SELECT ('a=>1,b=>2'::hstore -> 'b') AS value", &[], None)?;
+    assert_eq!(result.rows[0]["value"], json!("2"));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn hstore_extension_preload_memory_smoke() -> Result<()> {
+    Oliphaunt::preload_extensions([extensions::HSTORE])?;
+    let mut db = Oliphaunt::builder().extension(extensions::HSTORE).open()?;
+    let result = db.query("SELECT ('a=>1,b=>2'::hstore -> 'b') AS value", &[], None)?;
+    assert_eq!(result.rows[0]["value"], json!("2"));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn hstore_extension_reopens_when_selected() -> Result<()> {
+    let _trace = TestTrace::new("hstore_extension_reopens_when_selected");
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
@@ -539,6 +560,7 @@ fn hstore_extension_reopens_cleanly() -> Result<()> {
     {
         let mut reopened = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .extension(extensions::HSTORE)
             .open()?;
         let result = reopened.query(
             "SELECT data -> 'name' AS name FROM oxide_hstore_restart",
@@ -596,8 +618,8 @@ fn pgcrypto_extension_direct_smoke() -> Result<()> {
 }
 
 #[test]
-fn pgcrypto_extension_reopens_cleanly() -> Result<()> {
-    let _trace = TestTrace::new("pgcrypto_extension_reopens_cleanly");
+fn pgcrypto_extension_reopens_when_selected() -> Result<()> {
+    let _trace = TestTrace::new("pgcrypto_extension_reopens_when_selected");
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Oliphaunt::builder()
@@ -616,6 +638,7 @@ fn pgcrypto_extension_reopens_cleanly() -> Result<()> {
     {
         let mut reopened = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .extension(extensions::PGCRYPTO)
             .open()?;
         let result = reopened.query(
             "SELECT digest_hex = encode(digest('persisted', 'sha256'), 'hex') AS ok \

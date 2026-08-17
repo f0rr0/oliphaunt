@@ -12,7 +12,7 @@ maps the Rust binding by task; it does not describe the separate
 | Area | Public surface | Use it for |
 | --- | --- | --- |
 | Opening | `Oliphaunt`, `OliphauntBuilder`, `OliphauntServerBuilder` | Open a memory database by default or configure storage explicitly |
-| Storage | `DatabaseStorage`, `ApplicationData` | Select memory, a temporary directory, an app-owned directory, or app data |
+| Storage | `DatabaseStorage` | Select memory or a caller-supplied host directory |
 | Initialization | `DatabaseInitialization` | Initialize empty storage from the packaged template, `initdb`, or a same-version physical backup |
 | Runtime assets | asset loader and catalog APIs | Select the released WASIX PostgreSQL runtime artifacts |
 | Capabilities | `EngineCapabilities`, `engine_capabilities()` | Check protocol support for the opened Rust host |

@@ -1,4 +1,4 @@
-import { WasixStorageError } from './errors.js';
+import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
 import { simpleQuery } from './protocol.js';
 import {
   assertSuccessfulQueryResponse,
@@ -8,16 +8,20 @@ import {
   type QueryResult,
   toUint8Array,
 } from './query.js';
+import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { BinaryInput, OliphauntDatabase, OliphauntTransaction } from './types.js';
 
 const transactionPinnedMessage =
   'Oliphaunt WASIX database is pinned to an active transaction; use the callback transaction handle';
 const CLOSE_DEADLINE_MS = 120_000;
 
+/** @internal Host-publication policy for one pgwire exchange. */
+export type WasixPersistenceMode = 'sync' | 'defer';
+
 /** @internal Execution seam shared by direct and worker-backed database handles. */
 export type WasixDatabaseSession = {
-  exec(input: Uint8Array): Promise<Uint8Array>;
-  checkpoint(): Promise<void>;
+  exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
+  sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   close(): Promise<void>;
   /** Force-stop an isolated execution placement when orderly shutdown stalls. */
   abort?(): void | Promise<void>;
@@ -54,11 +58,16 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   #execOwned(bytes: Uint8Array): Promise<Uint8Array> {
     this.#assertAvailable();
     return this.#serialize(async () => {
-      // A checkpoint failure may have been ahead of this operation in the
+      // A persistence failure may have been ahead of this operation in the
       // serialized queue. Recheck here so queued work cannot run against the
       // unpublished, deliberately poisoned generation.
       this.#assertHealthy();
-      return this.#session.exec(bytes);
+      try {
+        return await this.#session.exec(bytes, 'sync');
+      } catch (error) {
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        throw error;
+      }
     });
   }
 
@@ -67,26 +76,10 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     await this.#serialize(async () => {
       this.#assertHealthy();
       // Preserve PostgreSQL error identity: first complete the ordinary pgwire
-      // exchange and parse any ErrorResponse on the main thread. Only a
-      // successful CHECKPOINT asks the worker to publish its PGDATA snapshot.
-      const response = await this.#session.exec(simpleQuery('CHECKPOINT'));
+      // exchange and parse any ErrorResponse on the main thread.
+      const response = await this.#session.exec(simpleQuery('CHECKPOINT'), 'defer');
       assertSuccessfulQueryResponse(response);
-      try {
-        await this.#session.checkpoint();
-      } catch (error) {
-        // PostgreSQL has already committed the CHECKPOINT in the live memory
-        // filesystem. If publication fails, no later query may widen the gap
-        // between that state and the last durable IndexedDB generation.
-        this.#persistenceFailure =
-          error instanceof WasixStorageError
-            ? error
-            : new WasixStorageError('WASIX persistence checkpoint failed', {
-                code: 'checkpoint-failed',
-                durability: 'unknown',
-                cause: error,
-              });
-        throw error;
-      }
+      await this.#syncPersistence('checkpoint');
     });
   }
 
@@ -98,16 +91,41 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     this.#activeTransaction = true;
     const attempt = this.#serialize(async () => {
       this.#assertHealthy();
-      const transaction = new WasixTransactionImpl((input) => this.#session.exec(input));
+      const transaction = new WasixTransactionImpl((input) => this.#session.exec(input, 'defer'));
+      let committed = false;
       try {
         await transaction.execute('BEGIN');
         const result = await body(transaction);
         transaction.seal();
         await transaction.finish('COMMIT');
+        committed = true;
+        await this.#syncPersistence('operation');
         return result;
       } catch (error) {
         transaction.seal();
-        await transaction.finish('ROLLBACK').catch(() => undefined);
+        // COMMIT has already changed PostgreSQL state. A failed publication
+        // must reject and poison the handle, but sending ROLLBACK afterwards
+        // cannot undo the commit and would obscure the actual boundary.
+        if (committed) throw error;
+        let rolledBack = false;
+        try {
+          await transaction.finish('ROLLBACK');
+          rolledBack = true;
+        } catch {
+          // Preserve the callback/BEGIN/COMMIT error as the primary failure,
+          // matching the existing best-effort rollback contract.
+        }
+        if (rolledBack) {
+          try {
+            await this.#syncPersistence('operation');
+          } catch (persistenceError) {
+            throw composeWasixStorageFailure(
+              persistenceError as WasixStorageError,
+              'transaction also failed',
+              error,
+            );
+          }
+        }
         throw error;
       } finally {
         transaction.seal();
@@ -157,13 +175,32 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   #assertHealthy(): void {
     if (this.#persistenceFailure !== undefined) {
       throw new WasixStorageError(
-        'Oliphaunt WASIX database cannot be used after a persistence checkpoint failed; close and reopen it',
+        'Oliphaunt WASIX database cannot be used after a persistence boundary failed; close and reopen it',
         {
           code: this.#persistenceFailure.code,
           durability: this.#persistenceFailure.durability,
           cause: this.#persistenceFailure,
         },
       );
+    }
+  }
+
+  async #syncPersistence(boundary: WasixStorageSyncBoundary): Promise<void> {
+    try {
+      await this.#session.sync(boundary);
+    } catch (error) {
+      const failure =
+        error instanceof WasixStorageError
+          ? error
+          : new WasixStorageError(`WASIX persistence ${boundary} failed`, {
+              code: 'checkpoint-failed',
+              durability: 'unknown',
+              cause: error,
+            });
+      // PostgreSQL may already have completed the operation in the live
+      // filesystem. No later query may widen the gap after publication fails.
+      this.#persistenceFailure = failure;
+      throw failure;
     }
   }
 

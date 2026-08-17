@@ -1,9 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 #[cfg(feature = "tools")]
@@ -21,7 +19,7 @@ use crate::oliphaunt::assets;
 use crate::oliphaunt::backend::{BackendOpenKind, BackendSession};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_bundled_extension_bytes;
-use crate::oliphaunt::base::{DirectoryLock, InstallOutcome, OliphauntPaths};
+use crate::oliphaunt::base::{DirectoryLock, InstallOutcome};
 use crate::oliphaunt::builder::OliphauntBuilder;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::data_dir::{
@@ -46,6 +44,8 @@ use crate::oliphaunt::parse::{
 use crate::oliphaunt::pg_dump::{PgDumpOptions, PgDumpVirtualSocket, dump_direct_sql};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::postgres_mod::PostgresMod;
+#[cfg(feature = "extensions")]
+use crate::oliphaunt::storage::StorageRoot;
 use crate::oliphaunt::storage::{DatabaseInitialization, PgDataStorage};
 use crate::oliphaunt::timing;
 use crate::oliphaunt::types::{
@@ -136,19 +136,14 @@ impl Oliphaunt {
 
     /// Warm the runtime module and bundled AOT artifact cache without opening a database.
     pub fn preload() -> Result<()> {
-        let (temp_dir, paths) = {
-            let _phase = timing::phase("preload.tempdir");
-            OliphauntPaths::with_temp_dir()?
-        };
         {
             let _phase = timing::phase("preload.runtime_module");
-            crate::oliphaunt::base::preload_runtime_module(&paths)?;
+            crate::oliphaunt::base::preload_runtime_module()?;
         }
         {
             let _phase = timing::phase("preload.aot_runtime");
             aot::preload_runtime_artifact()?;
         }
-        drop(temp_dir);
         Ok(())
     }
 
@@ -157,6 +152,7 @@ impl Oliphaunt {
     pub fn preload_extensions(extensions: impl IntoIterator<Item = Extension>) -> Result<()> {
         Self::preload()?;
         let extensions = extensions.into_iter().collect::<Vec<_>>();
+        let runtime_storage = StorageRoot::memory();
         for extension in resolve_extension_set(&extensions)? {
             let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
                 anyhow!(
@@ -164,27 +160,18 @@ impl Oliphaunt {
                     extension.sql_name()
                 )
             })?;
-            let (temp_dir, paths) = {
-                let _phase = timing::phase("preload.extension_tempdir");
-                OliphauntPaths::with_temp_dir()?
-            };
-            {
-                let _phase = timing::phase("preload.extension_runtime_module");
-                crate::oliphaunt::base::preload_runtime_module(&paths)?;
-            }
             {
                 let _phase = timing::phase("preload.extension_archive_install");
-                install_bundled_extension_bytes(&paths, extension.sql_name(), bytes)?;
+                install_bundled_extension_bytes(&runtime_storage, extension.sql_name(), bytes)?;
             }
             {
                 let _phase = timing::phase("preload.extension_side_module");
-                PostgresMod::preload_extension_module_from_paths(&paths, extension)?;
+                PostgresMod::preload_extension_module_from_storage(&runtime_storage, extension)?;
             }
             {
                 let _phase = timing::phase("preload.extension_aot");
                 aot::preload_extension_artifact(extension)?;
             }
-            drop(temp_dir);
         }
         Ok(())
     }
@@ -298,7 +285,11 @@ impl Oliphaunt {
                 extension.sql_name()
             )
         })?;
-        install_bundled_extension_bytes(self.paths(), extension.sql_name(), bytes)?;
+        install_bundled_extension_bytes(
+            self.backend.runtime_storage(),
+            extension.sql_name(),
+            bytes,
+        )?;
         self.backend.preload_extension_module(extension)?;
         for sql in extension_setup_sql(extension) {
             self.exec(&sql, None)?;
@@ -428,9 +419,9 @@ impl Oliphaunt {
         self.backend.capabilities()
     }
 
-    #[cfg(feature = "extensions")]
-    pub(crate) fn paths(&self) -> &OliphauntPaths {
-        self.backend.paths()
+    #[cfg(all(feature = "extensions", test))]
+    pub(crate) fn runtime_storage(&self) -> &StorageRoot {
+        self.backend.runtime_storage()
     }
 
     /// Return debug-build bridge allocation/free counters for ownership tests.
@@ -499,11 +490,9 @@ impl Oliphaunt {
             .with_context(|| format!("quiesce backend before {operation}"))?;
 
         let archive = match self.backend.pgdata_storage() {
-            PgDataStorage::HostDirectory => dump_pgdata_archive(
-                &self.backend.paths().pgdata,
-                self.backend.pgdata_template_root(),
-                format,
-            ),
+            PgDataStorage::HostDirectory(pgdata) => {
+                dump_pgdata_archive(pgdata, self.backend.pgdata_template_root(), format)
+            }
             PgDataStorage::Memory(filesystem) => {
                 dump_virtual_pgdata_archive(filesystem.as_ref(), format)
             }
@@ -697,11 +686,6 @@ impl Oliphaunt {
             self._workspace = None;
         }
         result
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn close_for_template_cache(&mut self) -> Result<()> {
-        self.close_backend()
     }
 
     /// Execute a simple SQL statement that may contain multiple commands.
@@ -1421,25 +1405,19 @@ impl Oliphaunt {
     }
 
     fn handle_blob_input(&mut self, blob: Option<&Vec<u8>>) -> Result<()> {
-        let path = self.dev_blob_path();
         if let Some(bytes) = blob {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create blob directory {}", parent.display())
-                })?;
-            }
-            fs::write(&path, bytes)
-                .with_context(|| format!("write blob input to {}", path.display()))?;
+            self.backend
+                .runtime_storage()
+                .write(Path::new("/dev/blob"), bytes)
+                .context("write blob input to /dev/blob")?;
             self.blob_input_provided = true;
         } else {
             self.blob_input_provided = false;
-            let _ = fs::remove_file(&path);
+            self.backend
+                .runtime_storage()
+                .remove_file_if_exists(Path::new("/dev/blob"))?;
         }
         Ok(())
-    }
-
-    fn dev_blob_path(&self) -> PathBuf {
-        self.backend.paths().runtime_root().join("dev/blob")
     }
 
     fn cleanup_blob(&mut self) -> Result<()> {
@@ -1447,31 +1425,33 @@ impl Oliphaunt {
     }
 
     fn get_written_blob(&mut self) -> Result<Option<Vec<u8>>> {
-        let path = self.dev_blob_path();
-
         if self.blob_input_provided {
             self.blob_input_provided = false;
-            let _ = fs::remove_file(&path);
+            self.backend
+                .runtime_storage()
+                .remove_file_if_exists(Path::new("/dev/blob"))?;
             return Ok(None);
         }
 
-        match fs::read(&path) {
-            Ok(data) => {
+        match self
+            .backend
+            .runtime_storage()
+            .read_optional(Path::new("/dev/blob"))?
+        {
+            Some(data) => {
                 self.blob_input_provided = false;
-                let _ = fs::remove_file(&path);
+                self.backend
+                    .runtime_storage()
+                    .remove_file_if_exists(Path::new("/dev/blob"))?;
                 if data.is_empty() {
                     Ok(None)
                 } else {
                     Ok(Some(data))
                 }
             }
-            Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
-                    self.blob_input_provided = false;
-                    Ok(None)
-                } else {
-                    Err(err).with_context(|| format!("read blob output from {}", path.display()))
-                }
+            None => {
+                self.blob_input_provided = false;
+                Ok(None)
             }
         }
     }

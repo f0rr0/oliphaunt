@@ -1,5 +1,9 @@
 import type { WasixDirectoryMount } from './archive.js';
-import { WasixDatabaseImpl, type WasixDatabaseSession } from './database.js';
+import {
+  WasixDatabaseImpl,
+  type WasixDatabaseSession,
+  type WasixPersistenceMode,
+} from './database.js';
 import { WasixStorageError } from './errors.js';
 import { type PreparedWasixRuntime, prepareWasixRuntime } from './extensions.js';
 import type {
@@ -15,6 +19,7 @@ import {
   acquireWasixStorage,
   canonicalStorageContract,
   type WasixStorageLease,
+  type WasixStorageSyncBoundary,
 } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
 import {
@@ -184,12 +189,17 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
   }
 
-  exec(input: Uint8Array): Promise<Uint8Array> {
+  async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
     this.#assertHealthy();
     try {
-      return Promise.resolve(this.#instance.execProtocolRaw(input));
+      const response = this.#instance.execProtocolRaw(input);
+      if (persistence === 'sync') {
+        await this.#storage.sync(this.#baseDirectory, 'operation');
+      }
+      return response;
     } catch (error) {
       this.#failed = true;
+      if (error instanceof WasixStorageError) throw error;
       return Promise.reject(
         new Error(
           `${describeError(error)}; this database can no longer be used and must be reopened`,
@@ -199,16 +209,16 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
   }
 
-  async checkpoint(): Promise<void> {
+  async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
     this.#assertHealthy();
     try {
-      await this.#storage.checkpoint(this.#baseDirectory);
+      await this.#storage.sync(this.#baseDirectory, boundary);
     } catch (error) {
       this.#failed = true;
       if (error instanceof WasixStorageError) {
         throw error;
       }
-      throw new WasixStorageError(`WASIX PGDATA checkpoint failed: ${describeError(error)}`, {
+      throw new WasixStorageError(`WASIX PGDATA ${boundary} failed: ${describeError(error)}`, {
         code: 'checkpoint-failed',
         durability: 'unknown',
         cause: error,

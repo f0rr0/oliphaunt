@@ -2,7 +2,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use wasmer_wasix::virtual_fs::{self, FileSystem};
@@ -17,46 +17,8 @@ pub enum DatabaseStorage {
     /// A true in-memory WASIX filesystem. No host PGDATA directory is created.
     #[default]
     Memory,
-    /// A host directory allocated for this database and removed with it.
-    TemporaryDirectory,
     /// A caller-owned host directory retained after the database closes.
     Directory(PathBuf),
-    /// A retained directory resolved from the platform application-data path.
-    ApplicationData(ApplicationData),
-}
-
-/// A platform application-data identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplicationData {
-    qualifier: String,
-    organization: String,
-    application: String,
-}
-
-impl ApplicationData {
-    pub fn new(
-        qualifier: impl Into<String>,
-        organization: impl Into<String>,
-        application: impl Into<String>,
-    ) -> Self {
-        Self {
-            qualifier: qualifier.into(),
-            organization: organization.into(),
-            application: application.into(),
-        }
-    }
-
-    pub fn qualifier(&self) -> &str {
-        &self.qualifier
-    }
-
-    pub fn organization(&self) -> &str {
-        &self.organization
-    }
-
-    pub fn application(&self) -> &str {
-        &self.application
-    }
 }
 
 /// How a database is initialized when its storage does not contain a cluster.
@@ -73,22 +35,150 @@ pub enum DatabaseInitialization {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PgDataStorage {
-    HostDirectory,
+pub(crate) enum StorageRoot {
+    HostDirectory(PathBuf),
     Memory(Arc<dyn FileSystem + Send + Sync>),
 }
 
-impl PgDataStorage {
+impl StorageRoot {
+    pub(crate) fn host_directory(path: impl Into<PathBuf>) -> Self {
+        Self::HostDirectory(path.into())
+    }
+
     pub(crate) fn memory() -> Self {
         Self::Memory(Arc::new(virtual_fs::mem_fs::FileSystem::default()))
     }
 
     pub(crate) fn memory_filesystem(&self) -> Option<&Arc<dyn FileSystem + Send + Sync>> {
         match self {
-            Self::HostDirectory => None,
+            Self::HostDirectory(_) => None,
             Self::Memory(filesystem) => Some(filesystem),
         }
     }
+
+    pub(crate) fn is_durable_host_directory(&self) -> bool {
+        matches!(self, Self::HostDirectory(_))
+    }
+
+    #[cfg(all(test, feature = "extensions"))]
+    pub(crate) fn host_path(&self) -> Option<&Path> {
+        match self {
+            Self::HostDirectory(path) => Some(path),
+            Self::Memory(_) => None,
+        }
+    }
+
+    pub(crate) fn create_dir_all(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::HostDirectory(root) => {
+                let path = storage_host_path(root, path)?;
+                std::fs::create_dir_all(&path)
+                    .with_context(|| format!("create storage directory {}", path.display()))
+            }
+            Self::Memory(filesystem) => vfs_create_dir_all(filesystem.as_ref(), path),
+        }
+    }
+
+    pub(crate) fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::HostDirectory(root) => {
+                let path = storage_host_path(root, path)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("create storage directory {}", parent.display())
+                    })?;
+                }
+                std::fs::write(&path, bytes)
+                    .with_context(|| format!("write storage file {}", path.display()))
+            }
+            Self::Memory(filesystem) => vfs_write(filesystem.as_ref(), path, bytes),
+        }
+    }
+
+    #[cfg(feature = "extensions")]
+    pub(crate) fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        match self {
+            Self::HostDirectory(root) => {
+                let path = storage_host_path(root, path)?;
+                std::fs::read(&path)
+                    .with_context(|| format!("read storage file {}", path.display()))
+            }
+            Self::Memory(filesystem) => vfs_read(filesystem.as_ref(), path),
+        }
+    }
+
+    pub(crate) fn read_optional(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+        match self {
+            Self::HostDirectory(root) => {
+                let path = storage_host_path(root, path)?;
+                match std::fs::read(&path) {
+                    Ok(bytes) => Ok(Some(bytes)),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(error) => {
+                        Err(error).with_context(|| format!("read storage file {}", path.display()))
+                    }
+                }
+            }
+            Self::Memory(filesystem) => match filesystem.metadata(path) {
+                Ok(metadata) if metadata.is_file() => vfs_read(filesystem.as_ref(), path).map(Some),
+                Ok(_) | Err(virtual_fs::FsError::EntryNotFound) => Ok(None),
+                Err(error) => {
+                    Err(error).with_context(|| format!("stat virtual file {}", path.display()))
+                }
+            },
+        }
+    }
+
+    pub(crate) fn remove_file_if_exists(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::HostDirectory(root) => {
+                let path = storage_host_path(root, path)?;
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error)
+                        .with_context(|| format!("remove storage file {}", path.display())),
+                }
+            }
+            Self::Memory(filesystem) => vfs_remove_file_if_exists(filesystem.as_ref(), path),
+        }
+    }
+
+    pub(crate) fn is_dir(&self, path: &Path) -> bool {
+        match self {
+            Self::HostDirectory(root) => {
+                storage_host_path(root, path).is_ok_and(|path| path.is_dir())
+            }
+            Self::Memory(filesystem) => filesystem
+                .metadata(path)
+                .is_ok_and(|metadata| metadata.is_dir()),
+        }
+    }
+
+    pub(crate) fn is_file(&self, path: &Path) -> bool {
+        match self {
+            Self::HostDirectory(root) => {
+                storage_host_path(root, path).is_ok_and(|path| path.is_file())
+            }
+            Self::Memory(filesystem) => filesystem
+                .metadata(path)
+                .is_ok_and(|metadata| metadata.is_file()),
+        }
+    }
+}
+
+pub(crate) type PgDataStorage = StorageRoot;
+
+fn storage_host_path(root: &Path, path: &Path) -> Result<PathBuf> {
+    let mut destination = root.to_path_buf();
+    for component in path.components() {
+        match component {
+            std::path::Component::RootDir | std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => destination.push(part),
+            _ => bail!("storage path must stay below its root: {}", path.display()),
+        }
+    }
+    Ok(destination)
 }
 
 static VFS_IO_RUNTIME: OnceLock<Runtime> = OnceLock::new();

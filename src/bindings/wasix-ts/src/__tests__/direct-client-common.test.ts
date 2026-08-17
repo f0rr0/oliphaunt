@@ -114,10 +114,43 @@ describe('direct WASIX session lifecycle', () => {
     await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
       'protocol pump trapped; this database can no longer be used',
     );
-    expect(() => session.exec(Uint8Array.of(2))).toThrow('Oliphaunt WASIX direct database failed');
+    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow(
+      'Oliphaunt WASIX direct database failed',
+    );
     await session.close();
 
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
+  });
+
+  it('defers storage publication only when the caller owns the durability boundary', async () => {
+    const events: string[] = [];
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+    });
+    storage.sync = async (_directory, boundary) => {
+      events.push(`sync:${boundary}`);
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({ events }),
+      fakeDependencies(storage),
+    );
+
+    await session.exec(Uint8Array.of(1), 'defer');
+    await session.exec(Uint8Array.of(2), 'sync');
+    await session.sync('checkpoint');
+    await session.close();
+
+    expect(events).toEqual([
+      'startup',
+      'exec',
+      'exec',
+      'sync:operation',
+      'sync:checkpoint',
+      'close',
+      'storage:clean',
+      'free',
+    ]);
   });
 
   it('preserves typed checkpoint and close storage errors', async () => {
@@ -133,7 +166,7 @@ describe('direct WASIX session lifecycle', () => {
     const storage: WasixStorageLease = {
       state: 'existing',
       mount: pgdataMount(),
-      async checkpoint() {
+      async sync() {
         throw checkpointFailure;
       },
       async close(_directory, outcome) {
@@ -147,7 +180,7 @@ describe('direct WASIX session lifecycle', () => {
       fakeDependencies(storage),
     );
 
-    await expect(session.checkpoint()).rejects.toBe(checkpointFailure);
+    await expect(session.sync('checkpoint')).rejects.toBe(checkpointFailure);
     const failure = await rejection(session.close());
 
     expect(failure).toBe(closeFailure);
@@ -331,7 +364,7 @@ function fakeLease(
   return {
     state,
     mount: pgdataMount(),
-    async checkpoint() {},
+    async sync() {},
     close,
   };
 }
@@ -458,7 +491,7 @@ function openOptions(): SerializedOpenOptions {
     username: 'postgres',
     database: 'postgres',
     startupGUCs: {},
-    storage: { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
+    storage: { schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' },
   };
 }
 

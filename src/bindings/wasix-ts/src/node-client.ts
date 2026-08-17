@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainThread, Worker } from 'node:worker_threads';
 
@@ -28,12 +28,13 @@ export const Oliphaunt: OliphauntClient = {
 };
 
 function requireNodeStorage(options: SerializedOpenOptions): void {
-  if (options.storage.kind === 'indexed-db') {
+  if (options.storage.kind === 'indexed-db' || options.storage.kind === 'opfs') {
+    const provider = options.storage.kind === 'indexed-db' ? 'IndexedDB' : 'OPFS';
     throw new TypeError(
-      `@oliphaunt/wasix-ts IndexedDB storage is browser-only; use memory or the storage/${serverRuntime()} adapter`,
+      `@oliphaunt/wasix-ts ${provider} storage is browser-only; use memory or the storage/${serverRuntime()} adapter`,
     );
   }
-  if (options.storage.kind === 'node-directory') {
+  if (options.storage.kind === 'directory') {
     if (!isMainThread) {
       throw new TypeError(
         `@oliphaunt/wasix-ts ${serverRuntimeName()} directory storage must be opened from the main thread`,
@@ -49,9 +50,9 @@ function requireNodeStorage(options: SerializedOpenOptions): void {
 
 function createNodeWorker(options: SerializedOpenOptions): WasixWorkerPort {
   const storage = options.storage;
-  const ownerToken = storage.kind === 'node-directory' ? storage.ownerToken : undefined;
+  const ownerToken = storage.kind === 'directory' ? storage.ownerToken : undefined;
   const recoverLease =
-    storage.kind === 'node-directory' && ownerToken !== undefined
+    storage.kind === 'directory' && ownerToken !== undefined
       ? () => releaseAbandonedDirectoryLock(storage.path, ownerToken)
       : undefined;
   return nodeWorkerPort(
@@ -67,7 +68,7 @@ function createNodeWorker(options: SerializedOpenOptions): WasixWorkerPort {
 /** Last-resort cleanup when a worker dies before its storage lease can close. */
 function releaseAbandonedDirectoryLock(input: string, ownerToken: string): void {
   const root = resolveNodeDirectoryPath(input);
-  releaseNodeDirectoryLockSync(join(root, '.oliphaunt-wasix-ts'), ownerToken);
+  releaseNodeDirectoryLockSync(root, ownerToken);
 }
 
 function resolveNodeDirectoryPath(input: string): string {

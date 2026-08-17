@@ -177,7 +177,7 @@ export type OliphauntDatabase = {
   execute(sql: string): Promise<Uint8Array>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  /** CHECKPOINT PostgreSQL, then atomically publish the current persistent PGDATA snapshot. */
+  /** CHECKPOINT PostgreSQL, then publish the resulting journaled PGDATA delta. */
   checkpoint(): Promise<void>;
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   close(): Promise<void>;
