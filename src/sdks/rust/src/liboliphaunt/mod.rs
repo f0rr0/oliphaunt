@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn direct_startup_args_include_required_preload_libraries_before_init() {
         let mut config = OpenConfig::native_direct("target/test-roots/native-direct-preload");
-        config.extensions = vec![Extension::PgSearch, Extension::PgSearch];
+        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
         let extensions = config.resolved_extensions().unwrap();
         let args = startup_args(&config, &extensions).unwrap();
         let args = args
@@ -829,10 +829,10 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_search");
+        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_search")
+                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
                 .count(),
             1,
             "preload libraries must be deduplicated before oliphaunt_init"
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn direct_startup_args_omit_preload_when_selected_extensions_do_not_require_it() {
         let config = OpenConfig::native_direct("target/test-roots/native-direct-no-preload");
-        let args = startup_args(&config, &[Extension::Graph]).unwrap();
+        let args = startup_args(&config, &[Extension::Vector]).unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())

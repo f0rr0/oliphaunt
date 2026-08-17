@@ -439,10 +439,6 @@ function generateExtensionCatalog() {
   }
   const catalog = JSON.parse(readText(catalogPath));
   const rows = (catalog.extensions ?? [])
-    .filter((extension) => {
-      const promotion = extension.promotion ?? {};
-      return promotion.stable && promotion.packaged && promotion.promoted;
-    })
     .sort((left, right) =>
       String(left['sql-name'] ?? left.id).localeCompare(String(right['sql-name'] ?? right.id)),
     )
@@ -457,7 +453,7 @@ title: Extension Catalog
 # Extension Catalog
 
 Use this table to find exact SQL extension names. SDK and app packaging
-selection uses the SQL extension name. The table shows stable packaged
+selection uses the SQL extension name. Every listed extension is supported
 extensions only.
 
 | SQL extension | Display name | Version | Family | Activation |

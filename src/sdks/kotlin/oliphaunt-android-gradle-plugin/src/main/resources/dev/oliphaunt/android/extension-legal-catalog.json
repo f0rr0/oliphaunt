@@ -1,6 +1,6 @@
 {
   "schema": "oliphaunt-android-extension-legal-catalog-v1",
-  "sourceCatalogSha256": "778b539d27ee995eae7b2c78c89acee5a61911109bf40bca9b463288d8850a5f",
+  "sourceCatalogSha256": "c1d2e09905d7ecc0172173b34b9e4104dad58987503dd3dab7af4ae78890d9f3",
   "contracts": [
     {
       "scope": "aggregate",

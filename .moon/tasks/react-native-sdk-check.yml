@@ -1,0 +1,44 @@
+$schema: "https://moonrepo.dev/schemas/tasks.json"
+
+# Every check-sdk mode materializes the same isolated repository-relative
+# helper closure. Keep its cache inputs in one Moon-owned definition so a new
+# shared helper cannot be copied without invalidating every sandbox consumer.
+inheritedBy:
+  tags:
+    and: ["sdk", "react-native"]
+
+tasks:
+  check:
+    inputs: &sdk-check-inputs
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/src/extensions/external/**/*"
+      - "/src/extensions/generated/mobile/**/*"
+      - "/src/extensions/generated/sdk/**/*"
+      - "/src/postgres/versions/18/source.toml"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - "/src/sources/third-party/shared/icu.toml"
+      - "/src/sources/third-party/shared/openssl.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-directory-safety.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-extension-install-contract.mjs"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+      - "/tools/test/run-js-tests.mjs"
+  build-ios-bridge:
+    inputs: *sdk-check-inputs
+  build-android-bridge:
+    inputs: *sdk-check-inputs
+  test:
+    inputs: *sdk-check-inputs
+  package:
+    inputs: *sdk-check-inputs
+  release-check:
+    inputs: *sdk-check-inputs
+  regression:
+    inputs: *sdk-check-inputs

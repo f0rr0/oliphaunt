@@ -34,6 +34,8 @@ tasks:
       - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/xtask/**/*"
@@ -65,14 +67,10 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/sources/third-party/shared/**/*"
       - "/tools/policy/source-fetch-core.mjs"
-      # These tools execute in the same hosted qualification job before this
-      # public-only packager. Keep their affected edge here without making
-      # either tool part of a release product's semantic identity.
-      - "/tools/release/extension-qualification-candidates.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/release-notices.mjs"
-      - "/tools/release/verify-extension-qualification-build.mjs"
       - "/tools/xtask/**/*"
     outputs:
       - "/target/extensions/wasix/release-assets/**/*"

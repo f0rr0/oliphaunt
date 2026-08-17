@@ -321,7 +321,7 @@ function parseTsv(file) {
 }
 
 function canonicalExtensions(selectionCsv) {
-  const metadataFile = path.join(ROOT, "src/extensions/generated/sdk/rust.json");
+  const metadataFile = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
   const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
   const byName = new Map((metadata.extensions ?? []).map((row) => [row["sql-name"], row]));
   const canonicalNames = exactExtensionProducts(PREFIX)
@@ -339,7 +339,7 @@ function canonicalExtensions(selectionCsv) {
   if (unknown.length > 0) fail(`planned native lifecycle selection contains unknown extensions: ${unknown.join(",")}`);
   const rows = names.map((name) => {
     const row = byName.get(name);
-    if (!row || row["desktop-release-ready"] !== true) fail(`generated Rust metadata is not release-ready for ${name}`);
+    if (!row) fail(`generated extension metadata has no row for ${name}`);
     return row;
   });
   const selectedSet = new Set(names);

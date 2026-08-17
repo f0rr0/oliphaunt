@@ -98,7 +98,7 @@ External extensions are distributed as exact extension artifacts or indexes.
 Native consumers select SQL names; WASIX consumers use the runtime-specific
 typed value or descriptor published for that extension.
 
-Each promoted exact extension has its own product tag, changelog, and package
+Each public exact extension has its own product tag, changelog, and package
 version. The PostgreSQL contrib bundle and both runtime products are versioned
 independently. Exact compatibility metadata creates directed dependency edges:
 a changed dependency may select its consumer, but never the reverse. External

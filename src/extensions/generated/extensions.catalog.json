@@ -16,80 +16,9 @@
     {
       "name": "external-extension-recipes",
       "path": "src/extensions/external"
-    },
-    {
-      "name": "extension-promotion-config",
-      "path": "src/extensions/catalog/extensions.promoted.toml"
-    },
-    {
-      "name": "extension-smoke-evidence",
-      "path": "src/extensions/catalog/extensions.smoke.toml"
-    },
-    {
-      "name": "asset-manifest-evidence",
-      "path": "target/oliphaunt-wasix/assets/manifest.json"
     }
   ],
   "extensions": [
-    {
-      "id": "age",
-      "sql-name": "age",
-      "rust-constant": "AGE",
-      "display-name": "Apache AGE",
-      "source-kind": "oliphaunt-other-extension",
-      "upstream-import-name": "age",
-      "package-export": "./age",
-      "tags": [
-        "postgres extension"
-      ],
-      "bundle-size": 141551,
-      "control-file": "target/oliphaunt-sources/checkouts/age/age.control",
-      "control": {
-        "default-version": "1.7.0",
-        "module-pathname": "$libdir/age",
-        "requires": [],
-        "schema": "ag_catalog"
-      },
-      "dependencies": [],
-      "native-dependencies": [],
-      "load-order": [],
-      "lifecycle": {
-        "create-extension": true,
-        "create-schema": "ag_catalog",
-        "load-sql": [
-          "LOAD 'age';"
-        ],
-        "post-create-sql": [
-          "SET search_path = ag_catalog, \"$user\", public;"
-        ],
-        "startup-config": [],
-        "preload-required": false,
-        "restart-required": false,
-        "shared-memory-required": false
-      },
-      "smoke": {
-        "direct": "not-run",
-        "server": "not-run",
-        "restart": "not-run",
-        "dump-restore": "not-run"
-      },
-      "tests": [
-        "target/oliphaunt-sources/checkouts/src/extensions/tests/age.test.ts"
-      ],
-      "native-module-file": "age.so",
-      "promotion": {
-        "configured": true,
-        "requested": false,
-        "packaged": false,
-        "promoted": false,
-        "stable": false,
-        "archive": "extensions/age.tar.zst",
-        "blocker": "Apache AGE does not currently build against PostgreSQL 18.4 in the WASIX lane; ag_label.c still calls ExecInitExtraTupleSlot, which is not available in PG18. Keep graph/pgGraph out of release artifacts until there is an official PG18-compatible upstream."
-      },
-      "notes": [
-        "promotion blocker: Apache AGE does not currently build against PostgreSQL 18.4 in the WASIX lane; ag_label.c still calls ExecInitExtraTupleSlot, which is not available in PG18. Keep graph/pgGraph out of release artifacts until there is an official PG18-compatible upstream."
-      ]
-    },
     {
       "id": "amcheck",
       "sql-name": "amcheck",
@@ -111,7 +40,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -123,25 +51,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/amcheck.test.js"
       ],
       "native-module-file": "amcheck.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/amcheck.tar.zst",
-        "module-sha256": "d56045d80ab6b7f324b03046b29c22082c053fde45aa2e5e11ee991fceab3e91"
-      },
       "notes": []
     },
     {
@@ -158,7 +71,6 @@
       ],
       "bundle-size": 3125,
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": false,
@@ -174,25 +86,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/auto_explain.test.js"
       ],
       "native-module-file": "auto_explain.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/auto_explain.tar.zst",
-        "module-sha256": "acfcf834e5500b8fede8e905c394e78a3eb6172c9b8ffeb45ca3507778ba1924"
-      },
       "notes": []
     },
     {
@@ -216,7 +113,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -228,25 +124,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/bloom.test.js"
       ],
       "native-module-file": "bloom.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/bloom.tar.zst",
-        "module-sha256": "61cf615937f48bd6b0fd5307d156a0e6f0ba063f1e19c5e975d651c7d502f743"
-      },
       "notes": []
     },
     {
@@ -270,7 +151,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -282,25 +162,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/btree_gin.test.js"
       ],
       "native-module-file": "btree_gin.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/btree_gin.tar.zst",
-        "module-sha256": "43f934fe1b181d92aca6e02955e0c94770d9ada08062ec701f034b00a4792f53"
-      },
       "notes": []
     },
     {
@@ -324,7 +189,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -336,25 +200,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/btree_gist.test.js"
       ],
       "native-module-file": "btree_gist.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/btree_gist.tar.zst",
-        "module-sha256": "0a291330d461217f0fdc8b8b2770d89a1b298eca0a0a81b615b889d76616c730"
-      },
       "notes": []
     },
     {
@@ -378,7 +227,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -390,25 +238,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/citext.test.js"
       ],
       "native-module-file": "citext.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/citext.tar.zst",
-        "module-sha256": "6153d92b5256e998a1fb86b0308e78f720727fc273b678b5886c809e96469a59"
-      },
       "notes": []
     },
     {
@@ -432,7 +265,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -444,25 +276,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/cube.test.js"
       ],
       "native-module-file": "cube.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/cube.tar.zst",
-        "module-sha256": "d4d3cc0ca49b0118cf44ca504deae4f2b5374dc5235c742967b59cc3224b8553"
-      },
       "notes": []
     },
     {
@@ -486,7 +303,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -498,25 +314,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_int.test.js"
       ],
       "native-module-file": "dict_int.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/dict_int.tar.zst",
-        "module-sha256": "804edf7a4f0dbb3299bb9cdfa8e3c86071a41e47243c6429f04b5ae9eaddab09"
-      },
       "notes": []
     },
     {
@@ -540,7 +341,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -552,25 +352,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/dict_xsyn.test.ts"
       ],
       "native-module-file": "dict_xsyn.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/dict_xsyn.tar.zst",
-        "module-sha256": "fe395776d7206886ca1fa19e2d4a93d88258e611257569094e9f7bc313a02991"
-      },
       "notes": []
     },
     {
@@ -598,7 +383,6 @@
       "dependencies": [
         "cube"
       ],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -610,25 +394,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/earthdistance.test.js"
       ],
       "native-module-file": "earthdistance.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/earthdistance.tar.zst",
-        "module-sha256": "bc3ac31e73fc60f6d651b7b6c11ab6f33ca1f9a28943d889e11c59d3122f39f8"
-      },
       "notes": []
     },
     {
@@ -652,7 +421,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -664,25 +432,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/file_fdw.test.js"
       ],
       "native-module-file": "file_fdw.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/file_fdw.tar.zst",
-        "module-sha256": "bce5ebf8ab3bcdc6a99576f4a42c2cd7364e529bfd0533780dcbc7976758e52d"
-      },
       "notes": []
     },
     {
@@ -706,7 +459,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -718,25 +470,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/fuzzystrmatch.test.js"
       ],
       "native-module-file": "fuzzystrmatch.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/fuzzystrmatch.tar.zst",
-        "module-sha256": "d38c63035ba62f21837de953318f6d1f4165bbf5da7024403636bd43a9c2d8fd"
-      },
       "notes": []
     },
     {
@@ -760,7 +497,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -772,25 +508,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/hstore.test.js"
       ],
       "native-module-file": "hstore.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/hstore.tar.zst",
-        "module-sha256": "0dc7c56c23353574a7871006121964f5c818c6f9764a92efe576e3d0e00bff29"
-      },
       "notes": []
     },
     {
@@ -814,7 +535,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -826,25 +546,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/intarray.test.js"
       ],
       "native-module-file": "_int.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/intarray.tar.zst",
-        "module-sha256": "da3aa37f4285208eb9b364d7996724274765105cfb747a10e405acd17d575ec7"
-      },
       "notes": []
     },
     {
@@ -868,7 +573,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -880,25 +584,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/isn.test.js"
       ],
       "native-module-file": "isn.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/isn.tar.zst",
-        "module-sha256": "f53cb67dcfb6a4c47b1116e14d972929960a4ed422ff2ffe1a1a0710779ffa72"
-      },
       "notes": []
     },
     {
@@ -922,7 +611,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -934,25 +622,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/lo.test.js"
       ],
       "native-module-file": "lo.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/lo.tar.zst",
-        "module-sha256": "72b02bf7c1e9ef7f0cc7298df7d1b560b6cf57e1ce18696293a7cd39bcb84e43"
-      },
       "notes": []
     },
     {
@@ -976,7 +649,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -988,25 +660,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/ltree.test.js"
       ],
       "native-module-file": "ltree.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/ltree.tar.zst",
-        "module-sha256": "662f3dbf50eed39d6ccc448221d5736ec3f56f4e9cdf4c79d9a2799b31cf501f"
-      },
       "notes": []
     },
     {
@@ -1030,7 +687,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1042,25 +698,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pageinspect.test.js"
       ],
       "native-module-file": "pageinspect.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pageinspect.tar.zst",
-        "module-sha256": "7afa71cf11d2366037e5cabb7d6666fe59ba4ad09000cbac2c2ec073d04f789d"
-      },
       "notes": []
     },
     {
@@ -1084,7 +725,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1096,25 +736,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_buffercache.test.js"
       ],
       "native-module-file": "pg_buffercache.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_buffercache.tar.zst",
-        "module-sha256": "f91f0b59a285e3d7efbc5107bb60188275e9e66db0d8999cf18092ec1839b87b"
-      },
       "notes": []
     },
     {
@@ -1138,7 +763,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1150,25 +774,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_freespacemap.test.ts"
       ],
       "native-module-file": "pg_freespacemap.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_freespacemap.tar.zst",
-        "module-sha256": "ce2ab5c845d217eaba3e838a86da3cf8088d220804bd1ea8be684eabd9eb10cf"
-      },
       "notes": []
     },
     {
@@ -1191,7 +800,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1203,25 +811,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_hashids.test.ts"
       ],
       "native-module-file": "pg_hashids.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_hashids.tar.zst",
-        "module-sha256": "b995931f524dc4a5eae7314d2229f47d2f92135d7273f49609f244859adf845d"
-      },
       "notes": []
     },
     {
@@ -1245,7 +838,6 @@
         "schema": "pg_catalog"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1257,25 +849,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_ivm.test.ts"
       ],
       "native-module-file": "pg_ivm.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_ivm.tar.zst",
-        "module-sha256": "52503a5e35e6c09ff3d04ff1bdbbe98fd09c2cc34633f1a15630cd43008a619a"
-      },
       "notes": []
     },
     {
@@ -1299,7 +876,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1311,25 +887,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_surgery.test.js"
       ],
       "native-module-file": "pg_surgery.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_surgery.tar.zst",
-        "module-sha256": "bcb0af2199605de28e05fc12e2f14e62bdd3fce42b4d18f1eb216efbabb4e661"
-      },
       "notes": []
     },
     {
@@ -1341,8 +902,7 @@
       "upstream-import-name": "pg_textsearch",
       "package-export": "./pg_textsearch",
       "tags": [
-        "postgres extension",
-        "experimental"
+        "postgres extension"
       ],
       "bundle-size": 55062,
       "control-file": "target/oliphaunt-sources/checkouts/pg_textsearch/pg_textsearch.control",
@@ -1353,7 +913,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1367,25 +926,10 @@
         "restart-required": true,
         "shared-memory-required": true
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_textsearch.test.ts"
       ],
       "native-module-file": "pg_textsearch.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_textsearch.tar.zst",
-        "module-sha256": "f69272228918d34b77efbe8cebd6a4e970dd598ca00dd22bc71c6c06951aadf5"
-      },
       "notes": []
     },
     {
@@ -1409,7 +953,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1421,25 +964,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_trgm.test.js"
       ],
       "native-module-file": "pg_trgm.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_trgm.tar.zst",
-        "module-sha256": "9a99d4535d3a17d86f75896add4df3c3fc50a91133ca2559f8798b589d8c7309"
-      },
       "notes": []
     },
     {
@@ -1462,7 +990,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1474,25 +1001,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pg_uuidv7.test.ts"
       ],
       "native-module-file": "pg_uuidv7.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_uuidv7.tar.zst",
-        "module-sha256": "8b1f9d686f2feac4dc7b807365e7a00163cd0dfe5f857723bd24e2c6eb65cfa6"
-      },
       "notes": []
     },
     {
@@ -1516,7 +1028,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1528,25 +1039,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_visibility.test.js"
       ],
       "native-module-file": "pg_visibility.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_visibility.tar.zst",
-        "module-sha256": "bd32a56f3cb6917d48cf178c74395e8ccabd2c563071ba1a0315255d0b9c2742"
-      },
       "notes": []
     },
     {
@@ -1570,7 +1066,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1582,25 +1077,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pg_walinspect.test.js"
       ],
       "native-module-file": "pg_walinspect.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pg_walinspect.tar.zst",
-        "module-sha256": "8b5a918c64c03c82227bff80c68ead920d4a75efdeb6b2dd11ae2655abddeb8d"
-      },
       "notes": []
     },
     {
@@ -1624,9 +1104,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [
-        "openssl:3.5.6-libcrypto-wasix-static"
-      ],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1637,25 +1114,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/pgcrypto.test.js"
       ],
       "native-module-file": "pgcrypto.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pgcrypto.tar.zst",
-        "module-sha256": "94eb7fc39eba66128093e5f50da1cf25f43e3328c27fc1c8609ed0ece80628a4"
-      },
       "notes": []
     },
     {
@@ -1681,7 +1143,6 @@
       "dependencies": [
         "plpgsql"
       ],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1693,24 +1154,9 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pgtap.test.ts"
       ],
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/pgtap.tar.zst",
-        "module-sha256": ""
-      },
       "notes": []
     },
     {
@@ -1721,8 +1167,7 @@
       "source-kind": "postgis",
       "upstream-import-name": "postgis",
       "tags": [
-        "postgres extension",
-        "experimental"
+        "postgres extension"
       ],
       "bundle-size": 8551161,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
@@ -1733,14 +1178,6 @@
         "relocatable": "false"
       },
       "dependencies": [],
-      "native-dependencies": [
-        "geos:3.14.1-static",
-        "proj:9.8.1-static",
-        "sqlite:3.53.1-static",
-        "libxml2:2.14.6-static",
-        "json-c:0.18-static",
-        "libiconv:1.19-static"
-      ],
       "load-order": [
         "lib/postgresql/postgis-3.so"
       ],
@@ -1753,25 +1190,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/postgis/postgis.test.ts"
       ],
       "native-module-file": "postgis-3.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/postgis.tar.zst",
-        "module-sha256": "2a0d7432348cfae67e7736687e4638d60f2df05ddcbc870ef44921940feb35d4"
-      },
       "notes": []
     },
     {
@@ -1795,7 +1217,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1807,25 +1228,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/seg.test.js"
       ],
       "native-module-file": "seg.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/seg.tar.zst",
-        "module-sha256": "870e5c91c89d9698b7d2632112a31bfe7182989ff7b164ac9a821f5c898a113d"
-      },
       "notes": []
     },
     {
@@ -1849,7 +1255,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1861,25 +1266,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tablefunc.test.js"
       ],
       "native-module-file": "tablefunc.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/tablefunc.tar.zst",
-        "module-sha256": "081fb164fffdd204701352472eb2aed658a034d6838b01c17e7d859337fd12b7"
-      },
       "notes": []
     },
     {
@@ -1903,7 +1293,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1915,25 +1304,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tcn.test.js"
       ],
       "native-module-file": "tcn.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/tcn.tar.zst",
-        "module-sha256": "5f6832e7b571d1e3906f86ea8b23fb65afdc447613387f134f4e91311a0bc698"
-      },
       "notes": []
     },
     {
@@ -1957,7 +1331,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -1969,25 +1342,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tsm_system_rows.test.js"
       ],
       "native-module-file": "tsm_system_rows.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/tsm_system_rows.tar.zst",
-        "module-sha256": "7248972e6cf7d6b6cc1a118f9367797d7c74a81309b6f66204e330a6064f3dd7"
-      },
       "notes": []
     },
     {
@@ -2011,7 +1369,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -2023,25 +1380,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/tsm_system_time.test.js"
       ],
       "native-module-file": "tsm_system_time.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/tsm_system_time.tar.zst",
-        "module-sha256": "12fea34d15535b054679a783c3431ef284f66bec8e39e7c1fd729e4cbac53a01"
-      },
       "notes": []
     },
     {
@@ -2065,7 +1407,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -2077,25 +1418,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/unaccent.test.js"
       ],
       "native-module-file": "unaccent.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/unaccent.tar.zst",
-        "module-sha256": "0be032500fc80cd9838cacb930a1c0f3112fadfb833609f291d2c875ca88d8a7"
-      },
       "notes": []
     },
     {
@@ -2119,7 +1445,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -2131,25 +1456,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/contrib/uuid_ossp.test.js"
       ],
       "native-module-file": "uuid-ossp.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/uuid-ossp.tar.zst",
-        "module-sha256": "cff691abacd7c038cd539188515df74b161ad3710ec33dc59514e7df89a0e4de"
-      },
       "notes": []
     },
     {
@@ -2172,7 +1482,6 @@
         "relocatable": "true"
       },
       "dependencies": [],
-      "native-dependencies": [],
       "load-order": [],
       "lifecycle": {
         "create-extension": true,
@@ -2184,25 +1493,10 @@
         "restart-required": false,
         "shared-memory-required": false
       },
-      "smoke": {
-        "direct": "passed",
-        "server": "passed",
-        "restart": "passed",
-        "dump-restore": "passed"
-      },
       "tests": [
         "target/oliphaunt-sources/checkouts/src/extensions/tests/pgvector.test.ts"
       ],
       "native-module-file": "vector.so",
-      "promotion": {
-        "configured": true,
-        "requested": true,
-        "packaged": true,
-        "promoted": true,
-        "stable": true,
-        "archive": "extensions/vector.tar.zst",
-        "module-sha256": "4b361e27f7723010c00cc4b32be78cd91343d8efed494ee9012f3872359f86f6"
-      },
       "notes": []
     }
   ]

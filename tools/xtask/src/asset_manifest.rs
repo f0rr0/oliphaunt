@@ -196,7 +196,6 @@ pub(super) struct ExtensionArtifact<'a> {
     pub(super) module_path: Option<&'a Path>,
     pub(super) native_module: Option<&'a str>,
     pub(super) native_modules: &'a [OwnedExtensionNativeModule],
-    pub(super) stable: bool,
 }
 
 pub(super) struct OwnedExtensionArtifact {
@@ -207,7 +206,6 @@ pub(super) struct OwnedExtensionArtifact {
     pub(super) module_path: Option<PathBuf>,
     pub(super) native_module: Option<String>,
     pub(super) native_modules: Vec<OwnedExtensionNativeModule>,
-    pub(super) stable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -325,17 +323,14 @@ pub(super) struct ExtensionAssetOut {
     #[serde(default)]
     pub(super) native_modules: Vec<BinaryAssetOut>,
     pub(super) size: u64,
-    pub(super) stable: bool,
     pub(super) control_files: Vec<String>,
     pub(super) dependencies: Vec<String>,
-    pub(super) native_dependencies: Vec<String>,
     pub(super) load_order: Vec<String>,
     pub(super) lifecycle: ExtensionLifecycleOut,
     pub(super) extension_imports: Vec<WasmImportOut>,
     pub(super) core_exports_required: Vec<String>,
     pub(super) unresolved_imports: Vec<WasmImportOut>,
     pub(super) installed_files: Vec<String>,
-    pub(super) smoke_status: ExtensionSmokeStatusOut,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) link: Option<WasmLinkMetadataOut>,
 }
@@ -351,16 +346,6 @@ pub(super) struct ExtensionLifecycleOut {
     pub(super) preload_required: bool,
     pub(super) restart_required: bool,
     pub(super) shared_memory_required: bool,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub(super) struct ExtensionSmokeStatusOut {
-    pub(super) promoted: bool,
-    pub(super) direct: String,
-    pub(super) server: String,
-    pub(super) restart: String,
-    pub(super) dump_restore: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]

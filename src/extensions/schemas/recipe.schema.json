@@ -13,8 +13,7 @@
     "source",
     "postgres_majors",
     "lifecycle",
-    "artifacts",
-    "support"
+    "artifacts"
   ],
   "properties": {
     "schema": { "const": "oliphaunt-extension-recipe-v1" },
@@ -32,10 +31,6 @@
       "items": { "type": "integer", "minimum": 18 }
     },
     "lifecycle": { "type": "object" },
-    "artifacts": { "type": "object" },
-    "support": {
-      "type": "object",
-      "additionalProperties": { "type": "object" }
-    }
+    "artifacts": { "type": "object" }
   }
 }

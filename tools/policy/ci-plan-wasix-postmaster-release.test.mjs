@@ -22,7 +22,7 @@ test('postmaster CI selects only terminal product roots', () => {
   ]);
 });
 
-test('postmaster planner renders published producers and the planned Windows no-op', () => {
+test('postmaster planner renders every supported release target', () => {
   const plan = renderPlanWithSelection({
     jobs: new Set(['affected', 'wasix-postmaster']),
     projects: new Set(),
@@ -33,13 +33,12 @@ test('postmaster planner renders published producers and the planned Windows no-
   });
   assert.deepEqual(
     plan.liboliphaunt_wasix_postmaster_runtime_matrix.include.map(
-      ({target_id, produces_artifact}) => [target_id, produces_artifact],
+      ({target_id}) => target_id,
     ),
     [
-      ['linux-arm64-gnu', true],
-      ['linux-x64-gnu', true],
-      ['macos-arm64', true],
-      ['windows-x64-msvc', false],
+      'linux-arm64-gnu',
+      'linux-x64-gnu',
+      'macos-arm64',
     ],
   );
 

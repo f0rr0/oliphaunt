@@ -455,11 +455,9 @@ OLIPHAUNT_TRACK_BUILD=never src/runtimes/liboliphaunt/native/tools/check-track.s
   `NATIVE_EXTENSION_MANIFEST` records SQL/control assets, native module
   requirements, data files, smoke SQL strategy, coverage evidence, mobile
   static-link status, and first-party/external packaging policy for every
-  supported row. `Extension::RELEASE_READY_PG18_SUPPORTED` is the public exact
-  extension catalog; custom static manifests are restricted to release-ready
-  first-party extensions. The external pgrx lane remains internal/deferred and
-  must not be surfaced as shippable SDK extensions until licensing, static
-  mobile linkage, and lifecycle evidence are complete. Required preload hooks
+  supported row. `Extension::ALL_PG18_SUPPORTED` is the public exact extension
+  catalog; custom static manifests are restricted to public first-party
+  extensions. Required preload hooks
   are derived from selected extensions, so extensions that need preload can add
   `shared_preload_libraries` to direct, broker, and server startup from manifest
   data instead of app code. Resource

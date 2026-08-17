@@ -27,6 +27,7 @@ import {
 import {
   compareText,
   exactExtensionProducts,
+  extensionPublicDependencySqlNames,
   extensionSqlNames,
 } from "../release/release-artifact-targets.mjs";
 
@@ -610,12 +611,6 @@ export function extensionProductDependencyClosure(products) {
   const productBySqlName = new Map(
     [...exactProducts].flatMap((product) => extensionSqlNames(product, PREFIX).map((sqlName) => [sqlName, product])),
   );
-  const metadata = JSON.parse(
-    readFileSync(path.join(ROOT, "src/extensions/generated/sdk/rust.json"), "utf8"),
-  );
-  const metadataBySqlName = new Map(
-    (metadata.extensions ?? []).map((row) => [row["sql-name"], row]),
-  );
   const closure = new Set();
   const pending = [...products];
   while (pending.length > 0) {
@@ -624,9 +619,7 @@ export function extensionProductDependencyClosure(products) {
     if (closure.has(product)) continue;
     closure.add(product);
     for (const sqlName of extensionSqlNames(product, PREFIX)) {
-      const row = metadataBySqlName.get(sqlName);
-      if (!row) throw new Error(`generated Rust metadata is missing exact extension ${sqlName}`);
-      for (const dependencySqlName of row["selected-extension-dependencies"] ?? []) {
+      for (const dependencySqlName of extensionPublicDependencySqlNames(sqlName, PREFIX)) {
         const dependencyProduct = productBySqlName.get(dependencySqlName);
         if (!dependencyProduct) {
           throw new Error(`${sqlName} has unknown public extension dependency ${dependencySqlName}`);
@@ -779,7 +772,7 @@ export function renderPlanForFullRun({
 }
 
 export function extensionArtifactsWasixMatrixForPlan(jobs, selectedExtensionProducts) {
-  // Release regression exercises every promoted extension. Its portable
+  // Release regression exercises every public extension. Its portable
   // carrier producer must therefore be complete even when the release/package
   // selection is intentionally narrowed to one independently versioned
   // extension. Non-regression callers retain that focused selection.

@@ -1,0 +1,159 @@
+schema = "oliphaunt-native-components-v1"
+
+[[components]]
+id = "geos"
+source = "geos"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "geos-c"
+archive-candidates = ["geos/lib/libgeos_c.a"]
+
+[[components.link-units]]
+id = "geos"
+archive-candidates = ["geos/lib/libgeos.a"]
+
+[[components]]
+id = "sqlite"
+source = "sqlite"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "sqlite"
+archive-candidates = ["sqlite/lib/libsqlite3.a"]
+
+[[components]]
+id = "proj"
+source = "proj"
+depends-on = ["sqlite"]
+runtime-files = ["proj/proj.db"]
+
+[[components.link-units]]
+id = "proj"
+archive-candidates = ["proj/lib/libproj.a"]
+
+[[components]]
+id = "libxml2"
+source = "libxml2"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "libxml2"
+archive-candidates = ["libxml2/lib/libxml2.a"]
+
+[[components]]
+id = "json-c"
+source = "json-c"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "json-c"
+archive-candidates = ["json-c/lib/libjson-c.a"]
+
+[[components]]
+id = "libiconv"
+source = "libiconv"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "libiconv"
+archive-candidates = ["libiconv/lib/libiconv.a"]
+
+[[components.link-units]]
+id = "libcharset"
+archive-candidates = ["libiconv/lib/libcharset.a"]
+
+[[components]]
+id = "openssl"
+source = "openssl"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "openssl"
+archive-candidates = ["openssl/libcrypto.a", "openssl/lib/libcrypto.a"]
+
+[[components]]
+id = "portable-uuid"
+source-path = "src/runtimes/liboliphaunt/native/portable-uuid"
+depends-on = []
+runtime-files = []
+
+[[components.link-units]]
+id = "uuid"
+archive-candidates = ["uuid/lib/libuuid.a"]
+
+[[requirements]]
+extension = "postgis"
+family = "native"
+kind = "native-dynamic"
+targets = ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
+roots = ["geos", "proj", "libxml2", "json-c"]
+
+[[requirements]]
+extension = "postgis"
+family = "native"
+kind = "native-static-registry"
+targets = ["ios-xcframework"]
+roots = ["geos", "proj", "libxml2", "json-c"]
+
+[[requirements]]
+extension = "postgis"
+family = "native"
+kind = "native-static-registry"
+targets = ["android-arm64-v8a", "android-x86_64"]
+roots = ["geos", "proj", "libxml2", "json-c", "libiconv"]
+
+[[requirements]]
+extension = "postgis"
+family = "wasix"
+kind = "wasix-runtime"
+targets = ["wasix-portable"]
+roots = ["geos", "proj", "libxml2", "json-c", "libiconv"]
+
+[[requirements]]
+extension = "pgcrypto"
+family = "native"
+kind = "native-dynamic"
+targets = ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
+roots = ["openssl"]
+
+[[requirements]]
+extension = "pgcrypto"
+family = "native"
+kind = "native-static-registry"
+targets = ["ios-xcframework", "android-arm64-v8a", "android-x86_64"]
+roots = ["openssl"]
+
+[[requirements]]
+extension = "pgcrypto"
+family = "wasix"
+kind = "wasix-runtime"
+targets = ["wasix-portable"]
+roots = ["openssl"]
+
+[[requirements]]
+extension = "uuid-ossp"
+family = "native"
+kind = "native-dynamic"
+targets = ["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]
+roots = ["portable-uuid"]
+
+[[requirements]]
+extension = "uuid-ossp"
+family = "native"
+kind = "native-static-registry"
+targets = ["ios-xcframework", "android-arm64-v8a", "android-x86_64"]
+roots = ["portable-uuid"]
+
+[[requirements]]
+extension = "uuid-ossp"
+family = "wasix"
+kind = "wasix-runtime"
+targets = ["wasix-portable"]
+roots = ["portable-uuid"]

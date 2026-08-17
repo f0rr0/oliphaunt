@@ -1,8 +1,6 @@
 schema = "oliphaunt-extension-target-v1"
 artifact_family = "native-dynamic"
-status = "supported"
 build_kind = "autotools"
-dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
 module_files = [
   "lib/postgresql/postgis-3.so",
   "lib/postgresql/liboliphaunt_postgis_deps.so",

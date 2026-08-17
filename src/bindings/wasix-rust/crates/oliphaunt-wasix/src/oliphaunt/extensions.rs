@@ -147,13 +147,6 @@ pub fn by_sql_name(sql_name: &str) -> Option<Extension> {
         .find(|extension| extension.sql_name == sql_name)
 }
 
-pub(crate) fn candidate_by_sql_name(sql_name: &str) -> Option<Extension> {
-    generated::CANDIDATES
-        .iter()
-        .copied()
-        .find(|extension| extension.sql_name == sql_name)
-}
-
 pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>> {
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
@@ -303,7 +296,7 @@ fn visit_extension(
         );
     }
     for dependency in extension.dependencies() {
-        let dependency_extension = candidate_by_sql_name(dependency).ok_or_else(|| {
+        let dependency_extension = by_sql_name(dependency).ok_or_else(|| {
             anyhow::anyhow!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
@@ -381,7 +374,7 @@ mod startup_config_tests {
 }
 
 #[cfg(all(test, feature = "extensions"))]
-mod candidate_tests {
+mod extension_tests {
     use super::*;
     #[cfg(feature = "tools")]
     use crate::PgDumpOptions;
@@ -410,52 +403,6 @@ mod candidate_tests {
     #[cfg(feature = "tools")]
     fn public_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
         run_direct_dump_restore_smoke_set(generated::ALL)
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    fn packaged_candidate_extensions_pass_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    fn uuid_ossp_candidate_passes_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    async fn packaged_candidate_extensions_pass_server_smoke() -> Result<()> {
-        run_server_smoke_set(generated::CANDIDATES).await
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn uuid_ossp_candidate_passes_server_smoke() -> Result<()> {
-        run_server_smoke_set(&[generated::CANDIDATE_UUID_OSSP]).await
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    fn packaged_candidate_extensions_materialize_only_requested_libraries() -> Result<()> {
-        run_lifecycle_materialization_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    fn uuid_ossp_candidate_materializes_only_requested_libraries() -> Result<()> {
-        run_lifecycle_materialization_set(&[generated::CANDIDATE_UUID_OSSP])
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    #[cfg(feature = "tools")]
-    fn packaged_candidate_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
-        run_direct_dump_restore_smoke_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    #[cfg(feature = "tools")]
-    fn uuid_ossp_candidate_passes_direct_dump_restore_smoke() -> Result<()> {
-        run_direct_dump_restore_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
     }
 
     fn embedded_extension_archives(extensions: &[Extension]) -> Result<Vec<Extension>> {
@@ -1015,7 +962,7 @@ mod candidate_tests {
                 "INSERT INTO oxide_vector VALUES ('[1,2,3]')",
                 "DO $$ DECLARE d float8; BEGIN SELECT embedding <-> '[1,2,4]'::vector INTO d FROM oxide_vector; IF d <> 1 THEN RAISE EXCEPTION 'vector distance failed: %', d; END IF; END $$",
             ],
-            other => panic!("missing smoke SQL for extension candidate {other}"),
+            other => panic!("missing smoke SQL for extension {other}"),
         }
     }
 }

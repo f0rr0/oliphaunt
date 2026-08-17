@@ -2,11 +2,6 @@
 import { appendFileSync } from "node:fs";
 
 import {
-  extensionQualificationCandidates,
-  qualificationCandidateTargets,
-} from "./extension-qualification-candidates.mjs";
-
-import {
   allArtifactTargets,
   compareText,
   exactExtensionProducts,
@@ -15,7 +10,7 @@ import {
   liboliphauntAndroidAbi,
   liboliphauntNativeBuildRoot,
   liboliphauntNativeCiArtifactRoot,
-  publishedExtensionTargetIds,
+  extensionTargetIds,
 } from "./release-artifact-targets.mjs";
 
 const PREFIX = "artifact_target_matrix.mjs";
@@ -129,7 +124,6 @@ export function liboliphauntNativeRuntimeMatrix() {
     {
       product: "liboliphaunt-native",
       kind: "native-runtime",
-      publishedOnly: true,
     },
     PREFIX,
   ).map((target) => {
@@ -179,7 +173,6 @@ export function liboliphauntNativeRuntimeTargetsForSurface(surface) {
       product: "liboliphaunt-native",
       kind: "native-runtime",
       surface,
-      publishedOnly: true,
     },
     PREFIX,
   ).map((target) => target.target);
@@ -196,7 +189,6 @@ export function reactNativeAndroidMobileAppMatrix(nativeTarget = "all", selected
       product: "liboliphaunt-native",
       kind: "native-runtime",
       surface: "react-native-android",
-      publishedOnly: true,
     },
     PREFIX,
   )) {
@@ -230,7 +222,6 @@ export function extensionArtifactsNativeMatrix(
       {
         product: "liboliphaunt-native",
         kind: "native-runtime",
-        publishedOnly: true,
       },
       PREFIX,
     )
@@ -238,7 +229,7 @@ export function extensionArtifactsNativeMatrix(
       .map((target) => [target.target, target]),
   );
   const byTarget = new Map();
-  for (const extensionTarget of extensionArtifactTargets({ family: "native", publishedOnly: true }, PREFIX)) {
+  for (const extensionTarget of extensionArtifactTargets({ family: "native" }, PREFIX)) {
     if (selectedProducts !== undefined && !selectedProducts.has(extensionTarget.product)) {
       continue;
     }
@@ -275,16 +266,9 @@ export function extensionArtifactsNativeMatrix(
   const include = [...byTarget.values()].map((group) => {
     const extensions = [...group.extensions].sort(compareText);
     const sqlNames = [...group.sqlNames].sort(compareText);
-    const qualificationSqlNames = extensionQualificationCandidates()
-      .filter((candidate) => qualificationCandidateTargets(candidate).some(
-        (target) => target.family === "native" && target.target === group.target,
-      ))
-      .map((candidate) => candidate.sqlName)
-      .sort(compareText);
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
-      qualification_sql_names_csv: qualificationSqlNames.join(","),
       extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,
@@ -293,7 +277,7 @@ export function extensionArtifactsNativeMatrix(
     };
   });
   if (include.length === 0) {
-    const validTargets = publishedExtensionTargetIds({ family: "native" }, PREFIX).join(", ");
+    const validTargets = extensionTargetIds({ family: "native" }, PREFIX).join(", ");
     fail(PREFIX, `unknown native extension artifact target ${nativeTarget}; expected one of: all, ${validTargets}`);
   }
   include.sort((left, right) => compareText(left.target, right.target));
@@ -302,11 +286,10 @@ export function extensionArtifactsNativeMatrix(
 
 export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProducts = undefined) {
   const byTarget = new Map();
-  const extensionTargets = extensionArtifactTargets({ family: "wasix", publishedOnly: true }, PREFIX);
+  const extensionTargets = extensionArtifactTargets({ family: "wasix" }, PREFIX);
   for (const target of allArtifactTargets(
     {
       product: "liboliphaunt-wasix",
-      publishedOnly: true,
     },
     PREFIX,
   )) {
@@ -342,16 +325,9 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
   const include = [...byTarget.values()].map((group) => {
     const extensions = [...group.extensions].sort(compareText);
     const sqlNames = [...group.sqlNames].sort(compareText);
-    const qualificationSqlNames = extensionQualificationCandidates()
-      .filter((candidate) => qualificationCandidateTargets(candidate).some(
-        (target) => target.family === "wasix" && target.target === group.target,
-      ))
-      .map((candidate) => candidate.sqlName)
-      .sort(compareText);
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
-      qualification_sql_names_csv: qualificationSqlNames.join(","),
       extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,
@@ -363,7 +339,6 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
     const validTargets = allArtifactTargets(
       {
         product: "liboliphaunt-wasix",
-        publishedOnly: true,
       },
       PREFIX,
     )
@@ -421,7 +396,6 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
     {
       product: "liboliphaunt-wasix",
       kind: "wasix-aot-runtime",
-      publishedOnly: true,
     },
     PREFIX,
   )) {
@@ -439,7 +413,6 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
       {
         product: "liboliphaunt-wasix",
         kind: "wasix-aot-runtime",
-        publishedOnly: true,
       },
       PREFIX,
     )
@@ -465,10 +438,9 @@ export function liboliphauntWasixPostmasterRuntimeMatrix() {
       target,
       "target/oliphaunt-wasix-postmaster/release-assets",
     ),
-    produces_artifact: target.published,
   }));
-  if (!include.some(({ produces_artifact: producesArtifact }) => producesArtifact)) {
-    fail(PREFIX, "WASIX postmaster CI matrix must contain at least one published artifact producer");
+  if (include.length === 0) {
+    fail(PREFIX, "WASIX postmaster CI matrix must contain at least one artifact target");
   }
   include.sort((left, right) => compareText(left.target_id, right.target_id));
   return { include };
@@ -480,7 +452,6 @@ export function brokerRuntimeMatrix(nativeTarget = "all") {
       {
         product: "oliphaunt-broker",
         kind: "broker-helper",
-        publishedOnly: true,
       },
       PREFIX,
     ).map((target) => {
@@ -502,7 +473,6 @@ export function nodeDirectRuntimeMatrix(nativeTarget = "all") {
       {
         product: "oliphaunt-node-direct",
         kind: "node-direct-addon",
-        publishedOnly: true,
       },
       PREFIX,
     ).map((target) => {

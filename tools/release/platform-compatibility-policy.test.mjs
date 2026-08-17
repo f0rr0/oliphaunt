@@ -13,17 +13,17 @@ const BINARY_ARTIFACT_KINDS = new Set([
   "node-direct-addon",
 ]);
 
-const publishedArtifacts = allArtifactTargets({ publishedOnly: true }).filter((target) =>
+const artifacts = allArtifactTargets().filter((target) =>
   BINARY_ARTIFACT_KINDS.has(target.kind),
 );
-const publishedExtensions = extensionArtifactTargets({ family: "native", publishedOnly: true });
+const extensions = extensionArtifactTargets({ family: "native" });
 
 function validateCoverage(policy, artifacts, extensions) {
   const uses = new Map();
   const addUse = (target, label, boundContract) => {
     const contract = policy[target];
     if (contract === undefined) {
-      throw new Error(`${label} publishes ${target} without a platform compatibility contract`);
+      throw new Error(`${label} uses ${target} without a platform compatibility contract`);
     }
     if (boundContract !== contract) {
       throw new Error(`${label} does not consume the authoritative ${target} contract`);
@@ -46,34 +46,34 @@ function validateCoverage(policy, artifacts, extensions) {
 
   const unused = Object.keys(policy).filter((target) => !uses.has(target)).sort();
   if (unused.length > 0) {
-    throw new Error(`platform compatibility contract(s) are not used by a published carrier: ${unused.join(", ")}`);
+    throw new Error(`platform compatibility contract(s) are not used by a carrier: ${unused.join(", ")}`);
   }
   return uses;
 }
 
-describe("published platform compatibility policy", () => {
+describe("platform compatibility policy", () => {
   test("is an exact bidirectional map of native, broker, Node, and extension carriers", () => {
     const uses = validateCoverage(
       PLATFORM_COMPATIBILITY_POLICY,
-      publishedArtifacts,
-      publishedExtensions,
+      artifacts,
+      extensions,
     );
     expect([...uses.keys()].sort()).toEqual(Object.keys(PLATFORM_COMPATIBILITY_POLICY).sort());
   });
 
-  test("rejects both an uncovered published target and an unused contract", () => {
+  test("rejects both an uncovered target and an unused contract", () => {
     const missing = { ...PLATFORM_COMPATIBILITY_POLICY };
     delete missing["linux-x64-gnu"];
-    expect(() => validateCoverage(missing, publishedArtifacts, publishedExtensions)).toThrow(
-      /publishes linux-x64-gnu without a platform compatibility contract/u,
+    expect(() => validateCoverage(missing, artifacts, extensions)).toThrow(
+      /uses linux-x64-gnu without a platform compatibility contract/u,
     );
 
     const unused = {
       ...PLATFORM_COMPATIBILITY_POLICY,
       "unused-test-target": PLATFORM_COMPATIBILITY_POLICY["linux-x64-gnu"],
     };
-    expect(() => validateCoverage(unused, publishedArtifacts, publishedExtensions)).toThrow(
-      /not used by a published carrier: unused-test-target/u,
+    expect(() => validateCoverage(unused, artifacts, extensions)).toThrow(
+      /not used by a carrier: unused-test-target/u,
     );
   });
 

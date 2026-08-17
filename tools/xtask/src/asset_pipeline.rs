@@ -290,7 +290,7 @@ impl BuildOutputs {
             });
         }
         if !skip_extensions_for_perf_probe() {
-            for extension in extension_catalog::promoted_build_specs()? {
+            for extension in extension_catalog::extension_build_specs()? {
                 for support_module in &extension.native_support_modules {
                     modules.push(BuildModuleOutput {
                         name: format!("extension:{}:{}", extension.sql_name, support_module.name),
@@ -590,7 +590,7 @@ impl BuildOutputs {
 
 fn extension_build_module_path(
     build_dir: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
 ) -> Result<PathBuf> {
     let module_file = extension
         .module_file
@@ -624,7 +624,7 @@ fn extension_build_module_path(
             Ok(build_dir.join(module_source_dir).join(module_file))
         }
         other => bail!(
-            "promoted extension {} has unsupported build kind {other}",
+            "supported extension {} has unsupported build kind {other}",
             extension.sql_name
         ),
     }
@@ -632,12 +632,12 @@ fn extension_build_module_path(
 
 fn pgxs_extension_build_dir(
     build_dir: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
 ) -> PathBuf {
     build_dir.join("pgxs").join(&extension.id)
 }
 
-fn extension_aot_file_stem(extension: &extension_catalog::PromotedExtensionBuildSpec) -> String {
+fn extension_aot_file_stem(extension: &extension_catalog::ExtensionBuildSpec) -> String {
     extension.sql_name.replace('/', "_")
 }
 
@@ -1436,7 +1436,7 @@ fn asset_build_commands(backend_script: &str) -> Result<Vec<AssetBuildCommand>> 
             skip_for_core_probe: true,
         },
     ];
-    for extension in extension_catalog::promoted_build_specs()? {
+    for extension in extension_catalog::extension_build_specs()? {
         if !extension_catalog::is_recipe_staged_build_kind(&extension.build_kind) {
             continue;
         }
@@ -1709,7 +1709,7 @@ fn package_assets_with_options(
     copy_file(outputs.module_path("tool:initdb")?, &initdb)?;
 
     let extension_artifacts =
-        build_promoted_extension_artifacts(source, build, stage, assets_dir, &outputs)?;
+        build_extension_artifacts(source, build, stage, assets_dir, &outputs)?;
     let extension_artifact_refs = extension_artifacts
         .iter()
         .map(|extension| ExtensionArtifact {
@@ -1720,7 +1720,6 @@ fn package_assets_with_options(
             module_path: extension.module_path.as_deref(),
             native_module: extension.native_module.as_deref(),
             native_modules: &extension.native_modules,
-            stable: extension.stable,
         })
         .collect::<Vec<_>>();
 
@@ -1839,7 +1838,7 @@ fn generate_pgdata_template_from_runtime_stage(
     Ok(())
 }
 
-fn build_promoted_extension_artifacts(
+fn build_extension_artifacts(
     source: &Path,
     build: &Path,
     stage: &Path,
@@ -1851,9 +1850,9 @@ fn build_promoted_extension_artifacts(
     }
 
     let mut packages = Vec::new();
-    for extension in extension_catalog::promoted_build_specs()? {
+    for extension in extension_catalog::extension_build_specs()? {
         let extension_stage = stage.join("extensions").join(&extension.sql_name);
-        stage_promoted_extension(source, build, &extension, &extension_stage)?;
+        stage_extension(source, build, &extension, &extension_stage)?;
         let archive_path = assets_dir.join(&extension.archive);
         deterministic_tar_zst(&extension_stage, Path::new(""), &archive_path)?;
         let native_modules = extension_native_module_artifacts(&extension, outputs)?;
@@ -1873,14 +1872,13 @@ fn build_promoted_extension_artifacts(
             },
             native_module: extension.module_file.clone(),
             native_modules,
-            stable: extension.stable,
         });
     }
     Ok(packages)
 }
 
 fn extension_native_module_artifacts(
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
     outputs: &BuildOutputs,
 ) -> Result<Vec<OwnedExtensionNativeModule>> {
     let mut modules = Vec::new();
@@ -1908,10 +1906,10 @@ fn extension_native_module_artifacts(
     Ok(modules)
 }
 
-fn stage_promoted_extension(
+fn stage_extension(
     source: &Path,
     build: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
     stage: &Path,
 ) -> Result<()> {
     match extension.build_kind.as_str() {
@@ -1923,7 +1921,7 @@ fn stage_promoted_extension(
             stage_recipe_staged_extension(build, extension, stage)
         }
         other => bail!(
-            "promoted extension {} has unsupported packaging build kind {other}",
+            "supported extension {} has unsupported packaging build kind {other}",
             extension.sql_name
         ),
     }
@@ -1931,7 +1929,7 @@ fn stage_promoted_extension(
 
 fn stage_recipe_staged_extension(
     build: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
     stage: &Path,
 ) -> Result<()> {
     let staging = extension
@@ -2020,7 +2018,7 @@ fn stage_recipe_staged_extension(
 
 fn stage_pgxs_style_extension(
     build: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
     stage: &Path,
 ) -> Result<()> {
     let source = Path::new(&extension.source_dir);
@@ -2126,7 +2124,7 @@ fn copy_extension_sql_dir(source: &Path, destination: &Path) -> Result<bool> {
 fn stage_contrib_extension(
     source: &Path,
     build: &Path,
-    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    extension: &extension_catalog::ExtensionBuildSpec,
     stage: &Path,
 ) -> Result<()> {
     let contrib_dir = extension
@@ -2780,7 +2778,10 @@ fn write_asset_manifest(
                 let mut unresolved_imports = Vec::new();
                 if let Some(link) = &link {
                     let primary_path = extension.module_path.ok_or_else(|| {
-                        anyhow!("extension {} has link metadata without a module", extension.sql_name)
+                        anyhow!(
+                            "extension {} has link metadata without a module",
+                            extension.sql_name
+                        )
                     })?;
                     let module_exports = extension_asset_provider_exports(
                         link,
@@ -2800,11 +2801,9 @@ fn write_asset_manifest(
                         )? {
                             continue;
                         }
-                        if let Some(name) = resolved_wasm_export_name(
-                            import,
-                            &runtime_link.exports,
-                            "runtime",
-                        )? {
+                        if let Some(name) =
+                            resolved_wasm_export_name(import, &runtime_link.exports, "runtime")?
+                        {
                             core_exports_required.push(name);
                         } else {
                             unresolved_imports.push(import.clone());
@@ -2820,32 +2819,21 @@ fn write_asset_manifest(
                     &installed_files,
                     extension.sql_name,
                 )?;
-                let promoted = extension.stable
-                    && metadata.smoke_status.direct == "passed"
-                    && metadata.smoke_status.server == "passed"
-                    && metadata.smoke_status.restart == "passed"
-                    && metadata.smoke_status.dump_restore == "passed";
-                ensure!(
-                    !metadata.smoke_status.promoted || promoted,
-                    "extension {} catalog metadata marks the asset promoted but current package evidence is insufficient",
-                    extension.sql_name
-                );
                 let native_modules = extension
                     .native_modules
                     .iter()
                     .map(|module| {
-                        let link = native_module_links.get(&module.name).cloned().ok_or_else(
-                            || anyhow!("missing link metadata for {}", module.name),
-                        )?;
+                        let link = native_module_links
+                            .get(&module.name)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("missing link metadata for {}", module.name))?;
                         Ok::<_, anyhow::Error>(BinaryAssetOut {
                             name: module.name.clone(),
                             path: module.runtime_path.clone(),
                             sha256: sha256_file(&module.path)?,
                             module_sha256: sha256_file(&module.path)?,
                             size: fs::metadata(&module.path)
-                                .with_context(|| {
-                                    format!("metadata {}", module.path.display())
-                                })?
+                                .with_context(|| format!("metadata {}", module.path.display()))?
                                 .len(),
                             link,
                         })
@@ -2867,10 +2855,8 @@ fn write_asset_manifest(
                     size: fs::metadata(extension.path)
                         .with_context(|| format!("metadata {}", extension.path.display()))?
                         .len(),
-                    stable: extension.stable,
                     control_files,
                     dependencies: metadata.dependencies.clone(),
-                    native_dependencies: metadata.native_dependencies.clone(),
                     load_order: metadata.load_order.clone(),
                     lifecycle: ExtensionLifecycleOut {
                         create_extension: metadata.lifecycle.create_extension,
@@ -2889,13 +2875,6 @@ fn write_asset_manifest(
                     core_exports_required,
                     unresolved_imports,
                     installed_files,
-                    smoke_status: ExtensionSmokeStatusOut {
-                        promoted,
-                        direct: metadata.smoke_status.direct.clone(),
-                        server: metadata.smoke_status.server.clone(),
-                        restart: metadata.smoke_status.restart.clone(),
-                        dump_restore: metadata.smoke_status.dump_restore.clone(),
-                    },
                     link,
                 })
             })
@@ -2959,7 +2938,6 @@ mod tests {
             source_kind: "postgres-contrib".to_owned(),
             control_files: control_files.into_iter().map(str::to_owned).collect(),
             dependencies: Vec::new(),
-            native_dependencies: Vec::new(),
             load_order: Vec::new(),
             lifecycle: extension_catalog::ManifestExtensionLifecycle {
                 create_extension,
@@ -2970,13 +2948,6 @@ mod tests {
                 preload_required: false,
                 restart_required: false,
                 shared_memory_required: false,
-            },
-            smoke_status: extension_catalog::ManifestExtensionSmokeStatus {
-                promoted: true,
-                direct: "passed".to_owned(),
-                server: "passed".to_owned(),
-                restart: "passed".to_owned(),
-                dump_restore: "not-run".to_owned(),
             },
         }
     }

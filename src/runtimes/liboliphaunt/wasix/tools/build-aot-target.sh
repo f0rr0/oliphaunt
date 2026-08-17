@@ -30,7 +30,7 @@ cargo run -p xtask -- assets check-aot --target-triple "$target"
 cargo check -p "$package" --locked
 cargo run -p xtask -- assets smoke --core-only
 
-# The portable/Linux regression exercises every promoted extension.  Each host
+# The portable/Linux regression exercises every catalogued extension. Each host
 # must also deserialize and execute machine code produced for that exact host,
 # including a side module and the split pg_dump/psql tool artifacts.  Keep this
 # bounded representative lane on all four AOT builders so cross-host coverage

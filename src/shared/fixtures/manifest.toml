@@ -1,1 +1,6 @@
 schema_version = 1
+
+[[fixtures]]
+id = "postgres-18-core-behavior"
+path = "postgres/behavior-contract.json"
+owner = "postgres-engine-runners"

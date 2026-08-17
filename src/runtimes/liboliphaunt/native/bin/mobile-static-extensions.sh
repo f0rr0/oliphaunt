@@ -42,6 +42,37 @@ oliphaunt_mobile_static_spec_field() {
   printf '%s\n' "$spec" | awk -F '|' -v field="$field" '{ print $field }'
 }
 
+oliphaunt_native_component_contract_field() {
+  local extension="${1:?missing extension}"
+  local family="${2:?missing artifact family}"
+  local kind="${3:?missing artifact kind}"
+  local target="${4:?missing artifact target}"
+  local field="${5:?missing component closure field}"
+  local script_dir repo_root
+  script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)"
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    field "$extension" "$family" "$kind" "$target" "$field"
+}
+
+oliphaunt_mobile_native_component_target() {
+  case "${1:?missing mobile target}" in
+    ios | ios-simulator | ios-device | macos | macos-arm64) printf '%s\n' ios-xcframework ;;
+    android | android-arm64 | arm64-v8a | android-arm64-v8a) printf '%s\n' android-arm64-v8a ;;
+    android-x86_64 | x86_64) printf '%s\n' android-x86_64 ;;
+    *) return 1 ;;
+  esac
+}
+
+oliphaunt_mobile_static_extension_components_for_target() {
+  local extension="${1:?missing mobile static extension}"
+  local target
+  target="$(oliphaunt_mobile_native_component_target "${2:?missing mobile target}")" || return 1
+  oliphaunt_native_component_contract_field \
+    "$extension" native native-static-registry "$target" components
+}
+
 oliphaunt_mobile_static_extension_sql_name() {
   oliphaunt_mobile_static_spec_field "$(oliphaunt_mobile_static_extension_spec "$1")" 1
 }
@@ -99,25 +130,17 @@ oliphaunt_mobile_static_extension_list_field() {
 oliphaunt_mobile_static_dependency_archive_candidates() {
   local dependency_root="${1:?missing mobile static dependency root}"
   local dependency="${2:?missing mobile static dependency name}"
-  case "$dependency" in
-    geos-c) printf '%s\n' "$dependency_root/geos/lib/libgeos_c.a" ;;
-    geos) printf '%s\n' "$dependency_root/geos/lib/libgeos.a" ;;
-    json-c) printf '%s\n' "$dependency_root/json-c/lib/libjson-c.a" ;;
-    libcharset) printf '%s\n' "$dependency_root/libiconv/lib/libcharset.a" ;;
-    libiconv) printf '%s\n' "$dependency_root/libiconv/lib/libiconv.a" ;;
-    libxml2) printf '%s\n' "$dependency_root/libxml2/lib/libxml2.a" ;;
-    openssl)
-      printf '%s\n' \
-        "$dependency_root/openssl/libcrypto.a" \
-        "$dependency_root/openssl/lib/libcrypto.a"
-      ;;
-    proj) printf '%s\n' "$dependency_root/proj/lib/libproj.a" ;;
-    sqlite) printf '%s\n' "$dependency_root/sqlite/lib/libsqlite3.a" ;;
-    uuid) printf '%s\n' "$dependency_root/uuid/lib/libuuid.a" ;;
-    *)
-      printf '%s\n' "$dependency_root/$dependency/lib$dependency.a"
-      ;;
-  esac
+  local script_dir repo_root candidate
+  script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)"
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    printf '%s/%s\n' "$dependency_root" "$candidate"
+  done < <(
+    "$repo_root/tools/dev/bun.sh" \
+      "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+      archive-candidates "$dependency"
+  )
 }
 
 oliphaunt_mobile_static_dependency_archive_for_root() {

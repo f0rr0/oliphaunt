@@ -12,11 +12,32 @@ import { stageIosApp } from "./stage-ios-app.mjs";
 
 const SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
 const GENERATED_EXTENSION_CATALOG = JSON.parse(
-  await fs.readFile(new URL("../src/generated/extensions.json", import.meta.url), "utf8"),
+  await fs.readFile(
+    await Promise.any([
+      new URL("../src/generated/extensions.json", import.meta.url),
+      new URL("../../../extensions/generated/sdk/extensions.json", import.meta.url),
+    ].map(async (url) => {
+      await fs.access(url);
+      return url;
+    })),
+    "utf8",
+  ),
 );
 const GENERATED_EXTENSION_BY_SQL_NAME = new Map(
   GENERATED_EXTENSION_CATALOG.extensions.map((row) => [row["sql-name"], row]),
 );
+const GENERATED_IOS_DEPENDENCIES_BY_SQL_NAME = new Map(JSON.parse(
+  await fs.readFile(
+    await Promise.any([
+      new URL("../src/generated/ios-static-dependencies.json", import.meta.url),
+      new URL("../../../extensions/generated/sdk/ios-static-dependencies.json", import.meta.url),
+    ].map(async (url) => {
+      await fs.access(url);
+      return url;
+    })),
+    "utf8",
+  ),
+).extensions.map((row) => [row["sql-name"], row["static-dependencies"]]));
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -811,12 +832,13 @@ async function createFixture(root) {
   ]) {
     const generated = GENERATED_EXTENSION_BY_SQL_NAME.get(fixture.sqlName);
     assert.ok(generated, `missing generated fixture metadata for ${fixture.sqlName}`);
+    const iosDependencies = GENERATED_IOS_DEPENDENCIES_BY_SQL_NAME.get(fixture.sqlName) ?? [];
     if (fixture.sqlName === "pgcrypto") {
-      assert.deepEqual(generated["ios-static-dependencies"], ["openssl"]);
+      assert.deepEqual(iosDependencies, ["openssl"]);
     }
     if (fixture.sqlName === "postgis") {
       assert.deepEqual(
-        generated["ios-static-dependencies"],
+        iosDependencies,
         ["geos", "geos-c", "json-c", "libxml2", "proj", "sqlite"],
       );
     }
@@ -827,7 +849,7 @@ async function createFixture(root) {
       dependencies: generated["selected-extension-dependencies"],
       extensionSqlFileNames: generated["extension-sql-file-names"],
       extensionSqlFilePrefixes: generated["extension-sql-file-prefixes"],
-      nativeDependencies: generated["ios-static-dependencies"],
+      nativeDependencies: iosDependencies,
       nativeModuleStem: generated["native-module-stem"],
       sharedPreloadLibraries: generated["shared-preload-libraries"],
     };

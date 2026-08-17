@@ -220,7 +220,7 @@ export async function loadSwiftExtensionInventoryCatalog(ownerCatalogFile = unde
   const candidates = ownerCatalogFile === undefined
     ? [
         path.join(import.meta.dirname, OWNER_CATALOG_FILENAME),
-        path.resolve(import.meta.dirname, "../../../extensions/generated/sdk/swift.json"),
+        path.resolve(import.meta.dirname, "../../../extensions/generated/sdk/extensions.json"),
       ]
     : [path.resolve(ownerCatalogFile)];
   let selected;
@@ -240,8 +240,8 @@ export async function loadSwiftExtensionInventoryCatalog(ownerCatalogFile = unde
   } catch (error) {
     fail("Swift extension inventory", `could not read ${selected}: ${error.message}`);
   }
-  if (document?.consumer !== "swift" || !Array.isArray(document.extensions) || document.extensions.length === 0) {
-    fail(selected, "is not a generated Swift extension catalog");
+  if (document?.["format-version"] !== 1 || !Array.isArray(document.extensions) || document.extensions.length === 0) {
+    fail(selected, "is not the generated extension catalog");
   }
   const rows = new Map();
   for (const [index, row] of document.extensions.entries()) {

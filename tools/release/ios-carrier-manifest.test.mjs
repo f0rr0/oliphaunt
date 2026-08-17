@@ -404,8 +404,6 @@ test("bundle carriers verify exact nested bytes without consulting truncated tar
         iosNativeDependencies: [],
         iosRegistration: null,
         sharedPreloadLibraries: [],
-        mobileReleaseReady: true,
-        desktopReleaseReady: true,
         assets: [{
           family: "native",
           target: "ios-xcframework",

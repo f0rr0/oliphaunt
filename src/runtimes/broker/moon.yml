@@ -18,7 +18,7 @@ project:
     packagePath: "src/runtimes/broker"
     artifactTargets:
       preset: "broker-helper"
-      publishedTargets:
+      targets:
         - "linux-arm64-gnu"
         - "linux-x64-gnu"
         - "macos-arm64"
@@ -122,6 +122,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/policy/moon.mjs"
@@ -161,6 +162,7 @@ tasks:
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/write_checksum_manifest.mjs"

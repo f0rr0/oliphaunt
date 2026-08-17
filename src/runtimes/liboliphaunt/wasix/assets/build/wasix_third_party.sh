@@ -145,7 +145,11 @@ oliphaunt_wasix_extension_build_dir() {
 }
 
 oliphaunt_wasix_extension_wasix_dependencies() {
-  oliphaunt_wasix_extension_wasix_target_values "$1" "$2" dependencies
+  local repo_root="$1"
+  local extension="$2"
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    field "$extension" wasix wasix-runtime wasix-portable components
 }
 
 oliphaunt_wasix_extension_wasix_configure_flags() {

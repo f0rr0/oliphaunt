@@ -6,8 +6,13 @@ import { extensionSqlNames } from "../../../../../tools/release/release-artifact
 import {
   projectWasixExtensionInstallSidecar,
 } from "../../../../../tools/release/wasix-extension-install-contract.mjs";
+import {
+  loadNativeComponentContract,
+  resolveNativeComponentClosure,
+} from "../../../tools/native-component-contract.mjs";
 const PREFIX = "package-wasix-extension-assets.sh";
 const WASIX_PRODUCT_PATH = "src/runtimes/liboliphaunt/wasix";
+const nativeComponentContract = loadNativeComponentContract();
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -148,6 +153,21 @@ for (const item of extensions) {
   if (typeof archive !== "string" || archive.length === 0) {
     fail(`${relativeToRoot(root, metadataPath)} row for ${sqlName} is missing archive`);
   }
+  const componentClosure = resolveNativeComponentClosure(nativeComponentContract, {
+    extension: sqlName,
+    family: "wasix",
+    kind: "wasix-runtime",
+    target: targetId,
+  });
+  for (const [field, expected] of [
+    ["native-components", componentClosure.components],
+    ["native-link-units", componentClosure.linkUnits],
+    ["native-runtime-files", componentClosure.runtimeFiles],
+  ]) {
+    if (JSON.stringify(item[field]) !== JSON.stringify(expected)) {
+      fail(`${relativeToRoot(root, metadataPath)} row for ${sqlName} has stale ${field}`);
+    }
+  }
 
   const source = path.join(assetRoot, archive);
   const sourceSize = await fileSize(source);
@@ -160,6 +180,18 @@ for (const item of extensions) {
   const builtRow = builtBySqlName.get(sqlName);
   if (builtRow === undefined) {
     fail(`${relativeToRoot(root, manifestPath)} has no built extension row for ${sqlName}`);
+  }
+  const installedFiles = Array.isArray(builtRow["installed-files"])
+    ? builtRow["installed-files"]
+    : [];
+  const missingComponentRuntimeFiles = componentClosure.runtimeFiles
+    .map((file) => `share/postgresql/${file}`)
+    .filter((file) => !installedFiles.includes(file));
+  if (missingComponentRuntimeFiles.length > 0) {
+    fail(
+      `${relativeToRoot(root, manifestPath)} extension ${sqlName} is missing native component runtime files: `
+        + missingComponentRuntimeFiles.join(", "),
+    );
   }
   const archiveBytes = await readFile(source);
   let installContract;

@@ -15,36 +15,44 @@ verified external artifact index.
 
 ## Release products and carriers
 
-Release ownership is not the same thing as SQL selection. The 32 promoted
+Release ownership is not the same thing as SQL selection. The 32 public
 PostgreSQL 18 contrib members have native carriers owned by
 `liboliphaunt-native` and WASIX carriers owned by `liboliphaunt-wasix`. The
 shared inventory has no version, changelog, or tag of its own. A shared contrib
 source change selects both runtimes; a native-only change does not select WASIX
 and a WASIX-only change does not select native.
 
-Every build-enabled, stable promoted external extension is an independently
+Every public external extension is an independently
 tagged release product. Its packaging version, changelog, immutable upstream
-source identity, and compatibility metadata live with that product. A catalog
-entry with `build = false` or `stable = false` is not a release member/product
-and must retain a concrete blocker until it qualifies; it must not acquire
-packages merely because its source pin exists.
+source identity, and compatibility metadata live with that product.
 
 For an external extension, `release.toml` is the active-public-product
-boundary, not general build metadata. A deferred extension must have no
-`release.toml`, `VERSION`, `CHANGELOG.md`, Release Please component, or Moon
-release-product metadata. Its source pin,
-recipe, target profiles, build tasks, and qualification evidence remain so CI
-can continue proving the implementation without reserving or publishing a
-package identity.
+boundary, not general build metadata. Experimental extension work belongs on a
+branch; an extension merged into the public catalog has a complete package
+identity and only claims targets it supports.
 
-Each exact SQL member has an explicit `targets/artifacts.toml`. The file opts
-into named target profiles and may add member-specific target rows; the expanded
-rows enumerate every published target and any member-specific planned or
-unsupported target with evidence references. Targets outside the global release
-OS policy are fail-closed and need not be repeated in every extension manifest.
-Missing metadata for a claimed target is an error; release tooling must never
-infer that an extension supports every runtime target merely because the
-runtime supports it.
+`tools/release/extension-target-profiles.toml` is the single exact-extension
+target contract. Every extension merged to main ships on every target in that
+contract; incomplete target work stays on a branch. This keeps target coverage
+fail-closed without 39 identical member manifests or status fields. The
+release tool expands the global profiles against the canonical SQL catalog and
+the runtime artifact inventory, so a target absent from either source cannot
+be packaged accidentally.
+
+Native library relationships are declared once in
+`src/extensions/catalog/native-components.toml`. A requirement is keyed by
+exact SQL name, artifact family, artifact kind, and target. Its
+transitive closure supplies component build order, static link units, runtime
+files, and source identities to native mobile, desktop packaging, and WASIX
+producers. Target differences must be separate requirement rows; for example,
+PostGIS carries `libiconv` on Android and WASIX but not in its iOS closure, and
+`proj` always brings `sqlite` plus `proj/proj.db`.
+
+This component contract is data, not a second build graph. Moon remains the
+only project/task dependency graph and invokes the existing artifact producers.
+The producers resolve and validate the component closure for their concrete
+target. SDKs consume the generated target projection or the resulting carrier;
+they must not reproduce the component graph.
 
 Ecosystem packages are carriers, not extra products: a stable Cargo façade,
 native/WASIX Cargo leaves, an npm façade plus selected platform packages,
@@ -177,7 +185,7 @@ The only exception is a mandatory dependency declared by
 `NATIVE_EXTENSION_MANIFEST`; for example `earthdistance` includes `cube`.
 
 End developers should not have to build PostgreSQL or extension source to know
-what they can ship. The runtime-resource CLI exposes the release-ready prebuilt
+what they can ship. The runtime-resource CLI exposes the public prebuilt
 catalog without requiring a local native build:
 
 ```sh
@@ -323,7 +331,7 @@ cargo run -p oliphaunt --bin oliphaunt-resources -- \
 
 `oliphaunt-resources` verifies the artifact byte count, SHA-256 digest, PG major,
 target, and artifact manifest before consuming it. It also follows exact
-extension dependencies from the index. Built-in release-ready extension names
+extension dependencies from the index. Built-in extension names
 cannot be overridden by index entries. Local sidecar artifacts next to the index
 are preferred. If a URL-backed artifact is missing locally, `--extension-cache`
 downloads it to a target-scoped cache and verifies bytes, SHA-256, and manifest
@@ -402,7 +410,7 @@ intentional local override: after its archive shape, exact manifest, complete
 inventory, legal members, native target, and selected runtime version all pass
 the normal validation boundary, it takes precedence over the built-in payload
 for the same SQL name. Artifact-index creation and loading reject entries for
-built-in release-ready names, so an index-resolved artifact cannot exercise
+built-in names, so an index-resolved artifact cannot exercise
 that override. Dependencies are exact extension names and resolve to an
 explicitly provided prebuilt artifact first, then to the built-in catalog or
 another provided prebuilt artifact.
@@ -545,31 +553,18 @@ public target-support declaration. Each row records:
 - first-party or external artifact policy.
 
 `Extension::FIRST_PARTY_PG18_SUPPORTED` is the exact inventory of first-party
-PG18 rows known to the native SDK. It is not a shipping promise.
+PG18 artifacts owned by Oliphaunt; vendor-provided artifact-index rows remain a
+separate runtime input.
 
-`Extension::RELEASE_READY_PG18_SUPPORTED` is a generated desktop native view
-for release packages. A row enters this catalog only when the product's
-explicit target manifest and current evidence declare that desktop target
-published. There is no contrib/default fallback.
-Rows can be first-party inventory without being desktop release-ready. PostGIS
-is target-specific rather than a blanket exception: native desktop, mobile,
-and WASIX readiness are controlled by its target metadata and build recipes.
-PostGIS mobile release readiness is target-owned and requires the selected iOS
-and Android static dependency archives, hash-dependency sets, runtime data, and
-smoke evidence.
-
-External candidates such as pgGraph and ParadeDB remain internal metadata until
-they have pinned artifacts, redistribution clearance, and direct, broker,
-server, restart, backup, restore, and mobile static-registry evidence.
-
-`Extension::MOBILE_RELEASE_READY_PG18_SUPPORTED` is the mobile exact-extension
-catalog. Release readiness is target-specific: mobile can intentionally be
-smaller than desktop native or WASIX support when static archives, dependency
-archives, runtime data, or mobile smoke evidence are incomplete. The
-runtime-resource CLI rejects attempts to mark a non-mobile-ready module as
-complete with `--mobile-static-module`; that prevents apps from shipping a
-manifest that claims an extension is linked when the prebuilt mobile artifact
-does not exist.
+`Extension::ALL_PG18_SUPPORTED` is the public exact-extension catalog used by
+release packages. Per-target support remains explicit in the canonical
+metadata: desktop native, mobile, and WASIX can differ where their artifacts or
+platform constraints differ. PostGIS, for example, requires the selected iOS
+and Android static dependency archives, hash-dependency sets, and runtime data
+on mobile. The runtime-resource CLI rejects attempts to mark a module without a
+mobile prebuilt artifact as complete with `--mobile-static-module`; that
+prevents apps from shipping a manifest that claims an extension is linked when
+the archive does not exist.
 
 `pgcrypto` is mobile-prebuilt through the first-party OpenSSL for `pgcrypto`
 static `libcrypto` archive. The Windows native producer also builds the pinned
@@ -582,20 +577,15 @@ PROJ, SQLite, json-c, and libxml2 dependency stack, links the generated
 `postgis-3` module against those static archives, and stages the matching
 extension SQL plus `proj/proj.db`.
 
-## Target-Specific PG18.4 Readiness
+## Target-Specific PG18.4 Support
 
 The generated catalog is a derived view of Oliphaunt-compatible PG18.4
-extension metadata. Product target manifests and evidence own release
-readiness. WASIX,
-native desktop, and mobile can move independently when their build recipes,
-artifacts, smoke evidence, or platform constraints differ. The invariant is
-strict: a public selection surface may advertise only the exact extensions that
-the selected target can actually package and run.
+extension metadata. WASIX, native desktop, and mobile support can differ when
+their artifacts or platform constraints differ. The invariant is strict: a
+public selection surface may advertise only the exact extensions that the
+selected target can actually package and run.
 
-Oliphaunt-listed extensions that are not stable stay out of every release-ready
-catalog until their PG18.4 blockers are gone. The only current non-stable row is
-Apache AGE, because the tracked source still calls PostgreSQL APIs removed in
-PG18. PostgreSQL 18.4 can build `uuid-ossp` only with
+PostgreSQL 18.4 can build `uuid-ossp` only with
 `--with-uuid=bsd`, `--with-uuid=e2fs`, or `--with-uuid=ossp`. Oliphaunt carries
 a first-party portable UUID compatibility source for the e2fs API under
 `src/runtimes/liboliphaunt/native/portable-uuid`; the WASIX, Linux/macOS native,

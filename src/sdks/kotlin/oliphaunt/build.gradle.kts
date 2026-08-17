@@ -735,7 +735,9 @@ val prepareOliphauntAndroidAssets by tasks.registering(PrepareOliphauntAndroidAs
     runtimeResourcesDirPath.set(packagedRuntimeResourcesDir ?: "")
     selectedExtensions.set(packagedExtensions)
     mobileStaticModuleStems.set(packagedMobileStaticModules)
-    generatedExtensionMetadata.from(layout.projectDirectory.file("src/generated/extensions.json"))
+    generatedExtensionMetadata.from(
+        layout.projectDirectory.file("../../../extensions/generated/sdk/extensions.json"),
+    )
     packagedRuntimeResourcesDir?.takeIf(String::isNotBlank)?.let { sourceDirectories.from(file(it)) }
     outputDir.set(generatedAndroidAssetsDir)
 }

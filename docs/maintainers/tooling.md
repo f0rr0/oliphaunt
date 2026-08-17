@@ -15,11 +15,10 @@ predictable without hiding ecosystem-native behavior.
 - Product-local `release.toml` files activate a public product and own package
   metadata Release Please does not model: owner, kind, publish targets,
   registry packages, release artifacts, compatibility-version files, and
-  derived version files. A build-only or publication-deferred extension must
-  not have one.
-- Runtime products select published target presets in Moon
-  `project.release.artifactTargets`; exact extension products own explicit
-  support and evidence in `targets/artifacts.toml`.
+  derived version files. Incomplete extension work stays on a branch.
+- Runtime products select target presets in Moon
+  `project.release.artifactTargets`; the global extension target-profile
+  contract applies those concrete targets to every catalogued SQL extension.
 - Product-native build tools own product behavior: Cargo, SwiftPM/Xcode,
   Gradle, npm, Expo, React Native Codegen, and PostgreSQL build scripts.
 - Bun helpers under `tools/release/*.mjs` and `.github/scripts/*.mjs` own the

@@ -205,7 +205,7 @@ verify_mobile_extension_smoke_receipt() {
   local reports_dir="$scratch_root/reports"
   local report="$reports_dir/$runner-report.json"
   local receipt="$reports_dir/$runner-extension-receipt.json"
-  local metadata="$root/src/extensions/generated/sdk/react-native.json"
+  local metadata="$root/src/extensions/generated/sdk/extensions.json"
   local candidate_sha="${CI_HEAD_SHA:-}"
   local candidate_tree
   local actual_sha
@@ -278,9 +278,6 @@ if (passEventBytes > 768) {
   throw new Error(`${platform} app PASS receipt exceeds the 768-byte unified-log-safe event budget: ${passEventBytes}`);
 }
 const expected = (metadata.extensions ?? [])
-  .filter(row => row['mobile-release-ready'] === true && (
-    row.support?.mobile?.[platform] === undefined || row.support.mobile[platform] === 'supported'
-  ))
   .map(row => row['sql-name'])
   .sort();
 if (expected.length === 0 || new Set(expected).size !== expected.length) {
@@ -332,7 +329,7 @@ verify_mobile_e2e_smoke_receipt() {
   local scratch="$2"
   local report="$scratch/reports/smoke-report.json"
   local receipt="$scratch/reports/smoke-extension-receipt.json"
-  local metadata="$root/src/extensions/generated/sdk/react-native.json"
+  local metadata="$root/src/extensions/generated/sdk/extensions.json"
   local candidate_sha
   local candidate_tree
   candidate_sha="$(git rev-parse HEAD)" || {
@@ -403,9 +400,6 @@ if (
   throw new Error(`${platform} mobile E2E receipt is not bound to the current commit and tree`);
 }
 const expected = (metadata.extensions ?? [])
-  .filter(row => row['mobile-release-ready'] === true && (
-    row.support?.mobile?.[platform] === undefined || row.support.mobile[platform] === 'supported'
-  ))
   .map(row => row['sql-name'])
   .sort();
 if (

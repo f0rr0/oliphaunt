@@ -18,6 +18,10 @@ import { afterEach, test } from "node:test";
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { extensionSqlNames } from "./release-artifact-targets.mjs";
+import {
+  loadNativeComponentContract,
+  resolveNativeComponentClosure,
+} from "../../src/extensions/tools/native-component-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const TEST_BASH = process.env.OLIPHAUNT_TEST_BASH
@@ -27,6 +31,7 @@ const RELEASE_SCRIPT = "src/extensions/artifacts/packages/tools/package-release-
 const MOBILE_SCRIPT = "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh";
 const WASIX_ASSET_PACKAGER = "src/extensions/artifacts/wasix/tools/package-release-assets.mjs";
 const CONTRIB_PRODUCT = "oliphaunt-extension-contrib-pg18";
+const nativeComponentContract = loadNativeComponentContract();
 const roots = [];
 
 function fixtureRun(script, { environment = {}, failTool = "" } = {}) {
@@ -160,6 +165,12 @@ test("WASIX release staging resolves runtime-owned contrib through its logical a
   const sqlNames = extensionSqlNames(CONTRIB_PRODUCT, "extension-package-assembly.test");
   const builtExtensions = [];
   const extensions = sqlNames.map((sqlName) => {
+    const componentClosure = resolveNativeComponentClosure(nativeComponentContract, {
+      extension: sqlName,
+      family: "wasix",
+      kind: "wasix-runtime",
+      target: "wasix-portable",
+    });
     const archive = `extensions/${sqlName}.tar.zst`;
     const archiveRoot = path.join(fixture, "archive-input", sqlName);
     const controlPath = `share/postgresql/extension/${sqlName}.control`;
@@ -206,6 +217,9 @@ test("WASIX release staging resolves runtime-owned contrib through its logical a
       lifecycle,
       "native-module-file": null,
       "native-support-modules": [],
+      "native-components": componentClosure.components,
+      "native-link-units": componentClosure.linkUnits,
+      "native-runtime-files": componentClosure.runtimeFiles,
     };
   });
   writeFileSync(metadataPath, `${JSON.stringify({ extensions }, null, 2)}\n`);

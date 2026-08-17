@@ -28,16 +28,3 @@ native_dependency_modules = []
 data_files = []
 headers = []
 licenses = ["share/licenses/pg_textsearch/LICENSE"]
-
-[support.native]
-direct = "supported"
-broker = "supported"
-server = "supported"
-
-[support.wasix]
-direct = "supported"
-server = "supported"
-
-[support.mobile]
-ios = "supported"
-android = "supported"
