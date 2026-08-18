@@ -30,12 +30,13 @@ import { runtimeBuildProvenance } from './packed-node-fixture.mjs';
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
 const execFileAsync = promisify(execFile);
-const benchmark = process.argv.includes('--benchmark');
+const diagnosticOpfsBenchmark = process.argv.includes('--diagnostic-opfs');
+const benchmark = process.argv.includes('--benchmark') || diagnosticOpfsBenchmark;
 const quickBenchmark = benchmark && process.argv.includes('--quick');
 const planFile = resolve(argumentValue('--config') ?? defaultBrowserPlanFile);
-const planSource = benchmark ? await loadBrowserPlan(planFile) : undefined;
-const git = benchmark ? await gitProvenance() : undefined;
-const benchmarkOutput = benchmark
+const planSource = benchmark && !diagnosticOpfsBenchmark ? await loadBrowserPlan(planFile) : undefined;
+const git = benchmark && !diagnosticOpfsBenchmark ? await gitProvenance() : undefined;
+const benchmarkOutput = benchmark && !diagnosticOpfsBenchmark
   ? resolve(argumentValue('--output') ?? defaultBenchmarkOutput(git.commit))
   : undefined;
 if (
@@ -46,7 +47,8 @@ if (
 }
 if (benchmarkOutput !== undefined) await requireAbsent(benchmarkOutput, 'benchmark output');
 const timeoutMs = Number(
-  process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
+  process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ??
+    (diagnosticOpfsBenchmark && !quickBenchmark ? 1_800_000 : benchmark ? 900_000 : 300_000),
 );
 const pgUuidv7Canary = process.argv.includes('--pg-uuidv7');
 const postgisWorkerCanary = process.argv.includes('--postgis-worker');
@@ -153,26 +155,57 @@ try {
   ]);
 
   const smokeUrl = benchmark
-    ? `http://127.0.0.1:${vitePort}/benchmark.html${quickBenchmark ? '?quick=1' : ''}`
+    ? `http://127.0.0.1:${vitePort}/benchmark.html?${new URLSearchParams({
+        ...(quickBenchmark ? { quick: '1' } : {}),
+        ...(diagnosticOpfsBenchmark ? { opfs: '1' } : {}),
+      })}`
     : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}${postgisWorkerCanary ? '&postgis_worker=1' : ''}`;
   await cdp.send('Page.navigate', { url: smokeUrl });
   const deadline = Date.now() + timeoutMs;
+  let latestSnapshot = {};
+  let completed = false;
   while (Date.now() < deadline) {
     assertRunning(vite);
     assertRunning(browser);
-    const evaluated = await cdp.send('Runtime.evaluate', {
-      expression:
-        "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
-      returnByValue: true,
-    });
+    const evaluated = await withTimeout(
+      cdp.send('Runtime.evaluate', {
+        expression:
+          "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
+        returnByValue: true,
+      }),
+      Math.max(1, deadline - Date.now()),
+      `browser smoke timed out after ${timeoutMs}ms`,
+    );
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
+    latestSnapshot = snapshot;
     if (snapshot.state === 'passed') {
       if (benchmark) {
+        const result = parseBenchmarkResult(snapshot.output);
+        if (diagnosticOpfsBenchmark) {
+          console.log(
+            `wasix-ts OPFS diagnostic benchmark: PASS\n${JSON.stringify(
+              {
+                configuration: result.configuration,
+                postgresProfiles: result.postgresProfiles,
+                worker: Object.fromEntries(
+                  Object.entries(result.summary.workload).map(([metric, value]) => [
+                    metric,
+                    value.worker,
+                  ]),
+                ),
+                insertDiagnostic: result.insertDiagnostic.summary,
+              },
+              null,
+              2,
+            )}`,
+          );
+          completed = true;
+          break;
+        }
         const finalGit = await gitProvenance();
         if (finalGit.commit !== git.commit || finalGit.tree !== git.tree) {
           throw new Error('Git commit or tree changed while the browser benchmark was running');
         }
-        const result = parseBenchmarkResult(snapshot.output);
         const summary = summarizeBrowserResult(planSource, result);
         const report = {
           schema: 'oliphaunt-wasix-browser-benchmark-report-v1',
@@ -203,6 +236,7 @@ try {
       } else {
         console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
       }
+      completed = true;
       break;
     }
     if (snapshot.state === 'failed') {
@@ -211,12 +245,10 @@ try {
     await delay(750);
   }
 
-  const finalState = await cdp.send('Runtime.evaluate', {
-    expression: "document.documentElement.dataset.oliphauntSmoke ?? ''",
-    returnByValue: true,
-  });
-  if (finalState.result.value !== 'passed') {
-    throw new Error(`browser smoke timed out after ${timeoutMs}ms`);
+  if (!completed) {
+    throw new Error(
+      `browser smoke timed out after ${timeoutMs}ms; last status=${JSON.stringify(latestSnapshot.status ?? '')}`,
+    );
   }
 } finally {
   socket?.close();
@@ -357,6 +389,7 @@ async function toolProvenance(plan) {
     resolve(bindingRoot, 'examples/browser/benchmark.html'),
     resolve(bindingRoot, 'examples/browser/benchmark.ts'),
     resolve(bindingRoot, 'examples/browser/pglite-worker.ts'),
+    resolve(bindingRoot, 'examples/browser/opfs-transport-probe-worker.ts'),
     resolve(bindingRoot, 'examples/browser/vite.config.ts'),
   ]);
 }
@@ -478,6 +511,11 @@ function createCdpClient(webSocket) {
       const sessionId = message.params.sessionId;
       void send('Runtime.enable', {}, sessionId);
       void send('Log.enable', {}, sessionId);
+      void send(
+        'Target.setAutoAttach',
+        { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
+        sessionId,
+      );
     }
   });
 
@@ -605,4 +643,20 @@ async function freePort() {
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+function withTimeout(promise, milliseconds, message) {
+  return new Promise((resolveResult, rejectResult) => {
+    const timeout = setTimeout(() => rejectResult(new Error(message)), milliseconds);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolveResult(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        rejectResult(error);
+      },
+    );
+  });
 }

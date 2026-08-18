@@ -1,5 +1,6 @@
 import type { WasixDirectoryMount } from './archive.js';
 import { WasixStorageError } from './errors.js';
+import type { Directory } from './host/index.mjs';
 import type { SerializedWasixStorage } from './storage.js';
 import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './storage.js';
 
@@ -42,11 +43,15 @@ export type StorageDirectory = {
 export type WasixStorageSyncBoundary = 'operation' | 'checkpoint' | 'close';
 
 export type WasixStorageLease = {
-  /** Whether PGDATA came from the packaged template or a durable generation. */
+  /** Whether first-open database and extension setup still has to complete. */
   readonly state: 'new' | 'existing';
-  /** Initial contents for the worker-owned `/base` Wasmer memory mount. */
+  /** Initial contents for a provider's portable `/base` Wasmer memory mount. */
   readonly mount: WasixDirectoryMount;
-  /** Publish journaled mutations at a PostgreSQL-safe host boundary. */
+  /** Optional direct filesystem materializer; portable providers omit it. */
+  createDirectory?(DirectoryConstructor: typeof Directory): Promise<Directory>;
+  /** Finalize provider-specific state after every first-open setup statement succeeds. */
+  completeInitialization(directory: StorageDirectory): Promise<void>;
+  /** Complete the provider's PostgreSQL-safe persistence boundary. */
   sync(directory: StorageDirectory, boundary: WasixStorageSyncBoundary): Promise<void>;
   close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void>;
 };
@@ -140,11 +145,45 @@ export function canonicalStorageContract(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
+export type StoredCompatibilityContext = Readonly<{
+  label: string;
+  corrupt(detail: string, cause?: unknown): WasixStorageError;
+}>;
+
+/** Validate one provider's untrusted compatibility sidecar consistently. */
+export function validateStoredCompatibility(
+  value: unknown,
+  expected: WasixStorageCompatibility,
+  context: StoredCompatibilityContext,
+): WasixStorageCompatibility {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw context.corrupt('has malformed compatibility metadata');
+  }
+  let storedContract: string;
+  try {
+    storedContract = canonicalStorageContract(value);
+  } catch (error) {
+    throw context.corrupt(`has malformed compatibility metadata: ${describeError(error)}`, error);
+  }
+  if (storedContract !== canonicalStorageContract(expected)) {
+    throw new WasixStorageError(
+      `${context.label} is incompatible with the selected runtime or extensions`,
+      { code: 'incompatible', durability: 'unchanged' },
+    );
+  }
+  return value as WasixStorageCompatibility;
+}
+
 function memoryLease(template: WasixDirectoryMount): WasixStorageLease {
   return {
     state: 'new',
     mount: template,
+    async completeInitialization() {},
     async sync() {},
     async close() {},
   };
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

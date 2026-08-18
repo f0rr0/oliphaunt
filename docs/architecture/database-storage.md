@@ -17,7 +17,7 @@ or initialization policy.
 | Temporary directory | Native process/runtime lifetime | SDK | Native |
 | Directory | Until the application removes it | Application | Never |
 | Application data | Until the application removes it | Application | Never |
-| IndexedDB / OPFS | Until the origin removes it | Application/origin | Never |
+| IndexedDB / OPFS | Best effort until the origin, user, or browser removes it; persistent when granted | Application/origin | Never |
 
 Native SDKs default to an SDK-owned temporary directory because native
 PostgreSQL requires a real PGDATA directory. WASIX SDKs default to a true
@@ -36,6 +36,13 @@ database. Native direct close may be a logical detach from a process-resident
 PostgreSQL backend; its SDK-owned temporary directory must remain until that
 backend's physical lifetime ends. It is not durable storage and the operating
 system may reclaim it after process exit.
+
+Browser persistence uses the origin's default storage bucket. The SDK does not
+silently request persistent-storage permission or guess whether a database is
+important enough to retain under storage pressure. Applications that require
+that policy call `navigator.storage.persisted()`, explain the choice to the
+user, request `navigator.storage.persist()`, and can inspect headroom with
+`navigator.storage.estimate()` before large imports.
 
 ## SDK spellings
 
@@ -61,10 +68,11 @@ crate and pass the result through `Directory(path)`.
 
 TypeScript WASIX does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
-hosts use the same memory default and selectively expose delta-backed browser
-or raw-directory providers. Those providers hydrate Wasmer memory and publish
-journaled changes at PostgreSQL-safe boundaries; they are not described as
-direct guest mounts. Portable `@oliphaunt/wasix-ts` and native
+hosts use the same memory default and selectively expose browser or
+raw-directory providers. IndexedDB, server directories, and the portable OPFS
+fallback hydrate Wasmer memory and publish journaled changes at
+PostgreSQL-safe boundaries. Browser workers instead mount the same opaque OPFS
+pool through a same-realm synchronous range-I/O bridge. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
@@ -104,9 +112,27 @@ provider boundary.
 Each logical IndexedDB name owns an independent physical IndexedDB database.
 Compatibility metadata and path rows change in one atomic read-write
 transaction using the browser's default durability policy, so an aborted
-publication leaves the prior generation current. OPFS, Node, Bun, and Deno
-expose raw PGDATA layouts and apply WAL before ordinary files,
-`global/pg_control` last, and removals after upserts.
+publication leaves the prior generation current. OPFS uses an opaque logical
+namespace plus flat backing-file pool. The PostgreSQL execution worker owns
+preopened synchronous access handles and services WASIX filesystem calls
+directly in that same realm: reads and writes cross one ordinary function call,
+without another worker, `Atomics`, or a copied mailbox. Logical create, rename,
+unlink, and directory operations are synchronous in memory; asynchronous OPFS
+namespace work occurs only while opening the database or completing a storage
+boundary. PostgreSQL descriptor syncs flush the addressed record. Because
+WASIX open options cannot carry `O_DSYNC`, the managed profile uses
+`fdatasync`; operation boundaries drain dirty WAL, while explicit checkpoints
+and clean close drain every remaining dirty record. The direct mount bypasses
+the Wasmer mutation journal.
+
+Main-thread execution and browsers without synchronous access handles retain
+the delta provider. It reads and writes the same pool format, uses copy-on-write
+backings for changed files, and atomically replaces logical state only after all
+new backings are complete. A failed state publication therefore leaves the
+preceding logical generation selected. OPFS still cannot make the direct
+PostgreSQL writes themselves a cross-file transaction, so provider failures
+remain `unknown` durability. Node, Bun, and Deno retain WAL-first/control-last
+ordering for their transparent raw-directory storage.
 
 Consequences are part of the public contract:
 
@@ -123,6 +149,10 @@ Consequences are part of the public contract:
 - a successful operation or callback transaction does not settle before its
   persistence boundary; abrupt termination may lose only work whose boundary
   had not completed;
+- direct OPFS reopen validates identity plus essential PGDATA and reads file
+  contents lazily; pool setup and fallback hydration use bounded concurrency,
+  and a burst that consumes all prepared spare files spills to memory until the
+  next safe boundary rather than rejecting a valid PostgreSQL operation;
 - one fixed atomic Node lock slot owns a local-filesystem directory; its
   published child is the complete unique lease identity, concurrent or
   cross-process opens on one host fail `busy`, proven-dead local owners and
@@ -134,9 +164,34 @@ Consequences are part of the public contract:
 - Node rejects symlinked or foreign adapter state and never treats unrelated
   files in the application directory as generations.
 
-OPFS is deliberately an asynchronous delta provider rather than a claimed
-synchronous guest mount. Its cross-file failure durability is `unknown`, while
-IndexedDB can report `not-persisted` when its atomic transaction aborts.
+OPFS is one provider with two transports over one format. The worker transport
+preserves PostgreSQL's WAL ordering and descriptor flushes through direct
+synchronous access handles. The portable transport hydrates Wasmer memory and
+publishes copy-on-write backing files followed by atomic logical state. They
+share the opaque pool, exact compatibility metadata, one Web Lock, and
+volatile-file cleanup, so either can reopen a database last used by the other.
+OPFS failures retain `unknown` durability, while IndexedDB can report
+`not-persisted` when its atomic transaction aborts.
+
+## OPFS design position
+
+Oliphaunt uses the same durable high-level idea as AHP-style OPFS filesystems:
+keep a logical namespace in memory and acquire backing handles before
+synchronous guest execution. Its concrete contract is the one documented
+above; upstream pool sizes, internal protocols, and failure policies are not
+part of Oliphaunt's API and should not be copied into this guide. A pinned,
+matched persistent-storage benchmark is required for any comparative
+performance claim, and cross-browser crash injection remains required for a
+comparative recovery claim.
+
+The execution worker is the only required worker boundary. Standard OPFS
+exposes synchronous access handles there; logical path creation, rename, and
+removal never call the asynchronous OPFS namespace during a guest syscall.
+This is the performance-critical topology: PostgreSQL, the WASIX virtual
+filesystem, and the access-handle pool share one worker and one call stack.
+The previous raw-PGDATA OPFS layout is not interoperable with this pool; a
+non-empty legacy identity fails closed so it cannot be silently replaced by a
+fresh database.
 
 ## Capabilities
 
@@ -154,4 +209,7 @@ the accurate filesystem term.
 ## References
 
 - [PGlite filesystems](https://pglite.dev/docs/filesystems)
+- [WHATWG File System Standard](https://fs.spec.whatwg.org/)
+- [WHATWG Storage Standard](https://storage.spec.whatwg.org/)
+- [wa-sqlite example VFS comparison](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples)
 - [Oliphaunt issue #90: in-memory mode](https://github.com/f0rr0/oliphaunt/issues/90)

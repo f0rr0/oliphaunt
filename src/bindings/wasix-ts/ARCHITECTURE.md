@@ -173,22 +173,26 @@ opaque storage descriptor
  acquire provider lease ---- exact compatibility metadata
           |
           v
- hydrate worker-owned /base Directory
+ materialize /base: memory hydration or direct OPFS bridge
           |
           v
  PostgreSQL ReadyForQuery / clean exit
           |
           v
- journaled delta publication + release
+ direct flush or journaled delta publication + release
 ```
 
 The main package owns the fresh-memory descriptor and default. IndexedDB and
 OPFS are selective `./storage/indexed-db` and `./storage/opfs` entrypoints whose
 implementations load only when an opaque descriptor reaches the execution
 realm. Raw serialized descriptors are not accepted from consumers. The
-internal lease exposes `state`, one initial PGDATA mount,
+internal lease exposes `state`, one initial PGDATA mount, an optional
+direct-PGDATA materializer, `completeInitialization(directory)`,
 `sync(directory, boundary)`, and `close(directory, outcome)`; it does not own
-runtime or extension assets.
+runtime or extension assets. `state` means whether first-open SQL setup has
+completed, not merely whether storage bytes exist. Providers whose initial
+bytes can precede setup use an explicit marker and publish it only after every
+setup statement succeeds.
 
 The source-pinned Wasmer `Directory` exposes a compact current-state mutation
 journal. Write-capable files are wrapped so a PostgreSQL descriptor retained
@@ -205,11 +209,32 @@ fixed metadata and one row per PGDATA path. Each boundary applies upserts and
 removals in one atomic read-write transaction using the browser's default
 durability policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
-stores raw PGDATA files plus one
-sidecar identity and publishes WAL first, ordinary files second,
-`global/pg_control` last, then removals. OPFS has native-filesystem recovery
-ordering but no cross-file transaction, so a failed publication reports unknown
-durability instead of claiming that nothing changed.
+stores a validated logical namespace and flat opaque backing-file pool. In
+worker placement, PostgreSQL, the WASIX filesystem, and the pool share the same
+worker. The Rust host calls the JavaScript backend directly; there is no nested
+storage worker, shared-memory mailbox, or `Atomics` wait. All live backings and
+32 spare backings have synchronous access handles before guest execution.
+Writes expose the exact WASIX slice to the backend, and reads fill the WASIX
+read buffer directly; there is no intermediate Rust read buffer. Create,
+rename, unlink, and directory operations update the in-memory namespace
+synchronously. A create burst larger
+than the spare set spills new files to memory and materializes them at the next
+safe boundary instead of failing. PostgreSQL descriptor fsyncs flush addressed
+records. Since WASIX open options cannot carry `O_DSYNC`, the managed profile
+uses `fdatasync`; completed operations drain dirty WAL, and explicit checkpoint
+or clean close drains every remaining dirty record. The direct mount bypasses
+the Wasmer mutation journal; open-file unlink retains the record until its last
+descriptor closes.
+
+Main-thread placement and browsers without synchronous access handles retain
+the delta transport. It hydrates Wasmer memory from the same pool format and
+publishes each changed file to a fresh backing before atomically replacing
+logical state. Failed state publication therefore keeps the prior logical
+generation selected. Fallback hydration and writes use bounded concurrency,
+and stale backings are pruned best-effort. Both transports share compatibility
+metadata, one Web Lock, and volatile-file cleanup. Direct OPFS writes are still
+not a cross-file transaction, so a storage failure reports unknown durability
+instead of claiming that nothing changed.
 
 Compatibility includes the exact runtime product/version, manifest, runtime
 archive, PGDATA template, module, source fingerprint, PostgreSQL version, and
@@ -225,8 +250,9 @@ the single-owner invariant rather than suggesting that one single-user
 PostgreSQL backend represents independent connections. There is no leader
 proxy or multi-tab transaction ownership yet.
 
-Provider acquisition and hydration happen before PostgreSQL starts. Delta
-publication happens only after pgwire recovery returns `ReadyForQuery`, so
+Provider acquisition and portable hydration happen before PostgreSQL starts;
+the direct OPFS transport validates essential PGDATA and opens its mapped
+backings without hydrating relation bytes. Delta publication happens only after pgwire recovery returns `ReadyForQuery`, so
 ordinary PostgreSQL errors retain their existing `PostgresError` identity. A
 host persistence failure is instead a typed storage error and poisons the live
 handle: committed work may be present in its memory directory while publication

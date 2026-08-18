@@ -8,10 +8,11 @@ import {
 } from '../direct-client-common.js';
 import { WasixStorageError } from '../errors.js';
 import type { PreparedWasixRuntime } from '../extensions.js';
-import type { OliphauntDirectInstance } from '../host/index.mjs';
+import type { OliphauntDirectInstance, RunWasixOptions } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
 import type { WasixStorageLease } from '../storage-provider.js';
+import { wasixPostgresArgs } from '../wasix-runtime.js';
 
 describe('direct WASIX session lifecycle', () => {
   it('keeps startup SQLSTATE while composing cleanup failures in ownership order', async () => {
@@ -58,6 +59,9 @@ describe('direct WASIX session lifecycle', () => {
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
     }, 'new');
+    storage.completeInitialization = async () => {
+      events.push('storage:initialized');
+    };
     const host = fakeHost({
       events,
       execProtocolRaw() {
@@ -76,6 +80,52 @@ describe('direct WASIX session lifecycle', () => {
     expect(failure).toBeInstanceOf(PostgresError);
     expect(failure).toMatchObject({ sqlstate: '22012', postgresMessage: 'division by zero' });
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
+  });
+
+  it('publishes the initialization marker only after all setup SQL succeeds', async () => {
+    const events: string[] = [];
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+    }, 'new');
+    storage.completeInitialization = async () => {
+      events.push('storage:initialized');
+    };
+
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({ events }),
+      fakeDependencies(storage, preparedRuntime(['SELECT 1'])),
+    );
+
+    expect(events).toEqual(['startup', 'exec', 'storage:initialized']);
+    await session.close();
+  });
+
+  it('mounts provider-owned PGDATA directly without hydrating the archive template', async () => {
+    const direct = new FakeDirectory();
+    let materializations = 0;
+    let mountedBase: unknown;
+    const storage = fakeLease(async () => undefined);
+    storage.createDirectory = async () => {
+      materializations += 1;
+      return direct as unknown as Awaited<
+        ReturnType<NonNullable<WasixStorageLease['createDirectory']>>
+      >;
+    };
+
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        onInstantiate(options) {
+          mountedBase = options.mount?.['/base'];
+        },
+      }),
+      fakeDependencies(storage),
+    );
+
+    expect(materializations).toBe(1);
+    expect(mountedBase).toBe(direct);
+    await session.close();
   });
 
   it('closes the guest before publishing storage and frees it last', async () => {
@@ -166,6 +216,7 @@ describe('direct WASIX session lifecycle', () => {
     const storage: WasixStorageLease = {
       state: 'existing',
       mount: pgdataMount(),
+      async completeInitialization() {},
       async sync() {
         throw checkpointFailure;
       },
@@ -332,6 +383,24 @@ describe('direct WASIX session lifecycle', () => {
   });
 });
 
+describe('direct WASIX runtime settings', () => {
+  it('uses fdatasync for the direct storage durability boundary', () => {
+    expect(wasixPostgresArgs(openOptions())).toContain('wal_sync_method=fdatasync');
+  });
+
+  it.each([
+    'max_worker_processes',
+    'MAX_PARALLEL_MAINTENANCE_WORKERS',
+    'io_method',
+    'wal_sync_method',
+  ])('rejects an override of managed setting %s', (name) => {
+    const options = openOptions();
+    options.startupGUCs = { [name]: '1' };
+
+    expect(() => wasixPostgresArgs(options)).toThrow(name);
+  });
+});
+
 async function rejection(promise: Promise<unknown>): Promise<Error> {
   try {
     await promise;
@@ -366,6 +435,7 @@ function fakeLease(
   return {
     state,
     mount: pgdataMount(),
+    async completeInitialization() {},
     async sync() {},
     close,
   };
@@ -374,6 +444,7 @@ function fakeLease(
 type FakeHostOptions = {
   events?: string[];
   init?(): Promise<void>;
+  onInstantiate?(options: RunWasixOptions): void;
   startup?(): Uint8Array;
   execProtocolRaw?(): Uint8Array;
   close?(): void;
@@ -406,7 +477,8 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
     async init() {
       await options.init?.();
     },
-    async instantiateOliphauntDirect() {
+    async instantiateOliphauntDirect(_module, _moduleBytes, runtimeOptions) {
+      options.onInstantiate?.(runtimeOptions);
       return options.instantiate?.() ?? instance;
     },
   };
