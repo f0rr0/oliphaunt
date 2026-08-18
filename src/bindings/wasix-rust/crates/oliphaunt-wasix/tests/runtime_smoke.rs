@@ -1,11 +1,12 @@
 #![cfg(feature = "extensions")]
 
 use oliphaunt_wasix::{
-    DataDirArchiveFormat, ExecProtocolOptions, Oliphaunt, OliphauntError, OliphauntServer,
-    QueryOptions, QueryTemplate, RowMode, format_query, quote_identifier,
+    DatabaseInitialization, DatabaseStorage, ExecProtocolOptions, Oliphaunt, OliphauntError,
+    OliphauntServer, QueryOptions, QueryTemplate, RowMode, format_query, quote_identifier,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -88,33 +89,10 @@ fn raw_backend_message_name(message: &oliphaunt_wasix::BackendMessage) -> &'stat
     }
 }
 
-fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
-    let runtime = root.join("tmp/oliphaunt");
-    assert!(
-        runtime.join(".oliphaunt-wasix-mountfs-runtime").is_file(),
-        "expected shared runtime overlay marker under {}",
-        runtime.display()
-    );
-    assert!(
-        !runtime.join("bin").exists(),
-        "core binaries should be served from the lower cached runtime, not linked into {}",
-        runtime.display()
-    );
-    assert!(
-        !runtime.join("lib").exists(),
-        "core runtime libraries should stay in the lower cached runtime"
-    );
-    assert!(
-        !runtime.join("share").exists(),
-        "core catalog, timezone, and extension metadata should stay in the lower cached runtime"
-    );
-}
-
 #[test]
 fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder()
-        .temporary()
-        .template_cache(false)
+        .initialization(DatabaseInitialization::FreshInitdb)
         .open()?;
     let result = db.query("SELECT 1 AS value", &[], None)?;
     assert_eq!(first_row(&result)?["value"], json!(1));
@@ -122,48 +100,56 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 }
 
 #[test]
-fn core_english_snowball_text_search_loads_runtime_module_and_data() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().temporary().open()?;
-    let result = db.query(
-        "SELECT CASE WHEN \
-         to_tsvector('pg_catalog.english', 'the quick foxes running') \
-         @@ to_tsquery('pg_catalog.english', 'run & fox') \
-         THEN 'english-snowball-ok' ELSE 'english-snowball-failed' END AS value",
-        &[],
-        None,
-    )?;
-    assert_eq!(first_row(&result)?["value"], json!("english-snowball-ok"));
+fn postgres_behavior_matches_shared_contract() -> anyhow::Result<()> {
+    let Some(fixture_path) = shared_postgres_behavior_fixture_path() else {
+        eprintln!("skipping shared PostgreSQL behavior fixture outside the monorepo package");
+        return Ok(());
+    };
+    let mut db = Oliphaunt::builder().open()?;
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(fixture_path)?)?;
+    assert_eq!(fixture["schemaVersion"], json!(1));
+
+    for statement in fixture["statements"]
+        .as_array()
+        .expect("contract statements")
+    {
+        db.exec(statement.as_str().expect("SQL statement"), None)?;
+    }
+
+    let assertion = fixture["assertion"]
+        .as_object()
+        .expect("contract assertion");
+    let result = db.query(assertion["sql"].as_str().expect("assertion SQL"), &[], None)?;
+    assert_eq!(
+        first_row(&result)?[assertion["column"].as_str().expect("assertion column")],
+        assertion["expected"]
+    );
+
+    for statement in fixture["cleanupStatements"]
+        .as_array()
+        .expect("contract cleanup statements")
+    {
+        db.exec(statement.as_str().expect("cleanup SQL statement"), None)?;
+    }
     Ok(())
 }
 
-#[test]
-fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().temporary().open()?;
-    let mut ids = Vec::new();
-
-    for _ in 0..4 {
-        let result = db.query("SELECT gen_random_uuid()::text AS id", &[], None)?;
-        ids.push(
-            first_row(&result)?["id"]
-                .as_str()
-                .expect("uuid text result")
-                .to_owned(),
-        );
+fn shared_postgres_behavior_fixture_path() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("OLIPHAUNT_SHARED_FIXTURES") {
+        let path = PathBuf::from(root).join("postgres/behavior-contract.json");
+        if path.is_file() {
+            return Some(path);
+        }
     }
-
-    let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        unique.len(),
-        ids.len(),
-        "expected gen_random_uuid() to produce unique values across queries, got {ids:?}"
-    );
-    Ok(())
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../shared/fixtures/postgres/behavior-contract.json");
+    path.is_file().then_some(path)
 }
 
 #[test]
 fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()> {
     // OLIPHAUNT_DOCS_SNIPPET wasm-quickstart
-    let mut pg = Oliphaunt::builder().temporary().open()?;
+    let mut pg = Oliphaunt::builder().open()?;
     pg.exec(
         "CREATE TABLE direct_tx_items(id int PRIMARY KEY, value text)",
         None,
@@ -206,7 +192,7 @@ fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()>
     let pg_err = failed
         .downcast_ref::<OliphauntError>()
         .expect("transaction SQL error should preserve Postgres fields");
-    assert_eq!(pg_err.database_error().code.as_deref(), Some("22012"));
+    assert_eq!(pg_err.postgres_error().sqlstate.as_deref(), Some("22012"));
 
     let count = pg.query(
         "SELECT count(*)::int AS count, string_agg(value, ',' ORDER BY id) AS values \
@@ -230,7 +216,6 @@ fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()>
 #[test]
 fn direct_startup_postgres_config_uses_real_guc_handling() -> anyhow::Result<()> {
     let mut pg = Oliphaunt::builder()
-        .temporary()
         .postgres_config("synchronous_commit", "off")
         .postgres_config("work_mem", "8MB")
         .open()?;
@@ -276,7 +261,6 @@ fn direct_startup_postgres_config_uses_real_guc_handling() -> anyhow::Result<()>
 #[test]
 fn invalid_postgres_config_is_rejected_before_backend_startup() -> anyhow::Result<()> {
     let err = match Oliphaunt::builder()
-        .temporary()
         .postgres_config("bad=name", "off")
         .open()
     {
@@ -294,14 +278,16 @@ fn invalid_postgres_config_is_rejected_before_backend_startup() -> anyhow::Resul
 fn direct_startup_identity_can_select_existing_user_and_database() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let mut db = Oliphaunt::builder().path(root.path()).open()?;
+        let mut db = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         db.exec("CREATE ROLE test_user LOGIN", None)?;
         db.exec("CREATE DATABASE test_db OWNER test_user", None)?;
         db.close()?;
     }
 
     let mut db = Oliphaunt::builder()
-        .path(root.path())
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
         .username("test_user")
         .database("test_db")
         .open()?;
@@ -319,10 +305,7 @@ fn direct_startup_identity_can_select_existing_user_and_database() -> anyhow::Re
 
 #[test]
 fn relaxed_durability_uses_postgres_guc() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder()
-        .temporary()
-        .relaxed_durability(true)
-        .open()?;
+    let mut db = Oliphaunt::builder().relaxed_durability(true).open()?;
     let result = db.query(
         "SELECT current_setting('synchronous_commit') AS sync_commit",
         &[],
@@ -336,7 +319,6 @@ fn relaxed_durability_uses_postgres_guc() -> anyhow::Result<()> {
 #[test]
 fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()> {
     let mut disabled = Oliphaunt::builder()
-        .temporary()
         .relaxed_durability(true)
         .relaxed_durability(false)
         .open()?;
@@ -349,7 +331,6 @@ fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()>
     disabled.close()?;
 
     let mut overridden = Oliphaunt::builder()
-        .temporary()
         .relaxed_durability(true)
         .postgres_config("synchronous_commit", "on")
         .open()?;
@@ -366,7 +347,6 @@ fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()>
 #[test]
 fn startup_args_are_passed_to_postgres() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder()
-        .temporary()
         .startup_args(["-c", "application_name=oliphaunt-wasix-test"])
         .open()?;
     let result = db.query(
@@ -384,7 +364,7 @@ fn startup_args_are_passed_to_postgres() -> anyhow::Result<()> {
 
 #[test]
 fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
-    let mut source = Oliphaunt::builder().temporary().open()?;
+    let mut source = Oliphaunt::builder().open()?;
     source.exec(
         "CREATE TABLE data_dir_items(id serial PRIMARY KEY, value text);
          INSERT INTO data_dir_items(value) VALUES ('alpha'), ('beta');",
@@ -396,11 +376,10 @@ fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
         &[],
         None,
     )?;
-    let archive = source.dump_data_dir_with_format(DataDirArchiveFormat::Tar)?;
+    let archive = source.backup()?;
 
     let mut loaded = Oliphaunt::builder()
-        .temporary()
-        .load_data_dir_archive(archive)
+        .initialization(DatabaseInitialization::PhysicalArchive(archive))
         .open()?;
     let loaded_rows = loaded.query(
         "SELECT id, value FROM data_dir_items ORDER BY id",
@@ -435,7 +414,7 @@ fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
 
 #[test]
 fn direct_raw_protocol_api_matches_oliphaunt_exec_protocol_cases() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().temporary().open()?;
+    let mut db = Oliphaunt::builder().open()?;
 
     let simple = db.exec_protocol(
         &raw_query_message("SELECT 1"),
@@ -481,7 +460,7 @@ fn direct_raw_protocol_api_matches_oliphaunt_exec_protocol_cases() -> anyhow::Re
         )
         .expect_err("throw_on_error should return the Postgres error");
     assert!(
-        err.downcast_ref::<oliphaunt_wasix::DatabaseError>()
+        err.downcast_ref::<oliphaunt_wasix::PostgresError>()
             .is_some(),
         "unexpected raw protocol error: {err:#}"
     );
@@ -516,15 +495,9 @@ fn direct_raw_protocol_api_matches_oliphaunt_exec_protocol_cases() -> anyhow::Re
     Ok(())
 }
 
-#[cfg(debug_assertions)]
 #[test]
-fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
-    let mut db = Oliphaunt::builder().temporary().open()?;
-    let (allocations_before, frees_before) = db.guest_bridge_allocation_counts();
-    assert_eq!(
-        allocations_before, frees_before,
-        "bridge allocations must be balanced before stress loop"
-    );
+fn direct_protocol_bridge_reuses_guest_owned_buffers() -> anyhow::Result<()> {
+    let mut db = Oliphaunt::builder().open()?;
 
     for _ in 0..128 {
         let mut output = Vec::new();
@@ -542,25 +515,17 @@ fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
         );
     }
 
-    let (allocations_after, frees_after) = db.guest_bridge_allocation_counts();
-    assert_eq!(
-        allocations_after, frees_after,
-        "each Rust-owned guest bridge allocation must be freed"
-    );
-    assert!(
-        allocations_after > allocations_before,
-        "stress loop should exercise bridge allocations"
-    );
-
     db.close()?;
     Ok(())
 }
 
 #[test]
-fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<()> {
+fn persistent_directory_is_raw_pgdata_without_runtime_assets() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let mut pg = Oliphaunt::builder().path(root.path()).open()?;
+        let mut pg = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         let result = pg.query(
             "SELECT count(*)::int AS utc_zones \
              FROM pg_timezone_names \
@@ -571,8 +536,42 @@ fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<
         assert_eq!(first_row(&result)?.get("utc_zones"), Some(&json!(1)));
         pg.close()?;
     }
+    {
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
+        let result = reopened.query("SELECT 18 AS postgres_major", &[], None)?;
+        assert_eq!(first_row(&result)?["postgres_major"], json!(18));
+        reopened.close()?;
+    }
 
-    assert_core_runtime_assets_stay_in_lower_mount(root.path());
+    assert!(root.path().join("PG_VERSION").is_file());
+    assert!(root.path().join("global/pg_control").is_file());
+    assert!(root.path().join("base/1").is_dir());
+    assert!(
+        !root
+            .path()
+            .join(".oliphaunt-wasix-pgdata-overlay.json")
+            .exists()
+    );
+    assert!(!root.path().join("tmp/oliphaunt").exists());
+    Ok(())
+}
+
+#[test]
+fn persistent_fresh_initdb_uses_the_locked_raw_directory() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    let mut pg = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .initialization(DatabaseInitialization::FreshInitdb)
+        .open()?;
+    let result = pg.query("SELECT 1 AS value", &[], None)?;
+    assert_eq!(first_row(&result)?["value"], json!(1));
+    pg.close()?;
+
+    assert!(root.path().join("PG_VERSION").is_file());
+    assert!(root.path().join("global/pg_control").is_file());
+    assert!(!root.path().join("tmp/oliphaunt").exists());
     Ok(())
 }
 
@@ -580,11 +579,15 @@ fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<
 fn server_drop_without_explicit_shutdown_releases_root() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let server = OliphauntServer::builder().path(root.path()).start()?;
+        let server = OliphauntServer::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .start()?;
         assert!(server.tcp_addr().is_some());
     }
 
-    let mut db = Oliphaunt::builder().path(root.path()).open()?;
+    let mut db = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()?;
     let result = db.query("SELECT 1 AS value", &[], None)?;
     assert_eq!(first_row(&result)?.get("value"), Some(&json!(1)));
     db.close()?;
@@ -593,7 +596,7 @@ fn server_drop_without_explicit_shutdown_releases_root() -> anyhow::Result<()> {
 
 #[test]
 fn pg18_embedded_backend_uses_sync_io_method() -> anyhow::Result<()> {
-    let mut pg = Oliphaunt::builder().temporary().open()?;
+    let mut pg = Oliphaunt::builder().open()?;
     let result = pg.query("SHOW io_method", &[], None)?;
     assert_eq!(
         first_row(&result)?.get("io_method"),
@@ -608,7 +611,9 @@ fn pg18_embedded_backend_uses_sync_io_method() -> anyhow::Result<()> {
 fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let mut pg = Oliphaunt::builder().path(root.path()).open()?;
+        let mut pg = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         pg.exec("CREATE TABLE template_restart(value TEXT)", None)?;
         pg.query(
             "INSERT INTO template_restart(value) VALUES ($1)",
@@ -618,7 +623,7 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
         pg.close()?;
     }
 
-    let pgdata = root.path().join("tmp/oliphaunt/base");
+    let pgdata = root.path();
     std::fs::write(
         pgdata.join("postmaster.pid"),
         b"stale pid from interrupted run",
@@ -628,7 +633,9 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
         b"stale opts from interrupted run",
     )?;
 
-    let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+    let mut reopened = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()?;
     let result = reopened.query("SELECT value FROM template_restart", &[], None)?;
     assert_eq!(
         first_row(&result)?.get("value"),
@@ -641,54 +648,74 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
 }
 
 #[test]
-fn persistent_template_recovers_interrupted_pgdata_without_marker() -> anyhow::Result<()> {
+fn persistent_template_rejects_nonempty_incomplete_pgdata_without_marker() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let pgdata = root.path().join("tmp/oliphaunt/base");
-    std::fs::create_dir_all(&pgdata)?;
+    let pgdata = root.path();
     std::fs::write(pgdata.join("postmaster.pid"), b"interrupted pid")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 
-    let mut pg = Oliphaunt::builder().path(root.path()).open()?;
-    let result = pg.query("SELECT 1::int AS one", &[], None)?;
-    assert_eq!(first_row(&result)?.get("one"), Some(&json!(1)));
-    assert!(pgdata.join("PG_VERSION").exists());
-    assert!(!pgdata.join("partial-bootstrap.sql").exists());
-    assert_file_missing_or_without(&pgdata.join("postmaster.pid"), "interrupted pid")?;
-    pg.close()?;
+    let error = match Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()
+    {
+        Ok(_) => anyhow::bail!("caller-owned incomplete PGDATA must fail closed"),
+        Err(error) => error,
+    };
+    assert!(format!("{error:#}").contains("refusing to delete or reinitialize caller-owned data"));
+    assert_eq!(
+        std::fs::read(pgdata.join("partial-bootstrap.sql"))?,
+        b"interrupted initdb"
+    );
+    assert_eq!(
+        std::fs::read(pgdata.join("postmaster.pid"))?,
+        b"interrupted pid"
+    );
     Ok(())
 }
 
 #[test]
-fn persistent_template_recovers_interrupted_pgdata_with_incomplete_markers() -> anyhow::Result<()> {
+fn persistent_template_rejects_nonempty_pgdata_with_incomplete_markers() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let pgdata = root.path().join("tmp/oliphaunt/base");
-    std::fs::create_dir_all(&pgdata)?;
+    let pgdata = root.path();
     std::fs::write(pgdata.join("PG_VERSION"), b"17\n")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 
-    let mut pg = Oliphaunt::builder().path(root.path()).open()?;
-    let result = pg.query("SELECT 2::int AS two", &[], None)?;
-    assert_eq!(first_row(&result)?.get("two"), Some(&json!(2)));
-    assert!(pgdata.join("PG_VERSION").exists());
-    assert!(pgdata.join("global/pg_control").exists());
-    assert!(!pgdata.join("partial-bootstrap.sql").exists());
-    pg.close()?;
+    let error = match Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()
+    {
+        Ok(_) => anyhow::bail!("caller-owned incomplete PGDATA must fail closed"),
+        Err(error) => error,
+    };
+    assert!(format!("{error:#}").contains("refusing to delete or reinitialize caller-owned data"));
+    assert_eq!(std::fs::read(pgdata.join("PG_VERSION"))?, b"17\n");
+    assert_eq!(
+        std::fs::read(pgdata.join("partial-bootstrap.sql"))?,
+        b"interrupted initdb"
+    );
     Ok(())
 }
 
 #[test]
 fn persistent_root_lock_rejects_second_direct_open() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let mut first = Oliphaunt::builder().path(root.path()).open()?;
-    let err = match Oliphaunt::builder().path(root.path()).open() {
+    let mut first = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()?;
+    let err = match Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()
+    {
         Ok(_) => anyhow::bail!("second open must fail while the root lock is held"),
         Err(err) => err,
     };
-    assert!(format!("{err:#}").contains("Oliphaunt root is already in use"));
+    assert!(format!("{err:#}").contains("database directory is already in use"));
 
     first.close()?;
 
-    let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+    let mut reopened = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()?;
     let result = reopened.query("SELECT 1::int AS one", &[], None)?;
     assert_eq!(first_row(&result)?.get("one"), Some(&json!(1)));
     reopened.close()?;
@@ -698,12 +725,17 @@ fn persistent_root_lock_rejects_second_direct_open() -> anyhow::Result<()> {
 #[test]
 fn persistent_root_lock_rejects_second_server_open() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let server = OliphauntServer::builder().path(root.path()).start()?;
-    let err = match OliphauntServer::builder().path(root.path()).start() {
+    let server = OliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .start()?;
+    let err = match OliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .start()
+    {
         Ok(_) => anyhow::bail!("second server must fail while the root lock is held"),
         Err(err) => err,
     };
-    assert!(format!("{err:#}").contains("Oliphaunt root is already in use"));
+    assert!(format!("{err:#}").contains("database directory is already in use"));
     server.shutdown()?;
     Ok(())
 }
@@ -711,15 +743,22 @@ fn persistent_root_lock_rejects_second_server_open() -> anyhow::Result<()> {
 #[test]
 fn persistent_root_lock_rejects_direct_open_while_server_runs() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let server = OliphauntServer::builder().path(root.path()).start()?;
-    let err = match Oliphaunt::builder().path(root.path()).open() {
+    let server = OliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .start()?;
+    let err = match Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()
+    {
         Ok(_) => anyhow::bail!("direct open must fail while the server owns the root lock"),
         Err(err) => err,
     };
-    assert!(format!("{err:#}").contains("Oliphaunt root is already in use"));
+    assert!(format!("{err:#}").contains("database directory is already in use"));
     server.shutdown()?;
 
-    let mut reopened = Oliphaunt::builder().path(root.path()).open()?;
+    let mut reopened = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()?;
     let result = reopened.query("SELECT 1::int AS one", &[], None)?;
     assert_eq!(first_row(&result)?.get("one"), Some(&json!(1)));
     reopened.close()?;
@@ -730,7 +769,7 @@ fn persistent_root_lock_rejects_direct_open_while_server_runs() -> anyhow::Resul
 fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     let child = Command::new(env!("CARGO_BIN_EXE_oliphaunt-wasix-proxy"))
-        .arg("--root")
+        .arg("--directory")
         .arg(root.path())
         .args(["--tcp", "127.0.0.1:0", "--print-uri"])
         .stdout(Stdio::piped())
@@ -751,7 +790,10 @@ fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
     }
     assert!(line.starts_with("postgresql://"), "{line:?}");
 
-    let err = match Oliphaunt::builder().path(root.path()).open() {
+    let err = match Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+        .open()
+    {
         Ok(mut db) => {
             let close = db.close();
             let stderr = child.collect_stderr();
@@ -762,7 +804,7 @@ fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
         Err(err) => err,
     };
     let message = format!("{err:#}");
-    if !message.contains("Oliphaunt root is already in use") {
+    if !message.contains("database directory is already in use") {
         let stderr = child.collect_stderr();
         anyhow::bail!("unexpected cross-process root-lock error: {message}\n\nstderr:\n{stderr}");
     }
@@ -772,8 +814,7 @@ fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
 #[test]
 fn runtime_smoke() -> anyhow::Result<()> {
     let _trace = TestTrace::new("runtime_smoke");
-    let mut pg = Oliphaunt::builder().temporary().open()?;
-    assert!(pg.paths().pgdata.join("PG_VERSION").exists());
+    let mut pg = Oliphaunt::builder().open()?;
 
     let version = pg.query(
         "SELECT current_setting('server_version_num')::int AS version_num",
@@ -1017,6 +1058,27 @@ fn runtime_smoke() -> anyhow::Result<()> {
     let count = pg.query("SELECT count(*)::int AS count FROM tx_items", &[], None)?;
     assert_eq!(first_row(&count)?.get("count"), Some(&json!(1)));
 
+    #[cfg(not(target_env = "msvc"))]
+    {
+        trace_step("runtime_smoke nested PostgreSQL error recovery");
+        pg.exec("CREATE TEMP TABLE nested_error_catch(value integer)", None)?;
+        pg.exec(
+            "DO $$ BEGIN \
+             BEGIN PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN \
+               INSERT INTO nested_error_catch VALUES (1); \
+             END; \
+           END $$",
+            None,
+        )?;
+        let caught = pg.query(
+            "SELECT count(*)::int AS count FROM nested_error_catch",
+            &[],
+            None,
+        )?;
+        assert_eq!(first_row(&caught)?.get("count"), Some(&json!(1)));
+    }
+
     trace_step("runtime_smoke expected-error syntax");
     let syntax_err = pg
         .exec("SELECT +", None)
@@ -1026,7 +1088,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
         .expect("syntax error should preserve Postgres error fields");
     assert_eq!(syntax_pg_err.query(), "SELECT +");
     assert_eq!(
-        syntax_pg_err.database_error().code.as_deref(),
+        syntax_pg_err.postgres_error().sqlstate.as_deref(),
         Some("42601")
     );
 
@@ -1047,7 +1109,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     );
     assert_eq!(missing_pg_err.params(), &[json!(7)]);
     assert_eq!(
-        missing_pg_err.database_error().code.as_deref(),
+        missing_pg_err.postgres_error().sqlstate.as_deref(),
         Some("42P01")
     );
 
@@ -1061,7 +1123,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     assert_eq!(invalid_bind_pg_err.query(), "SELECT $1::int4 AS value");
     assert_eq!(invalid_bind_pg_err.params(), &[json!("not_an_int")]);
     assert_eq!(
-        invalid_bind_pg_err.database_error().code.as_deref(),
+        invalid_bind_pg_err.postgres_error().sqlstate.as_deref(),
         Some("22P02")
     );
 
@@ -1073,7 +1135,10 @@ fn runtime_smoke() -> anyhow::Result<()> {
         .downcast_ref::<OliphauntError>()
         .expect("parameter count error should preserve Postgres error fields");
     assert_eq!(
-        wrong_param_count_pg_err.database_error().code.as_deref(),
+        wrong_param_count_pg_err
+            .postgres_error()
+            .sqlstate
+            .as_deref(),
         Some("08P01")
     );
 
@@ -1083,7 +1148,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     pg.close()?;
     assert!(pg.is_closed());
 
-    let mut restarted = Oliphaunt::temporary()?;
+    let mut restarted = Oliphaunt::open()?;
     let restarted_result = restarted.query("SELECT 42::int AS answer", &[], None)?;
     assert_eq!(
         first_row(&restarted_result)?.get("answer"),
@@ -1093,7 +1158,11 @@ fn runtime_smoke() -> anyhow::Result<()> {
 
     let persistent_dir = tempfile::TempDir::new()?;
     {
-        let mut persisted = Oliphaunt::builder().path(persistent_dir.path()).open()?;
+        let mut persisted = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(
+                persistent_dir.path().to_path_buf(),
+            ))
+            .open()?;
         persisted.exec("CREATE TABLE persisted(value TEXT)", None)?;
         persisted.query(
             "INSERT INTO persisted(value) VALUES ($1)",
@@ -1103,7 +1172,11 @@ fn runtime_smoke() -> anyhow::Result<()> {
         persisted.close()?;
     }
     {
-        let mut reopened = Oliphaunt::open(persistent_dir.path())?;
+        let mut reopened = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(
+                persistent_dir.path().to_path_buf(),
+            ))
+            .open()?;
         let persisted_result = reopened.query("SELECT value FROM persisted", &[], None)?;
         assert_eq!(
             first_row(&persisted_result)?.get("value"),

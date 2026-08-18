@@ -17,6 +17,7 @@ import type {
 
 export async function createNodeNativeBinding(
   options: NativeBindingOptions = {},
+  runtime: 'node' | 'bun' = 'node',
 ): Promise<NativeBinding> {
   const install = await resolveNodeNativeInstall(options.libraryPath);
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
@@ -24,9 +25,12 @@ export async function createNodeNativeBinding(
   const addon = await loadNodeDirectAddon(options.nodeAddonPath);
 
   return {
-    runtime: 'node',
+    runtime,
     rawProtocolTransport: 'node-addon',
-    protocolStream: true,
+    // Raw and simple queries run as Node-API async work so the event loop can
+    // deliver cancel(). The legacy callback stream entry point is synchronous;
+    // keep it out of the public capability until it has the same property.
+    protocolStream: false,
     defaultRuntimeDirectory: install.runtimeDirectory,
     version(): string {
       return addon.version(install.libraryPath);
@@ -54,18 +58,11 @@ export async function createNodeNativeBinding(
         moduleDirectory: extensionInstall.moduleDirectory,
       });
     },
-    execProtocolRaw(handle: NativeHandle, request: Uint8Array): Uint8Array {
-      return toUint8Array(addon.execProtocolRaw(handle, request));
+    async execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array> {
+      return toUint8Array(await addon.execProtocolRaw(handle, request));
     },
-    execSimpleQuery(handle: NativeHandle, sql: string): Uint8Array {
-      return toUint8Array(addon.execSimpleQuery(handle, sql));
-    },
-    execProtocolStream(
-      handle: NativeHandle,
-      request: Uint8Array,
-      onChunk: (chunk: Uint8Array) => void,
-    ): void {
-      addon.execProtocolStream(handle, request, (chunk) => onChunk(toUint8Array(chunk)));
+    async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
+      return toUint8Array(await addon.execSimpleQuery(handle, sql));
     },
     backup(handle: NativeHandle, format: BackupFormat): Uint8Array {
       assertSupportedDirectBackupFormat(format);
@@ -79,7 +76,7 @@ export async function createNodeNativeBinding(
       }
       addon.restore({
         libraryPath: install.libraryPath,
-        root: options.root,
+        destination: options.destination,
         format: nativeBackupFormat(options.format),
         bytes: options.bytes,
         replaceExisting: options.replaceExisting,

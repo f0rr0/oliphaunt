@@ -36,6 +36,16 @@ export function extensionNpmPackageForProduct(product) {
   return `@oliphaunt/${product.slice("oliphaunt-".length)}`;
 }
 
+/**
+ * Host-neutral npm carrier for one product's portable WASIX extension bytes.
+ *
+ * Keep the unsuffixed npm identity as the established native/default facade.
+ * Browser, Node, Bun, and Deno WASIX hosts intentionally share this one explicit carrier.
+ */
+export function extensionNpmWasixPackageForProduct(product) {
+  return `${extensionNpmPackageForProduct(product)}-wasix`;
+}
+
 export function extensionNpmTargetPackageForProduct(product, target) {
   return `${extensionNpmPackageForProduct(product)}-${target}`;
 }
@@ -122,6 +132,7 @@ export function extensionRegistryPackageEntries({
   npmTargets,
   nativeCargoTargets,
   includeWasixAot = true,
+  includeWasixNpm = true,
   wasixAotTargets = expectedExtensionAotTargets(),
 }) {
   return [
@@ -134,6 +145,7 @@ export function extensionRegistryPackageEntries({
     ...extensionWasixRegistryPackageEntries({
       product,
       includeAot: includeWasixAot,
+      includeNpm: includeWasixNpm,
       aotTargets: wasixAotTargets,
     }),
   ].sort((left, right) =>
@@ -165,10 +177,16 @@ export function extensionNativeRegistryPackageEntries({
 export function extensionWasixRegistryPackageEntries({
   product,
   includeAot = true,
+  includeNpm = true,
   aotTargets = expectedExtensionAotTargets(),
 }) {
-  return extensionWasixCargoPackageNames(product, { includeAot, aotTargets })
-    .map((name) => ({ kind: "crates", name }));
+  return [
+    ...extensionWasixCargoPackageNames(product, { includeAot, aotTargets })
+      .map((name) => ({ kind: "crates", name })),
+    ...(includeNpm
+      ? [{ kind: "npm", name: extensionNpmWasixPackageForProduct(product) }]
+      : []),
+  ];
 }
 
 export function extensionRegistryPackageStrings(options) {

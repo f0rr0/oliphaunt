@@ -1,0 +1,752 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 7b22da5..6803f8e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,6 +12,7 @@ mod logging;
+ mod net;
+ mod options;
+ mod package_loader;
++mod postgres_direct;
+ pub mod registry;
+ mod run;
+ mod runtime;
+@@ -29,6 +30,7 @@ pub use crate::{
+     js_runtime::{JsRuntime, RuntimeOptions},
+     logging::initialize_logger,
+     options::{RunOptions, SpawnOptions},
++    postgres_direct::{instantiate_oliphaunt_direct, OliphauntDirectInstance},
+     registry::RegistryConfig,
+     run::run_wasix,
+     utils::StringOrBytes,
+diff --git a/src/options.rs b/src/options.rs
+index 967ac16..7b93ca4 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -186,6 +186,19 @@ extern "C" {
+ }
+
+ impl RunOptions {
++    pub(crate) fn configure_direct_builder(
++        &self,
++        builder: &mut WasiEnvBuilder,
++    ) -> Result<(), Error> {
++        self.configure_common_builder(builder)?;
++
++        builder.set_stdin(Box::<virtual_fs::null_file::NullFile>::default());
++        builder.set_stdout(Box::<virtual_fs::null_file::NullFile>::default());
++        builder.set_stderr(Box::<virtual_fs::null_file::NullFile>::default());
++
++        Ok(())
++    }
++
+     /// Propagate any provided options to the [`WasiEnvBuilder`], returning
+     /// streams that can be used for stdin/stdout/stderr.
+     pub(crate) fn configure_builder(
+@@ -199,13 +212,7 @@ impl RunOptions {
+         ),
+         Error,
+     > {
+-        for arg in self.parse_args()? {
+-            builder.add_arg(arg);
+-        }
+-
+-        for (key, value) in self.parse_env()? {
+-            builder.add_env(key, value);
+-        }
++        self.configure_common_builder(builder)?;
+
+         let stdin = match self.read_stdin() {
+             Some(stdin) => {
+@@ -226,11 +233,29 @@ impl RunOptions {
+         let (stderr_file, stderr) = crate::streams::output_pipe();
+         builder.set_stderr(Box::new(stderr_file));
+
++        Ok((stdin, stdout, stderr))
++    }
++
++    fn configure_common_builder(
++        &self,
++        builder: &mut WasiEnvBuilder,
++    ) -> Result<(), Error> {
++        for arg in self.parse_args()? {
++            builder.add_arg(arg);
++        }
++
++        for (key, value) in self.parse_env()? {
++            builder.add_env(key, value);
++        }
++
++        if let Some(cwd) = self.parse_cwd()? {
++            builder.set_current_dir(cwd);
++        }
+         let fs = self.filesystem()?;
+         builder.set_fs(Box::new(fs));
+         builder.add_preopen_dir("/")?;
+
+-        Ok((stdin, stdout, stderr))
++        Ok(())
+     }
+
+     pub(crate) fn filesystem(&self) -> Result<TmpFileSystem, Error> {
+diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
+new file mode 100644
+index 0000000..e0f5463
+--- /dev/null
++++ b/src/postgres_direct.rs
+@@ -0,0 +1,567 @@
++use std::sync::Arc;
++
++use anyhow::{ensure, Context};
++use js_sys::{Uint8Array, WebAssembly};
++use wasm_bindgen::prelude::wasm_bindgen;
++use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
++use wasmer_wasix::{Runtime as _, WasiEnvBuilder, WasiError, WasiFunctionEnv};
++
++use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
++
++const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
++const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
++
++/// Instantiate the integrated Oliphaunt/PostgreSQL guest in this JS realm.
++///
++/// The returned driver is synchronous by design: every guest export runs on
++/// the caller's stack, and this code never constructs a Worker or ThreadPool.
++#[wasm_bindgen(js_name = instantiateOliphauntDirect)]
++pub async fn instantiate_oliphaunt_direct(
++    module: WebAssembly::Module,
++    module_bytes: Uint8Array,
++    options: RunOptions,
++) -> Result<OliphauntDirectInstance, Error> {
++    OliphauntDirectInstance::instantiate(module, module_bytes, options).await
++}
++
++#[wasm_bindgen]
++pub struct OliphauntDirectInstance {
++    // Runtime and instance must outlive every function handle and the Store.
++    _runtime: Arc<Runtime>,
++    store: Store,
++    _instance: WasmerInstance,
++    env: WasiFunctionEnv,
++    malloc: TypedFunction<i32, i32>,
++    free: TypedFunction<i32, ()>,
++    input_reset: TypedFunction<(), i32>,
++    input_write: TypedFunction<(i32, i32), i32>,
++    input_available: TypedFunction<(), i32>,
++    output_reset: TypedFunction<(), i32>,
++    output_len: TypedFunction<(), i32>,
++    output_read: TypedFunction<(i32, i32), i32>,
++    set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
++    set_active: TypedFunction<i32, i32>,
++    wasi_start: TypedFunction<(), ()>,
++    start_oliphaunt: TypedFunction<(), ()>,
++    run_atexit_funcs: Option<TypedFunction<(), ()>>,
++    get_port: TypedFunction<(), i32>,
++    process_startup: TypedFunction<(i32, i32, i32), i32>,
++    send_conn_data: TypedFunction<(), ()>,
++    pq_flush: TypedFunction<(), ()>,
++    pq_buffer_remaining_data: TypedFunction<(), i32>,
++    main_loop: TypedFunction<(), ()>,
++    send_ready: TypedFunction<(), ()>,
++    recover_error: TypedFunction<(), ()>,
++    backend_started: bool,
++    protocol_started: bool,
++    closed: bool,
++}
++
++#[wasm_bindgen]
++impl OliphauntDirectInstance {
++    /// Start PostgreSQL and process one frontend startup packet.
++    #[wasm_bindgen(js_name = startup)]
++    pub fn startup(&mut self, packet: Uint8Array) -> Result<Uint8Array, Error> {
++        match self.startup_inner(&packet.to_vec()) {
++            Ok(output) => Ok(Uint8Array::from(output.as_slice())),
++            Err(error) => Err(self.startup_error(error)),
++        }
++    }
++
++    /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
++    #[wasm_bindgen(js_name = execProtocolRaw)]
++    pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
++        self.exec_protocol_raw_inner(&input.to_vec())
++            .map(|output| Uint8Array::from(output.as_slice()))
++            .map_err(Error::from)
++    }
++
++    /// Shut down the embedded lifecycle. This does not consume the JS object.
++    pub fn close(&mut self) -> Result<(), Error> {
++        self.close_inner().map_err(Error::from)
++    }
++}
++
++impl OliphauntDirectInstance {
++    fn startup_inner(&mut self, packet: &[u8]) -> anyhow::Result<Vec<u8>> {
++        self.ensure_open()?;
++        ensure!(
++            !self.protocol_started,
++            "Oliphaunt direct startup already completed"
++        );
++        self.start_backend()?;
++        self.reset_io()?;
++        self.push_input(packet)?;
++
++        let port = self
++            .get_port
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_get_proc_port")?;
++        ensure!(port > 0, "oliphaunt_wasix_get_proc_port returned null");
++        let status = self
++            .process_startup
++            .call(&mut self.store, port, 1, 1)
++            .context("ProcessStartupPacket")?;
++        self.pq_flush.call(&mut self.store).ok();
++        if status == 0 {
++            self.send_conn_data
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_send_conn_data")?;
++            self.pq_flush
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_pq_flush after startup")?;
++            self.protocol_started = true;
++        }
++        self.take_output()
++    }
++
++    fn exec_protocol_raw_inner(&mut self, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
++        self.ensure_open()?;
++        ensure!(
++            self.protocol_started,
++            "Oliphaunt direct startup has not completed"
++        );
++        if payload.is_empty() {
++            return Ok(Vec::new());
++        }
++
++        self.reset_io()?;
++        self.push_input(&payload)?;
++        let max_attempts = (payload.len() / 5).saturating_add(2).max(1);
++        let mut attempts = 0usize;
++        let mut recovered_protocol_error = false;
++        while self.protocol_input_remaining()? > 0 {
++            attempts += 1;
++            ensure!(
++                attempts <= max_attempts,
++                "PostgreSQL direct protocol pump did not drain input"
++            );
++            if self.main_loop.call(&mut self.store).is_err() {
++                // Match the native host: the exported recovery boundary is
++                // authoritative even when a JS engine reports an unfamiliar
++                // trap spelling.
++                self.recover_protocol_error(payload.len())?;
++                recovered_protocol_error = true;
++            }
++        }
++        self.send_ready
++            .call(&mut self.store)
++            .context("PostgresSendReadyForQueryIfNecessary")?;
++        self.pq_flush
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_pq_flush after protocol input")?;
++        let output = self.take_output()?;
++        if !recovered_protocol_error && protocol_response_contains_error(&output) {
++            self.recover_non_trapping_protocol_error()?;
++        }
++        Ok(output)
++    }
++
++    fn close_inner(&mut self) -> anyhow::Result<()> {
++        if self.closed {
++            return Ok(());
++        }
++        self.set_active
++            .call(&mut self.store, 0)
++            .context("oliphaunt_wasix_set_active(0)")?;
++        if let Some(run_atexit_funcs) = &self.run_atexit_funcs {
++            run_atexit_funcs
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_run_atexit_funcs")?;
++        }
++        self.closed = true;
++        self.backend_started = false;
++        self.protocol_started = false;
++        Ok(())
++    }
++    async fn instantiate(
++        module: WebAssembly::Module,
++        module_bytes: Uint8Array,
++        options: RunOptions,
++    ) -> Result<Self, Error> {
++        // Direct execution intentionally has no configurable networking or
++        // worker-backed runtime. RunOptions is reused for args/env/fs mounts.
++        let runtime =
++            Arc::new(Runtime::with_defaults()?.with_task_manager(Arc::new(CallerRealmTaskManager)));
++        let program_name = options
++            .program()
++            .as_string()
++            .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
++        let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
++        options.configure_direct_builder(&mut builder)?;
++
++        let module = wasmer::Module::from((module, module_bytes.to_vec()));
++        let mut store = Store::new(runtime.engine());
++        let (instance, env) = builder
++            .instantiate_async(module, &mut store)
++            .await
++            .context("instantiate Oliphaunt direct WASIX module")?;
++        seed_exported_c_string(
++            &mut store,
++            &instance,
++            &env,
++            "my_exec_path",
++            DEFAULT_PROGRAM_NAME,
++        )?;
++
++        let malloc = typed_export(&mut store, &instance, "malloc")?;
++        let free = typed_export(&mut store, &instance, "pg_free")
++            .or_else(|_| typed_export(&mut store, &instance, "free"))?;
++        let input_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_input_reset")?;
++        let input_write = typed_export(&mut store, &instance, "oliphaunt_wasix_input_write")?;
++        let input_available =
++            typed_export(&mut store, &instance, "oliphaunt_wasix_input_available")?;
++        let output_reset = typed_export(&mut store, &instance, "oliphaunt_wasix_output_reset")?;
++        let output_len = typed_export(&mut store, &instance, "oliphaunt_wasix_output_len")?;
++        let output_read = typed_export(&mut store, &instance, "oliphaunt_wasix_output_read")?;
++        let set_force_host_error_recovery = optional_typed_export(
++            &mut store,
++            &instance,
++            "oliphaunt_wasix_set_force_host_error_recovery",
++        )?;
++        let set_active = typed_export(&mut store, &instance, "oliphaunt_wasix_set_active")?;
++        let wasi_start = typed_export(&mut store, &instance, "_start")?;
++        let start_oliphaunt = typed_export(&mut store, &instance, "oliphaunt_wasix_start")?;
++        let run_atexit_funcs =
++            optional_typed_export(&mut store, &instance, "oliphaunt_wasix_run_atexit_funcs")?;
++        let get_port = typed_export(&mut store, &instance, "oliphaunt_wasix_get_proc_port")?;
++        let process_startup = typed_export(&mut store, &instance, "ProcessStartupPacket")?;
++        let send_conn_data = typed_export(&mut store, &instance, "oliphaunt_wasix_send_conn_data")?;
++        let pq_flush = typed_export(&mut store, &instance, "oliphaunt_wasix_pq_flush")?;
++        let pq_buffer_remaining_data =
++            typed_export(&mut store, &instance, "pq_buffer_remaining_data")?;
++        let main_loop = typed_export(&mut store, &instance, "PostgresMainLoopOnce")?;
++        let send_ready = typed_export(
++            &mut store,
++            &instance,
++            "PostgresSendReadyForQueryIfNecessary",
++        )?;
++        let recover_error = typed_export(&mut store, &instance, "PostgresMainLongJmp")?;
++
++        let mut direct = Self {
++            _runtime: runtime,
++            store,
++            _instance: instance,
++            env,
++            malloc,
++            free,
++            input_reset,
++            input_write,
++            input_available,
++            output_reset,
++            output_len,
++            output_read,
++            set_force_host_error_recovery,
++            set_active,
++            wasi_start,
++            start_oliphaunt,
++            run_atexit_funcs,
++            get_port,
++            process_startup,
++            send_conn_data,
++            pq_flush,
++            pq_buffer_remaining_data,
++            main_loop,
++            send_ready,
++            recover_error,
++            backend_started: false,
++            protocol_started: false,
++            closed: false,
++        };
++        direct.reset_io()?;
++        Ok(direct)
++    }
++
++    fn ensure_open(&self) -> anyhow::Result<()> {
++        ensure!(!self.closed, "Oliphaunt direct instance is closed");
++        Ok(())
++    }
++
++    fn start_backend(&mut self) -> anyhow::Result<()> {
++        if self.backend_started {
++            return Ok(());
++        }
++        if let Some(set_force) = &self.set_force_host_error_recovery {
++            // Wasmer JS surfaces PostgreSQL's wasm EH at the export boundary;
++            // retain nested guest unwinding and recover the top-level jump via
++            // its dedicated exit(100) path.
++            set_force
++                .call(&mut self.store, 0)
++                .context("oliphaunt_wasix_set_force_host_error_recovery(0)")?;
++        }
++        self.set_active
++            .call(&mut self.store, 1)
++            .context("oliphaunt_wasix_set_active(1)")?;
++        match self.wasi_start.call(&mut self.store) {
++            Ok(()) => {}
++            Err(error) if runtime_exit_code(&error) == Some(OLIPHAUNT_EXIT_ALIVE) => {}
++            Err(error) => return Err(error).context("_start Oliphaunt single-user backend"),
++        }
++        self.start_oliphaunt
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_start")?;
++        self.backend_started = true;
++        Ok(())
++    }
++
++    fn reset_io(&mut self) -> anyhow::Result<()> {
++        ensure!(
++            self.input_reset
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_input_reset")?
++                == 0,
++            "oliphaunt_wasix_input_reset failed"
++        );
++        ensure!(
++            self.output_reset
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_output_reset")?
++                == 0,
++            "oliphaunt_wasix_output_reset failed"
++        );
++        Ok(())
++    }
++
++    fn push_input(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
++        if bytes.is_empty() {
++            return Ok(());
++        }
++        let ptr = self.allocate(bytes.len() as i32)?;
++        let result = (|| {
++            let view = self
++                .env
++                .data(&self.store)
++                .try_memory_view(&self.store)
++                .context("get WASIX memory view")?;
++            view.write(ptr as u64, bytes)
++                .context("write direct protocol input into guest")?;
++            let written = self
++                .input_write
++                .call(&mut self.store, ptr, bytes.len() as i32)
++                .context("oliphaunt_wasix_input_write")?;
++            ensure!(
++                written == bytes.len() as i32,
++                "short direct protocol input write"
++            );
++            Ok(())
++        })();
++        self.free
++            .call(&mut self.store, ptr)
++            .context("free direct protocol input")?;
++        result
++    }
++
++    fn take_output(&mut self) -> anyhow::Result<Vec<u8>> {
++        let len = self
++            .output_len
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_output_len")?;
++        ensure!(len >= 0, "negative direct protocol output length");
++        if len == 0 {
++            return Ok(Vec::new());
++        }
++        let ptr = self.allocate(len)?;
++        let result = (|| {
++            let read = self
++                .output_read
++                .call(&mut self.store, ptr, len)
++                .context("oliphaunt_wasix_output_read")?;
++            ensure!(
++                read >= 0 && read <= len,
++                "invalid direct protocol output read"
++            );
++            let mut bytes = vec![0; read as usize];
++            let view = self
++                .env
++                .data(&self.store)
++                .try_memory_view(&self.store)
++                .context("get WASIX memory view")?;
++            view.read(ptr as u64, &mut bytes)
++                .context("read direct protocol output from guest")?;
++            Ok(bytes)
++        })();
++        self.free
++            .call(&mut self.store, ptr)
++            .context("free direct protocol output")?;
++        let bytes = result?;
++        ensure!(
++            self.output_reset
++                .call(&mut self.store)
++                .context("oliphaunt_wasix_output_reset after read")?
++                == 0,
++            "oliphaunt_wasix_output_reset after read failed"
++        );
++        Ok(bytes)
++    }
++
++    fn allocate(&mut self, len: i32) -> anyhow::Result<i32> {
++        let ptr = self
++            .malloc
++            .call(&mut self.store, len)
++            .context("malloc direct guest buffer")?;
++        ensure!(ptr > 0, "malloc returned null for direct guest buffer");
++        Ok(ptr)
++    }
++
++    fn protocol_input_remaining(&mut self) -> anyhow::Result<i32> {
++        let available = self
++            .input_available
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_input_available")?;
++        ensure!(available >= 0, "negative direct protocol input length");
++        if available > 0 {
++            return Ok(available);
++        }
++        self.pq_buffer_remaining_data
++            .call(&mut self.store)
++            .context("pq_buffer_remaining_data")
++    }
++
++    fn recover_protocol_error(&mut self, payload_len: usize) -> anyhow::Result<()> {
++        self.recover_error
++            .call(&mut self.store)
++            .context("PostgresMainLongJmp after protocol trap")?;
++        let max_attempts = (payload_len / 5).saturating_add(2).max(1);
++        let mut attempts = 0usize;
++        while self.protocol_input_remaining()? > 0 {
++            attempts += 1;
++            ensure!(
++                attempts <= max_attempts,
++                "protocol recovery did not drain input"
++            );
++            if self.main_loop.call(&mut self.store).is_err() {
++                self.recover_error
++                    .call(&mut self.store)
++                    .context("PostgresMainLongJmp while draining protocol error")?;
++            }
++        }
++        Ok(())
++    }
++
++    fn recover_non_trapping_protocol_error(&mut self) -> anyhow::Result<()> {
++        self.recover_error
++            .call(&mut self.store)
++            .context("PostgresMainLongJmp after backend ErrorResponse")?;
++        self.send_ready
++            .call(&mut self.store)
++            .context("PostgresSendReadyForQueryIfNecessary after backend ErrorResponse")?;
++        self.pq_flush
++            .call(&mut self.store)
++            .context("oliphaunt_wasix_pq_flush after backend ErrorResponse")?;
++        let _ = self.take_output()?;
++        Ok(())
++    }
++
++    fn startup_error(&mut self, error: anyhow::Error) -> Error {
++        let _ = self.pq_flush.call(&mut self.store);
++        let protocol = self.take_output().unwrap_or_default();
++        if protocol.is_empty() {
++            return Error::from(error);
++        }
++
++        let js_error = js_sys::Error::new(&error.to_string());
++        let _ = js_sys::Reflect::set(
++            &js_error,
++            &wasm_bindgen::JsValue::from_str("protocolResponse"),
++            &Uint8Array::from(protocol.as_slice()),
++        );
++        let _ = js_sys::Reflect::set(
++            &js_error,
++            &wasm_bindgen::JsValue::from_str("detailedMessage"),
++            &wasm_bindgen::JsValue::from_str(&format!("{error:#}")),
++        );
++        Error::js(js_error)
++    }
++}
++
++fn typed_export<Args, Rets>(
++    store: &mut Store,
++    instance: &WasmerInstance,
++    name: &str,
++) -> anyhow::Result<TypedFunction<Args, Rets>>
++where
++    Args: WasmTypeList,
++    Rets: WasmTypeList,
++{
++    instance
++        .exports
++        .get_typed_function::<Args, Rets>(&*store, name)
++        .or_else(|_| {
++            instance
++                .exports
++                .get_typed_function::<Args, Rets>(&*store, &format!("_{name}"))
++        })
++        .with_context(|| format!("get {name} export"))
++}
++
++fn optional_typed_export<Args, Rets>(
++    store: &mut Store,
++    instance: &WasmerInstance,
++    name: &str,
++) -> anyhow::Result<Option<TypedFunction<Args, Rets>>>
++where
++    Args: WasmTypeList,
++    Rets: WasmTypeList,
++{
++    if instance.exports.get_function(name).is_err()
++        && instance.exports.get_function(&format!("_{name}")).is_err()
++    {
++        return Ok(None);
++    }
++    typed_export(store, instance, name).map(Some)
++}
++
++fn seed_exported_c_string(
++    store: &mut Store,
++    instance: &WasmerInstance,
++    env: &WasiFunctionEnv,
++    name: &str,
++    value: &str,
++) -> anyhow::Result<()> {
++    let Ok(global) = instance.exports.get_global(name) else {
++        return Ok(());
++    };
++    let Value::I32(ptr) = global.get(&mut *store) else {
++        return Ok(());
++    };
++    if ptr <= 0 {
++        return Ok(());
++    }
++    let mut bytes = value.as_bytes().to_vec();
++    bytes.push(0);
++    env.data(&*store)
++        .try_memory_view(&*store)
++        .context("get WASIX memory view")?
++        .write(ptr as u64, &bytes)
++        .with_context(|| format!("seed {name} at 0x{ptr:x}"))?;
++    Ok(())
++}
++
++fn runtime_exit_code(error: &wasmer::RuntimeError) -> Option<i32> {
++    error
++        .downcast_ref::<WasiError>()
++        .and_then(|error| match error {
++            WasiError::Exit(code) => Some(code.raw()),
++            _ => None,
++        })
++}
++
++fn protocol_response_contains_error(response: &[u8]) -> bool {
++    let mut cursor = 0usize;
++    while cursor + 5 <= response.len() {
++        let tag = response[cursor];
++        let len = i32::from_be_bytes(response[cursor + 1..cursor + 5].try_into().unwrap());
++        if len < 4 {
++            return false;
++        }
++        let total = 1usize.saturating_add(len as usize);
++        if cursor + total > response.len() {
++            return false;
++        }
++        if tag == b'E' {
++            return true;
++        }
++        cursor += total;
++    }
++    false
++}
+diff --git a/src/runtime.rs b/src/runtime.rs
+index d71638f..cb106d7 100644
+--- a/src/runtime.rs
++++ b/src/runtime.rs
+@@ -83,7 +83,7 @@ impl Runtime {
+         Ok(rt)
+     }
+
+-    pub(crate) fn with_task_manager(&self, task_manager: Arc<ThreadPool>) -> Self {
++    pub(crate) fn with_task_manager(&self, task_manager: Arc<dyn VirtualTaskManager>) -> Self {
+         let mut runtime = self.clone();
+         // Update the http client
+         let http_client = DefaultHttpClient::default();
+diff --git a/src/tasks/caller_realm.rs b/src/tasks/caller_realm.rs
+new file mode 100644
+index 0000000..0ad7233
+--- /dev/null
++++ b/src/tasks/caller_realm.rs
+@@ -0,0 +1,50 @@
++use std::{future::Future, pin::Pin, time::Duration};
++
++use futures::future::BoxFuture;
++use wasmer_wasix::{runtime::task_manager::TaskWasm, VirtualTaskManager, WasiThreadError};
++
++/// A deliberately single-realm task manager for synchronous guest calls.
++///
++/// PostgreSQL's direct protocol pump never yields control back to JavaScript
++/// while a guest export is running. Timers therefore have to complete during
++/// their first poll, while operations that require another WASM execution
++/// context fail explicitly instead of being queued behind the blocked realm.
++#[derive(Debug, Default)]
++pub(crate) struct CallerRealmTaskManager;
++
++#[async_trait::async_trait]
++impl VirtualTaskManager for CallerRealmTaskManager {
++    fn sleep_now(
++        &self,
++        duration: Duration,
++    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>> {
++        let deadline = instant::Instant::now() + duration;
++        Box::pin(async move {
++            while instant::Instant::now() < deadline {
++                std::hint::spin_loop();
++            }
++        })
++    }
++
++    fn task_shared(
++        &self,
++        _task: Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send + 'static>,
++    ) -> Result<(), WasiThreadError> {
++        Err(WasiThreadError::Unsupported)
++    }
++
++    fn task_wasm(&self, _task: TaskWasm<'_>) -> Result<(), WasiThreadError> {
++        Err(WasiThreadError::Unsupported)
++    }
++
++    fn task_dedicated(
++        &self,
++        _task: Box<dyn FnOnce() + Send + 'static>,
++    ) -> Result<(), WasiThreadError> {
++        Err(WasiThreadError::Unsupported)
++    }
++
++    fn thread_parallelism(&self) -> Result<usize, WasiThreadError> {
++        Ok(1)
++    }
++}
+diff --git a/src/tasks/mod.rs b/src/tasks/mod.rs
+index 2e9b0ee..76f8695 100644
+--- a/src/tasks/mod.rs
++++ b/src/tasks/mod.rs
+@@ -31,6 +31,7 @@
+ //! [`Worker`]: thread_pool_worker::ThreadPoolWorker
+ //! [`Scheduler`]: scheduler::Scheduler
+
++mod caller_realm;
+ mod interop;
+ mod post_message_payload;
+ mod scheduler;
+@@ -42,6 +43,7 @@ mod worker_handle;
+ mod worker_message;
+
+ pub(crate) use self::{
++    caller_realm::CallerRealmTaskManager,
+     post_message_payload::{AsyncJob, BlockingJob, Notification, PostMessagePayload},
+     scheduler::Scheduler,
+     scheduler_message::SchedulerMessage,

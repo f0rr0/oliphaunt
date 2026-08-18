@@ -3,7 +3,10 @@ import { deflateRawSync } from 'node:zlib';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { canonicalGzipSync } from './portable-archive.mjs';
+import {
+  canonicalGzipSync,
+  releaseZstdCompressSync,
+} from './portable-archive.mjs';
 
 function fail(message) {
   throw new Error(`archive_dir.mjs: ${message}`);
@@ -299,7 +302,7 @@ function parseArgs(argv) {
     values.shift();
   }
   if (values.length !== 2) {
-    fail('usage: tools/release/archive_dir.mjs [--keep-parent] <source-dir> <output.tar.gz|output.zip>');
+    fail('usage: tools/release/archive_dir.mjs [--keep-parent] <source-dir> <output.tar.gz|output.tar.zst|output.zip>');
   }
   return {
     keepParent,
@@ -317,6 +320,8 @@ async function main(argv) {
   await fs.mkdir(path.dirname(output), { recursive: true });
   if (output.endsWith('.tar.gz')) {
     await fs.writeFile(output, canonicalGzipSync(await createTar(source, { keepParent })));
+  } else if (output.endsWith('.tar.zst')) {
+    await fs.writeFile(output, releaseZstdCompressSync(await createTar(source, { keepParent })));
   } else if (path.extname(output) === '.zip') {
     await fs.writeFile(output, await createDeterministicZip(source, { keepParent }));
   } else {

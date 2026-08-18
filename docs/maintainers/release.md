@@ -28,11 +28,8 @@ The canonical model is composed from:
 Do not maintain a second hand-written package matrix. Query the catalog and inspect the lock. Dynamic package identities are forbidden except crates.io payload `part-N` carriers whose parent is declared and whose size requires splitting.
 
 A product-local `release.toml` activates an external extension as a public
-release product. It is not a harmless description of a build candidate. An
-extension deferred by `publication-blocker.toml` must remain absent from
-`release.toml`, Release Please, Moon release ownership, generated public SDK
-catalogs, the publication catalog, and every lock. Build recipes and target
-profiles may remain active solely for job-local qualification.
+release product. Incomplete extension work stays on a branch; main contains no
+deferred, promoted, planned, blocker, or qualification-only extension state.
 
 ## Carrier license and notice checks
 
@@ -75,8 +72,17 @@ and participates in the same carrier checks as other public products.
   separately versioned release products.
 - active external extension products are `upstream-bound` and own independent
   packaging SemVer. Their upstream version/commit and compatible runtime
-  versions are separate metadata. A publication-deferred external extension
-  has no packaging version until it is promoted into the active product graph.
+  versions are separate metadata.
+- Native/default extension npm identities stay unsuffixed. A portable WASIX npm
+  carrier adds only the `-wasix` suffix and uses the same exact packaging
+  SemVer, release tag, and changelog as every other carrier owned by that
+  extension product; it never creates a second release version line.
+- `@oliphaunt/liboliphaunt-wasix` is the host-neutral npm carrier of the
+  existing `liboliphaunt-wasix` product. It shares that product's SemVer, tag,
+  and changelog; it is not a browser SDK or another runtime product. The
+  carrier preserves the qualified portable runtime, PGDATA, and core-only
+  manifest bytes, while independently versioned extension products retain
+  their own WASIX install metadata and payloads.
 - `feat`, `fix`, `perf`, `refactor`, and `revert` are release-impacting types because the Release Please `changelog-sections` catalog says so. A Conventional Commit `!` is breaking. Release-intent checks derive this set from config.
 - Product source PRs never edit versions. The generated release PR owns all version, compatibility, lockfile, and changelog changes.
 - While every product is still `0.0.0`, top-level `bootstrap-sha` is the full
@@ -220,7 +226,7 @@ The `Release` workflow has four operations:
 1. `prepare-release-pr` — run from current `main`; creates/updates the single generated release PR and syncs derived files.
 2. `publish-dry-run` — downloads exact-SHA CI artifacts, performs release and registry preflight, packages public carriers, freezes/verifies the lock, and emits the lock-bound Cargo/npm bootstrap capsule without write credentials.
 3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. Provision only credentials required by the exact missing-identity inventory; a recovery in which every Cargo/npm version already matches requires neither token.
-4. `publish` — normal trusted release. It uses short-lived Cargo/npm/JSR credentials, Maven protected secrets, the frozen lock, and idempotent publication checks.
+4. `publish` — normal trusted release. It uses short-lived Cargo/npm credentials, Maven protected secrets, the frozen lock, and idempotent publication checks.
 
 On the normal path, only a successful `publish-dry-run` uploads the canonical
 `oliphaunt-publication-lock` and `oliphaunt-bootstrap-capsule` approval
@@ -356,9 +362,9 @@ Normal recovery reruns `publish` at the exact same release commit.
 The workflow does not encode a second product/ecosystem publish order. The
 normal registry executor derives its in-memory plan directly from the approved
 lock and rejects an omitted selected dependency, unknown carrier, cycle, or
-non-contiguous operation order. It runs one sequential Cargo, npm, Maven, and JSR lane,
+non-contiguous operation order. It runs one sequential Cargo, npm, and Maven lane,
 overlaps independent lanes, and awaits every explicit cross-registry dependency
-barrier. Cargo (including dynamic payload parts), npm, and JSR consume their
+barrier. Cargo (including dynamic payload parts) and npm consume their
 exact frozen carrier bytes. All selected Maven coordinates form one
 signed, atomic Central deployment because Maven Central validates and publishes
 that bundle as a unit. Before the first GitHub write, the workflow constructs
@@ -366,19 +372,6 @@ the complete selected bundle without upload and verifies every coordinate,
 POM, primary artifact, sources JAR, javadoc JAR, signature, checksum, nonempty
 file, and the strict sub-1-GB archive ceiling. A rerun skips an immutable carrier only after proving its
 public bytes match the lock; a partially published Maven product fails closed.
-
-JSR publication resolves the exact lock-installed CLI owned by
-`src/sdks/js`, validates its package identity, lock integrity, and executable,
-and invokes that absolute executable while retaining the frozen source as the
-working directory. POSIX runs the package executable directly; Windows invokes
-that same file through the absolute Node executable already verified by release
-setup, because Windows does not execute JavaScript shebangs. Never replace this
-with an ambient `jsr` or a `pnpm exec` lookup from `target/`: the frozen source
-intentionally has no workspace `node_modules` tree.
-The registry runner performs a frozen, script-disabled install filtered to
-`@oliphaunt/ts` before the mutation gate, using the digest-pinned Node and pnpm
-toolchains. This installs the one lock-owned JSR publisher without relying on
-global state or spending the registry deadline on unrelated workspaces.
 
 npm is the deliberate exception to a separate moving-tag promotion phase.
 Trusted-publishing OIDC authenticates `npm publish`, but npm does not authorize
@@ -432,9 +425,8 @@ rerun on the original Release run.
 
 Normal publication applies the same immutable-version rule to every supported
 registry: crates.io checks the published checksum, npm checks `dist.integrity`,
-Maven Central streams and hashes each frozen payload at its exact coordinate,
-and JSR compares the complete published file manifest with the frozen explicit
-`publish.include` set. A complete, same-lock bootstrap ledger is verified in
+and Maven Central streams and hashes each frozen payload at its exact coordinate.
+A complete, same-lock bootstrap ledger is verified in
 bounded parallel before mutation and its Cargo/npm receipts are reused by the
 normal executor; already-proven public identities are not queried serially
 again. Each registry publisher returns the exact receipt it proves; the
@@ -451,8 +443,8 @@ closure, versions, Maven coordinates, and Git tags from the same frozen lock.
 In parallel clean temporary homes/caches it resolves each Cargo consumer root
 in an independent scratch manifest without compiling payloads, installs each
 npm dependency root in an independent project, resolves each Maven entry in an
-isolated Gradle configuration without an Android build, caches each exact JSR
-entry import, and anonymously fetches every product tag. Each lane requires
+isolated Gradle configuration without an Android build, and anonymously fetches
+every product tag. Each lane requires
 the resolver's platform-independent lock graphs to cover every carrier in the
 corresponding frozen dependency closure; a missing carrier cannot be silently
 relabelled as receipt-only. It never invents one all-platform consumer graph.
@@ -556,7 +548,7 @@ tagged-without-pending.
 
 Normal publication inventories every selected frozen Cargo and npm
 `name@version` and rejects missing names that require first-identity bootstrap.
-It then attempts the complete dependency-ordered Cargo, npm, Maven, and JSR
+It then attempts the complete dependency-ordered Cargo, npm, and Maven
 plan once. Publishers honor an authoritative `Retry-After` while the job
 deadline permits; they do not predict registry capacity or deliberately split
 the plan. Temporary trusted-publishing tokens are refreshed and revoked in
@@ -599,8 +591,9 @@ Target packages are required where package managers select by OS/CPU/libc/ABI or
 - WASIX: portable runtime/extension carriers plus native AOT carriers for Linux
   x64/arm64 GNU, macOS arm64, and Windows x64 MSVC.
 - SDK façades: Rust/Cargo, npm, Maven/Gradle, and SwiftPM entry points select
-  only the needed target carriers. JSR is deliberately protocol/query-only and
-  does not claim native runtime carriers.
+  only the needed target carriers. Deno consumes the native and WASIX
+  TypeScript façades through npm, with the same product boundaries as Node and
+  Bun.
 
 The first release is fail-closed: it does not publish macOS x64, Windows ARM64,
 Linux musl, Android 32-bit, or additional Apple architectures. A target becomes
@@ -635,11 +628,9 @@ contract is the GNU architecture and symbol-version floor, not a distro name.
 
 Every release-ready exact extension has stable ecosystem façades. PostgreSQL
 contrib carriers belong to the matching native or WASIX runtime product; each
-active external extension owns its independent product. A build-only or
-publication-deferred extension owns neither. Each active
-exact SQL member's `targets/artifacts.toml` explicitly declares
-supported/unpublished targets and evidence. The runtime target matrix bounds
-possible values but never creates extension support by default.
+active external extension owns its independent product. The global extension
+target-profile contract applies to every public SQL member and is checked
+against the runtime target matrix.
 
 ## Recovery
 
@@ -671,12 +662,6 @@ publish selects no release changes and performs no registry work. A change to a
 compiler, SDK, linker, build command, source selection, target, or packaging
 output requires the affected versions to advance even when the change lives in
 CI.
-
-A deferred extension is never a recoverable missing publication. If it appears
-in a release PR, dry-run artifact set, or lock, reject that candidate, remove
-the extension from the active public graph, and qualify a new exact SHA. Do not
-bootstrap its reserved identity, publish its job-local outputs, or bypass the
-declared blocker to resume another product.
 
 ## Handoff evidence
 

@@ -1,8 +1,9 @@
+const encoder = new TextEncoder();
+
 export function simpleQuery(sql: string): Uint8Array {
   if (sql.includes('\0')) {
     throw new Error('simple query SQL must not contain NUL bytes');
   }
-  const encoder = new TextEncoder();
   const body = encoder.encode(sql);
   const packet = new Uint8Array(body.length + 6);
   packet[0] = 'Q'.charCodeAt(0);

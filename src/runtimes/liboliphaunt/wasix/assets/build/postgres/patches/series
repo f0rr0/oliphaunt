@@ -36,3 +36,9 @@
 0036-oliphaunt-wasix-skip-activity-id-reporting.patch
 0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch
 0038-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch
+0039-oliphaunt-wasix-declare-hybrid-protocol-transport.patch
+0040-oliphaunt-wasix-use-single-backend-spinlocks.patch
+0041-oliphaunt-wasix-specialize-single-backend-atomics.patch
+0042-oliphaunt-wasix-buffer-strong-random.patch
+0043-oliphaunt-wasix-disable-unsupported-writeback-hints.patch
+0044-oliphaunt-wasix-inline-sigsetjmp.patch

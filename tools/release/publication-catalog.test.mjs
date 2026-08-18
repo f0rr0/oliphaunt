@@ -23,10 +23,10 @@ function catalogForArtifactProducts(products) {
 
 test("the live publication catalog includes the independently versioned PostGIS product", () => {
   const catalog = loadPublicationCatalog("publication-catalog.test");
-  expect(catalog.products).toHaveLength(17);
-  expect(catalog.carriers).toHaveLength(186);
+  expect(catalog.products).toHaveLength(19);
+  expect(catalog.carriers).toHaveLength(195);
   expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
-  expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(17);
+  expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
 
   const extensionProducts = exactExtensionProducts("publication-catalog.test");
   expect(extensionProducts).toHaveLength(8);

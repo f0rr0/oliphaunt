@@ -6,6 +6,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use wasmer_wasix::virtual_fs::{
     self, DirEntry, FileType, FsError, Metadata, OpenOptions, OpenOptionsConfig, ReadDir,
@@ -40,9 +43,30 @@ impl SyncHostFileSystem {
 
         let path = path.strip_prefix("/").unwrap_or(&path);
         let path = self.root.join(path);
-
-        debug_assert!(path.starts_with(&self.root));
+        self.reject_symlink_components(&path)?;
         Ok(path)
+    }
+
+    fn reject_symlink_components(&self, path: &Path) -> virtual_fs::Result<()> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| FsError::InvalidInput)?;
+        let mut current = self.root.clone();
+        for component in relative.components() {
+            let Component::Normal(part) = component else {
+                return Err(FsError::InvalidInput);
+            };
+            current.push(part);
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(FsError::PermissionDenied);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Err(error) => return Err(FsError::from(error)),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -80,7 +104,8 @@ impl virtual_fs::FileSystem for SyncHostFileSystem {
         if path.parent().is_none() {
             return Err(FsError::BaseNotDirectory);
         }
-        fs::create_dir(path).map_err(FsError::from)
+        fs::create_dir(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
     }
 
     fn remove_dir(&self, path: &Path) -> virtual_fs::Result<()> {
@@ -95,7 +120,8 @@ impl virtual_fs::FileSystem for SyncHostFileSystem {
         {
             return Err(FsError::DirectoryNotEmpty);
         }
-        fs::remove_dir(path).map_err(FsError::from)
+        fs::remove_dir(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
     }
 
     fn rename<'a>(
@@ -121,7 +147,18 @@ impl virtual_fs::FileSystem for SyncHostFileSystem {
                 return Err(FsError::EntryNotFound);
             }
 
-            fs::rename(from, to).map_err(FsError::from)
+            let from_parent = from.parent().map(Path::to_path_buf);
+            let to_parent = to.parent().map(Path::to_path_buf);
+            fs::rename(&from, &to).map_err(FsError::from)?;
+            if let Some(parent) = from_parent {
+                sync_directory(&parent).map_err(FsError::from)?;
+            }
+            if let Some(parent) = to_parent
+                && from.parent() != Some(parent.as_path())
+            {
+                sync_directory(&parent).map_err(FsError::from)?;
+            }
+            Ok(())
         })
     }
 
@@ -142,7 +179,8 @@ impl virtual_fs::FileSystem for SyncHostFileSystem {
         if path.parent().is_none() {
             return Err(FsError::BaseNotDirectory);
         }
-        fs::remove_file(path).map_err(FsError::from)
+        fs::remove_file(&path).map_err(FsError::from)?;
+        sync_parent_directory(&path).map_err(FsError::from)
     }
 
     fn new_open_options(&self) -> OpenOptions<'_> {
@@ -158,6 +196,7 @@ impl virtual_fs::FileOpener for SyncHostFileSystem {
     ) -> virtual_fs::Result<Box<dyn VirtualFile + Send + Sync + 'static>> {
         let path = self.prepare_path(path)?;
         let append = conf.append() && !conf.truncate();
+        let existed = path.exists();
         let file = fs::OpenOptions::new()
             .read(conf.read())
             .write(conf.write())
@@ -167,6 +206,10 @@ impl virtual_fs::FileOpener for SyncHostFileSystem {
             .truncate(conf.truncate())
             .open(&path)
             .map_err(FsError::from)?;
+
+        if !existed && (conf.create() || conf.create_new()) {
+            sync_parent_directory(&path).map_err(FsError::from)?;
+        }
 
         Ok(Box::new(SyncHostFile::new(file, path)) as Box<dyn VirtualFile + Send + Sync + 'static>)
     }
@@ -233,7 +276,8 @@ impl VirtualFile for SyncHostFile {
     }
 
     fn unlink(&mut self) -> virtual_fs::Result<()> {
-        fs::remove_file(&self.host_path).map_err(FsError::from)
+        fs::remove_file(&self.host_path).map_err(FsError::from)?;
+        sync_parent_directory(&self.host_path).map_err(FsError::from)
     }
 
     fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
@@ -279,7 +323,7 @@ impl AsyncWrite for SyncHostFile {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(self.get_mut().file.flush())
+        Poll::Ready(self.get_mut().file.sync_all())
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -312,6 +356,33 @@ impl AsyncWrite for SyncHostFile {
     fn is_write_vectored(&self) -> bool {
         true
     }
+}
+
+fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    sync_directory(parent)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?
+        .sync_all()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 impl AsyncSeek for SyncHostFile {

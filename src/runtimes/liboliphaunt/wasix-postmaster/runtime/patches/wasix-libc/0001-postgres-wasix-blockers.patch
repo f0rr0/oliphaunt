@@ -1,0 +1,1793 @@
+diff --git a/dlmalloc/src/dlmalloc.c b/dlmalloc/src/dlmalloc.c
+index 331536b..e7063c5 100644
+--- a/dlmalloc/src/dlmalloc.c
++++ b/dlmalloc/src/dlmalloc.c
+@@ -12,6 +12,16 @@
+ // WebAssembly doesn't support shrinking linear memory.
+ #define MORECORE_CANNOT_TRIM 1
+ 
++// WASIX runtime facilities such as MAP_SHARED and dynamic linking also grow
++// linear memory. Consecutive MORECORE calls therefore are not contractually
++// contiguous even though each individual sbrk segment is exclusive.
++#define MORECORE_CONTIGUOUS 0
++
++// WASIX sbrk returns an exclusive segment of exactly the requested size.
++// dlmalloc must not infer that size from a later sbrk(0): another thread or a
++// direct caller can advance the logical break between those two calls.
++#define MORECORE_RETURNS_EXACT_SIZE 1
++
+ // Disable sanity checks to reduce code size.
+ #define ABORT __builtin_unreachable()
+ 
+diff --git a/dlmalloc/src/malloc.c b/dlmalloc/src/malloc.c
+index 96e6cea..e466124 100644
+--- a/dlmalloc/src/malloc.c
++++ b/dlmalloc/src/malloc.c
+@@ -4172,6 +4172,15 @@ static void* sys_alloc(mstate m, size_t nb) {
+   if (HAVE_MORECORE && tbase == CMFAIL) { /* Try noncontiguous MORECORE */
+     if (asize < HALF_MAX_SIZE_T) {
+       char* br = CMFAIL;
++#if defined(MORECORE_RETURNS_EXACT_SIZE) && MORECORE_RETURNS_EXACT_SIZE
++      ACQUIRE_MALLOC_GLOBAL_LOCK();
++      br = (char*)(CALL_MORECORE(asize));
++      RELEASE_MALLOC_GLOBAL_LOCK();
++      if (br != CMFAIL) {
++        tbase = br;
++        tsize = asize;
++      }
++#else
+       char* end = CMFAIL;
+       ACQUIRE_MALLOC_GLOBAL_LOCK();
+       br = (char*)(CALL_MORECORE(asize));
+@@ -4184,6 +4193,7 @@ static void* sys_alloc(mstate m, size_t nb) {
+           tsize = ssize;
+         }
+       }
++#endif
+     }
+   }
+ 
+diff --git a/emmalloc/emmalloc.c b/emmalloc/emmalloc.c
+index c98e42e..c76a2eb 100644
+--- a/emmalloc/emmalloc.c
++++ b/emmalloc/emmalloc.c
+@@ -54,9 +54,6 @@
+ #include <emscripten/trace.h>
+ #endif
+ 
+-// Defind by the linker to have the address of the start of the heap.
+-extern unsigned char __heap_base;
+-
+ // Behavior of right shifting a signed integer is compiler implementation defined.
+ static_assert((((int32_t)0x80000000U) >> 31) == -1, "This malloc implementation requires that right-shifting a signed integer produces a sign-extending (arithmetic) shift!");
+ 
+@@ -110,7 +107,7 @@ typedef struct RootRegion
+   uint8_t* endPtr;
+ } RootRegion;
+ 
+-#if defined(__EMSCRIPTEN_PTHREADS__)
++#if defined(__EMSCRIPTEN_PTHREADS__) || defined(_REENTRANT)
+ // In multithreaded builds, use a simple global spinlock strategy to acquire/release access to the memory allocator.
+ static volatile uint8_t multithreadingLock = 0;
+ #define MALLOC_ACQUIRE() while(__sync_lock_test_and_set(&multithreadingLock, 1)) { while(multithreadingLock) { /*nop*/ } }
+@@ -539,38 +536,24 @@ static bool claim_more_memory(size_t numBytes)
+   validate_memory_regions();
+ #endif
+ 
+-  uint8_t *startPtr;
+-  uint8_t *endPtr;
+-  do {
+-    // If this is the first time we're called, see if we can use
+-    // the initial heap memory set up by wasm-ld.
+-    if (!listOfAllRegions) {
+-      unsigned char *heap_end = sbrk(0);
+-      if (numBytes <= (size_t)(heap_end - &__heap_base)) {
+-        startPtr = &__heap_base;
+-        endPtr = heap_end;
+-	break;
+-      }
+-    }
+-
+-    // Round numBytes up to the nearest page size.
+-    numBytes = (numBytes + (PAGE_SIZE-1)) & -PAGE_SIZE;
++  // Runtime facilities can grow linear memory without transferring ownership
++  // to this allocator. Claim only the exact interval returned by positive
++  // sbrk; sbrk(0) is an address-space frontier, not an ownership boundary.
++  numBytes = (numBytes + (PAGE_SIZE-1)) & -PAGE_SIZE;
+ 
+-    // Claim memory via sbrk
+-    startPtr = (uint8_t*)sbrk(numBytes);
+-    if ((intptr_t)startPtr == -1)
+-    {
++  uint8_t *startPtr = (uint8_t*)sbrk(numBytes);
++  if ((intptr_t)startPtr == -1)
++  {
+ #ifdef EMMALLOC_VERBOSE
+-      MAIN_THREAD_ASYNC_EM_ASM(console.error('claim_more_memory: sbrk failed!'));
++    MAIN_THREAD_ASYNC_EM_ASM(console.error('claim_more_memory: sbrk failed!'));
+ #endif
+-      return false;
+-    }
++    return false;
++  }
+ #ifdef EMMALLOC_VERBOSE
+-    MAIN_THREAD_ASYNC_EM_ASM(console.log('claim_more_memory: claimed 0x' + ($0>>>0).toString(16) + ' - 0x' + ($1>>>0).toString(16) + ' (' + ($2>>>0) + ' bytes) via sbrk()'), startPtr, startPtr + numBytes, numBytes);
++  MAIN_THREAD_ASYNC_EM_ASM(console.log('claim_more_memory: claimed 0x' + ($0>>>0).toString(16) + ' - 0x' + ($1>>>0).toString(16) + ' (' + ($2>>>0) + ' bytes) via sbrk()'), startPtr, startPtr + numBytes, numBytes);
+ #endif
+-    assert(HAS_ALIGNMENT(startPtr, alignof(size_t)));
+-    endPtr = startPtr + numBytes;
+-  } while (0);
++  assert(HAS_ALIGNMENT(startPtr, alignof(size_t)));
++  uint8_t *endPtr = startPtr + numBytes;
+ 
+   // Create a sentinel region at the end of the new heap block
+   Region *endSentinelRegion = (Region*)(endPtr - sizeof(Region));
+diff --git a/expected/wasm32-wasi-eh/defined-symbols.txt b/expected/wasm32-wasi-eh/defined-symbols.txt
+index 51b29a4..29811fd 100644
+--- a/expected/wasm32-wasi-eh/defined-symbols.txt
++++ b/expected/wasm32-wasi-eh/defined-symbols.txt
+@@ -1650,6 +1650,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-eh/undefined-symbols.txt b/expected/wasm32-wasi-eh/undefined-symbols.txt
+index 4f926be..b03cc61 100644
+--- a/expected/wasm32-wasi-eh/undefined-symbols.txt
++++ b/expected/wasm32-wasi-eh/undefined-symbols.txt
+@@ -10,6 +10,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi-ehpic/defined-symbols.txt b/expected/wasm32-wasi-ehpic/defined-symbols.txt
+index 3885a66..ddaacd9 100644
+--- a/expected/wasm32-wasi-ehpic/defined-symbols.txt
++++ b/expected/wasm32-wasi-ehpic/defined-symbols.txt
+@@ -1658,6 +1658,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-ehpic/undefined-symbols.txt b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
+index 7af7e4c..49fbed2 100644
+--- a/expected/wasm32-wasi-ehpic/undefined-symbols.txt
++++ b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
+@@ -11,6 +11,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi-threads/defined-symbols.txt b/expected/wasm32-wasi-threads/defined-symbols.txt
+index c8996ef..ad96b32 100644
+--- a/expected/wasm32-wasi-threads/defined-symbols.txt
++++ b/expected/wasm32-wasi-threads/defined-symbols.txt
+@@ -1562,6 +1562,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-threads/undefined-symbols.txt b/expected/wasm32-wasi-threads/undefined-symbols.txt
+index e4a2638..9145830 100644
+--- a/expected/wasm32-wasi-threads/undefined-symbols.txt
++++ b/expected/wasm32-wasi-threads/undefined-symbols.txt
+@@ -13,6 +13,7 @@ __getf2
+ __global_base
+ __gttf2
+ __heap_base
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi/defined-symbols.txt b/expected/wasm32-wasi/defined-symbols.txt
+index 6d33bff..a7e915b 100644
+--- a/expected/wasm32-wasi/defined-symbols.txt
++++ b/expected/wasm32-wasi/defined-symbols.txt
+@@ -1657,6 +1657,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi/undefined-symbols.txt b/expected/wasm32-wasi/undefined-symbols.txt
+index 4f926be..b03cc61 100644
+--- a/expected/wasm32-wasi/undefined-symbols.txt
++++ b/expected/wasm32-wasi/undefined-symbols.txt
+@@ -10,6 +10,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm64-wasi/defined-symbols.txt b/expected/wasm64-wasi/defined-symbols.txt
+index cd3d45b..ca54a6d 100644
+--- a/expected/wasm64-wasi/defined-symbols.txt
++++ b/expected/wasm64-wasi/defined-symbols.txt
+@@ -1612,6 +1612,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm64-wasi/undefined-symbols.txt b/expected/wasm64-wasi/undefined-symbols.txt
+index ae7c7ff..a70377f 100644
+--- a/expected/wasm64-wasi/undefined-symbols.txt
++++ b/expected/wasm64-wasi/undefined-symbols.txt
+@@ -14,6 +14,7 @@ __getf2
+ __global_base
+ __gttf2
+ __heap_base
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
+index 06b7288..0526fce 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/fcntl.c
+@@ -24,7 +24,8 @@ int fcntl(int fildes, int cmd, ...) {
+       int flags = va_arg(ap, int);
+       va_end(ap);
+ 
+-      __wasi_fdflagsext_t fd_flags = flags | FD_CLOEXEC ? __WASI_FDFLAGSEXT_CLOEXEC : 0;
++      __wasi_fdflagsext_t fd_flags =
++          (flags & FD_CLOEXEC) ? __WASI_FDFLAGSEXT_CLOEXEC : 0;
+       __wasi_errno_t error =
+           __wasi_fd_fdflags_set(fildes, fd_flags);
+       if (error != 0) {
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
+index 8e469c6..f7d8034 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
+@@ -52,6 +52,14 @@ int __wasilibc_nocwd_openat_nomode(int fd, const char *path, int oflag) {
+       return -1;
+   }
+ 
++  // A directory descriptor is opened read-only, but its contents are
++  // metadata and POSIX permits both fsync() and fdatasync() to establish the
++  // same directory durability barrier.  Request both capabilities explicitly;
++  // otherwise fdatasync() is rejected by the WASI rights check before the
++  // runtime can synchronize the retained open directory description.
++  if ((oflag & O_DIRECTORY) != 0)
++    max |= __WASI_RIGHTS_FD_DATASYNC | __WASI_RIGHTS_FD_SYNC;
++
+   // Ensure that we can actually obtain the minimal rights needed.
+   __wasi_fdstat_t fsb_cur;
+   __wasi_errno_t error = __wasi_fd_fdstat_get(fd, &fsb_cur);
+diff --git a/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c b/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c
+new file mode 100644
+index 0000000..47cdad7
+--- /dev/null
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/sync_file_range.c
+@@ -0,0 +1,33 @@
++#define _GNU_SOURCE
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++
++int32_t __imported_oliphaunt_postmaster_v1_fd_sync_range(
++    int32_t fd, int64_t offset, int64_t nbytes, int32_t flags) __attribute__((
++    __import_module__("oliphaunt_postmaster_v1"),
++    __import_name__("fd_sync_range")));
++
++int sync_file_range(int fd, off_t offset, off_t nbytes, unsigned flags)
++{
++    const unsigned valid_flags = SYNC_FILE_RANGE_WAIT_BEFORE |
++                                 SYNC_FILE_RANGE_WRITE |
++                                 SYNC_FILE_RANGE_WAIT_AFTER;
++    int32_t error;
++
++    /* Linux requires a representable exclusive end; nbytes=0 means EOF. */
++    if (offset < 0 || nbytes < 0 || (flags & ~valid_flags) != 0 ||
++        (nbytes > 0 && offset > INT64_MAX - nbytes)) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    error = __imported_oliphaunt_postmaster_v1_fd_sync_range(
++        (int32_t)fd, (int64_t)offset, (int64_t)nbytes, (int32_t)flags);
++    if (error != 0) {
++        errno = error;
++        return -1;
++    }
++    return 0;
++}
+diff --git a/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c b/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
+index 74caf2e..2ab7514 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
++++ b/libc-bottom-half/cloudlibc/src/libc/sys/socket/socket.c
+@@ -4,10 +4,20 @@
+ #include <assert.h>
+ #include <wasi/api.h>
+ #include <errno.h>
++#include <fcntl.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ int socket(int domain, int ty, int protocol) {
+   int fd;
++  int flags = ty & (SOCK_NONBLOCK | SOCK_CLOEXEC);
++  ty &= ~(SOCK_NONBLOCK | SOCK_CLOEXEC);
++
++  if (ty != SOCK_STREAM && ty != SOCK_DGRAM) {
++    errno = EPROTONOSUPPORT;
++    return -1;
++  }
++
+   if(!protocol) {
+     switch (ty)
+     {
+@@ -25,5 +35,14 @@ int socket(int domain, int ty, int protocol) {
+     return -1;
+   }
+ 
++  if ((flags & SOCK_CLOEXEC) != 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
++    close(fd);
++    return -1;
++  }
++  if ((flags & SOCK_NONBLOCK) != 0 && fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
++    close(fd);
++    return -1;
++  }
++
+   return fd;
+ }
+diff --git a/libc-bottom-half/headers/public/wasi/api_wasix.h b/libc-bottom-half/headers/public/wasi/api_wasix.h
+index 5b02c4b..3963e83 100644
+--- a/libc-bottom-half/headers/public/wasi/api_wasix.h
++++ b/libc-bottom-half/headers/public/wasi/api_wasix.h
+@@ -4399,6 +4399,14 @@ __wasi_errno_t __wasi_proc_spawn2(
+ __wasi_errno_t __wasi_proc_id(
+     __wasi_pid_t *retptr0
+ ) __attribute__((__warn_unused_result__));
++/**
++ * Returns the current and maximum resource limit for the current process
++ */
++__wasi_errno_t __wasi_proc_rlimit_get(
++    uint32_t resource,
++    uint64_t *retptr0,
++    uint64_t *retptr1
++) __attribute__((__warn_unused_result__));
+ /**
+  * Returns the parent handle of a particular process
+  */
+diff --git a/libc-bottom-half/mman/mman.c b/libc-bottom-half/mman/mman.c
+index 7e26562..a156655 100644
+--- a/libc-bottom-half/mman/mman.c
++++ b/libc-bottom-half/mman/mman.c
+@@ -13,25 +13,188 @@
+ #include <errno.h>
+ #include <unistd.h>
+ #include <string.h>
++#include <stdint.h>
++#include <pthread.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <wasi/api.h>
++
++#define RUNTIME_MMAP_ALIGN ((size_t) 65536)
++
++int32_t __imported_wasix_32v1_mem_mmap(int32_t arg0, int32_t arg1,
++                                        int32_t arg2, int32_t arg3,
++                                        int32_t arg4, int64_t arg5,
++                                        int32_t arg6) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_mmap")
++));
++
++int32_t __imported_wasix_32v1_mem_munmap(int32_t arg0, int32_t arg1) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_munmap")
++));
++
++int32_t __imported_wasix_32v1_mem_msync(int32_t arg0, int32_t arg1,
++                                        int32_t arg2) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_msync")
++));
+ 
+ struct map {
++    void *addr;
+     int prot;
+     int flags;
+     off_t offset;
+     size_t length;
+     int fd;
++    struct map *next;
+ };
+ 
++/* Runtime-backed mappings live only in Wasmer's authoritative interval
++   registry. This guest list is solely for malloc-backed legacy emulation. */
++static struct map *legacy_maps;
++static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
++
++static __wasi_errno_t runtime_mem_mmap(void *addr, size_t length, int prot,
++                                       int flags, int fd, off_t offset,
++                                       void **ret_addr) {
++    uintptr_t out = 0;
++    int32_t ret = __imported_wasix_32v1_mem_mmap(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length,
++        (int32_t) prot,
++        (int32_t) flags,
++        (int32_t) fd,
++        (int64_t) offset,
++        (int32_t) (uintptr_t) &out);
++    *ret_addr = (void *) out;
++    return (__wasi_errno_t) ret;
++}
++
++static __wasi_errno_t runtime_mem_munmap(void *addr, size_t length) {
++    int32_t ret = __imported_wasix_32v1_mem_munmap(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length);
++    return (__wasi_errno_t) ret;
++}
++
++static __wasi_errno_t runtime_mem_msync(void *addr, size_t length, int flags) {
++    int32_t ret = __imported_wasix_32v1_mem_msync(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length,
++        (int32_t) flags);
++    return (__wasi_errno_t) ret;
++}
++
++static int range_end(void *addr, size_t length, uintptr_t *end) {
++    return length != 0 &&
++           !__builtin_add_overflow((uintptr_t) addr, length, end);
++}
++
++static struct map *find_overlapping_legacy_map_locked(
++    void *addr, size_t length, struct map ***link_out) {
++    uintptr_t start = (uintptr_t) addr;
++    uintptr_t end;
++    struct map **link = &legacy_maps;
++
++    if (!range_end(addr, length, &end)) {
++        return NULL;
++    }
++
++    while (*link != NULL) {
++        uintptr_t map_start = (uintptr_t) (*link)->addr;
++        uintptr_t map_end;
++
++        if (!range_end((*link)->addr, (*link)->length, &map_end)) {
++            /* Registry entries are validated before insertion. */
++            abort();
++        }
++        if (start < map_end && map_start < end) {
++            if (link_out) {
++                *link_out = link;
++            }
++            return *link;
++        }
++        link = &(*link)->next;
++    }
++
++    return NULL;
++}
++
++static int map_contains(const struct map *map, void *addr, size_t length) {
++    uintptr_t start = (uintptr_t) addr;
++    uintptr_t end;
++    uintptr_t map_start = (uintptr_t) map->addr;
++    uintptr_t map_end;
++
++    return range_end(addr, length, &end) &&
++           range_end(map->addr, map->length, &map_end) &&
++           start >= map_start && end <= map_end;
++}
++
++static int map_is_exact(const struct map *map, void *addr, size_t length) {
++    return map->addr == addr && map->length == length;
++}
++
++static void remove_map_locked(struct map **link) {
++    struct map *entry = *link;
++
++    *link = entry->next;
++}
++
++static void *runtime_mmap(void *addr, size_t length, int prot, int flags,
++                          int fd, off_t offset) {
++    void *target = addr;
++    void *mapped = NULL;
++    int fixed = (flags & MAP_FIXED) != 0;
++    __wasi_errno_t error;
++
++    if (!fixed) {
++        /*
++         * Address selection belongs to the runtime. It atomically claims new
++         * WebAssembly pages and returns their old end as the selected address.
++         * Allocators claim only exact positive-sbrk return intervals. A
++         * non-NULL POSIX hint is deliberately ignored rather than converted
++         * into an unsafe fixed replacement.
++         */
++        target = NULL;
++    } else if (((uintptr_t) target & (RUNTIME_MMAP_ALIGN - 1)) != 0) {
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    /* The host remap is currently read/write. Reject weaker or broader
++       protection contracts instead of silently violating them. */
++    if (prot != (PROT_READ | PROT_WRITE)) {
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    error = runtime_mem_mmap(target, length, prot, flags, fd, offset, &mapped);
++    if (error != __WASI_ERRNO_SUCCESS) {
++        errno = error;
++        return MAP_FAILED;
++    }
++    if (mapped == NULL || (fixed && mapped != target)) {
++        if (mapped != NULL) {
++            runtime_mem_munmap(mapped, length);
++        }
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    return mapped;
++}
++
+ void *mmap(void *addr, size_t length, int prot, int flags,
+            int fd, off_t offset) {
++    int runtime_candidate =
++        (flags & MAP_TYPE) == MAP_SHARED && (flags & MAP_ANON) == 0;
++
+     // Check for unsupported flags.
+-    if ((flags & (MAP_PRIVATE | MAP_SHARED)) == 0 ||
+-        (flags & MAP_FIXED) != 0 ||
+-#ifdef MAP_SHARED_VALIDATE
+-        (flags & MAP_SHARED_VALIDATE) == MAP_SHARED_VALIDATE ||
+-#endif
++    if (((flags & MAP_TYPE) != MAP_PRIVATE &&
++         (flags & MAP_TYPE) != MAP_SHARED) ||
++        ((flags & MAP_FIXED) != 0 && !runtime_candidate) ||
+ #ifdef MAP_NORESERVE
+         (flags & MAP_NORESERVE) != 0 ||
+ #endif
+@@ -67,6 +230,10 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+         return MAP_FAILED;
+     }
+ 
++    if (runtime_candidate) {
++        return runtime_mmap(addr, length, prot, flags, fd, offset);
++    }
++
+     // Check for integer overflow.
+     size_t buf_len = 0;
+     if (__builtin_add_overflow(length, sizeof(struct map), &buf_len)) {
+@@ -97,7 +264,7 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+             errno = EINVAL;
+             free(map);
+ 
+-            return NULL;
++            return MAP_FAILED;
+         }
+ 
+         map->fd = new_fd;
+@@ -108,6 +275,8 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+             if (nread < 0) {
+                 if (errno == EINTR)
+                     continue;
++                close(new_fd);
++                free(map);
+                 return MAP_FAILED;
+             }
+             if (nread == 0)
+@@ -121,28 +290,94 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+         memset(addr, 0, length);
+     }
+ 
++    map->addr = addr;
++    pthread_mutex_lock(&maps_lock);
++    if (find_overlapping_legacy_map_locked(addr, map->length, NULL) != NULL) {
++        pthread_mutex_unlock(&maps_lock);
++        if (map->fd >= 0) {
++            close(map->fd);
++        }
++        free(map);
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++    map->next = legacy_maps;
++    legacy_maps = map;
++    pthread_mutex_unlock(&maps_lock);
++
+     return addr;
+ }
+ 
++static int legacy_msync(struct map *map, void *addr, size_t length) {
++    uintptr_t delta = (uintptr_t) addr - (uintptr_t) map->addr;
++    off_t map_offset;
++
++    if (__builtin_add_overflow(map->offset, (off_t) delta, &map_offset)) {
++        errno = EOVERFLOW;
++        return -1;
++    }
++
++    if ((map->flags & MAP_SHARED) != 0 &&
++        (map->flags & MAP_ANON) == 0 &&
++        (map->prot & PROT_WRITE) != 0) {
++        char *body = (char *) addr;
++
++        while (length > 0) {
++            const ssize_t nwrite = pwrite(map->fd, body, length, map_offset);
++
++            if (nwrite > 0) {
++                length -= (size_t) nwrite;
++                map_offset += (size_t) nwrite;
++                body += (size_t) nwrite;
++            } else if (errno == EINTR) {
++                continue;
++            } else {
++                return -1;
++            }
++        }
++    }
++
++    return 0;
++}
++
+ int munmap(void *addr, size_t length) {
+-    struct map *map = (struct map *)addr - 1;
++    struct map **link = NULL;
++    struct map *map;
++    __wasi_errno_t runtime_error = runtime_mem_munmap(addr, length);
+ 
+-    // We don't support partial munmapping.
+-    if (map->length != length) {
++    if (runtime_error == __WASI_ERRNO_SUCCESS) {
++        return 0;
++    }
++    if (runtime_error != __WASI_ERRNO_NOENT) {
++        errno = runtime_error;
++        return -1;
++    }
++
++    pthread_mutex_lock(&maps_lock);
++    map = find_overlapping_legacy_map_locked(addr, length, &link);
++    if (map == NULL || !map_is_exact(map, addr, length)) {
++        pthread_mutex_unlock(&maps_lock);
+         errno = EINVAL;
+         return -1;
+     }
+ 
+     // Write the data back to the backing file and close
+     // the file handle
+-    if (map->fd > 0) {
+-        if ((map->prot & PROT_WRITE) != 0) {
+-            msync(addr, length, MS_SYNC);
++    if (map->fd >= 0) {
++        if ((map->flags & MAP_SHARED) != 0 &&
++            (map->prot & PROT_WRITE) != 0) {
++            if (legacy_msync(map, addr, length) < 0) {
++                pthread_mutex_unlock(&maps_lock);
++                return -1;
++            }
+         }
+ 
+         close(map->fd);
+     }
+ 
++    remove_map_locked(link);
++    pthread_mutex_unlock(&maps_lock);
++
+     // Release the memory.
+     free(map);
+ 
+@@ -151,39 +386,38 @@ int munmap(void *addr, size_t length) {
+ }
+ 
+ int msync (void *addr, size_t length, int flags) {
+-    struct map *map = (struct map *)addr - 1;
+-    size_t map_flags = map->flags;
+-    off_t map_offset = map->offset;
+-    size_t map_length = map->length;
+-    int fd = map->fd;
++    struct map *map;
++    __wasi_errno_t runtime_error;
+ 
+-    if (length > map_length) {
++    if ((flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0 ||
++        ((flags & MS_ASYNC) != 0 && (flags & MS_SYNC) != 0)) {
+         errno = EINVAL;
+         return -1;
+     }
+ 
+-    if ((map->prot & PROT_WRITE) != 0) {
+-        errno = EINVAL;
++    runtime_error = runtime_mem_msync(addr, length, flags);
++    if (runtime_error == __WASI_ERRNO_SUCCESS) {
++        return 0;
++    }
++    if (runtime_error != __WASI_ERRNO_NOENT) {
++        errno = runtime_error;
+         return -1;
+     }
+ 
+-    if ((map_flags & MAP_ANON) == 0) {
+-        char *body = (char *)addr;
+-
+-        while (length > 0) {
+-            const ssize_t nwrite = pwrite(fd, body, length, map_offset);
+-
+-            if (nwrite > 0) {
+-                length -= (size_t)nwrite;
+-                map_offset += (size_t)nwrite;
+-                body += (size_t)nwrite;
+-            } else if (errno == EINTR) {
+-                continue;
+-            } else {
+-                return -1;
+-            }
+-        }
++    pthread_mutex_lock(&maps_lock);
++    map = find_overlapping_legacy_map_locked(addr, length, NULL);
++    if (map == NULL) {
++        pthread_mutex_unlock(&maps_lock);
++        errno = ENOMEM;
++        return -1;
++    }
++    if (!map_contains(map, addr, length)) {
++        pthread_mutex_unlock(&maps_lock);
++        errno = EINVAL;
++        return -1;
+     }
+ 
+-    return 0;
++    int result = legacy_msync(map, addr, length);
++    pthread_mutex_unlock(&maps_lock);
++    return result;
+ }
+diff --git a/libc-bottom-half/sources/__wasilibc_futex.c b/libc-bottom-half/sources/__wasilibc_futex.c
+index 340899b..1a453fa 100644
+--- a/libc-bottom-half/sources/__wasilibc_futex.c
++++ b/libc-bottom-half/sources/__wasilibc_futex.c
+@@ -12,7 +12,7 @@ int __wasilibc_futex_wait_wasix(volatile void *addr, int op, int expected, int64
+   __wasi_bool_t woken = __WASI_BOOL_FALSE;
+   
+   __wasi_option_timestamp_t timeout;
+-  if (max_wait_ns > 0) {
++  if (max_wait_ns >= 0) {
+     timeout.tag = __WASI_OPTION_SOME;
+     timeout.u.some = max_wait_ns;
+   } else {
+@@ -30,8 +30,9 @@ int __wasilibc_futex_wait_wasix(volatile void *addr, int op, int expected, int64
+     return -EWOULDBLOCK;
+   }
+ 
+-  if (__wasi_futex_wait((uint32_t*)addr, expected, &timeout, &woken) != 0) {
+-    __builtin_trap();
++  __wasi_errno_t ret = __wasi_futex_wait((uint32_t*)addr, expected, &timeout, &woken);
++  if (ret != 0) {
++    return -ret;
+   }
+ 
+   if (woken == __WASI_BOOL_FALSE && *paddr == expected) {
+diff --git a/libc-bottom-half/sources/__wasixlibc_real.c b/libc-bottom-half/sources/__wasixlibc_real.c
+index 41a3f0b..56d916e 100644
+--- a/libc-bottom-half/sources/__wasixlibc_real.c
++++ b/libc-bottom-half/sources/__wasixlibc_real.c
+@@ -502,6 +502,20 @@ __wasi_errno_t __wasi_proc_id(
+     return (uint16_t) ret;
+ }
+ 
++int32_t __imported_wasix_32v1_proc_rlimit_get(int32_t arg0, int32_t arg1, int32_t arg2) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("proc_rlimit_get")
++));
++
++__wasi_errno_t __wasi_proc_rlimit_get(
++    uint32_t resource,
++    uint64_t *retptr0,
++    uint64_t *retptr1
++){
++    int32_t ret = __imported_wasix_32v1_proc_rlimit_get((int32_t) resource, (intptr_t) retptr0, (intptr_t) retptr1);
++    return (uint16_t) ret;
++}
++
+ int32_t __imported_wasix_32v1_proc_parent(int32_t arg0, int32_t arg1) __attribute__((
+     __import_module__("wasix_32v1"),
+     __import_name__("proc_parent")
+@@ -1278,4 +1292,3 @@ __wasi_errno_t __wasi_context_destroy(
+     int32_t ret = __imported_wasix_32v1_context_destroy((int64_t) context);
+     return (uint16_t) ret;
+ }
+-
+diff --git a/libc-bottom-half/sources/sbrk.c b/libc-bottom-half/sources/sbrk.c
+index a26b75e..98cd803 100644
+--- a/libc-bottom-half/sources/sbrk.c
++++ b/libc-bottom-half/sources/sbrk.c
+@@ -1,13 +1,18 @@
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <errno.h>
++#include <stdint.h>
+ #include <__macro_PAGESIZE.h>
+ 
+-// Bare-bones implementation of sbrk.
++/*
++ * Every positive call owns exactly the interval it returns. Runtime facilities
++ * may grow linear memory between calls, so callers must not infer ownership
++ * from a later sbrk(0) or assume that independently acquired intervals are
++ * consecutive.
++ */
+ void *sbrk(intptr_t increment) {
+-    // sbrk(0) returns the current memory size.
+     if (increment == 0) {
+-        // The wasm spec doesn't guarantee that memory.grow of 0 always succeeds.
++        // The wasm spec doesn't guarantee that memory.grow of 0 succeeds.
+         return (void *)(__builtin_wasm_memory_size(0) * PAGESIZE);
+     }
+ 
+@@ -28,5 +33,17 @@ void *sbrk(intptr_t increment) {
+         return (void *)-1;
+     }
+ 
+-    return (void *)(old * PAGESIZE);
++    if (old > UINTPTR_MAX / PAGESIZE) {
++        errno = ENOMEM;
++        return (void *)-1;
++    }
++    old *= PAGESIZE;
++    if ((uintptr_t)increment > UINTPTR_MAX - old) {
++        /* memory.grow has already reserved this terminal interval, but its
++           one-past end is not representable in the guest pointer width. Do
++           not transfer an interval with a wrapping end to the caller. */
++        errno = ENOMEM;
++        return (void *)-1;
++    }
++    return (void *)old;
+ }
+diff --git a/libc-top-half/musl/include/fcntl.h b/libc-top-half/musl/include/fcntl.h
+index 15bef28..1332569 100644
+--- a/libc-top-half/musl/include/fcntl.h
++++ b/libc-top-half/musl/include/fcntl.h
+@@ -190,11 +190,9 @@ struct f_owner_ex {
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no name_to_handle_at */
+ #define MAX_HANDLE_SZ 128
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no syc_file_range */
+ #define SYNC_FILE_RANGE_WAIT_BEFORE 1
+ #define SYNC_FILE_RANGE_WRITE 2
+ #define SYNC_FILE_RANGE_WAIT_AFTER 4
+-#endif
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no splice */
+ #define SPLICE_F_MOVE 1
+ #define SPLICE_F_NONBLOCK 2
+@@ -212,8 +210,8 @@ int open_by_handle_at(int, struct file_handle *, int);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no readahead */
+ ssize_t readahead(int, off_t, size_t);
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no splice, syc_file_range, or tee */
+ int sync_file_range(int, off_t, off_t, unsigned);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no splice or tee */
+ ssize_t vmsplice(int, const struct iovec *, size_t, unsigned);
+ ssize_t splice(int, off_t *, int, off_t *, size_t, unsigned);
+ ssize_t tee(int, int, size_t, unsigned);
+diff --git a/libc-top-half/musl/include/setjmp.h b/libc-top-half/musl/include/setjmp.h
+index 3961c02..f92f9f0 100644
+--- a/libc-top-half/musl/include/setjmp.h
++++ b/libc-top-half/musl/include/setjmp.h
+@@ -48,7 +48,13 @@ _Noreturn void _longjmp (jmp_buf, int);
+ #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
+ 	defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ 	typedef jmp_buf sigjmp_buf;
++#ifndef __WASIX_LIBC_BUILDING_SETJMP
++	int __wasilibc_sigsetjmp_save(sigjmp_buf, int);
++#define sigsetjmp(buf, savesigs) \
++	(__wasilibc_sigsetjmp_save((buf), (savesigs)), setjmp((buf)))
++#else
+ 	int sigsetjmp(sigjmp_buf, int) __setjmp_attr;
++#endif
+ 	_Noreturn void siglongjmp(sigjmp_buf, int);
+ #endif
+ 
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index 95a3ee7..7c30563 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -134,11 +134,9 @@ unsigned sleep(unsigned);
+ int pause(void);
+ #endif
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+ pid_t fork(void);
+ pid_t _fork_internal(int copy_mem);
+ pid_t _Fork(int copy_mem);
+-#endif
+ int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+ int execle(const char *, const char *, ...);
+diff --git a/libc-top-half/musl/src/linux/epoll.c b/libc-top-half/musl/src/linux/epoll.c
+index 4780ce2..b3ac891 100644
+--- a/libc-top-half/musl/src/linux/epoll.c
++++ b/libc-top-half/musl/src/linux/epoll.c
+@@ -2,6 +2,8 @@
+ #include <sys/epoll.h>
+ #include <signal.h>
+ #include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
+ 
+ int epoll_create(int size)
+ {
+@@ -17,7 +19,27 @@ int epoll_create(int size)
+ 
+ int epoll_create1(int flags)
+ {
+-    return epoll_create(0);
++    int fd;
++
++    if (flags & ~EPOLL_CLOEXEC) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    fd = epoll_create(0);
++    if (fd < 0) {
++        return -1;
++    }
++
++    if ((flags & EPOLL_CLOEXEC) && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
++        int saved_errno = errno;
++
++        close(fd);
++        errno = saved_errno;
++        return -1;
++    }
++
++    return fd;
+ }
+ 
+ int epoll_ctl(int fd, int op, int fd2, struct epoll_event *ev)
+diff --git a/libc-top-half/musl/src/misc/getrlimit.c b/libc-top-half/musl/src/misc/getrlimit.c
+index 67bfc7c..972fb67 100644
+--- a/libc-top-half/musl/src/misc/getrlimit.c
++++ b/libc-top-half/musl/src/misc/getrlimit.c
+@@ -2,6 +2,12 @@
+ #include <errno.h>
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
++#else
++#include <wasi/api.h>
++#endif
++
++#ifndef SYSCALL_RLIM_INFINITY
++#define SYSCALL_RLIM_INFINITY RLIM_INFINITY
+ #endif
+ 
+ #define FIX(x) do{ if ((x)>=SYSCALL_RLIM_INFINITY) (x)=RLIM_INFINITY; }while(0)
+@@ -24,8 +30,17 @@ int getrlimit(int resource, struct rlimit *rlim)
+ 	FIX(rlim->rlim_cur);
+ 	FIX(rlim->rlim_max);
+ #else
+-    rlim->rlim_cur = RLIM_INFINITY;
+-	rlim->rlim_max = RLIM_INFINITY;
++	uint64_t rlim_cur;
++	uint64_t rlim_max;
++	__wasi_errno_t error = __wasi_proc_rlimit_get(resource, &rlim_cur, &rlim_max);
++	if (error != __WASI_ERRNO_SUCCESS) {
++		errno = error;
++		return -1;
++	}
++	rlim->rlim_cur = rlim_cur;
++	rlim->rlim_max = rlim_max;
++	FIX(rlim->rlim_cur);
++	FIX(rlim->rlim_max);
+ #endif
+ 	return 0;
+ }
+diff --git a/libc-top-half/musl/src/process/_Fork.c b/libc-top-half/musl/src/process/_Fork.c
+index 76df425..8f0ee8e 100644
+--- a/libc-top-half/musl/src/process/_Fork.c
++++ b/libc-top-half/musl/src/process/_Fork.c
+@@ -10,8 +10,6 @@
+ #include "pthread_impl.h"
+ #include "aio_impl.h"
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+-
+ static void dummy(int x) { }
+ weak_alias(dummy, __aio_atfork);
+ 
+@@ -62,5 +60,3 @@ pid_t _Fork(int copy_mem)
+ 	__restore_sigs(&set);
+ 	return __syscall_ret(ret);
+ }
+-
+-#endif /* defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__) */
+\ No newline at end of file
+diff --git a/libc-top-half/musl/src/process/execv.c b/libc-top-half/musl/src/process/execv.c
+index bce72e3..5ef4ebe 100644
+--- a/libc-top-half/musl/src/process/execv.c
++++ b/libc-top-half/musl/src/process/execv.c
+@@ -7,6 +7,7 @@ extern char **__environ;
+ #include <stdlib.h>
+ #include <errno.h>
+ #include <wasi/api.h>
++char *__wasilibc_exec_combine_strings(char *const strings[]);
+ #endif
+ 
+ int execv(const char *path, char *const argv[])
+@@ -14,22 +15,16 @@ int execv(const char *path, char *const argv[])
+ #ifdef __wasilibc_unmodified_upstream
+ 	return execve(path, argv, __environ);
+ #else
+-	int combined_len = 0;
+-	for (char **argvp = (char **)argv; *argvp != NULL; argvp++) {
+-		combined_len += strlen(*argvp) + 1;
++	char *combined_argv = __wasilibc_exec_combine_strings(argv);
++	if (combined_argv == NULL) {
++		return -1;
+ 	}
+ 
+-	char *combined_argv = malloc((combined_len + 1));
+-	char *combined_argv_p = combined_argv;
+-	for (char **argvp = (char **)argv; *argvp != NULL; argvp++) {
+-		memcpy(combined_argv_p, *argvp, strlen(*argvp));
+-		combined_argv_p += strlen(*argvp);
+-		*combined_argv_p = '\n';
+-		combined_argv_p++;
+-	}
+-	*combined_argv_p = 0;
+-	
+ 	int e = __wasi_proc_exec3(path, combined_argv, NULL, 0, NULL);
++	/* A successful vfork+exec returns in the shared parent image immediately
++	   before the restore longjmp. Release child marshaling storage first so
++	   every backend launch returns the parent heap to its prior plateau. */
++	free(combined_argv);
+ #ifdef __wasm_exception_handling__
+ 	extern _Noreturn void __vfork_restore();
+ 	if (e == 0) {
+@@ -37,7 +32,7 @@ int execv(const char *path, char *const argv[])
+ 	}
+ #endif
+ 
+-	// A return from proc_exec automatically means it failed
++	// Any ordinary return from proc_exec means it failed.
+ 	errno = e;
+ 	return -1;
+ #endif
+diff --git a/libc-top-half/musl/src/process/execvp.c b/libc-top-half/musl/src/process/execvp.c
+index b26c275..0c5d1d5 100644
+--- a/libc-top-half/musl/src/process/execvp.c
++++ b/libc-top-half/musl/src/process/execvp.c
+@@ -3,6 +3,7 @@
+ #include <unistd.h>
+ #include <errno.h>
+ #include <limits.h>
++#include <stdint.h>
+ 
+ extern char **__wasilibc_environ;
+ 
+@@ -64,15 +65,31 @@ int __execvpe(const char *file, char *const argv[], char *const envp[])
+ #else
+ char *__wasilibc_exec_combine_strings(char *const strings[])
+ {
+-	int combined_len = 0;
+-	for (char **ptr = (char **)strings; *ptr != NULL; ptr++)
++	size_t combined_len = 0;
++	for (char **ptr = (char **)strings; strings != NULL && *ptr != NULL; ptr++)
+ 	{
+-		combined_len += strlen(*ptr) + 1;
++		size_t len = strlen(*ptr);
++		if (len == SIZE_MAX || combined_len > SIZE_MAX - len - 1)
++		{
++			errno = E2BIG;
++			return NULL;
++		}
++		combined_len += len + 1;
+ 	}
+ 
+-	char *combined = malloc((combined_len + 1));
++	if (combined_len == SIZE_MAX)
++	{
++		errno = E2BIG;
++		return NULL;
++	}
++	char *combined = malloc(combined_len + 1);
++	if (combined == NULL)
++	{
++		errno = ENOMEM;
++		return NULL;
++	}
+ 	char *combined_p = combined;
+-	for (char **ptr = (char **)strings; *ptr != NULL; ptr++)
++	for (char **ptr = (char **)strings; strings != NULL && *ptr != NULL; ptr++)
+ 	{
+ 		memcpy(combined_p, *ptr, strlen(*ptr));
+ 		combined_p += strlen(*ptr);
+@@ -87,11 +104,22 @@ char *__wasilibc_exec_combine_strings(char *const strings[])
+ int __execvpe(const char *path, char *const argv[], char *const envp[], uint8_t use_path)
+ {
+ 	char *combined_argv = __wasilibc_exec_combine_strings(argv);
++	if (combined_argv == NULL)
++		return -1;
+ 	char *combined_env = __wasilibc_exec_combine_strings(envp);
++	if (combined_env == NULL)
++	{
++		free(combined_argv);
++		return -1;
++	}
+ 
+ 	int e = __wasi_proc_exec3(
+ 		path, combined_argv, combined_env,
+ 		use_path ? __WASI_BOOL_TRUE : __WASI_BOOL_FALSE, getenv("PATH"));
++	/* proc_exec3 has consumed both buffers before returning. On vfork success
++	   this is the last point before longjmp restores the shared parent image. */
++	free(combined_argv);
++	free(combined_env);
+ #ifdef __wasm_exception_handling__
+ 	extern _Noreturn void __vfork_restore();
+ 	if (e == 0) {
+@@ -99,9 +127,6 @@ int __execvpe(const char *path, char *const argv[], char *const envp[], uint8_t
+ 	}
+ #endif
+ 
+-	free(combined_argv);
+-	free(combined_env);
+-
+ 	// A return from proc_exec automatically means it failed
+ 	errno = e;
+ 	return -1;
+diff --git a/libc-top-half/musl/src/process/fork.c b/libc-top-half/musl/src/process/fork.c
+index df38cf7..21895b4 100644
+--- a/libc-top-half/musl/src/process/fork.c
++++ b/libc-top-half/musl/src/process/fork.c
+@@ -51,8 +51,6 @@ weak_alias(dummy_0, __tl_lock);
+ weak_alias(dummy_0, __tl_unlock);
+ #endif
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+-
+ pid_t fork(void)
+ {
+ 	return _fork_internal(1);
+@@ -102,5 +100,3 @@ pid_t _fork_internal(int copy_mem)
+ 	if (ret<0) errno = errno_save;
+ 	return ret;
+ }
+-
+-#endif /* defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__) */
+\ No newline at end of file
+diff --git a/libc-top-half/musl/src/process/waitpid.c b/libc-top-half/musl/src/process/waitpid.c
+index 456cca9..330aa66 100644
+--- a/libc-top-half/musl/src/process/waitpid.c
++++ b/libc-top-half/musl/src/process/waitpid.c
+@@ -35,6 +35,13 @@ pid_t waitpid(pid_t pid, int *status, int options)
+ 		errno = ret;
+ 		return -1;
+ 	} else {
++		if (code.tag == __WASI_JOIN_STATUS_TYPE_NOTHING) {
++			if (status != NULL) {
++				*status = 0;
++			}
++			return 0;
++		}
++
+ 		// Read the PID
+ 		if (opid.tag == __WASI_OPTION_SOME) {
+ 			pid = opid.u.some;
+@@ -44,14 +51,18 @@ pid_t waitpid(pid_t pid, int *status, int options)
+ 		}
+ 
+ 		// Build the status code depending on what happened
+-		if (code.tag == __WASI_JOIN_STATUS_TYPE_NOTHING) {
+-			*status = 0;
+-		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL) {
+-			*status = W_EXITCODE(code.u.exit_normal, 0);
++		if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL) {
++			if (status != NULL) {
++				*status = W_EXITCODE(code.u.exit_normal, 0);
++			}
+ 		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_SIGNAL) {
+-			*status = W_EXITCODE(code.u.exit_signal.exit_code, code.u.exit_signal.signal);
++			if (status != NULL) {
++				*status = W_EXITCODE(code.u.exit_signal.exit_code, code.u.exit_signal.signal);
++			}
+ 		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_STOPPED) {
+-			*status = W_STOPCODE(code.u.stopped);
++			if (status != NULL) {
++				*status = W_STOPCODE(code.u.stopped);
++			}
+ 		} else {
+ 			errno = EUNKNOWN;
+ 			return -1;
+diff --git a/libc-top-half/musl/src/setjmp/setjmplongjmp.c b/libc-top-half/musl/src/setjmp/setjmplongjmp.c
+index 05ebc4a..a1fab64 100644
+--- a/libc-top-half/musl/src/setjmp/setjmplongjmp.c
++++ b/libc-top-half/musl/src/setjmp/setjmplongjmp.c
+@@ -1,4 +1,5 @@
+ #ifndef __wasilibc_unmodified_upstream
++#define __WASIX_LIBC_BUILDING_SETJMP
+ #include <setjmp.h>
+ 
+ #  ifdef __wasm_exception_handling__
+@@ -93,9 +94,11 @@ int setjmp (jmp_buf buf) {
+ 
+ #  endif
+ 
++#  ifndef __wasm_exception_handling__
+ // TODO: ignoring signal masking for now
+ int sigsetjmp(jmp_buf  buf, int savesigs) {
+     return setjmp(buf);
+ }
++#  endif
+ 
+ #endif
+diff --git a/libc-top-half/musl/src/signal/kill.c b/libc-top-half/musl/src/signal/kill.c
+index ca43eb8..bb34cce 100644
+--- a/libc-top-half/musl/src/signal/kill.c
++++ b/libc-top-half/musl/src/signal/kill.c
+@@ -2,6 +2,7 @@
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
+ #else
++#include <errno.h>
+ #include <wasi/api.h>
+ #endif
+ 
+@@ -11,6 +12,10 @@ int kill(pid_t pid, int sig)
+ 	return syscall(SYS_kill, pid, sig);
+ #else
+ 	int r = __wasi_proc_signal(pid, (__wasi_signal_t)sig);
+-	return r;
++	if (r != 0) {
++		errno = r;
++		return -1;
++	}
++	return 0;
+ #endif
+-}
+\ No newline at end of file
++}
+diff --git a/libc-top-half/musl/src/signal/sigaction.c b/libc-top-half/musl/src/signal/sigaction.c
+index d2ffaad..332feb2 100644
+--- a/libc-top-half/musl/src/signal/sigaction.c
++++ b/libc-top-half/musl/src/signal/sigaction.c
+@@ -133,8 +133,7 @@ static void __default_handler(int sig) {
+ #endif
+ 		case SIGURG:
+ 		case SIGWINCH:
+-			SIG_IGN(sig);
+-			break;
++			return;
+ 
+ 		// Default behavior: "continue".
+ 		case SIGCONT:
+@@ -170,6 +169,18 @@ static void __default_handler(int sig) {
+ 			break;
+ 	}
+ }
++
++static void __invoke_default_handler(int sig) {
++	/*
++	 * The WASIX callback is registered at startup, before a program is
++	 * required to call sigaction().  Materialize the built-in handler in the
++	 * function table before the first default-disposition signal arrives.
++	 */
++	if (default_handler == NULL) {
++		default_handler = &__default_handler;
++	}
++	default_handler(sig);
++}
+ #endif
+ 
+ static sighandler_t handlers[_NSIG];
+@@ -187,12 +198,14 @@ void __wasm_signal(int sig) {
+ 	struct k_sigaction ksa = __eintr_handler_callbacks[sig];
+ 	UNLOCK(__eintr_handler_lock);
+ 
+-	if (ksa.handler != 0) {
++	if (ksa.handler == SIG_IGN) {
++		return;
++	} else if (ksa.handler != 0 && ksa.handler != SIG_DFL) {
+ 		ksa.handler(sig);
+ 	} else {
+ 		unsigned long set[_NSIG/(8*sizeof(long))];
+ 		__block_all_sigs(&set);
+-		default_handler(sig);
++		__invoke_default_handler(sig);
+ 		__restore_sigs(&set);
+ 	}
+ }
+diff --git a/libc-top-half/musl/src/signal/siglongjmp.c b/libc-top-half/musl/src/signal/siglongjmp.c
+index 577ecb5..4ceea6a 100644
+--- a/libc-top-half/musl/src/signal/siglongjmp.c
++++ b/libc-top-half/musl/src/signal/siglongjmp.c
+@@ -8,5 +8,10 @@
+ 
+ _Noreturn void siglongjmp(sigjmp_buf buf, int ret)
+ {
++#if !defined(__wasilibc_unmodified_upstream) && defined(__wasm_exception_handling__)
++	if (buf->__fl) {
++		pthread_sigmask(SIG_SETMASK, (sigset_t *)buf->__ss, 0);
++	}
++#endif
+ 	longjmp(buf, ret);
+-}
+\ No newline at end of file
++}
+diff --git a/libc-top-half/musl/src/signal/sigsetjmp_tail.c b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+index 57b00c5..f35da65 100644
+--- a/libc-top-half/musl/src/signal/sigsetjmp_tail.c
++++ b/libc-top-half/musl/src/signal/sigsetjmp_tail.c
+@@ -1,6 +1,7 @@
+ #include <setjmp.h>
+ #include <signal.h>
+ #include <errno.h>
++#include <string.h>
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
+ #endif
+@@ -14,4 +15,18 @@ hidden int __sigsetjmp_tail(sigjmp_buf jb, int ret)
+ #else
+ 	return EINVAL;
+ #endif
+-}
+\ No newline at end of file
++}
++
++#if !defined(__wasilibc_unmodified_upstream) && defined(__wasm_exception_handling__)
++int __wasilibc_sigsetjmp_save(sigjmp_buf jb, int savesigs)
++{
++	jb->__fl = savesigs ? 1 : 0;
++	if (!savesigs) {
++		return 0;
++	}
++
++	memset(jb->__ss, 0, sizeof jb->__ss);
++	pthread_sigmask(SIG_SETMASK, NULL, (sigset_t *)jb->__ss);
++	return 0;
++}
++#endif
+diff --git a/libc-top-half/musl/src/string/memcmp.c b/libc-top-half/musl/src/string/memcmp.c
+index bdbce9f..3fbc3c5 100644
+--- a/libc-top-half/musl/src/string/memcmp.c
++++ b/libc-top-half/musl/src/string/memcmp.c
+@@ -1,8 +1,43 @@
++#include <endian.h>
++#include <stdint.h>
+ #include <string.h>
+ 
++static uint64_t load64(const unsigned char *p)
++{
++	uint64_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
++static uint32_t load32(const unsigned char *p)
++{
++	uint32_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
+ int memcmp(const void *vl, const void *vr, size_t n)
+ {
+ 	const unsigned char *l=vl, *r=vr;
++#if defined(__GNUC__) && __BYTE_ORDER == __LITTLE_ENDIAN
++	for (; n >= 8; n-=8, l+=8, r+=8) {
++		uint64_t a = load64(l), b = load64(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctzll(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++	}
++	if (n >= 4) {
++		uint32_t a = load32(l), b = load32(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctz(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++		n-=4;
++		l+=4;
++		r+=4;
++	}
++#endif
+ 	for (; n && *l == *r; n--, l++, r++);
+ 	return n ? *l-*r : 0;
+ }
+diff --git a/test/wasix/c_mmap_writeback/CMakeLists.txt b/test/wasix/c_mmap_writeback/CMakeLists.txt
+new file mode 100644
+index 0000000..eb29426
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/CMakeLists.txt
+@@ -0,0 +1,4 @@
++cmake_minimum_required (VERSION 3.5.0)
++project (c_mmap_writeback)
++
++add_executable(main main.c)
+diff --git a/test/wasix/c_mmap_writeback/main.c b/test/wasix/c_mmap_writeback/main.c
+new file mode 100644
+index 0000000..3ab7648
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/main.c
+@@ -0,0 +1,194 @@
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++static int write_full(int fd, const char *buf, size_t len)
++{
++    while (len > 0) {
++        ssize_t written = write(fd, buf, len);
++        if (written < 0) {
++            if (errno == EINTR) {
++                continue;
++            }
++            return -1;
++        }
++        buf += (size_t)written;
++        len -= (size_t)written;
++    }
++    return 0;
++}
++
++static int read_full(int fd, char *buf, size_t len)
++{
++    while (len > 0) {
++        ssize_t got = read(fd, buf, len);
++        if (got < 0) {
++            if (errno == EINTR) {
++                continue;
++            }
++            return -1;
++        }
++        if (got == 0) {
++            errno = EIO;
++            return -1;
++        }
++        buf += (size_t)got;
++        len -= (size_t)got;
++    }
++    return 0;
++}
++
++static int reset_file(int fd, const char *contents, size_t len)
++{
++    if (ftruncate(fd, 0) < 0) {
++        return -1;
++    }
++    if (lseek(fd, 0, SEEK_SET) < 0) {
++        return -1;
++    }
++    if (write_full(fd, contents, len) < 0) {
++        return -1;
++    }
++    return lseek(fd, 0, SEEK_SET) < 0 ? -1 : 0;
++}
++
++static int expect_file(int fd, const char *expected, size_t len)
++{
++    char buf[32];
++
++    if (len > sizeof(buf)) {
++        return -1;
++    }
++    memset(buf, 0, sizeof(buf));
++    if (lseek(fd, 0, SEEK_SET) < 0) {
++        return -1;
++    }
++    if (read_full(fd, buf, len) < 0) {
++        return -1;
++    }
++    return memcmp(buf, expected, len);
++}
++
++int main(void)
++{
++    const char *path = "wasix-libc-mmap-writeback-test.dat";
++    const char initial[] = "abcdefgh";
++    int fd;
++    char *map;
++    void *frontier_after_map;
++    unsigned char *morecore_segment;
++    size_t i;
++
++    unlink(path);
++    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (fd < 0) {
++        perror("open");
++        return 1;
++    }
++    if (reset_file(fd, initial, sizeof(initial) - 1) < 0) {
++        perror("reset shared");
++        return 2;
++    }
++
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++    if (map == MAP_FAILED) {
++        perror("mmap shared");
++        return 3;
++    }
++    errno = 0;
++    if (munmap(map + 1, 1) == 0 || errno != EINVAL) {
++        fprintf(stderr, "overlapping unaligned munmap escaped runtime ownership\n");
++        return 18;
++    }
++    errno = 0;
++    if (msync(map + 1, 1, MS_SYNC) == 0 || errno != EINVAL) {
++        fprintf(stderr, "overlapping unaligned msync escaped runtime ownership\n");
++        return 19;
++    }
++    if (memcmp(map, initial, sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "rejected shared operations mutated the mapping\n");
++        return 20;
++    }
++    frontier_after_map = sbrk(0);
++    morecore_segment = sbrk(65536);
++    if (morecore_segment == (void *)-1) {
++        perror("sbrk after shared mmap");
++        return 13;
++    }
++    if (morecore_segment != frontier_after_map ||
++        sbrk(0) != morecore_segment + 65536) {
++        fprintf(stderr, "sbrk did not return its exact exclusive interval\n");
++        return 14;
++    }
++    if ((uintptr_t)morecore_segment < (uintptr_t)map + 65536 &&
++        (uintptr_t)map < (uintptr_t)morecore_segment + 65536) {
++        fprintf(stderr, "MORECORE overlapped the runtime-owned mmap range\n");
++        return 15;
++    }
++    memset(morecore_segment, 0x5a, 65536);
++    memcpy(map, "WXYZ", 4);
++    for (i = 1; i <= 256; ++i) {
++        unsigned char *allocation = malloc(i * 17);
++        if (!allocation) {
++            fprintf(stderr, "malloc failed after nonconsecutive MORECORE\n");
++            return 16;
++        }
++        memset(allocation, (int)(i & 0xff), i * 17);
++        free(allocation);
++    }
++    if (morecore_segment[0] != 0x5a || morecore_segment[65535] != 0x5a ||
++        memcmp(map, "WXYZ", 4) != 0) {
++        fprintf(stderr, "allocator or mmap sentinel was corrupted\n");
++        return 17;
++    }
++    if (msync(map, sizeof(initial) - 1, MS_SYNC) < 0) {
++        perror("msync shared");
++        return 4;
++    }
++    if (expect_file(fd, "WXYZefgh", sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "MAP_SHARED changes were not written back\n");
++        return 5;
++    }
++    if (munmap(map, sizeof(initial) - 1) < 0) {
++        perror("munmap shared");
++        return 6;
++    }
++    errno = 0;
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ, MAP_SHARED, fd, 0);
++    if (map != MAP_FAILED || errno != EINVAL) {
++        fprintf(stderr, "runtime mapping accepted an unenforced protection contract\n");
++        return 21;
++    }
++
++    if (reset_file(fd, initial, sizeof(initial) - 1) < 0) {
++        perror("reset private");
++        return 7;
++    }
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
++    if (map == MAP_FAILED) {
++        perror("mmap private");
++        return 8;
++    }
++    memcpy(map, "PRIV", 4);
++    if (msync(map, sizeof(initial) - 1, MS_SYNC) < 0) {
++        perror("msync private");
++        return 9;
++    }
++    if (munmap(map, sizeof(initial) - 1) < 0) {
++        perror("munmap private");
++        return 10;
++    }
++    if (expect_file(fd, initial, sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "MAP_PRIVATE changes were written back\n");
++        return 11;
++    }
++
++    close(fd);
++    unlink(path);
++    return 0;
++}
+diff --git a/test/wasix/c_mmap_writeback/test.sh b/test/wasix/c_mmap_writeback/test.sh
+new file mode 100755
+index 0000000..3c120c4
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/test.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++
++wasmer run --verbose --enable-all ./main
++RESULT=$?
++if [ "$RESULT" != "0" ]; then
++    echo "Test failed: different exit code ($RESULT vs. 0)" > /dev/stderr
++    exit 1
++fi
++
++echo "c_mmap_writeback test passed"
+diff --git a/test/wasix/c_sync_file_range/CMakeLists.txt b/test/wasix/c_sync_file_range/CMakeLists.txt
+new file mode 100644
+index 0000000..c3e1c79
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/CMakeLists.txt
+@@ -0,0 +1,4 @@
++cmake_minimum_required(VERSION 3.5.0)
++project(c_sync_file_range C)
++
++add_executable(main main.c)
+diff --git a/test/wasix/c_sync_file_range/check-import-signature.sh b/test/wasix/c_sync_file_range/check-import-signature.sh
+new file mode 100755
+index 0000000..523b83b
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/check-import-signature.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++
++set -euo pipefail
++
++module="${1:-./main}"
++wasm_dis="${WASM_DIS:-wasm-dis}"
++expected='(import "oliphaunt_postmaster_v1" "fd_sync_range" (func $__imported_oliphaunt_postmaster_v1_fd_sync_range (param i32 i64 i64 i32) (result i32)))'
++
++command -v "$wasm_dis" >/dev/null 2>&1 || {
++    echo "missing wasm disassembler: $wasm_dis" >&2
++    exit 2
++}
++[ -f "$module" ] || {
++    echo "missing Wasm module: $module" >&2
++    exit 2
++}
++
++"$wasm_dis" "$module" -o - | grep -F "$expected" >/dev/null || {
++    echo "fd_sync_range import does not match the versioned ABI" >&2
++    exit 1
++}
++
++if "$wasm_dis" "$module" -o - |
++    grep -F '(import "wasix_32v1" "fd_sync_range"' >/dev/null; then
++    echo "fd_sync_range must not be aliased into wasix_32v1" >&2
++    exit 1
++fi
++
++echo "c_sync_file_range import signature passed"
+diff --git a/test/wasix/c_sync_file_range/main.c b/test/wasix/c_sync_file_range/main.c
+new file mode 100644
+index 0000000..90fdc92
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/main.c
+@@ -0,0 +1,82 @@
++#define _GNU_SOURCE
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <unistd.h>
++
++_Static_assert(SYNC_FILE_RANGE_WAIT_BEFORE == 1, "WAIT_BEFORE ABI bit changed");
++_Static_assert(SYNC_FILE_RANGE_WRITE == 2, "WRITE ABI bit changed");
++_Static_assert(SYNC_FILE_RANGE_WAIT_AFTER == 4, "WAIT_AFTER ABI bit changed");
++
++static int expect_einval(int fd, off_t offset, off_t len, unsigned flags,
++                         const char *label)
++{
++    errno = 0;
++    if (sync_file_range(fd, offset, len, flags) != -1 || errno != EINVAL) {
++        fprintf(stderr, "%s: expected EINVAL, got errno=%d\n", label, errno);
++        return -1;
++    }
++    return 0;
++}
++
++int main(void)
++{
++    static const char path[] = "wasix-libc-sync-file-range-test.dat";
++    char page[4096] = {1};
++    int fd;
++
++    unlink(path);
++    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (fd < 0) {
++        perror("open");
++        return 1;
++    }
++    if (write(fd, page, sizeof(page)) != (ssize_t)sizeof(page)) {
++        perror("write");
++        return 2;
++    }
++
++    if (sync_file_range(fd, 0, sizeof(page), SYNC_FILE_RANGE_WRITE) < 0) {
++        perror("sync_file_range WRITE");
++        return 3;
++    }
++    if (sync_file_range(fd, 0, sizeof(page),
++                        SYNC_FILE_RANGE_WAIT_BEFORE |
++                            SYNC_FILE_RANGE_WRITE |
++                            SYNC_FILE_RANGE_WAIT_AFTER) < 0) {
++        perror("sync_file_range full combination");
++        return 4;
++    }
++    if (sync_file_range(fd, 0, 0, 0) < 0) {
++        perror("sync_file_range through EOF no-op");
++        return 5;
++    }
++    if (sync_file_range(fd, INT64_MAX - 1, 1, 0) < 0) {
++        perror("sync_file_range maximum finite range");
++        return 6;
++    }
++
++    if (expect_einval(-1, 0, 0, 8, "unknown flags before import") < 0 ||
++        expect_einval(fd, -1, 0, 0, "negative offset before import") < 0 ||
++        expect_einval(fd, 0, -1, 0, "negative length before import") < 0 ||
++        expect_einval(fd, INT64_MAX, 1, 0, "overflow before import") < 0 ||
++        expect_einval(fd, INT64_MAX - 1, 2, 0, "overflow before import") < 0) {
++        return 7;
++    }
++
++    /* flags=0 is legal but must still validate the descriptor in the host. */
++    errno = 0;
++    if (sync_file_range(-1, 0, 0, 0) != -1 || errno != EBADF) {
++        fprintf(stderr, "flags=0 did not delegate: errno=%d\n", errno);
++        return 8;
++    }
++
++    if (close(fd) < 0) {
++        perror("close");
++        return 9;
++    }
++    unlink(path);
++    return 0;
++}
+diff --git a/test/wasix/c_sync_file_range/test.sh b/test/wasix/c_sync_file_range/test.sh
+new file mode 100755
+index 0000000..036c772
+--- /dev/null
++++ b/test/wasix/c_sync_file_range/test.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++
++wasmer run --verbose --enable-all ./main
++RESULT=$?
++if [ "$RESULT" != "0" ]; then
++    echo "Test failed: different exit code ($RESULT vs. 0)" > /dev/stderr
++    exit 1
++fi
++
++echo "c_sync_file_range test passed"

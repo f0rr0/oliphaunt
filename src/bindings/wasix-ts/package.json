@@ -1,0 +1,109 @@
+{
+  "name": "@oliphaunt/wasix-ts",
+  "version": "0.0.0",
+  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, and Deno.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/bindings/wasix-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "runtimeProduct": "liboliphaunt-wasix",
+    "runtimeVersion": "0.1.1",
+    "host": "wasmer-js-patched"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "deno": "./lib/index.deno.js",
+      "bun": "./lib/index.bun.js",
+      "node": "./lib/index.node.js",
+      "browser": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./protocol": {
+      "types": "./lib/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/query.d.ts",
+      "default": "./lib/query.js"
+    },
+    "./storage/indexed-db": {
+      "types": "./lib/storage/indexed-db.d.ts",
+      "default": "./lib/storage/indexed-db.js"
+    },
+    "./storage/opfs": {
+      "types": "./lib/storage/opfs.d.ts",
+      "default": "./lib/storage/opfs.js"
+    },
+    "./storage/node": {
+      "types": "./lib/storage/node.d.ts",
+      "node": "./lib/storage/node.js"
+    },
+    "./storage/bun": {
+      "types": "./lib/storage/bun.d.ts",
+      "bun": "./lib/storage/bun.js"
+    },
+    "./storage/deno": {
+      "types": "./lib/storage/deno.d.ts",
+      "deno": "./lib/storage/deno.js"
+    },
+    "./package.json": {
+      "default": "./package.json"
+    }
+  },
+  "main": "lib/index.js",
+  "module": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "node tools/clean-lib.mjs && tsc -p tsconfig.build.json",
+    "dev": "pnpm run package:build && vite --config examples/browser/vite.config.ts",
+    "host:build": "bash host/build-sdk.sh",
+    "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
+    "package:check": "node tools/check-package.mjs",
+    "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
+    "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
+    "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
+    "smoke:browser:postgis-worker": "pnpm run package:build && node tools/smoke-browser.mjs --postgis-worker",
+    "smoke:bun": "pnpm run package:build && node tools/smoke-node.mjs --runtime bun",
+    "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
+    "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",
+    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json"
+  },
+  "dependencies": {
+    "fzstd": "0.1.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.4",
+    "@types/node": "^24.10.1",
+    "typescript": "catalog:",
+    "vite": "^6.0.3",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13 <25",
+    "bun": ">=1.3.14",
+    "deno": ">=2.8.1"
+  }
+}

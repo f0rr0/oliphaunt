@@ -180,13 +180,6 @@ owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-js.waivers]]
-path = "src/sdks/js/src/native/bun.ts"
-reason = "Bun FFI binding is covered by Bun package/runtime checks, not Node Vitest line coverage"
-evidence = "TypeScript Bun package-shape and smoke lanes"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
-[[products.oliphaunt-js.waivers]]
 path = "src/sdks/js/src/native/default.ts"
 reason = "runtime selector depends on host runtime and is covered through Node/Bun/Deno package checks"
 evidence = "TypeScript package and native smoke lanes"

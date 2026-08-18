@@ -792,7 +792,7 @@ pub(super) fn mobile_static_registry_metadata(
         if registered_stems.contains(stem) {
             if !extension.mobile_prebuilt {
                 return Err(Error::InvalidConfig(format!(
-                    "selected extension '{}' does not have release-ready iOS/Android static artifacts; app bundles cannot mark module stem '{}' complete without a prebuilt mobile artifact",
+                    "selected extension '{}' does not have prebuilt iOS/Android static artifacts; app bundles cannot mark module stem '{}' complete without a prebuilt mobile artifact",
                     extension.sql_name, stem
                 )));
             }

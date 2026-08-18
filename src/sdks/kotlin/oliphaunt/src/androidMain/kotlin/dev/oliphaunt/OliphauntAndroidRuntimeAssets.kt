@@ -176,8 +176,8 @@ internal object OliphauntAndroidRuntimeAssets {
         }
         if (templatePgdata == null) {
             throw OliphauntException(
-                "Kotlin Android Oliphaunt requires packaged template PGDATA for new roots. " +
-                    "Package oliphaunt/template-pgdata assets or open an existing root that already contains PG_VERSION.",
+                "Kotlin Android Oliphaunt requires packaged template PGDATA for new storage. " +
+                    "Package oliphaunt/template-pgdata assets or open storage whose pgdata directory already contains PG_VERSION.",
             )
         }
         if (pgdata.exists()) {
@@ -229,7 +229,7 @@ internal object OliphauntAndroidRuntimeAssets {
             ?: throw OliphauntException(
                 "Kotlin Android Oliphaunt runtime resources are not present. " +
                     "Pass runtimeDirectory for local development or configure Gradle with " +
-                    "-PoliphauntRuntimeDir=<postgres-install-root>.",
+                    "-PoliphauntRuntimeResourcesDir=<runtime-resource output>.",
             )
         requirePackagedExtensions(runtimePackage, requestedExtensions)
         val runtimeRoot =
@@ -285,12 +285,12 @@ internal object OliphauntAndroidRuntimeAssets {
             validateExtensionIds(
                 properties.getProperty("extensions").orEmpty().split(','),
             )
-        val selectedExtensions =
-            validateExtensionIds(
-                properties
-                    .getProperty("selectedExtensions", properties.getProperty("extensions").orEmpty())
-                    .split(','),
+        val selectedExtensionsValue = properties.getProperty("selectedExtensions")
+            ?: throw OliphauntException(
+                "Oliphaunt asset manifest $assetRoot is missing selectedExtensions",
             )
+        val selectedExtensions =
+            validateExtensionIds(selectedExtensionsValue.split(','))
         if (!selectedExtensions.containsAll(extensions)) {
             throw OliphauntException(
                 "Oliphaunt asset manifest $assetRoot extensions must be a subset of selectedExtensions",

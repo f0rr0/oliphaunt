@@ -1,6 +1,6 @@
 # Maintainer documentation
 
-Status: index. Last verified: 2026-07-22. Owner: repository maintainers.
+Status: index. Last verified: 2026-08-15. Owner: repository maintainers.
 
 Executable configuration is authoritative. Documentation explains intent and operation; it must not invent workflow names, package identities, targets, or release state. When prose conflicts with the sources below, fix the prose in the same change.
 
@@ -10,7 +10,9 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | Registry and GitHub environment setup | `release-setup.md` | `.github/workflows/release.yml`, `tools/release/check_publish_environment.mjs` |
 | CI gates and test selection | `testing.md`, `tooling.md` | `.github/workflows/ci.yml`, `tools/graph/ci_plan.mjs`, Moon project files |
 | Binary artifacts and WASIX provenance | `assets.md`, `compiler-caching.md` | runtime target metadata, exact producer SHA, runtime/AOT manifests and checksums, `tools/xtask` |
-| Extension support and packaging | `extension-packaging-policy.md` | extension catalog, exact-member `targets/artifacts.toml`, evidence matrix, release catalog |
+| WASIX host APIs and storage | `wasix-usage.md` | WASIX binding source, host pins/patches, and product Moon tasks |
+| WASIX postmaster runtime and carrier | `wasix-postmaster.md` | `src/runtimes/liboliphaunt/wasix-postmaster`, its Moon project, sealed-carrier policy, and release metadata |
+| Extension support and packaging | `extension-packaging-policy.md` | extension catalog, global target profiles, native-component contract, release catalog |
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |
 | Repository layout | `repo-structure.md` | Moon graph and build/package manifests |
 
@@ -21,7 +23,7 @@ points for agents:
   and registry setup;
 - `qualify-oliphaunt-change` owns affected local feedback and exact-SHA GitHub
   qualification;
-- `add-oliphaunt-extension` owns extension catalog, version, target, evidence,
+- `add-oliphaunt-extension` owns extension catalog, version, target,
   carrier, and package changes.
 
 Those skills route to executable checks and the focused references above; they

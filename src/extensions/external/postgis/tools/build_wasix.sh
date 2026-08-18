@@ -178,11 +178,12 @@ EOF
   export CXX=wasixcc++
   export AR=wasixar
   export RANLIB=wasixranlib
-  export CPPFLAGS="-I$BUILD_DIR/src/include -I$PGSRC/src/include -I$PGSRC/src/include/port/wasix-dl -I$LIBICONV_PREFIX/include"
+export CPPFLAGS="$("$ROOT/pg_config_wasix.sh" --cppflags) -I$LIBICONV_PREFIX/include"
   export CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -Wno-unused-command-line-argument"
   export CXXFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -Wno-unused-command-line-argument"
   export LDFLAGS="-L$LIBICONV_PREFIX/lib -L$SQLITE_PREFIX/lib -liconv -lcharset -lsqlite3 -lc++ -lc++abi -lunwind"
   export ac_cv_lib_pq_PQserverVersion=yes
+  export ac_cv_lib_xml2_xmlInitParser=yes
   oliphaunt_postgis_enable_reproducible_time "$REPO_ROOT"
   [ "$SOURCE_DATE_EPOCH" = "$source_date_epoch" ] || {
     echo "PostGIS WASIX build epoch changed after fingerprinting" >&2
@@ -297,6 +298,8 @@ EOF
     -loliphaunt_postgis_deps \
     -rpath '$ORIGIN' \
     -o "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
+  oliphaunt_wasix_verify_side_module_sjlj "$postgis_deps_module"
+  oliphaunt_wasix_verify_side_module_sjlj "$POSTGIS_BUILD_DIR/postgis/postgis-3.so"
   # PostGIS core upgrade SQL still includes raster-unpackage stubs even when
   # raster support is disabled. Generate those SQL inputs as a best-effort
   # prerequisite before packaging PostGIS. Keep this serial: the

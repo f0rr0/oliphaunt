@@ -71,6 +71,9 @@ env:
   WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
   WASMER_LLVM_LINUX_X64_SHA256: 5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906
   WASMER_LLVM_LINUX_X64_BYTES: 741670068
+  WASMER_LLVM_MACOS_ARM64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz
+  WASMER_LLVM_MACOS_ARM64_SHA256: f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847
+  WASMER_LLVM_MACOS_ARM64_BYTES: 479103872
   HEAVY_CACHE_SAVE_IF: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.save_heavy_caches) }}
   MOON_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
   MOON_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -112,6 +115,7 @@ jobs:
       native_extension_lifecycle_matrix: ${{ steps.plan.outputs.native_extension_lifecycle_matrix }}
       native_extension_lifecycle_shard_count: ${{ steps.plan.outputs.native_extension_lifecycle_shard_count }}
       liboliphaunt_wasix_aot_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_wasix_aot_runtime_matrix }}
+      liboliphaunt_wasix_postmaster_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_wasix_postmaster_runtime_matrix }}
       liboliphaunt_native_android_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_android_runtime_matrix }}
       liboliphaunt_native_desktop_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_desktop_runtime_matrix }}
       liboliphaunt_native_ios_runtime_matrix: ${{ steps.plan.outputs.liboliphaunt_native_ios_runtime_matrix }}
@@ -497,7 +501,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/deps.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/extensions.build-plan.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/qualification-static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
+          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/catalog/native-components.toml', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
           restore-keys: |
             liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-
 
@@ -509,7 +513,6 @@ jobs:
         env:
           OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}
           OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
-          OLIPHAUNT_EXPECTED_QUALIFICATION_SQL_NAMES: ${{ matrix.qualification_sql_names_csv }}
           OLIPHAUNT_BISON: /opt/homebrew/opt/bison/bin/bison
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native
 
@@ -525,7 +528,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/deps.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/extensions.build-plan.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/qualification-static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
+          key: liboliphaunt-native-extension-ccache-v2-${{ matrix.target }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-apple/**', '.github/scripts/setup-native-build-tools.sh', 'src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/extensions/catalog/extensions.source.json', 'src/extensions/catalog/native-components.toml', 'src/extensions/contrib/postgres18.toml', 'src/extensions/external/*/source.toml', 'src/extensions/external/*/recipe.toml', 'src/extensions/external/*/dependencies/**/source.toml', 'src/extensions/external/*/dependencies/**/recipe.toml', 'src/extensions/external/*/patches/**', 'src/extensions/external/*/dependencies/**/patches/**', 'src/extensions/generated/extensions.catalog.json', 'src/extensions/generated/contrib-build.tsv', 'src/extensions/generated/pgxs-build.tsv', 'src/extensions/generated/mobile/static-extensions.tsv', 'src/extensions/generated/mobile/static-registry.json', 'src/runtimes/liboliphaunt/native/bin/build-*.sh', '!src/runtimes/liboliphaunt/native/bin/*.test.sh', 'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1', 'src/runtimes/liboliphaunt/native/bin/build-output.bash', 'src/runtimes/liboliphaunt/native/bin/common.sh', 'src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh', 'src/runtimes/liboliphaunt/native/bin/icu.sh', 'src/runtimes/liboliphaunt/native/bin/mobile-*.sh', 'src/runtimes/liboliphaunt/native/bin/postgis-dependency-cache.sh', 'src/runtimes/liboliphaunt/native/bin/postgres-backend-objects.mk', 'src/runtimes/liboliphaunt/native/crates/tools/Cargo.toml', 'src/runtimes/liboliphaunt/native/crates/tools/build.rs', 'src/runtimes/liboliphaunt/native/crates/tools/src/**', 'src/runtimes/liboliphaunt/native/include/**', 'src/runtimes/liboliphaunt/native/patches/**', 'src/runtimes/liboliphaunt/native/portable-uuid/**', 'src/runtimes/liboliphaunt/native/postgres18/**', 'src/runtimes/liboliphaunt/native/src/**') }}
 
       - name: Show native compiler cache stats
         if: ${{ always() && runner.os != 'Windows' }}
@@ -553,13 +556,10 @@ jobs:
           path: |
             target/liboliphaunt-mobile-extension-ci/**/*.log
             target/liboliphaunt-mobile-extension-release/**/*.log
-            target/liboliphaunt-mobile-extension-qualification/**/*.log
             target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-simulator/*.log
             target/liboliphaunt-mobile-extension-release/ios-xcframework/ios-device/*.log
             target/liboliphaunt-pg18-extension-release/**/*.log
             target/liboliphaunt-pg18-*-extension-release/**/*.log
-            target/liboliphaunt-pg18-extension-qualification*/**/*.log
-            target/liboliphaunt-pg18-*-extension-qualification/**/*.log
             /tmp/liboliphaunt-ci-*-extensions.log
             /tmp/liboliphaunt-release-*-extensions.log
             /tmp/liboliphaunt-ci-extension-assets-fetch.log
@@ -596,15 +596,6 @@ jobs:
         with:
           name: liboliphaunt-wasix-runtime-portable
           path: .
-
-      - name: Verify publication-deferred WASIX candidate build outputs
-        env:
-          OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
-        run: >-
-          tools/dev/bun.sh tools/release/verify-extension-qualification-build.mjs
-          --family wasix
-          --target "$OLIPHAUNT_EXTENSION_TARGET"
-          --asset-root target/oliphaunt-wasix/assets
 
       - name: Build WASIX exact-extension artifacts
         env:
@@ -1467,6 +1458,59 @@ jobs:
           path: target/sdk-artifacts/oliphaunt-js
           if-no-files-found: error
 
+  wasix-ts-sdk-package:
+    name: Builds / wasix-typescript-sdk
+    needs:
+      - affected
+      - liboliphaunt-wasix-runtime
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust and wasm-pack
+        uses: ./.github/actions/setup-rust
+        with:
+          tools: wasm-pack@0.15.0
+
+      - name: Set up Deno
+        uses: ./.github/actions/setup-deno
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
+      - name: Download same-run portable WASIX outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-portable
+          path: .
+
+      - name: Build and smoke WASIX TypeScript SDK package
+        run: |
+          pnpm --dir src/bindings/wasix-ts package:build
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
+          node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
+          OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
+
+      - name: Upload WASIX TypeScript SDK package artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-ts-sdk-package-artifacts
+          path: target/sdk-artifacts/oliphaunt-wasix-ts
+          if-no-files-found: error
+
   wasix-rust-package:
     name: Builds / wasix-rust-binding
     needs:
@@ -1799,6 +1843,161 @@ jobs:
         with:
           name: liboliphaunt-wasix-release-assets
           path: target/oliphaunt-wasix/release-assets
+          if-no-files-found: error
+
+  wasix-postmaster-portable:
+    name: Builds / wasix-postmaster (portable)
+    needs:
+      - affected
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install Wasmer LLVM 22.1
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
+          sha256: ${{ env.WASMER_LLVM_LINUX_X64_SHA256 }}
+          bytes: ${{ env.WASMER_LLVM_LINUX_X64_BYTES }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
+
+      - name: Build and qualify portable WASIX postmaster inputs
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:portable-inputs
+
+      - name: Upload portable WASIX postmaster build inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-portable-build-inputs
+          path: target/oliphaunt-wasix-postmaster/portable-inputs/wasix-postmaster-portable-build-inputs.tar.gz
+          if-no-files-found: error
+
+  wasix-postmaster-target:
+    name: Builds / wasix-postmaster (${{ matrix.target_id }})
+    needs:
+      - affected
+      - wasix-postmaster-portable
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-portable.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.liboliphaunt_wasix_postmaster_runtime_matrix || '{"include":[]}') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install portable shell utilities
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          brew install bash coreutils findutils util-linux
+          {
+            echo "$(brew --prefix bash)/bin"
+            echo "$(brew --prefix coreutils)/libexec/gnubin"
+            echo "$(brew --prefix findutils)/libexec/gnubin"
+            echo "$(brew --prefix util-linux)/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Install Wasmer LLVM 22.1
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ matrix.llvm_url }}
+          sha256: ${{ matrix.llvm_sha256 }}
+          bytes: ${{ matrix.llvm_bytes }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+
+      - name: Download portable WASIX postmaster build inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-postmaster-portable-build-inputs
+          path: target/oliphaunt-wasix-postmaster/portable-input-download
+
+      - name: Restore portable WASIX postmaster build inputs
+        run: |
+          archive=target/oliphaunt-wasix-postmaster/portable-input-download/wasix-postmaster-portable-build-inputs.tar.gz
+          test -f "$archive"
+          tar -xzf "$archive" --strip-components=1 \
+            -C target/oliphaunt-wasix-postmaster
+
+      - name: Build, verify, qualify, and package WASIX postmaster
+        env:
+          OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets
+
+      - name: Upload target WASIX postmaster release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}
+          path: ${{ matrix.release_asset_path }}
+          if-no-files-found: error
+
+  wasix-postmaster:
+    name: Builds / wasix-postmaster
+    needs:
+      - affected
+      - wasix-postmaster-target
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-postmaster-target.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Download target WASIX postmaster release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-wasix-postmaster-release-assets-*
+          path: target/oliphaunt-wasix-postmaster/release-assets
+          merge-multiple: true
+
+      - name: Merge target WASIX postmaster release assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets
+
+      - name: Upload complete WASIX postmaster release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-postmaster-release-assets
+          path: target/oliphaunt-wasix-postmaster/release-assets
           if-no-files-found: error
 
   native-extension-lifecycle:
@@ -2446,10 +2645,12 @@ jobs:
       - kotlin-maven-staging
       - react-native-sdk-package
       - js-sdk-package
+      - wasix-ts-sdk-package
       - wasix-rust-package
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
       - liboliphaunt-wasix-release-assets
+      - wasix-postmaster
       - wasix-release-regression
       - mobile-build-android
       - mobile-build-ios

@@ -37,7 +37,7 @@ Implemented:
   `pg_backup_stop` filtered-PGDATA tar control with equal `56.17 MB` p50
   payloads. The logical `pg_dump`/`pg_restore -Fc` row remains comparison data,
   not the direct parity gate.
-- direct physical backups now prefer `oliphaunt_backup_ex`, which appends SDK
+- direct physical backups use the options-based `oliphaunt_backup`, which appends SDK
   root/archive metadata while the C archive is still being written instead of
   validating and copying the full archive in Rust afterward. The C tar writer
   also uses direct `read(2)` file reads, per-entry buffer reservation, and
@@ -307,12 +307,11 @@ Implemented:
 - `OliphauntBuilder::relaxed_durability`;
 - `OliphauntBuilder::startup_arg`;
 - `OliphauntBuilder::startup_args`;
-- `OliphauntBuilder::load_data_dir_archive`;
+- `DatabaseInitialization::PhysicalArchive`;
 - `Oliphaunt::enable_extension`;
 - `Oliphaunt::preload`;
 - `Oliphaunt::preload_extensions`;
-- `Oliphaunt::dump_data_dir`;
-- `Oliphaunt::dump_data_dir_with_format`;
+- `Oliphaunt::backup`;
 - `Oliphaunt::try_clone`;
 - physical PGDATA archives now apply Wasmer overlay whiteouts, so files deleted
   from the lower template are not resurrected by dump/load/clone;
@@ -335,7 +334,7 @@ Implemented:
 - `OliphauntServerBuilder::relaxed_durability`;
 - `OliphauntServerBuilder::startup_arg`;
 - `OliphauntServerBuilder::startup_args`;
-- `OliphauntServer::database_url`;
+- `OliphauntServer::connection_uri`;
 - `OliphauntServer::dump_sql`;
 - `OliphauntServer::dump_bytes`;
 - `PgDumpOptions`;
@@ -395,9 +394,9 @@ Implemented coverage:
   after the C bridge reports active streaming COPY;
 - direct raw protocol streaming is routed through the shared `BackendSession`
   framed sender instead of a separate client-only transport path;
-- Rust-owned guest bridge allocations are scoped through `pg_free`/`free`, and
-  debug builds now have a direct raw-protocol stress test proving repeated
-  bridge round trips keep allocation/free counters balanced;
+- the C bridge owns reusable input/output capacity, and the direct raw-protocol
+  stress test proves repeated bridge round trips remain correct without
+  per-request guest allocation/free calls;
 - direct LISTEN/UNLISTEN quotes channel identifiers and dispatches notifications
   by the exact backend channel name, including case-sensitive and quoted names.
 - a larger PostgreSQL regression subset now ports the relevant Oliphaunt test
@@ -423,13 +422,14 @@ Verified ownership boundaries:
   state, COPY state, portal cleanup, and longjmp recovery boundaries;
 - the WASIX bridge owns only the host ABI that Wasmer/WASIX cannot provide as a
   normal OS process boundary: protocol fd transport, locale/identity shims,
-  single-process shared memory, fail-closed process calls, and explicit
-  allocation/free ownership.
+  single-process shared memory, fail-closed process calls, and reusable
+  guest-owned protocol buffers.
 
 Review conclusions:
 
-- guest-memory ownership is scoped through `GuestAllocator`, `pg_free`/`free`,
-  and debug allocation/free counters;
+- guest-memory ownership is scoped through bridge-owned input/output buffers;
+  hosts copy requests directly into reserved guest memory and copy each
+  response once into host-owned storage before the bridge buffer is reset;
 - detached protocol stdio fails closed rather than silently accepting bytes;
 - COPY state is reported by PostgreSQL through
   `pgl_protocol_report_copy_response`; the proxy no longer parses SQL text,
@@ -1055,7 +1055,7 @@ following completed work was removed from `TODO.md`:
   `--schema-only`, `--quote-all-identifiers`, source-server reuse after dump,
   and vector dump/restore coverage;
 - split WASIX `initdb` runtime support that is present locally: direct and
-  server `fresh_temporary()`/`template_cache(false)` paths, split-initdb module
+  explicit `DatabaseInitialization::FreshInitdb`, split-initdb module
   execution, interrupted-PGDATA cleanup, initdb shim ABI/source-spine checks,
   and PGDATA template manifest checks. The remaining backlog tracks only full
   WASIX runtime CI proof, deterministic two-build comparison, and package-size
@@ -1656,17 +1656,18 @@ each app to invent its own native-boundary test:
   installed-app runner into iOS simulator/device and Android emulator/device CI
   jobs with real packaged `liboliphaunt` runtime resources.
 
-## Native Direct Reopen Capability
+## Native Lifecycle Capabilities
 
-The SDKs now publish reopenability as an explicit capability instead of letting
-apps infer it from process isolation:
+The SDKs publish distinct lifecycle capabilities instead of asking apps to
+infer recovery behavior from process isolation:
 
 - Rust `EngineCapabilities`, Swift `OliphauntCapabilities`, Kotlin
-  `EngineCapabilities`, and React Native `EngineCapabilities` all expose
-  `reopenable`;
-- `NativeDirect` reports `false` because the embedded PostgreSQL backend is a
-  process-lifetime direct session, while `NativeBroker` and `NativeServer`
-  report `true`;
+  `EngineCapabilities`, and React Native `EngineCapabilities` expose
+  same-instance logical reopen, instance switching, and crash restart as
+  separate facts;
+- `NativeDirect` reports same-instance logical reopen but no instance switching
+  or crash restart, while broker and server modes advertise only the lifecycle
+  behaviors their process owners actually provide;
 - a local C-core experiment removed the process-spent guard and crashed on the
   second same-process direct open in PostgreSQL relation/storage startup, which
   shows this is not an fd-table-only reset problem. Broker/server remain the
@@ -1811,16 +1812,16 @@ The native perf harness now accepts the same tuning shape:
 
 ## Explicit Lifecycle Capability Vocabulary
 
-The SDK contract no longer relies on a single ambiguous `reopenable` boolean:
+The SDK contract uses separate lifecycle properties:
 
-- Rust `EngineCapabilities` now exposes `same_root_logical_reopen`,
-  `root_switchable`, and `crash_restartable`;
+- Rust `EngineCapabilities` exposes `same_instance_logical_reopen`,
+  `instance_switchable`, and `crash_restartable`;
 - Swift, Kotlin, and React Native expose matching camelCase fields in their
   capability structs/dictionaries;
-- native direct reports same-root resident logical reopen only, with
-  `rootSwitchable=false` and `crashRestartable=false`;
-- broker reports process isolation, root-switchability, and helper
-  crash-restartability; server reports root-switchability but no in-place
+- native direct reports same-instance resident logical reopen only, with
+  `instanceSwitchable=false` and `crashRestartable=false`;
+- broker reports process isolation, instance switching, and helper
+  crash-restartability; server reports instance switching but no in-place
   crash restart for the current SDK-owned server handle;
 - SDK tests and docs assert these semantics so mobile callers do not infer crash
   isolation from direct-mode logical close/reopen.

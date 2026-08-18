@@ -19,10 +19,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::BackupRequest`
 - `oliphaunt::BenchmarkMetric`
 - `oliphaunt::BenchmarkTarget`
-- `oliphaunt::BootstrapStrategy`
 - `oliphaunt::DEFAULT_DATABASE`
 - `oliphaunt::DEFAULT_USERNAME`
-- `oliphaunt::DatabaseRoot`
+- `oliphaunt::DatabaseInitialization`
+- `oliphaunt::DatabaseStorage`
 - `oliphaunt::DurabilityProfile`
 - `oliphaunt::EngineCancel`
 - `oliphaunt::EngineCapabilities`
@@ -92,15 +92,13 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::QueryParam`
 - `oliphaunt::QueryResult`
 - `oliphaunt::QueryRow`
+- `oliphaunt::RestoreDestinationPolicy`
 - `oliphaunt::RestoreRequest`
-- `oliphaunt::RestoreTargetPolicy`
 - `oliphaunt::Result`
-- `oliphaunt::RootLockPolicy`
 - `oliphaunt::RuntimeFootprintProfile`
 - `oliphaunt::RuntimeUnavailable`
 - `oliphaunt::SessionConcurrency`
 - `oliphaunt::SessionPin`
-- `oliphaunt::StorageConfig`
 - `oliphaunt::Transaction`
 - `oliphaunt::build_native_runtime_resources`
 - `oliphaunt::create_prebuilt_extension_artifact`
@@ -113,6 +111,48 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::resolve_extension_selection`
 - `oliphaunt::resolve_prebuilt_extension_artifacts_from_indexes`
 - `oliphaunt::sign_prebuilt_extension_artifact_index`
+
+## Rust WASIX: oliphaunt-wasix
+
+- `oliphaunt_wasix::BackendMessage`
+- `oliphaunt_wasix::DataTransferContainer`
+- `oliphaunt_wasix::DatabaseInitialization`
+- `oliphaunt_wasix::DatabaseStorage`
+- `oliphaunt_wasix::DebugLevel`
+- `oliphaunt_wasix::DescribeQueryParam`
+- `oliphaunt_wasix::DescribeQueryResult`
+- `oliphaunt_wasix::DescribeResultField`
+- `oliphaunt_wasix::EngineCapabilities`
+- `oliphaunt_wasix::ExecProtocolOptions`
+- `oliphaunt_wasix::ExecProtocolResult`
+- `oliphaunt_wasix::FieldInfo`
+- `oliphaunt_wasix::GlobalListenerHandle`
+- `oliphaunt_wasix::ListenerHandle`
+- `oliphaunt_wasix::NoticeCallback`
+- `oliphaunt_wasix::NoticeMessage`
+- `oliphaunt_wasix::Oliphaunt`
+- `oliphaunt_wasix::OliphauntBuilder`
+- `oliphaunt_wasix::OliphauntError`
+- `oliphaunt_wasix::OliphauntServer`
+- `oliphaunt_wasix::OliphauntServerBuilder`
+- `oliphaunt_wasix::ParserMap`
+- `oliphaunt_wasix::PgDumpOptions`
+- `oliphaunt_wasix::PostgresConfig`
+- `oliphaunt_wasix::PostgresError`
+- `oliphaunt_wasix::PsqlOptions`
+- `oliphaunt_wasix::QueryOptions`
+- `oliphaunt_wasix::QueryTemplate`
+- `oliphaunt_wasix::Results`
+- `oliphaunt_wasix::RowMode`
+- `oliphaunt_wasix::Serializer`
+- `oliphaunt_wasix::SerializerMap`
+- `oliphaunt_wasix::TemplatedQuery`
+- `oliphaunt_wasix::Transaction`
+- `oliphaunt_wasix::TypeParser`
+- `oliphaunt_wasix::extensions`
+- `oliphaunt_wasix::format_query`
+- `oliphaunt_wasix::preflight_wasix_tools`
+- `oliphaunt_wasix::quote_identifier`
 
 ## Swift: Oliphaunt
 
@@ -135,17 +175,16 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntCapabilities.extensions`
 - `OliphauntCapabilities.independentSessions`
 - `OliphauntCapabilities.init`
+- `OliphauntCapabilities.instanceSwitchable`
 - `OliphauntCapabilities.maxClientSessions`
 - `OliphauntCapabilities.mode`
-- `OliphauntCapabilities.multiRoot`
+- `OliphauntCapabilities.multipleInstances`
 - `OliphauntCapabilities.processIsolated`
 - `OliphauntCapabilities.protocolRaw`
 - `OliphauntCapabilities.protocolStream`
 - `OliphauntCapabilities.queryCancel`
-- `OliphauntCapabilities.reopenable`
 - `OliphauntCapabilities.restoreFormats`
-- `OliphauntCapabilities.rootSwitchable`
-- `OliphauntCapabilities.sameRootLogicalReopen`
+- `OliphauntCapabilities.sameInstanceLogicalReopen`
 - `OliphauntCapabilities.simpleQuery`
 - `OliphauntCapabilities.supportsBackupFormat()`
 - `OliphauntCapabilities.supportsRestoreFormat()`
@@ -154,9 +193,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntConfiguration.extensions`
 - `OliphauntConfiguration.init`
 - `OliphauntConfiguration.mode`
-- `OliphauntConfiguration.root`
 - `OliphauntConfiguration.runtimeFootprint`
 - `OliphauntConfiguration.startupGUCs`
+- `OliphauntConfiguration.storage`
 - `OliphauntConfiguration.username`
 - `OliphauntDatabase.backup()`
 - `OliphauntDatabase.cancel()`
@@ -170,6 +209,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.open()`
 - `OliphauntDatabase.prepareForBackground()`
 - `OliphauntDatabase.query()`
+- `OliphauntDatabase.response`
 - `OliphauntDatabase.restore()`
 - `OliphauntDatabase.resumeFromBackground()`
 - `OliphauntDatabase.supportedModes()`
@@ -239,10 +279,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntQueryRow.text()`
 - `OliphauntQueryRow.values`
 - `OliphauntRestoreRequest.artifact`
+- `OliphauntRestoreRequest.destination`
+- `OliphauntRestoreRequest.destinationPolicy`
 - `OliphauntRestoreRequest.init`
 - `OliphauntRestoreRequest.replaceExisting()`
-- `OliphauntRestoreRequest.root`
-- `OliphauntRestoreRequest.targetPolicy`
 - `OliphauntRuntimeResourceSizeReport.extensions`
 - `OliphauntRuntimeResourceSizeReport.init`
 - `OliphauntRuntimeResourceSizeReport.mobileStaticRegistryPending`
@@ -275,6 +315,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
+- `OliphauntTransaction.response`
 - `RuntimeUnavailableEngine.init`
 - `RuntimeUnavailableEngine.open()`
 - `RuntimeUnavailableEngine.restore()`
@@ -282,13 +323,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `actor OliphauntDatabase`
 - `enum OliphauntBackgroundCheckpointSkipReason`
 - `enum OliphauntBackupFormat`
+- `enum OliphauntDatabaseStorage`
 - `enum OliphauntDurability`
 - `enum OliphauntEngineMode`
 - `enum OliphauntError`
 - `enum OliphauntProtocol`
 - `enum OliphauntQueryFormat`
 - `enum OliphauntQueryParam`
-- `enum OliphauntRestoreTargetPolicy`
+- `enum OliphauntRestoreDestinationPolicy`
 - `enum OliphauntRuntimeFootprintProfile`
 - `enum OliphauntSDKSupport`
 - `extension OliphauntDatabase`
@@ -382,6 +424,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `class BackgroundPreparationResult`
 - `class BackupArtifact`
 - `class BackupRequest`
+- `class DatabaseStorage.Directory`
 - `class EngineCapabilities`
 - `class EngineModeSupport`
 - `class OliphauntConfig`
@@ -409,10 +452,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `enum class BackupFormat`
 - `enum class DurabilityProfile`
 - `enum class EngineMode`
-- `enum class RestoreTargetPolicy`
+- `enum class RestoreDestinationPolicy`
 - `enum class RuntimeFootprintProfile`
+- `interface DatabaseStorage`
 - `interface OliphauntEngine`
 - `interface OliphauntSession`
+- `object DatabaseStorage.TemporaryDirectory`
 - `object OliphauntRuntimeSupport`
 - `object QueryFormat.Binary`
 - `object QueryFormat.Text`
@@ -450,23 +495,17 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `BackupArtifact`
 - `BackupFormat`
 - `BinaryInput`
+- `DatabaseStorage`
 - `DurabilityProfile`
 - `EngineCapabilities`
 - `EngineMode`
 - `EngineModeSupport`
 - `ExtensionSizeReport`
-- `JsiRawProtocolTransport`
 - `LatencySummary`
 - `MobileReleaseExtensionProof`
 - `MobileReleasePlatform`
-- `NativeCapabilities`
-- `NativeEngineModeSupport`
-- `NativeExtensionSizeReport`
-- `NativeOpenConfig`
-- `NativePackageSizeReport`
-- `NativeProcessMemoryReport`
-- `NativeResourceConfig`
 - `OliphauntClient`
+- `OliphauntDatabase`
 - `OliphauntTransaction`
 - `OpenConfig`
 - `PackageSizeReport`
@@ -488,9 +527,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `ReactNativeBenchmarkWorkload`
 - `ReactNativeSmokeOptions`
 - `ReactNativeSmokeReport`
+- `RestoreDestinationPolicy`
 - `RestoreOptions`
 - `RuntimeFootprintProfile`
-- `Spec`
 - `ThroughputSummary`
 
 ### Values
@@ -498,9 +537,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `MOBILE_RELEASE_EXTENSION_CATALOG_SHA256`
 - `MOBILE_RELEASE_EXTENSION_PROOF_COUNT`
 - `Oliphaunt`
-- `OliphauntDatabase`
 - `PostgresError`
-- `createOliphauntClient`
 - `extendedQuery`
 - `mobileReleaseExtensionProofPlan`
 - `parseQueryResponse`
@@ -528,17 +565,16 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `EngineCapabilities.engine`
 - `EngineCapabilities.extensions`
 - `EngineCapabilities.independentSessions`
+- `EngineCapabilities.instanceSwitchable`
 - `EngineCapabilities.maxClientSessions`
-- `EngineCapabilities.multiRoot`
+- `EngineCapabilities.multipleInstances`
 - `EngineCapabilities.processIsolated`
 - `EngineCapabilities.protocolRaw`
 - `EngineCapabilities.protocolStream`
 - `EngineCapabilities.queryCancel`
 - `EngineCapabilities.rawProtocolTransport`
-- `EngineCapabilities.reopenable`
 - `EngineCapabilities.restoreFormats`
-- `EngineCapabilities.rootSwitchable`
-- `EngineCapabilities.sameRootLogicalReopen`
+- `EngineCapabilities.sameInstanceLogicalReopen`
 - `EngineCapabilities.simpleQuery`
 - `EngineModeSupport.available`
 - `EngineModeSupport.capabilities`
@@ -552,6 +588,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntClient.processMemory()`
 - `OliphauntClient.restore()`
 - `OliphauntClient.supportedModes()`
+- `OliphauntDatabase.[Symbol.asyncDispose]()`
 - `OliphauntDatabase.backup()`
 - `OliphauntDatabase.cancel()`
 - `OliphauntDatabase.capabilities()`
@@ -561,12 +598,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.execProtocolRaw()`
 - `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
-- `OliphauntDatabase.handle`
 - `OliphauntDatabase.prepareForBackground()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.resumeFromBackground()`
 - `OliphauntDatabase.supportsBackupFormat()`
 - `OliphauntDatabase.supportsRestoreFormat()`
+- `OliphauntDatabase.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
 - `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
@@ -577,11 +614,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OpenConfig.extensions`
 - `OpenConfig.libraryPath`
 - `OpenConfig.resourceRoot`
-- `OpenConfig.root`
 - `OpenConfig.runtimeDirectory`
 - `OpenConfig.runtimeFootprint`
 - `OpenConfig.startupGUCs`
-- `OpenConfig.temporary`
+- `OpenConfig.storage`
 - `OpenConfig.username`
 - `PackageSizeReport.extensions`
 - `PackageSizeReport.mobileStaticRegistryPending`
@@ -595,6 +631,19 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `PackageSizeReport.staticRegistryBytes`
 - `PackageSizeReport.templatePgdataBytes`
 - `PackageSizeReportOptions.resourceRoot`
+- `PostgresError.columnName`
+- `PostgresError.constraintName`
+- `PostgresError.dataTypeName`
+- `PostgresError.detail`
+- `PostgresError.fields`
+- `PostgresError.hint`
+- `PostgresError.position`
+- `PostgresError.postgresMessage`
+- `PostgresError.schemaName`
+- `PostgresError.severity`
+- `PostgresError.sqlstate`
+- `PostgresError.tableName`
+- `PostgresError.whereText`
 - `PostgresErrorField.code`
 - `PostgresErrorField.value`
 - `ProcessMemoryReport.nativeHeapAllocatedBytes`
@@ -625,10 +674,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.text()`
 - `QueryRow.values`
 - `RestoreOptions.artifact`
+- `RestoreOptions.destination`
+- `RestoreOptions.destinationPolicy`
 - `RestoreOptions.libraryPath`
-- `RestoreOptions.replaceExisting`
-- `RestoreOptions.root`
-- `createOliphauntClient()`
 - `extendedQuery()`
 - `parseQueryResponse()`
 - `simpleQuery()`
@@ -645,56 +693,42 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `BackupFormat`
 - `BinaryInput`
 - `BrokerTransport`
+- `DatabaseStorage`
 - `DurabilityProfile`
 - `EngineCapabilities`
 - `EngineMode`
 - `EngineModeSupport`
 - `JavaScriptRuntime`
-- `MaybePromise`
-- `NativeBinding`
-- `NativeBindingOptions`
-- `NativeHandle`
-- `NativeOpenConfig`
-- `NativeRestoreOptions`
-- `NormalizedOpenConfig`
 - `OliphauntClient`
+- `OliphauntDatabase`
 - `OliphauntTransaction`
 - `OpenConfig`
+- `PostgresErrorField`
 - `PostgresStartupGUC`
 - `ProtocolChunkCallback`
+- `QueryBinaryInput`
+- `QueryField`
+- `QueryFormat`
+- `QueryParam`
+- `QueryResult`
+- `QueryRow`
 - `RawProtocolTransport`
+- `RestoreDestinationPolicy`
 - `RestoreOptions`
-- `RuntimeBinding`
 - `RuntimeFootprintProfile`
-- `RuntimeHandle`
 - `SupportedModesOptions`
 
 ### Values
 
 - `Oliphaunt`
-- `OliphauntDatabase`
 - `PostgresError`
 - `assertSuccessfulQueryResponse`
-- `createBunNativeBinding`
-- `createDefaultNativeBinding`
-- `createDenoNativeBinding`
-- `createNodeNativeBinding`
-- `createOliphauntClient`
 - `extendedQuery`
-- `nativeDirectCapabilities`
 - `parseQueryResponse`
 - `simpleQuery`
 - `supportsBackupFormat`
 - `supportsRestoreFormat`
 - `toUint8Array`
-- `type NativeBindingFactory`
-- `type PostgresErrorField`
-- `type QueryBinaryInput`
-- `type QueryField`
-- `type QueryFormat`
-- `type QueryParam`
-- `type QueryResult`
-- `type QueryRow`
 
 ### Members
 
@@ -712,17 +746,16 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `EngineCapabilities.engine`
 - `EngineCapabilities.extensions`
 - `EngineCapabilities.independentSessions`
+- `EngineCapabilities.instanceSwitchable`
 - `EngineCapabilities.maxClientSessions`
-- `EngineCapabilities.multiRoot`
+- `EngineCapabilities.multipleInstances`
 - `EngineCapabilities.processIsolated`
 - `EngineCapabilities.protocolRaw`
 - `EngineCapabilities.protocolStream`
 - `EngineCapabilities.queryCancel`
 - `EngineCapabilities.rawProtocolTransport`
-- `EngineCapabilities.reopenable`
 - `EngineCapabilities.restoreFormats`
-- `EngineCapabilities.rootSwitchable`
-- `EngineCapabilities.sameRootLogicalReopen`
+- `EngineCapabilities.sameInstanceLogicalReopen`
 - `EngineCapabilities.simpleQuery`
 - `EngineModeSupport.available`
 - `EngineModeSupport.capabilities`
@@ -731,6 +764,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntClient.open()`
 - `OliphauntClient.restore()`
 - `OliphauntClient.supportedModes()`
+- `OliphauntDatabase.[Symbol.asyncDispose]()`
 - `OliphauntDatabase.backup()`
 - `OliphauntDatabase.cancel()`
 - `OliphauntDatabase.capabilities()`
@@ -740,18 +774,18 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.execProtocolRaw()`
 - `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
-- `OliphauntDatabase.handle`
 - `OliphauntDatabase.prepareForBackground()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.resumeFromBackground()`
 - `OliphauntDatabase.supportsBackupFormat()`
 - `OliphauntDatabase.supportsRestoreFormat()`
+- `OliphauntDatabase.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
 - `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `OpenConfig.brokerExecutable`
-- `OpenConfig.brokerMaxRoots`
+- `OpenConfig.brokerMaxInstances`
 - `OpenConfig.brokerTransport`
 - `OpenConfig.database`
 - `OpenConfig.durability`
@@ -759,21 +793,48 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OpenConfig.extensions`
 - `OpenConfig.libraryPath`
 - `OpenConfig.maxClientSessions`
-- `OpenConfig.root`
 - `OpenConfig.runtimeDirectory`
 - `OpenConfig.runtimeFootprint`
 - `OpenConfig.serverExecutable`
 - `OpenConfig.serverPort`
 - `OpenConfig.serverToolDirectory`
 - `OpenConfig.startupGUCs`
-- `OpenConfig.temporary`
+- `OpenConfig.storage`
 - `OpenConfig.username`
+- `PostgresError.columnName`
+- `PostgresError.constraintName`
+- `PostgresError.dataTypeName`
+- `PostgresError.detail`
+- `PostgresError.fields`
+- `PostgresError.hint`
+- `PostgresError.position`
+- `PostgresError.postgresMessage`
+- `PostgresError.schemaName`
+- `PostgresError.severity`
+- `PostgresError.sqlstate`
+- `PostgresError.tableName`
+- `PostgresError.whereText`
+- `PostgresErrorField.code`
+- `PostgresErrorField.value`
+- `QueryField.format`
+- `QueryField.name`
+- `QueryField.tableAttribute`
+- `QueryField.tableOid`
+- `QueryField.typeModifier`
+- `QueryField.typeOid`
+- `QueryField.typeSize`
+- `QueryResult.commandTag`
+- `QueryResult.fieldIndex()`
+- `QueryResult.fields`
+- `QueryResult.getText()`
+- `QueryResult.rowCount`
+- `QueryResult.rows`
+- `QueryRow.text()`
+- `QueryRow.values`
 - `RestoreOptions.artifact`
-- `RestoreOptions.brokerExecutable`
-- `RestoreOptions.engine`
+- `RestoreOptions.destination`
+- `RestoreOptions.destinationPolicy`
 - `RestoreOptions.libraryPath`
-- `RestoreOptions.replaceExisting`
-- `RestoreOptions.root`
 - `SupportedModesOptions.brokerExecutable`
 - `SupportedModesOptions.brokerTransport`
 - `SupportedModesOptions.libraryPath`
@@ -781,10 +842,181 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `SupportedModesOptions.serverExecutable`
 - `SupportedModesOptions.serverToolDirectory`
 - `assertSuccessfulQueryResponse()`
-- `createOliphauntClient()`
 - `extendedQuery()`
 - `parseQueryResponse()`
 - `simpleQuery()`
 - `supportsBackupFormat()`
 - `supportsRestoreFormat()`
 - `toUint8Array()`
+
+## TypeScript WASIX: @oliphaunt/wasix-ts
+
+### Types
+
+- `BinaryInput`
+- `ExecutionMode`
+- `OliphauntClient`
+- `OliphauntDatabase`
+- `OliphauntTransaction`
+- `OpenConfig`
+- `PostgresErrorField`
+- `QueryBinaryInput`
+- `QueryField`
+- `QueryFormat`
+- `QueryParam`
+- `QueryResult`
+- `QueryRow`
+- `WasixAssetSource`
+- `WasixExtensionCarrier`
+- `WasixExtensionCompatibility`
+- `WasixExtensionDescriptor`
+- `WasixExtensionImport`
+- `WasixExtensionInstall`
+- `WasixExtensionLifecycle`
+- `WasixExtensionNativeModule`
+- `WasixRuntimeArchive`
+- `WasixRuntimeDescriptor`
+- `WasixRuntimeManifest`
+- `WasixStorage`
+- `WasixStorageDurability`
+- `WasixStorageErrorCode`
+
+### Values
+
+- `Oliphaunt`
+- `PostgresError`
+- `WasixStorageError`
+- `assertSuccessfulQueryResponse`
+- `extendedQuery`
+- `memory`
+- `parseQueryResponse`
+- `simpleQuery`
+- `toUint8Array`
+
+### Members
+
+- `Oliphaunt`
+- `OliphauntClient.open()`
+- `OliphauntDatabase.[Symbol.asyncDispose]()`
+- `OliphauntDatabase.checkpoint()`
+- `OliphauntDatabase.close()`
+- `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execute()`
+- `OliphauntDatabase.query()`
+- `OliphauntDatabase.transaction()`
+- `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execute()`
+- `OliphauntTransaction.query()`
+- `OpenConfig.advanced`
+- `OpenConfig.database`
+- `OpenConfig.execution`
+- `OpenConfig.extensions`
+- `OpenConfig.startupGUCs`
+- `OpenConfig.storage`
+- `OpenConfig.username`
+- `PostgresError.columnName`
+- `PostgresError.constraintName`
+- `PostgresError.dataTypeName`
+- `PostgresError.detail`
+- `PostgresError.fields`
+- `PostgresError.hint`
+- `PostgresError.position`
+- `PostgresError.postgresMessage`
+- `PostgresError.schemaName`
+- `PostgresError.severity`
+- `PostgresError.sqlstate`
+- `PostgresError.tableName`
+- `PostgresError.whereText`
+- `PostgresErrorField.code`
+- `PostgresErrorField.value`
+- `QueryField.format`
+- `QueryField.name`
+- `QueryField.tableAttribute`
+- `QueryField.tableOid`
+- `QueryField.typeModifier`
+- `QueryField.typeOid`
+- `QueryField.typeSize`
+- `QueryResult.commandTag`
+- `QueryResult.fieldIndex()`
+- `QueryResult.fields`
+- `QueryResult.getText()`
+- `QueryResult.rowCount`
+- `QueryResult.rows`
+- `QueryRow.text()`
+- `QueryRow.values`
+- `WasixExtensionCarrier.archive`
+- `WasixExtensionCarrier.install`
+- `WasixExtensionCarrier.product`
+- `WasixExtensionCarrier.sha256`
+- `WasixExtensionCarrier.size`
+- `WasixExtensionCarrier.source`
+- `WasixExtensionCarrier.sqlName`
+- `WasixExtensionCarrier.version`
+- `WasixExtensionCompatibility.extensionRuntimeContract`
+- `WasixExtensionCompatibility.postgresMajor`
+- `WasixExtensionCompatibility.wasixRuntimeProduct`
+- `WasixExtensionCompatibility.wasixRuntimeVersion`
+- `WasixExtensionImport.kind`
+- `WasixExtensionImport.module`
+- `WasixExtensionImport.name`
+- `WasixExtensionInstall.coreExportsRequired`
+- `WasixExtensionInstall.dependencies`
+- `WasixExtensionInstall.installedFiles`
+- `WasixExtensionInstall.lifecycle`
+- `WasixExtensionInstall.loadOrder`
+- `WasixExtensionInstall.name`
+- `WasixExtensionInstall.nativeModule`
+- `WasixExtensionInstall.nativeModules`
+- `WasixExtensionInstall.schema`
+- `WasixExtensionInstall.unresolvedImports`
+- `WasixExtensionLifecycle.createExtension`
+- `WasixExtensionLifecycle.createSchema`
+- `WasixExtensionLifecycle.loadSql`
+- `WasixExtensionLifecycle.postCreateSql`
+- `WasixExtensionLifecycle.preloadRequired`
+- `WasixExtensionLifecycle.restartRequired`
+- `WasixExtensionLifecycle.sharedMemoryRequired`
+- `WasixExtensionLifecycle.startupConfig`
+- `WasixExtensionNativeModule.moduleSha256`
+- `WasixExtensionNativeModule.name`
+- `WasixExtensionNativeModule.path`
+- `WasixExtensionNativeModule.sha256`
+- `WasixExtensionNativeModule.size`
+- `WasixRuntimeArchive.archive`
+- `WasixRuntimeArchive.sha256`
+- `WasixRuntimeArchive.size`
+- `WasixRuntimeArchive.source`
+- `WasixRuntimeDescriptor.manifest`
+- `WasixRuntimeDescriptor.pgdataArchive`
+- `WasixRuntimeDescriptor.product`
+- `WasixRuntimeDescriptor.runtime`
+- `WasixRuntimeDescriptor.runtimeArchive`
+- `WasixRuntimeDescriptor.schema`
+- `WasixRuntimeDescriptor.version`
+- `WasixRuntimeManifest.sha256`
+- `WasixRuntimeManifest.size`
+- `WasixRuntimeManifest.source`
+- `WasixStorageError.code`
+- `WasixStorageError.durability`
+- `assertSuccessfulQueryResponse()`
+- `extendedQuery()`
+- `memory()`
+- `parseQueryResponse()`
+- `simpleQuery()`
+- `toUint8Array()`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db
+
+- `indexedDB`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/node
+
+- `directory`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/bun
+
+- `directory`
+
+### Storage subpath: @oliphaunt/wasix-ts/storage/deno
+
+- `directory`

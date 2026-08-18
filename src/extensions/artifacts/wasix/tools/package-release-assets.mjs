@@ -3,9 +3,16 @@ import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises
 import path from "node:path";
 
 import { extensionSqlNames } from "../../../../../tools/release/release-artifact-targets.mjs";
-
+import {
+  projectWasixExtensionInstallSidecar,
+} from "../../../../../tools/release/wasix-extension-install-contract.mjs";
+import {
+  loadNativeComponentContract,
+  resolveNativeComponentClosure,
+} from "../../../tools/native-component-contract.mjs";
 const PREFIX = "package-wasix-extension-assets.sh";
 const WASIX_PRODUCT_PATH = "src/runtimes/liboliphaunt/wasix";
+const nativeComponentContract = loadNativeComponentContract();
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -14,7 +21,7 @@ function fail(message) {
 
 function usage() {
   fail(
-    "usage: package-release-assets.mjs --root PATH --asset-root PATH --metadata PATH --out-dir PATH --target TARGET --extension-products CSV",
+    "usage: package-release-assets.mjs --root PATH --asset-root PATH --metadata PATH --manifest PATH --out-dir PATH --target TARGET --extension-products CSV",
   );
 }
 
@@ -98,6 +105,7 @@ const args = Bun.argv.slice(2);
 const root = path.resolve(optionValue(args, "--root"));
 const assetRoot = path.resolve(optionValue(args, "--asset-root"));
 const metadataPath = path.resolve(optionValue(args, "--metadata"));
+const manifestPath = path.resolve(optionValue(args, "--manifest"));
 const outDir = path.resolve(optionValue(args, "--out-dir"));
 const targetId = optionValue(args, "--target");
 const extensionProductsCsv = optionValue(args, "--extension-products");
@@ -111,6 +119,19 @@ const data = await readJson(metadataPath);
 const extensions = data.extensions;
 if (!Array.isArray(extensions) || extensions.length === 0) {
   fail(`${relativeToRoot(root, metadataPath)} must contain a non-empty extensions array`);
+}
+const builtManifest = await readJson(manifestPath);
+const builtExtensions = builtManifest.extensions;
+if (!Array.isArray(builtExtensions) || builtExtensions.length === 0) {
+  fail(`${relativeToRoot(root, manifestPath)} must contain a non-empty extensions array`);
+}
+const builtBySqlName = new Map();
+for (const row of builtExtensions) {
+  const sqlName = isObject(row) ? row["sql-name"] : undefined;
+  if (typeof sqlName !== "string" || sqlName.length === 0 || builtBySqlName.has(sqlName)) {
+    fail(`${relativeToRoot(root, manifestPath)} must contain unique extension sql-name rows`);
+  }
+  builtBySqlName.set(sqlName, row);
 }
 
 await rm(outDir, { recursive: true, force: true });
@@ -132,26 +153,81 @@ for (const item of extensions) {
   if (typeof archive !== "string" || archive.length === 0) {
     fail(`${relativeToRoot(root, metadataPath)} row for ${sqlName} is missing archive`);
   }
+  const componentClosure = resolveNativeComponentClosure(nativeComponentContract, {
+    extension: sqlName,
+    family: "wasix",
+    kind: "wasix-runtime",
+    target: targetId,
+  });
+  for (const [field, expected] of [
+    ["native-components", componentClosure.components],
+    ["native-link-units", componentClosure.linkUnits],
+    ["native-runtime-files", componentClosure.runtimeFiles],
+  ]) {
+    if (JSON.stringify(item[field]) !== JSON.stringify(expected)) {
+      fail(`${relativeToRoot(root, metadataPath)} row for ${sqlName} has stale ${field}`);
+    }
+  }
 
   const source = path.join(assetRoot, archive);
-  const sourceBytes = await fileSize(source);
-  if (sourceBytes === undefined) {
+  const sourceSize = await fileSize(source);
+  if (sourceSize === undefined) {
     fail(`missing WASIX extension archive for ${sqlName}: ${relativeToRoot(root, source)}`);
   }
-  if (sourceBytes === 0) {
+  if (sourceSize === 0) {
     fail(`WASIX extension archive for ${sqlName} is empty: ${relativeToRoot(root, source)}`);
+  }
+  const builtRow = builtBySqlName.get(sqlName);
+  if (builtRow === undefined) {
+    fail(`${relativeToRoot(root, manifestPath)} has no built extension row for ${sqlName}`);
+  }
+  const installedFiles = Array.isArray(builtRow["installed-files"])
+    ? builtRow["installed-files"]
+    : [];
+  const missingComponentRuntimeFiles = componentClosure.runtimeFiles
+    .map((file) => `share/postgresql/${file}`)
+    .filter((file) => !installedFiles.includes(file));
+  if (missingComponentRuntimeFiles.length > 0) {
+    fail(
+      `${relativeToRoot(root, manifestPath)} extension ${sqlName} is missing native component runtime files: `
+        + missingComponentRuntimeFiles.join(", "),
+    );
+  }
+  const archiveBytes = await readFile(source);
+  let installContract;
+  try {
+    installContract = projectWasixExtensionInstallSidecar({
+      modelRow: item,
+      manifestRow: builtRow,
+    }, {
+      archiveBytes,
+      label: `${relativeToRoot(root, manifestPath)} extension ${sqlName}`,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 
   const artifact = `liboliphaunt-wasix-${version}-extension-${sqlName}-${targetId}.tar.zst`;
   const destination = path.join(outDir, artifact);
   await copyFile(source, destination);
   const artifactBytes = await fileSize(destination);
+  if (artifactBytes !== installContract.size) {
+    fail(`WASIX extension archive for ${sqlName} changed while being staged`);
+  }
+  const installContractName =
+    `liboliphaunt-wasix-${version}-extension-${sqlName}-${targetId}.install-contract.json`;
+  await writeFile(
+    path.join(outDir, installContractName),
+    `${JSON.stringify(installContract, null, 2)}\n`,
+    "utf8",
+  );
   rows.push({
     sqlName,
     target: targetId,
     kind: "wasix-runtime",
     artifact,
     artifactBytes,
+    installContract: installContractName,
   });
 }
 
@@ -160,7 +236,14 @@ if (rows.length === 0) {
 }
 
 const indexPath = path.join(outDir, `liboliphaunt-wasix-${version}-wasix-extension-assets.tsv`);
-const lines = [["sql_name", "target", "kind", "artifact", "artifact_bytes"].join("\t")];
+const lines = [[
+  "sql_name",
+  "target",
+  "kind",
+  "artifact",
+  "artifact_bytes",
+  "install_contract",
+].join("\t")];
 for (const row of rows) {
   lines.push(
     [
@@ -169,6 +252,7 @@ for (const row of rows) {
       tsvCell(row.kind),
       tsvCell(row.artifact),
       tsvCell(row.artifactBytes),
+      tsvCell(row.installContract),
     ].join("\t"),
   );
 }

@@ -20,9 +20,12 @@ import {
   stageReleaseNotices,
 } from '../../../../../tools/release/release-notices.mjs';
 import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
-import { qualificationCandidateSqlNamesForTarget } from '../../../../../tools/release/extension-qualification-candidates.mjs';
 import { canonicalGzipSync } from '../../../../../tools/release/portable-archive.mjs';
 import { extensionSqlNames } from '../../../../../tools/release/release-artifact-targets.mjs';
+import {
+  loadNativeComponentContract,
+  resolveNativeComponentClosure,
+} from '../../../tools/native-component-contract.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
@@ -37,14 +40,11 @@ const DESKTOP_NATIVE_TARGETS = new Set([
   'windows-x64-msvc',
 ]);
 const MOBILE_NATIVE_TARGETS = new Set([
+  'ios-xcframework',
   'android-arm64-v8a',
   'android-x86_64',
-  'ios-xcframework',
 ]);
-const NATIVE_TARGETS = new Set([
-  ...DESKTOP_NATIVE_TARGETS,
-  ...MOBILE_NATIVE_TARGETS,
-]);
+const nativeComponentContract = loadNativeComponentContract();
 
 function fail(message) {
   throw new Error(message);
@@ -208,69 +208,10 @@ async function extensionArtifactList(sqlName, field) {
   return stringList(recipe.artifacts?.[field]);
 }
 
-async function externalTargetStatus(sqlName, target) {
-  const targetPath = path.join(root, 'src/extensions/external', sqlName, 'targets', `${target}.toml`);
-  if (!(await isFile(targetPath))) {
-    return null;
-  }
-  const data = await readToml(targetPath);
-  return typeof data.status === 'string' ? data.status : null;
-}
-
-async function extensionSupportStatuses(sqlName, family) {
-  const recipe = await externalRecipe(sqlName);
-  const support = recipe?.support?.[family];
-  if (support === undefined || support === null || typeof support !== 'object') {
-    return [];
-  }
-  return Object.values(support).filter((value) => typeof value === 'string');
-}
-
-async function mobileReleaseReady(sqlName) {
-  const targetStatus = await externalTargetStatus(sqlName, 'mobile');
-  if (targetStatus !== null) {
-    return targetStatus === 'supported';
-  }
-  const statuses = await extensionSupportStatuses(sqlName, 'mobile');
-  return statuses.length === 0 || statuses.every((status) => status === 'supported');
-}
-
-async function desktopReleaseReady(sqlName, promotion) {
-  if (!(promotion?.promoted === true && promotion?.stable === true)) {
-    return false;
-  }
-  const targetStatus = await externalTargetStatus(sqlName, 'native');
-  if (targetStatus !== null) {
-    return targetStatus === 'supported';
-  }
-  const statuses = await extensionSupportStatuses(sqlName, 'native');
-  return statuses.length === 0 || statuses.every((status) => status === 'supported');
-}
-
-function canonicalQualificationSqlNames(values) {
-  if (!Array.isArray(values)) {
-    fail('qualification SQL names must be an array');
-  }
-  const names = values.map((value) => {
-    if (typeof value !== 'string') {
-      fail('qualification SQL names must contain only strings');
-    }
-    validatePortableId(value, 'qualification SQL name');
-    return value;
-  });
-  const canonical = [...new Set(names)].sort(compareText);
-  if (JSON.stringify(names) !== JSON.stringify(canonical)) {
-    fail('qualification SQL names must be sorted and unique');
-  }
-  return canonical;
-}
-
-export function selectCatalogExtensions(extensions, qualificationSqlNames = []) {
+export function selectCatalogExtensions(extensions) {
   if (!Array.isArray(extensions)) {
     fail('generated extension catalog must define an extensions array');
   }
-  const qualificationNames = canonicalQualificationSqlNames(qualificationSqlNames);
-  const qualificationSet = new Set(qualificationNames);
   const seen = new Set();
   const normalized = [];
   for (const extension of extensions) {
@@ -286,61 +227,23 @@ export function selectCatalogExtensions(extensions, qualificationSqlNames = []) 
       fail(`generated extension catalog repeats SQL name '${sqlName}'`);
     }
     seen.add(sqlName);
-    const promotion = extension.promotion ?? {};
-    normalized.push({ extension, promotion, sqlName });
+    normalized.push({ extension, sqlName });
   }
-  const missing = qualificationNames.filter((sqlName) => !seen.has(sqlName));
-  if (missing.length > 0) {
-    fail(`qualification SQL names are absent from the generated extension catalog: ${missing.join(', ')}`);
-  }
-  const publicSqlNames = new Set(
-    normalized
-      .filter(({ promotion }) => promotion.promoted === true)
-      .map(({ sqlName }) => sqlName),
-  );
-  const selected = [];
-  for (const { extension, promotion, sqlName } of normalized) {
-    const publicStable = promotion.promoted === true && promotion.stable === true;
-    const qualification = qualificationSet.has(sqlName);
-    if (qualification && publicStable) {
-      fail(`public stable extension '${sqlName}' must not enter deferred qualification selection`);
-    }
-    if (publicStable || qualification) {
-      const allowedDependencies = qualification
-        ? new Set([...publicSqlNames, ...qualificationSet])
-        : publicSqlNames;
-      selected.push({
-        dependencies: stringList(extension.dependencies).filter((dependency) =>
-          allowedDependencies.has(dependency)),
-        extension,
-        qualification,
-        sqlName,
-      });
-    }
-  }
-  return selected;
+  const supportedSqlNames = new Set(normalized.map(({ sqlName }) => sqlName));
+  return normalized.map(({ extension, sqlName }) => ({
+    dependencies: stringList(extension.dependencies).filter(dependency => supportedSqlNames.has(dependency)),
+    extension,
+    sqlName,
+  }));
 }
 
-export async function catalogRows({
-  qualificationSqlNames = [],
-  qualificationTarget = undefined,
-} = {}) {
-  if (qualificationTarget === undefined && qualificationSqlNames.length > 0) {
-    fail('qualification SQL names require a native qualification target');
-  }
-  if (qualificationTarget !== undefined && !NATIVE_TARGETS.has(qualificationTarget)) {
-    fail(`unsupported native qualification target '${qualificationTarget}'`);
-  }
+export async function catalogRows() {
   const catalog = await readJson(CATALOG_PATH);
   const contrib = await readToml(CONTRIB_RECIPE_PATH);
   const contribRows = Array.isArray(contrib.extensions) ? contrib.extensions : [];
   const extensions = Array.isArray(catalog.extensions) ? catalog.extensions : [];
   const rows = [];
-  for (const { dependencies, extension, qualification, sqlName } of selectCatalogExtensions(
-    extensions,
-    qualificationSqlNames,
-  )) {
-    const promotion = extension.promotion ?? {};
+  for (const { dependencies, extension, sqlName } of selectCatalogExtensions(extensions)) {
     const dataFiles = runtimeShareDataFiles(await extensionDataFiles(extension, contribRows));
     const stem = nativeModuleStem(extension);
     rows.push({
@@ -350,12 +253,8 @@ export async function catalogRows({
       stem,
       dependencies,
       sharedPreload: sharedPreloadLibraries(extension),
-      desktopPrebuilt: qualification
-        ? DESKTOP_NATIVE_TARGETS.has(qualificationTarget)
-        : await desktopReleaseReady(sqlName, promotion),
-      mobilePrebuilt: qualification
-        ? MOBILE_NATIVE_TARGETS.has(qualificationTarget)
-        : await mobileReleaseReady(sqlName),
+      desktopPrebuilt: true,
+      mobilePrebuilt: true,
       mobileStaticRequired: stem.length > 0,
       mobileStaticTargets: [],
       dataFiles,
@@ -380,24 +279,8 @@ async function catalogDefaultVersion(sqlName) {
   return version;
 }
 
-function qualificationTargetArgument(args) {
-  if (args.length === 0) return undefined;
-  if (args.length !== 2 || args[0] !== '--qualification-target') {
-    fail('list-catalog accepts only --qualification-target <native-target>');
-  }
-  const target = args[1];
-  validatePortableId(target, 'native qualification target');
-  if (!NATIVE_TARGETS.has(target)) {
-    fail(`unsupported native qualification target '${target}'`);
-  }
-  return target;
-}
-
 async function listCatalog(args = []) {
-  const qualificationTarget = qualificationTargetArgument(args);
-  const qualificationSqlNames = qualificationTarget === undefined
-    ? []
-    : qualificationCandidateSqlNamesForTarget(qualificationTarget, { family: 'native' });
+  if (args.length > 0) fail('list-catalog does not accept arguments');
   const header = [
     'sql_name',
     'pg_major',
@@ -413,7 +296,7 @@ async function listCatalog(args = []) {
     'artifact',
   ];
   console.log(header.join('\t'));
-  for (const row of await catalogRows({ qualificationSqlNames, qualificationTarget })) {
+  for (const row of await catalogRows()) {
     console.log(
       [
         row.sqlName,
@@ -795,6 +678,45 @@ async function validateArtifactArgs(args) {
     validateRelativeArtifactPath(dataFile, 'data file');
     if (dataFile.split('/')[0] === 'extension') {
       fail(`prebuilt extension data file '${dataFile}' must not be under share/postgresql/extension; control and SQL files are selected from sqlName`);
+    }
+  }
+
+  const kind = DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)
+    ? 'native-dynamic'
+    : MOBILE_NATIVE_TARGETS.has(args.nativeTarget)
+      ? 'native-static-registry'
+      : null;
+  if (kind === null) {
+    fail(`prebuilt extension artifact has no native component profile for target '${args.nativeTarget}'`);
+  }
+  args.nativeComponentClosure = resolveNativeComponentClosure(nativeComponentContract, {
+    extension: args.sqlName,
+    family: 'native',
+    kind,
+    target: args.nativeTarget,
+  });
+  const missingRuntimeFiles = args.nativeComponentClosure.runtimeFiles
+    .filter((runtimeFile) => !args.dataFiles.includes(runtimeFile));
+  if (missingRuntimeFiles.length > 0) {
+    fail(
+      `prebuilt extension artifact ${args.sqlName}/${args.nativeTarget} is missing native component runtime files: `
+        + missingRuntimeFiles.join(', '),
+    );
+  }
+  if (kind === 'native-static-registry' && args.nativeModuleStem !== undefined) {
+    const expected = [...args.nativeComponentClosure.linkUnits].sort(compareText);
+    for (const target of mobileTargets) {
+      const actual = args.mobileStaticDependencyArchives
+        .filter((archive) => archive.target === target)
+        .map((archive) => archive.name)
+        .sort(compareText);
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        fail(
+          `prebuilt extension artifact ${args.sqlName}/${target} native dependency archives do not match `
+            + `the ${args.nativeTarget} component closure: expected=${expected.join(',') || '<none>'} `
+            + `actual=${actual.join(',') || '<none>'}`,
+        );
+      }
     }
   }
 }

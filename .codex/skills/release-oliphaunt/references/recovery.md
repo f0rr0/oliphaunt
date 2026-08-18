@@ -27,7 +27,7 @@ Normal recovery is an exact-commit rerun, not a new recovery commit:
    release commit, with the same qualified CI artifacts and approved
    publication lock. Do not create a fresh dispatch after `main` moves. The
    original run and every referenced CI/dry-run artifact must remain available.
-2. Re-inventory every selected Cargo/npm/Maven/JSR identity and GitHub
+2. Re-inventory every selected Cargo/npm/Maven identity and GitHub
    tag/release/asset. Skip an existing item only after its bytes and metadata
    match the lock.
 3. Publish or stage only missing state. Any mismatch stops the release.

@@ -22,7 +22,7 @@ use crate::extension::Extension;
 use crate::ipc::{RequestFrame, ResponseFrame, read_response, write_request};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::storage::{
-    BackupArtifact, BackupFormat, BackupRequest, BootstrapStrategy, DatabaseRoot,
+    BackupArtifact, BackupFormat, BackupRequest, DatabaseInitialization, DatabaseStorage,
 };
 
 const ENV_BROKER: &str = "OLIPHAUNT_BROKER";
@@ -42,7 +42,7 @@ impl<T> BrokerTransport for T where T: Read + Write + Send {}
 /// Broker runtime backed by a local helper process.
 ///
 /// Broker mode is intentionally separate from direct mode. The helper process
-/// owns the native root and the direct PostgreSQL backend; the Rust SDK client
+/// owns the native database instance and the direct PostgreSQL backend; the Rust SDK client
 /// talks to it over a small length-prefixed local IPC protocol.
 #[derive(Debug, Clone)]
 pub struct NativeBrokerRuntime {
@@ -64,7 +64,7 @@ impl NativeBrokerRuntime {
     pub fn from_config(config: &NativeBrokerConfig) -> Self {
         Self {
             executable: config.executable.clone(),
-            supervisor: Arc::new(BrokerSupervisor::new(config.max_roots)),
+            supervisor: Arc::new(BrokerSupervisor::new(config.max_instances)),
         }
     }
 
@@ -76,15 +76,15 @@ impl NativeBrokerRuntime {
         }
     }
 
-    /// Set the maximum number of active database roots this runtime
+    /// Set the maximum number of active database instances this runtime
     /// supervises.
     ///
-    /// Broker mode uses one helper process per root while the native direct
+    /// Broker mode uses one helper process per instance while the native direct
     /// backend remains process-global. This limit therefore controls the
     /// number of concurrently supervised helper processes, not the number of
-    /// sessions within a root.
-    pub fn with_max_roots(mut self, max_roots: usize) -> Self {
-        self.supervisor = Arc::new(BrokerSupervisor::new(max_roots));
+    /// sessions within an instance.
+    pub fn with_max_instances(mut self, max_instances: usize) -> Self {
+        self.supervisor = Arc::new(BrokerSupervisor::new(max_instances));
         self
     }
 
@@ -93,9 +93,9 @@ impl NativeBrokerRuntime {
         self.executable.as_ref()
     }
 
-    /// Return the maximum number of active roots this runtime admits.
-    pub fn max_roots(&self) -> usize {
-        self.supervisor.max_roots()
+    /// Return the maximum number of active database instances this runtime admits.
+    pub fn max_instances(&self) -> usize {
+        self.supervisor.max_instances()
     }
 }
 
@@ -122,14 +122,14 @@ impl NativeRuntime for NativeBrokerRuntime {
             .ok_or(Error::RuntimeUnavailable {
                 mode: EngineMode::NativeBroker,
             })?;
-        let (root_path, temporary_root) = materialize_broker_root(&config.storage.root)?;
-        let root_lease = self.supervisor.acquire_root(&root_path)?;
+        let (root_path, temporary_root) = materialize_broker_root(&config.storage)?;
         let mut open_guard = BrokerOpenGuard {
             child: None,
             temporary_root,
             ipc_cleanup: None,
-            root_lease: Some(root_lease),
+            root_lease: None,
         };
+        open_guard.root_lease = Some(self.supervisor.acquire_root(&root_path)?);
         let endpoint = BrokerEndpoint::allocate()?;
         open_guard.ipc_cleanup = endpoint.cleanup_path();
         let extensions = config.resolved_extensions()?;
@@ -158,7 +158,7 @@ impl NativeRuntime for NativeBrokerRuntime {
             temporary_root,
             ipc_cleanup,
             root_lease: Some(root_lease),
-            max_roots: self.supervisor.max_roots(),
+            max_instances: self.supervisor.max_instances(),
             closed: false,
         }))
     }
@@ -172,7 +172,7 @@ struct NativeBrokerSession {
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
     root_lease: Option<BrokerRootLease>,
-    max_roots: usize,
+    max_instances: usize,
     closed: bool,
 }
 
@@ -182,10 +182,9 @@ impl EngineSession for NativeBrokerSession {
             mode: EngineMode::NativeBroker,
             session_concurrency: SessionConcurrency::SerializedSingleSession,
             process_isolated: true,
-            multi_root: self.max_roots > 1,
-            reopenable: true,
-            same_root_logical_reopen: false,
-            root_switchable: true,
+            multiple_instances: self.max_instances > 1,
+            same_instance_logical_reopen: false,
+            instance_switchable: true,
             crash_restartable: true,
             max_client_sessions: 1,
             protocol_raw: true,
@@ -595,10 +594,10 @@ fn wait_for_child_exit(
     }
 }
 
-fn materialize_broker_root(root: &DatabaseRoot) -> Result<(PathBuf, Option<PathBuf>)> {
-    match root {
-        DatabaseRoot::Path(path) => Ok((path.clone(), None)),
-        DatabaseRoot::Temporary => {
+fn materialize_broker_root(storage: &DatabaseStorage) -> Result<(PathBuf, Option<PathBuf>)> {
+    match storage {
+        DatabaseStorage::Directory(path) => Ok((path.clone(), None)),
+        DatabaseStorage::TemporaryDirectory => {
             let path = create_temporary_root()?;
             Ok((path.clone(), Some(path)))
         }
@@ -632,26 +631,26 @@ fn create_temporary_root() -> Result<PathBuf> {
 
 #[derive(Debug)]
 struct BrokerSupervisor {
-    max_roots: usize,
+    max_instances: usize,
     roots: Mutex<HashSet<PathBuf>>,
 }
 
 impl BrokerSupervisor {
-    fn new(max_roots: usize) -> Self {
+    fn new(max_instances: usize) -> Self {
         Self {
-            max_roots,
+            max_instances,
             roots: Mutex::new(HashSet::new()),
         }
     }
 
-    fn max_roots(&self) -> usize {
-        self.max_roots
+    fn max_instances(&self) -> usize {
+        self.max_instances
     }
 
     fn acquire_root(self: &Arc<Self>, root: &Path) -> Result<BrokerRootLease> {
-        if self.max_roots == 0 {
+        if self.max_instances == 0 {
             return Err(Error::InvalidConfig(
-                "native broker max_roots must be greater than zero".to_owned(),
+                "native broker max_instances must be greater than zero".to_owned(),
             ));
         }
         let key = broker_root_key(root)?;
@@ -665,11 +664,11 @@ impl BrokerSupervisor {
                 key.display()
             )));
         }
-        if roots.len() >= self.max_roots {
+        if roots.len() >= self.max_instances {
             return Err(Error::Engine(format!(
-                "native broker runtime already owns {} root(s), at configured capacity {}",
+                "native broker runtime already owns {} instance(s), at configured capacity {}",
                 roots.len(),
-                self.max_roots
+                self.max_instances
             )));
         }
         roots.insert(key.clone());
@@ -763,9 +762,6 @@ fn spawn_broker(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .env(ENV_BROKER_AUTH_TOKEN, auth_token.as_str());
-    if let BootstrapStrategy::InitdbToolingOnly { initdb } = &config.storage.bootstrap {
-        command.env("OLIPHAUNT_INITDB", initdb);
-    }
     command.spawn().map_err(|err| {
         Error::Engine(format!(
             "spawn native broker {}: {err}",
@@ -784,10 +780,10 @@ fn broker_spawn_args(
         OsString::from("--root"),
         root.as_os_str().to_os_string(),
         OsString::from("--bootstrap"),
-        OsString::from(match &config.storage.bootstrap {
-            BootstrapStrategy::PackagedTemplate => "packaged-template",
-            BootstrapStrategy::ExistingOnly => "existing-only",
-            BootstrapStrategy::InitdbToolingOnly { .. } => "initdb-tooling-only",
+        OsString::from(match &config.initialization {
+            DatabaseInitialization::PackagedTemplate => "packaged-template",
+            DatabaseInitialization::FreshInitdb => "fresh-initdb",
+            DatabaseInitialization::ExistingOnly => "existing-only",
         }),
         OsString::from("--durability"),
         OsString::from(match config.durability {
@@ -802,10 +798,6 @@ fn broker_spawn_args(
             crate::RuntimeFootprintProfile::SmallMobile => "small-mobile",
         }),
     ];
-    if let BootstrapStrategy::InitdbToolingOnly { initdb } = &config.storage.bootstrap {
-        args.push(OsString::from("--initdb"));
-        args.push(initdb.as_os_str().to_os_string());
-    }
     args.push(OsString::from("--username"));
     args.push(OsString::from(&config.username));
     args.push(OsString::from("--database"));
@@ -1300,7 +1292,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error,
-            Error::InvalidConfig("native broker max_roots must be greater than zero".to_owned())
+            Error::InvalidConfig(
+                "native broker max_instances must be greater than zero".to_owned()
+            )
         );
     }
 
@@ -1310,7 +1304,7 @@ mod tests {
         config.mode = EngineMode::NativeBroker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
-        config.extensions = vec![Extension::PgSearch, Extension::PgSearch];
+        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
             listen: "127.0.0.1:0".to_owned(),
@@ -1329,10 +1323,10 @@ mod tests {
 
         assert_arg_pair(&args, "--username", "app_user");
         assert_arg_pair(&args, "--database", "app_db");
-        assert_arg_pair(&args, "--extension", "pg_search");
+        assert_arg_pair(&args, "--extension", "pg_textsearch");
         assert_eq!(
             args.windows(2)
-                .filter(|window| window[0] == "--extension" && window[1] == "pg_search")
+                .filter(|window| window[0] == "--extension" && window[1] == "pg_textsearch")
                 .count(),
             1,
             "broker must forward deduplicated resolved extensions to the helper"

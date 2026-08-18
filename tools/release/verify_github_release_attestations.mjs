@@ -27,6 +27,7 @@ import {
 } from "./publication-lock.mjs";
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
 import { swiftExtensionCarrierAssetName } from "./ios-carrier-manifest.mjs";
+import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "verify_github_release_attestations.mjs";
@@ -60,6 +61,7 @@ const GITHUB_RELEASE_ARTIFACT_ROLES = new Set([
 const BASE_ASSET_BACKED_PRODUCTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
 ]);
@@ -87,13 +89,11 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "dataFiles",
   "extensionSqlFileNames",
   "extensionSqlFilePrefixes",
-  "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
-  "mobileReleaseReady",
-  "desktopReleaseReady",
   "assets",
 ]);
 const EXTENSION_OWNERSHIP_KEYS = ["releaseProduct", "family"];
@@ -133,13 +133,11 @@ const PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
   "dataFiles",
   "extensionSqlFileNames",
   "extensionSqlFilePrefixes",
-  "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
-  "mobileReleaseReady",
-  "desktopReleaseReady",
   "assets",
 ]);
 const PUBLIC_EXTENSION_BUNDLE_ASSET_KEYS = new Set([
@@ -308,7 +306,7 @@ function moonReleaseProducts() {
   return products;
 }
 
-function publishedTargets(product, preset) {
+function productTargets(product, preset) {
   const release = moonReleaseProducts().get(product);
   if (!release) {
     fail(`Moon release metadata does not include ${product}`);
@@ -321,9 +319,9 @@ function publishedTargets(product, preset) {
   ) {
     fail(`Moon release metadata for ${product} must use artifactTargets preset ${preset}`);
   }
-  const targets = artifactTargets.publishedTargets;
+  const targets = artifactTargets.targets;
   if (!Array.isArray(targets) || !targets.every((target) => typeof target === "string" && target)) {
-    fail(`Moon release metadata for ${product} must declare publishedTargets`);
+    fail(`Moon release metadata for ${product} must declare artifactTargets.targets`);
   }
   return [...targets].sort(compareText);
 }
@@ -333,7 +331,7 @@ function archiveSuffix(target) {
 }
 
 function liboliphauntNativeAssets(version) {
-  const targets = publishedTargets("liboliphaunt-native", "liboliphaunt-native");
+  const targets = productTargets("liboliphaunt-native", "liboliphaunt-native");
   const assets = targets.map((target) => `liboliphaunt-${version}-${target}.${archiveSuffix(target)}`);
   for (const target of targets.filter((target) => DESKTOP_TARGETS.has(target))) {
     assets.push(`oliphaunt-tools-${version}-${target}.${archiveSuffix(target)}`);
@@ -349,9 +347,9 @@ function liboliphauntNativeAssets(version) {
 }
 
 function liboliphauntWasixAssets(version) {
-  const targets = publishedTargets("liboliphaunt-wasix", "liboliphaunt-wasix");
+  const targets = productTargets("liboliphaunt-wasix", "liboliphaunt-wasix");
   if (!targets.includes("portable")) {
-    fail("Moon release metadata for liboliphaunt-wasix must publish portable");
+    fail("Moon release metadata for liboliphaunt-wasix must include portable");
   }
   const assets = [
     `liboliphaunt-wasix-${version}-runtime-portable.tar.zst`,
@@ -427,6 +425,13 @@ async function expectedAssets(product, version) {
       assets.push(...await expectedExtensionAssets(contrib.artifactProduct, version, "wasix"));
     }
     return [...new Set(assets)].sort(compareText);
+  }
+  if (product === "liboliphaunt-wasix-postmaster") {
+    return [
+      ...productTargets(product, "liboliphaunt-wasix-postmaster")
+        .map((target) => `${product}-${version}-${target}.tar.zst`),
+      `${product}-${version}-release-assets.sha256`,
+    ].sort(compareText);
   }
   if (product === "oliphaunt-broker") {
     return expectedDesktopAssets(product, "broker-helper", version, PREFIX);
@@ -975,7 +980,7 @@ let canonicalIosDependenciesCache;
 
 function canonicalExtensionRows() {
   canonicalExtensionRowsCache ??= JSON.parse(
-    readFileSync(path.join(ROOT, "src/extensions/generated/sdk/react-native.json"), "utf8"),
+    readFileSync(path.join(ROOT, "src/extensions/generated/sdk/extensions.json"), "utf8"),
   ).extensions;
   if (!Array.isArray(canonicalExtensionRowsCache)) {
     throw new Error("generated React Native extension catalog has no extensions array");
@@ -1026,12 +1031,9 @@ function canonicalMemberSemantics(product, sqlName) {
     dataFiles: canonicalSortedUniqueStrings(row["runtime-share-data-files"], `${product}/${sqlName}.runtime-share-data-files`),
     extensionSqlFileNames: canonicalSortedUniqueStrings(row["extension-sql-file-names"], `${product}/${sqlName}.extension-sql-file-names`),
     extensionSqlFilePrefixes: canonicalSortedUniqueStrings(row["extension-sql-file-prefixes"], `${product}/${sqlName}.extension-sql-file-prefixes`),
-    nativeDependencies: canonicalSortedUniqueStrings(row["native-dependencies"], `${product}/${sqlName}.native-dependencies`),
     nativeModuleStem,
     iosNativeDependencies: nativeModuleStem === null ? [] : (canonicalIosDependencies().get(sqlName) ?? []),
     sharedPreloadLibraries: canonicalSortedUniqueStrings(row["shared-preload-libraries"], `${product}/${sqlName}.shared-preload-libraries`),
-    mobileReleaseReady: row["mobile-release-ready"] === true,
-    desktopReleaseReady: row["desktop-release-ready"] === true,
   };
 }
 
@@ -1090,6 +1092,10 @@ function assertCanonicalMemberSemantics(product, member, context) {
     }
   }
   assertCanonicalIosRegistration(member, expected, context);
+}
+
+function assertCanonicalWasixInstall(member, context) {
+  assertWasixExtensionMemberInstall(member, { label: context });
 }
 
 export function assertCanonicalExtensionReleaseIdentity(
@@ -1183,6 +1189,11 @@ async function validateExtensionManifest(
       context,
     );
     validateExtensionAssets(manifest.assets, context, seen);
+    try {
+      assertCanonicalWasixInstall(manifest, context);
+    } catch (error) {
+      fail(error.message);
+    }
     return manifest.assets;
   }
   if (manifest.schema !== "oliphaunt-extension-release-manifest-v2") {
@@ -1212,6 +1223,11 @@ async function validateExtensionManifest(
     }
     validateKeySet(member, PUBLIC_EXTENSION_BUNDLE_MEMBER_KEYS, memberContext);
     validateBundleMemberAssets(member.assets, memberContext, carriers, seenLocators);
+    try {
+      assertCanonicalWasixInstall(member, memberContext);
+    } catch (error) {
+      fail(error.message);
+    }
     for (const asset of member.assets) {
       const expectedMemberPath = `extensions/${member.sqlName}/${asset.name}`;
       if (asset.memberPath !== expectedMemberPath) {

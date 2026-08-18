@@ -26,7 +26,7 @@ use crate::extension::{
 use crate::liboliphaunt::{PreparedNativeRoot, configure_native_tool_env};
 use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::storage::{BackupArtifact, BackupFormat, BackupRequest, BootstrapStrategy};
+use crate::storage::{BackupArtifact, BackupFormat, BackupRequest};
 
 const SERVER_HOST: &str = "127.0.0.1";
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
@@ -94,7 +94,6 @@ impl NativeRuntime for NativeServerRuntime {
         config.validate()?;
         let extensions = config.resolved_extensions()?;
         let root = PreparedNativeRoot::prepare(&config, &extensions)?;
-        initdb_if_needed(&root, &config)?;
         let executable = self
             .executable
             .clone()
@@ -183,10 +182,9 @@ impl EngineSession for NativeServerSession {
             mode: EngineMode::NativeServer,
             session_concurrency: SessionConcurrency::IndependentSessions,
             process_isolated: true,
-            multi_root: false,
-            reopenable: true,
-            same_root_logical_reopen: false,
-            root_switchable: true,
+            multiple_instances: false,
+            same_instance_logical_reopen: false,
+            instance_switchable: true,
             crash_restartable: false,
             max_client_sessions: self.max_client_sessions,
             protocol_raw: true,
@@ -334,47 +332,6 @@ impl NativeServerSession {
 impl Drop for NativeServerSession {
     fn drop(&mut self) {
         let _ = self.close_server();
-    }
-}
-
-fn initdb_if_needed(root: &PreparedNativeRoot, config: &OpenConfig) -> Result<()> {
-    if root.pgdata.join("PG_VERSION").is_file() {
-        return root.refresh_manifest();
-    }
-    let initdb = match &config.storage.bootstrap {
-        BootstrapStrategy::InitdbToolingOnly { initdb } => initdb.clone(),
-        BootstrapStrategy::PackagedTemplate | BootstrapStrategy::ExistingOnly => {
-            root.tool_path("initdb")
-        }
-    };
-    if !initdb.is_file() {
-        return Err(Error::Engine(format!(
-            "native server bootstrap requires initdb at {}",
-            initdb.display()
-        )));
-    }
-    let mut command = Command::new(&initdb);
-    configure_native_runtime_env(&mut command, &root.runtime_dir, &config.extensions);
-    let status = command
-        .arg("-D")
-        .arg(&root.pgdata)
-        .arg("-U")
-        .arg(&config.username)
-        .arg("--auth=trust")
-        .arg("--no-sync")
-        .arg("--locale-provider=libc")
-        .arg("--locale=C")
-        .arg("--encoding=UTF8")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .status()
-        .map_err(|err| Error::Engine(format!("run native server initdb: {err}")))?;
-    if status.success() {
-        root.refresh_manifest()
-    } else {
-        Err(Error::Engine(format!(
-            "native server initdb failed with status {status}"
-        )))
     }
 }
 
@@ -707,7 +664,7 @@ mod tests {
             Path::new("/tmp/oliphaunt-preload/pgdata"),
             15432,
             &config,
-            &[Extension::PgSearch, Extension::PgSearch],
+            &[Extension::PgTextsearch, Extension::PgTextsearch],
             Some(Path::new("/tmp/oliphaunt-preload-socket")),
         )
         .unwrap();
@@ -716,10 +673,10 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_search");
+        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_search")
+                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
                 .count(),
             1,
             "preload libraries must be deduplicated in server startup args"

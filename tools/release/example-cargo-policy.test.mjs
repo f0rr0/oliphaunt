@@ -16,24 +16,24 @@ import {
 const ROOT = path.resolve(import.meta.dir, "../..");
 const cratesIo = "registry+https://github.com/rust-lang/crates.io-index";
 const toolchainVersions = {
-  wasmer: "7.2.0",
-  wasmerWasix: "0.702.0",
+  wasmer: "7.2.1",
+  wasmerWasix: "0.702.1",
   webc: "12.0.0",
 };
 const wasmerPackages = [
-  ["wasmer", "7.2.0"],
-  ["wasmer-compiler", "7.2.0"],
-  ["wasmer-derive", "7.2.0"],
-  ["wasmer-types", "7.2.0"],
-  ["wasmer-vm", "7.2.0"],
-  ["wasmer-config", "0.702.0"],
-  ["wasmer-journal", "0.702.0"],
-  ["wasmer-package", "0.702.0"],
-  ["wasmer-wasix", "0.702.0"],
-  ["wasmer-wasix-types", "0.702.0"],
-  ["virtual-fs", "0.702.0"],
-  ["virtual-mio", "0.702.0"],
-  ["virtual-net", "0.702.0"],
+  ["wasmer", "7.2.1"],
+  ["wasmer-compiler", "7.2.1"],
+  ["wasmer-derive", "7.2.1"],
+  ["wasmer-types", "7.2.1"],
+  ["wasmer-vm", "7.2.1"],
+  ["wasmer-config", "0.702.1"],
+  ["wasmer-journal", "0.702.1"],
+  ["wasmer-package", "0.702.1"],
+  ["wasmer-wasix", "0.702.1"],
+  ["wasmer-wasix-types", "0.702.1"],
+  ["virtual-fs", "0.702.1"],
+  ["virtual-mio", "0.702.1"],
+  ["virtual-net", "0.702.1"],
   ["webc", "12.0.0"],
 ].map(([name, version]) => ({ name, version, source: cratesIo }));
 
@@ -80,7 +80,7 @@ describe("ephemeral example Cargo policy", () => {
         name,
         name === "webc"
           ? "=12.0.0"
-          : { version: "=0.702.0", "default-features": false },
+          : { version: "=0.702.1", "default-features": false },
       ]),
     );
     expect(validateWasixConsumerDependencyPins(
@@ -88,9 +88,9 @@ describe("ephemeral example Cargo policy", () => {
       { manifestPath: "fixture.toml", toolchainVersions },
     )).toEqual([]);
 
-    dependencies["virtual-mio"] = { version: "0.702.0", "default-features": false };
+    dependencies["virtual-mio"] = { version: "0.702.1", "default-features": false };
     dependencies["virtual-net"] = {
-      version: "=0.702.0",
+      version: "=0.702.1",
       optional: true,
       "default-features": false,
     };
@@ -100,7 +100,7 @@ describe("ephemeral example Cargo policy", () => {
       { manifestPath: "fixture.toml", toolchainVersions },
     )).toEqual([
       "fixture.toml must declare non-optional virtual-fs exactly once, found 0",
-      "fixture.toml dependencies.virtual-mio must pin virtual-mio exactly to =0.702.0, got \"0.702.0\"",
+      "fixture.toml dependencies.virtual-mio must pin virtual-mio exactly to =0.702.1, got \"0.702.1\"",
       "fixture.toml dependencies.virtual-net must keep virtual-net non-optional",
     ]);
   });
@@ -111,7 +111,7 @@ describe("ephemeral example Cargo policy", () => {
         name,
         name === "webc"
           ? "=12.0.0"
-          : { version: "=0.702.0", "default-features": false },
+          : { version: "=0.702.1", "default-features": false },
       ]),
     );
     delete dependencies["wasmer-config"]["default-features"];
@@ -138,7 +138,7 @@ describe("ephemeral example Cargo policy", () => {
         name,
         name === "webc"
           ? "=12.0.0"
-          : { version: "=0.702.0", "default-features": false },
+          : { version: "=0.702.1", "default-features": false },
       ]),
     );
 
@@ -173,12 +173,12 @@ describe("ephemeral example Cargo policy", () => {
 
   test("rejects prerelease Wasmer drift", () => {
     const packages = wasmerPackages.map((pkg) =>
-      pkg.name === "wasmer-wasix" ? { ...pkg, version: "0.702.0-alpha.3" } : pkg,
+      pkg.name === "wasmer-wasix" ? { ...pkg, version: "0.702.1-alpha.3" } : pkg,
     );
     expect(validateResolvedPackagePolicy("fixture.lock", packages, {
       wasixToolchain: true,
       toolchainVersions,
-    })).toContain("fixture.lock: wasmer-wasix resolved 0.702.0-alpha.3; expected 0.702.0");
+    })).toContain("fixture.lock: wasmer-wasix resolved 0.702.1-alpha.3; expected 0.702.1");
   });
 
   test("rejects duplicate or drifted WebC identities from fresh consumer locks", () => {
@@ -222,13 +222,13 @@ describe("ephemeral example Cargo policy", () => {
     const failures = validateResolvedPackagePolicy("fixture.lock", [
       ...wasmerPackages,
       { name: "wasmer-future", version: "1.0.0", source: cratesIo },
-      { name: "virtual-future", version: "0.702.0", source: cratesIo },
+      { name: "virtual-future", version: "0.702.1", source: cratesIo },
     ], { wasixToolchain: true, toolchainVersions });
     expect(failures).toContain(
       "fixture.lock: unexpected non-canonical WASIX toolchain package wasmer-future@1.0.0",
     );
     expect(failures).toContain(
-      "fixture.lock: unexpected non-canonical WASIX toolchain package virtual-future@0.702.0",
+      "fixture.lock: unexpected non-canonical WASIX toolchain package virtual-future@0.702.1",
     );
   });
 

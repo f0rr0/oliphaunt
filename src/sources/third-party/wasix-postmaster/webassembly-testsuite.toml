@@ -1,0 +1,4 @@
+name = "wasmer-postmaster-webassembly-testsuite"
+url = "https://github.com/WebAssembly/testsuite.git"
+branch = "main"
+commit = "7e0b83aba9dbbb6e0623c9334b0f73b3bb584b90"

@@ -8,7 +8,7 @@ import {
 } from "./publication-lock.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
 
-const SUPPORTED_ECOSYSTEMS = new Set(["cargo", "npm", "maven", "jsr"]);
+const SUPPORTED_ECOSYSTEMS = new Set(["cargo", "npm", "maven"]);
 const MAVEN_UNIT = "maven:atomic-deployment";
 
 function error(message) {
@@ -93,7 +93,7 @@ function operationEnvelope(unit) {
 
 /**
  * Turn an exact frozen publication lock into the mutation sequence used by the
- * normal release. Cargo, npm, and JSR identities remain independent mutations.
+ * normal release. Cargo and npm identities remain independent mutations.
  * Maven identities are one unit because Maven Central validates and publishes
  * the signed bundle atomically; dependency edges inside that bundle therefore
  * do not require separate deployments.

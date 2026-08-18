@@ -3,13 +3,12 @@ import {
   applyNativeRuntimeLibraryEnvironment,
   assertSupportedDirectBackupFormat,
   errorMessage,
-  nativeBackupFormat,
 } from './common.js';
 import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
 import type { BackupFormat } from '../types.js';
 import {
+  packBackupOptions,
   packConfigPointers,
-  packInitOptionsPointers,
   packRestoreOptionsPointers,
   readResponseLength,
   readResponsePointer,
@@ -26,13 +25,8 @@ import type {
 type DenoPointer = object | null;
 type DenoSymbols = {
   oliphaunt_init: (config: Uint8Array, out: Uint8Array) => number;
-  oliphaunt_init_ex: (
-    config: Uint8Array,
-    options: Uint8Array,
-    out: Uint8Array,
-  ) => number;
-  oliphaunt_exec_protocol: (...args: unknown[]) => unknown;
-  oliphaunt_exec_simple_query: (...args: unknown[]) => unknown;
+  oliphaunt_exec_protocol: (...args: unknown[]) => Promise<number>;
+  oliphaunt_exec_simple_query: (...args: unknown[]) => Promise<number>;
   oliphaunt_backup: (...args: unknown[]) => unknown;
   oliphaunt_restore: (...args: unknown[]) => unknown;
   oliphaunt_cancel: (...args: unknown[]) => unknown;
@@ -52,16 +46,17 @@ export async function createDenoNativeBinding(
   applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const dylib = deno.dlopen(install.libraryPath, {
     oliphaunt_init: { parameters: ['buffer', 'buffer'], result: 'i32' },
-    oliphaunt_init_ex: { parameters: ['buffer', 'buffer', 'buffer'], result: 'i32' },
     oliphaunt_exec_protocol: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
       result: 'i32',
+      nonblocking: true,
     },
     oliphaunt_exec_simple_query: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
       result: 'i32',
+      nonblocking: true,
     },
-    oliphaunt_backup: { parameters: ['pointer', 'u32', 'buffer'], result: 'i32' },
+    oliphaunt_backup: { parameters: ['pointer', 'buffer', 'buffer'], result: 'i32' },
     oliphaunt_restore: { parameters: ['buffer'], result: 'i32' },
     oliphaunt_cancel: { parameters: ['pointer'], result: 'i32' },
     oliphaunt_detach: { parameters: ['pointer'], result: 'i32' },
@@ -107,21 +102,16 @@ export async function createDenoNativeBinding(
         });
         openConfig = { ...openConfig, runtimeDirectory: validated.runtimeDirectory };
         // Keep canonical lib/postgresql subprocess-owned during initdb. The
-        // separate lib/modules $libdir is selected only through init_ex below.
+        // separate lib/modules $libdir is carried in the ABI 7 config.
         moduleDirectory = validated.moduleDirectory;
         applyNativeRuntimeLibraryEnvironment(validated.runtimeDirectory);
       }
-      const packed = packConfigPointers(openConfig, (value) => pointerOf(deno, value));
+      const packed = packConfigPointers({ ...openConfig, moduleDirectory }, (value) =>
+        pointerOf(deno, value),
+      );
       const out = new Uint8Array(8);
-      const initialized = invokeDenoInit({
-        symbols,
-        config: packed.config,
-        moduleDirectory,
-        out,
-        pointerOf: (value) => pointerOf(deno, value),
-      });
-      const rc = initialized.status;
-      keepAlive([...packed.keepAlive, ...initialized.keepAlive]);
+      const rc = symbols.oliphaunt_init(packed.config, out);
+      keepAlive(packed.keepAlive);
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt init failed', rc, lastError(deno, symbols, null));
       }
@@ -131,14 +121,14 @@ export async function createDenoNativeBinding(
       }
       return handle;
     },
-    execProtocolRaw(handle: NativeHandle, request: Uint8Array): Uint8Array {
+    async execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array> {
       const response = responseBuffer();
-      const rc = symbols.oliphaunt_exec_protocol(
+      const rc = await symbols.oliphaunt_exec_protocol(
         handle,
         request,
         BigInt(request.byteLength),
         response,
-      ) as number;
+      );
       if (rc !== 0) {
         symbols.oliphaunt_free_response(response);
         throw errorMessage(
@@ -149,18 +139,18 @@ export async function createDenoNativeBinding(
       }
       return copyResponse(deno, symbols, response);
     },
-    execSimpleQuery(handle: NativeHandle, sql: string): Uint8Array {
+    async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
       if (sql.includes('\0')) {
         throw new Error('simple query SQL must not contain NUL bytes');
       }
       const bytes = new TextEncoder().encode(sql);
       const response = responseBuffer();
-      const rc = symbols.oliphaunt_exec_simple_query(
+      const rc = await symbols.oliphaunt_exec_simple_query(
         handle,
         bytes,
         BigInt(bytes.byteLength),
         response,
-      ) as number;
+      );
       if (rc !== 0) {
         symbols.oliphaunt_free_response(response);
         throw errorMessage(
@@ -174,7 +164,8 @@ export async function createDenoNativeBinding(
     backup(handle: NativeHandle, format: BackupFormat): Uint8Array {
       assertSupportedDirectBackupFormat(format);
       const response = responseBuffer();
-      const rc = symbols.oliphaunt_backup(handle, nativeBackupFormat(format), response) as number;
+      const options = packBackupOptions(format);
+      const rc = symbols.oliphaunt_backup(handle, options, response) as number;
       if (rc !== 0) {
         symbols.oliphaunt_free_response(response);
         throw errorMessage(
@@ -222,32 +213,6 @@ export async function createDenoNativeBinding(
         );
       }
     },
-  };
-}
-
-export function invokeDenoInit({
-  symbols,
-  config,
-  moduleDirectory,
-  out,
-  pointerOf,
-}: {
-  symbols: Pick<DenoSymbols, 'oliphaunt_init' | 'oliphaunt_init_ex'>;
-  config: Uint8Array;
-  moduleDirectory?: string;
-  out: Uint8Array;
-  pointerOf: (value: Uint8Array) => bigint;
-}): { status: number; keepAlive: Uint8Array[] } {
-  if (moduleDirectory === undefined) {
-    return {
-      status: symbols.oliphaunt_init(config, out),
-      keepAlive: [],
-    };
-  }
-  const packed = packInitOptionsPointers(moduleDirectory, pointerOf);
-  return {
-    status: symbols.oliphaunt_init_ex(config, packed.options, out),
-    keepAlive: packed.keepAlive,
   };
 }
 

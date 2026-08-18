@@ -6,12 +6,12 @@ import {
   normalizeDurability,
   normalizeOpenConfig,
   normalizeRuntimeFootprint,
-  validateBrokerMaxRoots,
+  validateBrokerMaxInstances,
   validateBrokerTransport,
   validateMaxClientSessions,
   validateOptionalPathOverride,
   validateExtensionIds,
-  validateRootPath,
+  validateDirectoryPath,
   validateServerPort,
   validateStartupGUCs,
   validateStartupIdentity,
@@ -30,25 +30,25 @@ test('normalizes explicit config contracts for broker and server modes', () => {
   const broker = normalizeOpenConfig(
     {
       engine: 'nativeBroker',
-      root: '/app/root',
+      storage: { kind: 'directory', path: '/app/root' },
       durability: 'balanced',
       runtimeFootprint: 'balancedMobile',
       brokerExecutable: '/opt/oliphaunt-broker',
-      brokerMaxRoots: 8,
+      brokerMaxInstances: 8,
       brokerTransport: 'tcp',
       maxClientSessions: 1,
       username: 'app_user',
       database: 'app_db',
       extensions: [' vector ', '', 'hstore'],
     },
-    '/app/root',
+    { instanceDirectory: '/app/root', temporaryDirectory: false },
   );
 
   assert.equal(broker.pgdata, '/app/root/pgdata');
   assert.equal(broker.durability, 'balanced');
   assert.equal(broker.runtimeFootprint, 'balancedMobile');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
-  assert.equal(broker.brokerMaxRoots, 8);
+  assert.equal(broker.brokerMaxInstances, 8);
   assert.equal(broker.brokerTransport, 'tcp');
   assert.deepEqual(broker.extensions, ['vector', 'hstore']);
   assert.ok(broker.startupArgs.includes('max_connections=1'));
@@ -57,14 +57,14 @@ test('normalizes explicit config contracts for broker and server modes', () => {
   const server = normalizeOpenConfig(
     {
       engine: 'nativeServer',
-      root: '/server/root',
+      storage: { kind: 'directory', path: '/server/root' },
       runtimeFootprint: 'smallMobile',
       durability: 'fastDev',
       serverExecutable: '/opt/postgres',
       serverToolDirectory: '/opt/postgres/bin',
       serverPort: 15432,
     },
-    '/server/root',
+    { instanceDirectory: '/server/root', temporaryDirectory: false },
   );
 
   assert.equal(server.maxClientSessions, 32);
@@ -76,20 +76,29 @@ test('normalizes explicit config contracts for broker and server modes', () => {
 });
 
 test('validates config error surfaces deterministically', () => {
-  validateRootPath(undefined, 'database root');
+  validateDirectoryPath(undefined, 'database storage directory');
   validateStartupIdentity(undefined, 'username');
   assert.equal(validateOptionalPathOverride(undefined, 'libraryPath'), undefined);
   assert.equal(validateMaxClientSessions(undefined, 'nativeDirect'), 1);
   assert.equal(validateMaxClientSessions(undefined, 'nativeServer'), 32);
-  assert.equal(validateBrokerMaxRoots(undefined), 1);
+  assert.equal(validateBrokerMaxInstances(undefined), 1);
   assert.equal(validateServerPort(undefined), undefined);
   assert.equal(validateBrokerTransport('auto'), 'auto');
   assert.equal(validateBrokerTransport('unix'), 'unix');
 
-  throwsMessage(() => validateRootPath('', 'restore root'), /restore root must not be empty/);
-  throwsMessage(() => validateRootPath('\0', 'restore root'), /restore root must not contain NUL/);
-  throwsMessage(() => validateRootPath('', 'custom path'), /custom path must not be empty/);
-  throwsMessage(() => validateRootPath('\0', 'custom path'), /custom path must not contain NUL/);
+  throwsMessage(
+    () => validateDirectoryPath('', 'restore destination'),
+    /restore destination must not be empty/,
+  );
+  throwsMessage(
+    () => validateDirectoryPath('\0', 'restore destination'),
+    /restore destination must not contain NUL/,
+  );
+  throwsMessage(() => validateDirectoryPath('', 'custom path'), /custom path must not be empty/);
+  throwsMessage(
+    () => validateDirectoryPath('\0', 'custom path'),
+    /custom path must not contain NUL/,
+  );
   throwsMessage(() => validateStartupIdentity(' \t', 'database'), /database must not be empty/);
   throwsMessage(
     () => validateStartupIdentity('bad\0db', 'database'),
@@ -122,8 +131,8 @@ test('validates config error surfaces deterministically', () => {
   throwsMessage(() => validateMaxClientSessions(1.5, 'nativeDirect'), /must be an integer/);
   throwsMessage(() => validateMaxClientSessions(0, 'nativeServer'), /greater than zero/);
   throwsMessage(() => validateMaxClientSessions(2, 'nativeDirect'), /supports exactly 1/);
-  throwsMessage(() => validateBrokerMaxRoots(1.5), /must be an integer/);
-  throwsMessage(() => validateBrokerMaxRoots(0), /max_roots must be greater than zero/);
+  throwsMessage(() => validateBrokerMaxInstances(1.5), /must be an integer/);
+  throwsMessage(() => validateBrokerMaxInstances(0), /maxInstances must be greater than zero/);
   throwsMessage(() => validateServerPort(1.5), /port must be an integer/);
   throwsMessage(() => validateServerPort(0), /range 1..65535/);
   throwsMessage(() => validateServerPort(65_536), /range 1..65535/);

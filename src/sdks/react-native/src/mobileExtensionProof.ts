@@ -5,9 +5,7 @@ import {
   type GeneratedExtensionMetadata,
 } from './generated/extensions';
 
-export const MOBILE_RELEASE_EXTENSION_PROOF_COUNT = GENERATED_EXTENSION_METADATA.filter(
-  (extension) => extension.mobileReleaseReady,
-).length;
+export const MOBILE_RELEASE_EXTENSION_PROOF_COUNT = GENERATED_EXTENSION_METADATA.length;
 export const MOBILE_RELEASE_EXTENSION_CATALOG_SHA256 = GENERATED_EXTENSION_METADATA_SHA256;
 
 export type MobileReleasePlatform = 'android' | 'ios';
@@ -52,17 +50,6 @@ function assertExact(actual: readonly string[], expected: readonly string[], lab
   }
 }
 
-function supportsPlatform(
-  extension: GeneratedExtensionMetadata,
-  platform: MobileReleasePlatform,
-): boolean {
-  const status = extension.support.mobile?.[platform];
-  // `mobileReleaseReady` is the canonical family-level release decision. The
-  // optional per-platform table only narrows that decision when it explicitly
-  // marks Android or iOS unsupported; an absent entry inherits family support.
-  return extension.mobileReleaseReady && (status === undefined || status === 'supported');
-}
-
 function quoteIdentifier(value: string): string {
   if (!/^[a-z][a-z0-9_-]*$/u.test(value)) {
     throw new Error(`generated extension SQL name is not a canonical identifier: ${value}`);
@@ -88,9 +75,7 @@ function activationSql(extension: GeneratedExtensionMetadata): readonly string[]
 }
 
 function canonicalPlatformRows(platform: MobileReleasePlatform): GeneratedExtensionMetadata[] {
-  const rows = GENERATED_EXTENSION_METADATA.filter((extension) =>
-    supportsPlatform(extension, platform),
-  );
+  const rows = [...GENERATED_EXTENSION_METADATA];
   if (rows.length === 0)
     throw new Error(`${platform} generated mobile release extension set is empty`);
   sortedUnique(
@@ -188,7 +173,9 @@ export function mobileReleaseExtensionProofPlan(
   for (const extension of packageSize.extensions) {
     const row = rowsBySqlName.get(extension.name);
     if (row === undefined) {
-      throw new Error(`${platform} packaged extension ${extension.name} is absent from generated metadata`);
+      throw new Error(
+        `${platform} packaged extension ${extension.name} is absent from generated metadata`,
+      );
     }
     const isFullyRegisteredStaticModuleOnly =
       !row.createsExtension &&

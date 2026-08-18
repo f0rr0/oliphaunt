@@ -1,0 +1,105 @@
+diff --git a/src/syscalls/wasix/mod.rs b/src/syscalls/wasix/mod.rs
+index 0ec461d..74c1c61 100644
+--- a/src/syscalls/wasix/mod.rs
++++ b/src/syscalls/wasix/mod.rs
+@@ -173,3 +173,18 @@ pub use tty_get::*;
+ pub use tty_set::*;
+
+ use tracing::{debug_span, field, instrument, trace_span, Span};
++
++use crate::WasiEnv;
++
++const OLIPHAUNT_SINGLE_BACKEND_ENV: &[u8] = b"OLIPHAUNT_WASIX_SINGLE_BACKEND=1";
++
++fn oliphaunt_single_backend_requested(env: &WasiEnv) -> bool {
++    env.state
++        .envs
++        .lock()
++        .map(|envs| {
++            envs.iter()
++                .any(|entry| entry.as_slice() == OLIPHAUNT_SINGLE_BACKEND_ENV)
++        })
++        .unwrap_or(true)
++}
+diff --git a/src/syscalls/wasix/proc_exec3.rs b/src/syscalls/wasix/proc_exec3.rs
+index e72cdd7..b6c29b7 100644
+--- a/src/syscalls/wasix/proc_exec3.rs
++++ b/src/syscalls/wasix/proc_exec3.rs
+@@ -34,6 +34,11 @@ pub fn proc_exec3<M: MemorySize>(
+ ) -> Result<Errno, WasiError> {
+     WasiEnv::do_pending_operations(&mut ctx)?;
+
++    if oliphaunt_single_backend_requested(ctx.data()) {
++        warn!("guest process replacement denied for the Oliphaunt single-backend pgwire runtime");
++        return Ok(Errno::Notcapable);
++    }
++
+     // If we were just restored the stack then we were woken after a deep sleep
+     if let Some(exit_code) = unsafe { handle_rewind::<M, i32>(&mut ctx) } {
+         // We should never get here as the process will be termined
+diff --git a/src/syscalls/wasix/proc_fork.rs b/src/syscalls/wasix/proc_fork.rs
+index f2b17e5..f7fead0 100644
+--- a/src/syscalls/wasix/proc_fork.rs
++++ b/src/syscalls/wasix/proc_fork.rs
+@@ -27,6 +27,11 @@ pub fn proc_fork<M: MemorySize>(
+ ) -> Result<Errno, WasiError> {
+     WasiEnv::do_pending_operations(&mut ctx)?;
+
++    if oliphaunt_single_backend_requested(ctx.data()) {
++        warn!("guest process fork denied for the Oliphaunt single-backend pgwire runtime");
++        return Ok(Errno::Notcapable);
++    }
++
+     wasi_try_ok!(ctx.data().ensure_static_module().map_err(|_| {
+         warn!("process forking not supported for dynamically linked modules");
+         Errno::Notsup
+diff --git a/src/syscalls/wasix/proc_spawn.rs b/src/syscalls/wasix/proc_spawn.rs
+index 958b9b0..fff03a8 100644
+--- a/src/syscalls/wasix/proc_spawn.rs
++++ b/src/syscalls/wasix/proc_spawn.rs
+@@ -42,6 +42,11 @@ pub fn proc_spawn<M: MemorySize>(
+ ) -> Result<Errno, WasiError> {
+     WasiEnv::do_pending_operations(&mut ctx)?;
+
++    if oliphaunt_single_backend_requested(ctx.data()) {
++        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
++        return Ok(Errno::Notcapable);
++    }
++
+     let env = ctx.data();
+     let control_plane = &env.control_plane;
+     let memory = unsafe { env.memory_view(&ctx) };
+diff --git a/src/syscalls/wasix/proc_spawn2.rs b/src/syscalls/wasix/proc_spawn2.rs
+index b907118..2922514 100644
+--- a/src/syscalls/wasix/proc_spawn2.rs
++++ b/src/syscalls/wasix/proc_spawn2.rs
+@@ -44,6 +44,11 @@ pub fn proc_spawn2<M: MemorySize>(
+ ) -> Result<Errno, WasiError> {
+     WasiEnv::do_pending_operations(&mut ctx)?;
+
++    if oliphaunt_single_backend_requested(ctx.data()) {
++        warn!("guest process creation denied for the Oliphaunt single-backend pgwire runtime");
++        return Ok(Errno::Notcapable);
++    }
++
+     let env = ctx.data();
+     let memory = unsafe { ctx.data().memory_view(&ctx) };
+     let mut name = unsafe { get_input_str_ok!(&memory, name, name_len) };
+diff --git a/src/syscalls/wasix/thread_spawn.rs b/src/syscalls/wasix/thread_spawn.rs
+index 3598b70..b3fc666 100644
+--- a/src/syscalls/wasix/thread_spawn.rs
++++ b/src/syscalls/wasix/thread_spawn.rs
+@@ -57,6 +57,13 @@ pub fn thread_spawn_internal_from_wasi<M: MemorySize>(
+     ctx: &mut FunctionEnvMut<'_, WasiEnv>,
+     start_ptr: WasmPtr<ThreadStart<M>, M>,
+ ) -> Result<Tid, Errno> {
++    if oliphaunt_single_backend_requested(ctx.data()) {
++        warn!(
++            "guest thread creation denied for the Oliphaunt single-backend pgwire runtime"
++        );
++        return Err(Errno::Notcapable);
++    }
++
+     // Now we use the environment and memory references
+     let env = ctx.data();
+     let memory = unsafe { env.memory_view(&ctx) };

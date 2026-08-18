@@ -91,14 +91,12 @@ check_static() {
     "Node direct addon must register a Node-API module"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" '#include "oliphaunt.h"' \
     "Node direct addon must compile against the canonical liboliphaunt ABI header"
-  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" "struct OliphauntInitOptions" \
-    "Node direct addon must not duplicate the canonical init-options ABI layout"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     "dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)" \
     "Node direct must expose embedded PostgreSQL symbols to extension DSOs"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(env, dynamic, "oliphaunt_init_ex")' \
-    "Node direct must resolve the versioned per-handle initialization ABI"
+    'LoadSymbol(env, dynamic, "oliphaunt_init")' \
+    "Node direct must resolve the canonical initialization ABI"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     'LoadSymbol(env, dynamic, "oliphaunt_close")' \
     "Node direct must reject native libraries missing the mandatory terminal-close ABI"

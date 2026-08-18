@@ -131,7 +131,7 @@ describe("registry identity bootstrap publication plan", () => {
       .toThrow(/refers to unknown locked dependency npm:@example\/missing/u);
   });
 
-  test("keeps resolved Maven/JSR dependencies external to identity bootstrap", () => {
+  test("keeps resolved Maven dependencies external to identity bootstrap", () => {
     const plan = bootstrapPublicationPlan(lock([
       {
         id: "maven:dev.example:runtime",

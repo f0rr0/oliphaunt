@@ -16,8 +16,6 @@ import {
 const ROOT = path.resolve(import.meta.dir, "../..");
 const CRATES_IO_API = process.env.CRATES_IO_API || "https://crates.io/api/v1";
 const NPM_REGISTRY = process.env.NPM_REGISTRY || "https://registry.npmjs.org";
-const JSR_REGISTRY = process.env.JSR_REGISTRY || "https://jsr.io";
-const JSR_API_BASE = process.env.JSR_API_BASE || "https://api.jsr.io";
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || "https://repo1.maven.org/maven2";
 const REQUEST_ATTEMPTS = Math.max(1, Number.parseInt(process.env.OLIPHAUNT_REGISTRY_QUERY_ATTEMPTS || "8", 10) || 8);
 const REQUEST_RETRY_DELAY_SECONDS = Math.max(0, Number.parseFloat(process.env.OLIPHAUNT_REGISTRY_QUERY_RETRY_DELAY || "1.0") || 0);
@@ -27,13 +25,12 @@ export const CRATES_IO_READ_INTERVAL_SECONDS = 1;
 export const CRATES_IO_READ_RETRY_BUDGET_SECONDS = 10 * 60;
 export const CRATES_IO_RATE_LIMIT_FALLBACK_SECONDS = 60;
 const MAX_REGISTRY_JSON_BYTES = 8 * 1024 * 1024;
-const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
-const REGISTRY_KINDS = new Set(["crates", "npm", "jsr", "maven"]);
+const REGISTRY_TARGETS = new Set(["crates-io", "npm", "maven-central"]);
+const REGISTRY_KINDS = new Set(["crates", "npm", "maven"]);
 const REGISTRY_KIND_BY_ECOSYSTEM = new Map(
   Object.entries(REGISTRY_KIND_TO_ECOSYSTEM).map(([kind, ecosystem]) => [ecosystem, kind]),
 );
 const USER_AGENT = "oliphaunt-release-check (https://github.com/f0rr0/oliphaunt)";
-const JSR_PACKAGE_IDENTITY_RE = /^@([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/u;
 
 const caches = {
   releaseConfig: undefined,
@@ -255,12 +252,12 @@ export function productRegistryPackagesFromLock(
   if (versionOverride !== undefined && versionOverride !== productRow.version) {
     fail(`${product} requested version ${versionOverride} does not match frozen publication-lock version ${productRow.version}`);
   }
-  const ecosystemByKind = new Map([["crates", "cargo"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
+  const ecosystemByKind = new Map([["crates", "cargo"], ["npm", "npm"], ["maven", "maven"]]);
   if (registryKind !== undefined && !ecosystemByKind.has(registryKind)) {
     fail(`unsupported registry kind ${JSON.stringify(registryKind)}`);
   }
   const ecosystem = registryKind === undefined ? undefined : ecosystemByKind.get(registryKind);
-  const kindByEcosystem = new Map([["cargo", "crates"], ["npm", "npm"], ["maven", "maven"], ["jsr", "jsr"]]);
+  const kindByEcosystem = new Map([["cargo", "crates"], ["npm", "npm"], ["maven", "maven"]]);
   const packages = lockedCarriers(publicationLock, { product, ecosystem }).map((carrier) => ({
     kind: kindByEcosystem.get(carrier.ecosystem),
     name: carrier.name,
@@ -290,7 +287,6 @@ export async function productRegistryPackages(product, { versionOverride = undef
   const expectedKinds = new Map([
     ["crates-io", "crates"],
     ["npm", "npm"],
-    ["jsr", "jsr"],
     ["maven-central", "maven"],
   ]);
   const packages = catalog.carriers
@@ -582,109 +578,12 @@ async function mavenCoordinateExists(coordinate) {
   return urlExists(mavenCoordinatePaths(coordinate));
 }
 
-function jsrPackageIdentity(packageName) {
-  const match = typeof packageName === "string" ? packageName.match(JSR_PACKAGE_IDENTITY_RE) : null;
-  if (match === null) {
-    throw new RegistryResponseError(`invalid JSR package ${JSON.stringify(packageName)}; expected @scope/name`);
-  }
-  return { scope: match[1], name: match[2] };
-}
-
-function jsrMetaUrl(packageName) {
-  let identity;
-  try {
-    identity = jsrPackageIdentity(packageName);
-  } catch (error) {
-    fail(error.message);
-  }
-  const { scope, name } = identity;
-  return `${JSR_REGISTRY.replace(/\/+$/u, "")}/@${encodeURIComponent(scope)}/${encodeURIComponent(name)}/meta.json`;
-}
-
-function jsrManagementPackageUrl(packageName, apiBase = JSR_API_BASE) {
-  const { scope, name } = jsrPackageIdentity(packageName);
-  return `${apiBase.replace(/\/+$/u, "")}/scopes/${encodeURIComponent(scope)}/packages/${encodeURIComponent(name)}`;
-}
-
-export async function jsrManagementPackageExists(packageName, {
-  apiBase = JSR_API_BASE,
-  fetchImpl = fetch,
-} = {}) {
-  // A package created and linked for OIDC has no registry meta.json until its
-  // first version exists. The anonymous management GET is authoritative only
-  // for identity existence; jsrVersionExists deliberately stays on jsr.io.
-  const expected = jsrPackageIdentity(packageName);
-  let data;
-  try {
-    data = await requestJson(
-      jsrManagementPackageUrl(packageName, apiBase),
-      `JSR package identity ${packageName}`,
-      { fetchImpl },
-    );
-  } catch (error) {
-    if (error instanceof RegistryHttpError && error.status === 404) {
-      return false;
-    }
-    throw error;
-  }
-  if (
-    data === null
-    || Array.isArray(data)
-    || typeof data !== "object"
-    || data.scope !== expected.scope
-    || data.name !== expected.name
-  ) {
-    throw new RegistryResponseError(
-      `JSR management API returned mismatched identity metadata for ${packageName}`,
-    );
-  }
-  return true;
-}
-
-async function jsrPackageMetadata(packageName) {
-  try {
-    const data = await requestJson(jsrMetaUrl(packageName), packageName);
-    return data && !Array.isArray(data) && typeof data === "object" ? data : undefined;
-  } catch (error) {
-    if (error instanceof RegistryHttpError && error.status === 404) {
-      return undefined;
-    }
-    if (error instanceof RegistryHttpError) {
-      fail(`JSR registry returned HTTP ${error.status} for ${packageName}`);
-    }
-    fail(`failed to query JSR registry for ${packageName}: ${error}`);
-  }
-}
-
-async function jsrVersionExists(packageName, version) {
-  const data = await jsrPackageMetadata(packageName);
-  if (data === undefined) {
-    return false;
-  }
-  const versions = data.versions;
-  return versions !== null && !Array.isArray(versions) && typeof versions === "object" && version in versions;
-}
-
-async function jsrPackageExists(packageName) {
-  try {
-    return await jsrManagementPackageExists(packageName);
-  } catch (error) {
-    if (error instanceof RegistryHttpError) {
-      fail(`JSR management API returned HTTP ${error.status} for ${packageName}`);
-    }
-    fail(`failed to query JSR management API for ${packageName}: ${error}`);
-  }
-}
-
 async function packageExists(pkg) {
   if (pkg.kind === "crates") {
     return crateVersionExists(pkg.name, pkg.version);
   }
   if (pkg.kind === "npm") {
     return npmVersionExists(pkg.name, pkg.version);
-  }
-  if (pkg.kind === "jsr") {
-    return jsrVersionExists(pkg.name, pkg.version);
   }
   if (pkg.kind === "maven") {
     return mavenVersionExists(pkg.name, pkg.version);
@@ -698,9 +597,6 @@ async function packageIdentityExists(pkg) {
   }
   if (pkg.kind === "npm") {
     return npmPackageExists(pkg.name);
-  }
-  if (pkg.kind === "jsr") {
-    return jsrPackageExists(pkg.name);
   }
   if (pkg.kind === "maven") {
     return mavenCoordinateExists(pkg.name);

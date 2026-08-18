@@ -18,10 +18,8 @@ import { TextDecoder } from "node:util";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from "./extension-artifact-archive-policy.mjs";
-import { extensionQualificationCandidates } from "./extension-qualification-candidates.mjs";
 import {
   extensionCarrierLegalContract,
-  extensionQualificationLegalContract,
   extensionUpstreamLicenseRow,
 } from "./extension-upstream-licenses.mjs";
 import { extensionProductForSqlName } from "./release-artifact-targets.mjs";
@@ -743,15 +741,8 @@ function validateStaticLinkage(properties, metadata, target, label) {
 function canonicalLegalContract(metadata, target, label) {
   let contract;
   try {
-    const qualificationOnly = extensionQualificationCandidates().some(
-      (candidate) => candidate.sqlName === metadata.sqlName,
-    );
-    if (qualificationOnly) {
-      contract = extensionQualificationLegalContract(metadata.sqlName, { family: "native", target });
-    } else {
-      const product = extensionProductForSqlName(metadata.sqlName, "extension-artifact-inventory.mjs");
-      contract = extensionCarrierLegalContract(product, [metadata.sqlName], { family: "native", target });
-    }
+    const product = extensionProductForSqlName(metadata.sqlName, "extension-artifact-inventory.mjs");
+    contract = extensionCarrierLegalContract(product, [metadata.sqlName], { family: "native", target });
   } catch (cause) {
     throw inventoryError(label, `cannot resolve canonical legal contract: ${cause.message}`);
   }

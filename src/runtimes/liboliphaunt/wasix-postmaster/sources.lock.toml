@@ -1,0 +1,79 @@
+[current_postgresql_product_inputs]
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/series"
+sha256 = "3842f934e69d47a85c13e6ad37fb6d095b512bca56c3c0bdfac9e159ded26f22"
+bytes = 218
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/product-patch-provenance.toml"
+sha256 = "26e2b2e54bfe4c99b2007593e0eb34071030970fecca4b79a4056098dc81121e"
+bytes = 3445
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
+sha256 = "17435fd5261a641837053728ed3314a2145307ab25bea473d5529b62a6a5aa3b"
+bytes = 883
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch"
+sha256 = "a7eb6c9bd4366938fd40de1e8bdeaba600f4d9a42f5d2935677a795c3fcefc43"
+bytes = 501
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch"
+sha256 = "acf40abd1498a92d122f939857086003e66962e51a2501b927391939981de502"
+bytes = 28650
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch"
+sha256 = "329fb6d098240b96d504165043f5b9f41f67439032b7dbf672367bffa4c78c14"
+bytes = 1751
+
+[[current_postgresql_product_inputs.file]]
+path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
+sha256 = "419eb45d4ee33aac428bc21a819409e4cd5fac5a227562c3e2c60a1a697fef43"
+bytes = 10236
+
+[current_postgresql_patches.packed_atomic_latch_state]
+path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
+base_tag = "REL_18_4"
+sha256 = "419eb45d4ee33aac428bc21a819409e4cd5fac5a227562c3e2c60a1a697fef43"
+bytes = 10236
+feature_macro = "PG_WASIX_ATOMIC_LATCH_STATE"
+native_behavior_preserved = true
+
+[current_runtime_patches.wasmer]
+path = "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
+base_commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
+sha256 = "3406534fb297c690567b7df5cb31937dcf1708e13973562859cbc7d8a50bdc21"
+bytes = 1719460
+
+[current_runtime_patches.wasix_libc]
+path = "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+base_commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
+sha256 = "116f0728a06e7b2e8e4189b0af6a7d22f40fb0fdda597a6170b5b6e712ddc3dc"
+bytes = 57623
+
+[postgresql]
+version = "18.4"
+tag = "REL_18_4"
+remote = "https://github.com/postgres/postgres.git"
+archive_sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+
+[wasmer]
+version = "7.2.0-alpha.2"
+wasix_version = "0.702.0-alpha.2"
+tag = "v7.2.0-alpha.2"
+commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
+napi_commit = "706383f42391cb4e4e82e5fd5e63a0ebf81ae19d"
+test_files_commit = "7f27e84c69af3b772f751d6c4a733d9f448b2c70"
+webassembly_testsuite_commit = "7e0b83aba9dbbb6e0623c9334b0f73b3bb584b90"
+remote = "https://github.com/wasmerio/wasmer.git"
+napi_remote = "https://github.com/wasmerio/napi.git"
+test_files_remote = "https://github.com/wasmerio/wasmer-test-files.git"
+webassembly_testsuite_remote = "https://github.com/WebAssembly/testsuite.git"
+
+[wasix_libc]
+commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
+remote = "https://github.com/wasix-org/wasix-libc.git"

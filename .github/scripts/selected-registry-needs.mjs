@@ -21,7 +21,7 @@ if (!Array.isArray(products) || products.length === 0 || products.some((product)
 
 const catalog = loadPublicationCatalog("selected-registry-needs", { products });
 const ecosystems = new Set(catalog.carriers.map((carrier) => carrier.ecosystem));
-for (const ecosystem of ["cargo", "npm", "maven", "jsr"]) {
+for (const ecosystem of ["cargo", "npm", "maven"]) {
   const line = `needs_${ecosystem}=${String(ecosystems.has(ecosystem))}`;
   console.log(line);
   if (process.env.GITHUB_OUTPUT) {

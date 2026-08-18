@@ -23,18 +23,15 @@ pub struct EngineCapabilities {
     pub session_concurrency: SessionConcurrency,
     /// True if the engine is isolated in a helper/server process.
     pub process_isolated: bool,
-    /// True if this engine/runtime can own multiple database roots.
-    pub multi_root: bool,
-    /// True if the same host process can close this session and later open a
-    /// root again through the same mode.
-    pub reopenable: bool,
+    /// True if this engine/runtime can own multiple database instances.
+    pub multiple_instances: bool,
     /// True when `close` is a logical detach from a resident backend and the
-    /// same root can be reopened in this process without reinitializing the
+    /// same instance can be reopened in this process without reinitializing the
     /// physical backend.
-    pub same_root_logical_reopen: bool,
-    /// True when this mode can open a different root in the same application
+    pub same_instance_logical_reopen: bool,
+    /// True when this mode can open a different instance in the same application
     /// process after closing the current session.
-    pub root_switchable: bool,
+    pub instance_switchable: bool,
     /// True when this mode can recover the opened handle after its managed
     /// PostgreSQL process exits unexpectedly.
     pub crash_restartable: bool,
@@ -109,10 +106,9 @@ impl EngineCapabilities {
                 mode,
                 session_concurrency: SessionConcurrency::SerializedSingleSession,
                 process_isolated: false,
-                multi_root: false,
-                reopenable: true,
-                same_root_logical_reopen: true,
-                root_switchable: false,
+                multiple_instances: false,
+                same_instance_logical_reopen: true,
+                instance_switchable: false,
                 crash_restartable: false,
                 max_client_sessions: 1,
                 protocol_raw: true,
@@ -130,10 +126,9 @@ impl EngineCapabilities {
                 mode,
                 session_concurrency: SessionConcurrency::SerializedSingleSession,
                 process_isolated: true,
-                multi_root: true,
-                reopenable: true,
-                same_root_logical_reopen: false,
-                root_switchable: true,
+                multiple_instances: true,
+                same_instance_logical_reopen: false,
+                instance_switchable: true,
                 crash_restartable: true,
                 max_client_sessions: 1,
                 protocol_raw: true,
@@ -151,10 +146,9 @@ impl EngineCapabilities {
                 mode,
                 session_concurrency: SessionConcurrency::IndependentSessions,
                 process_isolated: true,
-                multi_root: false,
-                reopenable: true,
-                same_root_logical_reopen: false,
-                root_switchable: true,
+                multiple_instances: false,
+                same_instance_logical_reopen: false,
+                instance_switchable: true,
                 crash_restartable: false,
                 max_client_sessions: 32,
                 protocol_raw: true,

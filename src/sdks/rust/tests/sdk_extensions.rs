@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use oliphaunt::{
-    Extension, ExtensionArtifactPolicy, ExtensionModuleAsset, ExtensionRedistribution,
-    ExtensionSmokeCoverage, ExtensionSmokePlan, ExtensionSourceKind, ExtensionSqlAsset,
+    Extension, ExtensionModuleAsset, ExtensionSmokeCoverage, ExtensionSmokePlan, ExtensionSqlAsset,
     MobileStaticLinkStatus, NATIVE_EXTENSION_MANIFEST, Oliphaunt,
     required_shared_preload_libraries, resolve_extension_selection,
 };
@@ -19,8 +18,8 @@ fn generated_wasm_extension_catalog() -> serde_json::Value {
 }
 
 fn generated_rust_sdk_extension_metadata() -> serde_json::Value {
-    let catalog_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extensions/generated/sdk/rust.json");
+    let catalog_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../extensions/generated/sdk/extensions.json");
     let catalog_text = std::fs::read_to_string(&catalog_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", catalog_path.display()));
     serde_json::from_str(&catalog_text)
@@ -47,40 +46,15 @@ fn extension_metadata_distinguishes_sql_only_modules_and_dependencies() {
     assert!(postgis_data_files.contains(&"contrib/postgis-3.6/postgis.sql"));
     assert!(postgis_data_files.contains(&"contrib/postgis-3.6/spatial_ref_sys.sql"));
     assert!(postgis_data_files.contains(&"proj/proj.db"));
-    assert_eq!(Extension::Graph.native_module_stem(), Some("graph"));
-    assert_eq!(Extension::PgSearch.native_module_stem(), Some("pg_search"));
     assert_eq!(Extension::Earthdistance.dependencies(), &[Extension::Cube]);
     assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Pgtap));
-    assert!(Extension::EXTERNAL_PG18_SUPPORTED.contains(&Extension::Graph));
-    assert!(Extension::EXTERNAL_PG18_SUPPORTED.contains(&Extension::PgSearch));
-    assert!(!Extension::Graph.first_party_artifact());
-    assert!(!Extension::PgSearch.first_party_artifact());
-    assert!(matches!(
-        Extension::Graph.artifact_policy(),
-        ExtensionArtifactPolicy::External {
-            source_kind: ExtensionSourceKind::Pgrx,
-            redistribution: ExtensionRedistribution::Allowed,
-            requires_shared_preload: false,
-            ..
-        }
-    ));
-    assert!(matches!(
-        Extension::PgSearch.artifact_policy(),
-        ExtensionArtifactPolicy::External {
-            source_kind: ExtensionSourceKind::Pgrx,
-            redistribution: ExtensionRedistribution::RequiresCommercialLicense,
-            requires_shared_preload: true,
-            ..
-        }
-    ));
     assert_eq!(
-        Extension::PgSearch.required_shared_preload_library(),
-        Some("pg_search")
+        Extension::PgTextsearch.required_shared_preload_library(),
+        Some("pg_textsearch")
     );
-    assert_eq!(Extension::Graph.required_shared_preload_library(), None);
     assert_eq!(
-        required_shared_preload_libraries(&[Extension::PgSearch, Extension::PgSearch]),
-        vec!["pg_search"]
+        required_shared_preload_libraries(&[Extension::PgTextsearch, Extension::PgTextsearch]),
+        vec!["pg_textsearch"]
     );
 }
 
@@ -159,20 +133,17 @@ fn native_extension_manifest_covers_every_supported_pg18_extension() {
 }
 
 #[test]
-fn native_release_ready_manifest_matches_generated_rust_metadata() {
+fn native_manifest_matches_generated_extension_metadata() {
     let metadata = generated_rust_sdk_extension_metadata();
     let generated_rows = metadata["extensions"]
         .as_array()
         .expect("generated Rust SDK extension metadata must define extensions");
-    assert_eq!(metadata["consumer"].as_str(), Some("rust"));
-
-    let release_ready_sql_names = Extension::RELEASE_READY_PG18_SUPPORTED
+    let catalog_sql_names = Extension::ALL_PG18_SUPPORTED
         .iter()
         .map(|extension| extension.sql_name().to_owned())
         .collect::<BTreeSet<_>>();
-    let generated_release_ready_sql_names = generated_rows
+    let generated_sql_names = generated_rows
         .iter()
-        .filter(|row| row["desktop-release-ready"].as_bool() == Some(true))
         .map(|row| {
             row["sql-name"]
                 .as_str()
@@ -181,8 +152,8 @@ fn native_release_ready_manifest_matches_generated_rust_metadata() {
         })
         .collect::<BTreeSet<_>>();
     assert_eq!(
-        generated_release_ready_sql_names, release_ready_sql_names,
-        "Rust SDK release-ready extension set must come from generated metadata"
+        generated_sql_names, catalog_sql_names,
+        "Rust SDK extension set must come from generated metadata"
     );
 
     for row in generated_rows {
@@ -200,26 +171,8 @@ fn native_release_ready_manifest_matches_generated_rust_metadata() {
             row["native-module-stem"].as_str(),
             extension.native_module_stem()
         );
-        assert_eq!(
-            row["mobile-release-ready"].as_bool(),
-            Some(extension.mobile_release_ready())
-        );
-        assert_eq!(
-            row["desktop-release-ready"].as_bool(),
-            Some(extension.desktop_release_ready())
-        );
-        assert_eq!(
-            Extension::by_release_ready_sql_name(sql_name),
-            extension.desktop_release_ready().then_some(extension)
-        );
-        assert!(
-            row["target-status"].is_object(),
-            "generated Rust SDK metadata must include target-status for {sql_name}"
-        );
-        assert!(
-            row["support"].is_object(),
-            "generated Rust SDK metadata must include support for {sql_name}"
-        );
+        assert!(row.get("mobile-release-ready").is_none());
+        assert!(row.get("desktop-release-ready").is_none());
         let dependencies = extension
             .dependencies()
             .iter()
@@ -317,120 +270,37 @@ fn native_extension_manifest_matches_build_required_artifacts() {
 }
 
 #[test]
-fn release_ready_extension_catalog_is_exact_and_excludes_external_candidates() {
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::Hstore));
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::PgHashids));
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::Pgcrypto));
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::UuidOssp));
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::Vector));
+fn supported_extension_catalog_is_exact() {
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Hstore));
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::PgHashids));
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Pgcrypto));
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::UuidOssp));
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Vector));
     assert!(Extension::FIRST_PARTY_PG18_SUPPORTED.contains(&Extension::Postgis));
-    assert!(Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::Postgis));
-    assert!(!Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::Graph));
-    assert!(!Extension::RELEASE_READY_PG18_SUPPORTED.contains(&Extension::PgSearch));
-    let expected_mobile_ready = BTreeSet::from([
-        Extension::Amcheck,
-        Extension::AutoExplain,
-        Extension::Bloom,
-        Extension::BtreeGin,
-        Extension::BtreeGist,
-        Extension::Citext,
-        Extension::Cube,
-        Extension::DictInt,
-        Extension::DictXsyn,
-        Extension::Earthdistance,
-        Extension::FileFdw,
-        Extension::Fuzzystrmatch,
-        Extension::Hstore,
-        Extension::Intarray,
-        Extension::Isn,
-        Extension::Lo,
-        Extension::Ltree,
-        Extension::Pageinspect,
-        Extension::PgBuffercache,
-        Extension::PgFreespacemap,
-        Extension::PgHashids,
-        Extension::PgIvm,
-        Extension::Pgcrypto,
-        Extension::PgSurgery,
-        Extension::PgTrgm,
-        Extension::PgUuidv7,
-        Extension::PgVisibility,
-        Extension::PgWalinspect,
-        Extension::Pgtap,
-        Extension::Postgis,
-        Extension::PgTextsearch,
-        Extension::Seg,
-        Extension::Tablefunc,
-        Extension::Tcn,
-        Extension::TsmSystemRows,
-        Extension::TsmSystemTime,
-        Extension::Unaccent,
-        Extension::UuidOssp,
-        Extension::Vector,
-    ]);
-    let actual_mobile_ready = Extension::MOBILE_RELEASE_READY_PG18_SUPPORTED
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(actual_mobile_ready, expected_mobile_ready);
-    for extension in expected_mobile_ready {
-        assert!(extension.mobile_release_ready());
-    }
-    for extension in [Extension::Graph, Extension::PgSearch] {
-        assert!(!extension.mobile_release_ready());
-    }
+    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Postgis));
     assert!(Extension::Hstore.requires_mobile_static_registry());
     assert!(Extension::UuidOssp.requires_mobile_static_registry());
     assert!(!Extension::Pgtap.requires_mobile_static_registry());
 
+    assert_eq!(Extension::by_sql_name("vector"), Some(Extension::Vector));
     assert_eq!(
-        Extension::by_release_ready_sql_name("vector"),
-        Some(Extension::Vector)
-    );
-    assert_eq!(
-        Extension::by_release_ready_sql_name("uuid-ossp"),
+        Extension::by_sql_name("uuid-ossp"),
         Some(Extension::UuidOssp)
     );
     assert_eq!(
-        Extension::by_release_ready_sql_name("pg_search"),
+        Extension::by_sql_name("pg_search"),
         None,
         "ParadeDB is tracked as an external candidate but must not enter release packages implicitly"
     );
-    assert_eq!(
-        Extension::by_release_ready_sql_name("postgis"),
-        Some(Extension::Postgis)
-    );
+    assert_eq!(Extension::by_sql_name("postgis"), Some(Extension::Postgis));
     let metadata = generated_rust_sdk_extension_metadata();
     let metadata_rows = metadata["extensions"].as_array().unwrap();
     let postgis_metadata = metadata_rows
         .iter()
         .find(|row| row["sql-name"] == "postgis")
         .expect("PostGIS metadata row must exist");
-    assert_eq!(
-        postgis_metadata["desktop-release-ready"].as_bool(),
-        Some(true)
-    );
-    assert_eq!(
-        postgis_metadata["mobile-release-ready"].as_bool(),
-        Some(true)
-    );
-    assert_eq!(
-        postgis_metadata["target-status"]["wasix"].as_str(),
-        Some("supported")
-    );
-    assert_eq!(
-        postgis_metadata["target-status"]["native"].as_str(),
-        Some("supported")
-    );
-    assert_eq!(postgis_metadata["target-status"]["mobile"].as_str(), None);
-    assert_eq!(
-        postgis_metadata["support"]["mobile"]["android"].as_str(),
-        Some("supported")
-    );
-    assert_eq!(
-        postgis_metadata["support"]["mobile"]["ios"].as_str(),
-        Some("supported")
-    );
+    assert!(postgis_metadata.get("desktop-release-ready").is_none());
+    assert!(postgis_metadata.get("mobile-release-ready").is_none());
     for alias in [
         "core",
         "search",
@@ -440,7 +310,7 @@ fn release_ready_extension_catalog_is_exact_and_excludes_external_candidates() {
         "vector+search",
     ] {
         assert_eq!(
-            Extension::by_release_ready_sql_name(alias),
+            Extension::by_sql_name(alias),
             None,
             "{alias} must not resolve as an extension selection alias or multi-extension selector"
         );
@@ -448,7 +318,7 @@ fn release_ready_extension_catalog_is_exact_and_excludes_external_candidates() {
 }
 
 #[test]
-fn target_specific_release_readiness_can_diverge_from_wasix_support() {
+fn target_specific_support_remains_explicit() {
     let catalog = generated_wasm_extension_catalog();
     let wasm_postgis = catalog["extensions"]
         .as_array()
@@ -457,77 +327,16 @@ fn target_specific_release_readiness_can_diverge_from_wasix_support() {
         .find(|extension| extension["sql-name"].as_str() == Some("postgis"))
         .expect("generated wasm extension catalog must contain PostGIS");
 
-    assert_eq!(wasm_postgis["promotion"]["stable"].as_bool(), Some(true));
+    assert_eq!(
+        wasm_postgis["native-module-file"].as_str(),
+        Some("postgis-3.so")
+    );
     assert!(Extension::Postgis.first_party_artifact());
-    assert!(Extension::Postgis.desktop_release_ready());
-    assert!(Extension::Postgis.mobile_release_ready());
-    assert_eq!(
-        Extension::by_release_ready_sql_name("postgis"),
-        Some(Extension::Postgis)
-    );
+    assert_eq!(Extension::by_sql_name("postgis"), Some(Extension::Postgis));
 }
 
 #[test]
-fn pg18_blocked_extensions_remain_out_of_release_ready_catalog() {
-    let catalog = generated_wasm_extension_catalog();
-    let extensions = catalog["extensions"]
-        .as_array()
-        .expect("generated wasm extension catalog must have an extensions array");
-
-    let blocked_ids = extensions
-        .iter()
-        .filter(|extension| {
-            !extension["promotion"]["stable"]
-                .as_bool()
-                .expect("generated wasm extension catalog rows must have promotion.stable")
-        })
-        .map(|extension| {
-            extension["id"]
-                .as_str()
-                .expect("generated wasm extension catalog rows must have an id")
-                .to_owned()
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        blocked_ids,
-        BTreeSet::from(["age".to_owned()]),
-        "every PG18.4 non-stable extension needs an explicit blocker before release-ready parity can move"
-    );
-
-    let (id, sql_name, requested, packaged, blocker) =
-        ("age", "age", false, false, "ExecInitExtraTupleSlot");
-    let extension = extensions
-        .iter()
-        .find(|extension| extension["id"].as_str() == Some(id))
-        .unwrap_or_else(|| panic!("generated wasm extension catalog must contain {id}"));
-    assert_eq!(extension["sql-name"].as_str(), Some(sql_name));
-    assert_eq!(
-        extension["promotion"]["requested"].as_bool(),
-        Some(requested),
-        "{id} build request state must match its current PG18.4 blocker status"
-    );
-    assert_eq!(
-        extension["promotion"]["stable"].as_bool(),
-        Some(false),
-        "{id} must not be treated as PG18.4 release-ready until its blocker is resolved"
-    );
-    assert_eq!(
-        extension["promotion"]["packaged"].as_bool(),
-        Some(packaged),
-        "{id} packaged state must match the generated WASIX artifact evidence"
-    );
-    assert!(
-        extension["promotion"]["blocker"]
-            .as_str()
-            .unwrap_or_default()
-            .contains(blocker),
-        "{id} must record the concrete PG18.4 blocker"
-    );
-    assert_eq!(Extension::by_release_ready_sql_name(sql_name), None);
-}
-
-#[test]
-fn extension_catalog_cli_lists_release_ready_prebuilt_availability_without_native_env() {
+fn extension_catalog_cli_lists_prebuilt_availability_without_native_env() {
     let Some(resources_bin) = option_env!("CARGO_BIN_EXE_oliphaunt-resources") else {
         eprintln!(
             "skipping extension catalog CLI smoke: cargo did not provide runtime-resource generator binary path"
@@ -567,7 +376,7 @@ fn extension_catalog_cli_lists_release_ready_prebuilt_availability_without_nativ
             (columns[0], columns)
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    for expected in Extension::RELEASE_READY_PG18_SUPPORTED {
+    for expected in Extension::ALL_PG18_SUPPORTED {
         let row = catalog
             .get(expected.sql_name())
             .unwrap_or_else(|| panic!("catalog must advertise {}", expected.sql_name()));
@@ -582,14 +391,7 @@ fn extension_catalog_cli_lists_release_ready_prebuilt_availability_without_nativ
         );
         assert_eq!(row[3], expected.native_module_stem().unwrap_or("-"));
         assert_eq!(row[6], "yes");
-        assert_eq!(
-            row[7],
-            if expected.mobile_release_ready() {
-                "yes"
-            } else {
-                "no"
-            }
-        );
+        assert_eq!(row[7], "yes");
         assert_eq!(
             row[8],
             if expected.requires_mobile_static_registry() {
@@ -632,7 +434,7 @@ fn extension_catalog_cli_lists_release_ready_prebuilt_availability_without_nativ
 #[test]
 fn extension_selection_resolves_only_exact_extensions_and_required_dependencies() {
     let config = Oliphaunt::builder()
-        .path("target/test-roots/native-direct")
+        .directory("target/test-roots/native-direct")
         .extension(Extension::Earthdistance)
         .extension(Extension::Earthdistance)
         .build_config()

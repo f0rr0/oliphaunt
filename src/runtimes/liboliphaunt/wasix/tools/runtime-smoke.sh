@@ -32,7 +32,6 @@ fi
 oliphaunt_runtime_wasm_require "$preflight_mode"
 if [ "$mode" = "core-smoke" ]; then
   export OLIPHAUNT_RUNTIME_WASM_ASSET_MODE="core"
-  export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1
 fi
 asset_mode="$OLIPHAUNT_RUNTIME_WASM_ASSET_MODE"
 full_evidence_features=""
@@ -45,8 +44,8 @@ fi
 
 oliphaunt_wasix_cargo_test() {
   if [ "$asset_mode" = "full" ]; then
-    # The public extension evidence contract includes pg_dump/restore.  Keep the
-    # tools feature and every promoted extension feature enabled whenever the
+    # The extension evidence contract includes pg_dump/restore. Keep the tools
+    # feature and every catalogued extension feature enabled whenever the
     # full extension asset set is under test.
     cargo test -p oliphaunt-wasix --locked --no-default-features \
       --features "$full_evidence_features" "$@"
@@ -56,6 +55,12 @@ oliphaunt_wasix_cargo_test() {
 }
 
 cargo run -p xtask -- assets install-local --target-triple "$host"
+if [ "$mode" = "core-smoke" ]; then
+  # Validate the installed AOT manifest against the asset set that actually
+  # produced it, then narrow only the smoke workload. A full manifest still
+  # contains the split pg_dump/psql tools even when this run skips their tests.
+  export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1
+fi
 export OLIPHAUNT_WASM_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets"
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="$root/target/oliphaunt-wasix/aot"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
@@ -69,7 +74,7 @@ oliphaunt_wasix_cargo_test \
   --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
-  # These library tests iterate every promoted extension through direct,
+  # These library tests iterate every catalogued extension through direct,
   # server, restart, materialization, and dump/restore paths.  Do not replace
   # this with a small representative integration-test subset: the evidence
   # matrix makes product-by-product claims.

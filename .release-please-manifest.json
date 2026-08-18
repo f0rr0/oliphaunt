@@ -15,5 +15,7 @@
   "src/extensions/external/postgis": "0.1.1",
   "src/extensions/external/vector": "0.1.1",
   "src/runtimes/liboliphaunt/wasix": "0.1.1",
-  "src/bindings/wasix-rust/crates/oliphaunt-wasix": "0.1.1"
+  "src/runtimes/liboliphaunt/wasix-postmaster": "0.0.0",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix": "0.1.1",
+  "src/bindings/wasix-ts": "0.0.0"
 }

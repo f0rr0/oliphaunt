@@ -19,16 +19,13 @@ import {
   runOrThrow,
   uniqueValueFlag,
 } from "./release-cli-utils.mjs";
-import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
 import {
   DEFAULT_PUBLICATION_LOCK,
-  assertJsrPublicationNormalizationAdmissions,
   assertLockedArtifactSet,
   assertLockedProductArtifacts,
   assertPublicationLockSource,
   discoverPublicationArtifacts,
   loadPublicationLock,
-  lockedCarrierDirectory,
   lockedCarrierFile,
   lockedCarriers,
   lockedProductArtifactPaths,
@@ -38,7 +35,6 @@ import {
   parseRegistryMutationDeadline,
 } from "./crates-io-bootstrap-capacity.mjs";
 import { uploadCargoOnceAndReconcileExactVersion } from "./cargo-upload-reconciliation.mjs";
-import { mutateOnceAndRequireExactState } from "./immutable-mutation-reconciliation.mjs";
 import { publishFrozenCargoCrate } from "./frozen-cargo-publish.mjs";
 import {
   encodeRegistryPublicationDeferral,
@@ -89,7 +85,6 @@ const REGISTRY_PUBLICATION_CHECK = [
   "tools/release/check_registry_publication.mjs",
 ];
 const REGISTRY_DEADLINE_RESERVE_MS = 5_000;
-const JSR_PUBLISH_TIMEOUT_MS = 5 * 60_000;
 const MAVEN_PUBLISH_MINIMUM_WINDOW_MS = 35 * 60_000;
 
 function usage() {
@@ -108,7 +103,7 @@ Every real publish requires an exact-SHA frozen publication lock. Repeatable
 identity bootstrap for newly generated Cargo/npm identities uses:
   publish --bootstrap-identities --carrier-id cargo:NAME|npm:NAME \\
     --head-ref SHA --publication-lock FILE [--bootstrap-ledger FILE]
-Bootstrap mode cannot publish GitHub releases/assets, Maven, or JSR.
+Bootstrap mode cannot publish GitHub releases/assets or Maven.
 
 Normal registry publication uses one lock-derived global topology:
   publish --registry-plan --products-json JSON --head-ref SHA \
@@ -169,6 +164,7 @@ const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
 const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
 ]);
@@ -270,14 +266,6 @@ function stagedKotlinMavenRepo() {
   return validateStagedKotlinMavenRepo({
     version: currentProductVersionSync("oliphaunt-kotlin", TOOL),
   });
-}
-
-function stagedJsrSourceDir(product) {
-  const directory = path.join(ROOT, "target", "sdk-artifacts", product, "jsr-source");
-  if (!isDirectory(directory)) {
-    fail(`${product} requires staged JSR source under target/sdk-artifacts/${product}/jsr-source`);
-  }
-  return directory;
 }
 
 function noProductPublishDryRunPassthrough(args) {
@@ -1074,57 +1062,6 @@ async function publishTypescriptNpm(headRef) {
   await npmPublishTarball(carrier.name, carrier.file, carrier.version);
 }
 
-async function publishTypescriptJsr(headRef, { version: versionOverride, source: sourceOverride } = {}) {
-  const product = "oliphaunt-js";
-  const packageName = "@oliphaunt/ts";
-  if (BOOTSTRAP_IDENTITIES) {
-    throw new Error("JSR publication is forbidden during identity bootstrap");
-  }
-  verifyReleaseTagOrThrow(product, headRef);
-  const version = versionOverride ?? currentProductVersionSync(product, TOOL);
-  const source = sourceOverride ?? stagedJsrSourceDir(product);
-  let frozenSource;
-  try {
-    frozenSource = lockedCarrierDirectory(ACTIVE_PUBLICATION_LOCK, "jsr", packageName, source);
-  } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-  // This is deliberately before the existence check and the one permitted
-  // immutable-version mutation. A future Deno sloppy-import rewrite cannot be
-  // discovered only after JSR has accepted the public version.
-  assertJsrPublicationNormalizationAdmissions(ACTIVE_PUBLICATION_LOCK);
-  const wasPublished = productRegistryPublished(product, "jsr");
-  let reconciledMutationFailure = false;
-  if (wasPublished) {
-    console.log(`jsr:${packageName} ${version} is already published with a lock-matching file manifest; skipping jsr publish.`);
-    requireProductRegistryPublishedOrThrow(product, "jsr");
-  } else {
-    const timeout = Math.min(
-      JSR_PUBLISH_TIMEOUT_MS,
-      requirePreMutationRegistryWindow({
-        deadlineEpochSeconds: registryMutationDeadlineSeconds(),
-        minimumMilliseconds: JSR_PUBLISH_TIMEOUT_MS,
-        reserveMilliseconds: REGISTRY_DEADLINE_RESERVE_MS,
-        context: `JSR publish for ${packageName}@${version}`,
-      }),
-    );
-    const result = await mutateOnceAndRequireExactState({
-      label: `JSR publish for ${packageName}@${version}`,
-      mutate: () => runOrThrow(TOOL, resolvePinnedJsrInvocation(["publish"]), {
-        cwd: frozenSource.directory,
-        timeout,
-      }),
-      reconcile: () => requireProductRegistryPublishedOrThrow(product, "jsr"),
-    });
-    reconciledMutationFailure = result.reconciledMutationFailure;
-  }
-  const receipt = await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `jsr:${packageName}`);
-  if (reconciledMutationFailure) {
-    console.log(`jsr:${packageName} ${version} became available after an ambiguous publish failure; registry files match the lock.`);
-  }
-  return receipt;
-}
-
 async function publishRustCratesIo(headRef) {
   const product = "oliphaunt-rust";
   if (publishedRerun(product, headRef)) {
@@ -1342,15 +1279,6 @@ async function publishNormalCarrier(operation, headRef, context, provenReceipts)
     const locked = lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, "npm", carrier.name);
     return await npmPublishTarball(carrier.name, locked.file, carrier.version);
   }
-  if (carrier.ecosystem === "jsr") {
-    if (carrier.product !== "oliphaunt-js" || carrier.name !== "@oliphaunt/ts") {
-      throw new Error(`unsupported JSR carrier ${carrier.id}; add an exact frozen JSR publisher before selecting it`);
-    }
-    return await publishTypescriptJsr(headRef, {
-      version: carrier.version,
-      source: path.join(ROOT, "target", "sdk-artifacts", carrier.product, "jsr-source"),
-    });
-  }
   throw new Error(`normal registry plan cannot publish unsupported carrier ${carrier.id}`);
 }
 
@@ -1375,16 +1303,13 @@ async function publishNormalRegistryPlan(products, headRef) {
   if (plan.carrierCount === 0) {
     writeRegistryReceiptEvidence(REGISTRY_RECEIPT_EVIDENCE_PATH, ACTIVE_PUBLICATION_LOCK, {
       products,
-      ecosystems: ["cargo", "npm", "maven", "jsr"],
+      ecosystems: ["cargo", "npm", "maven"],
       receipts: [],
     });
     console.log("Selected release contains no registry carriers; preserved exact empty registry receipt evidence and skipped registry mutation.");
     return;
   }
   requireNormalRegistryProductInputs(products);
-  // Admit every selected JSR source before executing the first registry
-  // operation, not merely when the dependency-ordered executor reaches JSR.
-  assertJsrPublicationNormalizationAdmissions(ACTIVE_PUBLICATION_LOCK);
   const carrierProducts = [...new Set(
     plan.operations.flatMap((operation) => operation.products),
   )].sort(compareText);
@@ -1428,7 +1353,7 @@ async function publishNormalRegistryPlan(products, headRef) {
   });
   writeRegistryReceiptEvidence(REGISTRY_RECEIPT_EVIDENCE_PATH, ACTIVE_PUBLICATION_LOCK, {
     products,
-    ecosystems: ["cargo", "npm", "maven", "jsr"],
+    ecosystems: ["cargo", "npm", "maven"],
     receipts: [...completeReceipts.values()],
   });
   console.log(`Preserved ${completeReceipts.size} exact-lock registry receipts at ${path.relative(ROOT, REGISTRY_RECEIPT_EVIDENCE_PATH)}.`);
@@ -1636,7 +1561,7 @@ if (normalRegistryPlanSelected) {
   }
   process.exit(0);
 }
-if (new Set(["crates-io", "npm", "maven-central", "jsr"]).has(flagValue(argv.slice(1), "--step"))) {
+if (new Set(["crates-io", "npm", "maven-central"]).has(flagValue(argv.slice(1), "--step"))) {
   fail("normal product/ecosystem registry steps are disabled; use the exact-lock --registry-plan executor");
 }
 if (publishProductStep?.step === "github-release-assets") {
@@ -1717,11 +1642,6 @@ if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step ==
   } else {
     await publishTypescriptNpm(publishProductStep.headRef);
   }
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "jsr") {
-  await publishTypescriptJsr(publishProductStep.headRef);
   process.exit(0);
 }
 

@@ -8,8 +8,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Error type for SDK configuration, lifecycle, and engine execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// A database root was required but not configured.
-    MissingDatabaseRoot,
     /// The selected engine mode cannot provide the requested client sessions.
     UnsupportedClientSessions {
         /// Engine mode that rejected the request.
@@ -49,9 +47,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingDatabaseRoot => {
-                f.write_str("database root is not configured; call path or temporary")
-            }
             Self::UnsupportedClientSessions {
                 mode,
                 requested,

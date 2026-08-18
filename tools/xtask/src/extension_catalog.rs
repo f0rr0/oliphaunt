@@ -8,18 +8,14 @@ use serde::{Deserialize, Serialize};
 
 const CATALOG_PATH: &str = "src/extensions/generated/extensions.catalog.json";
 const SOURCE_CATALOG_PATH: &str = "src/extensions/catalog/extensions.source.json";
-const BUILD_PLAN_PATH: &str = "src/extensions/generated/extensions.build-plan.json";
 const CONTRIB_BUILD_PLAN_PATH: &str = "src/extensions/generated/contrib-build.tsv";
 const PGXS_BUILD_PLAN_PATH: &str = "src/extensions/generated/pgxs-build.tsv";
-const PROMOTION_CONFIG_PATH: &str = "src/extensions/catalog/extensions.promoted.toml";
-const SMOKE_CONFIG_PATH: &str = "src/extensions/catalog/extensions.smoke.toml";
 const CONTRIB_MANIFEST_PATH: &str = "src/extensions/contrib/postgres18.toml";
 const POSTGRES_CONTRIB: &str = "src/postgres/versions/18/contrib";
 const POSTGRES_OTHER_EXTENSIONS: &str = "src/extensions/external";
 const EXTERNAL_EXTENSION_RECIPE_ROOT: &str = "src/extensions/external";
 const PGVECTOR_CHECKOUT: &str = "target/oliphaunt-sources/checkouts/pgvector";
 const EXTERNAL_EXTENSION_CHECKOUT_ROOT: &str = "target/oliphaunt-sources/checkouts";
-const ASSET_MANIFEST: &str = "target/oliphaunt-wasix/assets/manifest.json";
 
 pub(crate) fn extensions(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
@@ -119,11 +115,6 @@ pub(crate) fn check_build_plan_file(strict: bool) -> Result<()> {
     let expected = build_plan_texts(&catalog)?;
     for (path, text, command) in [
         (
-            BUILD_PLAN_PATH,
-            expected.json.as_str(),
-            "cargo run -p xtask -- extensions build-plan --write",
-        ),
-        (
             CONTRIB_BUILD_PLAN_PATH,
             expected.contrib_tsv.as_str(),
             "cargo run -p xtask -- extensions build-plan --write",
@@ -150,11 +141,7 @@ pub(crate) fn check_build_plan_file(strict: bool) -> Result<()> {
         }
         let actual =
             fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-        let matches = if path == Path::new(BUILD_PLAN_PATH) {
-            extension_build_plan_text_matches_source_control(&actual, text)?
-        } else {
-            extension_build_plan_tsv_matches_source_control(&actual, text)
-        };
+        let matches = extension_build_plan_tsv_matches_source_control(&actual, text);
         if !matches {
             if strict {
                 bail!(
@@ -183,13 +170,7 @@ fn normalize_extension_build_plan_tsv(text: &str) -> String {
 }
 
 fn extension_discovery_inputs_available(strict: bool) -> Result<bool> {
-    for required in [
-        SOURCE_CATALOG_PATH,
-        CATALOG_PATH,
-        PROMOTION_CONFIG_PATH,
-        SMOKE_CONFIG_PATH,
-        CONTRIB_MANIFEST_PATH,
-    ] {
+    for required in [SOURCE_CATALOG_PATH, CATALOG_PATH, CONTRIB_MANIFEST_PATH] {
         let path = Path::new(required);
         if path.exists() {
             continue;
@@ -218,33 +199,8 @@ fn extension_catalog_text_matches_source_control(actual: &str, expected: &str) -
         == normalize_extension_catalog_for_source_control(expected))
 }
 
-fn extension_build_plan_text_matches_source_control(actual: &str, expected: &str) -> Result<bool> {
-    let actual: serde_json::Value =
-        serde_json::from_str(actual).context("parse generated extension build plan")?;
-    let expected: serde_json::Value =
-        serde_json::from_str(expected).context("parse expected extension build plan")?;
-    Ok(normalize_generated_inputs_for_source_control(actual)
-        == normalize_generated_inputs_for_source_control(expected))
-}
-
 fn normalize_extension_catalog_for_source_control(value: serde_json::Value) -> serde_json::Value {
-    let mut value = normalize_generated_inputs_for_source_control(value);
-    if let Some(extensions) = value
-        .get_mut("extensions")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for extension in extensions {
-            if let Some(promotion) = extension
-                .get_mut("promotion")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                promotion.remove("packaged");
-                promotion.remove("promoted");
-                promotion.remove("module-sha256");
-            }
-        }
-    }
-    value
+    normalize_generated_inputs_for_source_control(value)
 }
 
 fn normalize_generated_inputs_for_source_control(
@@ -263,54 +219,53 @@ fn normalize_generated_inputs_for_source_control(
 
 pub(crate) fn manifest_metadata_by_sql_name() -> Result<BTreeMap<String, ManifestExtensionMetadata>>
 {
-    if extension_discovery_inputs_available(false)? {
-        let catalog = discover_catalog()?;
-        validate_catalog(&catalog)?;
-        Ok(catalog
-            .extensions
-            .into_iter()
-            .map(|extension| {
-                (
-                    extension.sql_name.clone(),
-                    manifest_metadata_from_catalog_entry(extension),
-                )
-            })
-            .collect())
-    } else {
-        manifest_metadata_by_sql_name_from_generated_plan()
-    }
-}
-
-pub(crate) fn promoted_build_specs() -> Result<Vec<PromotedExtensionBuildSpec>> {
-    if extension_discovery_inputs_available(false)? {
-        let catalog = discover_catalog()?;
-        validate_catalog(&catalog)?;
-        build_specs(&catalog)
-    } else {
-        promoted_build_specs_from_generated_plan()
-    }
-}
-
-fn build_specs(catalog: &ExtensionCatalog) -> Result<Vec<PromotedExtensionBuildSpec>> {
-    let mut specs = Vec::new();
-    for extension in catalog
+    ensure!(
+        extension_discovery_inputs_available(false)?,
+        "extension manifest metadata requires the extension source catalog and recipes"
+    );
+    let catalog = discover_catalog()?;
+    validate_catalog(&catalog)?;
+    Ok(catalog
         .extensions
-        .iter()
-        .filter(|extension| extension.promotion.requested)
-    {
-        let archive = extension
-            .promotion
-            .archive
-            .clone()
-            .unwrap_or_else(|| format!("extensions/{}.tar.zst", extension.sql_name));
-        let wasix_target = wasix_target_recipe(&extension.sql_name)?;
+        .into_iter()
+        .map(|extension| {
+            (
+                extension.sql_name.clone(),
+                manifest_metadata_from_catalog_entry(extension),
+            )
+        })
+        .collect())
+}
+
+pub(crate) fn extension_build_specs() -> Result<Vec<ExtensionBuildSpec>> {
+    ensure!(
+        extension_discovery_inputs_available(false)?,
+        "extension build specs require the extension source catalog and recipes"
+    );
+    let catalog = discover_catalog()?;
+    validate_catalog(&catalog)?;
+    build_specs(&catalog)
+}
+
+fn build_specs(catalog: &ExtensionCatalog) -> Result<Vec<ExtensionBuildSpec>> {
+    build_specs_at(catalog, Path::new("."))
+}
+
+fn build_specs_at(
+    catalog: &ExtensionCatalog,
+    repository_root: &Path,
+) -> Result<Vec<ExtensionBuildSpec>> {
+    let mut specs = Vec::new();
+    for extension in &catalog.extensions {
+        let archive = format!("extensions/{}.tar.zst", extension.sql_name);
+        let wasix_target = wasix_target_recipe_at(repository_root, &extension.sql_name)?;
         let mut native_support_modules = wasix_target
             .as_ref()
             .map(|target| target.native_support_modules.clone())
             .unwrap_or_default();
         native_support_modules.sort_by(|left, right| left.name.cmp(&right.name));
         let build_kind = build_kind(extension, wasix_target.as_ref())?;
-        specs.push(PromotedExtensionBuildSpec {
+        specs.push(ExtensionBuildSpec {
             id: extension.id.clone(),
             display_name: extension.display_name.clone(),
             sql_name: extension.sql_name.clone(),
@@ -334,9 +289,7 @@ fn build_specs(catalog: &ExtensionCatalog) -> Result<Vec<PromotedExtensionBuildS
             module_file: extension.native_module_file.clone(),
             archive,
             control_file: extension.control_file.clone(),
-            stable: extension.promotion.stable,
             dependencies: extension.dependencies.clone(),
-            native_dependencies: extension.native_dependencies.clone(),
             native_support_modules,
             excluded_sql_extensions: wasix_target
                 .as_ref()
@@ -345,7 +298,6 @@ fn build_specs(catalog: &ExtensionCatalog) -> Result<Vec<PromotedExtensionBuildS
             staging: wasix_target.and_then(|target| target.staging),
             load_order: extension.load_order.clone(),
             lifecycle: extension.lifecycle.clone(),
-            smoke: extension.smoke.clone(),
             tests: extension.tests.clone(),
         });
     }
@@ -354,7 +306,7 @@ fn build_specs(catalog: &ExtensionCatalog) -> Result<Vec<PromotedExtensionBuildS
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PromotedExtensionBuildSpec {
+pub(crate) struct ExtensionBuildSpec {
     pub(crate) id: String,
     pub(crate) display_name: String,
     pub(crate) sql_name: String,
@@ -369,15 +321,12 @@ pub(crate) struct PromotedExtensionBuildSpec {
     pub(crate) module_file: Option<String>,
     pub(crate) archive: String,
     pub(crate) control_file: Option<String>,
-    pub(crate) stable: bool,
     pub(crate) dependencies: Vec<String>,
-    pub(crate) native_dependencies: Vec<String>,
     pub(crate) native_support_modules: Vec<NativeSupportModuleSpec>,
     pub(crate) excluded_sql_extensions: Vec<String>,
     pub(crate) staging: Option<ExtensionStagingSpec>,
     pub(crate) load_order: Vec<String>,
     pub(crate) lifecycle: ExtensionLifecycle,
-    pub(crate) smoke: ExtensionSmokeEvidence,
     pub(crate) tests: Vec<String>,
 }
 
@@ -386,10 +335,8 @@ pub(crate) struct ManifestExtensionMetadata {
     pub(crate) source_kind: String,
     pub(crate) control_files: Vec<String>,
     pub(crate) dependencies: Vec<String>,
-    pub(crate) native_dependencies: Vec<String>,
     pub(crate) load_order: Vec<String>,
     pub(crate) lifecycle: ManifestExtensionLifecycle,
-    pub(crate) smoke_status: ManifestExtensionSmokeStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -404,15 +351,6 @@ pub(crate) struct ManifestExtensionLifecycle {
     pub(crate) shared_memory_required: bool,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ManifestExtensionSmokeStatus {
-    pub(crate) promoted: bool,
-    pub(crate) direct: String,
-    pub(crate) server: String,
-    pub(crate) restart: String,
-    pub(crate) dump_restore: String,
-}
-
 fn write_catalog(text: &str) -> Result<()> {
     let path = Path::new(CATALOG_PATH);
     if let Some(parent) = path.parent() {
@@ -424,7 +362,6 @@ fn write_catalog(text: &str) -> Result<()> {
 fn write_build_plan_files(catalog: &ExtensionCatalog) -> Result<()> {
     let texts = build_plan_texts(catalog)?;
     for (path, text) in [
-        (BUILD_PLAN_PATH, texts.json),
         (CONTRIB_BUILD_PLAN_PATH, texts.contrib_tsv),
         (PGXS_BUILD_PLAN_PATH, texts.pgxs_tsv),
     ] {
@@ -439,11 +376,8 @@ fn write_build_plan_files(catalog: &ExtensionCatalog) -> Result<()> {
 
 fn build_plan_texts(catalog: &ExtensionCatalog) -> Result<BuildPlanTexts> {
     let plan = build_plan(catalog)?;
-    let json =
-        serde_json::to_string_pretty(&plan).context("serialize extension build plan")? + "\n";
-    let mut contrib_tsv = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\tstable\n".to_owned();
-    let mut pgxs_tsv =
-        "# id\tsql_name\tsource_dir\tmodule_file\tarchive\tstable\tmake_args\n".to_owned();
+    let mut contrib_tsv = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\n".to_owned();
+    let mut pgxs_tsv = "# id\tsql_name\tsource_dir\tmodule_file\tarchive\tmake_args\n".to_owned();
     for extension in &plan.extensions {
         match extension.build_kind.as_str() {
             "postgres-contrib" => {
@@ -451,24 +385,22 @@ fn build_plan_texts(catalog: &ExtensionCatalog) -> Result<BuildPlanTexts> {
                     anyhow!("contrib extension {} has no contrib_dir", extension.id)
                 })?;
                 contrib_tsv.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "{}\t{}\t{}\t{}\t{}\n",
                     extension.id,
                     extension.sql_name,
                     contrib_dir,
                     extension.module_file.as_deref().unwrap_or("-"),
-                    extension.archive,
-                    extension.stable
+                    extension.archive
                 ));
             }
             kind if is_pgxs_style_build_kind(kind) => {
                 pgxs_tsv.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "{}\t{}\t{}\t{}\t{}\t{}\n",
                     extension.id,
                     extension.sql_name,
                     extension.source_dir,
                     extension.module_file.as_deref().unwrap_or("-"),
                     extension.archive,
-                    extension.stable,
                     shell_words(&extension.make_args)
                 ));
             }
@@ -480,7 +412,6 @@ fn build_plan_texts(catalog: &ExtensionCatalog) -> Result<BuildPlanTexts> {
         }
     }
     Ok(BuildPlanTexts {
-        json,
         contrib_tsv,
         pgxs_tsv,
     })
@@ -490,20 +421,10 @@ fn build_plan(catalog: &ExtensionCatalog) -> Result<ExtensionBuildPlan> {
     let specs = build_specs(catalog)?;
     Ok(ExtensionBuildPlan {
         format_version: 1,
-        generated_from: vec![
-            CatalogInput {
-                name: "extension-catalog".to_owned(),
-                path: CATALOG_PATH.to_owned(),
-            },
-            CatalogInput {
-                name: "promotion-config".to_owned(),
-                path: PROMOTION_CONFIG_PATH.to_owned(),
-            },
-            CatalogInput {
-                name: "asset-manifest-evidence".to_owned(),
-                path: ASSET_MANIFEST.to_owned(),
-            },
-        ],
+        generated_from: vec![CatalogInput {
+            name: "extension-catalog".to_owned(),
+            path: CATALOG_PATH.to_owned(),
+        }],
         extensions: specs
             .into_iter()
             .map(|spec| ExtensionBuildPlanEntry {
@@ -521,97 +442,16 @@ fn build_plan(catalog: &ExtensionCatalog) -> Result<ExtensionBuildPlan> {
                 module_file: spec.module_file,
                 archive: spec.archive,
                 control_file: spec.control_file,
-                stable: spec.stable,
                 dependencies: spec.dependencies,
-                native_dependencies: spec.native_dependencies,
                 native_support_modules: spec.native_support_modules,
                 excluded_sql_extensions: spec.excluded_sql_extensions,
                 staging: spec.staging,
                 load_order: spec.load_order,
                 lifecycle: spec.lifecycle,
-                smoke: spec.smoke,
                 tests: spec.tests,
             })
             .collect(),
     })
-}
-
-fn promoted_build_specs_from_generated_plan() -> Result<Vec<PromotedExtensionBuildSpec>> {
-    promoted_build_specs_from_generated_plan_at(Path::new(BUILD_PLAN_PATH))
-}
-
-fn promoted_build_specs_from_generated_plan_at(
-    path: &Path,
-) -> Result<Vec<PromotedExtensionBuildSpec>> {
-    let text = fs::read_to_string(path).with_context(|| {
-        format!(
-            "read {}; extension discovery inputs are unavailable, so generated build plan fallback is required",
-            path.display()
-        )
-    })?;
-    let plan: ExtensionBuildPlan =
-        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    ensure!(
-        plan.format_version == 1,
-        "extension build plan format must be 1"
-    );
-    Ok(plan
-        .extensions
-        .into_iter()
-        .map(|extension| PromotedExtensionBuildSpec {
-            id: extension.id,
-            display_name: extension.display_name,
-            sql_name: extension.sql_name,
-            source_kind: extension.source_kind,
-            build_kind: extension.build_kind,
-            build_script: extension.build_script,
-            required_build_files: extension.required_build_files,
-            required_build_globs: extension.required_build_globs,
-            source_dir: extension.source_dir,
-            make_args: extension.make_args,
-            contrib_dir: extension.contrib_dir,
-            module_file: extension.module_file,
-            archive: extension.archive,
-            control_file: extension.control_file,
-            stable: extension.stable,
-            dependencies: extension.dependencies,
-            native_dependencies: extension.native_dependencies,
-            native_support_modules: extension.native_support_modules,
-            excluded_sql_extensions: extension.excluded_sql_extensions,
-            staging: extension.staging,
-            load_order: extension.load_order,
-            lifecycle: extension.lifecycle,
-            smoke: extension.smoke,
-            tests: extension.tests,
-        })
-        .collect())
-}
-
-fn manifest_metadata_by_sql_name_from_generated_plan()
--> Result<BTreeMap<String, ManifestExtensionMetadata>> {
-    let path = Path::new(BUILD_PLAN_PATH);
-    let text = fs::read_to_string(path).with_context(|| {
-        format!(
-            "read {}; extension discovery inputs are unavailable, so generated build plan fallback is required",
-            path.display()
-        )
-    })?;
-    let plan: ExtensionBuildPlan =
-        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    ensure!(
-        plan.format_version == 1,
-        "extension build plan format must be 1"
-    );
-    Ok(plan
-        .extensions
-        .into_iter()
-        .map(|extension| {
-            (
-                extension.sql_name.clone(),
-                manifest_metadata_from_build_plan_entry(extension),
-            )
-        })
-        .collect())
 }
 
 fn manifest_metadata_from_catalog_entry(
@@ -621,35 +461,8 @@ fn manifest_metadata_from_catalog_entry(
         source_kind: extension.source_kind,
         control_files: extension.control_file.into_iter().collect(),
         dependencies: extension.dependencies,
-        native_dependencies: extension.native_dependencies,
         load_order: extension.load_order,
         lifecycle: manifest_lifecycle_from_extension(extension.lifecycle),
-        smoke_status: ManifestExtensionSmokeStatus {
-            promoted: extension.promotion.promoted,
-            ..manifest_smoke_status_from_evidence(extension.smoke)
-        },
-    }
-}
-
-fn manifest_metadata_from_build_plan_entry(
-    extension: ExtensionBuildPlanEntry,
-) -> ManifestExtensionMetadata {
-    let promoted = extension.stable
-        && extension.smoke.direct == "passed"
-        && extension.smoke.server == "passed"
-        && extension.smoke.restart == "passed"
-        && extension.smoke.dump_restore == "passed";
-    ManifestExtensionMetadata {
-        source_kind: extension.source_kind,
-        control_files: extension.control_file.into_iter().collect(),
-        dependencies: extension.dependencies,
-        native_dependencies: extension.native_dependencies,
-        load_order: extension.load_order,
-        lifecycle: manifest_lifecycle_from_extension(extension.lifecycle),
-        smoke_status: ManifestExtensionSmokeStatus {
-            promoted,
-            ..manifest_smoke_status_from_evidence(extension.smoke)
-        },
     }
 }
 
@@ -666,21 +479,8 @@ fn manifest_lifecycle_from_extension(lifecycle: ExtensionLifecycle) -> ManifestE
     }
 }
 
-fn manifest_smoke_status_from_evidence(
-    smoke: ExtensionSmokeEvidence,
-) -> ManifestExtensionSmokeStatus {
-    ManifestExtensionSmokeStatus {
-        promoted: false,
-        direct: smoke.direct,
-        server: smoke.server,
-        restart: smoke.restart,
-        dump_restore: smoke.dump_restore,
-    }
-}
-
 fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
-    let promoted = promoted_extensions(catalog);
-    let candidates = packaged_extensions(catalog);
+    let extensions = &catalog.extensions;
     let mut text = String::new();
     text.push_str("// @generated by `cargo run -p xtask -- extensions generate`\n\n");
     text.push_str("use super::{Extension, ExtensionNativeModule, ExtensionSetup};\n\n");
@@ -689,54 +489,54 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
     text.push_str("const EMPTY_STARTUP_CONFIG: &[&str] = &[];\n");
     text.push_str("const EMPTY_NATIVE_MODULES: &[ExtensionNativeModule] = &[];\n\n");
 
-    for extension in &candidates {
+    for extension in extensions {
         let prefix = extension.rust_constant.as_str();
-        let candidate_const = format!("CANDIDATE_{prefix}");
+        let definition_const = format!("DEFINITION_{prefix}");
         let dependencies = api_dependencies(extension);
         if dependencies.is_empty() {
             text.push_str(&format!(
-                "const {candidate_const}_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;\n"
+                "const {definition_const}_DEPENDENCIES: &[&str] = EMPTY_SQL_NAMES;\n"
             ));
         } else {
             text.push_str(&format!(
-                "const {candidate_const}_DEPENDENCIES: &[&str] = &{};\n",
+                "const {definition_const}_DEPENDENCIES: &[&str] = &{};\n",
                 rust_string_array(&dependencies)
             ));
         }
         if extension.lifecycle.load_sql.is_empty() {
             text.push_str(&format!(
-                "const {candidate_const}_LOAD_SQL: &[&str] = EMPTY_SQL;\n"
+                "const {definition_const}_LOAD_SQL: &[&str] = EMPTY_SQL;\n"
             ));
         } else {
             text.push_str(&format!(
-                "const {candidate_const}_LOAD_SQL: &[&str] = &{};\n",
+                "const {definition_const}_LOAD_SQL: &[&str] = &{};\n",
                 rust_string_array(&extension.lifecycle.load_sql)
             ));
         }
         if extension.lifecycle.post_create_sql.is_empty() {
             text.push_str(&format!(
-                "const {candidate_const}_POST_CREATE_SQL: &[&str] = EMPTY_SQL;\n"
+                "const {definition_const}_POST_CREATE_SQL: &[&str] = EMPTY_SQL;\n"
             ));
         } else {
             text.push_str(&format!(
-                "const {candidate_const}_POST_CREATE_SQL: &[&str] = &{};\n",
+                "const {definition_const}_POST_CREATE_SQL: &[&str] = &{};\n",
                 rust_string_array(&extension.lifecycle.post_create_sql)
             ));
         }
         if extension.lifecycle.startup_config.is_empty() {
             text.push_str(&format!(
-                "const {candidate_const}_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;\n"
+                "const {definition_const}_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;\n"
             ));
         } else {
             text.push_str(&format!(
-                "const {candidate_const}_STARTUP_CONFIG: &[&str] = &{};\n",
+                "const {definition_const}_STARTUP_CONFIG: &[&str] = &{};\n",
                 rust_string_array(&extension.lifecycle.startup_config)
             ));
         }
         let native_support_modules = api_native_support_modules(extension)?;
         if native_support_modules.is_empty() {
             text.push_str(&format!(
-                "const {candidate_const}_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;\n"
+                "const {definition_const}_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;\n"
             ));
         } else {
             let native_modules = native_support_modules
@@ -750,24 +550,17 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(", ");
             text.push_str(&format!(
-                "const {candidate_const}_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = &[{native_modules}];\n"
+                "const {definition_const}_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = &[{native_modules}];\n"
             ));
         }
         text.push('\n');
-        let archive = extension.promotion.archive.as_deref().ok_or_else(|| {
-            anyhow!(
-                "release-ready extension {} is missing archive",
-                extension.id
-            )
-        })?;
-        let aot_name = extension.native_module_file.as_ref().and(
-            extension
-                .promotion
-                .packaged
-                .then(|| format!("extension:{}", extension.sql_name)),
-        );
+        let archive = format!("extensions/{}.tar.zst", extension.sql_name);
+        let aot_name = extension
+            .native_module_file
+            .as_ref()
+            .map(|_| format!("extension:{}", extension.sql_name));
         text.push_str(&format!(
-            "pub(crate) const {candidate_const}: Extension = Extension::new(\n    {:?},\n    {:?},\n    {:?},\n    {candidate_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {candidate_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {candidate_const}_STARTUP_CONFIG,\n        {candidate_const}_LOAD_SQL,\n        {candidate_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
+            "const {definition_const}: Extension = Extension::new(\n    {:?},\n    {:?},\n    {:?},\n    {definition_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {definition_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {definition_const}_STARTUP_CONFIG,\n        {definition_const}_LOAD_SQL,\n        {definition_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
             extension.display_name,
             extension.sql_name,
             archive,
@@ -778,44 +571,28 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
         ));
     }
 
-    for extension in &promoted {
+    for extension in extensions {
         let prefix = extension.rust_constant.as_str();
         text.push_str(&format!(
-            "pub const {prefix}: Extension = CANDIDATE_{prefix};\n"
+            "pub const {prefix}: Extension = DEFINITION_{prefix};\n"
         ));
     }
-    if !promoted.is_empty() {
+    if !extensions.is_empty() {
         text.push('\n');
     }
 
-    let all = promoted
+    let all = extensions
         .iter()
         .map(|extension| extension.rust_constant.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     text.push_str(&format!("pub const ALL: &[Extension] = &[{all}];\n"));
-    let candidates_all = candidates
-        .iter()
-        .map(|extension| format!("CANDIDATE_{}", extension.rust_constant))
-        .collect::<Vec<_>>()
-        .join(", ");
-    text.push_str(&format!(
-        "pub(crate) const CANDIDATES: &[Extension] = &[{candidates_all}];\n"
-    ));
 
     let path = Path::new(
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs",
     );
     fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
     format_rust_source(path)
-}
-
-fn promoted_extensions(catalog: &ExtensionCatalog) -> Vec<&ExtensionCatalogEntry> {
-    catalog
-        .extensions
-        .iter()
-        .filter(|extension| extension.promotion.promoted)
-        .collect()
 }
 
 fn format_rust_source(path: &Path) -> Result<()> {
@@ -829,18 +606,6 @@ fn format_rust_source(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
-}
-
-fn packaged_extensions(catalog: &ExtensionCatalog) -> Vec<&ExtensionCatalogEntry> {
-    catalog
-        .extensions
-        .iter()
-        .filter(|extension| {
-            extension.promotion.requested
-                && extension.promotion.packaged
-                && extension.promotion.archive.is_some()
-        })
-        .collect()
 }
 
 fn rust_string_array(values: &[String]) -> String {
@@ -861,56 +626,6 @@ fn option_string_literal(value: Option<&str>) -> String {
 fn discover_catalog() -> Result<ExtensionCatalog> {
     let mut catalog = read_source_catalog()?;
     merge_source_owned_default_versions(&mut catalog)?;
-    let promotion_requests = parse_promotion_config(Path::new(PROMOTION_CONFIG_PATH))?;
-    let smoke_evidence = parse_smoke_config(Path::new(SMOKE_CONFIG_PATH))?;
-    let packaged = parse_packaged_manifest(Path::new(ASSET_MANIFEST))?;
-
-    for extension in &mut catalog.extensions {
-        let request = promotion_requests
-            .get(extension.id.as_str())
-            .or_else(|| promotion_requests.get(extension.sql_name.as_str()));
-        let asset = packaged.get(extension.sql_name.as_str());
-        let archive = asset
-            .and_then(|asset| asset.archive.clone())
-            .or_else(|| request.and_then(|request| request.archive.clone()))
-            .or_else(|| request.map(|_| format!("extensions/{}.tar.zst", extension.sql_name)));
-        let requested = request.map(|request| request.build).unwrap_or(false);
-        let stable = request.map(|request| request.stable).unwrap_or(false);
-        let blocker = request.and_then(|request| request.blocker.clone());
-        let packaged = asset.is_some();
-        let asset_stable = asset.map(|asset| asset.stable).unwrap_or(false);
-        extension.smoke = smoke_evidence
-            .get(extension.id.as_str())
-            .or_else(|| smoke_evidence.get(extension.sql_name.as_str()))
-            .cloned()
-            .unwrap_or_default();
-        extension.promotion = PromotionStatus {
-            configured: request.is_some(),
-            requested,
-            packaged,
-            promoted: requested
-                && stable
-                && packaged
-                && asset_stable
-                && extension.smoke.direct == "passed"
-                && extension.smoke.server == "passed"
-                && extension.smoke.restart == "passed"
-                && extension.smoke.dump_restore == "passed",
-            stable,
-            archive,
-            module_sha256: asset.and_then(|asset| asset.module_sha256.clone()),
-            blocker,
-        };
-        extension
-            .notes
-            .retain(|note| !note.starts_with("promotion blocker: "));
-        if let Some(blocker) = &extension.promotion.blocker {
-            extension
-                .notes
-                .push(format!("promotion blocker: {blocker}"));
-        }
-    }
-
     catalog
         .extensions
         .sort_by(|left, right| left.id.cmp(&right.id));
@@ -933,18 +648,6 @@ fn read_source_catalog_at(repository_root: &Path) -> Result<ExtensionCatalog> {
         path.display()
     );
     for extension in &catalog.extensions {
-        ensure!(
-            extension.smoke == ExtensionSmokeEvidence::default(),
-            "{} extension {} must not contain derived smoke evidence",
-            path.display(),
-            extension.id
-        );
-        ensure!(
-            extension.promotion == PromotionStatus::default(),
-            "{} extension {} must not contain derived promotion state",
-            path.display(),
-            extension.id
-        );
         ensure!(
             extension
                 .control
@@ -1117,18 +820,6 @@ fn catalog_inputs() -> Vec<CatalogInput> {
             name: "external-extension-recipes".to_owned(),
             path: POSTGRES_OTHER_EXTENSIONS.to_owned(),
         },
-        CatalogInput {
-            name: "extension-promotion-config".to_owned(),
-            path: PROMOTION_CONFIG_PATH.to_owned(),
-        },
-        CatalogInput {
-            name: "extension-smoke-evidence".to_owned(),
-            path: SMOKE_CONFIG_PATH.to_owned(),
-        },
-        CatalogInput {
-            name: "asset-manifest-evidence".to_owned(),
-            path: ASSET_MANIFEST.to_owned(),
-        },
     ]
 }
 
@@ -1150,56 +841,25 @@ fn validate_catalog(catalog: &ExtensionCatalog) -> Result<()> {
             "live must not be included in SQL extension catalog"
         );
         ensure!(
-            extension.promotion.configured,
-            "{} is missing from {}; every discovered SQL extension must be explicitly build-requested or blocked",
-            extension.id,
-            PROMOTION_CONFIG_PATH
-        );
-        ensure!(
-            extension.promotion.requested || extension.promotion.blocker.is_some(),
-            "{} is not build-requested and has no blocker in {}",
-            extension.id,
-            PROMOTION_CONFIG_PATH
-        );
-        ensure!(
             sql_names.insert(extension.sql_name.as_str()),
             "duplicate SQL extension name {}",
             extension.sql_name
         );
         ensure!(
-            !extension.promotion.promoted || extension.promotion.stable,
-            "{} cannot be promoted without stable=true",
+            extension.source_kind != "oliphaunt-plugin",
+            "supported extension {} is not a SQL extension",
             extension.id
         );
-        if extension.promotion.requested {
-            ensure!(
-                extension.promotion.archive.is_some(),
-                "requested extension {} must resolve to an archive path",
-                extension.id
-            );
-            ensure!(
-                extension.source_kind != "oliphaunt-plugin",
-                "requested extension {} is not a SQL extension",
-                extension.id
-            );
-            ensure!(
-                extension.lifecycle.create_extension || !extension.lifecycle.load_sql.is_empty(),
-                "requested extension {} must declare a lifecycle operation",
-                extension.id
-            );
-        }
-        if extension.promotion.promoted {
-            ensure!(
-                !extension.tests.is_empty(),
-                "promoted extension {} must have a smoke test source",
-                extension.id
-            );
-            ensure!(
-                extension.lifecycle.create_extension || !extension.lifecycle.load_sql.is_empty(),
-                "promoted extension {} must declare a lifecycle operation",
-                extension.id
-            );
-        }
+        ensure!(
+            !extension.tests.is_empty(),
+            "supported extension {} must have a smoke test source",
+            extension.id
+        );
+        ensure!(
+            extension.lifecycle.create_extension || !extension.lifecycle.load_sql.is_empty(),
+            "supported extension {} must declare a lifecycle operation",
+            extension.id
+        );
         for dependency in &extension.dependencies {
             if runtime_provided_sql_extensions().contains(&dependency.as_str()) {
                 continue;
@@ -1214,28 +874,6 @@ fn validate_catalog(catalog: &ExtensionCatalog) -> Result<()> {
                 extension.id,
                 dependency
             );
-            if extension.promotion.promoted {
-                ensure!(
-                    catalog.extensions.iter().any(|candidate| {
-                        candidate.promotion.promoted
-                            && (candidate.sql_name == *dependency || candidate.id == *dependency)
-                    }),
-                    "promoted extension {} depends on unpromoted extension {}",
-                    extension.id,
-                    dependency
-                );
-            }
-            if extension.promotion.requested {
-                ensure!(
-                    catalog.extensions.iter().any(|candidate| {
-                        candidate.promotion.requested
-                            && (candidate.sql_name == *dependency || candidate.id == *dependency)
-                    }),
-                    "requested extension {} depends on unrequested extension {}",
-                    extension.id,
-                    dependency
-                );
-            }
         }
     }
 
@@ -1270,10 +908,7 @@ fn api_native_support_modules(
         .map(|module| {
             (
                 module.runtime_path,
-                extension
-                    .promotion
-                    .stable
-                    .then(|| format!("extension:{}:{}", extension.sql_name, module.name)),
+                Some(format!("extension:{}:{}", extension.sql_name, module.name)),
             )
         })
         .collect())
@@ -1288,7 +923,15 @@ fn wasix_native_support_modules(sql_name: &str) -> Result<Vec<NativeSupportModul
 }
 
 fn wasix_target_recipe(sql_name: &str) -> Result<Option<ExtensionTargetRecipe>> {
-    let path = Path::new(EXTERNAL_EXTENSION_RECIPE_ROOT)
+    wasix_target_recipe_at(Path::new("."), sql_name)
+}
+
+fn wasix_target_recipe_at(
+    repository_root: &Path,
+    sql_name: &str,
+) -> Result<Option<ExtensionTargetRecipe>> {
+    let path = repository_root
+        .join(EXTERNAL_EXTENSION_RECIPE_ROOT)
         .join(sql_name)
         .join("targets/wasix.toml");
     if !path.exists() {
@@ -1306,108 +949,6 @@ fn wasix_target_recipe(sql_name: &str) -> Result<Option<ExtensionTargetRecipe>> 
 
 fn runtime_provided_sql_extensions() -> &'static [&'static str] {
     &["plpgsql"]
-}
-
-fn parse_promotion_config(path: &Path) -> Result<BTreeMap<String, PromotionRequest>> {
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let config: PromotionConfig =
-        toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    ensure!(
-        config.format_version == 1,
-        "{} format_version must be 1",
-        path.display()
-    );
-    let mut requests = BTreeMap::new();
-    for request in config.extensions {
-        ensure!(!request.id.is_empty(), "promotion request has empty id");
-        ensure!(
-            requests.insert(request.id.clone(), request).is_none(),
-            "duplicate promotion request"
-        );
-    }
-    Ok(requests)
-}
-
-fn parse_smoke_config(path: &Path) -> Result<BTreeMap<String, ExtensionSmokeEvidence>> {
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let config: SmokeConfig =
-        toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    ensure!(
-        config.format_version == 1,
-        "{} format_version must be 1",
-        path.display()
-    );
-    let mut evidence = BTreeMap::new();
-    for mut extension in config.extensions {
-        ensure!(!extension.id.is_empty(), "smoke evidence has empty id");
-        normalize_smoke_statuses(&mut extension);
-        ensure_valid_smoke_status(&extension.direct, &extension.id, "direct")?;
-        ensure_valid_smoke_status(&extension.server, &extension.id, "server")?;
-        ensure_valid_smoke_status(&extension.restart, &extension.id, "restart")?;
-        ensure_valid_smoke_status(&extension.dump_restore, &extension.id, "dump-restore")?;
-        ensure!(
-            evidence
-                .insert(
-                    extension.id.clone(),
-                    ExtensionSmokeEvidence::from(extension)
-                )
-                .is_none(),
-            "duplicate smoke evidence"
-        );
-    }
-    Ok(evidence)
-}
-
-fn normalize_smoke_statuses(extension: &mut SmokeConfigExtension) {
-    if extension.direct.is_empty() {
-        extension.direct = "not-run".to_owned();
-    }
-    if extension.server.is_empty() {
-        extension.server = "not-run".to_owned();
-    }
-    if extension.restart.is_empty() {
-        extension.restart = "not-run".to_owned();
-    }
-    if extension.dump_restore.is_empty() {
-        extension.dump_restore = "not-run".to_owned();
-    }
-}
-
-fn ensure_valid_smoke_status(status: &str, id: &str, field: &str) -> Result<()> {
-    ensure!(
-        matches!(status, "passed" | "failed" | "not-run" | "blocked"),
-        "extension {id} has invalid smoke status for {field}: {status}"
-    );
-    Ok(())
-}
-
-fn parse_packaged_manifest(path: &Path) -> Result<BTreeMap<String, PackagedExtension>> {
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let manifest: AssetManifest =
-        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    Ok(manifest
-        .extensions
-        .into_iter()
-        .map(|extension| {
-            (
-                extension.sql_name,
-                PackagedExtension {
-                    archive: Some(extension.archive),
-                    module_sha256: Some(extension.module_sha256),
-                    stable: extension.stable,
-                },
-            )
-        })
-        .collect())
 }
 
 pub(crate) fn is_pgxs_style_build_kind(kind: &str) -> bool {
@@ -1518,7 +1059,6 @@ struct CatalogInput {
 }
 
 struct BuildPlanTexts {
-    json: String,
     contrib_tsv: String,
     pgxs_tsv: String,
 }
@@ -1555,9 +1095,7 @@ struct ExtensionBuildPlanEntry {
     archive: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     control_file: Option<String>,
-    stable: bool,
     dependencies: Vec<String>,
-    native_dependencies: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     native_support_modules: Vec<NativeSupportModuleSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1566,7 +1104,6 @@ struct ExtensionBuildPlanEntry {
     staging: Option<ExtensionStagingSpec>,
     load_order: Vec<String>,
     lifecycle: ExtensionLifecycle,
-    smoke: ExtensionSmokeEvidence,
     tests: Vec<String>,
 }
 
@@ -1641,16 +1178,11 @@ struct ExtensionCatalogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     control: Option<ControlMetadata>,
     dependencies: Vec<String>,
-    native_dependencies: Vec<String>,
     load_order: Vec<String>,
     lifecycle: ExtensionLifecycle,
-    #[serde(default)]
-    smoke: ExtensionSmokeEvidence,
     tests: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     native_module_file: Option<String>,
-    #[serde(default)]
-    promotion: PromotionStatus,
     notes: Vec<String>,
 }
 
@@ -1680,42 +1212,6 @@ pub(crate) struct ExtensionLifecycle {
     pub(crate) preload_required: bool,
     pub(crate) restart_required: bool,
     pub(crate) shared_memory_required: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) struct ExtensionSmokeEvidence {
-    direct: String,
-    server: String,
-    restart: String,
-    dump_restore: String,
-}
-
-impl Default for ExtensionSmokeEvidence {
-    fn default() -> Self {
-        Self {
-            direct: "not-run".to_owned(),
-            server: "not-run".to_owned(),
-            restart: "not-run".to_owned(),
-            dump_restore: "not-run".to_owned(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-struct PromotionStatus {
-    configured: bool,
-    requested: bool,
-    packaged: bool,
-    promoted: bool,
-    stable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archive: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    module_sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    blocker: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1752,143 +1248,14 @@ struct ExternalExtensionControl {
     default_version: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct PromotionConfig {
-    format_version: u32,
-    #[serde(default)]
-    extensions: Vec<PromotionRequest>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct PromotionRequest {
-    id: String,
-    #[serde(default = "default_true")]
-    build: bool,
-    #[serde(default)]
-    stable: bool,
-    #[serde(default)]
-    archive: Option<String>,
-    #[serde(default)]
-    blocker: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct SmokeConfig {
-    format_version: u32,
-    #[serde(default)]
-    extensions: Vec<SmokeConfigExtension>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct SmokeConfigExtension {
-    id: String,
-    #[serde(default)]
-    direct: String,
-    #[serde(default)]
-    server: String,
-    #[serde(default)]
-    restart: String,
-    #[serde(default)]
-    dump_restore: String,
-}
-
-impl From<SmokeConfigExtension> for ExtensionSmokeEvidence {
-    fn from(value: SmokeConfigExtension) -> Self {
-        Self {
-            direct: value.direct,
-            server: value.server,
-            restart: value.restart,
-            dump_restore: value.dump_restore,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PackagedExtension {
-    archive: Option<String>,
-    module_sha256: Option<String>,
-    stable: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct AssetManifest {
-    #[serde(default)]
-    extensions: Vec<AssetManifestExtension>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct AssetManifestExtension {
-    sql_name: String,
-    archive: String,
-    #[serde(default)]
-    module_sha256: String,
-    #[serde(default)]
-    stable: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn build_plan_entry_for_manifest_metadata_test() -> ExtensionBuildPlanEntry {
-        ExtensionBuildPlanEntry {
-            id: "vector".to_owned(),
-            sql_name: "vector".to_owned(),
-            display_name: "pgvector".to_owned(),
-            source_kind: "oliphaunt-other-extension".to_owned(),
-            build_kind: "pgxs-external".to_owned(),
-            build_script: None,
-            required_build_files: Vec::new(),
-            required_build_globs: Vec::new(),
-            source_dir: "target/oliphaunt-sources/checkouts/pgvector".to_owned(),
-            make_args: Vec::new(),
-            contrib_dir: None,
-            module_file: Some("vector.so".to_owned()),
-            archive: "extensions/vector.tar.zst".to_owned(),
-            control_file: Some(
-                "target/oliphaunt-sources/checkouts/pgvector/vector.control".to_owned(),
-            ),
-            stable: true,
-            dependencies: vec!["plpgsql".to_owned()],
-            native_dependencies: vec!["runtime:oliphaunt".to_owned()],
-            native_support_modules: Vec::new(),
-            excluded_sql_extensions: Vec::new(),
-            staging: None,
-            load_order: vec!["vector".to_owned()],
-            lifecycle: ExtensionLifecycle {
-                create_extension: true,
-                create_schema: Some("extensions".to_owned()),
-                load_sql: vec!["select 1".to_owned()],
-                post_create_sql: vec!["select 2".to_owned()],
-                startup_config: vec!["shared_preload_libraries=vector".to_owned()],
-                preload_required: true,
-                restart_required: true,
-                shared_memory_required: false,
-            },
-            smoke: ExtensionSmokeEvidence {
-                direct: "passed".to_owned(),
-                server: "passed".to_owned(),
-                restart: "passed".to_owned(),
-                dump_restore: "passed".to_owned(),
-            },
-            tests: vec!["src/extensions/tests/vector.test.ts".to_owned()],
-        }
-    }
-
     #[test]
     fn extension_build_plan_tsv_freshness_is_checkout_line_ending_stable() {
-        let expected = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\tstable\namcheck\tamcheck\tamcheck\tamcheck.so\textensions/amcheck.tar.zst\ttrue\n";
-        let windows_checkout = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\tstable\r\namcheck\tamcheck\tamcheck\tamcheck.so\textensions/amcheck.tar.zst\ttrue\r\n";
+        let expected = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\namcheck\tamcheck\tamcheck\tamcheck.so\textensions/amcheck.tar.zst\n";
+        let windows_checkout = "# id\tsql_name\tcontrib_dir\tmodule_file\tarchive\r\namcheck\tamcheck\tamcheck\tamcheck.so\textensions/amcheck.tar.zst\r\n";
 
         assert!(extension_build_plan_tsv_matches_source_control(
             windows_checkout,
@@ -1941,62 +1308,14 @@ mod tests {
     }
 
     #[test]
-    fn build_plan_manifest_metadata_preserves_runtime_contract() {
-        let metadata =
-            manifest_metadata_from_build_plan_entry(build_plan_entry_for_manifest_metadata_test());
-
-        assert_eq!(metadata.source_kind, "oliphaunt-other-extension");
-        assert_eq!(
-            metadata.control_files,
-            vec!["target/oliphaunt-sources/checkouts/pgvector/vector.control"]
-        );
-        assert_eq!(metadata.dependencies, vec!["plpgsql"]);
-        assert_eq!(metadata.native_dependencies, vec!["runtime:oliphaunt"]);
-        assert_eq!(metadata.load_order, vec!["vector"]);
-        assert!(metadata.lifecycle.create_extension);
-        assert_eq!(
-            metadata.lifecycle.create_schema.as_deref(),
-            Some("extensions")
-        );
-        assert_eq!(metadata.lifecycle.load_sql, vec!["select 1"]);
-        assert_eq!(metadata.lifecycle.post_create_sql, vec!["select 2"]);
-        assert!(metadata.lifecycle.preload_required);
-        assert!(metadata.lifecycle.restart_required);
-        assert!(!metadata.lifecycle.shared_memory_required);
-        assert!(metadata.smoke_status.promoted);
-        assert_eq!(metadata.smoke_status.direct, "passed");
-        assert_eq!(metadata.smoke_status.server, "passed");
-        assert_eq!(metadata.smoke_status.restart, "passed");
-        assert_eq!(metadata.smoke_status.dump_restore, "passed");
-    }
-
-    #[test]
-    fn build_plan_manifest_metadata_requires_all_smoke_evidence_for_promoted() {
-        let mut entry = build_plan_entry_for_manifest_metadata_test();
-        entry.smoke.restart = "not-run".to_owned();
-
-        let metadata = manifest_metadata_from_build_plan_entry(entry);
-
-        assert!(!metadata.smoke_status.promoted);
-        assert_eq!(metadata.smoke_status.restart, "not-run");
-
-        let mut entry = build_plan_entry_for_manifest_metadata_test();
-        entry.smoke.dump_restore = "not-run".to_owned();
-
-        let metadata = manifest_metadata_from_build_plan_entry(entry);
-
-        assert!(!metadata.smoke_status.promoted);
-        assert_eq!(metadata.smoke_status.dump_restore, "not-run");
-    }
-
-    #[test]
     fn generated_postgis_build_spec_preserves_wasix_target_recipe_metadata() -> Result<()> {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let specs = promoted_build_specs_from_generated_plan_at(&repo_root.join(BUILD_PLAN_PATH))?;
+        let catalog = read_source_catalog_at(&repo_root)?;
+        let specs = build_specs_at(&catalog, &repo_root)?;
         let postgis = specs
             .iter()
             .find(|extension| extension.sql_name == "postgis")
-            .expect("postgis must be a promoted build spec");
+            .expect("postgis must be a supported build spec");
 
         assert_eq!(postgis.build_kind, "autotools");
         assert_eq!(

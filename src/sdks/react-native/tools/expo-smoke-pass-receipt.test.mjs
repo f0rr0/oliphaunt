@@ -11,18 +11,14 @@ import {
   GENERATED_EXTENSION_METADATA_SHA256,
 } from "../src/generated/extensions.ts";
 
-function platformExtensions(platform) {
+function platformExtensions() {
   return GENERATED_EXTENSION_METADATA
-    .filter((extension) => {
-      const status = extension.support.mobile?.[platform];
-      return extension.mobileReleaseReady && (status === undefined || status === "supported");
-    })
     .map((extension) => extension.sqlName)
     .sort();
 }
 
 function receiptInput(platform, overrides = {}) {
-  const extensions = platformExtensions(platform);
+  const extensions = platformExtensions();
   return {
     platform,
     extensions,
@@ -37,7 +33,7 @@ function receiptInput(platform, overrides = {}) {
 
 test("the exact mobile catalog produces a bounded authoritative receipt", () => {
   for (const platform of ["android", "ios"]) {
-    const extensions = platformExtensions(platform);
+    const extensions = platformExtensions();
     const serialized = serializeExpoSmokePassReceipt(receiptInput(platform));
     const event = `${EXPO_SMOKE_PASS_TAG} ${serialized}`;
     assert(Buffer.byteLength(event) <= EXPO_SMOKE_PASS_EVENT_MAX_BYTES);
@@ -56,7 +52,7 @@ test("the exact mobile catalog produces a bounded authoritative receipt", () => 
 });
 
 test("receipt serialization fails closed on proof drift and remains constant-size as catalogs grow", () => {
-  const extensions = platformExtensions("ios");
+  const extensions = platformExtensions();
   assert.throws(
     () => serializeExpoSmokePassReceipt(receiptInput("ios", {
       activatedExtensions: extensions.slice(1),

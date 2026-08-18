@@ -109,7 +109,7 @@ pub fn list_prebuilt_extension_artifact_index_catalog(
 /// archive artifacts.
 ///
 /// The index producer verifies every artifact through the same schema parser
-/// used by package consumption, rejects built-in release-ready extension names,
+/// used by package consumption, rejects built-in public extension names,
 /// computes byte counts and SHA-256 digests, and writes relative paths only.
 pub fn create_prebuilt_extension_artifact_index(
     options: NativeExtensionArtifactIndexCreateOptions,
@@ -303,9 +303,9 @@ fn create_extension_artifact_index_row(
             target
         )));
     }
-    if Extension::by_release_ready_sql_name(&loaded.sql_name).is_some() {
+    if Extension::by_sql_name(&loaded.sql_name).is_some() {
         return Err(Error::InvalidConfig(format!(
-            "extension artifact index cannot override built-in release-ready extension '{}'",
+            "extension artifact index cannot override built-in public extension '{}'",
             loaded.sql_name
         )));
     }
@@ -527,9 +527,9 @@ fn load_extension_artifact_index(
             )?;
         }
         validate_sha256_hex(index_path, &artifact.sha256)?;
-        if Extension::by_release_ready_sql_name(&artifact.sql_name).is_some() {
+        if Extension::by_sql_name(&artifact.sql_name).is_some() {
             return Err(Error::InvalidConfig(format!(
-                "extension artifact index {} cannot override built-in release-ready extension '{}'",
+                "extension artifact index {} cannot override built-in public extension '{}'",
                 index_path.display(),
                 artifact.sql_name
             )));
@@ -840,7 +840,7 @@ fn visit_extension_artifact_index_entry(
     artifacts: &mut Vec<NativePrebuiltExtensionArtifact>,
     extension_names: &mut Vec<String>,
 ) -> Result<()> {
-    if Extension::by_release_ready_sql_name(sql_name).is_some() {
+    if Extension::by_sql_name(sql_name).is_some() {
         return Ok(());
     }
     if visited.contains(sql_name) {

@@ -34,6 +34,7 @@ docs_entry = "target/docs/generated/api/typescript/html/index.html"
 package_path = "src/sdks/react-native"
 docs_entry = "target/docs/generated/api/react-native/html/index.html"
 
+# Internal rustdoc artifact key. Public routes and labels use WASIX.
 [api_reference.wasm]
 package = "oliphaunt-wasix"
 docs_entry = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
@@ -44,7 +45,6 @@ title = "Start"
 kind = "public"
 route = "start"
 source = "src/docs/content/start"
-public = true
 version_source = "current"
 reference_kind = "none"
 tested_snippet_path = ""
@@ -57,7 +57,6 @@ title = "SDKs"
 kind = "public"
 route = "sdk"
 source = "src/docs/content/sdk"
-public = true
 version_source = "current"
 reference_kind = "none"
 tested_snippet_path = ""
@@ -70,7 +69,6 @@ title = "Learn"
 kind = "public"
 route = "learn"
 source = "src/docs/content/learn"
-public = true
 version_source = "current"
 reference_kind = "none"
 tested_snippet_path = ""
@@ -90,7 +88,6 @@ title = "Reference"
 kind = "public"
 route = "reference"
 source = "src/docs/content/reference"
-public = true
 version_source = "current"
 reference_kind = "none"
 tested_snippet_path = ""
@@ -120,7 +117,6 @@ title = "Rust SDK"
 kind = "sdk"
 route = "sdk/rust"
 source = "src/docs/content/sdk/rust"
-public = true
 version_source = "src/sdks/rust/release.toml:id"
 reference_kind = "rustdoc"
 tested_snippet_path = "src/sdks/rust/tests/sdk_shape.rs"
@@ -149,7 +145,6 @@ title = "Swift SDK"
 kind = "sdk"
 route = "sdk/swift"
 source = "src/docs/content/sdk/swift"
-public = true
 version_source = "src/sdks/swift/release.toml:id"
 reference_kind = "swift-docc"
 tested_snippet_path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift"
@@ -178,7 +173,6 @@ title = "Kotlin SDK"
 kind = "sdk"
 route = "sdk/kotlin"
 source = "src/docs/content/sdk/kotlin"
-public = true
 version_source = "src/sdks/kotlin/release.toml:id"
 reference_kind = "dokka"
 tested_snippet_path = "src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt"
@@ -207,7 +201,6 @@ title = "React Native SDK"
 kind = "sdk"
 route = "sdk/react-native"
 source = "src/docs/content/sdk/react-native"
-public = true
 version_source = "src/sdks/react-native/release.toml:id"
 reference_kind = "typedoc"
 tested_snippet_path = "src/sdks/react-native/src/__tests__/client.test.ts"
@@ -238,7 +231,6 @@ title = "TypeScript SDK"
 kind = "sdk"
 route = "sdk/typescript"
 source = "src/docs/content/sdk/typescript"
-public = true
 version_source = "src/sdks/js/release.toml:id"
 reference_kind = "typedoc"
 tested_snippet_path = "src/sdks/js/src/__tests__/client.test.ts"
@@ -263,11 +255,10 @@ snippet_language = "typescript"
 [[routes]]
 id = "oliphaunt-wasix"
 product_id = "oliphaunt-wasix-rust"
-title = "WASM SDK"
+title = "Rust WASIX SDK"
 kind = "sdk"
-route = "sdk/wasm"
+route = "sdk/wasix"
 source = "src/docs/content/sdk/wasm"
-public = true
 version_source = "src/bindings/wasix-rust/crates/oliphaunt-wasix/release.toml:id"
 reference_kind = "rustdoc"
 tested_snippet_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs"
@@ -279,6 +270,7 @@ required_pages = [
 ]
 page_order = [
   "index",
+  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",
@@ -286,6 +278,7 @@ page_order = [
 ]
 sidebar_pages = [
   "index",
+  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",
@@ -300,7 +293,6 @@ title = "C ABI"
 kind = "sdk"
 route = "sdk/c-abi"
 source = "src/docs/content/sdk/c-abi"
-public = true
 version_source = "src/runtimes/liboliphaunt/native/release.toml:id"
 reference_kind = "doxygen"
 tested_snippet_path = "src/runtimes/liboliphaunt/native/smoke/liboliphaunt_smoke.c"

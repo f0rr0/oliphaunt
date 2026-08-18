@@ -44,8 +44,14 @@ tasks:
       - "!/src/sdks/js/node_modules"
       - "!/src/sdks/js/node_modules/**"
       - "!/src/sdks/js/lib/**"
+      - "/src/bindings/wasix-ts/**/*"
+      - "!/src/bindings/wasix-ts/node_modules"
+      - "!/src/bindings/wasix-ts/node_modules/**"
+      - "!/src/bindings/wasix-ts/lib/**"
+      - "!/src/bindings/wasix-ts/examples/browser/dist/**"
       - "/tools/policy/format.sh"
       - "/tools/perf/matrix/**/*"
+      - "/tools/perf/wasix-browser/**/*"
       - "/tools/test/**/*"
     options:
       cache: false
@@ -77,8 +83,14 @@ tasks:
       - "!/src/sdks/js/node_modules"
       - "!/src/sdks/js/node_modules/**"
       - "!/src/sdks/js/lib/**"
+      - "/src/bindings/wasix-ts/**/*"
+      - "!/src/bindings/wasix-ts/node_modules"
+      - "!/src/bindings/wasix-ts/node_modules/**"
+      - "!/src/bindings/wasix-ts/lib/**"
+      - "!/src/bindings/wasix-ts/examples/browser/dist/**"
       - "/tools/policy/format.sh"
       - "/tools/perf/matrix/**/*"
+      - "/tools/perf/wasix-browser/**/*"
       - "/tools/test/**/*"
     options:
       cache: true

@@ -107,7 +107,7 @@ pub(super) fn perf_diagnose_indexed_update() -> Result<()> {
 
     let report = IndexedUpdateDiagnosticReport {
         source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql plus controlled variants.",
-        measurement_model: "Each case opens a fresh temporary database, runs setup outside the measured section, then records the measured update SQL and internal Rust/WASIX phase timings.",
+        measurement_model: "Each case opens a fresh disposable database, runs setup outside the measured section, then records the measured update SQL and internal Rust/WASIX phase timings.",
         wasix_runtime_assets: wasix_runtime_asset_report()?,
         cases,
     };
@@ -273,7 +273,7 @@ fn perf_diagnose_speed_ids(ids: &[&str], options: &SpeedDiagnosticOptions) -> Re
 
     let report = SpeedHotspotDiagnosticReport {
         source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql.",
-        measurement_model: "Each case opens a fresh temporary database, runs all earlier Oliphaunt speed tests outside the measured section, then records the selected speed-test SQL. WASIX diagnostics include FS trace and internal Rust phase timings. Native direct diagnostics run one case per process. Native PostgreSQL diagnostics start a fresh temporary cluster per case and use the same database target as liboliphaunt.",
+        measurement_model: "Each case opens a fresh disposable database, runs all earlier Oliphaunt speed tests outside the measured section, then records the selected speed-test SQL. WASIX diagnostics include FS trace and internal Rust phase timings. Native direct diagnostics run one case per process. Native PostgreSQL diagnostics start a fresh temporary cluster per case and use the same database target as liboliphaunt.",
         wasix_runtime_assets: (options.engine == DiagnosticEngine::WasixLegacy)
             .then(wasix_runtime_asset_report)
             .transpose()?,
@@ -303,7 +303,7 @@ pub(super) fn perf_diagnose_buffer_cache() -> Result<()> {
 
     let report = BufferCacheDiagnosticReport {
         source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql.",
-        measurement_model: "Each case opens a fresh temporary database, runs all earlier Oliphaunt speed tests outside the measured section, then executes EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) for the target data-moving statements.",
+        measurement_model: "Each case opens a fresh disposable database, runs all earlier Oliphaunt speed tests outside the measured section, then executes EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) for the target data-moving statements.",
         wasix_runtime_assets: wasix_runtime_asset_report()?,
         cases: diagnostics,
     };
@@ -328,7 +328,7 @@ fn run_buffer_cache_diagnostic_case(
         .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
     let target = &cases[target_index];
 
-    let mut builder = Oliphaunt::builder().temporary();
+    let mut builder = Oliphaunt::builder().storage(DatabaseStorage::Memory);
     if let Some(config) = perf_postgres_config_from_env()? {
         builder = builder.postgres_configs(config);
     }
@@ -500,7 +500,7 @@ fn run_wasix_speed_hotspot_diagnostic_case(
 ) -> Result<SpeedHotspotDiagnosticCase> {
     let target = &cases[target_index];
     let mut db = Oliphaunt::builder()
-        .temporary()
+        .storage(DatabaseStorage::Memory)
         .open()
         .with_context(|| format!("open speed hotspot diagnostic database for {}", target.id))?;
 
@@ -741,7 +741,7 @@ fn run_indexed_update_diagnostic_case(
     operation_count: usize,
 ) -> Result<IndexedUpdateDiagnosticCase> {
     let mut db = Oliphaunt::builder()
-        .temporary()
+        .storage(DatabaseStorage::Memory)
         .open()
         .with_context(|| format!("open diagnostic database for {name}"))?;
 

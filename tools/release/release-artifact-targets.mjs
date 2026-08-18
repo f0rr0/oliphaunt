@@ -10,6 +10,10 @@ import {
   extensionWasixRegistryPackageStrings,
 } from "./extension-registry-packages.mjs";
 import { loadContribCarriers } from "./contrib-carriers.mjs";
+import {
+  EXTENSION_TARGET_PROFILES_RELATIVE_PATH,
+  loadExtensionTargetProfiles,
+} from "./extension-target-profiles.mjs";
 import { loadGraph } from "./release-graph.mjs";
 
 export { PLATFORM_COMPATIBILITY_POLICY };
@@ -100,34 +104,35 @@ export const MOBILE_TARGETS = {
 };
 
 const NATIVE_RUNTIME_TARGETS = { ...DESKTOP_TARGETS, ...MOBILE_TARGETS };
-const WASIX_TARGETS = new Set(["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
-const BROKER_TARGETS = new Set(["linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
+const RELEASE_HOST_TARGETS = Object.freeze([
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+]);
+const WASIX_TARGETS = new Set(["portable", ...RELEASE_HOST_TARGETS]);
+const WASIX_POSTMASTER_TARGETS = new Set(RELEASE_HOST_TARGETS);
+const BROKER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const NODE_DIRECT_TARGETS = BROKER_TARGETS;
 const PRODUCT_PRESETS = {
   "liboliphaunt-native": "liboliphaunt-native",
   "liboliphaunt-wasix": "liboliphaunt-wasix",
+  "liboliphaunt-wasix-postmaster": "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker": "broker-helper",
   "oliphaunt-node-direct": "node-direct-addon",
 };
 const EXTENSION_FAMILIES = new Set(["native", "wasix"]);
 const EXTENSION_KINDS = new Set(["native-dynamic", "native-static-registry", "wasix-runtime"]);
-const EXTENSION_STATUSES = new Set(["supported", "planned", "unsupported"]);
-const EXTENSION_EVIDENCE_KINDS = new Set([
-  "build-and-lifecycle-smoke",
-  "build-package-and-install",
-  "manual-qualification",
-  "unsupported-contract",
-]);
 const EXTENSION_VERSIONING_BY_CLASS = {
   contrib: "runtime-bound",
   external: "upstream-bound",
   "first-party": "repo-bound",
 };
 const EXTENSION_PRODUCT_KINDS = new Set(["exact-extension-artifact", "exact-extension-bundle"]);
-const EXTENSION_BUILD_PLAN_PATH = path.join(ROOT, "src/extensions/generated/extensions.build-plan.json");
+const EXTENSION_CATALOG_PATH = path.join(ROOT, "src/extensions/generated/extensions.catalog.json");
 
 const graphCache = new Map();
-let extensionBuildPlanRowsCache;
+let extensionCatalogRowsCache;
 let contribCarriersCache;
 
 export function fail(prefix, message) {
@@ -257,37 +262,18 @@ function artifactTargetConfig(product, expectedPreset, prefix) {
   return config;
 }
 
-function publishedTargets(product, expectedPreset, knownTargets, prefix) {
+function productTargets(product, expectedPreset, knownTargets, prefix) {
   const config = artifactTargetConfig(product, expectedPreset, prefix);
-  const targets = assertStringList(config.publishedTargets ?? [], `${product}.publishedTargets`, prefix);
+  const targets = assertStringList(config.targets ?? [], `${product}.targets`, prefix);
   const duplicates = [...new Set(targets.filter((target, index) => targets.indexOf(target) !== index))];
   if (duplicates.length > 0) {
-    fail(prefix, `Moon release metadata for ${product} artifactTargets.publishedTargets contains duplicates`);
+    fail(prefix, `Moon release metadata for ${product} artifactTargets.targets contains duplicates`);
   }
   const unknown = targets.filter((target) => !knownTargets.has(target)).sort(compareText);
   if (unknown.length > 0) {
     fail(prefix, `Moon release metadata for ${product} declares unknown artifact target(s): ${unknown.join(", ")}`);
   }
   return targets;
-}
-
-function plannedTargets(product, expectedPreset, knownTargets, prefix) {
-  const value = artifactTargetConfig(product, expectedPreset, prefix).plannedTargets ?? {};
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    fail(prefix, `Moon release metadata for ${product} artifactTargets.plannedTargets must be an object`);
-  }
-  const parsed = new Map();
-  for (const [target, details] of Object.entries(value)) {
-    if (!knownTargets.has(target)) {
-      fail(prefix, `Moon release metadata for ${product} declares unknown planned artifact target ${target}`);
-    }
-    const reason = details?.unsupportedReason;
-    if (typeof reason !== "string" || reason.trim().length < 40) {
-      fail(prefix, `Moon release metadata for ${product} planned target ${target} must declare a concrete unsupportedReason`);
-    }
-    parsed.set(target, details);
-  }
-  return parsed;
 }
 
 function nativeLibraryRelativePath(target) {
@@ -349,14 +335,12 @@ export function liboliphauntAndroidAbi(target) {
 
 function liboliphauntNativeRows(prefix) {
   const product = "liboliphaunt-native";
-  const published = new Set(
-    publishedTargets(product, PRODUCT_PRESETS[product], new Set(Object.keys(NATIVE_RUNTIME_TARGETS)), prefix),
+  const targets = new Set(
+    productTargets(product, PRODUCT_PRESETS[product], new Set(Object.keys(NATIVE_RUNTIME_TARGETS)), prefix),
   );
-  const planned = plannedTargets(product, PRODUCT_PRESETS[product], new Set(Object.keys(NATIVE_RUNTIME_TARGETS)), prefix);
   const rows = [];
-  for (const target of [...new Set([...published, ...planned.keys()])].sort(compareText)) {
+  for (const target of [...targets].sort(compareText)) {
     const platform = NATIVE_RUNTIME_TARGETS[target];
-    const publishedTarget = published.has(target);
     const row = {
       id: `${product}.${target}`,
       product,
@@ -371,16 +355,9 @@ function liboliphauntNativeRows(prefix) {
       npm_cpu: platform.npmCpu,
       npm_libc: platform.npmLibc,
       surfaces: nativeSurfaces(target),
-      published: publishedTarget,
-      binary_compatibility: publishedTarget
-        ? requiredBinaryCompatibility(target, `${product} native runtime`, prefix)
-        : undefined,
+      binary_compatibility: requiredBinaryCompatibility(target, `${product} native runtime`, prefix),
       _source_file: "Moon release metadata",
     };
-    if (!publishedTarget) {
-      row.tier = "planned";
-      row.unsupported_reason = planned.get(target).unsupportedReason;
-    }
     rows.push(row);
   }
   rows.push(
@@ -393,7 +370,6 @@ function liboliphauntNativeRows(prefix) {
       runner: "macos-26",
       asset: "liboliphaunt-{version}-apple-spm-xcframework.zip",
       surfaces: ["github-release", "swiftpm"],
-      published: true,
       _source_file: "Moon release metadata",
     },
     {
@@ -403,7 +379,6 @@ function liboliphauntNativeRows(prefix) {
       target: "portable",
       asset: "liboliphaunt-{version}-runtime-resources.tar.gz",
       surfaces: ["github-release", "rust-native-direct", "typescript-native-direct", "swiftpm", "maven"],
-      published: true,
       _source_file: "Moon release metadata",
     },
     {
@@ -422,7 +397,6 @@ function liboliphauntNativeRows(prefix) {
         "react-native-ios",
         "react-native-android",
       ],
-      published: true,
       _source_file: "Moon release metadata",
     },
     {
@@ -440,7 +414,6 @@ function liboliphauntNativeRows(prefix) {
         "rust-native-direct",
         "typescript-native-direct",
       ],
-      published: true,
       _source_file: "Moon release metadata",
     },
     {
@@ -450,11 +423,10 @@ function liboliphauntNativeRows(prefix) {
       target: "portable",
       asset: "liboliphaunt-{version}-release-assets.sha256",
       surfaces: ["github-release"],
-      published: true,
       _source_file: "Moon release metadata",
     },
   );
-  for (const target of [...published].filter((item) => item in DESKTOP_TARGETS).sort(compareText)) {
+  for (const target of [...targets].filter((item) => item in DESKTOP_TARGETS).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
       id: `${product}.tools-${target}`,
@@ -469,7 +441,6 @@ function liboliphauntNativeRows(prefix) {
       npm_cpu: platform.npmCpu,
       npm_libc: platform.npmLibc,
       surfaces: ["github-release", "rust-native-direct", "typescript-native-direct"],
-      published: true,
       binary_compatibility: requiredBinaryCompatibility(
         target,
         `${product} native tools`,
@@ -483,9 +454,9 @@ function liboliphauntNativeRows(prefix) {
 
 function liboliphauntWasixRows(prefix) {
   const product = "liboliphaunt-wasix";
-  const published = new Set(publishedTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix));
-  if (!published.has("portable")) {
-    fail(prefix, `Moon release metadata for ${product} must publish the portable runtime target`);
+  const targets = new Set(productTargets(product, PRODUCT_PRESETS[product], WASIX_TARGETS, prefix));
+  if (!targets.has("portable")) {
+    fail(prefix, `Moon release metadata for ${product} must include the portable runtime target`);
   }
   const rows = [
     {
@@ -495,7 +466,6 @@ function liboliphauntWasixRows(prefix) {
       target: "portable",
       asset: "liboliphaunt-wasix-{version}-runtime-portable.tar.zst",
       surfaces: ["github-release"],
-      published: true,
       _source_file: "Moon release metadata",
     },
     {
@@ -505,11 +475,10 @@ function liboliphauntWasixRows(prefix) {
       target: "portable",
       asset: "liboliphaunt-wasix-{version}-icu-data.tar.zst",
       surfaces: ["github-release"],
-      published: true,
       _source_file: "Moon release metadata",
     },
   ];
-  for (const target of [...published].filter((item) => item !== "portable").sort(compareText)) {
+  for (const target of [...targets].filter((item) => item !== "portable").sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
       id: `${product}.aot-${target}`,
@@ -523,7 +492,6 @@ function liboliphauntWasixRows(prefix) {
       llvm_bytes: platform.wasixLlvmBytes,
       asset: `liboliphaunt-wasix-{version}-runtime-aot-${target}.tar.zst`,
       surfaces: ["github-release"],
-      published: true,
       _source_file: "Moon release metadata",
     });
   }
@@ -534,7 +502,50 @@ function liboliphauntWasixRows(prefix) {
     target: "portable",
     asset: "liboliphaunt-wasix-{version}-release-assets.sha256",
     surfaces: ["github-release"],
-    published: true,
+    _source_file: "Moon release metadata",
+  });
+  return rows;
+}
+
+function liboliphauntWasixPostmasterRows(prefix) {
+  const product = "liboliphaunt-wasix-postmaster";
+  const rows = [];
+  for (const target of productTargets(
+    product,
+    PRODUCT_PRESETS[product],
+    WASIX_POSTMASTER_TARGETS,
+    prefix,
+  ).sort(compareText)) {
+    const platform = DESKTOP_TARGETS[target];
+    rows.push({
+      id: `${product}.${target}`,
+      product,
+      kind: "wasix-postmaster-runtime",
+      target,
+      triple: platform.triple,
+      runner: platform.runner,
+      llvm_url: platform.wasixLlvmUrl,
+      llvm_sha256: platform.wasixLlvmSha256,
+      llvm_bytes: platform.wasixLlvmBytes,
+      asset: `${product}-{version}-${target}.tar.zst`,
+      surfaces: ["github-release"],
+      binary_compatibility: requiredBinaryCompatibility(
+        target,
+        `${product} runtime`,
+        prefix,
+      ),
+      extension_artifacts: false,
+      _source_file: "Moon release metadata",
+    });
+  }
+  rows.push({
+    id: `${product}.checksums`,
+    product,
+    kind: "checksums",
+    target: "portable",
+    asset: `${product}-{version}-release-assets.sha256`,
+    surfaces: ["github-release"],
+    extension_artifacts: false,
     _source_file: "Moon release metadata",
   });
   return rows;
@@ -543,7 +554,7 @@ function liboliphauntWasixRows(prefix) {
 function brokerRows(prefix) {
   const product = "oliphaunt-broker";
   const rows = [];
-  for (const target of publishedTargets(product, PRODUCT_PRESETS[product], BROKER_TARGETS, prefix).sort(compareText)) {
+  for (const target of productTargets(product, PRODUCT_PRESETS[product], BROKER_TARGETS, prefix).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
       id: `${product}.${target}`,
@@ -559,7 +570,6 @@ function brokerRows(prefix) {
       npm_cpu: platform.npmCpu,
       npm_libc: platform.npmLibc,
       surfaces: ["github-release", "rust-broker", "typescript-broker"],
-      published: true,
       binary_compatibility: requiredBinaryCompatibility(target, `${product} broker`, prefix),
       _source_file: "Moon release metadata",
     });
@@ -571,7 +581,6 @@ function brokerRows(prefix) {
     target: "portable",
     asset: "oliphaunt-broker-{version}-release-assets.sha256",
     surfaces: ["github-release", "rust-broker", "typescript-broker"],
-    published: true,
     _source_file: "Moon release metadata",
   });
   return rows;
@@ -580,7 +589,7 @@ function brokerRows(prefix) {
 function nodeDirectRows(prefix) {
   const product = "oliphaunt-node-direct";
   const rows = [];
-  for (const target of publishedTargets(product, PRODUCT_PRESETS[product], NODE_DIRECT_TARGETS, prefix).sort(compareText)) {
+  for (const target of productTargets(product, PRODUCT_PRESETS[product], NODE_DIRECT_TARGETS, prefix).sort(compareText)) {
     const platform = DESKTOP_TARGETS[target];
     rows.push({
       id: `${product}.${target}`,
@@ -596,7 +605,6 @@ function nodeDirectRows(prefix) {
       npm_cpu: platform.npmCpu,
       npm_libc: platform.npmLibc,
       surfaces: ["github-release", "npm-optional"],
-      published: true,
       binary_compatibility: requiredBinaryCompatibility(target, `${product} Node addon`, prefix),
       _source_file: "Moon release metadata",
     });
@@ -608,7 +616,6 @@ function nodeDirectRows(prefix) {
     target: "portable",
     asset: "oliphaunt-node-direct-{version}-release-assets.sha256",
     surfaces: ["github-release"],
-    published: true,
     _source_file: "Moon release metadata",
   });
   return rows;
@@ -618,6 +625,7 @@ export function rawArtifactTargetRows(prefix = "release-artifact-targets.mjs") {
   return [
     ...liboliphauntNativeRows(prefix),
     ...liboliphauntWasixRows(prefix),
+    ...liboliphauntWasixPostmasterRows(prefix),
     ...brokerRows(prefix),
     ...nodeDirectRows(prefix),
   ];
@@ -676,7 +684,6 @@ function normalizeArtifactTarget(row, prefix) {
     kind: stringField(row, "kind", id, true, prefix),
     target: stringField(row, "target", id, true, prefix),
     asset: stringField(row, "asset", id, true, prefix),
-    published: row.published,
     surfaces: assertStringList(row.surfaces, `${id}.surfaces`, prefix),
     triple: stringField(row, "triple", id, false, prefix),
     runner: stringField(row, "runner", id, false, prefix),
@@ -708,9 +715,6 @@ function normalizeArtifactTarget(row, prefix) {
     source_file: sourceFile,
     unsupported_reason: unsupportedReason,
   };
-  if (typeof target.published !== "boolean") {
-    fail(prefix, `artifact target ${id}.published must be true or false`);
-  }
   if (typeof target.extensionArtifacts !== "boolean") {
     fail(prefix, `artifact target ${id}.extension_artifacts must be true or false`);
   }
@@ -722,7 +726,6 @@ export function allArtifactTargets(
     product = undefined,
     kind = undefined,
     surface = undefined,
-    publishedOnly = false,
   } = {},
   prefix = "release-artifact-targets.mjs",
 ) {
@@ -747,15 +750,12 @@ export function allArtifactTargets(
       if (surface !== undefined && !target.surfaces.includes(surface)) {
         return false;
       }
-      if (publishedOnly && !target.published) {
-        return false;
-      }
       return true;
     });
 }
 
 export function typescriptOptionalRuntimePackageProducts(prefix = "release-artifact-targets.mjs") {
-  const selected = allArtifactTargets({ publishedOnly: true }, prefix).filter((target) => {
+  const selected = allArtifactTargets({}, prefix).filter((target) => {
     if (target.product === "oliphaunt-broker" && target.kind === "broker-helper") {
       return target.surfaces.includes("typescript-broker");
     }
@@ -792,13 +792,13 @@ export function typescriptOptionalRuntimePackageProducts(prefix = "release-artif
 }
 
 export function artifactTargets(product, kind, prefix) {
-  return allArtifactTargets({ product, kind, publishedOnly: true }, prefix);
+  return allArtifactTargets({ product, kind }, prefix);
 }
 
 function ciArtifactRows({ product, kind, surface, family, name }, prefix) {
-  const targets = allArtifactTargets({ product, kind, surface, publishedOnly: true }, prefix);
+  const targets = allArtifactTargets({ product, kind, surface }, prefix);
   if (targets.length === 0) {
-    fail(prefix, `${product} has no published ${kind} CI ${family} artifact targets`);
+    fail(prefix, `${product} has no ${kind} CI ${family} artifact targets`);
   }
   return targets
     .map((target) => ({
@@ -837,7 +837,6 @@ export function expectedAssetRows(
     product,
     version,
     surface = "github-release",
-    publishedOnly = true,
     kinds = undefined,
   } = {},
   prefix = "release-artifact-targets.mjs",
@@ -855,7 +854,7 @@ export function expectedAssetRows(
   ) {
     fail(prefix, "expected asset row kinds must be a non-empty string list");
   }
-  const rows = allArtifactTargets({ product, surface, publishedOnly }, prefix)
+  const rows = allArtifactTargets({ product, surface }, prefix)
     .filter((target) => kindSet === undefined || kindSet.has(target.kind))
     .map((target) => ({
       product: target.product,
@@ -1009,7 +1008,7 @@ export function currentProductVersionSync(product, prefix = "release-artifact-ta
     let version = "";
     if (name === "Cargo.toml") {
       version = parseCargoVersion(text, file, prefix);
-    } else if (name === "package.json" || name === "jsr.json") {
+    } else if (name === "package.json") {
       const data = JSON.parse(text);
       version = typeof data.version === "string" ? data.version : "";
     } else if (name === "gradle.properties") {
@@ -1116,7 +1115,7 @@ function contribMemberRows(product, prefix) {
     }
     seenIds.add(id);
     seenSqlNames.add(sqlName);
-    rows.push({ id, sqlName, path: `${memberRoot}/${id}` });
+    rows.push({ id, sqlName, path: memberRoot });
   }
   return rows;
 }
@@ -1155,44 +1154,61 @@ export function extensionSqlNames(product, prefix = "release-artifact-targets.mj
   return sorted;
 }
 
-function extensionBuildPlanRows(prefix) {
-  if (extensionBuildPlanRowsCache !== undefined) return extensionBuildPlanRowsCache;
-  let plan;
+function extensionCatalogRows(prefix) {
+  if (extensionCatalogRowsCache !== undefined) return extensionCatalogRowsCache;
+  let catalog;
   try {
-    plan = JSON.parse(readFileSync(EXTENSION_BUILD_PLAN_PATH, "utf8"));
+    catalog = JSON.parse(readFileSync(EXTENSION_CATALOG_PATH, "utf8"));
   } catch (error) {
-    fail(prefix, `${rel(EXTENSION_BUILD_PLAN_PATH)} is not readable JSON: ${error.message}`);
+    fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} is not readable JSON: ${error.message}`);
   }
-  if (plan?.["format-version"] !== 1 || !Array.isArray(plan.extensions)) {
-    fail(prefix, `${rel(EXTENSION_BUILD_PLAN_PATH)} must use format-version 1 and define extension rows`);
+  if (catalog?.["format-version"] !== 1 || !Array.isArray(catalog.extensions)) {
+    fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} must use format-version 1 and define extension rows`);
   }
   const bySqlName = new Map();
-  for (const [index, row] of plan.extensions.entries()) {
+  for (const [index, row] of catalog.extensions.entries()) {
     const sqlName = row?.["sql-name"];
     if (typeof sqlName !== "string" || !sqlName) {
-      fail(prefix, `${rel(EXTENSION_BUILD_PLAN_PATH)} extension row ${index} has no SQL name`);
+      fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} extension row ${index} has no SQL name`);
     }
     if (bySqlName.has(sqlName)) {
-      fail(prefix, `${rel(EXTENSION_BUILD_PLAN_PATH)} repeats SQL extension ${sqlName}`);
+      fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} repeats SQL extension ${sqlName}`);
     }
-    const moduleFile = row["module-file"];
+    const moduleFile = row["native-module-file"];
     if (moduleFile !== undefined && (typeof moduleFile !== "string" || !moduleFile)) {
-      fail(prefix, `${rel(EXTENSION_BUILD_PLAN_PATH)} ${sqlName}.module-file must be a non-empty string when present`);
+      fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} ${sqlName}.native-module-file must be a non-empty string when present`);
     }
     bySqlName.set(sqlName, row);
   }
-  extensionBuildPlanRowsCache = bySqlName;
-  return extensionBuildPlanRowsCache;
+  extensionCatalogRowsCache = bySqlName;
+  return extensionCatalogRowsCache;
+}
+
+export function extensionPublicDependencySqlNames(
+  sqlName,
+  prefix = "release-artifact-targets.mjs",
+) {
+  nonEmptyString(sqlName, "extension SQL name", prefix);
+  const rows = extensionCatalogRows(prefix);
+  const row = rows.get(sqlName);
+  if (row === undefined) {
+    fail(prefix, `${sqlName} is absent from ${rel(EXTENSION_CATALOG_PATH)}`);
+  }
+  const dependencies = row.dependencies ?? [];
+  if (!Array.isArray(dependencies) || dependencies.some((value) => typeof value !== "string" || !value)) {
+    fail(prefix, `${rel(EXTENSION_CATALOG_PATH)} ${sqlName}.dependencies must be an array of SQL names`);
+  }
+  return [...new Set(dependencies.filter((dependency) => rows.has(dependency)))].sort(compareText);
 }
 
 export function extensionWasixAotMemberSqlNames(product, prefix = "release-artifact-targets.mjs") {
-  const rows = extensionBuildPlanRows(prefix);
+  const rows = extensionCatalogRows(prefix);
   return extensionSqlNames(product, prefix).filter((sqlName) => {
     const row = rows.get(sqlName);
     if (row === undefined) {
-      fail(prefix, `${product} member ${sqlName} is absent from ${rel(EXTENSION_BUILD_PLAN_PATH)}`);
+      fail(prefix, `${product} member ${sqlName} is absent from ${rel(EXTENSION_CATALOG_PATH)}`);
     }
-    return typeof row["module-file"] === "string";
+    return typeof row["native-module-file"] === "string";
   });
 }
 
@@ -1426,11 +1442,10 @@ function wasixExtensionTargetId(runtimeTarget) {
   return runtimeTarget === "portable" ? "wasix-portable" : runtimeTarget;
 }
 
-function defaultExtensionTargetRows(product, sqlName, prefix) {
-  const sourceFile = `${extensionMemberPath(product, sqlName, prefix)}/targets/artifacts.toml`;
+function runtimeExtensionTargetRows(prefix) {
   const rows = [];
   for (const target of allArtifactTargets(
-    { product: "liboliphaunt-native", kind: "native-runtime", publishedOnly: true },
+    { product: "liboliphaunt-native", kind: "native-runtime" },
     prefix,
   )) {
     if (!target.extensionArtifacts) {
@@ -1442,115 +1457,34 @@ function defaultExtensionTargetRows(product, sqlName, prefix) {
       kind: target.target === "ios-xcframework" || target.target.startsWith("android-")
         ? "native-static-registry"
         : "native-dynamic",
-      status: "supported",
-      published: true,
-      _source_file: sourceFile,
     });
   }
   for (const target of allArtifactTargets(
-    { product: "liboliphaunt-wasix", kind: "wasix-runtime", publishedOnly: true },
+    { product: "liboliphaunt-wasix", kind: "wasix-runtime" },
     prefix,
   )) {
     rows.push({
       target: wasixExtensionTargetId(target.target),
       family: "wasix",
       kind: "wasix-runtime",
-      status: "supported",
-      published: true,
-      _source_file: sourceFile,
     });
   }
   if (rows.length === 0) {
-    fail(prefix, `${product} could not derive any exact-extension artifact targets`);
+    fail(prefix, "could not derive any exact-extension artifact targets from runtime products");
   }
   return rows;
 }
 
-function readExtensionTargetRows(product, sqlName, prefix) {
-  const relative = `${extensionMemberPath(product, sqlName, prefix)}/targets/artifacts.toml`;
-  const file = path.join(ROOT, relative);
-  if (!existsSync(file)) {
-    fail(prefix, `${relative} is required; exact-extension support is fail-closed and must never be inferred from runtime capability`);
-  }
-  const data = Bun.TOML.parse(readFileSync(file, "utf8"));
-  if (data.schema !== "oliphaunt-extension-artifact-targets-v1") {
-    fail(prefix, `${relative} must use schema = "oliphaunt-extension-artifact-targets-v1"`);
-  }
-  if (!Array.isArray(data.targets) || data.targets.length === 0) {
-    if (!Array.isArray(data.profiles) || data.profiles.length === 0) {
-      fail(prefix, `${relative} must opt into at least one canonical profile or define [[targets]] rows`);
-    }
-  }
-  const allowed = new Set(defaultExtensionTargetRows(product, sqlName, prefix).map((row) => `${row.target}\0${row.family}\0${row.kind}`));
-  const rows = [];
-  if (data.profiles !== undefined) {
-    if (!Array.isArray(data.profiles) || data.profiles.some((profile) => typeof profile !== "string" || profile.length === 0)) {
-      fail(prefix, `${relative} profiles must be a list of non-empty profile ids`);
-    }
-    const profileFile = "tools/release/extension-target-profiles.toml";
-    const profileData = Bun.TOML.parse(readFileSync(path.join(ROOT, profileFile), "utf8"));
-    if (profileData.schema !== "oliphaunt-extension-artifact-target-profiles-v1" || !Array.isArray(profileData.profiles)) {
-      fail(prefix, `${profileFile} must use schema oliphaunt-extension-artifact-target-profiles-v1 and define [[profiles]]`);
-    }
-    const profiles = new Map();
-    for (const profile of profileData.profiles) {
-      const id = nonEmptyString(profile?.id, `${profileFile} profile id`, prefix);
-      if (profiles.has(id) || !Array.isArray(profile.targets) || profile.targets.length === 0) {
-        fail(prefix, `${profileFile} profile ${id} must be unique and define targets`);
-      }
-      profiles.set(id, profile.targets);
-    }
-    const evidence = data.evidence;
-    if (evidence === null || Array.isArray(evidence) || typeof evidence !== "object") {
-      fail(prefix, `${relative} must define [evidence.<profile>] for every selected profile`);
-    }
-    const selectedProfiles = new Set();
-    for (const profileId of data.profiles) {
-      if (selectedProfiles.has(profileId)) {
-        fail(prefix, `${relative} selects duplicate profile ${profileId}`);
-      }
-      selectedProfiles.add(profileId);
-      const profileTargets = profiles.get(profileId);
-      if (profileTargets === undefined) {
-        fail(prefix, `${relative} selects unknown extension target profile ${profileId}`);
-      }
-      const profileEvidence = evidence[profileId];
-      if (profileEvidence === null || Array.isArray(profileEvidence) || typeof profileEvidence !== "object") {
-        fail(prefix, `${relative} is missing [evidence.${profileId}]`);
-      }
-      const evidenceKind = nonEmptyString(profileEvidence.kind, `${relative} evidence.${profileId}.kind`, prefix);
-      const evidenceReference = nonEmptyString(profileEvidence.reference, `${relative} evidence.${profileId}.reference`, prefix);
-      for (const target of profileTargets) {
-        rows.push({
-          ...target,
-          status: "supported",
-          published: true,
-          evidence_kind: evidenceKind,
-          evidence_reference: evidenceReference,
-          _profile: profileId,
-        });
-      }
-    }
-    const staleEvidence = Object.keys(evidence).filter((profileId) => !selectedProfiles.has(profileId)).sort(compareText);
-    if (staleEvidence.length > 0) {
-      fail(prefix, `${relative} defines evidence for unselected profiles: ${staleEvidence.join(", ")}`);
-    }
-  }
-  rows.push(...(data.targets ?? []));
+function readExtensionTargetRows(prefix) {
+  const relative = EXTENSION_TARGET_PROFILES_RELATIVE_PATH;
+  const allowed = new Set(runtimeExtensionTargetRows(prefix).map((row) => `${row.target}\0${row.family}\0${row.kind}`));
+  const rows = loadExtensionTargetProfiles().targets;
   for (const row of rows) {
-    row._source_file = relative;
     if (!allowed.has(`${row.target}\0${row.family}\0${row.kind}`)) {
       fail(prefix, `${relative} target row ${row.target}/${row.family}/${row.kind} is not backed by runtime artifact metadata`);
     }
   }
   return rows;
-}
-
-function boolField(value, label, prefix) {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  fail(prefix, `${label} must be true or false`);
 }
 
 function nonEmptyString(value, label, prefix) {
@@ -1564,7 +1498,6 @@ export function extensionArtifactTargets(
   {
     product = undefined,
     family = undefined,
-    publishedOnly = false,
   } = {},
   prefix = "release-artifact-targets.mjs",
 ) {
@@ -1576,79 +1509,45 @@ export function extensionArtifactTargets(
     }
     for (const sqlName of extensionSqlNames(productId, prefix)) {
       const seen = new Set();
-      for (const [index, row] of readExtensionTargetRows(productId, sqlName, prefix).entries()) {
-      const source = row._source_file ?? extensionMemberPath(productId, sqlName, prefix);
-      const target = nonEmptyString(row.target, `${source} targets[${index}].target`, prefix);
-      const targetFamily = nonEmptyString(row.family, `${source} targets[${index}].family`, prefix);
-      const kind = nonEmptyString(row.kind, `${source} targets[${index}].kind`, prefix);
-      const status = nonEmptyString(row.status, `${source} targets[${index}].status`, prefix);
-      const published = boolField(row.published, `${source} targets[${index}].published`, prefix);
-      const evidenceKind = nonEmptyString(row.evidence_kind, `${source} targets[${index}].evidence_kind`, prefix);
-      const evidenceReference = nonEmptyString(row.evidence_reference, `${source} targets[${index}].evidence_reference`, prefix);
-      if (!EXTENSION_FAMILIES.has(targetFamily)) {
-        fail(prefix, `${source} target ${target} has invalid family ${targetFamily}`);
-      }
-      if (!EXTENSION_KINDS.has(kind)) {
-        fail(prefix, `${source} target ${target} has invalid kind ${kind}`);
-      }
-      if (!EXTENSION_STATUSES.has(status)) {
-        fail(prefix, `${source} target ${target} has invalid status ${status}`);
-      }
-      if (!EXTENSION_EVIDENCE_KINDS.has(evidenceKind)) {
-        fail(prefix, `${source} target ${target} has invalid evidence_kind ${evidenceKind}; expected one of ${[...EXTENSION_EVIDENCE_KINDS].sort(compareText).join(", ")}`);
-      }
-      if (evidenceReference.includes("\0") || evidenceReference.trim() !== evidenceReference) {
-        fail(prefix, `${source} target ${target} evidence_reference must be a trimmed stable job, test, or contract reference`);
-      }
-      if (targetFamily === "wasix" && kind !== "wasix-runtime") {
-        fail(prefix, `${source} target ${target} must use kind wasix-runtime for wasix family`);
-      }
-      if (targetFamily === "native" && kind === "wasix-runtime") {
-        fail(prefix, `${source} target ${target} cannot use wasix-runtime for native family`);
-      }
-      if (published && status !== "supported") {
-        fail(prefix, `${source} target ${target} cannot be published with status ${status}`);
-      }
-      const unsupportedReason = row.unsupported_reason;
-      if (!published && (typeof unsupportedReason !== "string" || unsupportedReason.length === 0)) {
-        fail(prefix, `${source} unpublished target ${target} must explain unsupported_reason`);
-      }
-      if (published && evidenceKind === "unsupported-contract") {
-        fail(prefix, `${source} published target ${target} cannot use unsupported-contract evidence`);
-      }
-      if (!published && evidenceKind !== "unsupported-contract" && status === "unsupported") {
-        fail(prefix, `${source} unsupported target ${target} must use unsupported-contract evidence`);
-      }
-      const key = `${target}\0${targetFamily}\0${kind}`;
-      if (seen.has(key)) {
-        fail(prefix, `${source} has duplicate target row ${target}/${targetFamily}/${kind}`);
-      }
-      seen.add(key);
-      if (family !== undefined && targetFamily !== family) {
-        continue;
-      }
-      if (publishedOnly && !published) {
-        continue;
-      }
-      const binaryCompatibility =
-        targetFamily === "native" && published
-          ? requiredBinaryCompatibility(target, `${productId} native extension`, prefix)
-          : undefined;
+      for (const [index, row] of readExtensionTargetRows(prefix).entries()) {
+        const source = EXTENSION_TARGET_PROFILES_RELATIVE_PATH;
+        const target = nonEmptyString(row.target, `${source} targets[${index}].target`, prefix);
+        const targetFamily = nonEmptyString(row.family, `${source} targets[${index}].family`, prefix);
+        const kind = nonEmptyString(row.kind, `${source} targets[${index}].kind`, prefix);
+        if (!EXTENSION_FAMILIES.has(targetFamily)) {
+          fail(prefix, `${source} target ${target} has invalid family ${targetFamily}`);
+        }
+        if (!EXTENSION_KINDS.has(kind)) {
+          fail(prefix, `${source} target ${target} has invalid kind ${kind}`);
+        }
+        if (targetFamily === "wasix" && kind !== "wasix-runtime") {
+          fail(prefix, `${source} target ${target} must use kind wasix-runtime for wasix family`);
+        }
+        if (targetFamily === "native" && kind === "wasix-runtime") {
+          fail(prefix, `${source} target ${target} cannot use wasix-runtime for native family`);
+        }
+        const key = `${target}\0${targetFamily}\0${kind}`;
+        if (seen.has(key)) {
+          fail(prefix, `${source} has duplicate target row ${target}/${targetFamily}/${kind}`);
+        }
+        seen.add(key);
+        if (family !== undefined && targetFamily !== family) {
+          continue;
+        }
+        const binaryCompatibility =
+          targetFamily === "native"
+            ? requiredBinaryCompatibility(target, `${productId} native extension`, prefix)
+            : undefined;
         parsed.push({
-        product: productId,
-        sqlName,
-        sql_name: sqlName,
-        target,
-        family: targetFamily,
-        kind,
-        published,
-        status,
-        source_file: source,
-        unsupported_reason: typeof unsupportedReason === "string" ? unsupportedReason : null,
-        evidence_kind: evidenceKind,
-        evidence_reference: evidenceReference,
-        binaryCompatibility,
-        binary_compatibility: binaryCompatibility,
+          product: productId,
+          sqlName,
+          sql_name: sqlName,
+          target,
+          family: targetFamily,
+          kind,
+          source_file: source,
+          binaryCompatibility,
+          binary_compatibility: binaryCompatibility,
         });
       }
     }
@@ -1656,14 +1555,14 @@ export function extensionArtifactTargets(
   return parsed;
 }
 
-export function publishedExtensionTargetIds({ family }, prefix = "release-artifact-targets.mjs") {
-  return [...new Set(extensionArtifactTargets({ family, publishedOnly: true }, prefix).map((target) => target.target))]
+export function extensionTargetIds({ family }, prefix = "release-artifact-targets.mjs") {
+  return [...new Set(extensionArtifactTargets({ family }, prefix).map((target) => target.target))]
     .sort(compareText);
 }
 
 function extensionPublishedTargets(product, family, kind, prefix) {
   return [...new Set(
-    extensionArtifactTargets({ product, family, publishedOnly: true }, prefix)
+    extensionArtifactTargets({ product, family }, prefix)
       .filter((target) => target.kind === kind)
       .map((target) => target.target),
   )].sort(compareText);
@@ -1671,7 +1570,7 @@ function extensionPublishedTargets(product, family, kind, prefix) {
 
 export function extensionRegistryPackageTargetSets(product, prefix = "release-artifact-targets.mjs") {
   const memberSignatures = extensionSqlNames(product, prefix).map((sqlName) => {
-    const rows = extensionArtifactTargets({ product, publishedOnly: true }, prefix)
+    const rows = extensionArtifactTargets({ product }, prefix)
       .filter((row) => row.sqlName === sqlName)
       .map((row) => `${row.target}\0${row.family}\0${row.kind}`)
       .sort(compareText);
@@ -1684,7 +1583,7 @@ export function extensionRegistryPackageTargetSets(product, prefix = "release-ar
   }
   const nativeDynamicTargets = extensionPublishedTargets(product, "native", "native-dynamic", prefix);
   if (nativeDynamicTargets.length === 0) {
-    fail(prefix, `${product} has no published native dynamic extension registry targets`);
+    fail(prefix, `${product} has no native dynamic extension registry targets`);
   }
   const androidTargets = extensionPublishedTargets(product, "native", "native-static-registry", prefix)
     .filter((target) => target.startsWith("android-"));
@@ -1694,6 +1593,7 @@ export function extensionRegistryPackageTargetSets(product, prefix = "release-ar
     androidTargets,
     npmTargets: nativeDynamicTargets,
     nativeCargoTargets: nativeDynamicTargets,
+    includeWasixNpm: wasixRuntimeTargets.includes("wasix-portable"),
     // An AOT carrier is meaningful only when at least one exact SQL member has
     // a native module to precompile. SQL/resource-only products still publish
     // their portable archive but must not reserve empty host-AOT identities.

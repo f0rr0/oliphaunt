@@ -80,7 +80,6 @@ import {Oliphaunt} from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
   engine: 'nativeDirect',
-  temporary: true,
   runtimeFootprint: 'balancedMobile',
   startupGUCs: [{name: 'shared_buffers', value: '32MB'}],
   username: 'postgres',
@@ -121,7 +120,7 @@ The native layer should stay deliberately thin:
 Capabilities are delegated from the platform SDK and keep the same field names
 as the product contract: raw and streaming protocol support, cancellation,
 backup/restore, simple-query execution, exact extensions, and session semantics.
-They also expose `multiRoot` plus `backupFormats` and `restoreFormats`, so TypeScript callers can
+They also expose `multipleInstances` plus `backupFormats` and `restoreFormats`, so TypeScript callers can
 disable unsupported SQL or archive actions before crossing the native boundary.
 Use the exported `supportsBackupFormat` and `supportsRestoreFormat` helpers, or
 the matching `OliphauntDatabase.supportsBackupFormat` and
@@ -141,18 +140,21 @@ unavailable modes instead of attempting direct-mode aliases. `OpenConfig.engine`
 currently accepts `nativeDirect` only; broker/server entries are discovery
 signals until the React Native bridge exposes those open paths.
 Lifecycle capability fields are forwarded from the platform SDK:
-`sameRootLogicalReopen`, `rootSwitchable`, and `crashRestartable` distinguish
-direct's same-root resident reopen from broker/server process-managed behavior.
-Native direct is not root-switchable or crash-restartable. Mobile direct mode
+`sameInstanceLogicalReopen`, `instanceSwitchable`, and `crashRestartable` distinguish
+direct's resident-instance reopen from broker/server process-managed behavior.
+Native direct is not instance-switchable or crash-restartable. Mobile direct mode
 has one resident backend per app process and one physical session.
+Keep one opened database object in app state: a second open is rejected while
+the native session is opening, active, or closing, and logical reopen starts
+only after `close()` completes.
 `Oliphaunt.open({ username, database })` forwards startup identity to the Swift or
 Kotlin SDK and rejects empty or NUL-containing values before the TurboModule
 call.
 
 Packaged runtime/template assets use the same `oliphaunt/runtime` and
 `oliphaunt/template-pgdata` resource layout as the Swift and Kotlin SDKs. Empty
-mobile roots require a packaged template because mobile bootstrap must not
-depend on executing `initdb` from app data.
+mobile storage directories require a packaged template because mobile bootstrap
+must not depend on executing `initdb` from app data.
 
 See [`docs/architecture.md`](docs/architecture.md) for the architecture,
 transport, and performance completion criteria.
@@ -172,12 +174,16 @@ Multi-result-set and COPY traffic stay on `execProtocolRaw`/`execute`.
 Pass query parameters as the second argument to use PostgreSQL's extended
 protocol instead of interpolating values into SQL:
 
-For crash-recovery and physical-device harnesses, `root` may be an absolute
-native path or an app-sandbox specifier. `app-support://name` resolves under
-Application Support on Apple platforms and app-private files storage on
-Android; `documents://name` resolves under Documents on Apple platforms and the
-same app-private files base on Android. The suffix must be a relative path and
-cannot contain `.` or `..`.
+Storage needs no configuration for temporary work. The default
+`{kind: 'temporaryDirectory'}` is SDK-owned, process-scoped, and not durable.
+Select a persistent native directory with
+`storage: {kind: 'directory', path}`. For the common mobile case, prefer
+`storage: {kind: 'applicationData', name: 'main'}`; the platform adapter resolves
+that portable name below Application Support on iOS and app-private files on
+Android. `close()` never deletes application-supplied persistent storage.
+Close rejects new work, waits for in-flight work to finish, and then detaches
+the native session. If native detach fails, the database remains open and
+`close()` can be retried; close is rejected while a transaction is active.
 
 <!-- liboliphaunt-doc-example:react-native-parameterized-query -->
 ```ts
@@ -201,7 +207,7 @@ resources:
 import {runInstalledOliphauntReactNativeSmoke} from '@oliphaunt/react-native';
 
 const report = await runInstalledOliphauntReactNativeSmoke({
-  open: {engine: 'nativeDirect', temporary: true, extensions: ['vector']},
+  open: {engine: 'nativeDirect', extensions: ['vector']},
   requirePackageSizeReport: true,
   afterSmoke: async database => {
     await database.execute('CREATE TABLE app_smoke (id integer PRIMARY KEY)');
@@ -254,7 +260,7 @@ The example defaults Metro to the dev-client plus local MCP path: `pnpm start`,
 `EXPO_UNSTABLE_MCP_SERVER=1 expo start --dev-client`.
 The installed-app smoke, benchmark, and crash scripts own their dev-client
 Metro process by default with the same local MCP capabilities enabled so runner
-mode, durability, startup GUCs, and persistent crash roots are passed through
+mode, durability, startup GUCs, and persistent crash storage are passed through
 `EXPO_PUBLIC_OLIPHAUNT_*` env instead of depending on Expo launcher URL
 forwarding. If port 8081 is already in use and no explicit
 `OLIPHAUNT_EXPO_*_METRO_PORT` is set, the scripts choose a free port in
@@ -290,12 +296,12 @@ pnpm --dir ../../src/sdks/react-native/examples/expo run crash:ios
 ```
 
 Those lanes run a two-phase installed-app harness. The write phase uses a
-persistent app-private root and intentionally leaves the direct-mode database
+persistent app-private storage and intentionally leaves the direct-mode database
 open; the platform script force-stops or terminates the app, relaunches the
-verify phase with the same root, and expects the committed row to survive
+verify phase with the same storage, and expects the committed row to survive
 PostgreSQL recovery before emitting `OLIPHAUNT_EXPO_CRASH_RECOVERY_PASS`.
 For development-client builds, each phase starts a fresh Metro bundle with the
-phase-specific runner (`crash-write`, then `crash-verify`) and root in Expo
+phase-specific runner (`crash-write`, then `crash-verify`) and storage in Expo
 public env.
 The mobile footprint matrix runs this lane for safe-durability cases by default;
 balanced cases remain latency/footprint evidence rather than last-commit
@@ -370,8 +376,8 @@ Pass `libraryPath` and `runtimeDirectory`, or set
 `OLIPHAUNT_*` environment variables in the test process. Pass
 `resourceRoot` when testing an unpacked `oliphaunt/` resource layout. Restore
 accepts the same `libraryPath` override because it also crosses the native C ABI.
-Empty iOS roots require packaged template PGDATA or an existing root with
-`PG_VERSION`.
+Empty iOS storage requires packaged template PGDATA or an existing storage
+directory whose `pgdata` child contains `PG_VERSION`.
 
 For local Android smoke work, the RN module calls the Kotlin SDK
 `OliphauntAndroid` facade and stores the returned `OliphauntDatabase` handle. Package
@@ -460,25 +466,11 @@ gradle -p android assembleRelease \
   -PoliphauntAndroidExtensionArchivesDir=/path/to/liboliphaunt-android-arm64/out
 ```
 
-The older split inputs remain available when integrating with a custom build:
-
-```bash
-gradle -p android assembleDebug \
-  -PoliphauntRuntimeDir=/path/to/postgres-install-root \
-  -PoliphauntTemplatePgdataDir=/path/to/template-pgdata \
-  -PoliphauntExtensions=vector
-```
-
-The build packages those directories under `assets/oliphaunt/` with generated
-content manifests. At runtime the Kotlin SDK materializes the runtime directory
-once under `noBackupFilesDir` and hydrates new PGDATA roots from the packaged
+At runtime the Kotlin SDK materializes the packaged runtime directory
+once under `noBackupFilesDir` and hydrates new PGDATA directories from the packaged
 template. Android records the packaged exact extension names in the runtime
 manifest and fails open early if JS requests an extension that was not packaged.
-Split-resource Android builds intentionally keep module-backed extensions in
-`pending` state because they cannot generate
-or verify `static-registry/oliphaunt_static_registry.c`; use the Rust runtime-resource generator
-output with `--mobile-static-module <stem>` for a mobile-complete release
-package. iOS performs the same manifest check through
+iOS performs the same manifest check through
 `Oliphaunt` when packaged runtime resources are used. The React Native package
 does not implement extension loading in TypeScript; its iOS/Android native
 layers inherit the Swift/Kotlin bridge behavior. Mobile-ready Rust runtime-resource generator
@@ -521,6 +513,8 @@ strongly references selected native symbols, so a missing selected artifact is
 a build/link failure rather than a runtime surprise. Device and simulator lanes
 still execute the packaged app to validate the complete consumer path.
 
-Backup and restore use the same same-version physical archive model as the
+Backup and restore use the same-version physical archive model as the
 Rust/Swift/Kotlin SDKs. RN Android delegates those calls to the Kotlin Android
-SDK; RN iOS delegates those calls to `Oliphaunt`.
+SDK; RN iOS delegates those calls to `Oliphaunt`. Existing destinations fail by
+default; callers opt into replacement with
+`destinationPolicy: 'replaceExisting'`.

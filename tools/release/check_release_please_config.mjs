@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { moonCommand } from '../dev/moon-command.mjs';
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { releasePleaseBootstrapLifecycleError } from './release-please-bootstrap.mjs';
+import { assertReleasePleasePackageIdentity } from './release-please-package-identity.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const configPath = path.join(root, 'release-please-config.json');
@@ -412,6 +413,14 @@ for (const [packagePath, packageConfig] of Object.entries(packages)) {
   }
   if (product === 'oliphaunt-swift') {
     validateSwiftReleasePleaseBootstrap(packagePath, packageConfig, manifestVersion);
+  }
+  if (['expo', 'node'].includes(packageConfig['release-type'])) {
+    const packageManifest = await readJson(path.join(root, packagePath, 'package.json'));
+    try {
+      assertReleasePleasePackageIdentity(packagePath, packageConfig, packageManifest);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
   }
   const changelogPath = packageConfig['changelog-path'] ?? 'CHANGELOG.md';
   if (typeof changelogPath !== 'string' || !changelogPath) {

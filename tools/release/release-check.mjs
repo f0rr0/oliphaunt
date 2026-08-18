@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawn } from "node:child_process";
 import { lstatSync } from "node:fs";
 import path from "node:path";
 
@@ -11,7 +12,8 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 export const DEDICATED_GATE_TESTS = new Set([
   "tools/release/toolchain-bootstrap.test.mjs",
 ]);
-export const MUTATION_TEST_MAX_CONCURRENCY = 4;
+export const MUTATION_TEST_PROCESS_CONCURRENCY = 4;
+export const MUTATION_TEST_MAX_CONCURRENCY = 1;
 export const MUTATION_TEST_TIMEOUT_MS = 30_000;
 
 export function mutationTestEnvironment(inheritedEnvironment = process.env) {
@@ -75,6 +77,52 @@ export function mutationTests(
   return tests;
 }
 
+export function mutationTestWaves(tests, concurrency = MUTATION_TEST_PROCESS_CONCURRENCY) {
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new Error(`${TOOL}: mutation test process concurrency must be a positive integer`);
+  }
+  const waves = [];
+  for (let offset = 0; offset < tests.length; offset += concurrency) {
+    waves.push(tests.slice(offset, offset + concurrency));
+  }
+  return waves;
+}
+
+export function mutationTestCommand(test) {
+  return [
+    process.execPath,
+    "test",
+    // Positional paths are filters, so Bun still discovers recursively from
+    // the workspace root. Generated build trees are never mutation tests and
+    // can contain hundreds of thousands of files after local qualification.
+    "--path-ignore-patterns=target/**",
+    "--isolate",
+    `--max-concurrency=${MUTATION_TEST_MAX_CONCURRENCY}`,
+    `--timeout=${MUTATION_TEST_TIMEOUT_MS}`,
+    test,
+  ];
+}
+
+function runMutationTest(test, environment) {
+  const command = mutationTestCommand(test);
+  console.log(`\n==> ${command.join(" ")}`);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const child = spawn(command[0], command.slice(1), {
+      cwd: ROOT,
+      env: environment,
+      stdio: "inherit",
+    });
+    child.once("error", (error) => finish({ error, status: null, signal: null, test }));
+    child.once("close", (status, signal) => finish({ error: null, status, signal, test }));
+  });
+}
+
 function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
@@ -88,22 +136,32 @@ accepted for compatibility with release workflow and Moon callers.
   }
 }
 
-function main(argv) {
+async function main(argv) {
   parseArgs(argv);
   run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...argv]);
-  run(TOOL, [
-    process.execPath,
-    "test",
-    "--isolate",
-    `--max-concurrency=${MUTATION_TEST_MAX_CONCURRENCY}`,
-    `--timeout=${MUTATION_TEST_TIMEOUT_MS}`,
+  const tests = [
     ...mutationTests("tools/policy"),
     ...mutationTests("tools/release"),
-  ], {
-    environment: mutationTestEnvironment(),
-  });
+  ];
+  // Bun 1.3 can retain stale epoll registrations while moving between test
+  // files. Give every file a fresh process, and preserve bounded throughput by
+  // draining a fixed-size wave before starting the next one.
+  const environment = mutationTestEnvironment();
+  for (const wave of mutationTestWaves(tests)) {
+    const results = await Promise.all(wave.map((test) => runMutationTest(test, environment)));
+    const failure = results.find(({ error, status }) => error !== null || status !== 0);
+    if (failure !== undefined) {
+      if (failure.error !== null) {
+        throw new Error(`${TOOL}: ${failure.test} failed to start: ${failure.error.message}`);
+      }
+      if (failure.signal !== null) {
+        throw new Error(`${TOOL}: ${failure.test} terminated by ${failure.signal}`);
+      }
+      process.exit(failure.status ?? 1);
+    }
+  }
 }
 
 if (import.meta.main) {
-  main(Bun.argv.slice(2));
+  await main(Bun.argv.slice(2));
 }

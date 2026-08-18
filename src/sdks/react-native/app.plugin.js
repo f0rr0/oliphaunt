@@ -5,7 +5,14 @@ const { spawnSync } = require('node:child_process');
 
 const EXTENSION_NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const packageMetadata = require('./package.json');
-const extensionMetadata = require('./src/generated/extensions.json');
+const packagedExtensionMetadata = path.join(__dirname, 'src/generated/extensions.json');
+const repositoryExtensionMetadata = path.join(
+  __dirname,
+  '../../extensions/generated/sdk/extensions.json',
+);
+const extensionMetadata = require(
+  fs.existsSync(packagedExtensionMetadata) ? packagedExtensionMetadata : repositoryExtensionMetadata,
+);
 const IOS_PODFILE_START = '# @oliphaunt/react-native begin';
 const IOS_PODFILE_END = '# @oliphaunt/react-native end';
 const IOS_MINIMUM_DEPLOYMENT_TARGET = '17.0';
@@ -22,11 +29,6 @@ const KNOWN_EXTENSION_SQL_NAMES = new Set(
 );
 const EXTENSION_METADATA_BY_SQL_NAME = new Map(
   extensionMetadata.extensions.map((extension) => [extension['sql-name'], extension]),
-);
-const MOBILE_RELEASE_READY_EXTENSION_SQL_NAMES = new Set(
-  extensionMetadata.extensions
-    .filter((extension) => extension['mobile-release-ready'] === true)
-    .map((extension) => extension['sql-name']),
 );
 
 function compareText(left, right) {
@@ -45,11 +47,6 @@ function normalizeOptions(options = {}) {
     if (!KNOWN_EXTENSION_SQL_NAMES.has(extension)) {
       throw new Error(
         `@oliphaunt/react-native extension '${extension}' is not in the generated exact-extension catalog`,
-      );
-    }
-    if (!MOBILE_RELEASE_READY_EXTENSION_SQL_NAMES.has(extension)) {
-      throw new Error(
-        `@oliphaunt/react-native extension '${extension}' is known but does not have release-ready iOS/Android artifacts`,
       );
     }
   }

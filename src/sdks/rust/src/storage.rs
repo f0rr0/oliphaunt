@@ -5,47 +5,25 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
-/// Live database root.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DatabaseRoot {
-    /// Persistent root directory.
-    Path(PathBuf),
-    /// Temporary root owned by the SDK.
-    Temporary,
+/// Storage used by a native database instance.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DatabaseStorage {
+    /// SDK-owned temporary directory.
+    #[default]
+    TemporaryDirectory,
+    /// Caller-owned persistent directory.
+    Directory(PathBuf),
 }
 
-/// Bootstrap policy for a new database root.
+/// How an empty database storage directory is initialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BootstrapStrategy {
-    /// Copy a packaged PostgreSQL template cluster into the root.
+pub enum DatabaseInitialization {
+    /// Copy a packaged PostgreSQL template cluster into the storage directory.
     PackagedTemplate,
-    /// Open an existing root and fail if it has not been bootstrapped.
+    /// Initialize empty storage with the packaged `initdb` executable.
+    FreshInitdb,
+    /// Open an existing directory and fail if it has not been initialized.
     ExistingOnly,
-    /// Tooling-only fallback. Production mobile paths must not require this.
-    InitdbToolingOnly {
-        /// Path to the initdb executable.
-        initdb: PathBuf,
-    },
-}
-
-/// Root locking policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RootLockPolicy {
-    /// One process owns the root directly.
-    ExclusiveProcess,
-    /// A broker process owns the root.
-    BrokerOwned,
-}
-
-/// Storage configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageConfig {
-    /// Database root.
-    pub root: DatabaseRoot,
-    /// Bootstrap strategy.
-    pub bootstrap: BootstrapStrategy,
-    /// Locking policy.
-    pub lock_policy: RootLockPolicy,
 }
 
 /// Backup format.
@@ -53,7 +31,7 @@ pub struct StorageConfig {
 pub enum BackupFormat {
     /// Portable logical SQL dump.
     Sql,
-    /// Physical archive of the root directory.
+    /// Physical archive of the database storage directory.
     PhysicalArchive,
     /// Product-level portable archive.
     OliphauntArchive,
@@ -74,7 +52,7 @@ impl BackupRequest {
         }
     }
 
-    /// Request a same-version physical archive of the database root.
+    /// Request a same-version physical archive of the database storage directory.
     pub fn physical_archive() -> Self {
         Self {
             format: BackupFormat::PhysicalArchive,
@@ -91,12 +69,12 @@ pub struct BackupArtifact {
     pub bytes: Vec<u8>,
 }
 
-/// Policy for an existing restore target.
+/// Policy for an existing restore destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RestoreTargetPolicy {
-    /// Fail if the target root already contains files.
+pub enum RestoreDestinationPolicy {
+    /// Fail if the destination path already exists.
     FailIfExists,
-    /// Atomically replace the existing root after taking its root lock.
+    /// Atomically replace the existing destination after taking its lock.
     ReplaceExisting,
 }
 
@@ -105,32 +83,32 @@ pub enum RestoreTargetPolicy {
 pub struct RestoreRequest {
     /// Backup artifact to restore.
     pub artifact: BackupArtifact,
-    /// Target database root.
-    pub target: DatabaseRoot,
-    /// Existing-target behavior.
-    pub target_policy: RestoreTargetPolicy,
+    /// Filesystem directory that will receive the restored database.
+    pub destination: PathBuf,
+    /// Existing-destination behavior.
+    pub destination_policy: RestoreDestinationPolicy,
 }
 
 impl RestoreRequest {
-    /// Restore a same-version physical archive into a persistent root.
-    pub fn physical_archive(root: impl Into<PathBuf>, artifact: BackupArtifact) -> Self {
+    /// Restore a same-version physical archive into a persistent directory.
+    pub fn physical_archive(destination: impl Into<PathBuf>, artifact: BackupArtifact) -> Self {
         Self {
             artifact,
-            target: DatabaseRoot::Path(root.into()),
-            target_policy: RestoreTargetPolicy::FailIfExists,
+            destination: destination.into(),
+            destination_policy: RestoreDestinationPolicy::FailIfExists,
         }
     }
 
-    /// Set the target policy.
-    pub fn with_target_policy(mut self, target_policy: RestoreTargetPolicy) -> Self {
-        self.target_policy = target_policy;
+    /// Set the destination policy.
+    pub fn with_destination_policy(mut self, destination_policy: RestoreDestinationPolicy) -> Self {
+        self.destination_policy = destination_policy;
         self
     }
 
-    /// Replace an existing root. The existing root must not be open by another
-    /// process.
+    /// Replace an existing destination. The database must not be open by
+    /// another process.
     pub fn replace_existing(self) -> Self {
-        self.with_target_policy(RestoreTargetPolicy::ReplaceExisting)
+        self.with_destination_policy(RestoreDestinationPolicy::ReplaceExisting)
     }
 }
 

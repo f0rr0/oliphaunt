@@ -1,0 +1,14 @@
+# Compatible PostgreSQL optimizations owned by the main WASIX runtime.
+#
+# Deliberately excluded from this multi-backend lane:
+# - 0040 and 0041 specialize spinlocks and atomics for the canonical guest
+#   shared by Rust and TypeScript bindings, whose hosts enforce one PostgreSQL
+#   backend execution context per isolated instance.
+# The postmaster and its backends coordinate concurrently through shared
+# memory, so this lane retains PostgreSQL's normal spinlock and atomic paths.
+0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch
+0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch
+0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch
+0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch
+0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch
+0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch

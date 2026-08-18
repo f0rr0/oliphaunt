@@ -46,6 +46,11 @@ import {
 } from "./ios-carrier-manifest.mjs";
 import { AOT_TARGET_TRIPLES } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
+import {
+  assertWasixExtensionArchiveInstall,
+  assertWasixExtensionInstallSidecar,
+  projectWasixExtensionInstallSidecar,
+} from "./wasix-extension-install-contract.mjs";
 
 const PREFIX = "build-extension-ci-artifacts.mjs";
 
@@ -67,7 +72,7 @@ function extensionProducts() {
 }
 
 function generatedExtensionRow(sqlName) {
-  const metadata = path.join(ROOT, "src/extensions/generated/sdk/kotlin.json");
+  const metadata = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
   const data = JSON.parse(readFileSync(metadata, "utf8"));
   const row = (data.extensions ?? []).find((item) => item && item["sql-name"] === sqlName);
   if (!row) {
@@ -140,7 +145,7 @@ function indexContainsSqlName(index, sqlName) {
 
 function publishedTargetIds(family) {
   return [...new Set(
-    extensionArtifactTargets({ family, publishedOnly: true }, PREFIX).map((target) => target.target),
+    extensionArtifactTargets({ family }, PREFIX).map((target) => target.target),
   )].sort(compareText);
 }
 
@@ -247,19 +252,50 @@ function wasixArchiveFor(sqlName, { product = undefined, required = false } = {}
       if (row.sql_name !== sqlName) {
         continue;
       }
-      const { target, kind, artifact } = row;
-      if (target !== "wasix-portable" || kind !== "wasix-runtime" || !artifact) {
+      const { target, kind, artifact, install_contract: installContractName } = row;
+      if (
+        target !== "wasix-portable"
+        || kind !== "wasix-runtime"
+        || !artifact
+        || !/^[1-9][0-9]*$/u.test(row.artifact_bytes ?? "")
+        || !installContractName
+      ) {
         fail(`${rel(index)} has an invalid WASIX asset row for ${sqlName}`);
       }
       const asset = path.join(path.dirname(index), artifact);
       if (!existsSync(asset) || !statSync(asset).isFile()) {
         fail(`${rel(index)} references missing WASIX asset ${rel(asset)}`);
       }
-      assets.push(asset);
+      if (statSync(asset).size !== Number(row.artifact_bytes)) {
+        fail(`${rel(index)} references a WASIX asset with a drifted byte count for ${sqlName}`);
+      }
+      const installContractPath = path.join(path.dirname(index), installContractName);
+      if (!existsSync(installContractPath) || !statSync(installContractPath).isFile()) {
+        fail(`${rel(index)} references missing WASIX install contract ${rel(installContractPath)}`);
+      }
+      let sidecar;
+      try {
+        sidecar = assertWasixExtensionInstallSidecar(
+          JSON.parse(readFileSync(installContractPath, "utf8")),
+          {
+            expectedArchive: `extensions/${sqlName}.tar.zst`,
+            expectedSha256: sha256(asset),
+            expectedSize: statSync(asset).size,
+            expectedSqlName: sqlName,
+            label: rel(installContractPath),
+          },
+        );
+        assertWasixExtensionArchiveInstall(readFileSync(asset), sidecar, {
+          label: rel(asset),
+        });
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+      assets.push({ archive: asset, install: sidecar.install });
     }
   }
   if (assets.length > 1) {
-    fail(`${sqlName} has duplicate WASIX extension assets: ${assets.map(rel).join(", ")}`);
+    fail(`${sqlName} has duplicate WASIX extension assets: ${assets.map(({ archive }) => rel(archive)).join(", ")}`);
   }
   if (assets.length === 1) {
     return assets[0];
@@ -297,7 +333,32 @@ function wasixArchiveFor(sqlName, { product = undefined, required = false } = {}
     if (sha256(archive) !== row.sha256) {
       fail(`${rel(archive)} does not match the digest in ${rel(manifestPath)}`);
     }
-    return archive;
+    const modelPath = path.join(ROOT, "src/extensions/generated/wasix/extensions.json");
+    let model;
+    try {
+      model = JSON.parse(readFileSync(modelPath, "utf8"));
+    } catch (error) {
+      fail(`${rel(modelPath)} is not valid JSON: ${error.message}`);
+    }
+    const modelRows = Array.isArray(model.extensions)
+      ? model.extensions.filter((candidate) => candidate?.["sql-name"] === sqlName)
+      : [];
+    if (modelRows.length !== 1) {
+      fail(`${rel(modelPath)} must contain exactly one static extension row for ${sqlName}, got ${modelRows.length}`);
+    }
+    let sidecar;
+    try {
+      sidecar = projectWasixExtensionInstallSidecar({
+        modelRow: modelRows[0],
+        manifestRow: row,
+      }, {
+        archiveBytes: readFileSync(archive),
+        label: `${rel(manifestPath)} extension ${sqlName}`,
+      });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    return { archive, install: sidecar.install };
   }
   if (required) {
     fail(`${sqlName} has no WASIX extension assets in target/extensions/wasix/release-assets target indexes`);
@@ -429,10 +490,10 @@ function archiveSuffix(source) {
 
 function validateStagedTargets(product, assets, { requireNative, requireWasix, requireNativeTargets }) {
   const declaredNativeTargets = new Set(
-    extensionArtifactTargets({ product, family: "native", publishedOnly: true }, PREFIX).map((target) => target.target),
+    extensionArtifactTargets({ product, family: "native" }, PREFIX).map((target) => target.target),
   );
   const declaredWasixTargets = new Set(
-    extensionArtifactTargets({ product, family: "wasix", publishedOnly: true }, PREFIX).map((target) => target.target),
+    extensionArtifactTargets({ product, family: "wasix" }, PREFIX).map((target) => target.target),
   );
   const stagedNativeTargets = new Set(assets.filter((asset) => asset.family === "native").map((asset) => String(asset.target)));
   const stagedWasixTargets = new Set(assets.filter((asset) => asset.family === "wasix").map((asset) => String(asset.target)));
@@ -481,6 +542,7 @@ function stageMember(product, sqlName, version, productRoot, {
 }) {
   const extensionRow = generatedExtensionRow(sqlName);
   const assets = [];
+  let wasixInstall = null;
   let iosRegistration = null;
   for (const row of families.has("native")
     ? nativeAssetsFor(sqlName, { product, required: requireNative })
@@ -509,11 +571,11 @@ function stageMember(product, sqlName, version, productRoot, {
     }
   }
 
-  const wasixArchive = families.has("wasix")
+  const wasix = families.has("wasix")
     ? wasixArchiveFor(sqlName, { product, required: requireWasix })
     : undefined;
-  if (wasixArchive !== undefined) {
-    const metadata = copyAsset(wasixArchive, destinationDir, {
+  if (wasix !== undefined) {
+    const metadata = copyAsset(wasix.archive, destinationDir, {
       name: `${product}-${version}-wasix-portable.tar.zst`,
     });
     metadata.family = "wasix";
@@ -521,6 +583,7 @@ function stageMember(product, sqlName, version, productRoot, {
     metadata.target = "wasix-portable";
     metadata.identity = null;
     assets.push(metadata);
+    wasixInstall = wasix.install;
   }
 
   for (const [targetId, source] of families.has("wasix") ? wasixAotDirsFor(sqlName) : []) {
@@ -547,16 +610,14 @@ function stageMember(product, sqlName, version, productRoot, {
     dataFiles: stringList(extensionRow["runtime-share-data-files"], `${sqlName}.runtime-share-data-files`),
     extensionSqlFileNames: stringList(extensionRow["extension-sql-file-names"], `${sqlName}.extension-sql-file-names`),
     extensionSqlFilePrefixes: stringList(extensionRow["extension-sql-file-prefixes"], `${sqlName}.extension-sql-file-prefixes`),
-    nativeDependencies: stringList(extensionRow["native-dependencies"], `${sqlName}.native-dependencies`),
     nativeModuleStem: extensionRow["native-module-stem"],
     iosNativeDependencies: assets
       .filter((asset) => asset.kind === "ios-dependency-xcframework")
       .map((asset) => asset.identity)
       .sort(compareText),
     iosRegistration,
+    wasixInstall,
     sharedPreloadLibraries: stringList(extensionRow["shared-preload-libraries"], `${sqlName}.shared-preload-libraries`),
-    mobileReleaseReady: extensionRow["mobile-release-ready"] === true,
-    desktopReleaseReady: extensionRow["desktop-release-ready"] === true,
     assets,
   };
 }
@@ -703,12 +764,9 @@ export function extensionReleasePropertiesText({
       `dataFiles=${propertiesCsv(manifest.dataFiles)}\n`,
       `extensionSqlFileNames=${propertiesCsv(manifest.extensionSqlFileNames)}\n`,
       `extensionSqlFilePrefixes=${propertiesCsv(manifest.extensionSqlFilePrefixes)}\n`,
-      `nativeDependencies=${propertiesCsv(manifest.nativeDependencies)}\n`,
       `nativeModuleStem=${manifest.nativeModuleStem || ""}\n`,
       `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
       `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
-      `mobileReleaseReady=${manifest.mobileReleaseReady ? "true" : "false"}\n`,
-      `desktopReleaseReady=${manifest.desktopReleaseReady ? "true" : "false"}\n`,
     );
     for (const asset of [...manifest.assets].sort((left, right) => compareText(
       `${left.family}\0${left.target}\0${left.kind}\0${left.identity ?? ""}\0${left.name}`,
@@ -727,12 +785,9 @@ export function extensionReleasePropertiesText({
         `${prefix}.dataFiles=${propertiesCsv(member.dataFiles)}\n`,
         `${prefix}.extensionSqlFileNames=${propertiesCsv(member.extensionSqlFileNames)}\n`,
         `${prefix}.extensionSqlFilePrefixes=${propertiesCsv(member.extensionSqlFilePrefixes)}\n`,
-        `${prefix}.nativeDependencies=${propertiesCsv(member.nativeDependencies)}\n`,
         `${prefix}.nativeModuleStem=${member.nativeModuleStem || ""}\n`,
         `${prefix}.iosNativeDependencies=${propertiesCsv(member.iosNativeDependencies)}\n`,
         `${prefix}.sharedPreloadLibraries=${propertiesCsv(member.sharedPreloadLibraries)}\n`,
-        `${prefix}.mobileReleaseReady=${member.mobileReleaseReady ? "true" : "false"}\n`,
-        `${prefix}.desktopReleaseReady=${member.desktopReleaseReady ? "true" : "false"}\n`,
       );
       for (const asset of member.assets) {
         const identity = asset.identity === null || asset.identity === undefined ? "" : `.${asset.identity}`;
@@ -882,13 +937,11 @@ function stageProductVariant(product, {
       extensionSqlFileNames: member.extensionSqlFileNames,
       extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
       createsExtension: member.createsExtension,
-      nativeDependencies: member.nativeDependencies,
       nativeModuleStem: member.nativeModuleStem,
       iosNativeDependencies: member.iosNativeDependencies,
       iosRegistration: member.iosRegistration,
+      wasixInstall: member.wasixInstall,
       sharedPreloadLibraries: member.sharedPreloadLibraries,
-      mobileReleaseReady: member.mobileReleaseReady,
-      desktopReleaseReady: member.desktopReleaseReady,
       assets: member.assets.map(publicExtensionReleaseAsset),
     };
   }

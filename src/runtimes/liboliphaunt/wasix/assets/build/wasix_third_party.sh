@@ -145,7 +145,11 @@ oliphaunt_wasix_extension_build_dir() {
 }
 
 oliphaunt_wasix_extension_wasix_dependencies() {
-  oliphaunt_wasix_extension_wasix_target_values "$1" "$2" dependencies
+  local repo_root="$1"
+  local extension="$2"
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/extensions/tools/native-component-contract.mjs" \
+    field "$extension" wasix wasix-runtime wasix-portable components
 }
 
 oliphaunt_wasix_extension_wasix_configure_flags() {
@@ -231,7 +235,15 @@ oliphaunt_wasix_export_extension_dependency_prefixes() {
     env_name="${env_prefix}_PREFIX"
     prefix="${!env_name:-}"
     if [ -z "$prefix" ]; then
-      prefix="$("$script")"
+      if [ "$extension" = "postgis" ]; then
+        # WASIX wasm-ld cannot reliably combine the complete geospatial C++
+        # archive closure when every member is ThinLTO bitcode. Keep the
+        # PostgreSQL/PostGIS hot path on its selected profile while emitting
+        # conventional O2 objects for this aggregate dependency side module.
+        prefix="$(OLIPHAUNT_WASM_WASIX_COPT="${OLIPHAUNT_WASM_POSTGIS_DEPENDENCY_COPT:--O2 -g0}" "$script")"
+      else
+        prefix="$("$script")"
+      fi
     fi
     printf -v "$env_name" '%s' "$prefix"
     export "$env_name"

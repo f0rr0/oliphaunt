@@ -8,8 +8,7 @@
 extern "C" {
 #endif
 
-#define OLIPHAUNT_ABI_VERSION 6u
-#define OLIPHAUNT_INIT_OPTIONS_ABI_VERSION 1u
+#define OLIPHAUNT_ABI_VERSION 7u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
 
 #define OLIPHAUNT_CAP_PROTOCOL_RAW (1ull << 0)
@@ -87,7 +86,7 @@ typedef struct OliphauntStaticExtension {
  * oliphaunt_close is terminal for the process lifetime and restores the caller's
  * previous PGDATA value, or unsets it if it was unset.
  *
- * Every successful oliphaunt_init or oliphaunt_init_ex establishes a current
+ * Every successful oliphaunt_init establishes a current
  * logical lease generation. Hosts with independent cleanup owners must capture
  * its non-zero value immediately with oliphaunt_logical_generation and use
  * oliphaunt_close_if_generation: a stale owner then cannot terminate a newer
@@ -101,27 +100,18 @@ typedef struct OliphauntConfig {
     uint32_t abi_version;
     const char *pgdata;
     const char *runtime_dir;
+    /*
+     * Exact PostgreSQL $libdir for the embedded handle. It must name an
+     * existing directory. Pass NULL to use OLIPHAUNT_EMBEDDED_MODULE_DIR and
+     * release-layout discovery.
+     */
+    const char *module_dir;
     const char *username;
     const char *database;
     uint64_t reserved_flags;
     const char *const *startup_args;
     size_t startup_arg_count;
 } OliphauntConfig;
-
-/*
- * Optional, versioned additions to oliphaunt_init.
- *
- * module_dir selects the exact directory PostgreSQL uses for $libdir while
- * this embedded handle is active. It is copied during initialization and must
- * name an existing directory. A NULL OliphauntInitOptions preserves the
- * oliphaunt_init contract, including the OLIPHAUNT_EMBEDDED_MODULE_DIR host
- * override and release-layout discovery fallbacks.
- */
-typedef struct OliphauntInitOptions {
-    uint32_t abi_version;
-    const char *module_dir;
-    uint64_t reserved_flags;
-} OliphauntInitOptions;
 
 typedef struct OliphauntResponse {
     uint8_t *data;
@@ -146,7 +136,7 @@ typedef struct OliphauntBackupOptions {
 
 typedef struct OliphauntRestoreOptions {
     uint32_t abi_version;
-    const char *root;
+    const char *destination;
     uint32_t format;
     const uint8_t *data;
     size_t len;
@@ -156,10 +146,6 @@ typedef struct OliphauntRestoreOptions {
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
 
 OLIPHAUNT_API int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out);
-OLIPHAUNT_API int32_t oliphaunt_init_ex(
-    const OliphauntConfig *config,
-    const OliphauntInitOptions *options,
-    OliphauntHandle **out);
 OLIPHAUNT_API int32_t oliphaunt_exec_protocol(
     OliphauntHandle *handle,
     const uint8_t *request,
@@ -176,8 +162,7 @@ OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
     size_t request_len,
     OliphauntStreamCallback callback,
     void *callback_context);
-OLIPHAUNT_API int32_t oliphaunt_backup(OliphauntHandle *handle, uint32_t format, OliphauntResponse *out);
-OLIPHAUNT_API int32_t oliphaunt_backup_ex(
+OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     const OliphauntBackupOptions *options,
     OliphauntResponse *out);

@@ -14,7 +14,6 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  assertSourceOnlyJsrDirectory,
   assertSourceOnlyNpmArchive,
   prepareSourceOnlyNpmPackage,
   SOURCE_ONLY_NPM_PROFILES,
@@ -92,34 +91,6 @@ for (const [profileName, profile] of Object.entries(SOURCE_ONLY_NPM_PROFILES)) {
     }
   });
 }
-
-test("JSR source carrier includes the same source-only license and canonical notices", () => {
-  mkdirSync(path.join(ROOT, "target"), { recursive: true });
-  const scratch = mkdtempSync(path.join(ROOT, "target", "source-only-jsr-"));
-  try {
-    const profile = SOURCE_ONLY_NPM_PROFILES.js;
-    writeJson(path.join(scratch, "package.json"), packageManifest(profile));
-    writeFileSync(path.join(scratch, "index.js"), "export {};\n", "utf8");
-    writeJson(path.join(scratch, "jsr.json"), {
-      name: profile.name,
-      version: "1.2.3",
-      license: "MIT",
-      exports: "./index.js",
-      publish: {
-        include: ["index.js", "package.json", "jsr.json", "LICENSE", "THIRD_PARTY_NOTICES.md"],
-      },
-    });
-    prepareSourceOnlyNpmPackage(scratch, profile);
-    assert.equal(assertSourceOnlyJsrDirectory(scratch).license, "MIT");
-
-    const jsr = JSON.parse(readFileSync(path.join(scratch, "jsr.json"), "utf8"));
-    jsr.publish.include = jsr.publish.include.filter((member) => member !== "LICENSE");
-    writeJson(path.join(scratch, "jsr.json"), jsr);
-    assert.throws(() => assertSourceOnlyJsrDirectory(scratch), /must contain LICENSE/u);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-});
 
 test("rejects a symlinked package directory before rewriting its manifest", {
   skip: process.platform === "win32",

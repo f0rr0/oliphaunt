@@ -43,6 +43,7 @@ src/sdks/kotlin                  Kotlin/Android SDK
 src/sdks/react-native            React Native SDK
 src/sdks/js                      TypeScript SDK
 src/bindings/wasix-rust          Rust binding for the WASIX runtime
+src/bindings/wasix-ts            TypeScript browser/Node/Bun/Deno binding for the WASIX runtime
 src/shared/contracts             cross-language protocol and API contracts
 src/shared/extension-runtime-contract extension/runtime ABI contract
 src/shared/fixtures              shared semantic test fixtures
@@ -72,6 +73,10 @@ Examples:
   `oliphaunt-kotlin -> oliphaunt-react-native` are production edges.
 - `oliphaunt-rust -> oliphaunt-js` is a production edge because the TypeScript
   SDK uses the Rust broker helper.
+- `liboliphaunt-wasix -> oliphaunt-wasix-rust` and
+  `liboliphaunt-wasix -> oliphaunt-wasix-ts` are separate WASIX binding edges.
+  The WASIX TypeScript binding has no edge to the TypeScript SDK's native runtime or native
+  runtime products.
 - `extensions -> SDKs` is a build edge. SDK tests and generated metadata react
   to extension catalog changes, but exact extension source releases do not
   automatically release SDK packages.
@@ -87,6 +92,11 @@ moon action-graph oliphaunt-rust:test
 ```
 
 Do not add a second graph format to answer questions Moon already answers.
+
+Native SDK and WASIX SDK database lifetimes use the shared vocabulary in
+[`database-storage.md`](database-storage.md). That contract aligns public names
+and behavior without merging the two product families or their runtime
+implementations.
 
 ## CI Model
 
@@ -225,6 +235,11 @@ versioned product.
   byte count, and checksum; consumers select and verify only the requested SQL
   members. The bundle is a registry/distribution envelope, not an instruction
   to install every contrib extension in an application.
+- JavaScript keeps the existing unsuffixed extension package as the
+  native/default facade. Portable WASIX bytes use a distinct `-wasix` npm leaf
+  owned and versioned by that same extension product. Its exact-member ESM
+  descriptors are host-neutral across browser, Node, Bun, and Deno WASIX adapters; the
+  host and runtime remain separate axes.
 - Native runtime targets may opt out of exact-extension artifact publication
   with product-local target metadata when no real extension producer exists for
   that target. They must not appear in exact-extension matrices until the
@@ -254,7 +269,7 @@ artifact envelopes. Publishable artifacts are produced by explicit
 the `CI` workflow.
 
 Use pnpm only for JavaScript dependency installation and package-manager
-commands. Use Cargo, SwiftPM/Xcode, Gradle, npm/JSR, and Expo through
+commands. Use Cargo, SwiftPM/Xcode, Gradle, npm, and Expo through
 product-local Moon tasks or product-owned scripts. Do not add root alias layers
 over Moon.
 

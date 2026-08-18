@@ -12,7 +12,7 @@ artifacts and reuse cached runtime files.
 
 For test suites:
 
-- use `Oliphaunt::temporary()` or `OliphauntServer::temporary_tcp()`;
+- use the default memory storage on `Oliphaunt` or `OliphauntServer`;
 - reuse the process when possible so the template and module caches stay warm;
 - keep Postgres client pools at one connection;
 - call `Oliphaunt::preload()` once before a visible UI path or a large test group;
@@ -28,7 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Oliphaunt::preload_extensions([extensions::VECTOR])?;
 
     let mut db = Oliphaunt::builder()
-        .temporary()
         .extension(extensions::VECTOR)
         .open()?;
 
@@ -132,16 +131,17 @@ filesystem itself.
 ## Release Asset Profile
 
 The default asset release profile is `release`: WASIX C modules are compiled
-with `-O2 -g0`, then Binaryen runs with the wasixcc default optimization level
-plus `--converge`, `--strip-debug`, and `--strip-producers`. This is the current
-PG18 SQL-workload profile: local parity runs kept the O2 lane strict green,
-while `release-o3`/ThinLTO was mixed and did not justify becoming the default.
+with `-O2 -g0` and ThinLTO through the final guest link, then Binaryen runs with
+the wasixcc default optimization level plus `--converge`, `--strip-debug`, and
+`--strip-producers`. This retains the strict-green O2 lane while applying
+whole-program optimization; guest `release-o3` remains a comparison profile
+because its SQL-workload results were mixed.
 
 Available profile knobs:
 
 - `OLIPHAUNT_WASM_BUILD_PROFILE=release` is the default release asset profile;
 - `release`, `release-o3`, `release-os`, and `release-oz` remain available for
-  comparison builds. `release-o3` includes ThinLTO by default;
+  comparison builds. `release` and `release-o3` include ThinLTO by default;
 - set `OLIPHAUNT_WASM_WASM_OPT_FLAGS=none` to disable the release-profile
   Binaryen converge/strip extras for local build iteration;
 - set `OLIPHAUNT_WASM_WASM_OPT_FLAGS='<colon-separated flags>'` to override the

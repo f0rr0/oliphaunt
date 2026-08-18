@@ -87,7 +87,6 @@ EncodeDateOnly
 EncodeDateTime
 EncodeSpecialDate
 EncodeSpecialTimestamp
-EncodeTimeOnly
 EndCopyFrom
 EnsurePortalSnapshotExists
 EnterParallelMode
@@ -399,6 +398,9 @@ XLogRecStoreStats
 XLogRegisterData
 XactIsoLevel
 XidInMVCCSnapshot
+__wasm_longjmp
+__wasm_setjmp
+__wasm_setjmp_test
 _bt_allequalimage
 _bt_binsrch_insert
 _bt_check_natts
@@ -898,17 +900,18 @@ oidin
 oidout
 oliphaunt_wasix_get_proc_port
 oliphaunt_wasix_input_available
+oliphaunt_wasix_input_commit
+oliphaunt_wasix_input_reserve
 oliphaunt_wasix_input_reset
-oliphaunt_wasix_input_write
+oliphaunt_wasix_output_contains_error
+oliphaunt_wasix_output_data
 oliphaunt_wasix_output_len
-oliphaunt_wasix_output_read
 oliphaunt_wasix_output_reset
 oliphaunt_wasix_pq_flush
 oliphaunt_wasix_protocol_stream_active
 oliphaunt_wasix_send_conn_data
 oliphaunt_wasix_set_active
 oliphaunt_wasix_set_force_host_error_recovery
-oliphaunt_wasix_set_protocol_stdio
 oliphaunt_wasix_set_protocol_transport
 oliphaunt_wasix_start
 op_hashjoinable
@@ -1076,7 +1079,6 @@ shmem_request_hook
 shmem_startup_hook
 sigaction
 signal
-sigsetjmp
 sin
 sinl
 slot_getsomeattrs_int

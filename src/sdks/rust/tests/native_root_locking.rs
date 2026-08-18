@@ -23,11 +23,11 @@ fn native_server_rejects_duplicate_root_and_reopens_when_env_is_available() {
     }
 
     let root = unique_temp_root("oliphaunt-server-root-lock");
-    let first = block_on(Oliphaunt::builder().path(&root).native_server().open()).unwrap();
+    let first = block_on(Oliphaunt::builder().directory(&root).native_server().open()).unwrap();
     assert_query_value(&first, "SELECT 'server-open'::text AS value", "server-open");
 
     assert_open_fails_with(
-        block_on(Oliphaunt::builder().path(&root).native_server().open()),
+        block_on(Oliphaunt::builder().directory(&root).native_server().open()),
         &["already open in this process", "lock native root"],
     );
     let archive = block_on(first.backup(BackupRequest::physical_archive())).unwrap();
@@ -41,7 +41,7 @@ fn native_server_rejects_duplicate_root_and_reopens_when_env_is_available() {
     block_on(first.close()).unwrap();
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_server()
             .existing_only()
             .open(),
@@ -72,7 +72,7 @@ fn native_broker_rejects_duplicate_root_across_helpers_when_env_is_available() {
     let root = unique_temp_root("oliphaunt-broker-root-lock");
     let first = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .open(),
@@ -83,7 +83,7 @@ fn native_broker_rejects_duplicate_root_across_helpers_when_env_is_available() {
     assert_open_fails_with(
         block_on(
             Oliphaunt::builder()
-                .path(&root)
+                .directory(&root)
                 .native_broker()
                 .broker_executable(broker)
                 .open(),
@@ -94,7 +94,7 @@ fn native_broker_rejects_duplicate_root_across_helpers_when_env_is_available() {
     block_on(first.close()).unwrap();
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
             .broker_executable(broker)
             .existing_only()
@@ -126,13 +126,13 @@ fn native_broker_shared_runtime_rejects_duplicate_root_before_helper_spawn() {
     };
 
     let runtime: Arc<dyn NativeRuntime> =
-        Arc::new(NativeBrokerRuntime::from_executable(broker).with_max_roots(2));
+        Arc::new(NativeBrokerRuntime::from_executable(broker).with_max_instances(2));
     let root = unique_temp_root("oliphaunt-broker-supervisor-root-lock");
     let first = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_broker()
-            .broker_max_roots(2)
+            .broker_max_instances(2)
             .runtime_arc(Arc::clone(&runtime))
             .open(),
     )
@@ -141,9 +141,9 @@ fn native_broker_shared_runtime_rejects_duplicate_root_before_helper_spawn() {
     assert_open_fails_with(
         block_on(
             Oliphaunt::builder()
-                .path(&root)
+                .directory(&root)
                 .native_broker()
-                .broker_max_roots(2)
+                .broker_max_instances(2)
                 .runtime_arc(runtime)
                 .open(),
         ),
@@ -173,7 +173,8 @@ fn c_direct_and_rust_sdk_root_locks_are_reciprocal_when_env_is_available() {
     let api = CDirectApi::load_from_env().unwrap();
     let root = unique_temp_root("oliphaunt-c-rust-root-lock");
     let pgdata = root.join("pgdata");
-    let rust_server = block_on(Oliphaunt::builder().path(&root).native_server().open()).unwrap();
+    let rust_server =
+        block_on(Oliphaunt::builder().directory(&root).native_server().open()).unwrap();
     assert_query_value(
         &rust_server,
         "SELECT 'rust-first'::text AS value",
@@ -199,7 +200,7 @@ fn c_direct_and_rust_sdk_root_locks_are_reciprocal_when_env_is_available() {
     assert_open_fails_with(
         block_on(
             Oliphaunt::builder()
-                .path(&root)
+                .directory(&root)
                 .native_server()
                 .existing_only()
                 .open(),
@@ -210,7 +211,7 @@ fn c_direct_and_rust_sdk_root_locks_are_reciprocal_when_env_is_available() {
     c_direct.close().unwrap();
     let reopened = block_on(
         Oliphaunt::builder()
-            .path(&root)
+            .directory(&root)
             .native_server()
             .existing_only()
             .open(),
@@ -398,6 +399,7 @@ struct CDirectConfig {
     abi_version: u32,
     pgdata: *const c_char,
     runtime_dir: *const c_char,
+    module_dir: *const c_char,
     username: *const c_char,
     database: *const c_char,
     reserved_flags: u64,
@@ -408,7 +410,7 @@ struct CDirectConfig {
 #[repr(C)]
 struct CDirectRestoreOptions {
     abi_version: u32,
-    root: *const c_char,
+    destination: *const c_char,
     format: u32,
     data: *const u8,
     len: usize,
@@ -421,7 +423,7 @@ type CDirectRestore = unsafe extern "C" fn(*const CDirectRestoreOptions) -> c_in
 type CDirectClose = unsafe extern "C" fn(*mut CDirectRawHandle) -> c_int;
 type CDirectLastError = unsafe extern "C" fn(*mut CDirectRawHandle) -> *const c_char;
 
-const OLIPHAUNT_ABI_VERSION: u32 = 6;
+const OLIPHAUNT_ABI_VERSION: u32 = 7;
 
 struct CDirectApi {
     _library: Library,
@@ -462,6 +464,7 @@ impl CDirectApi {
             abi_version: OLIPHAUNT_ABI_VERSION,
             pgdata: pgdata.as_ptr(),
             runtime_dir: runtime_dir.as_ptr(),
+            module_dir: ptr::null(),
             username: username.as_ptr(),
             database: database.as_ptr(),
             reserved_flags: 0,
@@ -496,7 +499,7 @@ impl CDirectApi {
         let root = path_to_c_string(root, "restore root")?;
         let options = CDirectRestoreOptions {
             abi_version: OLIPHAUNT_ABI_VERSION,
-            root: root.as_ptr(),
+            destination: root.as_ptr(),
             format: 2,
             data: bytes.as_ptr(),
             len: bytes.len(),

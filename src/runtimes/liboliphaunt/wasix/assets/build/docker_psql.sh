@@ -74,10 +74,6 @@ fi
     . ./src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh
     . ./src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh
     . ./src/runtimes/liboliphaunt/wasix/assets/build/source_lane.sh
-    . ./src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh
-    icu_prefix="$(./src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh)"
-    ICU_CFLAGS="$(oliphaunt_wasix_icu_cflags "$icu_prefix")"
-    ICU_LIBS="$(oliphaunt_wasix_icu_libs "$icu_prefix")"
     oliphaunt_wasix_apply_wasix_profile build
     export AR=wasixar
     export RANLIB=wasixranlib
@@ -89,22 +85,67 @@ fi
     sha256sum -c "$BUILD_DIR/.oliphaunt-wasix-bridge-sha256" >/dev/null
     test "$(oliphaunt_wasix_wasix_profile_signature)" = "$(cat "$BUILD_DIR/.oliphaunt-wasix-build-profile")"
 
-    # initdb uses tool-specific symbol rewrites. Rebuild shared frontend
-    # archives with the generic bridge before linking standalone psql.
-    make -s -C "$BUILD_DIR/src/interfaces/libpq" clean
-    make -s -C "$BUILD_DIR/src/fe_utils" clean
-    make -s -C "$BUILD_DIR/src/port" clean
-    make -s -C "$BUILD_DIR/src/common" clean
-    make -s -C "$BUILD_DIR/src/port" all
-    make -s -C "$BUILD_DIR/src/common" all
-    make -s -C "$BUILD_DIR/src/interfaces/libpq" all
-    make -s -C "$BUILD_DIR/src/fe_utils" all
-    make -s -C "$BUILD_DIR/src/bin/psql" clean
-    make -s -C "$BUILD_DIR/src/bin/psql" psql \
-      libpq="$BUILD_DIR/src/interfaces/libpq/libpq.a" \
-      LIBS="$BUILD_DIR/src/common/libpgcommon_shlib.a $BUILD_DIR/src/common/libpgcommon_excluded_shlib.a $BUILD_DIR/src/port/libpgport_shlib.a $ICU_LIBS -lm"
-    test -f "$BUILD_DIR/src/bin/psql/psql"
-    if wasixnm -u "$BUILD_DIR/src/bin/psql/psql" | grep -E " PQ[A-Za-z0-9_]+$"; then
+    runtime_build_dir="$BUILD_DIR"
+
+    # The runtime was already sealed with the selected release profile. Build
+    # the separate psql closure without ThinLTO: WASIX LLVM can segfault when
+    # its large frontend, libpq, and ICU archive closure is linked as one.
+    . ./src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh
+    tool_icu_native_build_dir="$CONTAINER_GENERATED_ROOT/work/icu-native-tools"
+    tool_icu_prefix="$CONTAINER_GENERATED_ROOT/work/icu-wasix-tools"
+    tool_icu_build_dir="$CONTAINER_GENERATED_ROOT/work/icu-wasix-tools-build"
+    icu_prefix="$(
+      env -u AR -u RANLIB -u NM -u LLVM_NM \
+        ICU_PREFIX="$tool_icu_prefix" \
+        ICU_NATIVE_BUILD_DIR="$tool_icu_native_build_dir" \
+        ICU_BUILD_DIR="$tool_icu_build_dir" \
+        OLIPHAUNT_WASM_BUILD_PROFILE=release-os \
+        OLIPHAUNT_WASM_WASIX_COPT="-O2 -g0" \
+        ./src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh
+    )"
+    ICU_CFLAGS="$(oliphaunt_wasix_icu_cflags "$icu_prefix")"
+    ICU_LIBS="$(oliphaunt_wasix_icu_libs "$icu_prefix")"
+
+    tool_build_dir="$CONTAINER_GENERATED_ROOT/work/docker-psql"
+    tool_shim="$CONTAINER_GENERATED_ROOT/build/wasix-psql/oliphaunt_wasix_bridge.o"
+    tool_stamp="$tool_build_dir/.oliphaunt-wasix-psql-build"
+    expected_tool_stamp="$(
+      printf "%s\n" "schema=oliphaunt-wasix-psql-v1"
+      sha256sum \
+        "$PGSRC/.oliphaunt-wasix-source-fingerprint" \
+        "$PGSRC/.oliphaunt-wasix-postgres-version" \
+        ./src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh \
+        ./src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh \
+        ./src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh \
+        "$icu_prefix/.oliphaunt-wasix-icu-build"
+    )"
+    if [ ! -f "$tool_build_dir/config.status" ] ||
+       [ ! -f "$tool_stamp" ] ||
+       [ "$(cat "$tool_stamp")" != "$expected_tool_stamp" ]; then
+      rm -rf "$tool_build_dir"
+      BUILD_DIR="$tool_build_dir" \
+      ICU_PREFIX="$icu_prefix" \
+      OLIPHAUNT_WASM_SHIM_OBJECT="$tool_shim" \
+      OLIPHAUNT_WASM_BUILD_PROFILE=release-os \
+      OLIPHAUNT_WASM_WASIX_COPT="-O2 -g0" \
+      OLIPHAUNT_WASM_WASIX_LOPT="-Wl,--threads=1" \
+        ./src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh
+      printf "%s\n" "$expected_tool_stamp" > "$tool_stamp"
+    fi
+
+    # initdb uses tool-specific symbol rewrites. The isolated build keeps the
+    # generic psql closure independent from both initdb and the hot backend.
+    make -s -C "$tool_build_dir/src/port" all
+    make -s -C "$tool_build_dir/src/common" all
+    make -s -C "$tool_build_dir/src/interfaces/libpq" all
+    make -s -C "$tool_build_dir/src/fe_utils" all
+    make -s -C "$tool_build_dir/src/bin/psql" psql \
+      libpq="$tool_build_dir/src/interfaces/libpq/libpq.a" \
+      LIBS="$tool_build_dir/src/common/libpgcommon_shlib.a $tool_build_dir/src/common/libpgcommon_excluded_shlib.a $tool_build_dir/src/port/libpgport_shlib.a $ICU_LIBS -lm"
+    install -m 0755 \
+      "$tool_build_dir/src/bin/psql/psql" \
+      "$runtime_build_dir/src/bin/psql/psql"
+    if wasixnm -u "$runtime_build_dir/src/bin/psql/psql" | grep -E " PQ[A-Za-z0-9_]+$"; then
       echo "psql still imports libpq symbols; expected standalone WASIX psql" >&2
       exit 1
     fi

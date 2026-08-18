@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Embedded PostgreSQL
-description: Learn how PostgreSQL roots, WAL, lifecycle, extensions, backup, and restore fit inside an app.
+description: Learn how PostgreSQL storage, WAL, lifecycle, extensions, backup, and restore fit inside an app.
 ---
 
 # Embedded PostgreSQL
@@ -13,39 +13,42 @@ defaults.
 
 <EmbeddedPostgresModel />
 
-The product line has two runtime families.
+The product line has distinct native and WASIX hosts.
 
-| Runtime family | Use it for |
+| Product | Use it for |
 | --- | --- |
-| Native `liboliphaunt` | Rust, Swift, Kotlin, React Native, TypeScript native paths, and C ABI consumers |
-| `oliphaunt-wasix` | The first-class WASM/WASIX runtime family |
+| Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
+| Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
+| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno direct/Worker placement with memory; browsers may opt into IndexedDB snapshots and server runtimes may opt into directory snapshots |
 
-Both families share public concepts such as roots, capabilities, exact
-extensions, backup, and restore. Runtime details differ by family, so native and
-WASM packages expose their own capabilities for app decisions.
+The products share storage, exact extension selection, structured errors, and
+lifecycle concepts. Capabilities, backup/restore, server access, and persistence
+mechanisms remain product-specific.
 
-## Root Storage
+## Database storage
 
-An Oliphaunt database root is a PostgreSQL directory. A persistent root contains
-PostgreSQL data, WAL, Oliphaunt metadata, root locks, selected extension
-metadata, and recovery state. Temporary roots are owned by the SDK and can be
-removed after close.
+Oliphaunt storage contains PostgreSQL data, WAL, Oliphaunt metadata, locks,
+selected-extension metadata, and recovery state. Native persistent storage is
+an application-owned directory. Native temporary storage is SDK-owned. WASIX
+uses a true memory filesystem by default and offers host-specific persistent
+storage explicitly.
 
-That root model is deliberate: app developers get PostgreSQL's recovery and SQL
+That storage model is deliberate: app developers get PostgreSQL's recovery and SQL
 behavior, while the SDK owns the app-facing safety rails around paths, locking,
 backup, restore, and selected runtime assets.
 
 ## Lifecycle Contract
 
-Every SDK exposes the same lifecycle phases with ecosystem-native names:
+Every SDK exposes open, query, and close with ecosystem-native names. Other
+lifecycle phases are present only where the host supports them:
 
 | Phase | What the SDK owns |
 | --- | --- |
-| Open | Create or attach to the root, validate locks, and materialize selected runtime resources |
+| Open | Create or attach to storage, validate ownership, and materialize selected runtime resources |
 | Query | Route work through the selected engine and preserve mode-specific concurrency rules |
-| Background | Checkpoint, cancel, or defer bounded work according to platform lifecycle hooks |
+| Background/checkpoint | Use platform lifecycle hooks or host-specific WASIX snapshot publication where exposed |
 | Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
-| Backup/restore | Validate archives and roots before moving PostgreSQL data |
+| Backup/restore | Use native or Rust WASIX data-movement APIs where exposed |
 
 Mobile SDKs connect these phases to app background and foreground transitions.
 Desktop SDKs add broker and server modes where a helper process or local server
@@ -53,10 +56,10 @@ is the better runtime shape.
 
 ## Extension Selection
 
-Extensions are selected by exact SQL extension name before packaging or opening
-the database. App artifacts include the selected extension and its declared
-dependencies. An app selecting `vector` ships `vector` and only the dependency
-files declared for `vector`.
+Extensions are selected exactly before packaging or opening the database.
+Native SDKs use SQL-name selectors, Rust WASIX uses exact Cargo features and
+typed values, and WASIX TypeScript imports exact `-wasix` descriptors. App
+artifacts include only the selected carrier closure.
 
 `CREATE EXTENSION` succeeds only when the selected runtime resources include
 that extension for the target platform. See the
@@ -64,8 +67,9 @@ that extension for the target platform. See the
 
 ## What is different from SQLite?
 
-Oliphaunt stores live data as a PostgreSQL root directory with PostgreSQL
-recovery behavior. That is a larger runtime model than a single-file database,
+Oliphaunt stores live data as PostgreSQL storage with PostgreSQL recovery
+behavior. On native targets this is a directory rather than a single database
+file; WASIX hosts provide their own storage policy. That is a larger runtime model,
 but it enables PostgreSQL SQL, types, wire-protocol behavior, and extensions
 inside apps that need those features.
 

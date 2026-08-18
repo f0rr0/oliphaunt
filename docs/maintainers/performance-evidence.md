@@ -280,7 +280,7 @@ Current physical iPhone install/runtime/benchmark evidence:
 - iOS app bundle: 183,420,535 bytes
 - packed React Native package: 14,008,184 bytes
 - crash recovery: passed on the physical iPhone with app-private
-  `app-support://...` storage; verify reopened the recovered root in
+  explicit React Native `applicationData` storage; verify reopened the recovered database in
   `146.99 ms` and read back `crash-ios-12452656`
 - smoke/runtime: passed on the physical iPhone after the harness automatically
   backgrounded the app through Safari and foregrounded it again. The smoke
@@ -499,7 +499,7 @@ A focused post-report backup diagnostic at
 `target/perf/native-liboliphaunt-20260524Tbackup-final-direct/report.md`
 uses matching current-source provenance but is intentionally partial. It covers
 only NativeDirect plus native PostgreSQL backup/restore with 10 repeats after
-the C ABI gained `oliphaunt_backup_ex`, in-archive SDK metadata append, direct
+the C ABI gained options-based in-archive SDK metadata append, direct
 `read(2)` file copying, and per-entry tar buffer reservation. That run improves
 the direct physical backup/restore p90 to `0.534 s`, but native PostgreSQL
 physical remains `0.324 s`, so the backup gate is still a real miss. Opt-in

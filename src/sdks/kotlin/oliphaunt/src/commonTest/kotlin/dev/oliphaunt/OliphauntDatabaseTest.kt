@@ -288,6 +288,55 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun highLevelSqlSurfacesPostgresErrorsWhileRawProtocolPreservesBytes() = runTest {
+        val expected = backendErrorResponse("ERROR", "23505", "duplicate key value")
+        val database = postgresErrorDatabase("FAIL")
+        val request = ProtocolRequest.simpleQuery("SELECT FAIL")
+
+        assertTrue(database.execProtocolRaw(request).bytes.contentEquals(expected))
+
+        val executeError =
+            assertFailsWith<PostgresException> {
+                database.execute("SELECT FAIL")
+            }
+        assertEquals("23505", executeError.postgresError.sqlstate)
+        assertEquals("duplicate key value", executeError.postgresError.message)
+
+        val transactionError =
+            assertFailsWith<PostgresException> {
+                database.transaction { transaction ->
+                    transaction.execute("SELECT FAIL")
+                }
+            }
+        assertEquals("23505", transactionError.postgresError.sqlstate)
+    }
+
+    @Test
+    fun transactionControlAndCheckpointSurfacePostgresErrors() = runTest {
+        val beginDatabase = postgresErrorDatabase("BEGIN")
+        val beginError =
+            assertFailsWith<PostgresException> {
+                beginDatabase.transaction { }
+            }
+        assertEquals("23505", beginError.postgresError.sqlstate)
+        beginDatabase.execute("SELECT recovered")
+
+        val commitDatabase = postgresErrorDatabase("COMMIT")
+        val commitError =
+            assertFailsWith<PostgresException> {
+                commitDatabase.transaction { }
+            }
+        assertEquals("23505", commitError.postgresError.sqlstate)
+        commitDatabase.execute("SELECT recovered")
+
+        val checkpointError =
+            assertFailsWith<PostgresException> {
+                postgresErrorDatabase("CHECKPOINT").checkpoint()
+            }
+        assertEquals("23505", checkpointError.postgresError.sqlstate)
+    }
+
+    @Test
     fun queryNormalizesCancellationPostgresErrors() {
         val error =
             assertFailsWith<PostgresException> {
@@ -559,7 +608,7 @@ class OliphauntDatabaseTest {
 
         val capabilities = database.capabilities()
         assertTrue(capabilities.independentSessions)
-        assertEquals(false, capabilities.multiRoot)
+        assertEquals(false, capabilities.multipleInstances)
         assertTrue(capabilities.queryCancel)
         assertTrue(capabilities.backupRestore)
         assertEquals(
@@ -614,25 +663,22 @@ class OliphauntDatabaseTest {
         assertTrue(support[0].capabilities.supportsBackupFormat(BackupFormat.PhysicalArchive))
         assertFalse(support[0].capabilities.supportsBackupFormat(BackupFormat.Sql))
         assertEquals(false, support[0].capabilities.independentSessions)
-        assertEquals(false, support[0].capabilities.multiRoot)
-        assertTrue(support[0].capabilities.reopenable)
-        assertTrue(support[0].capabilities.sameRootLogicalReopen)
-        assertFalse(support[0].capabilities.rootSwitchable)
+        assertEquals(false, support[0].capabilities.multipleInstances)
+        assertTrue(support[0].capabilities.sameInstanceLogicalReopen)
+        assertFalse(support[0].capabilities.instanceSwitchable)
         assertFalse(support[0].capabilities.crashRestartable)
         assertEquals(false, support[1].available)
         assertTrue(support[1].capabilities.processIsolated)
-        assertTrue(support[1].capabilities.multiRoot)
-        assertTrue(support[1].capabilities.reopenable)
-        assertFalse(support[1].capabilities.sameRootLogicalReopen)
-        assertTrue(support[1].capabilities.rootSwitchable)
+        assertTrue(support[1].capabilities.multipleInstances)
+        assertFalse(support[1].capabilities.sameInstanceLogicalReopen)
+        assertTrue(support[1].capabilities.instanceSwitchable)
         assertTrue(support[1].capabilities.crashRestartable)
         assertTrue(support[1].unavailableReason.orEmpty().contains("broker"))
         assertEquals(false, support[2].available)
         assertTrue(support[2].capabilities.independentSessions)
-        assertEquals(false, support[2].capabilities.multiRoot)
-        assertTrue(support[2].capabilities.reopenable)
-        assertFalse(support[2].capabilities.sameRootLogicalReopen)
-        assertTrue(support[2].capabilities.rootSwitchable)
+        assertEquals(false, support[2].capabilities.multipleInstances)
+        assertFalse(support[2].capabilities.sameInstanceLogicalReopen)
+        assertTrue(support[2].capabilities.instanceSwitchable)
         assertFalse(support[2].capabilities.crashRestartable)
         assertEquals(
             listOf(BackupFormat.Sql, BackupFormat.PhysicalArchive),
@@ -683,32 +729,43 @@ class OliphauntDatabaseTest {
     }
 
     @Test
-    fun openRejectsBlankRootBeforeEngineCall() = runTest {
+    fun configDefaultsToTemporaryDirectoryStorage() {
+        assertEquals(DatabaseStorage.TemporaryDirectory, OliphauntConfig().storage)
+    }
+
+    @Test
+    fun openRejectsBlankStorageDirectoryBeforeEngineCall() = runTest {
         val engine = CountingEngine()
         val error =
             assertFailsWith<OliphauntException> {
                 OliphauntDatabase.open(
-                    config = OliphauntConfig(mode = EngineMode.NativeDirect, root = " \t"),
+                    config = OliphauntConfig(
+                        mode = EngineMode.NativeDirect,
+                        storage = DatabaseStorage.Directory(" \t"),
+                    ),
                     engine = engine,
                 )
             }
 
-        assertTrue(error.message.orEmpty().contains("database root must not be empty"))
+        assertTrue(error.message.orEmpty().contains("database storage directory must not be empty"))
         assertEquals(0, engine.openCalls)
     }
 
     @Test
-    fun openRejectsNulRootBeforeEngineCall() = runTest {
+    fun openRejectsNulStorageDirectoryBeforeEngineCall() = runTest {
         val engine = CountingEngine()
         val error =
             assertFailsWith<OliphauntException> {
                 OliphauntDatabase.open(
-                    config = OliphauntConfig(mode = EngineMode.NativeDirect, root = "/tmp/oliphaunt\u0000root"),
+                    config = OliphauntConfig(
+                        mode = EngineMode.NativeDirect,
+                        storage = DatabaseStorage.Directory("/tmp/oliphaunt\u0000storage"),
+                    ),
                     engine = engine,
                 )
             }
 
-        assertTrue(error.message.orEmpty().contains("database root must not contain NUL bytes"))
+        assertTrue(error.message.orEmpty().contains("database storage directory must not contain NUL bytes"))
         assertEquals(0, engine.openCalls)
     }
 
@@ -756,16 +813,43 @@ class OliphauntDatabaseTest {
                 BackupFormat.PhysicalArchive,
                 "physical-backup".encodeToByteArray(),
             )
-        val root =
+        val destination = "/tmp/oliphaunt-restore"
+        val restoredDestination =
             OliphauntDatabase.restore(
                 RestoreRequest(
                     artifact = artifact,
-                    root = "/tmp/oliphaunt-restore",
+                    destination = destination,
                 ).replaceExisting(),
-                engine = MockEngine(EngineMode.NativeDirect),
+                engine = MockEngine(
+                    mode = EngineMode.NativeDirect,
+                    expectedRestoreDestinationPolicy = RestoreDestinationPolicy.ReplaceExisting,
+                ),
             )
 
-        assertEquals("/tmp/oliphaunt-restore", root)
+        assertEquals(destination, restoredDestination)
+    }
+
+    @Test
+    fun restoreForwardsFailIfExistsByDefault() = runTest {
+        val artifact =
+            BackupArtifact(
+                BackupFormat.PhysicalArchive,
+                "physical-backup".encodeToByteArray(),
+            )
+        val destination = "/tmp/oliphaunt-restore-default-policy"
+        val restoredDestination =
+            OliphauntDatabase.restore(
+                RestoreRequest(
+                    artifact = artifact,
+                    destination = destination,
+                ),
+                engine = MockEngine(
+                    mode = EngineMode.NativeDirect,
+                    expectedRestoreDestinationPolicy = RestoreDestinationPolicy.FailIfExists,
+                ),
+            )
+
+        assertEquals(destination, restoredDestination)
     }
 
     @Test
@@ -779,7 +863,7 @@ class OliphauntDatabaseTest {
                             BackupFormat.Sql,
                             "sql-backup".encodeToByteArray(),
                         ),
-                        root = "/tmp/oliphaunt-restore-sql",
+                        destination = "/tmp/oliphaunt-restore-sql",
                     ),
                     engine = MockEngine(EngineMode.NativeDirect),
                 )
@@ -793,7 +877,7 @@ class OliphauntDatabaseTest {
     }
 
     @Test
-    fun restoreRejectsBlankRootBeforeEngineCall() = runTest {
+    fun restoreRejectsBlankDestinationBeforeEngineCall() = runTest {
         val engine = CountingEngine()
         val error =
             assertFailsWith<OliphauntException> {
@@ -804,18 +888,18 @@ class OliphauntDatabaseTest {
                             BackupFormat.PhysicalArchive,
                             "physical-backup".encodeToByteArray(),
                         ),
-                        root = "\n",
+                        destination = "\n",
                     ),
                     engine = engine,
                 )
             }
 
-        assertTrue(error.message.orEmpty().contains("restore root must not be empty"))
+        assertTrue(error.message.orEmpty().contains("restore destination must not be empty"))
         assertEquals(0, engine.restoreCalls)
     }
 
     @Test
-    fun restoreRejectsNulRootBeforeEngineCall() = runTest {
+    fun restoreRejectsNulDestinationBeforeEngineCall() = runTest {
         val engine = CountingEngine()
         val error =
             assertFailsWith<OliphauntException> {
@@ -826,13 +910,13 @@ class OliphauntDatabaseTest {
                             BackupFormat.PhysicalArchive,
                             "physical-backup".encodeToByteArray(),
                         ),
-                        root = "/tmp/oliphaunt\u0000restore",
+                        destination = "/tmp/oliphaunt\u0000restore",
                     ),
                     engine = engine,
                 )
             }
 
-        assertTrue(error.message.orEmpty().contains("restore root must not contain NUL bytes"))
+        assertTrue(error.message.orEmpty().contains("restore destination must not contain NUL bytes"))
         assertEquals(0, engine.restoreCalls)
     }
 
@@ -1013,6 +1097,29 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun failedCloseKeepsSessionUsableAndRetriesTheSameOwner() = runTest {
+        val session = FailOnceCloseSession()
+        val database =
+            OliphauntDatabase.open(
+                config = OliphauntConfig(mode = EngineMode.NativeDirect),
+                engine = FixedSessionEngine(session),
+            )
+
+        val error = assertFailsWith<OliphauntException> { database.close() }
+        assertEquals("injected detach failure", error.message)
+        assertEquals(
+            listOf(1, 2, 3),
+            database
+                .execProtocolRaw(ProtocolRequest(byteArrayOf(1, 2, 3)))
+                .bytes
+                .map(Byte::toInt),
+        )
+
+        database.close()
+        assertEquals(2, session.closeAttempts)
+    }
+
+    @Test
     fun closeDoesNotIssueSpuriousCancelBeforeClosing() = runTest {
         val session = BlockingSession()
         val database =
@@ -1110,6 +1217,7 @@ class OliphauntDatabaseTest {
 
 private class MockEngine(
     private val mode: EngineMode,
+    private val expectedRestoreDestinationPolicy: RestoreDestinationPolicy? = null,
 ) : OliphauntEngine {
     override suspend fun open(config: OliphauntConfig): OliphauntSession {
         assertEquals(mode, config.mode)
@@ -1118,8 +1226,10 @@ private class MockEngine(
 
     override suspend fun restore(request: RestoreRequest): String {
         assertEquals(BackupFormat.PhysicalArchive, request.artifact.format)
-        assertEquals(RestoreTargetPolicy.ReplaceExisting, request.targetPolicy)
-        return request.root
+        expectedRestoreDestinationPolicy?.let {
+            assertEquals(it, request.destinationPolicy)
+        }
+        return request.destination
     }
 }
 
@@ -1147,7 +1257,7 @@ private class CountingEngine : OliphauntEngine {
 
     override suspend fun restore(request: RestoreRequest): String {
         restoreCalls += 1
-        return request.root
+        return request.destination
     }
 }
 
@@ -1224,13 +1334,70 @@ private class MockSession(
     override suspend fun close() = Unit
 }
 
+private class FailOnceCloseSession : OliphauntSession {
+    var closeAttempts = 0
+        private set
+
+    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
+        mode = EngineMode.NativeDirect,
+        processIsolated = false,
+        independentSessions = false,
+        maxClientSessions = 1,
+    )
+
+    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse = ProtocolResponse(request.bytes)
+
+    override suspend fun backup(request: BackupRequest): BackupArtifact = BackupArtifact(request.format, ByteArray(0))
+
+    override suspend fun cancel() = Unit
+
+    override suspend fun close() {
+        closeAttempts += 1
+        if (closeAttempts == 1) {
+            throw OliphauntException("injected detach failure")
+        }
+    }
+}
+
 private class FixedSessionEngine(
     private val session: OliphauntSession,
 ) : OliphauntEngine {
     override suspend fun open(config: OliphauntConfig): OliphauntSession = session
 
-    override suspend fun restore(request: RestoreRequest): String = request.root
+    override suspend fun restore(request: RestoreRequest): String = request.destination
 }
+
+private class PostgresErrorSession(
+    private val failureSql: String,
+) : OliphauntSession {
+    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
+        mode = EngineMode.NativeDirect,
+        processIsolated = false,
+        independentSessions = false,
+        maxClientSessions = 1,
+    )
+
+    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse {
+        val response =
+            if (request.bytes.decodeToString().contains(failureSql)) {
+                backendErrorResponse("ERROR", "23505", "duplicate key value")
+            } else {
+                backendSelectResponse()
+            }
+        return ProtocolResponse(response)
+    }
+
+    override suspend fun backup(request: BackupRequest): BackupArtifact = BackupArtifact(request.format, ByteArray(0))
+
+    override suspend fun cancel() = Unit
+
+    override suspend fun close() = Unit
+}
+
+private suspend fun postgresErrorDatabase(failingOn: String): OliphauntDatabase = OliphauntDatabase.open(
+    config = OliphauntConfig(mode = EngineMode.NativeDirect),
+    engine = FixedSessionEngine(PostgresErrorSession(failingOn)),
+)
 
 private class BlockingSession : OliphauntSession {
     val started = CompletableDeferred<Unit>()

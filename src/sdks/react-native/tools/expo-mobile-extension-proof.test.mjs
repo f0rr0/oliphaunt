@@ -11,7 +11,7 @@ mock.module("@oliphaunt/react-native", () => ({
 }));
 
 const { runMobileReleaseExtensionProof } = await import(
-  "../examples/expo/src/postgres-workload.ts"
+  "../examples/expo/src/mobile-smoke.ts"
 );
 const { serializeExpoSmokePassReceipt } = await import(
   "../examples/expo/src/smoke-pass-receipt.ts"

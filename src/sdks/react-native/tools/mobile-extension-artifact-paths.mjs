@@ -25,6 +25,7 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "../../../../tools/release/extension-upstream-licenses.mjs";
+import { assertWasixExtensionMemberInstall } from "../../../../tools/release/wasix-extension-install-contract.mjs";
 
 const OPTION_NAMES = new Set([
   "--root",
@@ -49,13 +50,11 @@ const EXTENSION_MEMBER_KEYS = new Set([
   "dataFiles",
   "extensionSqlFileNames",
   "extensionSqlFilePrefixes",
-  "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
   "iosRegistration",
+  "wasixInstall",
   "sharedPreloadLibraries",
-  "mobileReleaseReady",
-  "desktopReleaseReady",
   "assets",
 ]);
 const DIRECT_MANIFEST_KEYS = new Set([
@@ -289,18 +288,39 @@ function parseIosDependencyContract(text, source) {
   return result;
 }
 
+function parseIosDependencyOverlay(value, source) {
+  if (!isObject(value) || value["format-version"] !== 1 || !Array.isArray(value.extensions)) {
+    fail(`${source} must use format-version 1 and declare extensions`);
+  }
+  const result = new Map();
+  for (const [index, row] of value.extensions.entries()) {
+    if (!isObject(row)) fail(`${source} extension ${index} must be an object`);
+    const sqlName = safeComponent(row["sql-name"], `${source} extension ${index} sql-name`);
+    const dependencies = canonicalStringList(
+      row["static-dependencies"],
+      `${source} extension ${sqlName} static-dependencies`,
+    );
+    if (result.has(sqlName)) fail(`${source} repeats iOS dependency owner ${sqlName}`);
+    result.set(sqlName, dependencies);
+  }
+  return result;
+}
+
 async function loadRepositoryContract(root) {
-  const metadataPath = join(root, "src/extensions/generated/sdk/react-native.json");
+  const metadataPath = join(root, "src/extensions/generated/sdk/extensions.json");
+  const iosOverlayPath = join(root, "src/extensions/generated/sdk/ios-static-dependencies.json");
   const iosDependenciesPath = join(root, "src/extensions/generated/mobile/static-extensions.tsv");
   const nativeVersionPath = join(root, "src/runtimes/liboliphaunt/native/VERSION");
   const wasixVersionPath = join(root, "src/runtimes/liboliphaunt/wasix/VERSION");
   let metadata;
+  let iosOverlay;
   let iosDependenciesText;
   let nativeRuntimeVersion;
   let wasixRuntimeVersion;
   try {
-    [metadata, iosDependenciesText, nativeRuntimeVersion, wasixRuntimeVersion] = await Promise.all([
+    [metadata, iosOverlay, iosDependenciesText, nativeRuntimeVersion, wasixRuntimeVersion] = await Promise.all([
       readFile(metadataPath, "utf8").then((value) => JSON.parse(value)),
+      readFile(iosOverlayPath, "utf8").then((value) => JSON.parse(value)),
       readFile(iosDependenciesPath, "utf8"),
       readFile(nativeVersionPath, "utf8").then((value) => value.trim()),
       readFile(wasixVersionPath, "utf8").then((value) => value.trim()),
@@ -314,7 +334,8 @@ async function loadRepositoryContract(root) {
   if (!isObject(metadata) || !Array.isArray(metadata.extensions)) {
     fail(`${metadataPath} must declare extensions`);
   }
-  const iosDependencies = parseIosDependencyContract(iosDependenciesText, iosDependenciesPath);
+  const generatedIosDependencies = parseIosDependencyOverlay(iosOverlay, iosOverlayPath);
+  const staticIosDependencies = parseIosDependencyContract(iosDependenciesText, iosDependenciesPath);
   const products = new Map();
   const sqlOwners = new Map();
   for (const [index, row] of metadata.extensions.entries()) {
@@ -338,25 +359,19 @@ async function loadRepositoryContract(root) {
     if (typeof row["creates-extension"] !== "boolean") {
       fail(`${metadataPath} extension ${sqlName} creates-extension must be boolean`);
     }
-    if (typeof row["mobile-release-ready"] !== "boolean" || typeof row["desktop-release-ready"] !== "boolean") {
-      fail(`${metadataPath} extension ${sqlName} release readiness flags must be boolean`);
-    }
     const nativeModuleStem = row["native-module-stem"] === null
       ? null
       : safeComponent(row["native-module-stem"], `${metadataPath} extension ${sqlName} native-module-stem`);
-    const generatedIosDependencies = canonicalStringList(
-      row["ios-static-dependencies"],
-      `${metadataPath} extension ${sqlName} ios-static-dependencies`,
-    );
-    const staticIosDependencies = iosDependencies.get(sqlName)
+    const generatedDependencies = generatedIosDependencies.get(sqlName) ?? [];
+    const staticDependencies = staticIosDependencies.get(sqlName)
       ?? (nativeModuleStem === null
         ? []
         : fail(`${iosDependenciesPath} has no row for native extension ${sqlName}`));
-    if (!isDeepStrictEqual(generatedIosDependencies, staticIosDependencies)) {
-      fail(`${metadataPath} and ${iosDependenciesPath} disagree for iOS dependencies of ${sqlName}`);
+    if (!isDeepStrictEqual(generatedDependencies, staticDependencies)) {
+      fail(`${iosOverlayPath} and ${iosDependenciesPath} disagree for iOS dependencies of ${sqlName}`);
     }
-    if (nativeModuleStem === null && generatedIosDependencies.length > 0) {
-      fail(`${metadataPath} SQL-only extension ${sqlName} must not declare iOS dependencies`);
+    if (nativeModuleStem === null && generatedDependencies.length > 0) {
+      fail(`${iosOverlayPath} SQL-only extension ${sqlName} must not declare iOS dependencies`);
     }
     const dependencies = canonicalStringList(
       row["selected-extension-dependencies"],
@@ -384,18 +399,12 @@ async function loadRepositoryContract(root) {
         `${metadataPath} extension ${sqlName} extension-sql-file-prefixes`,
         sqlFilePrefix,
       ),
-      nativeDependencies: canonicalStringList(
-        row["native-dependencies"],
-        `${metadataPath} extension ${sqlName} native-dependencies`,
-      ),
       nativeModuleStem,
-      canonicalIosNativeDependencies: generatedIosDependencies,
+      canonicalIosNativeDependencies: generatedDependencies,
       sharedPreloadLibraries: canonicalStringList(
         row["shared-preload-libraries"],
         `${metadataPath} extension ${sqlName} shared-preload-libraries`,
       ),
-      mobileReleaseReady: row["mobile-release-ready"],
-      desktopReleaseReady: row["desktop-release-ready"],
     };
     const owner = products.get(product) ?? {
       artifactProduct: product,
@@ -538,17 +547,19 @@ function validateMemberContract(member, expected, context) {
     "dataFiles",
     "extensionSqlFileNames",
     "extensionSqlFilePrefixes",
-    "nativeDependencies",
     "nativeModuleStem",
     "sharedPreloadLibraries",
-    "mobileReleaseReady",
-    "desktopReleaseReady",
   ]) {
     if (!isDeepStrictEqual(member[field], expected[field])) {
       fail(`${context}.${field} must exactly match generated React Native extension metadata`);
     }
   }
   if (!Array.isArray(member.assets)) fail(`${context}.assets must be an array`);
+  try {
+    assertWasixExtensionMemberInstall(member, { label: context });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const mobileGroups = new Map();
   for (const [index, asset] of member.assets.entries()) {
     if (!isObject(asset) || !MOBILE_TARGETS.has(asset.target)) continue;

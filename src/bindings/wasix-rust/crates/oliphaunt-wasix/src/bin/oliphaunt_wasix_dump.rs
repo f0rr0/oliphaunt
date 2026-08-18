@@ -1,6 +1,6 @@
 use anyhow::Result;
 #[cfg(feature = "tools")]
-use oliphaunt_wasix::{OliphauntServer, PgDumpOptions};
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, PgDumpOptions};
 #[cfg(feature = "tools")]
 use std::env;
 #[cfg(feature = "tools")]
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[cfg(feature = "tools")]
 #[derive(Debug)]
 struct Args {
-    root: PathBuf,
+    directory: PathBuf,
     passthrough: Vec<String>,
 }
 
@@ -20,8 +20,13 @@ fn main() -> Result<()> {
     }
     #[cfg(feature = "tools")]
     {
-        let Args { root, passthrough } = parse_args()?;
-        let server = OliphauntServer::builder().path(root).start()?;
+        let Args {
+            directory,
+            passthrough,
+        } = parse_args()?;
+        let server = OliphauntServer::builder()
+            .storage(DatabaseStorage::Directory(directory))
+            .start()?;
         let sql = server.dump_sql(PgDumpOptions::new().args(passthrough))?;
         print!("{sql}");
         server.shutdown()?;
@@ -31,15 +36,15 @@ fn main() -> Result<()> {
 
 #[cfg(feature = "tools")]
 fn parse_args() -> Result<Args> {
-    let mut root = PathBuf::from("./.oliphaunt");
+    let mut directory = PathBuf::from("./.oliphaunt");
     let mut passthrough = Vec::new();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--root" => {
-                root = PathBuf::from(
+            "--directory" => {
+                directory = PathBuf::from(
                     args.next()
-                        .ok_or_else(|| anyhow::anyhow!("--root requires a path"))?,
+                        .ok_or_else(|| anyhow::anyhow!("--directory requires a path"))?,
                 );
             }
             "--help" | "-h" => {
@@ -53,11 +58,14 @@ fn parse_args() -> Result<Args> {
             other => passthrough.push(other.to_string()),
         }
     }
-    Ok(Args { root, passthrough })
+    Ok(Args {
+        directory,
+        passthrough,
+    })
 }
 
 #[cfg(feature = "tools")]
 fn print_usage() {
-    eprintln!("Usage: oliphaunt-wasix-dump --root PATH -- [pg_dump args]");
-    eprintln!("Example: oliphaunt-wasix-dump --root ./.oliphaunt -- --schema-only");
+    eprintln!("Usage: oliphaunt-wasix-dump --directory PATH -- [pg_dump args]");
+    eprintln!("Example: oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only");
 }

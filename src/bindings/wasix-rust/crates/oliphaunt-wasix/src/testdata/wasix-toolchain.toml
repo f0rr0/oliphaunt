@@ -1,6 +1,6 @@
 [toolchain]
-wasmer = "7.2.0"
-wasmer-wasix = "0.702.0"
+wasmer = "7.2.1"
+wasmer-wasix = "0.702.1"
 webc = "12.0.0"
 wasmer_llvm = "22.1"
 assets_manifest = "src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"

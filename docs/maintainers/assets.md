@@ -4,8 +4,9 @@ This page is maintainer documentation for packaged runtime assets, generated
 payloads, and release provenance. It is not end-user product documentation.
 Native application users should start with
 `src/docs/content/learn/native-runtime.md` and the SDK README for their
-platform. WASIX users should use
-the public WASM SDK guide and `src/docs/content/sdk/wasm/runtime.md`.
+platform. WASIX users should use the public Rust WASIX guide or WASIX TypeScript
+TypeScript page; their source pages currently live under
+`src/docs/content/sdk/wasm/` as an internal docs-generation path.
 
 `oliphaunt-wasix` does not embed the database runtime in the SDK crate. Runtime,
 PGDATA template, extension, and AOT payloads are package-manager-resolved
@@ -53,13 +54,15 @@ features or public archive environment variables.
 ## Cache Behavior
 
 Runtime files are expanded into a cache and then composed with a small writable
-per-root skeleton by default. Temporary and template-backed databases use a
-cached PGDATA template as a lower filesystem and materialize files into the
-database root only when PostgreSQL opens them for mutation.
+per-database skeleton by default. Temporary and template-backed databases use a
+cached PGDATA template as a lower filesystem and materialize files into database
+storage only when PostgreSQL opens them for mutation.
 
-The runtime tree keeps both `/bin/oliphaunt` and `/bin/postgres`. They are the same
-backend module; the `postgres` path exists so upstream `initdb` can discover and
-spawn the backend through PostgreSQL's normal `find_other_exec()` path.
+The portable artifact installs the backend once under PostgreSQL's conventional
+`/bin/postgres` name. Both direct hosts execute that path, and upstream `initdb`
+discovers the same regular file through its normal `find_other_exec()` path.
+The internal build output and AOT artifact retain the Oliphaunt product identity,
+but that branding does not leak into PostgreSQL's installed executable layout.
 
 The cache is content-addressed by the asset manifest and artifact hashes. If an
 asset hash does not match the manifest, startup fails instead of using a mixed
@@ -67,8 +70,8 @@ or corrupted runtime.
 
 ## Extension Assets
 
-Extensions are demand-driven. An extension archive is installed into the
-database root only when the builder requests it or, for an extension with no
+Extensions are demand-driven. An extension archive is installed into database
+storage only when the builder requests it or, for an extension with no
 startup requirements, `enable_extension` is called. Extensions whose generated
 lifecycle declares startup configuration (including
 `shared_preload_libraries`) must be selected on the builder before `open()` or
@@ -80,7 +83,6 @@ attempting a partially initialized extension:
 use oliphaunt_wasix::{extensions, Oliphaunt};
 
 let mut db = Oliphaunt::builder()
-    .temporary()
     .extension(extensions::VECTOR)
     .open()?;
 
@@ -147,9 +149,10 @@ templates, and the absence of committed PGDATA template, portable WASIX, or
 native AOT blobs.
 
 Release assets are built with the `release` profile by default: WASIX C code
-uses `-O2 -g0`, and Binaryen runs the wasixcc default optimization plus
-`--converge`, `--strip-debug`, and `--strip-producers`. The `release-o3`
-profile remains available for explicit O3/ThinLTO comparison builds.
+uses `-O2 -g0` with ThinLTO through the final guest link, and Binaryen runs the
+wasixcc default optimization plus `--converge`, `--strip-debug`, and
+`--strip-producers`. The `release-o3` profile remains available for explicit O3
+comparison builds.
 
 Generated runtime hashes in package metadata are refreshed in the release
 staging workspace. CI-produced assets are selected by exact workflow run or

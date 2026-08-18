@@ -1,7 +1,6 @@
 import type { BackupFormat } from '../types.js';
 
-export const ABI_VERSION = 6;
-export const INIT_OPTIONS_ABI_VERSION = 1;
+export const ABI_VERSION = 7;
 export const RESTORE_REPLACE_EXISTING = 1n;
 export const LIBOLIPHAUNT_RUNTIME_DIR_ENV = 'OLIPHAUNT_RUNTIME_DIR';
 export const OLIPHAUNT_ICU_DATA_DIR_ENV = 'OLIPHAUNT_ICU_DATA_DIR';

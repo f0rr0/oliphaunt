@@ -9,7 +9,9 @@ packages:
   - "src/runtimes/node-direct/packages/*"
   - "src/sdks/react-native"
   - "src/sdks/react-native/examples/expo"
+  - "src/bindings/wasix-ts"
   - "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla"
+  - "tools/perf/wasix-node"
 
 catalog:
   "@vitest/coverage-v8": ^4.1.8

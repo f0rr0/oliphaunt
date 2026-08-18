@@ -1,0 +1,2 @@
+schema_version	profile_id	status	postgres_major	runtime_footprint	max_backends	backend_authentication_overlap	max_io_worker_slots	fixed_non_max_backends_pmchild_roles	tracked_child_capacity	postmaster_tasks	reserve_tasks	host_task_budget	blocking_core_threads	blocking_worker_idle_timeout_ms
+oliphaunt.wasix-postmaster.runtime-task-budget.v1	embedded-postmaster-v1	supported	18	embedded-concurrent	32	18	32	8	90	1	5	96	1	1000

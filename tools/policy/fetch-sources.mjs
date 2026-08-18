@@ -5,6 +5,15 @@ import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 import {assertHttpsUrl, createSourceFetcher} from './source-fetch-core.mjs';
+import {
+  defaultSourceScope,
+  scopeIncludes,
+  scopeIncludesExtensions,
+  scopeIncludesWasix,
+  sourceDomainsForScope,
+  sourceOrigins,
+  sourceScopes,
+} from './source-fetch-scopes.mjs';
 import {auditExtensionUpstreamLicenseSources} from '../release/extension-upstream-licenses.mjs';
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -17,13 +26,7 @@ const sourceFetcher = createSourceFetcher({
   checkoutRoot: sourceCheckoutRoot,
   archiveRoot: sourceArchiveRoot,
 });
-const sourceOrigins = {
-  sharedThirdParty: 'shared-third-party',
-  nativeThirdParty: 'native-third-party',
-  wasixThirdParty: 'wasix-third-party',
-  extension: 'extension',
-};
-const allowedScopes = new Set(['all', 'native-runtime', 'wasix-runtime', 'extensions']);
+const allowedScopes = new Set(sourceScopes);
 
 const {scope, force, validateOnly, verifyOnly} = parseArgs(process.argv.slice(2));
 if (!allowedScopes.has(scope)) {
@@ -54,7 +57,7 @@ try {
 }
 
 function parseArgs(args) {
-  let selectedScope = 'all';
+  let selectedScope = defaultSourceScope;
   let sawScope = false;
   let forceFetch = false;
   let validateOnly = false;
@@ -74,7 +77,7 @@ function parseArgs(args) {
     }
     if (arg === '--help' || arg === '-h') {
       console.log(
-        'usage: bun tools/policy/fetch-sources.mjs [all|native-runtime|wasix-runtime|extensions] [--force|--validate-only|--verify-only]',
+        `usage: bun tools/policy/fetch-sources.mjs [${sourceScopes.join('|')}] [--force|--validate-only|--verify-only]`,
       );
       process.exit(0);
     }
@@ -106,28 +109,12 @@ function loadSourcesManifest(selectedScope) {
       pushSourcePin(sources, names, join(domainDir, file), origin);
     }
   }
-  for (const sourcePath of extensionSourcePinPaths()) {
-    pushSourcePin(sources, names, sourcePath, sourceOrigins.extension);
+  if (scopeIncludesExtensions(selectedScope)) {
+    for (const sourcePath of extensionSourcePinPaths()) {
+      pushSourcePin(sources, names, sourcePath, sourceOrigins.extension);
+    }
   }
   return {sources, ...(scopeIncludesWasix(selectedScope) ? readToml('src/sources/toolchains/wasix.toml') : {})};
-}
-
-function sourceDomainsForScope(selectedScope) {
-  const domains = [];
-  if (selectedScope === 'all' || selectedScope === 'native-runtime' || selectedScope === 'wasix-runtime') {
-    domains.push(['shared', sourceOrigins.sharedThirdParty]);
-  }
-  if (selectedScope === 'all' || selectedScope === 'native-runtime') {
-    domains.push(['native', sourceOrigins.nativeThirdParty]);
-  }
-  if (selectedScope === 'all' || selectedScope === 'wasix-runtime') {
-    domains.push(['wasix', sourceOrigins.wasixThirdParty]);
-  }
-  return domains;
-}
-
-function scopeIncludesWasix(selectedScope) {
-  return selectedScope === 'all' || selectedScope === 'wasix-runtime';
 }
 
 function extensionSourcePinPaths() {
@@ -214,8 +201,8 @@ function validateSourcesManifest(manifest, selectedScope) {
 }
 
 function validateWasixToolchain(manifest) {
-  assertEquals(manifest.toolchain?.wasmer, '7.2.0', 'toolchain.wasmer');
-  assertEquals(manifest.toolchain?.['wasmer-wasix'], '0.702.0', 'toolchain.wasmer-wasix');
+  assertEquals(manifest.toolchain?.wasmer, '7.2.1', 'toolchain.wasmer');
+  assertEquals(manifest.toolchain?.['wasmer-wasix'], '0.702.1', 'toolchain.wasmer-wasix');
   assertEquals(manifest.toolchain?.webc, '12.0.0', 'toolchain.webc');
   assertEquals(manifest.toolchain?.wasmer_llvm, '22.1', 'toolchain.wasmer_llvm');
   assertEquals(manifest.toolchain?.wasixcc?.version, '0.4.3', 'toolchain.wasixcc.version');
@@ -481,27 +468,6 @@ async function fetchManifestSources(manifest, selectedScope, verifyOnly) {
       `audited ${auditedFiles} pinned extension legal source files after qualifying ${selectedExtensionSources} extension source checkouts`,
     );
   }
-}
-
-function scopeIncludes(selectedScope, origin) {
-  if (selectedScope === 'all') {
-    return true;
-  }
-  if (selectedScope === 'native-runtime') {
-    return [
-      sourceOrigins.sharedThirdParty,
-      sourceOrigins.nativeThirdParty,
-      sourceOrigins.extension,
-    ].includes(origin);
-  }
-  if (selectedScope === 'wasix-runtime') {
-    return [
-      sourceOrigins.sharedThirdParty,
-      sourceOrigins.wasixThirdParty,
-      sourceOrigins.extension,
-    ].includes(origin);
-  }
-  return origin === sourceOrigins.extension;
 }
 
 function archiveSha256(source) {

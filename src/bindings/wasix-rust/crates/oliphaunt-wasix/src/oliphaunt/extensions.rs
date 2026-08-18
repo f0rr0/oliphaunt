@@ -147,13 +147,6 @@ pub fn by_sql_name(sql_name: &str) -> Option<Extension> {
         .find(|extension| extension.sql_name == sql_name)
 }
 
-pub(crate) fn candidate_by_sql_name(sql_name: &str) -> Option<Extension> {
-    generated::CANDIDATES
-        .iter()
-        .copied()
-        .find(|extension| extension.sql_name == sql_name)
-}
-
 pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>> {
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
@@ -303,7 +296,7 @@ fn visit_extension(
         );
     }
     for dependency in extension.dependencies() {
-        let dependency_extension = candidate_by_sql_name(dependency).ok_or_else(|| {
+        let dependency_extension = by_sql_name(dependency).ok_or_else(|| {
             anyhow::anyhow!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
@@ -349,14 +342,6 @@ fn extension_setup_sql_with_schema_policy(extension: Extension) -> Vec<String> {
     statements
 }
 
-pub(crate) fn extension_session_setup_sql(extension: Extension) -> Vec<String> {
-    let setup = extension.setup();
-    let mut statements = Vec::new();
-    statements.extend(setup.load_sql.iter().map(|sql| (*sql).to_owned()));
-    statements.extend(setup.post_create_sql.iter().map(|sql| (*sql).to_owned()));
-    statements
-}
-
 #[cfg(test)]
 mod startup_config_tests {
     use super::*;
@@ -381,11 +366,11 @@ mod startup_config_tests {
 }
 
 #[cfg(all(test, feature = "extensions"))]
-mod candidate_tests {
+mod extension_tests {
     use super::*;
     #[cfg(feature = "tools")]
     use crate::PgDumpOptions;
-    use crate::{Oliphaunt, OliphauntServer};
+    use crate::{DatabaseStorage, Oliphaunt, OliphauntServer};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
     use std::collections::BTreeSet;
@@ -410,52 +395,6 @@ mod candidate_tests {
     #[cfg(feature = "tools")]
     fn public_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
         run_direct_dump_restore_smoke_set(generated::ALL)
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    fn packaged_candidate_extensions_pass_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    fn uuid_ossp_candidate_passes_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    async fn packaged_candidate_extensions_pass_server_smoke() -> Result<()> {
-        run_server_smoke_set(generated::CANDIDATES).await
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn uuid_ossp_candidate_passes_server_smoke() -> Result<()> {
-        run_server_smoke_set(&[generated::CANDIDATE_UUID_OSSP]).await
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    fn packaged_candidate_extensions_materialize_only_requested_libraries() -> Result<()> {
-        run_lifecycle_materialization_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    fn uuid_ossp_candidate_materializes_only_requested_libraries() -> Result<()> {
-        run_lifecycle_materialization_set(&[generated::CANDIDATE_UUID_OSSP])
-    }
-
-    #[test]
-    #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
-    #[cfg(feature = "tools")]
-    fn packaged_candidate_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
-        run_direct_dump_restore_smoke_set(generated::CANDIDATES)
-    }
-
-    #[test]
-    #[cfg(feature = "tools")]
-    fn uuid_ossp_candidate_passes_direct_dump_restore_smoke() -> Result<()> {
-        run_direct_dump_restore_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
     }
 
     fn embedded_extension_archives(extensions: &[Extension]) -> Result<Vec<Extension>> {
@@ -503,7 +442,6 @@ mod candidate_tests {
         let name = extension.sql_name();
         {
             let mut db = Oliphaunt::builder()
-                .temporary()
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open temporary database with extension {name}"))?;
@@ -516,7 +454,7 @@ mod candidate_tests {
             .with_context(|| format!("create restart root for extension {name}"))?;
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| {
@@ -529,7 +467,7 @@ mod candidate_tests {
         }
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| {
@@ -561,11 +499,10 @@ mod candidate_tests {
     async fn run_one_server_smoke(extension: Extension) -> Result<()> {
         let name = extension.sql_name();
         let server = OliphauntServer::builder()
-            .temporary()
             .extension(extension)
             .start()
             .with_context(|| format!("start server with extension {name}"))?;
-        let mut conn = PgConnection::connect(&server.database_url())
+        let mut conn = PgConnection::connect(&server.connection_uri())
             .await
             .with_context(|| format!("connect server with extension {name}"))?;
         run_server_smoke(&mut conn, extension).await?;
@@ -598,14 +535,19 @@ mod candidate_tests {
             .with_context(|| format!("create lifecycle root for extension {name}"))?;
         {
             let mut db = Oliphaunt::builder()
-                .path(root.path())
+                .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open lifecycle database with extension {name}"))?;
+            let runtime_root = db
+                .runtime_storage()
+                .host_path()
+                .context("directory database should use a host runtime workspace")?;
+            assert_only_resolved_extension_libraries_are_materialized(runtime_root, extension)?;
             db.close()
                 .with_context(|| format!("close lifecycle database with extension {name}"))?;
         }
-        assert_only_resolved_extension_libraries_are_materialized(root.path(), extension)
+        Ok(())
     }
 
     #[cfg(feature = "tools")]
@@ -630,7 +572,6 @@ mod candidate_tests {
         let name = extension.sql_name();
         let dump = {
             let mut db = Oliphaunt::builder()
-                .temporary()
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open dump source database with extension {name}"))?;
@@ -667,7 +608,6 @@ mod candidate_tests {
         }
 
         let mut restored = Oliphaunt::builder()
-            .temporary()
             .extension(extension)
             .open()
             .with_context(|| format!("open dump restore database with extension {name}"))?;
@@ -750,7 +690,7 @@ mod candidate_tests {
     }
 
     fn assert_only_resolved_extension_libraries_are_materialized(
-        root: &Path,
+        runtime_root: &Path,
         extension: Extension,
     ) -> Result<()> {
         let expected = resolve_extension_set(&[extension])?
@@ -772,7 +712,7 @@ mod candidate_tests {
                 modules
             })
             .collect::<BTreeSet<_>>();
-        let actual = relative_files(&root.join("tmp/oliphaunt/lib/postgresql"))
+        let actual = relative_files(&runtime_root.join("lib/postgresql"))
             .into_iter()
             .collect::<BTreeSet<_>>();
         ensure!(
@@ -1019,7 +959,7 @@ mod candidate_tests {
                 "INSERT INTO oxide_vector VALUES ('[1,2,3]')",
                 "DO $$ DECLARE d float8; BEGIN SELECT embedding <-> '[1,2,4]'::vector INTO d FROM oxide_vector; IF d <> 1 THEN RAISE EXCEPTION 'vector distance failed: %', d; END IF; END $$",
             ],
-            other => panic!("missing smoke SQL for extension candidate {other}"),
+            other => panic!("missing smoke SQL for extension {other}"),
         }
     }
 }

@@ -1,13 +1,13 @@
 [advisories]
 yanked = "warn"
 ignore = [
-  # Wasmer/WASIX 7.2.0 currently pulls bincode through virtual-net and
+  # Wasmer/WASIX 7.2.1 currently pulls bincode through virtual-net and
   # wasmer-journal. Keep this explicit until Wasmer removes or replaces it.
   "RUSTSEC-2025-0141",
-  # Wasmer 7.2.0 currently pulls paste. Keep this explicit until upstream
+  # Wasmer 7.2.1 currently pulls paste. Keep this explicit until upstream
   # moves to a maintained macro helper or removes the dependency.
   "RUSTSEC-2024-0436",
-  # Wasmer 7.2.0's current stable derive crate still uses proc-macro-error2.
+  # Wasmer 7.2.1's current stable derive crate still uses proc-macro-error2.
   # The advisory reports maintenance status, not a known vulnerability, and
   # provides no safe upgrade. Remove this exception when Wasmer migrates away.
   "RUSTSEC-2026-0173",

@@ -113,7 +113,7 @@ fi
 	        clean >/dev/null 2>&1 || true
 	      make -s -j"$JOBS" -C "$extension_dir" \
 	        PG_CONFIG="$CONTAINER_ROOT/pg_config_wasix.sh" \
-	        CPPFLAGS="-I$BUILD_DIR/src/include -I$PGSRC/src/include -I$PGSRC/src/include/port/wasix-dl" \
+	        CPPFLAGS="$("$CONTAINER_ROOT/pg_config_wasix.sh" --cppflags)" \
 	        OPTFLAGS="" \
 	        "${extra_make_args[@]}" \
 	        all
@@ -129,5 +129,6 @@ fi
         find "$extension_dir" -maxdepth 1 -type f -name "*.so" -print >&2
         exit 1
       fi
+      oliphaunt_wasix_verify_side_module_sjlj "$extension_dir/$module_file"
     done < "$PLAN"
   '

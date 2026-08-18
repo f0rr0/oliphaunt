@@ -32,6 +32,8 @@ tasks:
       - "/src/sdks/react-native/src/**/*.ts"
       - "/src/sdks/rust/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*.rs"
+      - "/src/bindings/wasix-ts/src/**/*.ts"
       - "/tools/policy/generate-sdk-api-surface.mjs"
     options:
       cache: true
@@ -66,6 +68,7 @@ tasks:
     command: "bun tools/policy/check-sdk-manifest.mjs"
     inputs:
       - "/src/bindings/wasix-rust/moon.yml"
+      - "/src/bindings/wasix-ts/moon.yml"
       - "/src/sdks/*/moon.yml"
       - "/src/sdks/js/package.json"
       - "/tools/policy/check-sdk-manifest.mjs"

@@ -44,12 +44,16 @@ const WASIX_RUNTIME_VERSION = readFileSync(
 ).trim();
 const CONTRIB_VERSION = NATIVE_RUNTIME_VERSION;
 const REACT_NATIVE_EXTENSIONS = JSON.parse(readFileSync(
-  path.join(REPOSITORY_ROOT, "src/extensions/generated/sdk/react-native.json"),
+  path.join(REPOSITORY_ROOT, "src/extensions/generated/sdk/extensions.json"),
   "utf8",
 )).extensions;
 const REACT_NATIVE_EXTENSION_BY_SQL_NAME = new Map(
   REACT_NATIVE_EXTENSIONS.map((row) => [row["sql-name"], row]),
 );
+const IOS_OVERLAY_BY_SQL_NAME = new Map(JSON.parse(readFileSync(
+  path.join(REPOSITORY_ROOT, "src/extensions/generated/sdk/ios-static-dependencies.json"),
+  "utf8",
+)).extensions.map((row) => [row["sql-name"], row["static-dependencies"]]));
 const NATIVE_RELEASE_PRODUCT_BY_ARTIFACT_PRODUCT = new Map(
   REACT_NATIVE_EXTENSIONS.map((row) => [row["artifact-product"], row["release-product"]]),
 );
@@ -186,7 +190,7 @@ function extensionMember(sqlName, stagesIos = true) {
   const row = REACT_NATIVE_EXTENSION_BY_SQL_NAME.get(sqlName);
   assert(row, `missing generated React Native fixture metadata for ${sqlName}`);
   const nativeModuleStem = row["native-module-stem"];
-  const generatedIosDependencies = [...row["ios-static-dependencies"]].sort();
+  const generatedIosDependencies = [...(IOS_OVERLAY_BY_SQL_NAME.get(sqlName) ?? [])].sort();
   assert.deepEqual(
     generatedIosDependencies,
     IOS_DEPENDENCIES_BY_SQL_NAME.get(sqlName) ?? [],
@@ -205,7 +209,6 @@ function extensionMember(sqlName, stagesIos = true) {
     dataFiles: [...row["runtime-share-data-files"]].sort(),
     extensionSqlFileNames: [...row["extension-sql-file-names"]].sort(),
     extensionSqlFilePrefixes: [...row["extension-sql-file-prefixes"]].sort(),
-    nativeDependencies: [...row["native-dependencies"]].sort(),
     nativeModuleStem,
     iosNativeDependencies,
     iosRegistration: nativeModuleStem === null || !stagesIos
@@ -218,9 +221,8 @@ function extensionMember(sqlName, stagesIos = true) {
           sqlName,
           symbols: [],
         },
+    wasixInstall: null,
     sharedPreloadLibraries: [...row["shared-preload-libraries"]].sort(),
-    mobileReleaseReady: row["mobile-release-ready"],
-    desktopReleaseReady: row["desktop-release-ready"],
     assets: [],
   };
 }
@@ -698,7 +700,7 @@ test("rejects noncanonical public evidence-envelope key sets", (t) => {
 
   const bundleMember = fixture(t);
   const bundleMemberAggregate = bundleMember.installAggregate({ targets: ["android-arm64-v8a"] });
-  delete bundleMemberAggregate.manifest.extensions[0].desktopReleaseReady;
+  delete bundleMemberAggregate.manifest.extensions[0].sharedPreloadLibraries;
   bundleMember.writeManifest(CONTRIB, bundleMemberAggregate.manifest);
   const bundleMemberResult = bundleMember.run({
     extensions: "amcheck",

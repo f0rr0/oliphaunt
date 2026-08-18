@@ -138,7 +138,7 @@ removing it. Do not turn reference counts into a required CI gate.
   the final `main` SHA. Do not also create a push run: non-PR runs for the same
   SHA serialize rather than cancel one another.
 - The release prerequisite is the non-cancelled `Qualified` gate for that SHA, including required checks, builds, policy, tests, and selected E2E.
-- When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every promoted extension in direct, server, restart, materialization, and dump/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
+- When WASIX or an extension is selected, require the same-run full lifecycle evidence artifact. It must cover every catalogued extension in direct, server, restart, materialization, and dump/restore modes and satisfy `--require-current-evidence` for the candidate source digest.
 - Ensure artifact attestations and the publication lock reference the same SHA/tree.
 - Require artifact evidence for the compatibility floors in
   `docs/maintainers/release.md`: inspect Mach-O load commands, Android API/ELF

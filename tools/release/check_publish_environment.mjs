@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const oidcTargets = new Set(['crates-io', 'npm', 'jsr']);
+const oidcTargets = new Set(['crates-io', 'npm']);
 const mavenTargets = new Set(['maven-central']);
 const githubTargets = new Set(['github-release', 'github-release-assets', 'swift-package-source-tag']);
 const forbiddenEnvVars = {
@@ -20,7 +20,6 @@ const forbiddenEnvVars = {
     new Set(['npm']),
     'npm publishing uses trusted publishing with provenance through GitHub Actions OIDC',
   ],
-  JSR_TOKEN: [new Set(['jsr']), 'JSR publishing uses GitHub Actions OIDC'],
   COCOAPODS_TRUNK_TOKEN: [
     new Set(),
     'Apple SDK releases use SwiftPM plus GitHub assets, not CocoaPods trunk',

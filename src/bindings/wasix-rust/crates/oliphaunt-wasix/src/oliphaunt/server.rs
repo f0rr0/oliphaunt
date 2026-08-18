@@ -1,5 +1,9 @@
 use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -12,9 +16,7 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
-use crate::oliphaunt::base::{
-    PreparedRoot, RootLock, RootPlan, RootSource, RootTarget, prepare_root,
-};
+use crate::oliphaunt::base::{DatabasePlan, DirectoryLock, PreparedDatabase, prepare_database};
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::{
@@ -26,47 +28,53 @@ use crate::oliphaunt::pg_dump::{
     PgDumpOptions, PsqlOptions, dump_server_sql, preflight_wasix_tools, run_server_psql,
 };
 use crate::oliphaunt::proxy::OliphauntProxy;
+use crate::oliphaunt::storage::{DatabaseInitialization, DatabaseStorage};
 use crate::oliphaunt::timing;
 
 /// A supervised local PostgreSQL socket backed by one embedded Oliphaunt runtime.
 ///
-/// This is the compatibility entry point for code that expects a PostgreSQL URL,
-/// such as `tokio-postgres`, SQLx, or tools that speak the wire protocol. The
+/// Use this entry point for code that expects a PostgreSQL URI, such as
+/// `tokio-postgres`, SQLx, or tools that speak the wire protocol. The
 /// server owns one embedded backend, so downstream pools should use a single
 /// connection.
 #[derive(Debug)]
 pub struct OliphauntServer {
-    root: PathBuf,
-    _temp_dir: Option<TempDir>,
-    _root_lock: Option<RootLock>,
+    _workspace: Option<TempDir>,
+    _directory_lock: Option<DirectoryLock>,
     endpoint: ServerEndpoint,
     startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<Result<()>>>,
+    #[cfg(unix)]
+    owned_unix_socket: Option<OwnedUnixSocket>,
 }
 
 #[derive(Debug, Clone)]
 enum ServerEndpoint {
     Tcp(SocketAddr),
     #[cfg(unix)]
-    Unix(PathBuf),
+    Unix(UnixSocketEndpoint),
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct UnixSocketEndpoint {
+    path: PathBuf,
+    port: u16,
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct OwnedUnixSocket {
+    path: PathBuf,
+    identity: Option<(u64, u64)>,
 }
 
 impl OliphauntServer {
-    /// Build a local Oliphaunt server. The default is a cached temporary database
+    /// Build a local Oliphaunt server. The default is an in-memory database
     /// served on `127.0.0.1:0`.
     pub fn builder() -> OliphauntServerBuilder {
         OliphauntServerBuilder::new()
-    }
-
-    /// Start a cached temporary database on a random local TCP port.
-    pub fn temporary_tcp() -> Result<Self> {
-        Self::builder().temporary().start()
-    }
-
-    /// Return the root directory used for runtime files and cluster data.
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// Return the bound TCP address, if this server is using TCP.
@@ -83,7 +91,7 @@ impl OliphauntServer {
     pub fn socket_path(&self) -> Option<&Path> {
         match &self.endpoint {
             ServerEndpoint::Tcp(_) => None,
-            ServerEndpoint::Unix(path) => Some(path),
+            ServerEndpoint::Unix(endpoint) => Some(&endpoint.path),
         }
     }
 
@@ -92,23 +100,8 @@ impl OliphauntServer {
         match &self.endpoint {
             ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr, &self.startup_config),
             #[cfg(unix)]
-            ServerEndpoint::Unix(path) => {
-                let host = path.parent().unwrap_or_else(|| Path::new("/tmp"));
-                let port = parse_unix_socket_port(path).unwrap_or(5432);
-                format!(
-                    "postgresql://{}@/{}?host={}&port={}&sslmode=disable",
-                    self.startup_config.username,
-                    self.startup_config.database,
-                    percent_encode_query_value(&host.display().to_string()),
-                    port
-                )
-            }
+            ServerEndpoint::Unix(endpoint) => unix_connection_uri(endpoint, &self.startup_config),
         }
-    }
-
-    /// Alias for [`connection_uri`](Self::connection_uri).
-    pub fn database_url(&self) -> String {
-        self.connection_uri()
     }
 
     /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
@@ -165,13 +158,31 @@ impl OliphauntServer {
             let _phase = timing::phase("server.shutdown_wake");
             wake_listener(&self.endpoint);
         }
-        if let Some(handle) = self.handle.take() {
+        let worker_result = if let Some(handle) = self.handle.take() {
             let _phase = timing::phase("server.thread_join");
-            handle
-                .join()
-                .map_err(|_| anyhow!("oliphaunt server thread panicked"))??;
+            match handle.join() {
+                Ok(result) => result,
+                Err(_) => Err(anyhow!("oliphaunt server thread panicked")),
+            }
+        } else {
+            Ok(())
+        };
+        #[cfg(unix)]
+        let socket_result = if let Some(mut socket) = self.owned_unix_socket.take() {
+            socket.cleanup()
+        } else {
+            Ok(())
+        };
+        #[cfg(not(unix))]
+        let socket_result = Ok::<(), anyhow::Error>(());
+
+        match (worker_result, socket_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(worker), Err(socket)) => Err(anyhow!(
+                "Oliphaunt server worker failed: {worker:#}; Unix socket cleanup also failed: {socket:#}"
+            )),
         }
-        Ok(())
     }
 }
 
@@ -186,18 +197,13 @@ impl Drop for OliphauntServer {
 /// Builder for [`OliphauntServer`].
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
-    root: ServerRoot,
+    storage: DatabaseStorage,
+    initialization: DatabaseInitialization,
     endpoint: ServerEndpointConfig,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
-}
-
-#[derive(Debug, Clone)]
-enum ServerRoot {
-    Temporary { template_cache: bool },
-    Path(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -210,9 +216,8 @@ enum ServerEndpointConfig {
 impl Default for OliphauntServerBuilder {
     fn default() -> Self {
         Self {
-            root: ServerRoot::Temporary {
-                template_cache: true,
-            },
+            storage: DatabaseStorage::Memory,
+            initialization: DatabaseInitialization::PackagedTemplate,
             endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
@@ -223,35 +228,20 @@ impl Default for OliphauntServerBuilder {
 }
 
 impl OliphauntServerBuilder {
-    /// Create a builder. Defaults to a cached temporary database on
-    /// `127.0.0.1:0`.
+    /// Create a builder. Defaults to a memory database on `127.0.0.1:0`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Serve a persistent database rooted at `root`.
-    pub fn path(mut self, root: impl Into<PathBuf>) -> Self {
-        self.root = ServerRoot::Path(root.into());
+    /// Select where PostgreSQL stores its mutable database files.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.storage = storage;
         self
     }
 
-    /// Serve a temporary database cloned from the process-local template cache.
-    pub fn temporary(mut self) -> Self {
-        self.root = ServerRoot::Temporary {
-            template_cache: true,
-        };
-        self
-    }
-
-    /// Serve a temporary database initialized without the template cache.
-    ///
-    /// This is a compatibility alias for the pre-template-cache public API.
-    /// Fresh initdb uses the bundled split WASIX `initdb` module; cached
-    /// temporary databases remain the production fast path.
-    pub fn fresh_temporary(mut self) -> Self {
-        self.root = ServerRoot::Temporary {
-            template_cache: false,
-        };
+    /// Select how an empty storage allocation is initialized.
+    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
+        self.initialization = initialization;
         self
     }
 
@@ -261,7 +251,11 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Bind the server to a Unix-domain socket path.
+    /// Bind the server to a PostgreSQL Unix-domain socket path.
+    ///
+    /// The filename must use PostgreSQL's `.s.PGSQL.<port>` convention so
+    /// [`OliphauntServer::connection_uri`] can address the bound socket. A
+    /// relative path is resolved against the current working directory.
     #[cfg(unix)]
     pub fn unix(mut self, path: impl Into<PathBuf>) -> Self {
         self.endpoint = ServerEndpointConfig::Unix(path.into());
@@ -288,13 +282,13 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Default user encoded in [`OliphauntServer::database_url`].
+    /// Default user encoded in [`OliphauntServer::connection_uri`].
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.startup_config.username = username.into();
         self
     }
 
-    /// Default database encoded in [`OliphauntServer::database_url`].
+    /// Default database encoded in [`OliphauntServer::connection_uri`].
     pub fn database(mut self, database: impl Into<String>) -> Self {
         self.startup_config.database = database.into();
         self
@@ -313,7 +307,7 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Append an advanced PostgreSQL startup argument for server backends.
+    /// Append an advanced PostgreSQL startup option for server backends.
     pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
         self.startup_config.extra_args.push(arg.into());
         self
@@ -343,6 +337,12 @@ impl OliphauntServerBuilder {
 
     /// Install the runtime if needed, initialize the cluster, and start serving.
     pub fn start(self) -> Result<OliphauntServer> {
+        #[cfg(unix)]
+        let unix_endpoint = match &self.endpoint {
+            ServerEndpointConfig::Unix(path) => Some(resolve_unix_socket_endpoint(path)?),
+            ServerEndpointConfig::Tcp(_) => None,
+        };
+
         #[cfg(feature = "extensions")]
         let (extensions, postgres_config) = self.resolved_extension_startup()?;
         #[cfg(not(feature = "extensions"))]
@@ -351,46 +351,21 @@ impl OliphauntServerBuilder {
         self.startup_config.validate()?;
         let startup_config = self.startup_config.clone();
 
-        let prepared_root = {
-            let _phase = timing::phase("server.root_prepare");
-            match self.root {
-                ServerRoot::Path(root) => {
-                    let _phase = timing::phase("server.root_prepare.path");
-                    let plan = RootPlan::new(RootTarget::Path(root), RootSource::Template);
-                    #[cfg(feature = "extensions")]
-                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
-                    prepare_root(plan)?
-                }
-                ServerRoot::Temporary { template_cache } => {
-                    let source = if template_cache {
-                        RootSource::Template
-                    } else {
-                        RootSource::FreshInitdb
-                    };
-                    let phase = if template_cache {
-                        "server.root_prepare.temporary_cached"
-                    } else {
-                        "server.root_prepare.temporary_fresh"
-                    };
-                    let _phase = timing::phase(phase);
-                    let plan = RootPlan::new(RootTarget::Temporary, source);
-                    #[cfg(feature = "extensions")]
-                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
-                    run_blocking("oliphaunt-template-cache", move || prepare_root(plan))?
-                }
-            }
+        let prepared_database = {
+            let _phase = timing::phase("server.storage_prepare");
+            let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
+            run_blocking("oliphaunt-storage-prepare", move || prepare_database(plan))?
         };
-        let PreparedRoot {
-            root,
-            temp_dir,
-            root_lock,
+        let PreparedDatabase {
+            workspace,
+            directory_lock,
             outcome,
-        } = prepared_root;
+        } = prepared_database;
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let proxy = {
             let _phase = timing::phase("server.proxy_create");
-            OliphauntProxy::new(root.clone()).with_prepared_root(outcome)
+            OliphauntProxy::from_prepared_database(outcome)
         };
         let proxy = proxy
             .with_postgres_config(postgres_config)
@@ -398,20 +373,35 @@ impl OliphauntServerBuilder {
         #[cfg(feature = "extensions")]
         let proxy = proxy.with_extensions(extensions);
 
+        #[cfg(unix)]
+        let (endpoint, handle, owned_unix_socket) = match self.endpoint {
+            ServerEndpointConfig::Tcp(addr) => {
+                let (endpoint, handle) = start_tcp(proxy, addr, shutdown.clone())?;
+                (endpoint, handle, None)
+            }
+            ServerEndpointConfig::Unix(_) => {
+                let (endpoint, handle, socket) = start_unix(
+                    proxy,
+                    unix_endpoint.expect("Unix endpoint was resolved before database preparation"),
+                    shutdown.clone(),
+                )?;
+                (endpoint, handle, Some(socket))
+            }
+        };
+        #[cfg(not(unix))]
         let (endpoint, handle) = match self.endpoint {
             ServerEndpointConfig::Tcp(addr) => start_tcp(proxy, addr, shutdown.clone())?,
-            #[cfg(unix)]
-            ServerEndpointConfig::Unix(path) => start_unix(proxy, path, shutdown.clone())?,
         };
 
         Ok(OliphauntServer {
-            root,
-            _temp_dir: temp_dir,
-            _root_lock: root_lock,
+            _workspace: workspace,
+            _directory_lock: directory_lock,
             endpoint,
             startup_config,
             shutdown,
             handle: Some(handle),
+            #[cfg(unix)]
+            owned_unix_socket,
         })
     }
 
@@ -457,26 +447,43 @@ fn start_tcp(
 }
 
 fn tcp_connection_uri(addr: SocketAddr, startup: &StartupConfig) -> String {
+    let username = percent_encode_uri_component(&startup.username);
+    let database = percent_encode_uri_component(&startup.database);
     match addr {
         SocketAddr::V4(addr) => {
             format!(
                 "postgresql://{}@{}:{}/{}?sslmode=disable",
-                startup.username,
+                username,
                 addr.ip(),
                 addr.port(),
-                startup.database
+                database
             )
         }
         SocketAddr::V6(addr) => {
             format!(
                 "postgresql://{}@[{}]:{}/{}?sslmode=disable",
-                startup.username,
+                username,
                 addr.ip(),
                 addr.port(),
-                startup.database
+                database
             )
         }
     }
+}
+
+#[cfg(unix)]
+fn unix_connection_uri(endpoint: &UnixSocketEndpoint, startup: &StartupConfig) -> String {
+    let host = endpoint
+        .path
+        .parent()
+        .expect("resolved Unix socket path is absolute");
+    format!(
+        "postgresql://{}@/{}?host={}&port={}&sslmode=disable",
+        percent_encode_uri_component(&startup.username),
+        percent_encode_uri_component(&startup.database),
+        percent_encode_bytes(host.as_os_str().as_bytes(), true),
+        endpoint.port
+    )
 }
 
 fn run_blocking<T, F>(name: &'static str, f: F) -> Result<T>
@@ -496,19 +503,17 @@ where
 #[cfg(unix)]
 fn start_unix(
     proxy: OliphauntProxy,
-    path: PathBuf,
+    endpoint: UnixSocketEndpoint,
     shutdown: Arc<AtomicBool>,
-) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
+) -> Result<(ServerEndpoint, JoinHandle<Result<()>>, OwnedUnixSocket)> {
+    let path = endpoint.path.clone();
     {
         let _phase = timing::phase("server.unix_prepare_path");
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .with_context(|| format!("remove stale socket {}", path.display()))?;
-        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create socket directory {}", parent.display()))?;
         }
+        ensure_unix_socket_path_available(&path)?;
     }
 
     let listener = {
@@ -516,22 +521,128 @@ fn start_unix(
         UnixListener::bind(&path)
             .with_context(|| format!("bind Oliphaunt Unix socket {}", path.display()))?
     };
-    let endpoint = ServerEndpoint::Unix(path);
+    let mut owned_socket = match OwnedUnixSocket::capture(&path) {
+        Ok(socket) => socket,
+        Err(error) => {
+            cleanup_new_unix_socket(&path);
+            return Err(error);
+        }
+    };
+    let server_endpoint = ServerEndpoint::Unix(endpoint);
     let (ready_tx, ready_rx) = sync_channel(1);
     let recorder = timing::current_recorder();
+    let worker_shutdown = shutdown.clone();
     let handle = {
         let _phase = timing::phase("server.thread_spawn");
         thread::spawn(move || {
             timing::with_recorder(recorder, || {
-                proxy.serve_unix_listener_until_ready(listener, shutdown, Some(ready_tx))
+                proxy.serve_unix_listener_until_ready(listener, worker_shutdown, Some(ready_tx))
             })
         })
     };
-    {
+    let ready_result = {
         let _phase = timing::phase("server.wait_ready");
-        wait_until_ready(&ready_rx)?;
+        wait_until_ready(&ready_rx)
+    };
+    if let Err(error) = ready_result {
+        shutdown.store(true, Ordering::SeqCst);
+        let _ = UnixStream::connect(&path);
+        let worker_result = handle
+            .join()
+            .map_err(|_| anyhow!("oliphaunt Unix server thread panicked during startup"))?;
+        owned_socket.cleanup()?;
+        worker_result?;
+        return Err(error);
     }
-    Ok((endpoint, handle))
+    Ok((server_endpoint, handle, owned_socket))
+}
+
+#[cfg(unix)]
+impl OwnedUnixSocket {
+    fn capture(path: &Path) -> Result<Self> {
+        let metadata = std::fs::symlink_metadata(path)
+            .with_context(|| format!("inspect bound Unix socket {}", path.display()))?;
+        if !metadata.file_type().is_socket() {
+            return Err(anyhow!(
+                "bound Unix endpoint {} is not a socket",
+                path.display()
+            ));
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            identity: Some((metadata.dev(), metadata.ino())),
+        })
+    }
+
+    fn cleanup(&mut self) -> Result<()> {
+        let Some(expected) = self.identity else {
+            return Ok(());
+        };
+        let metadata = match std::fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.identity = None;
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect owned Unix socket {}", self.path.display()));
+            }
+        };
+        let actual = (metadata.dev(), metadata.ino());
+        if !metadata.file_type().is_socket() || actual != expected {
+            self.identity = None;
+            return Err(anyhow!(
+                "refusing to remove replaced Unix endpoint {}",
+                self.path.display()
+            ));
+        }
+        std::fs::remove_file(&self.path)
+            .with_context(|| format!("remove owned Unix socket {}", self.path.display()))?;
+        self.identity = None;
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OwnedUnixSocket {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            tracing::warn!("Oliphaunt Unix socket cleanup during drop failed: {error:#}");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn cleanup_new_unix_socket(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(
+            "Oliphaunt Unix socket cleanup after startup failure failed for {}: {error:#}",
+            path.display()
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn ensure_unix_socket_path_available(path: &Path) -> Result<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect Unix socket {}", path.display()));
+        }
+    };
+    let kind = if metadata.file_type().is_socket() {
+        "socket"
+    } else {
+        "non-socket endpoint"
+    };
+    Err(anyhow!(
+        "refusing to replace existing Unix {kind} {}; remove it explicitly if it is stale",
+        path.display()
+    ))
 }
 
 fn wait_until_ready(ready_rx: &Receiver<Result<()>>) -> Result<()> {
@@ -546,29 +657,59 @@ fn wake_listener(endpoint: &ServerEndpoint) {
             let _ = TcpStream::connect(addr);
         }
         #[cfg(unix)]
-        ServerEndpoint::Unix(path) => {
-            let _ = UnixStream::connect(path);
+        ServerEndpoint::Unix(endpoint) => {
+            let _ = UnixStream::connect(&endpoint.path);
         }
     }
 }
 
 #[cfg(unix)]
-fn parse_unix_socket_port(path: &Path) -> Option<u16> {
-    let name = path.file_name()?.to_str()?;
-    name.strip_prefix(".s.PGSQL.")?.parse().ok()
+fn resolve_unix_socket_endpoint(path: &Path) -> Result<UnixSocketEndpoint> {
+    let port = parse_unix_socket_port(path).with_context(|| {
+        format!(
+            "Unix socket path {} must end with .s.PGSQL.<port>",
+            path.display()
+        )
+    })?;
+    if port == 0 {
+        return Err(anyhow!("Unix socket port must be in the range 1..=65535"));
+    }
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("resolve current directory for Unix socket")?
+            .join(path)
+    };
+    Ok(UnixSocketEndpoint { path, port })
 }
 
 #[cfg(unix)]
-fn percent_encode_query_value(value: &str) -> String {
+fn parse_unix_socket_port(path: &Path) -> Option<u16> {
+    let name = path.file_name()?.to_str()?;
+    let suffix = name.strip_prefix(".s.PGSQL.")?;
+    let port = suffix.parse::<u16>().ok()?;
+    (suffix == port.to_string()).then_some(port)
+}
+
+fn percent_encode_uri_component(value: &str) -> String {
+    percent_encode_bytes(value.as_bytes(), false)
+}
+
+fn percent_encode_bytes(value: &[u8], preserve_slashes: bool) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
+    for &byte in value {
         if matches!(
             byte,
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/'
-        ) {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+        ) || (preserve_slashes && byte == b'/')
+        {
             encoded.push(byte as char);
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            encoded.push('%');
+            encoded.push(HEX[usize::from(byte >> 4)] as char);
+            encoded.push(HEX[usize::from(byte & 0x0f)] as char);
         }
     }
     encoded
@@ -576,9 +717,6 @@ fn percent_encode_query_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::percent_encode_query_value;
-    #[cfg(feature = "extensions")]
     use super::*;
     #[cfg(feature = "extensions")]
     use crate::oliphaunt::extensions::PG_TEXTSEARCH;
@@ -587,8 +725,172 @@ mod tests {
     #[test]
     fn unix_socket_uri_host_is_query_encoded() {
         assert_eq!(
-            percent_encode_query_value("/tmp/Application Support/oliphaunt"),
+            percent_encode_bytes(b"/tmp/Application Support/oliphaunt", true),
             "/tmp/Application%20Support/oliphaunt"
+        );
+    }
+
+    #[test]
+    fn tcp_connection_uri_encodes_username_and_database_components() {
+        let startup = StartupConfig {
+            username: "role@example:admin".to_string(),
+            database: "tenant/a?mode=#100%".to_string(),
+            ..StartupConfig::default()
+        };
+
+        assert_eq!(
+            tcp_connection_uri(SocketAddr::from(([127, 0, 0, 1], 6543)), &startup),
+            "postgresql://role%40example%3Aadmin@127.0.0.1:6543/tenant%2Fa%3Fmode%3D%23100%25?sslmode=disable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_connection_uri_encodes_every_caller_controlled_component() {
+        let startup = StartupConfig {
+            username: "role name".to_string(),
+            database: "tenant/db#1".to_string(),
+            ..StartupConfig::default()
+        };
+
+        let endpoint = resolve_unix_socket_endpoint(Path::new(
+            "/tmp/Application Support/db?slot/.s.PGSQL.6543",
+        ))
+        .unwrap();
+        assert_eq!(
+            unix_connection_uri(&endpoint, &startup),
+            "postgresql://role%20name@/tenant%2Fdb%231?host=/tmp/Application%20Support/db%3Fslot&port=6543&sslmode=disable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_connection_uri_preserves_non_utf8_path_bytes() {
+        use std::ffi::OsStr;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let directory = temp.path().join(OsStr::from_bytes(b"db-\xFF"));
+        let endpoint = resolve_unix_socket_endpoint(&directory.join(".s.PGSQL.6543")).unwrap();
+
+        assert!(unix_connection_uri(&endpoint, &StartupConfig::default()).contains("db-%FF"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_endpoint_rejects_non_postgresql_names() {
+        let error = resolve_unix_socket_endpoint(Path::new("/tmp/oliphaunt.sock")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Unix socket path /tmp/oliphaunt.sock must end with .s.PGSQL.<port>"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_endpoint_rejects_noncanonical_ports() {
+        for path in ["/tmp/.s.PGSQL.0001", "/tmp/.s.PGSQL.+1"] {
+            let error = resolve_unix_socket_endpoint(Path::new(path)).unwrap_err();
+            assert!(
+                error.to_string().contains("must end with .s.PGSQL.<port>"),
+                "unexpected error for {path}: {error:#}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_endpoint_resolves_relative_paths() -> Result<()> {
+        let endpoint = resolve_unix_socket_endpoint(Path::new("run/.s.PGSQL.6543"))?;
+        assert_eq!(
+            endpoint.path,
+            std::env::current_dir()?.join("run/.s.PGSQL.6543")
+        );
+        assert_eq!(endpoint.port, 6543);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_preparation_rejects_regular_files_and_symlinks() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::TempDir::new()?;
+        let regular = temp.path().join("regular");
+        std::fs::write(&regular, b"keep")?;
+        let error = ensure_unix_socket_path_available(&regular).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to replace existing Unix non-socket")
+        );
+        assert_eq!(std::fs::read(&regular)?, b"keep");
+
+        let link = temp.path().join("link");
+        symlink(&regular, &link)?;
+        let error = ensure_unix_socket_path_available(&link).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to replace existing Unix non-socket")
+        );
+        assert!(link.symlink_metadata()?.file_type().is_symlink());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_preparation_rejects_active_and_stale_sockets() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let socket = temp.path().join(".s.PGSQL.6543");
+        let listener = UnixListener::bind(&socket)?;
+
+        let error = ensure_unix_socket_path_available(&socket).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to replace existing Unix socket")
+        );
+        assert!(socket.exists());
+
+        drop(listener);
+        let error = ensure_unix_socket_path_available(&socket).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("remove it explicitly if it is stale")
+        );
+        assert!(socket.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_cleanup_removes_only_the_owned_inode() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let socket = temp.path().join(".s.PGSQL.6543");
+        let listener = UnixListener::bind(&socket)?;
+        let mut owned = OwnedUnixSocket::capture(&socket)?;
+
+        std::fs::remove_file(&socket)?;
+        std::fs::write(&socket, b"replacement")?;
+        let error = owned.cleanup().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to remove replaced Unix endpoint")
+        );
+        assert_eq!(std::fs::read(&socket)?, b"replacement");
+        drop(listener);
+        Ok(())
+    }
+
+    #[test]
+    fn default_server_builder_selects_memory_and_packaged_template() {
+        let builder = OliphauntServerBuilder::default();
+        assert_eq!(builder.storage, DatabaseStorage::Memory);
+        assert_eq!(
+            builder.initialization,
+            DatabaseInitialization::PackagedTemplate
         );
     }
 

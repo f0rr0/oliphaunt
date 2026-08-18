@@ -374,7 +374,7 @@ function authorizedDerivedStructuredChange(context, rules) {
 
 function structuredType(file) {
   const basename = path.posix.basename(file);
-  if (file === "release-please-config.json" || basename === "package.json" || basename === "jsr.json") return "json";
+  if (file === "release-please-config.json" || basename === "package.json") return "json";
   if (basename === "pnpm-lock.yaml") return "yaml";
   if (basename === "Cargo.toml" || basename === "Cargo.lock" || file.endsWith(".toml")) return "toml";
   return undefined;

@@ -4,12 +4,11 @@ use std::fmt;
 use serde_json::Value;
 
 use crate::oliphaunt::interface::QueryOptions;
-use crate::protocol::messages::DatabaseError;
+use crate::protocol::messages::PostgresError;
 
-/// Rich error type that mirrors the TypeScript `OliphauntError` by carrying the
-/// original database error along with query context.
+/// PostgreSQL error enriched with the query context that produced it.
 pub struct OliphauntError {
-    source: DatabaseError,
+    source: PostgresError,
     query: String,
     params: Vec<Value>,
     query_options: Option<QueryOptions>,
@@ -17,7 +16,7 @@ pub struct OliphauntError {
 
 impl OliphauntError {
     pub fn new(
-        source: DatabaseError,
+        source: PostgresError,
         query: impl Into<String>,
         params: Vec<Value>,
         query_options: Option<QueryOptions>,
@@ -30,7 +29,8 @@ impl OliphauntError {
         }
     }
 
-    pub fn database_error(&self) -> &DatabaseError {
+    /// Return the structured PostgreSQL error, including its SQLSTATE.
+    pub fn postgres_error(&self) -> &PostgresError {
         &self.source
     }
 

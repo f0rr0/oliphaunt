@@ -1,10 +1,8 @@
-use std::path::PathBuf;
-
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_missing_extension_archives;
-use crate::oliphaunt::base::{PreparedRoot, RootPlan, RootSource, RootTarget, prepare_root};
+use crate::oliphaunt::base::{DatabasePlan, PreparedDatabase, prepare_database};
 use crate::oliphaunt::client::Oliphaunt;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
@@ -12,38 +10,26 @@ use crate::oliphaunt::extensions::{
     Extension, postgres_config_with_extension_startup, resolve_extension_set,
 };
 use crate::oliphaunt::interface::DebugLevel;
+use crate::oliphaunt::storage::{DatabaseInitialization, DatabaseStorage};
 
-/// Builder for opening persistent or temporary [`Oliphaunt`] databases.
+/// Builder for opening [`Oliphaunt`] databases.
 #[derive(Debug, Clone)]
 pub struct OliphauntBuilder {
-    target: Option<OliphauntTarget>,
-    template_cache: bool,
+    storage: DatabaseStorage,
+    initialization: DatabaseInitialization,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
-    load_data_dir_archive: Option<Vec<u8>>,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
-}
-
-#[derive(Debug, Clone)]
-enum OliphauntTarget {
-    Path(PathBuf),
-    AppId {
-        qualifier: String,
-        organization: String,
-        application: String,
-    },
-    Temporary,
 }
 
 impl Default for OliphauntBuilder {
     fn default() -> Self {
         Self {
-            target: None,
-            template_cache: true,
+            storage: DatabaseStorage::Memory,
+            initialization: DatabaseInitialization::PackagedTemplate,
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
-            load_data_dir_archive: None,
             #[cfg(feature = "extensions")]
             extensions: Vec::new(),
         }
@@ -51,62 +37,22 @@ impl Default for OliphauntBuilder {
 }
 
 impl OliphauntBuilder {
-    /// Create a builder. Call [`path`](Self::path), [`app_id`](Self::app_id),
-    /// or [`temporary`](Self::temporary) before [`open`](Self::open).
+    /// Create a builder for a memory database initialized from the packaged
+    /// template.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Open a persistent database rooted at `root`.
-    pub fn path(mut self, root: impl Into<PathBuf>) -> Self {
-        self.target = Some(OliphauntTarget::Path(root.into()));
+    /// Select where PostgreSQL stores its mutable database files.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.storage = storage;
         self
     }
 
-    /// Open a persistent database under the platform data directory.
-    pub fn app(
-        mut self,
-        qualifier: impl Into<String>,
-        organization: impl Into<String>,
-        application: impl Into<String>,
-    ) -> Self {
-        self.target = Some(OliphauntTarget::AppId {
-            qualifier: qualifier.into(),
-            organization: organization.into(),
-            application: application.into(),
-        });
+    /// Select how an empty storage allocation is initialized.
+    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
+        self.initialization = initialization;
         self
-    }
-
-    /// Open a persistent database under the platform data directory.
-    pub fn app_id(self, app_id: (&str, &str, &str)) -> Self {
-        self.app(app_id.0, app_id.1, app_id.2)
-    }
-
-    /// Open an ephemeral database removed when the instance is dropped.
-    ///
-    /// Temporary databases use the process-local template cluster cache by
-    /// default, avoiding repeated `initdb` work in test suites.
-    pub fn temporary(mut self) -> Self {
-        self.target = Some(OliphauntTarget::Temporary);
-        self
-    }
-
-    /// Control whether new databases are cloned from the process-local or
-    /// embedded PGDATA template cache.
-    pub fn template_cache(mut self, enabled: bool) -> Self {
-        self.template_cache = enabled;
-        self
-    }
-
-    /// Open an ephemeral database with a fresh `initdb`.
-    ///
-    /// This is a compatibility alias for
-    /// `temporary().template_cache(false)`. Fresh initdb uses the bundled split
-    /// WASIX `initdb` module; cached temporary databases remain the production
-    /// fast path.
-    pub fn fresh_temporary(self) -> Self {
-        self.temporary().template_cache(false)
     }
 
     /// Set a PostgreSQL startup GUC for this embedded backend.
@@ -154,8 +100,9 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Append an advanced PostgreSQL startup argument. Prefer
-    /// [`postgres_config`](Self::postgres_config) for GUCs.
+    /// Append an advanced PostgreSQL startup option. Prefer
+    /// [`postgres_config`](Self::postgres_config) for GUCs and
+    /// [`database`](Self::database) for the positional database name.
     pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
         self.startup_config.extra_args.push(arg.into());
         self
@@ -166,12 +113,6 @@ impl OliphauntBuilder {
         self.startup_config
             .extra_args
             .extend(args.into_iter().map(Into::into));
-        self
-    }
-
-    /// Load a previously dumped PGDATA tar archive before opening the database.
-    pub fn load_data_dir_archive(mut self, archive: impl Into<Vec<u8>>) -> Self {
-        self.load_data_dir_archive = Some(archive.into());
         self
     }
 
@@ -197,42 +138,15 @@ impl OliphauntBuilder {
         let postgres_config = self.postgres_config.clone();
         postgres_config.validate()?;
         self.startup_config.validate()?;
-        let target = match self.target.clone() {
-            Some(OliphauntTarget::Path(root)) => RootTarget::Path(root),
-            Some(OliphauntTarget::AppId {
-                qualifier,
-                organization,
-                application,
-            }) => RootTarget::AppId {
-                qualifier,
-                organization,
-                application,
-            },
-            Some(OliphauntTarget::Temporary) => RootTarget::Temporary,
-            None => {
-                bail!(
-                    "OliphauntBuilder target is not set; call path, app_id, or temporary before open"
-                )
-            }
-        };
-        let source = if let Some(archive) = self.load_data_dir_archive.clone() {
-            RootSource::DataDirArchive(archive)
-        } else if self.template_cache {
-            RootSource::Template
-        } else {
-            RootSource::FreshInitdb
-        };
-        let plan = RootPlan::new(target, source);
-        #[cfg(feature = "extensions")]
-        let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
-        let prepared = prepare_root(plan)?;
+        let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
+        let prepared = prepare_database(plan)?;
         #[cfg(feature = "extensions")]
         {
-            self.open_prepared_root(prepared, extensions, postgres_config)
+            self.open_prepared_database(prepared, extensions, postgres_config)
         }
         #[cfg(not(feature = "extensions"))]
         {
-            self.open_prepared_root(prepared, postgres_config)
+            self.open_prepared_database(prepared, postgres_config)
         }
     }
 
@@ -244,17 +158,16 @@ impl OliphauntBuilder {
         Ok((extensions, postgres_config))
     }
 
-    fn open_prepared_root(
+    fn open_prepared_database(
         self,
-        prepared: PreparedRoot,
+        prepared: PreparedDatabase,
         #[cfg(feature = "extensions")] extensions: Vec<Extension>,
         postgres_config: PostgresConfig,
     ) -> Result<Oliphaunt> {
-        let PreparedRoot {
-            temp_dir,
-            root_lock,
+        let PreparedDatabase {
+            workspace,
+            directory_lock,
             outcome,
-            ..
         } = prepared;
         #[cfg(feature = "extensions")]
         install_missing_extension_archives(&outcome, &extensions)?;
@@ -268,15 +181,30 @@ impl OliphauntBuilder {
         #[cfg(not(feature = "extensions"))]
         let mut instance =
             Oliphaunt::new_prepared_with_config(outcome, postgres_config, self.startup_config)?;
-        if let Some(lock) = root_lock {
-            instance.attach_root_lock(lock);
+        if let Some(lock) = directory_lock {
+            instance.attach_directory_lock(lock);
         }
-        if let Some(temp_dir) = temp_dir {
-            instance.attach_temp_dir(temp_dir);
+        if let Some(workspace) = workspace {
+            instance.attach_workspace(workspace);
         }
         #[cfg(feature = "extensions")]
         instance.enable_startup_extensions(&extensions)?;
         Ok(instance)
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn default_builder_selects_memory_and_packaged_template() {
+        let builder = OliphauntBuilder::default();
+        assert_eq!(builder.storage, DatabaseStorage::Memory);
+        assert_eq!(
+            builder.initialization,
+            DatabaseInitialization::PackagedTemplate
+        );
     }
 }
 

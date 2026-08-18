@@ -26,7 +26,7 @@ fi
 run_id="${1:-$(date -u +%Y-%m-%dT%H%M%SZ)-wasix-full-lifecycle}"
 observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# This command exercises every promoted extension in direct, server, restart,
+# This command exercises every catalogued extension in direct, server, restart,
 # materialization, and dump/restore modes.  The record command is deliberately
 # after it so a failing or interrupted run cannot produce passed evidence.
 bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh regression

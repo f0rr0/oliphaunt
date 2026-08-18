@@ -122,10 +122,10 @@ impl From<oliphaunt::Error> for CommandError {
     }
 }
 
-async fn open_database(root: PathBuf) -> anyhow::Result<Oliphaunt> {
+async fn open_database(directory: PathBuf) -> anyhow::Result<Oliphaunt> {
     oliphaunt::register_build_resources!()?;
     let db = Oliphaunt::builder()
-        .path(root)
+        .directory(directory)
         .native_server()
         .max_client_sessions(4)
         .extensions([Extension::Hstore, Extension::PgTrgm, Extension::Unaccent])
@@ -242,8 +242,8 @@ fn required<'a>(result: &'a QueryResult, row: usize, column: &str) -> anyhow::Re
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let root = app.path().app_data_dir()?.join("oliphaunt-native-todos");
-            let db = tauri::async_runtime::block_on(open_database(root))?;
+            let directory = app.path().app_data_dir()?.join("oliphaunt-native-todos");
+            let db = tauri::async_runtime::block_on(open_database(directory))?;
             app.manage(TodoStore { db: Mutex::new(db) });
             Ok(())
         })
@@ -263,13 +263,13 @@ mod tests {
 
     #[test]
     fn startup_smoke_runs_sql_dump() {
-        let root = std::env::temp_dir().join(format!(
+        let directory = std::env::temp_dir().join(format!(
             "oliphaunt-example-tauri-smoke-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
-        let db = tauri::async_runtime::block_on(open_database(root.clone())).unwrap();
+        let _ = std::fs::remove_dir_all(&directory);
+        let db = tauri::async_runtime::block_on(open_database(directory.clone())).unwrap();
         tauri::async_runtime::block_on(db.close()).unwrap();
-        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

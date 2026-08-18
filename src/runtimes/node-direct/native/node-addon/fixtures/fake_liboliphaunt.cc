@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <mutex>
 
 struct OliphauntHandle {
@@ -14,8 +15,11 @@ struct OliphauntHandle {
 namespace {
 
 std::mutex g_mutex;
+std::condition_variable g_query_condition;
 OliphauntHandle g_handle;
 char g_last_error[256] = "";
+bool g_failed_detach_once = false;
+bool g_query_cancelled = false;
 
 void SetError(const char *message) {
   std::snprintf(g_last_error, sizeof(g_last_error), "%s", message);
@@ -84,18 +88,24 @@ OLIPHAUNT_API int32_t oliphaunt_init(
   return OpenFake(out);
 }
 
-OLIPHAUNT_API int32_t oliphaunt_init_ex(
-    const OliphauntConfig *,
-    const OliphauntInitOptions *,
-    OliphauntHandle **out) {
-  return OpenFake(out);
-}
-
 OLIPHAUNT_API int32_t oliphaunt_exec_protocol(
     OliphauntHandle *,
     const uint8_t *,
     size_t,
     OliphauntResponse *out) {
+  const char *block_query = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_QUERY");
+  if (block_query != nullptr && std::strcmp(block_query, "1") == 0) {
+    if (out != nullptr) {
+      out->data = nullptr;
+      out->len = 0;
+    }
+    std::unique_lock<std::mutex> guard(g_mutex);
+    RecordEvent("query-started");
+    g_query_condition.wait(guard, [] { return g_query_cancelled; });
+    RecordEvent("query-cancelled");
+    SetError("fake query was cancelled");
+    return -1;
+  }
   return UnsupportedResponse(out);
 }
 
@@ -119,13 +129,6 @@ OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
 
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *,
-    uint32_t,
-    OliphauntResponse *out) {
-  return UnsupportedResponse(out);
-}
-
-OLIPHAUNT_API int32_t oliphaunt_backup_ex(
-    OliphauntHandle *,
     const OliphauntBackupOptions *,
     OliphauntResponse *out) {
   return UnsupportedResponse(out);
@@ -136,6 +139,13 @@ OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *) {
 }
 
 OLIPHAUNT_API int32_t oliphaunt_cancel(OliphauntHandle *) {
+  const char *block_query = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_QUERY");
+  if (block_query != nullptr && std::strcmp(block_query, "1") == 0) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+    RecordEvent("cancel");
+    g_query_cancelled = true;
+    g_query_condition.notify_all();
+  }
   return 0;
 }
 
@@ -149,6 +159,13 @@ OLIPHAUNT_API int32_t oliphaunt_detach(OliphauntHandle *handle) {
   if (g_handle.terminally_closed) {
     RecordEvent("detach-after-close");
     SetError("fake detach ran after terminal close");
+    return -1;
+  }
+  const char *fail_once = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_FAIL_DETACH_ONCE");
+  if (!g_failed_detach_once && fail_once != nullptr && std::strcmp(fail_once, "1") == 0) {
+    g_failed_detach_once = true;
+    RecordEvent("detach-failed");
+    SetError("injected fake detach failure");
     return -1;
   }
   RecordEvent("detach");

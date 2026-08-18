@@ -36,7 +36,14 @@ source lives under `src/<product>/`.
 - `src/sdks/swift/`, `src/sdks/kotlin/`,
   `src/sdks/react-native/`, and `src/sdks/js/` own platform and
   runtime SDKs.
-- `src/bindings/wasix-rust/` owns the first-class WASM/WASIX product lane.
+- `src/bindings/wasix-rust/` owns the released Rust WASIX binding.
+- `src/bindings/wasix-ts/` owns the public browser, Node, Bun, and Deno TypeScript WASIX
+  binding. It is a peer binding, not part of the native TypeScript SDK.
+- `src/runtimes/liboliphaunt/wasix-postmaster/` owns the released concurrent
+  PostgreSQL postmaster runtime and its sealed WASIX backend carrier. It reuses
+  canonical source and toolchain inputs where semantics agree, while owning
+  its concurrency-specific patches, carrier, release metadata, and support
+  claims.
 - `src/*/moon.yml` is the canonical product graph. `tools/policy/sdk-manifest.toml`
   is a small SDK parity ownership registry and must agree with Moon metadata.
 - Tooling lives under `tools/`.
@@ -53,6 +60,10 @@ source lives under `src/<product>/`.
   toolchain pins, extension-owned source pins, and generated extension catalogs
   live under `src/postgres/versions/18`, `src/sources/third-party`,
   `src/sources/toolchains`, and `src/extensions`.
+- Postmaster-specific Wasmer and wasix-libc pins live under
+  `src/sources/third-party/wasix-postmaster/`. The default `production-all`
+  source scope includes every released product input; the focused
+  `wasix-postmaster-runtime` scope acquires only this product's runtime inputs.
 
 There should be no tracked product source under retired roots such as
 `crates/`, `sdks/`, root `liboliphaunt/`, or root product examples.
@@ -65,7 +76,8 @@ synthetic root:
   `src/sdks/kotlin/oliphaunt/src/*Test/`,
   `src/sdks/react-native/src/__tests__/`,
   `src/sdks/js/src/__tests__/`, and
-  `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`.
+  `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`, plus
+  `src/bindings/wasix-ts/src/__tests__/` for the TypeScript WASIX binding.
 - Rust SDK release-shape tests are split by contract: config and mode
   capability contracts stay in `src/sdks/rust/tests/sdk_config_modes.rs`,
   handle lifecycle behavior stays in `src/sdks/rust/tests/sdk_shape.rs`,
@@ -97,6 +109,19 @@ synthetic root:
   release lane and comparison target. It should not expose native engine
   selection or link/load `liboliphaunt`; native Rust work belongs in
   `src/sdks/rust`.
+- `src/bindings/wasix-ts` is the public browser, Node, Bun, and Deno binding over the same
+  portable WASIX runtime. It owns module-Worker and worker-thread orchestration,
+  archive-to-memory mounts, the patched package-relative Wasmer host, and the
+  direct guest-memory pgwire client. It must not depend on `src/sdks/js`, native runtime
+  carriers, Node direct, or the broker. Ordinary opens consume the generated
+  host-neutral `@oliphaunt/liboliphaunt-wasix` carrier; conditional exports
+  select the host adapter without changing the public package identity.
+- `src/runtimes/liboliphaunt/wasix-postmaster` is a peer release product, not an
+  implementation directory of `liboliphaunt-wasix`. It owns a distinct Moon
+  release component and sealed carrier because its concurrent process and
+  shared-memory semantics differ from the single-backend runtime. Generated
+  checkouts, builds, carriers, caches, and reports stay under
+  `target/oliphaunt-wasix-postmaster/`.
 - `src/runtimes/liboliphaunt/wasix/assets/build` is source-only: scripts, patches,
   Docker inputs, and shims. Generated WASIX build and work trees live under
   `target/oliphaunt-wasix/wasix-build`.
@@ -112,22 +137,25 @@ synthetic root:
   adapter glue, not a parallel PostgreSQL lifecycle implementation.
 - `src/sdks/js` is the SDK for Node.js, Bun, and Deno. Tauri apps currently
   use the Rust SDK behind narrow app-owned commands; direct JavaScript/webview
-  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm/JSR package metadata, and
+  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm package metadata, and
   broker/server client orchestration. Its broker implementation depends on the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol,
   so that dependency must remain modeled in Moon and product-local release
   metadata.
 
-All SDKs are product peers over the same native PostgreSQL boundary. They should
-have parity wherever the target platform can support the behavior honestly; any
-gap must be represented as an explicit unsupported error and justified in
+Native SDKs are product peers over the native `liboliphaunt` PostgreSQL
+boundary. WASIX Rust and WASIX TypeScript are peers over the separate portable
+WASIX runtime boundary. All should have parity wherever their target can
+support behavior honestly; gaps must be explicit and justified in
 `docs/maintainers/sdk-parity-policy.md`.
 
 ## Internal Organization Rules
 
-- Product crates own their own runtime code. `oliphaunt-wasix` may depend on the
-  WASIX asset crates; `oliphaunt` may load `liboliphaunt`; neither crate
-  should call into the other's private modules.
+- Product bindings own their own host code. WASIX Rust may consume Cargo WASIX
+  asset crates and WASIX TypeScript may consume the generated host-neutral
+  portable runtime carrier plus separately selected WASIX extension npm leaves;
+  `oliphaunt` may load `liboliphaunt`. None should call another public
+  product's private modules.
 - `tools/policy/check-native-boundaries.sh` enforces the native/legacy split:
   the Rust-native SDK and Swift/Kotlin/React Native package manifests must not
   depend on `oliphaunt-wasix`, WASIX AOT payload crates, or Wasmer runtime

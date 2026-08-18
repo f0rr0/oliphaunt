@@ -18,7 +18,7 @@ this SDK, so the Swift lifecycle model is the Apple behavior source.
 Add the Swift package from Xcode or `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.6.0")
+.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.6.1")
 ```
 
 The package carries the Swift API and the native runtime artifacts for supported
@@ -38,8 +38,8 @@ let appSupport = FileManager.default.urls(
 
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
-        root: appSupport.appending(path: "main.oliphaunt"),
         mode: .nativeDirect,
+        storage: .directory(appSupport.appending(path: "main.oliphaunt")),
         extensions: ["vector"]
     )
 )
@@ -60,7 +60,8 @@ against the resident backend and preserves transaction ordering.
 
 ## App Responsibilities
 
-- Keep user data in an app-owned persistent directory.
+- Use `.directory(url)` for persistent user data. Omit it for SDK-owned
+  temporary storage.
 - Call lifecycle hooks around background and foreground transitions.
 - Select exact SQL extension names so the app bundle contains only selected
   extension artifacts and declared dependencies.

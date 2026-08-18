@@ -28,7 +28,12 @@ pub(super) fn check_sources_manifest_for_asset_build(args: &[String]) -> Result<
     let source_lane =
         canonical_source_lane(value_after(args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE))?;
     if args.iter().any(|arg| arg == "--fetch") {
-        fetch_pinned_sources_for_source_lane(&manifest, source_lane, true, SourceFetchScope::All)?;
+        fetch_pinned_sources_for_source_lane(
+            &manifest,
+            source_lane,
+            true,
+            SourceFetchScope::ProductionAll,
+        )?;
     } else {
         check_source_spine_for_source_lane(&manifest, source_lane, true, false)?;
     }
@@ -61,6 +66,7 @@ pub(super) fn fetch_pinned_sources_for_source_lane(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceFetchScope {
+    ProductionAll,
     All,
     NativeRuntime,
     WasixRuntime,
@@ -70,18 +76,20 @@ pub(super) enum SourceFetchScope {
 impl SourceFetchScope {
     pub(super) fn parse(value: &str) -> Result<Self> {
         match value {
+            "production-all" => Ok(Self::ProductionAll),
             "all" => Ok(Self::All),
             "native-runtime" => Ok(Self::NativeRuntime),
             "wasix-runtime" => Ok(Self::WasixRuntime),
             "extensions" => Ok(Self::Extensions),
             other => bail!(
-                "unsupported source fetch scope {other:?}; expected one of: all, native-runtime, wasix-runtime, extensions"
+                "unsupported source fetch scope {other:?}; expected one of: production-all, all, native-runtime, wasix-runtime, extensions"
             ),
         }
     }
 
     fn as_arg(self) -> &'static str {
         match self {
+            Self::ProductionAll => "production-all",
             Self::All => "all",
             Self::NativeRuntime => "native-runtime",
             Self::WasixRuntime => "wasix-runtime",
@@ -91,7 +99,7 @@ impl SourceFetchScope {
 
     fn includes(self, origin: SourceOrigin) -> bool {
         match self {
-            Self::All => true,
+            Self::ProductionAll | Self::All => true,
             Self::NativeRuntime => matches!(
                 origin,
                 SourceOrigin::SharedThirdParty
@@ -338,10 +346,10 @@ pub(super) fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()
     if manifest.sources.is_empty() {
         bail!("source metadata must contain at least one source pin");
     }
-    ensure_eq(&manifest.toolchain.wasmer, "7.2.0", "toolchain.wasmer")?;
+    ensure_eq(&manifest.toolchain.wasmer, "7.2.1", "toolchain.wasmer")?;
     ensure_eq(
         &manifest.toolchain.wasmer_wasix,
-        "0.702.0",
+        "0.702.1",
         "toolchain.wasmer-wasix",
     )?;
     ensure_eq(&manifest.toolchain.webc, "12.0.0", "toolchain.webc")?;
@@ -823,10 +831,15 @@ mod tests {
 
     #[test]
     fn rust_fetch_scopes_delegate_to_the_authoritative_fetcher() {
+        assert_eq!(SourceFetchScope::ProductionAll.as_arg(), "production-all");
         assert_eq!(SourceFetchScope::All.as_arg(), "all");
         assert_eq!(SourceFetchScope::NativeRuntime.as_arg(), "native-runtime");
         assert_eq!(SourceFetchScope::WasixRuntime.as_arg(), "wasix-runtime");
         assert_eq!(SourceFetchScope::Extensions.as_arg(), "extensions");
+        assert_eq!(
+            SourceFetchScope::parse("all").unwrap(),
+            SourceFetchScope::All
+        );
     }
 
     #[test]

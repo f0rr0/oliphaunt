@@ -23,10 +23,9 @@ function fixture() {
   return { root, cleanup };
 }
 
-function promotedExtensions() {
+function publicExtensions() {
   const catalog = JSON.parse(readFileSync("src/extensions/generated/extensions.catalog.json", "utf8"));
   return catalog.extensions
-    .filter((extension) => extension?.promotion?.promoted === true)
     .map((extension) => extension.id)
     .sort();
 }
@@ -34,7 +33,7 @@ function promotedExtensions() {
 function writeEvidence(
   root,
   {
-    extensions = promotedExtensions(),
+    extensions = publicExtensions(),
     runAttempt = 1,
     job = "wasix-release-regression",
   } = {},
@@ -107,7 +106,7 @@ test("binds the canonical affected plan and conditional WASIX evidence", () => {
     };
     expect(() => assertCandidateBindingShape(candidate)).not.toThrow();
     expect(evidence.github.runId).toBe(123456789);
-    expect(evidence.resultCount).toBe(promotedExtensions().length);
+    expect(evidence.resultCount).toBe(publicExtensions().length);
   } finally {
     cleanup();
   }
@@ -116,7 +115,7 @@ test("binds the canonical affected plan and conditional WASIX evidence", () => {
 test("rejects an incomplete WASIX evidence result set", () => {
   const { root, cleanup } = fixture();
   try {
-    writeEvidence(root, { extensions: promotedExtensions().slice(1) });
+    writeEvidence(root, { extensions: publicExtensions().slice(1) });
     expect(() => wasixEvidenceBinding(root, {
       repository: "f0rr0/oliphaunt",
       workflow: "CI",
@@ -124,7 +123,7 @@ test("rejects an incomplete WASIX evidence result set", () => {
       runAttempt: 1,
       sha: "a".repeat(40),
       tree: "c".repeat(40),
-    })).toThrow("every and only promoted public extension");
+    })).toThrow("every and only public extension");
   } finally {
     cleanup();
   }

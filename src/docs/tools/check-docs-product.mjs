@@ -259,7 +259,7 @@ function assertSdkSidebarPages() {
       route.id === 'oliphaunt-react-native'
         ? ['index', 'guide', 'architecture']
         : route.id === 'oliphaunt-wasix'
-          ? ['index', 'guide', 'runtime', 'dump-restore']
+          ? ['index', 'browser-typescript', 'guide', 'runtime', 'dump-restore']
           : ['index', 'guide'];
     const actual = route.sidebar_pages ?? [];
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -430,9 +430,10 @@ function assertLightweightVersioning() {
     fail('generated version matrix has no canonical release products');
   }
   for (const [productId, product] of products) {
-    const currentVersion = product.current_version === '0.0.0'
-      ? `${product.current_version} (unreleased)`
-      : product.current_version;
+    const currentVersion =
+      product.current_version === '0.0.0'
+        ? `${product.current_version} (unreleased)`
+        : product.current_version;
     const expectedRow = `| ${[
       productId,
       currentVersion,
@@ -440,9 +441,13 @@ function assertLightweightVersioning() {
       product.version_relationship,
       (product.publish_targets ?? []).join(', ') || 'none',
       product.tag_prefix,
-    ].map(escapeMarkdownCell).join(' | ')} |`;
+    ]
+      .map(escapeMarkdownCell)
+      .join(' | ')} |`;
     if (!versionMatrix.includes(expectedRow)) {
-      fail(`generated version matrix is missing the canonical row for ${productId}: ${expectedRow}`);
+      fail(
+        `generated version matrix is missing the canonical row for ${productId}: ${expectedRow}`,
+      );
     }
   }
   if (releaseGraph.products?.['oliphaunt-swift']?.initial_version !== '0.6.0') {
@@ -579,7 +584,7 @@ function assertSdkSectionCoverage() {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasm',
+    'oliphaunt-wasix': 'wasix-rust',
   };
   const guideHeadingOrder = {
     'liboliphaunt-native': [
@@ -726,33 +731,33 @@ function assertSdkSectionCoverage() {
     if (route.id === 'oliphaunt-wasix') {
       const runtimePath = routeSourcePagePath(route, 'runtime');
       if (!runtimePath) {
-        fail('WASM SDK docs are missing runtime.md or runtime.mdx');
+        fail('Rust WASIX docs are missing runtime.md or runtime.mdx');
       }
       const runtimeMarkdown = readText(runtimePath);
       if (!runtimeMarkdown.includes('<WasmRuntimeMap />')) {
-        fail('WASM runtime docs are missing WasmRuntimeMap');
+        fail('Rust WASIX runtime docs are missing WasmRuntimeMap');
       }
       for (const heading of [
         'Choose A Mode',
-        'Persistence Modes',
+        'Storage and initialization',
         'Operational Limits',
-        'Root Locking And Lifecycle',
+        'Persistent-storage locking and lifecycle',
         'Startup And Preload',
         'Supported Targets',
         'Server-Compatible Access',
       ]) {
         if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(runtimeMarkdown)) {
-          fail(`WASM runtime docs are missing required section: ${heading}`);
+          fail(`Rust WASIX runtime docs are missing required section: ${heading}`);
         }
       }
 
       const dumpRestorePath = routeSourcePagePath(route, 'dump-restore');
       if (!dumpRestorePath) {
-        fail('WASM SDK docs are missing dump-restore.md or dump-restore.mdx');
+        fail('Rust WASIX docs are missing dump-restore.md or dump-restore.mdx');
       }
       const dumpRestoreMarkdown = readText(dumpRestorePath);
       if (!dumpRestoreMarkdown.includes('<WasmDataMovement />')) {
-        fail('WASM dump/restore docs are missing WasmDataMovement');
+        fail('Rust WASIX dump/restore docs are missing WasmDataMovement');
       }
       for (const heading of [
         'Choose The Right Export Format',
@@ -764,7 +769,7 @@ function assertSdkSectionCoverage() {
         'Upgrade Guidance',
       ]) {
         if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(dumpRestoreMarkdown)) {
-          fail(`WASM dump/restore docs are missing required section: ${heading}`);
+          fail(`Rust WASIX dump/restore docs are missing required section: ${heading}`);
         }
       }
     }
@@ -815,14 +820,16 @@ function assertReferencePageCoverage() {
       page: 'capabilities',
       title: 'Capability Matrix',
       components: ['CapabilitySnapshot'],
-      headings: ['SDKs', 'Runtime Modes', 'Feature Support', 'Choosing A Mode'],
+      headings: ['SDKs', 'Runtime Modes', 'Feature Support', 'Choosing A Product'],
     },
     {
       page: 'extensions',
       title: 'Extensions',
       components: ['ExactExtensionRule', 'ExtensionArtifactFlow'],
       headings: [
-        'How Selection Works',
+        'Native selection',
+        'Rust WASIX selection',
+        'Browser WASIX selection',
         'Platform Behavior',
         'Dependencies',
         'External Extensions',
@@ -896,7 +903,7 @@ function assertLearnPageCoverage() {
       title: 'Embedded PostgreSQL',
       components: ['EmbeddedPostgresModel'],
       headings: [
-        'Root Storage',
+        'Database storage',
         'Lifecycle Contract',
         'Extension Selection',
         'What is different from SQLite?',
@@ -983,18 +990,6 @@ function assertLearnPageCoverage() {
       previousHeadingIndex = headingIndex;
     }
   }
-}
-
-function markerDisplayId(marker) {
-  if (!marker) {
-    return '';
-  }
-  const colon = marker.lastIndexOf(':');
-  if (colon >= 0) {
-    return marker.slice(colon + 1);
-  }
-  const parts = marker.trim().split(/\s+/);
-  return parts[parts.length - 1] ?? marker;
 }
 
 function assertSnippetMarkers() {
@@ -1087,7 +1082,7 @@ function assertApiReferenceSummary({ requireGenerated = false } = {}) {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasm',
+    'oliphaunt-wasix': 'wasix',
   };
   const expected = new Set(
     manifest.routes.filter((entry) => entry.kind === 'sdk').map((entry) => entry.id),
@@ -1133,7 +1128,7 @@ function assertSdkManifestCoverage() {
 }
 
 function assertReleaseGraphPolicy() {
-  if (releaseGraph.products?.['docs']) {
+  if (releaseGraph.products?.docs) {
     fail('docs must not be a release product');
   }
 }
@@ -1348,10 +1343,16 @@ function assertSdkInstallReleaseContracts() {
   };
   const initialVersion = (component) =>
     packageConfig(component)['initial-version'] ?? releasePlease['initial-version'];
-  const swiftVersion = initialVersion('oliphaunt-swift');
-  const kotlinVersion = initialVersion('oliphaunt-kotlin');
-  if (swiftVersion !== '0.6.0') {
-    fail(`the first SwiftPM-compatible Oliphaunt version must remain 0.6.0; got ${swiftVersion}`);
+  const swiftInitialVersion = initialVersion('oliphaunt-swift');
+  if (swiftInitialVersion !== '0.6.0') {
+    fail(
+      `the first SwiftPM-compatible Oliphaunt version must remain 0.6.0; got ${swiftInitialVersion}`,
+    );
+  }
+  const swiftVersion = releaseGraph.products?.['oliphaunt-swift']?.current_version;
+  const kotlinVersion = releaseGraph.products?.['oliphaunt-kotlin']?.current_version;
+  if (!swiftVersion || !kotlinVersion) {
+    fail('release graph must provide current Swift and Kotlin SDK versions');
   }
 
   const required = new Map([
@@ -1399,19 +1400,15 @@ function assertSdkInstallReleaseContracts() {
       'public Kotlin install docs must not advertise the unpublished dev.oliphaunt:oliphaunt coordinate',
     );
   }
-  const typescriptDocs = [
-    'src/docs/content/sdk/typescript/index.mdx',
-    'src/docs/content/reference/sdk-products.mdx',
-  ]
-    .map(readText)
-    .join('\n');
-  if (
-    !typescriptDocs.includes('JSR package intentionally contains only') ||
-    !typescriptDocs.includes('JSR distribution is deliberately limited')
-  ) {
-    fail(
-      'TypeScript public docs must distinguish the native npm distribution from protocol/query-only JSR',
-    );
+  const wasixTypescriptDocs = readText('src/docs/content/sdk/wasm/browser-typescript.mdx');
+  for (const contract of [
+    "npm:@oliphaunt/wasix-ts';",
+    "npm:@oliphaunt/wasix-ts/storage/deno';",
+    'same npm package as browsers, Node.js, and Bun',
+  ]) {
+    if (!wasixTypescriptDocs.includes(contract)) {
+      fail(`WASIX TypeScript public docs must include ${JSON.stringify(contract)}`);
+    }
   }
 }
 

@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, zstdDecompressSync } from "node:zlib";
 
 const ARCHIVER = path.resolve(import.meta.dir, "archive_dir.mjs");
 
@@ -41,7 +41,10 @@ function tarOctal(buffer, offset, length) {
 }
 
 function entries(archive) {
-  const buffer = gunzipSync(readFileSync(archive));
+  const compressed = readFileSync(archive);
+  const buffer = archive.endsWith(".tar.zst")
+    ? zstdDecompressSync(compressed)
+    : gunzipSync(compressed);
   const rows = [];
   for (let offset = 0; offset + 512 <= buffer.length;) {
     const header = buffer.subarray(offset, offset + 512);
@@ -119,16 +122,25 @@ test("writes deterministic canonical ustar directory markers", () => {
     writeFileSync(path.join(source, "top.txt"), "top\n");
     const first = path.join(root, "first.tar.gz");
     const second = path.join(root, "second.tar.gz");
+    const firstZstd = path.join(root, "first.tar.zst");
+    const secondZstd = path.join(root, "second.tar.zst");
     run(process.execPath, [ARCHIVER, source, first]);
     run(process.execPath, [ARCHIVER, source, second]);
+    run(process.execPath, [ARCHIVER, source, firstZstd]);
+    run(process.execPath, [ARCHIVER, source, secondZstd]);
 
     assert.equal(digest(first), digest(second), "archive output must be byte-for-byte deterministic");
+    assert.equal(
+      digest(firstZstd),
+      digest(secondZstd),
+      "Zstandard archive output must be byte-for-byte deterministic",
+    );
     assert.equal(
       readFileSync(first).subarray(0, 10).toString("hex"),
       "1f8b0800000000000003",
       "tar.gz output must use the canonical cross-platform gzip header",
     );
-    assert.deepEqual(entries(first), [
+    const expectedEntries = [
       { headerName: ".", name: ".", prefix: "", type: "5" },
       { headerName: "nested/", name: "nested/", prefix: "", type: "5" },
       { headerName: `${longParent}/`, name: `${longParent}/`, prefix: "", type: "5" },
@@ -136,7 +148,14 @@ test("writes deterministic canonical ustar directory markers", () => {
       { headerName: "nested/child/", name: "nested/child/", prefix: "", type: "5" },
       { headerName: "nested/child/payload.txt", name: "nested/child/payload.txt", prefix: "", type: "0" },
       { headerName: `${longChild}/`, name: `${longParent}/${longChild}/`, prefix: longParent, type: "5" },
-    ]);
+    ];
+    assert.deepEqual(entries(first), expectedEntries);
+    assert.deepEqual(entries(firstZstd), expectedEntries);
+    assert.equal(
+      readFileSync(firstZstd).subarray(0, 4).toString("hex"),
+      "28b52ffd",
+      "tar.zst output must be a Zstandard frame",
+    );
 
     const extracted = path.join(root, "extracted");
     mkdirSync(extracted);
@@ -224,7 +243,11 @@ test("rejects symbolic links instead of silently dereferencing release inputs", 
     writeFileSync(path.join(source, "payload"), "payload\n");
     symlinkSync("payload", path.join(source, "payload-link"));
 
-    for (const output of [path.join(root, "output.tar.gz"), path.join(root, "output.zip")]) {
+    for (const output of [
+      path.join(root, "output.tar.gz"),
+      path.join(root, "output.tar.zst"),
+      path.join(root, "output.zip"),
+    ]) {
       assert.match(
         runFailure(process.execPath, [ARCHIVER, source, output]),
         /source tree contains a symbolic link/u,

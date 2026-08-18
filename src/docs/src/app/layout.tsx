@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: '%s | Oliphaunt',
   },
   description:
-    'Embedded PostgreSQL SDKs for Rust, Swift, Kotlin, React Native, TypeScript, and WASM apps.',
+    'Embedded PostgreSQL SDKs for native, Rust WASIX, and TypeScript WASIX apps.',
   icons: {
     icon: [{ url: '/img/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/img/favicon.svg',

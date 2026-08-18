@@ -49,18 +49,6 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./node": {
-      "types": "./lib/native/node.d.ts",
-      "default": "./lib/native/node.js"
-    },
-    "./bun": {
-      "types": "./lib/native/bun.d.ts",
-      "default": "./lib/native/bun.js"
-    },
-    "./deno": {
-      "types": "./lib/native/deno.d.ts",
-      "default": "./lib/native/deno.js"
-    },
     "./protocol": {
       "types": "./lib/protocol.d.ts",
       "default": "./lib/protocol.js"
@@ -79,7 +67,6 @@
   "files": [
     "lib",
     "src",
-    "jsr.json",
     "README.md",
     "ARCHITECTURE.md",
     "CHANGELOG.md",
@@ -100,7 +87,6 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "catalog:",
-    "jsr": "^0.14.3",
     "tsx": "catalog:",
     "typedoc": "catalog:",
     "typescript": "catalog:",

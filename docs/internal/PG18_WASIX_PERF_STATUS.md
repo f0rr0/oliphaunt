@@ -134,7 +134,7 @@ Implementation comparison status:
   XLog checkpoint-request guard, local in-process checkpoint behavior, GUC
   report allocation skip, and the POSIX semaphore reset fast path.  The
   LIKE/hash/btree/top-XID fast paths are not upstream Oliphaunt deltas; they were
-  ported from the concurrent WASIX experiment and are already in this PG18
+  identified during early postmaster development and are already in this PG18
   lane.
 - `XLogFlush()` is not materially different between PG17.5 Oliphaunt and PG18.3
   Oliphaunt.  The earlier isolated COMMIT diagnostic gap pointed at PG18
@@ -633,7 +633,7 @@ and WAL behavior before changing more release-default behavior.
 
 Patch `0030` is the first release-default candidate from that conclusion.  It
 adds a corrected first-column int4 leaf-tuple fast path.  Unlike the earlier
-full-concurrent experiment shortcut, this version keeps the old `oliphaunt` naming
+early postmaster shortcut, this version keeps the old `oliphaunt` naming
 out of the source, requires the built-in integer btree opfamily, requires a
 normal non-null non-posting non-pivot leaf tuple, and treats equality as a
 successful key comparison so the attribute loop is skipped while PostgreSQL's
@@ -689,8 +689,8 @@ non-HOT indexed update behavior, btree reinsertion/search/compare work, and
 repeated simple-query planning as the high-value areas.  The heap subprobes do
 not justify a heap-specific shortcut yet.
 
-The full-concurrent experiment's btree bottom-up-delete runtime toggle was also
-tested as a possible diagnostic import.  It is not carried in the patch stack.
+The early postmaster btree bottom-up-delete runtime toggle was also tested as a
+possible diagnostic import. It is not carried in the patch stack.
 Even with upstream behavior selected by default, the local embedded port
 regressed the no-timing 9/10 run to `2284.27 ms` and `2795.44 ms`; the
 `index-unchanged-off` override was no better overall (`2327.91 ms` and
@@ -707,7 +707,7 @@ and any accidental parallel worker use fails through the existing error path.
 ## Release Hygiene
 
 The rebuilt PG18 runtime binary does not contain the old `pgl_*`/`Oliphaunt`
-runtime symbol strings when inspected from the packaged `oliphaunt/bin/oliphaunt`
+runtime symbol strings when inspected from the packaged `oliphaunt/bin/postgres`
 module.  The PG18 patch stack and build scripts also keep the new
 `oliphaunt_wasix_*` naming.
 
@@ -718,62 +718,20 @@ tarball plus the PG18 patch-series fingerprint.  The regenerated PG18 perf
 manifest now reports PostgreSQL `18.4`, and
 zero old `pgl`/`oliphaunt` provenance references in its source pins.
 
-## Patch Disposition From This Run
+## Postmaster Product Boundary
 
-The full-concurrent experiment's LIKE literal substring fast path remains in
-the embedded WASIX runtime as patch `0024`.  It appears directionally useful for Test
-5, but it does not address the dominant misses.
+The concurrent WASIX postmaster is a peer release product, not a candidate
+implementation of this single-backend lane. Its Wasmer and WASIX-libc changes
+provide the shared-memory, process, socket, wait, signal, timer, and
+`EXEC_BACKEND` semantics required by multi-process PostgreSQL. Those contracts
+necessarily add lifecycle work that the single-backend topology avoids.
 
-The full-concurrent experiment's first-column int4 tuple-data btree shortcut was
-tested and removed from the default patch stack.  With that shortcut present,
-the core-only O2 run was still not competitive (`1.385x` geomean vs PG17.5),
-and the indexed update cases remained more than `2x` slower.  The patch remains
-recorded as deferred in
-`src/runtimes/liboliphaunt/wasix/assets/build/postgres/experiment-patch-disposition.toml`.
-
-## Full Concurrent WASIX Direction
-
-The concurrent PG18 WASIX experiment is still valuable runtime research, but it
-is not a near-term performance replacement path.  Its upstream Wasmer and
-WASIX-libc patches are mostly correctness/runtime-enablement work:
-
-- fixed shared file-backed memory remapping and `msync`
-- memory-copy exclusion for forked stores
-- resource limits for stack reporting
-- socket, epoll, waitpid, futex, signal, and `sigsetjmp` behavior fixes
-- fork declarations and full EXEC_BACKEND runtime unblockers
-
-Those are necessary for proper multi-process PostgreSQL semantics under WASIX,
-but they add lifecycle and memory-management work that the product-style
-single-backend lane intentionally avoids.  They should be tracked upstream and
-mined for narrow fixes, not used as the default product architecture until the
-runtime can show competitive steady-state SQL numbers.
-
-The actual local concurrent experiment branch is
-`/Users/sid/dev/oliphaunt-oxide-wasix-pg18-experiment` on
-`f0rr0/wasix-pg18-experiment`, with a detached copy at
-`/Users/sid/.codex/worktrees/2eae/oliphaunt-oxide`.  Its query-hot PostgreSQL patch
-stack has now been fully triaged against this embedded WASIX runtime:
-
-- `0006-like-literal-substring-fast-path.patch`: already ported as `0024` with
-  tighter LIKE/collation guards.
-- `0007-top-xid-current-transaction-fast-path.patch`: already ported as `0015`.
-- `0008-btree-int4-compare-fast-path.patch`: already ported as `0016` with
-  tighter opfamily/type/collation guards.
-- `0009-btree-delete-stack-state.patch`: already ported as `0017` under
-  `__wasi__ && OLIPHAUNT_WASM_SINGLE_USER`.
-- `0010-btree-bottomup-delete-runtime-toggle.patch`: remains rejected for the
-  default lane. A local embedded port of the diagnostic hook made the default
-  release-profile Test 9/10 run slower before any override was enabled, and
-  disabling bottom-up deletion changes PostgreSQL index maintenance behavior.
-- `0011-btree-first-int4-compare-fast-path.patch`: already ported as `0030`
-  with tighter leaf/non-null/non-posting/non-pivot/built-in-int4 guards.
-
-That leaves the remaining same-host misses after `0032`-`0034` as measurement
-work rather than an obvious unported concurrent-experiment patch.  The next
-artifact rebuild needs to answer whether the newly ported checkpoint,
-postmaster-environment, semaphore-reset, and GUC-reporting changes close Test
-11 and improve the smaller Test 1/10/14/15 misses.
+Topology-neutral SQL optimizations found during postmaster development were
+reviewed and moved into this canonical patch stack where their guards and
+semantics were sound. Postmaster lifecycle patches stay with the postmaster
+product. This performance report therefore compares single-backend releases
+only; postmaster throughput, concurrency, and recovery are qualified against
+the postmaster carrier and must not be used to choose single-backend patches.
 
 ## Recommendation
 
@@ -797,8 +755,8 @@ shortcuts:
   current AOT/runtime lane;
 - keep `release`/O2 as the measured baseline until `release-o3`/thin-LTO or
   wasm-opt proves a repeatable win for this workload;
-- leave the full concurrent WASIX mmap/fork patches as runtime research unless
-  a narrow part directly improves the single-backend lane.
+- keep postmaster process/shared-memory patches in the postmaster product;
+  adopt only topology-neutral improvements into this single-backend lane.
 
 ## 2026-05-29 34-Patch Rebuild
 

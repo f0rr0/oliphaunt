@@ -1,19 +1,23 @@
 ---
 title: Build With TypeScript
-description: Use the desktop JavaScript SDK in Node.js, Bun, or Deno with helper-backed runtimes and selected extensions.
+description: Use the native desktop JavaScript SDK in Node.js, Bun, or Deno with native engines and selected extensions.
 ---
 
 # Build With TypeScript
 
-Use the TypeScript SDK in Node.js, Bun, and Deno. It
-provides a JavaScript API over Oliphaunt runtime assets and broker/server
-helpers where supported.
+Use `@oliphaunt/ts` in Node.js, Bun, and Deno. It provides a JavaScript API over
+native Oliphaunt runtime assets and native engines where supported.
 
 <Callout type="info" title="Desktop JavaScript uses native helpers">
 Use this package for Node.js, Bun, and Deno. Tauri apps currently keep the
 database in Rust state behind narrow app-owned commands; direct webview
 integration is planned. React Native apps use the React Native SDK because
 mobile runtime work flows through Swift and Kotlin.
+
+Browser applications use the separate
+[`@oliphaunt/wasix-ts`](/docs/sdk/wasix/browser-typescript) package. This native
+package does not fall back to WASIX, and the WASIX package does not fall back to
+native execution.
 </Callout>
 
 <SdkGuideSummary id="typescript" />
@@ -35,7 +39,8 @@ npm install @oliphaunt/ts
 
 ### Open and query
 
-Create a client, open a root, run SQL, and close the handle.
+Open the package client, choose persistent storage, run SQL, and close the
+database.
 
 <!-- oliphaunt-snippet: oliphaunt-js -->
 
@@ -43,8 +48,7 @@ Create a client, open a root, run SQL, and close the handle.
 import { Oliphaunt } from '@oliphaunt/ts';
 
 const db = await Oliphaunt.open({
-  engine: 'nativeBroker',
-  root: './app-data/main.oliphaunt',
+  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
   extensions: ['vector'],
 });
 
@@ -54,7 +58,7 @@ const value = rows.getText(0, 'value');
 await db.close();
 ```
 
-Keep one client per app database root unless you intentionally use a mode that
+Keep one client per database instance unless you intentionally use a mode that
 supports independent sessions.
 
 </Step>
@@ -77,7 +81,7 @@ await db.execute(`
 
 await db.query(
   'INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id',
-  ['First note', 'Stored in an embedded PostgreSQL root'],
+  ['First note', 'Stored by embedded PostgreSQL'],
 );
 
 const notes = await db.query(
@@ -95,18 +99,19 @@ the first release.
 
 ### Configure
 
-Configure mode, root, selected exact extensions, runtime asset locations,
-durability, startup identity, broker helper path, and server helper path through
-the JS configuration object.
+Configure storage, mode, selected exact extensions, durability, startup
+identity, and advanced runtime overrides through the JS configuration object.
+Omit `storage` for an SDK-owned temporary directory; pass
+`{ kind: 'directory', path }` for persistence.
 
 </Step>
 <Step>
 
 ### Choose a mode
 
-Direct mode is lowest-latency where a native binding is available. Broker mode
-uses a helper process and is the preferred robust desktop JavaScript path.
-Server mode is for PostgreSQL-compatible tools and independent clients.
+Omit `engine` for the runtime-detected native direct default. Select broker mode
+when process isolation and crash recovery matter, or server mode when
+PostgreSQL-compatible tools and independent clients are required.
 
 </Step>
 <Step>
@@ -131,6 +136,10 @@ selected extensions and mandatory dependencies.
 
 Use SDK backup and restore helpers for physical archives and supported server
 flows. Keep live PostgreSQL directories behind the SDK data-movement APIs.
+Restores fail when the destination exists by default; use
+`destinationPolicy: 'replaceExisting'` only when replacement is intentional.
+Restore is offline and mode-independent; the SDK uses the detected native
+binding rather than requiring an engine or broker executable.
 
 </Step>
 </Steps>
@@ -139,6 +148,6 @@ flows. Keep live PostgreSQL directories behind the SDK data-movement APIs.
 
 ## Troubleshooting
 
-Check runtime asset resolution, helper executable availability, root locks,
+Check runtime asset resolution, helper executable availability, storage ownership,
 mode capability errors, extension selection, and SQLSTATE-bearing PostgreSQL
 errors.

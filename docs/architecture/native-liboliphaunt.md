@@ -127,12 +127,10 @@ src/runtimes/liboliphaunt/native/include/oliphaunt.h
 The current ABI is intentionally small:
 
 - `oliphaunt_init`
-- `oliphaunt_init_ex`
 - `oliphaunt_exec_protocol`
 - `oliphaunt_exec_simple_query`
 - `oliphaunt_exec_protocol_stream`
 - `oliphaunt_backup`
-- `oliphaunt_backup_ex`
 - `oliphaunt_restore`
 - `oliphaunt_cancel`
 - `oliphaunt_detach`
@@ -149,15 +147,11 @@ The current ABI is intentionally small:
 `oliphaunt_init` has initialized the embedded backend session. Responses are owned
 by the native library until `oliphaunt_free_response`.
 
-`oliphaunt_init_ex` extends initialization without changing the shared ABI v6
-record. Its independently versioned `OliphauntInitOptions` can provide a
-per-handle `module_dir`. A non-empty value must be an existing directory, is
-copied during initialization, and is authoritative for PostgreSQL `$libdir`.
-This is how the Rust SDK binds an embedded handle to the exact selected-module
-tree in its materialized runtime cache without mutating process environment
-before the call. Existing callers continue to use `oliphaunt_init`: a valid
+ABI v7 carries the optional `module_dir` directly in `OliphauntConfig`. A
+non-empty value must be an existing directory, is copied during initialization,
+and is authoritative for PostgreSQL `$libdir`. When it is `NULL`, a valid
 `OLIPHAUNT_EMBEDDED_MODULE_DIR` remains higher priority than release-layout
-discovery, so JavaScript and direct C hosts keep their established behavior.
+discovery.
 
 Direct mode sets the process `PGDATA` environment variable to the active
 `config.pgdata` for the backend lifetime so PostgreSQL extensions that consult
@@ -167,7 +161,7 @@ open. Broker and server modes provide stronger process isolation for apps that
 cannot tolerate a process-wide environment mutation.
 
 `oliphaunt_detach` ends one logical lease while keeping the same-root backend
-resident for a later `oliphaunt_init`/`oliphaunt_init_ex`. Every successful
+resident for a later `oliphaunt_init`. Every successful
 logical open establishes a nonzero token returned by
 `oliphaunt_logical_generation`. Binding cleanup code that can outlive a logical
 lease must use
@@ -179,11 +173,11 @@ lease.
 already serialize the complete process lifetime.
 
 Desktop dynamic extension modules also require PostgreSQL backend symbols from
-the loaded `liboliphaunt` image. `oliphaunt_init_ex` therefore promotes that
+the loaded `liboliphaunt` image. `oliphaunt_init` therefore promotes that
 exact image to `RTLD_NOW | RTLD_GLOBAL` before backend startup; explicit Rust,
 Node, Swift, and Kotlin loaders request the same scope as defense in depth. The
-central promotion is required for FFI hosts such as Bun and Deno that do not
-offer loader-flag control. The promoted reference is retained for process
+central promotion is required for FFI hosts such as Deno that do not offer
+loader-flag control. The promoted reference is retained for process
 lifetime. A second embedded PostgreSQL image and caller-created `dlmopen`
 namespaces are outside the direct-mode contract; process isolation belongs in
 broker or server mode.
@@ -221,8 +215,7 @@ growth. The default queue budget is 4 MiB and can be overridden for diagnostics
 with `OLIPHAUNT_STREAM_QUEUE_MAX_BYTES`.
 
 Protocol execution does not impose a default query timeout. Startup readiness
-uses `OLIPHAUNT_STARTUP_TIMEOUT_MS` with the legacy `OLIPHAUNT_TIMEOUT_MS`
-fallback, but long-running SQL must run until PostgreSQL completes or the owner
+uses `OLIPHAUNT_STARTUP_TIMEOUT_MS`, but long-running SQL must run until PostgreSQL completes or the owner
 explicitly calls `oliphaunt_cancel`. Ordinary close waits for active SQL and then
 detaches/closes the owning SDK handle.
 
@@ -235,10 +228,11 @@ their own transport-native mechanisms.
 
 Bootstrap no longer shells through `system(3)`: the C runtime forks and execs
 `initdb` directly when a PGDATA root has no `PG_VERSION`. The Rust SDK now uses
-the production bootstrap path first: `BootstrapStrategy::PackagedTemplate`
+the production initialization path first: `DatabaseInitialization::PackagedTemplate`
 hydrates new roots from a cached base PGDATA template before entering
 `oliphaunt_init`, so direct mode does not pay `initdb` on every fresh open.
-`initdb` remains the explicit tooling fallback.
+`DatabaseInitialization::FreshInitdb` explicitly runs the matching packaged
+`initdb`; consumers do not provide an executable path.
 
 Native v1 is one active embedded PostgreSQL backend per process. The product
 path keeps this honest with a process-wide guard; robust multi-root app behavior
@@ -277,7 +271,7 @@ use oliphaunt::Oliphaunt;
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .path(".oliphaunt")
+    .directory(".oliphaunt")
     .native_direct()
     .open()
     .await?;
@@ -461,11 +455,9 @@ OLIPHAUNT_TRACK_BUILD=never src/runtimes/liboliphaunt/native/tools/check-track.s
   `NATIVE_EXTENSION_MANIFEST` records SQL/control assets, native module
   requirements, data files, smoke SQL strategy, coverage evidence, mobile
   static-link status, and first-party/external packaging policy for every
-  supported row. `Extension::RELEASE_READY_PG18_SUPPORTED` is the public exact
-  extension catalog; custom static manifests are restricted to release-ready
-  first-party extensions. The external pgrx lane remains internal/deferred and
-  must not be surfaced as shippable SDK extensions until licensing, static
-  mobile linkage, and lifecycle evidence are complete. Required preload hooks
+  supported row. `Extension::ALL_PG18_SUPPORTED` is the public exact extension
+  catalog; custom static manifests are restricted to public first-party
+  extensions. Required preload hooks
   are derived from selected extensions, so extensions that need preload can add
   `shared_preload_libraries` to direct, broker, and server startup from manifest
   data instead of app code. Resource
@@ -491,9 +483,9 @@ OLIPHAUNT_TRACK_BUILD=never src/runtimes/liboliphaunt/native/tools/check-track.s
   native extension matrix iterates the manifest and covers install/load,
   restart, physical backup, and physical restore for every currently packaged
   extension across broker/direct-C-ABI and server paths.
-- Broker mode starts one helper process per active root and uses a shared Rust
-  supervisor to enforce `.broker_max_roots(n)` and duplicate-root admission.
-  Sessions report `multi_root=true` when the configured broker root budget is
+- Broker mode starts one helper process per active instance and uses a shared Rust
+  supervisor to enforce `.broker_max_instances(n)` and duplicate-instance admission.
+  Sessions report `multiple_instances=true` when the configured broker instance budget is
   greater than one. The helper still takes the same filesystem root lock, so
   independent broker runtimes cannot accidentally own the same root. Durable
   reconnect, crash-restart policy, and upgrade orchestration remain broker
@@ -529,7 +521,7 @@ OLIPHAUNT_TRACK_BUILD=never src/runtimes/liboliphaunt/native/tools/check-track.s
   fresh-process diagnostics reproduce `1`, `2.1`, `3`, `4`, `10`, and `13`.
 - A current-source focused backup diagnostic lives at
   `target/perf/native-liboliphaunt-20260524Tbackup-final-direct/report.md`.
-  It is partial evidence only, but it verifies the new `oliphaunt_backup_ex`
+  It is partial evidence only, but it verifies the options-based `oliphaunt_backup`
   path that appends SDK metadata during the C archive write. Direct p90 improved
   to `0.534 s`; native PostgreSQL physical p90 in the same run is `0.324 s`.
   `OLIPHAUNT_TRACE_BACKUP=1` attributes the remaining direct cost mainly to

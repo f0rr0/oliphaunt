@@ -1,0 +1,244 @@
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -189,12 +189,13 @@
+     pub(crate) fn configure_direct_builder(
+         &self,
+         builder: &mut WasiEnvBuilder,
++        stderr: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
+     ) -> Result<(), Error> {
+         self.configure_common_builder(builder)?;
+ 
+         builder.set_stdin(Box::<virtual_fs::null_file::NullFile>::default());
+         builder.set_stdout(Box::<virtual_fs::null_file::NullFile>::default());
+-        builder.set_stderr(Box::<virtual_fs::null_file::NullFile>::default());
++        builder.set_stderr(stderr);
+ 
+         Ok(())
+     }
+--- a/src/postgres_direct.rs
++++ b/src/postgres_direct.rs
+@@ -1,7 +1,15 @@
+-use std::sync::Arc;
++use std::{
++    collections::VecDeque,
++    io::{self, SeekFrom},
++    pin::Pin,
++    sync::{Arc, Mutex},
++    task::{Context as TaskContext, Poll},
++};
+ 
+ use anyhow::{ensure, Context};
+ use js_sys::{Uint8Array, WebAssembly};
++use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
++use virtual_fs::VirtualFile;
+ use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
+ use wasmer::{Instance as WasmerInstance, Store, TypedFunction, Value, WasmTypeList};
+ use wasmer_wasix::{
+@@ -12,6 +20,133 @@
+ 
+ const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
+ const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
++const STDERR_LIMIT_BYTES: usize = 16 * 1024;
++
++#[derive(Clone, Debug, Default)]
++struct BoundedStderr {
++    bytes: Arc<Mutex<VecDeque<u8>>>,
++}
++
++impl BoundedStderr {
++    fn append(&self, input: &[u8]) {
++        let mut bytes = self.bytes.lock().expect("bounded stderr lock poisoned");
++        if input.len() >= STDERR_LIMIT_BYTES {
++            bytes.clear();
++            bytes.extend(&input[input.len() - STDERR_LIMIT_BYTES..]);
++            return;
++        }
++        let overflow = bytes
++            .len()
++            .saturating_add(input.len())
++            .saturating_sub(STDERR_LIMIT_BYTES);
++        bytes.drain(..overflow);
++        bytes.extend(input);
++    }
++
++    fn attach(&self, error: anyhow::Error) -> anyhow::Error {
++        let mut bytes = self.bytes.lock().expect("bounded stderr lock poisoned");
++        if bytes.is_empty() {
++            return error;
++        }
++        let stderr = String::from_utf8_lossy(bytes.make_contiguous());
++        error.context(format!("WASIX stderr (last 16 KiB):\n{stderr}"))
++    }
++}
++
++impl AsyncWrite for BoundedStderr {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        self.append(input);
++        Poll::Ready(Ok(input.len()))
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncRead for BoundedStderr {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        _buffer: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncSeek for BoundedStderr {
++    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> io::Result<()> {
++        Ok(())
++    }
++
++    fn poll_complete(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<u64>> {
++        Poll::Ready(Ok(0))
++    }
++}
++
++impl VirtualFile for BoundedStderr {
++    fn last_accessed(&self) -> u64 {
++        0
++    }
++
++    fn last_modified(&self) -> u64 {
++        0
++    }
++
++    fn created_time(&self) -> u64 {
++        0
++    }
++
++    fn size(&self) -> u64 {
++        self.bytes
++            .lock()
++            .expect("bounded stderr lock poisoned")
++            .len() as u64
++    }
++
++    fn set_len(&mut self, new_size: u64) -> virtual_fs::Result<()> {
++        let target = usize::try_from(new_size)
++            .unwrap_or(usize::MAX)
++            .min(STDERR_LIMIT_BYTES);
++        let mut bytes = self.bytes.lock().expect("bounded stderr lock poisoned");
++        while bytes.len() > target {
++            bytes.pop_front();
++        }
++        bytes.resize(target, 0);
++        Ok(())
++    }
++
++    fn unlink(&mut self) -> virtual_fs::Result<()> {
++        self.bytes
++            .lock()
++            .expect("bounded stderr lock poisoned")
++            .clear();
++        Ok(())
++    }
++
++    fn get_special_fd(&self) -> Option<u32> {
++        Some(2)
++    }
++
++    fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(0))
++    }
++
++    fn poll_write_ready(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++    ) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(8192))
++    }
++}
+ 
+ #[wasm_bindgen(inline_js = r#"
+ export function oliphauntCopyToGuest(memory, pointer, input) {
+@@ -50,7 +185,10 @@
+     module_bytes: Uint8Array,
+     options: RunOptions,
+ ) -> Result<OliphauntDirectInstance, Error> {
+-    OliphauntDirectInstance::instantiate(module, module_bytes, options).await
++    let stderr = BoundedStderr::default();
++    OliphauntDirectInstance::instantiate(module, module_bytes, options, stderr.clone())
++        .await
++        .map_err(|error| Error::from(stderr.attach(error.into_anyhow())))
+ }
+ 
+ #[wasm_bindgen]
+@@ -60,6 +198,7 @@
+     store: Store,
+     _instance: WasmerInstance,
+     _env: WasiFunctionEnv,
++    stderr: BoundedStderr,
+     guest_memory: JsValue,
+     input_reset: TypedFunction<(), i32>,
+     input_reserve: TypedFunction<i32, i32>,
+@@ -101,12 +240,18 @@
+     /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
+     #[wasm_bindgen(js_name = execProtocolRaw)]
+     pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
+-        self.exec_protocol_raw_inner(&input).map_err(Error::from)
++        match self.exec_protocol_raw_inner(&input) {
++            Ok(output) => Ok(output),
++            Err(error) => Err(Error::from(self.stderr.attach(error))),
++        }
+     }
+ 
+     /// Shut down the embedded lifecycle. This does not consume the JS object.
+     pub fn close(&mut self) -> Result<(), Error> {
+-        self.close_inner().map_err(Error::from)
++        match self.close_inner() {
++            Ok(()) => Ok(()),
++            Err(error) => Err(Error::from(self.stderr.attach(error))),
++        }
+     }
+ }
+ 
+@@ -212,6 +357,7 @@
+         module: WebAssembly::Module,
+         module_bytes: Uint8Array,
+         options: RunOptions,
++        stderr: BoundedStderr,
+     ) -> Result<Self, Error> {
+         // Direct execution intentionally has no configurable networking or
+         // worker-backed runtime. RunOptions is reused for args/env/fs mounts.
+@@ -222,7 +368,7 @@
+             .as_string()
+             .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
+         let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
+-        options.configure_direct_builder(&mut builder)?;
++        options.configure_direct_builder(&mut builder, Box::new(stderr.clone()))?;
+ 
+         let module = wasmer::Module::from((module, module_bytes.to_vec()));
+         let mut store = Store::new(runtime.engine());
+@@ -282,6 +428,7 @@
+             store,
+             _instance: instance,
+             _env: env,
++            stderr,
+             guest_memory,
+             input_reset,
+             input_reserve,
+@@ -458,6 +605,7 @@
+     }
+ 
+     fn startup_error(&mut self, error: anyhow::Error) -> Error {
++        let error = self.stderr.attach(error);
+         let _ = self.pq_flush.call(&mut self.store);
+         let protocol = self
+             .take_output_js()

@@ -9,6 +9,7 @@
 - TypeScript: desktop JavaScript SDK for Node.js, Bun, and Deno. A direct
   Tauri JavaScript/webview adapter is planned.
 - WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
+- WASIX TypeScript: public browser, Node, Bun, and Deno binding for the WASIX/WASM runtime.
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
@@ -36,12 +37,17 @@ Mobile crash/reopen/concurrency semantics are tracked separately in
 [`Mobile Stability`](/learn/mobile-stability) because they differ by platform
 sandbox.
 
-The common product concepts are defined by `liboliphaunt`, the shared fixture
-contracts, the public parity matrix, and the release metadata. Rust, Swift,
-Kotlin, TypeScript, React Native, and WASIX Rust are peer products with
-ecosystem contracts. WASIX Rust is the parallel WASIX runtime SDK, with its own
-asset and AOT artifact contract. Any deviation needs an explicit reason, not
-silent drift.
+The common product concepts are defined by the native and WASIX runtime
+products, shared fixture contracts, the public parity matrix, and release
+metadata. Rust, Swift, Kotlin, TypeScript, and React Native are peers over the
+native product boundary. WASIX Rust and the public WASIX TypeScript binding
+are peers over the separate WASIX asset/runtime contract. Any deviation needs
+an explicit reason, not silent drift.
+
+Database storage naming, ownership, defaults, and the allowed platform
+divergences are defined in
+[`database-storage.md`](../architecture/database-storage.md). This is a semantic
+contract and fixture boundary, not a shared native/WASIX implementation.
 
 ## SDK Taxonomy
 
@@ -61,12 +67,16 @@ SDK ownership is product ownership, not just source layout:
 - WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
   liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
   resolve through Cargo artifact crates.
+- WASIX TypeScript owns direct or Worker placement in browsers, Node.js, Bun, and Deno for
+  the portable WASIX runtime. It is separate from desktop `@oliphaunt/ts` and
+  has no native runtime, native Node-direct carrier, or broker dependency.
 
-The SDKs are peers over the same `liboliphaunt` C ABI and runtime-resource model.
-React Native is not a fifth runtime. Its native modules are adapters over the
-Swift and Kotlin SDKs so platform bugs, packaging, extension checks,
-backup/restore behavior, and lifecycle semantics are fixed once in the platform
-SDK that native app developers also use.
+The native SDKs are peers over the `liboliphaunt` C ABI and native
+runtime-resource model. The WASIX bindings are peers over
+`liboliphaunt-wasix` portable assets and its WASIX lifecycle contract; they do
+not cross the native C ABI. React Native is not another runtime. Its native
+modules adapt the Swift and Kotlin SDKs so platform behavior is fixed once in
+the SDK native app developers also use.
 
 The Rust SDK owns the runtime-resource producer contract. Generated manifests
 must declare `schema=oliphaunt-runtime-resources-v1` and the expected
@@ -89,7 +99,8 @@ those overrides are not the consumer install path.
 | --- | --- | --- | --- | --- |
 | Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | the PostgreSQL 18 contrib bundle or independently versioned external extension Cargo carriers, selected by exact SQL name | `OLIPHAUNT_RESOURCES_DIR` |
 | WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | contrib-bundle or external WASIX/AOT carriers selected by exact SQL name | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
-| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*`; JSR is protocol/query-only | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
+| WASIX TypeScript | exact `@oliphaunt/liboliphaunt-wasix` dependency selected internally; its descriptor binds the portable runtime, PGDATA, and core-only manifest as one identity | unavailable | selectively imported host-neutral `@oliphaunt/extension-*-wasix` descriptors with product-owned install contracts; `pgtap` is qualified, with `pg_uuidv7` as a narrow native canary | `advanced.runtime` only for explicit custom runtime replacement |
+| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
 | Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | checksum-covered release carriers composed over the embedded base snapshot; contrib has one 32-row carrier and each external release has one row | `--carrier`, repeatable `--extension-carrier`, `runtimeDirectory`, or `resourceRoot` |
 | Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
@@ -145,12 +156,13 @@ reason for any unavailable mode.
 | Backend response validation | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them |
 | Transaction helper | `transaction()` returns an explicit pinned handle; `with_transaction(...)` commits or rolls back an async closure; unpinned work is rejected | `transaction {}` uses the actor-owned session for raw and streaming work and rejects database work outside the active transaction handle | `transaction {}` uses the serialized session for raw and streaming work and rejects database work outside the active transaction handle | `transaction(async tx => ...)` preserves the platform session boundary for raw and streaming work and rejects database work outside the active transaction handle |
 | Structured PostgreSQL errors | `Error::Postgres(Box<PostgresError>)` with SQLSTATE and raw ErrorResponse fields | `OliphauntError.postgres(OliphauntPostgresError)` with SQLSTATE and raw ErrorResponse fields | `PostgresException(PostgresError)` with SQLSTATE and raw ErrorResponse fields | `PostgresError` with SQLSTATE and raw ErrorResponse fields |
-| Capability reporting | raw, stream, cancel, backup/restore, simple query, extensions, session model, multi-root support | same C ABI capability bits surfaced as Swift properties, including `multiRoot` | same C ABI capability bits surfaced as Kotlin properties, including `multiRoot` | same capability fields delegated from Swift/Kotlin, including `multiRoot` |
+| Capability reporting | raw, stream, cancel, backup/restore, simple query, extensions, and instance/session model | same C ABI capability bits surfaced as Swift properties, including `multipleInstances` | same C ABI capability bits surfaced as Kotlin properties, including `multipleInstances` | same capability fields delegated from Swift/Kotlin, including `multipleInstances` |
 | Backup/restore format discovery | direct/broker: physical archive; server: SQL and physical archive backup; restore: physical archive; capability and handle `supports_backup_format`/`supports_restore_format` helpers | `backupFormats`, `restoreFormats`, and capability/database `supportsBackupFormat`/`supportsRestoreFormat` helpers | `backupFormats`, `restoreFormats`, and capability/database `supportsBackupFormat`/`supportsRestoreFormat` helpers | delegated `backupFormats` and `restoreFormats` capability fields plus TypeScript `supportsBackupFormat`/`supportsRestoreFormat` helpers and matching database methods |
 | Backup format enforcement | `EngineExecutor::backup` rejects unsupported formats before the owner queue | `OliphauntDatabase.backup` rejects unsupported formats before the native session call | `OliphauntDatabase.backup` rejects unsupported formats before the platform session call | `OliphauntDatabase.backup` rejects unsupported formats before the TurboModule backup call |
 | Checkpoint | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the opened engine and rejects while a session pin is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the actor-owned session and rejects while a transaction is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the serialized session and rejects while a transaction is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the delegated platform session and rejects while a transaction is active |
 | Restore format enforcement | `Oliphaunt::restore` rejects non-physical artifacts before target materialization | `OliphauntDatabase.restore` rejects non-physical artifacts before the engine call | `OliphauntDatabase.restore` rejects non-physical artifacts before the platform engine call | `Oliphaunt.restore` rejects non-physical artifacts before the TurboModule restore call |
-| Root validation | persistent roots are rejected when empty or NUL-containing before runtime selection; restore targets are rejected before materialization | roots must be file URLs and are rejected when empty or NUL-containing before engine calls | blank or NUL-containing open and restore roots are rejected before platform engine calls | blank or NUL-containing open and restore roots are rejected before TurboModule calls |
+| Storage | `DatabaseStorage::TemporaryDirectory` by default; explicit application-owned directory for persistence | `.temporaryDirectory` by default; explicit file-URL directory for persistence | `DatabaseStorage.TemporaryDirectory` by default; explicit directory for persistence | temporary directory by default; explicit directory or portable application-data name for persistence |
+| Storage/destination validation | persistent directories and restore destinations are rejected when empty or NUL-containing before runtime selection | storage directories and restore destinations must be file URLs and are validated before engine calls | blank or NUL-containing storage directories and restore destinations are rejected before platform calls | invalid storage descriptors and restore destinations are rejected before TurboModule calls |
 | Mode support discovery | `EngineCapabilities::rust_sdk_support()` | `OliphauntDatabase.supportedModes()` | `OliphauntDatabase.supportedModes()` and `OliphauntAndroid.supportedModes()` | `Oliphaunt.supportedModes()` delegated from Swift/Kotlin |
 | Handle/executor ownership | Cloned Rust `Oliphaunt` handles share one SDK executor, FIFO owner queue, session pin, cancel handle, and close state in direct, broker, and server modes; cloning is not a connection pool | Swift database values are actor-owned session handles guarded by a FIFO async serial gate; additional references share the same actor/session and server-mode independent clients must use server support when implemented | Kotlin database values are coroutine session handles guarded by `executionMutex`; additional references share the same coroutine/session boundary and server-mode independent clients must use server support when implemented | React Native `OliphauntDatabase` objects wrap the delegated Swift/Kotlin session handle and delegate ordering to the platform serial session; JS references do not create independent sessions |
 | Connection identity | `Oliphaunt::builder().username(...).database(...)` feeds direct, broker, and server startup identity; invalid empty/NUL values are rejected before runtime open | `OliphauntConfiguration(username:database:)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `OliphauntConfig(username, database)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `open({ username, database })` forwards the same identity through Swift/Kotlin and rejects invalid empty/NUL values before the TurboModule call |
@@ -177,8 +189,8 @@ table above:
 - The default open profile is `runtimeFootprint: 'throughput'` with
   `durability: 'safe'`, matching the desktop-first default rather than the
   mobile `balancedMobile` + `balanced` default.
-- Node.js direct mode resolves the prebuilt `@oliphaunt/node-direct-*`
-  optional package; Bun and Deno use their native FFI surfaces.
+- Node.js and Bun direct mode resolve the prebuilt
+  `@oliphaunt/node-direct-*` optional package; Deno uses nonblocking native FFI.
 - Native runtime artifacts come from `@oliphaunt/liboliphaunt-*` optional npm
   packages, PostgreSQL client tools come from split `@oliphaunt/tools-*`
   optional npm packages, and Node/Bun extensions come from exact extension npm
@@ -203,12 +215,50 @@ behavior: the split tools preflight must load both `pg_dump` and `psql`
 artifacts before tool APIs run, and AOT manifests must reject missing,
 duplicate, or non-tool entries.
 
+### WASIX TypeScript Deltas
+
+Public `@oliphaunt/wasix-ts` runs PostgreSQL with direct or worker-isolated
+execution in a cross-origin-isolated browser, Node.js, Bun, or Deno. Every
+placement consumes portable WASIX assets only, shares one serialized
+PostgreSQL/pgwire database contract plus lifecycle configuration, and never
+reuses or extends native `@oliphaunt/ts`.
+
+Current allowed gaps are explicit: one serialized session, required
+prepopulated PGDATA, no ICU/tools/backup/restore/server/cancellation/COPY
+streaming surface, and no generic native-extension claim. Ordinary runtime
+assets come from the exact `@oliphaunt/liboliphaunt-wasix` dependency; explicit
+sources remain an advanced custom-runtime override. The package-owned patched
+source-pinned Wasmer JS 0.8/WASIX 0.601 host has executable browser and fresh external Node/Bun/Deno
+consumer proofs for the exact portable 0.702 guest pairing. Simple and extended
+PostgreSQL errors recover repeatedly, SQL-only `pgtap` completes a real test
+lifecycle, and clean close requires a zero worker-process exit or successful
+caller-realm atexit cleanup. The browser-only
+`pg_uuidv7` canary executes on both sides of recovery, but generic 0.702 or
+native-module compatibility is not claimed.
+
+Memory is the zero-configuration default on every host. Selectively imported
+persistent adapters own one exclusive database lease and synchronize changed
+PGDATA paths after each completed protocol exchange, including an error that
+PostgreSQL has recovered through `ReadyForQuery`. Callback transactions defer
+their internal publications and synchronize exactly once after confirmed
+`COMMIT` or `ROLLBACK`. Each IndexedDB identity owns one physical IndexedDB
+database, stores one row per normalized path, and commits metadata, upserts,
+and deletes atomically in a single transaction. Node, Bun, and Deno expose the selected directory as raw
+PGDATA and durably apply the same delta (WAL first and `pg_control` last).
+Browser OPFS exposes raw PGDATA with the same ordering and Web Lock ownership;
+because OPFS has no cross-file transaction, an interrupted publication is
+reported as unknown durability and the session is poisoned. Explicit
+`checkpoint()` remains a PostgreSQL `CHECKPOINT` followed by the same storage
+boundary. Extension migration remains absent until its real contract exists.
+The binding README is the detailed divergence record.
+
 ## Current Platform Stance
 
 | SDK | Primary app target | Runtime owner | Current native mode | Non-parity that is allowed today |
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
 | WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
+| WASIX TypeScript | cross-origin-isolated browsers, Node.js, Bun, and Deno | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on every host | exact error-recovery, selected-extension, and memory paths are proven in both placements; IndexedDB, OPFS, and Node/Bun/Deno raw-directory adapters publish changed paths at successful operation boundaries; no generic native-extension contract or tool/server/backup surface; explicit runtime replacement is advanced-only |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct | Host-native compilations are development/parity evidence and are not published; JVM runtime is explicitly unavailable; Android common defaults require the `OliphauntAndroid` Context facade; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |
@@ -253,7 +303,7 @@ use during iteration.
   backup, and restore traffic.
 - Swift and Kotlin use platform-native async/actor/coroutine shapes rather than
   copying Rust names exactly.
-- Android requires packaged template PGDATA for new roots because mobile apps
+- Android requires packaged template PGDATA for new storage directories because mobile apps
   cannot rely on executing `initdb` from writable app storage.
 
 ## Release Rule

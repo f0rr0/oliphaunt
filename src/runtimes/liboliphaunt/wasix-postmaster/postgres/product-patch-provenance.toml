@@ -1,0 +1,46 @@
+schema_version = 1
+
+[[patch]]
+path = "postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch"
+base_tag = "REL_18_4"
+status = "guest-platform-correctness"
+native_behavior_preserved = true
+wasix_fact = "The multi-instance WASIX process model requires named POSIX shared-memory objects that every backend can reopen at the inherited PostgreSQL address."
+gate = "The ordered patch series, shared-memory probes, concurrent connection smoke, and backend-wave qualification must pass."
+
+[[patch]]
+path = "postgres/patches/0003-wasix-libpq-static-encoding-shim.patch"
+base_tag = "REL_18_4"
+status = "guest-link-correctness"
+native_behavior_preserved = true
+wasix_fact = "The WASIX libpq client tools use the sealed PostgreSQL encoding modules without relying on an unresolved native dynamic-loader path."
+gate = "The ordered patch series and PostgreSQL regression subset must pass."
+
+[[patch]]
+path = "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch"
+base_tag = "REL_18_4"
+status = "guest-process-model"
+native_behavior_preserved = true
+wasix_fact = "Postmaster children and initdb's bootstrap server must re-enter through the sealed executor as fresh module instances while preserving PostgreSQL's EXEC_BACKEND handoff."
+gate = "The ordered patch series, initdb smoke, concurrent connection smoke, and immediate-recovery qualification must pass."
+
+[[patch]]
+path = "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch"
+base_tag = "REL_18_4"
+status = "guest-process-correctness"
+native_behavior_preserved = true
+wasix_fact = "A signal may interrupt WASIX child joining without making the child unreapable; PostgreSQL must retry the wait operation on EINTR."
+gate = "The ordered patch series, process supervision tests, concurrent connection smoke, and backend-wave qualification must pass."
+
+[[patch]]
+path = "postgres/patches/0008-wasix-packed-atomic-latch-state.patch"
+base_tag = "REL_18_4"
+status = "guest-correctness-seam"
+feature_macro = "PG_WASIX_ATOMIC_LATCH_STATE"
+native_behavior_preserved = true
+wasix_fact = "The selected EXEC_BACKEND architecture maps one PostgreSQL shared-memory backing into separately instantiated Wasm modules. PostgreSQL release-O3 ThinLTO can erase fence-only latch ordering before the final module, allowing a granted lock holder to remain parked."
+rejected_alternative = "Do not weaken EXEC_BACKEND isolation, make every guest memory access volatile, depend on a compiler fence surviving whole-program optimization, add polling timeouts, or send unconditional wake signals."
+layout_contract = "One naturally aligned lock-free pg_atomic_uint32 packs SET=1 and SLEEPING=2; a reserved uint32 and compile-time size/is_shared/owner_pid offset checks preserve the upstream WASIX Latch ABI."
+ordering_contract = "SetLatch uses SC fetch-or and signals only the clear-to-set transition that observed SLEEPING. WaitEventSetWait publishes SLEEPING with fetch-or, rechecks through a true SC atomic load, retracts SLEEPING before returning or after wake, and ResetLatch clears only SET."
+signal_contract = "The atomic operations are compile-time required to be lock-free; no errno, owner, wake primitive, or signal-handler call path is changed."
+gate = "Local acceptance requires the static state-machine test, standalone clean REL_18_4 apply check, ordered full-series apply check, final-Wasm atomic opcode/fence verifier, cross-instance latch probe, and fresh-postmaster backend-wave qualification."

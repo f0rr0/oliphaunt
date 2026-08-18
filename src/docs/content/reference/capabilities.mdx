@@ -1,74 +1,81 @@
 ---
 title: Capability Matrix
-description: Compare SDK mode support, runtime boundaries, protocol features, extensions, backup, restore, and client compatibility.
+description: Compare native SDK modes, Rust WASIX, and WASIX TypeScript without assuming API parity.
 ---
 
 # Capability Matrix
 
-Use this page to choose the right SDK and runtime mode. Oliphaunt SDKs are
-peers: Rust is for Tauri and native Rust apps, Swift is for iOS and macOS,
-Kotlin is for Android, React Native uses the Swift and Kotlin SDKs underneath,
-TypeScript is for desktop JavaScript runtimes, and WASM is the WebAssembly
-runtime family.
+Choose a product before choosing a feature. Native SDKs embed or supervise the
+native runtime, Rust WASIX hosts the portable runtime from Rust, and WASIX
+TypeScript hosts it in a browser, Node, Bun, or Deno realm. Sharing PostgreSQL and portable
+WASIX carriers does not make those public APIs interchangeable.
 
-Capability checks return explicit errors when a feature is absent. Use them to
-show only the modes, controls, and workflows the installed SDK advertises for
-the target.
+Native SDKs expose capability reports for features that can vary by engine or
+target. Rust WASIX exposes `engine_capabilities()`. WASIX TypeScript has
+a deliberately fixed, smaller surface and does not expose a capability-reporting
+method.
 
 <CapabilitySnapshot />
 
 ## SDKs
 
-| SDK | Primary use | Runtime owner | Notes |
+| SDK | Package | Primary use | Runtime owner |
 | --- | --- | --- | --- |
-| C ABI | Binding authors | `liboliphaunt` | Low-level raw protocol and lifecycle boundary |
-| Rust | Tauri and native Rust apps | Rust SDK | Full direct, broker, and server model where supported |
-| Swift | iOS and macOS apps | Swift SDK | Async Apple API over the native runtime |
-| Kotlin | Android apps | Kotlin SDK | Coroutine Android API over the native runtime |
-| React Native | Expo and New Architecture apps | Swift/Kotlin | TypeScript API, config plugin, TurboModule/JSI transport |
-| TypeScript | Node.js, Bun, Deno | TypeScript SDK | Desktop JavaScript API over native helpers; direct Tauri JavaScript integration is planned |
-| WASM | WebAssembly/WASIX apps | WASM SDK | Separate runtime family with WASM-owned assets |
+| C ABI | `liboliphaunt` | Binding authors | Native `liboliphaunt` boundary |
+| Rust | `oliphaunt` | Tauri and native Rust apps | Native direct, broker, or server engine |
+| Swift | `Oliphaunt` | iOS and macOS apps | Native engine through Swift concurrency |
+| Kotlin | `dev.oliphaunt:oliphaunt-android` | Android apps | Native engine through coroutines |
+| React Native | `@oliphaunt/react-native` | Expo and New Architecture apps | Swift/Kotlin platform SDKs |
+| TypeScript | `@oliphaunt/ts` | Node.js, Bun, and Deno | Native direct, broker, or server engine |
+| Rust WASIX | `oliphaunt-wasix` | Rust applications hosting WASIX | Rust-owned WASIX direct or local server API |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno apps choosing portable WASIX | Browser or server-runtime caller realm or Worker |
 
 ## Runtime Modes
 
 | Mode | Best for | Session model | SDK availability |
 | --- | --- | --- | --- |
-| Native direct | Lowest-latency embedded database | One serialized physical session | Rust, Swift, Kotlin, React Native through Swift/Kotlin, C ABI |
-| Native broker | Desktop apps that need process isolation or multiple roots | Helper process owns roots and sessions | Rust first; TypeScript via helper integration where supported |
-| Native server | `psql`, `pg_dump`, ORMs, pools, independent clients | PostgreSQL-compatible server process | Rust first; other SDKs only when they advertise support |
-| WASM | WebAssembly/WASIX deployments | WASM runtime session model | WASM SDK |
+| Native direct | Lowest-latency embedded database | One serialized physical session | Rust, Swift, Kotlin, React Native through Swift/Kotlin, TypeScript where its adapter is available, C ABI |
+| Native broker | Desktop process isolation or multiple instances | A helper process owns each instance | Rust and TypeScript where supported |
+| Native server | PostgreSQL clients, pools, ORMs, and tools | PostgreSQL-compatible server process | Rust and TypeScript where supported |
+| Rust WASIX direct | Rust-owned portable embedding | One embedded WASIX backend | `oliphaunt-wasix` |
+| Rust WASIX server | Local client-library compatibility | One embedded WASIX backend behind a local endpoint | `oliphaunt-wasix` |
+| Browser WASIX | Browser-local SQL | One serialized database in the caller realm or a module Worker | `@oliphaunt/wasix-ts` |
+| Node WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
+| Bun WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
+| Deno WASIX | Portable SQL without a native runtime | One serialized database in the caller thread or one package Worker | `@oliphaunt/wasix-ts` |
 
 Mobile direct mode has one resident backend per app process and one physical
-session. It is same-root logically reopenable inside that process. Use server
-mode only where the SDK reports true server support. Mobile direct mode is not
-a broker/server alias; it is not a crash-isolated server and does not provide
-independent concurrent PostgreSQL client sessions.
+session. WASIX TypeScript similarly owns one serialized backend per opened
+database, placed in the browser or a Node/Bun/Deno caller realm or Worker. It is not a
+native direct mode and does not use the native SDK
+contract.
 
 ## Feature Support
 
-| Feature | Rust | Swift | Kotlin | React Native | TypeScript | WASM |
-| --- | --- | --- | --- | --- | --- | --- |
-| Open persistent root | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
-| Temporary root | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
-| Simple SQL helpers | Yes | Yes | Yes | Yes | Yes | Yes |
-| Raw protocol bytes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Chunked protocol streaming | Yes | Yes where reported | Yes where reported | JSI ArrayBuffer stream where reported | Yes where reported | Yes where reported |
-| Transactions | Yes | Yes | Yes | Yes | Yes | Yes |
-| Exact extension selection | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
-| Physical backup/restore | Yes | Yes | Yes | Via Swift/Kotlin | Yes | Yes |
-| PostgreSQL-compatible server | Yes | Where advertised | Where advertised | Where advertised through Swift/Kotlin | Via supported helper path | WASM-specific |
-| Independent concurrent clients | Server mode only | Server mode only where available | Server mode only where available | Server mode only where available | Server mode only where available | Runtime-specific |
+| Feature | Rust | Swift | Kotlin | React Native | TypeScript | Rust WASIX | WASIX TypeScript |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Persistent storage | Yes | Yes | Yes | Via Swift/Kotlin | Host directory | Host directory or app-data directory | Browser: selective IndexedDB snapshots; Node/Bun/Deno: selective directory snapshots |
+| Default storage | Temporary directory | Temporary directory | Temporary directory | Via Swift/Kotlin | Temporary directory | Memory filesystem | Memory filesystem |
+| Simple SQL helpers | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Raw protocol bytes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Protocol streaming | Yes | Where reported | Where reported | Where reported | Where reported | Yes | No |
+| Transaction helper | Yes | Yes | Yes | Yes | Yes | Yes | Yes; callback-scoped |
+| Exact extension selection | SQL names | SQL names | SQL names | SQL names through Swift/Kotlin | SQL names | Typed Cargo extension values | Selectively imported WASIX descriptors |
+| Physical backup/restore | Yes | Yes | Yes | Via Swift/Kotlin | Where reported | Same-version archive APIs | No |
+| Logical dump/restore | Where reported | Where reported | Where reported | Where reported | Where reported | With the `tools` feature | No |
+| PostgreSQL-compatible server | Yes | Where advertised | Where advertised | Where advertised through Swift/Kotlin | Where advertised | Local Rust host API | No |
+| Capability report | Yes | Yes | Yes | Yes | Yes | `engine_capabilities()` | No |
+| Independent concurrent clients | Server mode only | Server mode only where available | Server mode only where available | Server mode only where available | Server mode only where available | No independent backend sessions | No |
 
-## Choosing A Mode
+## Choosing A Product
 
-Choose native direct when app code owns one embedded database and latency is the
-priority.
+Choose a native SDK when the application ships native `liboliphaunt` or its
+native helper processes. Choose Rust WASIX when Rust owns the portable host and
+needs the crate's direct, server, archive, or dump APIs. Choose WASIX TypeScript
+for the browser, Node, Bun, or Deno direct/Worker API, SQLSTATE recovery, and selective
+extension imports; the browser can additionally opt into IndexedDB generations.
+Node, Bun, and Deno can opt into directory generations with the same checkpoint
+and clean-close snapshot contract.
 
-Choose native broker when a desktop app needs stronger isolation, multiple
-database roots, crash recovery, or a long-lived helper process.
-
-Choose native server when compatibility with existing PostgreSQL clients matters
-more than embedding latency.
-
-Choose WASM when the deployment target is WASIX/WebAssembly. Choose a
-native SDK when the app ships a `liboliphaunt` runtime.
+Do not import native `@oliphaunt/ts` as a fallback for `@oliphaunt/wasix-ts`, and do
+not infer a browser API from an API that exists in the Rust WASIX crate.

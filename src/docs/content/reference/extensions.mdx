@@ -1,23 +1,25 @@
 ---
 title: Extensions
-description: Select exact PostgreSQL extension names and verify the artifacts that enter each app package.
+description: Select exact PostgreSQL extensions through each SDK's native API and verify the carriers that enter an app.
 ---
 
 # Extensions
 
-Oliphaunt uses exact, opt-in PostgreSQL extension selection. App developers
-choose the SQL extension names their app needs, and release artifacts contain
-only those selected extensions plus mandatory dependencies declared by the
-extension metadata.
+Oliphaunt uses exact, opt-in PostgreSQL extension selection. Native SDKs accept
+exact SQL names, Rust WASIX exposes exact Cargo features and typed values, and
+WASIX TypeScript accepts selectively imported portable descriptors. Release
+artifacts contain only the selected extensions plus mandatory dependencies
+declared by extension metadata.
 
-There are no extension packs, aliases, grouped selectors, or implicit expansion.
-Selecting `vector` means selecting the PostgreSQL extension named `vector`.
+There are no extension packs, aliases, grouped selectors, or broad runtime
+bundles. Selecting one extension includes that extension and only its declared
+dependency closure.
 
 <ExactExtensionRule />
 
 <ExtensionArtifactFlow />
 
-## How Selection Works
+## Native selection
 
 Select extensions before opening the database:
 
@@ -26,7 +28,6 @@ use oliphaunt::{Extension, Oliphaunt};
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .temporary()
     .native_direct()
     .extension(Extension::Vector)
     .open()
@@ -41,6 +42,37 @@ db.execute("CREATE EXTENSION vector").await?;
 extension for the target platform. The SDK loads only the selected extension
 artifacts and their declared dependencies.
 
+## Rust WASIX selection
+
+Enable the exact extension feature and pass its typed value to the WASIX
+builder:
+
+```toml
+[dependencies]
+oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
+```
+
+```rust
+use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
+
+let database = Oliphaunt::builder().extension(PGTAP).open()?;
+```
+
+## Browser WASIX selection
+
+Import only the portable carrier descriptors the browser, Node, Bun, or Deno application uses:
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const database = await Oliphaunt.open({ extensions: [pgtap] });
+```
+
+The descriptor carries the exact dependency and compatibility metadata needed
+by the Worker. SQL-name strings are intentionally not accepted by this API. Use
+only extensions published for the selected WASIX host.
+
 ## Platform Behavior
 
 | Platform | Expected behavior |
@@ -49,8 +81,9 @@ artifacts and their declared dependencies.
 | iOS/macOS Swift | App bundle includes selected extension artifacts and dependencies only |
 | Android Kotlin | Android package includes selected extension artifacts and dependencies only |
 | React Native | Config plugin delegates selection to Swift/Kotlin packaging |
-| TypeScript desktop | SDK resolves selected runtime artifacts or helper-process resources |
-| WASM | WASM assets include selected extension artifacts built for the WASIX runtime |
+| TypeScript | SDK resolves selected native artifacts or helper-process resources |
+| Rust WASIX | Exact Cargo features carry selected portable artifacts; typed values select them at open |
+| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and portable bytes on browser, Node, Bun, and Deno hosts |
 
 ## Dependencies
 
@@ -62,10 +95,10 @@ includes `vector` and its declared dependencies only.
 ## External Extensions
 
 External extensions are distributed as exact extension artifacts or indexes.
-Consumer apps select them by SQL extension name. If a developer provides a
-verified custom artifact for `acme_ext`, the app selects `acme_ext`.
+Native consumers select SQL names; WASIX consumers use the runtime-specific
+typed value or descriptor published for that extension.
 
-Each promoted exact extension has its own product tag, changelog, and package
+Each public exact extension has its own product tag, changelog, and package
 version. The PostgreSQL contrib bundle and both runtime products are versioned
 independently. Exact compatibility metadata creates directed dependency edges:
 a changed dependency may select its consumer, but never the reverse. External
@@ -73,6 +106,11 @@ extension packages own independent packaging SemVer; their immutable upstream
 version/commit and compatible Oliphaunt runtime versions are separate metadata.
 Do not assume an external package version matches either its upstream project
 version or the runtime version.
+
+The WASIX carrier uses the explicit `-wasix` identifier while the native/default
+package keeps its existing name. Both carriers belong to the same extension
+product version stream; `-wasix` does not create an unrelated second extension
+release line.
 
 ## Verifying App Artifacts
 

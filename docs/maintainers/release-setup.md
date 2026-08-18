@@ -87,13 +87,11 @@ and environment claims before either mutating operation.
 | --- | --- | --- |
 | crates.io | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish` | Normal publication is a root `main` dispatch |
 | npm | owner `f0rr0`, repository `oliphaunt`, workflow filename `release.yml`, environment `release-publish`, allowed action `npm publish` | Normal publication is a root `main` dispatch |
-| JSR | link `@oliphaunt/ts` to GitHub repository `f0rr0/oliphaunt` | Normal publication is a root `main` dispatch |
 
 This identity follows GitHub's [OIDC claim
 reference](https://docs.github.com/en/actions/reference/security/oidc), the
 [crates.io trusted-publishing setup](https://crates.io/docs/trusted-publishing),
-npm's [trusted-publisher fields](https://docs.npmjs.com/trusted-publishers/), and JSR's
-[repository-link publishing model](https://jsr.io/docs/publishing-packages).
+and npm's [trusted-publisher fields](https://docs.npmjs.com/trusted-publishers/).
 Registry settings are external state: the OIDC preflight proves what GitHub
 emits, not what a registry operator entered. Audit the table after bootstrap.
 The crates.io exchange then proves its matching configuration before normal
@@ -342,16 +340,6 @@ publish before their aggregator, and are not independent release products.
 
 Target-specific npm packages are intentional carriers. Routine payload-splitting packages are forbidden; an npm tarball contains the target payload directly and stays within the registry's documented limits.
 
-### JSR
-
-Create the `@oliphaunt` scope and `@oliphaunt/ts` package, then link it to `f0rr0/oliphaunt`. The normal workflow uses JSR's GitHub Actions OIDC path. Its read-only readiness gate queries JSR's management API and fails before qualification downloads or release mutations unless the package exists and exposes that exact repository link. Do not configure `JSR_TOKEN` unless JSR's documented bootstrap process explicitly requires one, and never retain it for normal releases.
-
-JSR requires the actor who dispatches the GitHub workflow to be a member of the
-JSR scope by default. Keep that safer default and make every release operator a
-scope member; if the scope setting is deliberately relaxed, record that
-decision in the external controls audit. This actor-membership policy is not
-visible through the repository's unauthenticated readiness query.
-
 ### Maven Central
 
 Verify in Central Portal that `dev.oliphaunt` is visibly **Verified** for the
@@ -429,7 +417,7 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
    mutation it repeats the exact Release Please markability assertion and pins
    the immutable transport tag. One protected job stages GitHub releases,
    attempts the complete dependency-ordered registry plan, runs public
-   Cargo/npm/Maven/JSR and Git/Swift probes from fresh anonymous caches, and
+   Cargo/npm/Maven and Git/Swift probes from fresh anonymous caches, and
    promotes drafts last. It has no normal checkpoint, continuation, or phase
    handoff. If it stops, use GitHub's rerun on the original Release run;
    matching immutable state is byte-verified and skipped. The final label updates add
@@ -490,8 +478,6 @@ versioning and qualification. First-identity bootstrap alone restores its checkp
   allows `npm publish`, and neither registry is expected to bind a branch;
 - the exact-lock trusted-publisher audit reports every selected Cargo/npm
   identity exact, with zero missing and zero conflicting/extra configurations;
-- JSR `@oliphaunt/ts` links to `f0rr0/oliphaunt`, and each release operator is
-  a JSR scope member while the default actor restriction is enabled;
 - Central Portal visibly marks `dev.oliphaunt` Verified, the deployment API
   credentials authenticate, and the primary signing key preflight validates;
 - registry owners and GitHub maintainers can recover/revoke credentials;

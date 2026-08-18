@@ -3,7 +3,7 @@
 use anyhow::Result;
 use oliphaunt_wasix::OliphauntServer;
 use oliphaunt_wasix::extensions;
-use oliphaunt_wasix::{Oliphaunt, capture_phase_timings};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, capture_phase_timings};
 use serde_json::json;
 use std::time::Instant;
 
@@ -59,7 +59,7 @@ fn preload_runtime_then_open_smoke() -> Result<()> {
     let preload_elapsed = preload_started.elapsed();
 
     let open_started = Instant::now();
-    let mut db = Oliphaunt::builder().temporary().open()?;
+    let mut db = Oliphaunt::builder().open()?;
     let open_elapsed = open_started.elapsed();
 
     let result = db.query("SELECT $1::int + 1 AS answer", &[json!(41)], None)?;
@@ -77,7 +77,7 @@ fn preload_runtime_then_open_smoke() -> Result<()> {
 #[test]
 fn scalar_open_does_not_scan_array_catalog() -> Result<()> {
     let (result, phases) = capture_phase_timings(|| {
-        let mut db = Oliphaunt::builder().temporary().open()?;
+        let mut db = Oliphaunt::builder().open()?;
         let result = db.query("SELECT $1::int + 1 AS answer", &[json!(41)], None)?;
         assert_eq!(first_int(&result, "answer"), 42);
         db.close()
@@ -120,14 +120,14 @@ fn preload_reuses_process_aot_module_cache() -> Result<()> {
 fn shared_runtime_does_not_share_database_state_between_instances() -> Result<()> {
     Oliphaunt::preload()?;
 
-    let mut first = Oliphaunt::builder().temporary().open()?;
+    let mut first = Oliphaunt::builder().open()?;
     first.exec(
         "CREATE TABLE process_cache_isolation(value int); \
          INSERT INTO process_cache_isolation VALUES (42);",
         None,
     )?;
 
-    let mut second = Oliphaunt::builder().temporary().open()?;
+    let mut second = Oliphaunt::builder().open()?;
     let missing = second
         .query("SELECT value FROM process_cache_isolation", &[], None)
         .expect_err("temporary database state must not leak across instances");
@@ -146,7 +146,9 @@ fn shared_runtime_does_not_share_database_state_between_instances() -> Result<()
 fn persistent_direct_close_avoids_startup_xlog_recovery() -> Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let mut db = Oliphaunt::builder().path(root.path()).open()?;
+        let mut db = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         db.exec(
             "CREATE TABLE clean_shutdown(value int); \
              INSERT INTO clean_shutdown VALUES (42);",
@@ -156,7 +158,9 @@ fn persistent_direct_close_avoids_startup_xlog_recovery() -> Result<()> {
     }
 
     let (result, phases) = capture_phase_timings(|| -> Result<()> {
-        let mut db = Oliphaunt::open(root.path())?;
+        let mut db = Oliphaunt::builder()
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
+            .open()?;
         let row = db.query("SELECT value FROM clean_shutdown", &[], None)?;
         assert_eq!(first_int(&row, "value"), 42);
         db.close()
@@ -205,7 +209,7 @@ fn persistent_extension_server_reopen_uses_single_clean_backend() -> Result<()> 
 
     {
         let mut db = Oliphaunt::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::VECTOR)
             .open()?;
         db.query(
@@ -218,10 +222,10 @@ fn persistent_extension_server_reopen_uses_single_clean_backend() -> Result<()> 
 
     let (result, phases) = capture_phase_timings(|| -> Result<()> {
         let server = OliphauntServer::builder()
-            .path(root.path())
+            .storage(DatabaseStorage::Directory(root.path().to_path_buf()))
             .extension(extensions::VECTOR)
             .start()?;
-        let url = server.database_url();
+        let url = server.connection_uri();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -269,10 +273,7 @@ fn cached_extension_template_opens_without_startup_xlog_recovery() -> Result<()>
     }
 
     {
-        let mut db = Oliphaunt::builder()
-            .temporary()
-            .extension(extensions::VECTOR)
-            .open()?;
+        let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
         db.query(
             "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance",
             &[],
@@ -282,10 +283,7 @@ fn cached_extension_template_opens_without_startup_xlog_recovery() -> Result<()>
     }
 
     let (result, phases) = capture_phase_timings(|| -> Result<()> {
-        let mut db = Oliphaunt::builder()
-            .temporary()
-            .extension(extensions::VECTOR)
-            .open()?;
+        let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
         db.query(
             "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance",
             &[],

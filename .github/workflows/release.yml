@@ -35,7 +35,6 @@ env:
   NODE_VERSION: 22.22.3
   NPM_VERSION: 11.18.0
   PNPM_VERSION: 11.5.0
-  DENO_VERSION: v2.8.1
   BUN_VERSION: 1.3.14
   PUBLICATION_LOCK_PATH: target/release/publication-lock.json
   BOOTSTRAP_LEDGER_PATH: target/release/bootstrap-ledger
@@ -647,6 +646,22 @@ jobs:
             --job Builds \
             --artifact liboliphaunt-wasix-release-assets
 
+      - name: Download WASIX postmaster release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
+          RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
+        run: |
+          node .github/scripts/download-build-artifacts.mjs \
+            CI \
+            "$RELEASE_ARTIFACT_SHA" \
+            target/oliphaunt-wasix-postmaster/release-assets \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact liboliphaunt-wasix-postmaster-release-assets
+
       - name: Download exact-extension package artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
         env:
@@ -705,12 +720,6 @@ jobs:
             --run-id "$CI_RUN_ID" \
             --job Builds \
             --artifact liboliphaunt-native-release-assets
-
-      - name: Set up Deno for TypeScript JSR consumer checks
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
-        uses: ./.github/actions/setup-deno
-        with:
-          deno-version: ${{ env.DENO_VERSION }}
 
       - name: Set up Bun for TypeScript npm consumer checks
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
@@ -913,6 +922,7 @@ jobs:
             target/liboliphaunt/release-assets \
             target/liboliphaunt/cargo-artifacts \
             target/oliphaunt-wasix/release-assets \
+            target/oliphaunt-wasix-postmaster/release-assets \
             target/oliphaunt-broker/release-assets \
             target/oliphaunt-broker/cargo-artifacts \
             target/oliphaunt-wasix/cargo-artifacts \
@@ -1227,6 +1237,22 @@ jobs:
             target/oliphaunt-wasix/release-assets/*.sha256
             target/extension-artifacts/liboliphaunt-wasix/oliphaunt-extension-contrib-pg18/release-assets/*
 
+      - name: Reserve WASIX postmaster attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX postmaster attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX postmaster attestation API attempt"
+
+      - name: Attest WASIX postmaster release assets
+        id: attest_wasix_postmaster
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix-postmaster/release-assets/*.tar.zst
+            target/oliphaunt-wasix-postmaster/release-assets/*.sha256
+
       - name: Freeze exact GitHub release asset and attestation evidence
         id: freeze_github_evidence
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -1241,6 +1267,7 @@ jobs:
           BROKER_ATTESTATION_BUNDLE: ${{ steps.attest_broker.outputs.bundle-path }}
           NODE_DIRECT_ATTESTATION_BUNDLE: ${{ steps.attest_node_direct.outputs.bundle-path }}
           WASIX_ATTESTATION_BUNDLE: ${{ steps.attest_wasix.outputs.bundle-path }}
+          WASIX_POSTMASTER_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_postmaster.outputs.bundle-path }}
         run: |
           bundle_args=()
           for bundle in \
@@ -1249,7 +1276,8 @@ jobs:
             "$LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE" \
             "$BROKER_ATTESTATION_BUNDLE" \
             "$NODE_DIRECT_ATTESTATION_BUNDLE" \
-            "$WASIX_ATTESTATION_BUNDLE"
+            "$WASIX_ATTESTATION_BUNDLE" \
+            "$WASIX_POSTMASTER_ATTESTATION_BUNDLE"
           do
             if [[ -n "$bundle" ]]; then
               bundle_args+=(--attestation-bundle "$bundle")

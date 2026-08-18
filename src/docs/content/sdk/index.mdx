@@ -1,82 +1,70 @@
 ---
 title: SDKs
-description: Choose the Oliphaunt SDK for Rust, Apple, Android, React Native, TypeScript, WASM, or C ABI binding.
+description: Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI by runtime owner and application target.
 ---
 
 # SDKs
 
-Choose the SDK by the app target and delivery path. Oliphaunt is a family of
-peer SDKs over the same embedded PostgreSQL runtime model: open an app-owned
-root, select the runtime mode, choose exact SQL extensions, run SQL, read
-capabilities, and use the SDK's lifecycle and backup APIs.
-
-Each SDK page starts with the package to install, the platform build step that
-matters, a first query, and the runtime behavior that affects real apps. Use
-the reference pages when you need exact capability or extension tables.
+Choose the SDK that owns the database runtime in the deployed application.
+Oliphaunt products share PostgreSQL concepts and versioned carriers, but each SDK
+keeps ecosystem-native naming and exposes only the behavior its host supports.
 
 <SdkChooser />
 
 ## How To Choose
 
-Use the SDK that owns the app binary or helper process that carries the
-database runtime:
+- Choose Rust, Swift, Kotlin, React Native, or TypeScript when the app
+  embeds or supervises the native runtime family.
+- Choose Rust WASIX (`oliphaunt-wasix`) when Rust owns the portable WASIX host
+  and needs Rust direct, local server, extension, or data-movement APIs.
+- Choose WASIX TypeScript (`@oliphaunt/wasix-ts`) when portable PostgreSQL runs
+  directly or in a Worker in a browser, Node.js, Bun, or Deno.
+  Memory is the default; extensions are selective imports, IndexedDB snapshots
+  are a browser opt-in, and directory snapshots are a Node opt-in.
+- Choose the C ABI only when building another native language binding or
+  integrating `liboliphaunt` directly.
 
-- choose Swift for iOS and macOS apps;
-- choose Kotlin for Android apps;
-- choose React Native when JavaScript owns the app surface and Swift/Kotlin
-  carry the native runtime underneath;
-- choose Rust for Tauri and native Rust desktop apps, and TypeScript for
-  Node.js, Bun, Deno, and local JavaScript helper processes;
-- choose WASM when the runtime host is WASIX;
-- choose C ABI only when building another language binding or integrating the
-  native runtime directly.
+Native TypeScript and WASIX TypeScript are separate packages. Neither selects
+or falls back to the other. Rust WASIX and WASIX TypeScript can
+share portable runtime and extension carriers without sharing a public API.
 
-React Native crosses two native platforms. Its public API is TypeScript, while
-packaging, lifecycle, and binary transport are handled through Swift on Apple
-platforms and Kotlin on Android.
+## Shared Concepts, Separate APIs
 
-## Shared Contract
+The products use a cohesive vocabulary where the host actually supports it:
 
-All SDKs expose the same durable concepts where the platform supports them:
+- storage describes database lifetime and persistence;
+- initialization describes how empty storage receives PostgreSQL data;
+- exact extension selection keeps unused payloads out of app artifacts;
+- structured PostgreSQL errors preserve SQLSTATE where available; and
+- explicit lifecycle methods define when runtime or persistent state is
+  released.
 
-- explicit runtime mode selection;
-- app-owned persistent or temporary roots;
-- exact SQL extension selection;
-- `capabilities()` before relying on advanced features;
-- SQL helpers plus raw protocol access for adapters;
-- lifecycle, backup, restore, and structured PostgreSQL errors.
-
-Each SDK reports platform-specific mode support through capabilities. Mobile
-SDKs expose direct mode first; broker and server support appear when a platform
-SDK advertises those runtimes. Direct mode uses one physical session with
-serialized work.
+Those concepts are not a parity promise. Native SDKs expose their engine modes
+and capability reports. Rust WASIX adds Rust host, server, physical archive, and
+optional dump tooling. WASIX TypeScript intentionally exposes only
+`open`, `query`, `execute`, raw protocol, callback transactions, `checkpoint`,
+and `close`.
 
 <ModeMatrix />
 
 ## What Each SDK Page Answers
 
-Use the landing page for the package you are adding to an app. It answers the
-questions that block the first useful integration:
-
 | Question | Why it matters |
 | --- | --- |
-| Which package do I install? | App users install your app; the SDK carries released runtime artifacts. |
-| What build step changes my app binary? | Native runtime assets and selected extensions are packaged at build time. |
-| Which runtime mode can I use? | Direct, broker, server, and WASM have different concurrency and process boundaries. |
-| How do I ship only selected extensions? | App artifacts include exact SQL extension names and declared dependencies only. |
-| What happens on close, backgrounding, relaunch, and backup? | Embedded database behavior has to match platform lifecycle expectations. |
-
-React Native covers the JavaScript boundary, config plugin, TurboModule, JSI
-transport, and installed-app wiring. Swift and Kotlin cover platform lifecycle
-and runtime resources. Rust and TypeScript cover their own desktop runtime
-ownership. WASM remains a separate runtime family.
+| Which package do I install? | Package identity determines native versus WASIX runtime ownership. |
+| Which host runs PostgreSQL? | Native process, Rust WASIX host, and browser or Node/Bun/Deno caller realm/Worker have different lifecycle behavior. |
+| What is the storage default? | Sensible defaults avoid configuration while explicit storage opts into persistence. |
+| How do I select extensions? | Native SDKs select exact SQL names; WASIX TypeScript imports exact portable descriptors. |
+| Which APIs are actually present? | Server, capability, streaming, transaction-helper, and data-movement support differs by product. |
 
 ## Where To Go Next
 
 - Use [Start](/docs/start) for the shortest first-query path.
 - Use [Capability Matrix](/docs/reference/capabilities) before relying on a
   mode or feature in a packaged app.
-- Use [Extensions](/docs/reference/extensions) to understand exact extension
-  selection and app artifact behavior.
-- Use [Native Runtime](/docs/learn/native-runtime) for direct, broker, and
-  server semantics.
+- Use [WASIX TypeScript](/docs/sdk/wasix/browser-typescript) for direct or
+  worker-isolated browser, Node, Bun, and Deno execution, error recovery,
+  host-specific snapshots, and selective extensions.
+- Use [Rust WASIX](/docs/sdk/wasix) for the Rust portable host.
+- Use [Native Runtime](/docs/learn/native-runtime) for native direct, broker,
+  and server semantics.

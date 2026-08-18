@@ -100,7 +100,6 @@ export function stageArtifacts(artifactRoot, workRoot) {
     "extension-resource-inventory.mjs",
     "render-extension-products.mjs",
     "swift-carrier-resolver.mjs",
-    "swiftpm-extension-input.schema.json",
   ]) {
     copyFileSync(
       path.join(ROOT, "src/sdks/swift/tools", name),
@@ -108,7 +107,7 @@ export function stageArtifacts(artifactRoot, workRoot) {
     );
   }
   copyFileSync(
-    path.join(ROOT, "src/extensions/generated/sdk/swift.json"),
+    path.join(ROOT, "src/extensions/generated/sdk/extensions.json"),
     path.join(generatorRoot, "extension-owner-catalog.json"),
   );
 }

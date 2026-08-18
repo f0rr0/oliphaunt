@@ -21,13 +21,10 @@ use self::ffi::{
     ABI_VERSION, BACKUP_FORMAT_OLIPHAUNT_ARCHIVE, BACKUP_FORMAT_PHYSICAL_ARCHIVE,
     BACKUP_FORMAT_SQL, CAP_BACKUP_RESTORE, CAP_EXTENSIONS, CAP_LOGICAL_REOPEN, CAP_MULTI_INSTANCE,
     CAP_PROTOCOL_RAW, CAP_PROTOCOL_STREAM, CAP_QUERY_CANCEL, CAP_SERVER_MODE, CAP_SIMPLE_QUERY,
-    NativeArchiveFile, NativeBackupOptions, NativeConfig, NativeHandle, NativeInitOptions,
-    NativeResponse, NativeSymbols, path_to_cstring,
+    NativeArchiveFile, NativeBackupOptions, NativeConfig, NativeHandle, NativeResponse,
+    NativeSymbols, path_to_cstring,
 };
-use crate::backup::{
-    PHYSICAL_ARCHIVE_MANIFEST_PATH, annotate_physical_archive_backup,
-    physical_archive_metadata_files,
-};
+use crate::backup::{PHYSICAL_ARCHIVE_MANIFEST_PATH, physical_archive_metadata_files};
 use crate::config::{EngineMode, OpenConfig};
 use crate::engine::{
     EngineCancel, EngineCapabilities, EngineSession, NativeRuntime, SessionConcurrency,
@@ -35,8 +32,7 @@ use crate::engine::{
 use crate::error::{Error, Result};
 use crate::extension::{Extension, required_shared_preload_libraries};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::storage::DatabaseRoot;
-use crate::storage::{BackupArtifact, BackupFormat, BackupRequest};
+use crate::storage::{BackupArtifact, BackupFormat, BackupRequest, DatabaseStorage};
 
 static DIRECT_INSTANCE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static DIRECT_RESIDENT_ROOT: OnceLock<Mutex<Option<DirectResidentRoot>>> = OnceLock::new();
@@ -44,8 +40,7 @@ static DIRECT_RESIDENT_ROOT: OnceLock<Mutex<Option<DirectResidentRoot>>> = OnceL
 /// Source used to locate the native `liboliphaunt` dynamic library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OliphauntRuntimeSource {
-    /// Resolve from `LIBOLIPHAUNT_PATH`, falling back to legacy
-    /// native-spike environment variables during migration.
+    /// Resolve from `LIBOLIPHAUNT_PATH`.
     Env,
     /// Load from an explicit path.
     Path(PathBuf),
@@ -95,9 +90,9 @@ impl DirectResidentKey {
         extensions: &[Extension],
         startup_args: Vec<String>,
     ) -> Result<Self> {
-        let requested_root_key = match &config.storage.root {
-            DatabaseRoot::Path(root) => Some(native_root_key(root)?),
-            DatabaseRoot::Temporary => None,
+        let requested_root_key = match &config.storage {
+            DatabaseStorage::Directory(root) => Some(native_root_key(root)?),
+            DatabaseStorage::TemporaryDirectory => None,
         };
         Ok(Self {
             actual_root_key: requested_root_key.clone().unwrap_or_default(),
@@ -114,11 +109,16 @@ impl DirectResidentKey {
         Ok(self)
     }
 
-    fn matches_request(&self, requested: &Self) -> bool {
-        requested
-            .requested_root_key
-            .as_ref()
-            .is_some_and(|requested_root| requested_root == &self.actual_root_key)
+    fn matches_storage(&self, requested: &Self) -> bool {
+        match (&self.requested_root_key, &requested.requested_root_key) {
+            (None, None) => true,
+            (_, Some(requested_root)) => requested_root == &self.actual_root_key,
+            (Some(_), None) => false,
+        }
+    }
+
+    fn matches_configuration(&self, requested: &Self) -> bool {
+        self.matches_storage(requested)
             && self.username == requested.username
             && self.database == requested.database
             && self.startup_args == requested.startup_args
@@ -129,6 +129,7 @@ impl DirectResidentKey {
 struct DirectResidentRoot {
     root: PreparedNativeRoot,
     key: DirectResidentKey,
+    configuration_bound: bool,
 }
 
 impl NativeRuntime for OliphauntRuntime {
@@ -145,7 +146,7 @@ impl NativeRuntime for OliphauntRuntime {
         let startup_args = startup_arg_strings(&config, &extensions);
         let requested_key = DirectResidentKey::requested(&config, &extensions, startup_args)?;
         let symbols = Arc::new(NativeSymbols::load(&self.source)?);
-        let (root, root_was_resident) =
+        let (root, configuration_bound) =
             take_or_prepare_direct_root(&config, &extensions, &requested_key)?;
         let resident_key = requested_key.bind_actual_root(&root)?;
         match OliphauntSession::open(
@@ -158,9 +159,17 @@ impl NativeRuntime for OliphauntRuntime {
         ) {
             Ok(session) => Ok(Box::new(session)),
             Err(failure) => {
-                let (root, error) = *failure;
-                if root_was_resident {
-                    store_direct_resident_root(root, resident_key)?;
+                let DirectOpenFailure {
+                    root,
+                    error,
+                    native_open_attempted,
+                } = *failure;
+                if configuration_bound || native_open_attempted {
+                    // Once oliphaunt_init has run, the process-resident backend may
+                    // still own PGDATA even when it rejects the logical open.
+                    // Keep both persistent and SDK-temporary storage available
+                    // for a coherent retry instead of deleting or replacing it.
+                    store_direct_resident_root(root, resident_key, configuration_bound)?;
                 }
                 Err(error)
             }
@@ -178,8 +187,13 @@ fn take_or_prepare_direct_root(
         .lock()
         .map_err(|_| Error::Engine("native direct resident root lock was poisoned".to_owned()))?;
     if let Some(existing) = resident.take() {
-        if existing.key.matches_request(requested_key) {
-            return Ok((existing.root, true));
+        let matches = if existing.configuration_bound {
+            existing.key.matches_configuration(requested_key)
+        } else {
+            existing.key.matches_storage(requested_key)
+        };
+        if matches {
+            return Ok((existing.root, existing.configuration_bound));
         }
         let bound_root = existing.key.actual_root_key.display().to_string();
         *resident = Some(existing);
@@ -192,12 +206,20 @@ fn take_or_prepare_direct_root(
     PreparedNativeRoot::prepare(config, extensions).map(|root| (root, false))
 }
 
-fn store_direct_resident_root(root: PreparedNativeRoot, key: DirectResidentKey) -> Result<()> {
+fn store_direct_resident_root(
+    root: PreparedNativeRoot,
+    key: DirectResidentKey,
+    configuration_bound: bool,
+) -> Result<()> {
     let slot = DIRECT_RESIDENT_ROOT.get_or_init(|| Mutex::new(None));
     let mut resident = slot
         .lock()
         .map_err(|_| Error::Engine("native direct resident root lock was poisoned".to_owned()))?;
-    *resident = Some(DirectResidentRoot { root, key });
+    *resident = Some(DirectResidentRoot {
+        root,
+        key,
+        configuration_bound,
+    });
     Ok(())
 }
 
@@ -226,6 +248,30 @@ struct OliphauntSession {
     resident_key: DirectResidentKey,
     _lease: Option<DirectInstanceLease>,
     selected_extensions: Vec<Extension>,
+}
+
+struct DirectOpenFailure {
+    root: PreparedNativeRoot,
+    error: Error,
+    native_open_attempted: bool,
+}
+
+impl DirectOpenFailure {
+    fn before_native(root: PreparedNativeRoot, error: Error) -> Box<Self> {
+        Box::new(Self {
+            root,
+            error,
+            native_open_attempted: false,
+        })
+    }
+
+    fn after_native(root: PreparedNativeRoot, error: Error) -> Box<Self> {
+        Box::new(Self {
+            root,
+            error,
+            native_open_attempted: true,
+        })
+    }
 }
 
 struct SharedNativeHandle {
@@ -287,46 +333,46 @@ impl OliphauntSession {
         extensions: &[Extension],
         resident_key: DirectResidentKey,
         lease: DirectInstanceLease,
-    ) -> std::result::Result<Self, Box<(PreparedNativeRoot, Error)>> {
+    ) -> std::result::Result<Self, Box<DirectOpenFailure>> {
         if let Err(error) = root.refresh_manifest() {
-            return Err(Box::new((root, error)));
+            return Err(DirectOpenFailure::before_native(root, error));
         }
         let pgdata = match path_to_cstring(&root.pgdata, "PGDATA") {
             Ok(value) => value,
-            Err(error) => return Err(Box::new((root, error))),
+            Err(error) => return Err(DirectOpenFailure::before_native(root, error)),
         };
         let runtime_dir = match path_to_cstring(&root.runtime_dir, "runtime dir") {
             Ok(value) => value,
-            Err(error) => return Err(Box::new((root, error))),
+            Err(error) => return Err(DirectOpenFailure::before_native(root, error)),
         };
         let module_dir = match path_to_cstring(
             &root.runtime_dir.join("lib/postgresql"),
             "embedded module dir",
         ) {
             Ok(value) => value,
-            Err(error) => return Err(Box::new((root, error))),
+            Err(error) => return Err(DirectOpenFailure::before_native(root, error)),
         };
         let username = match CString::new(config.username.as_str()) {
             Ok(value) => value,
             Err(_) => {
-                return Err(Box::new((
+                return Err(DirectOpenFailure::before_native(
                     root,
                     Error::InvalidConfig("username contains an interior NUL".to_owned()),
-                )));
+                ));
             }
         };
         let database = match CString::new(config.database.as_str()) {
             Ok(value) => value,
             Err(_) => {
-                return Err(Box::new((
+                return Err(DirectOpenFailure::before_native(
                     root,
                     Error::InvalidConfig("database contains an interior NUL".to_owned()),
-                )));
+                ));
             }
         };
         let startup_args = match startup_args(&config, extensions) {
             Ok(value) => value,
-            Err(error) => return Err(Box::new((root, error))),
+            Err(error) => return Err(DirectOpenFailure::before_native(root, error)),
         };
         let startup_arg_ptrs = startup_args
             .iter()
@@ -336,28 +382,23 @@ impl OliphauntSession {
             abi_version: ABI_VERSION,
             pgdata: pgdata.as_ptr(),
             runtime_dir: runtime_dir.as_ptr(),
+            module_dir: module_dir.as_ptr(),
             username: username.as_ptr(),
             database: database.as_ptr(),
             reserved_flags: ffi::CONFIG_EXTERNAL_ROOT_LOCK,
             startup_args: startup_arg_ptrs.as_ptr(),
             startup_arg_count: startup_arg_ptrs.len(),
         };
-        let init_options = NativeInitOptions {
-            abi_version: ffi::INIT_OPTIONS_ABI_VERSION,
-            module_dir: module_dir.as_ptr(),
-            reserved_flags: 0,
-        };
-
         let mut handle = ptr::null_mut();
-        let rc = unsafe { (symbols.init_ex)(&native_config, &init_options, &mut handle) };
+        let rc = unsafe { (symbols.init)(&native_config, &mut handle) };
         if rc != 0 || handle.is_null() {
             let message = symbols
                 .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_init_ex failed with status {rc}"));
-            return Err(Box::new((
+                .unwrap_or_else(|| format!("oliphaunt_init failed with status {rc}"));
+            return Err(DirectOpenFailure::after_native(
                 root,
-                Error::Engine(format!("native liboliphaunt init_ex failed: {message}")),
-            )));
+                Error::Engine(format!("native liboliphaunt init failed: {message}")),
+            ));
         }
 
         let handle = Arc::new(SharedNativeHandle::new(handle));
@@ -398,7 +439,7 @@ impl OliphauntSession {
         }
         *guard = ptr::null_mut();
         if let Some(root) = self.root.take() {
-            store_direct_resident_root(root, self.resident_key.clone())?;
+            store_direct_resident_root(root, self.resident_key.clone(), true)?;
         }
         self._lease = None;
         Ok(())
@@ -433,10 +474,9 @@ impl EngineSession for OliphauntSession {
             mode: EngineMode::NativeDirect,
             session_concurrency: SessionConcurrency::SerializedSingleSession,
             process_isolated: false,
-            multi_root: flags & CAP_MULTI_INSTANCE != 0,
-            reopenable: flags & CAP_LOGICAL_REOPEN != 0,
-            same_root_logical_reopen: flags & CAP_LOGICAL_REOPEN != 0,
-            root_switchable: false,
+            multiple_instances: flags & CAP_MULTI_INSTANCE != 0,
+            same_instance_logical_reopen: flags & CAP_LOGICAL_REOPEN != 0,
+            instance_switchable: false,
             crash_restartable: false,
             max_client_sessions: 1,
             protocol_raw: flags & CAP_PROTOCOL_RAW != 0,
@@ -621,75 +661,39 @@ impl EngineSession for OliphauntSession {
                 let pgdata = root.pgdata.clone();
                 let selected_extensions = self.selected_extensions.clone();
 
-                if let Some(backup_ex) = self.symbols.backup_ex {
-                    let metadata_files = physical_archive_metadata_files(
-                        &pgdata,
-                        &selected_extensions,
-                        |request| self.exec_protocol_raw(request),
-                    )?;
-                    let root_manifest_path = CString::new(NATIVE_ROOT_MANIFEST_FILE)
-                        .expect("native root manifest path is a static C string");
-                    let backup_manifest_path = CString::new(PHYSICAL_ARCHIVE_MANIFEST_PATH)
-                        .expect("physical archive manifest path is a static C string");
-                    let root_manifest_bytes = metadata_files.root_manifest.as_bytes();
-                    let backup_manifest_bytes = metadata_files.backup_manifest.as_bytes();
-                    let generated_files = [
-                        NativeArchiveFile {
-                            path: root_manifest_path.as_ptr(),
-                            data: root_manifest_bytes.as_ptr(),
-                            len: root_manifest_bytes.len(),
-                            mode: 0o600,
-                            reserved_flags: 0,
-                        },
-                        NativeArchiveFile {
-                            path: backup_manifest_path.as_ptr(),
-                            data: backup_manifest_bytes.as_ptr(),
-                            len: backup_manifest_bytes.len(),
-                            mode: 0o600,
-                            reserved_flags: 0,
-                        },
-                    ];
-                    let options = NativeBackupOptions {
-                        abi_version: ABI_VERSION,
-                        format: BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-                        generated_files: generated_files.as_ptr(),
-                        generated_file_count: generated_files.len(),
-                        reserved_flags: 0,
-                    };
-                    let guard = self.handle.handle.read().map_err(|_| {
-                        Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
+                let metadata_files =
+                    physical_archive_metadata_files(&pgdata, &selected_extensions, |request| {
+                        self.exec_protocol_raw(request)
                     })?;
-                    let handle = *guard;
-                    if handle.is_null() {
-                        return Err(Error::EngineStopped);
-                    }
-                    let mut response = NativeResponse {
-                        data: ptr::null_mut(),
-                        len: 0,
-                    };
-                    let rc = unsafe { backup_ex(handle, &options, &mut response) };
-                    if rc != 0 {
-                        self.free_failed_response(&mut response);
-                        let message = self.symbols.last_error_text(handle).unwrap_or_else(|| {
-                            format!("oliphaunt_backup_ex failed with status {rc}")
-                        });
-                        return Err(Error::Engine(format!(
-                            "native liboliphaunt physical backup failed: {message}"
-                        )));
-                    }
-                    let bytes = self.bytes_from_native_response(response);
-                    return Ok(BackupArtifact {
-                        format: BackupFormat::PhysicalArchive,
-                        bytes,
-                    });
-                }
-
-                let backup = self.symbols.backup.ok_or_else(|| {
-                    Error::Engine(
-                        "native liboliphaunt is missing required oliphaunt_backup symbol"
-                            .to_owned(),
-                    )
-                })?;
+                let root_manifest_path = CString::new(NATIVE_ROOT_MANIFEST_FILE)
+                    .expect("native root manifest path is a static C string");
+                let backup_manifest_path = CString::new(PHYSICAL_ARCHIVE_MANIFEST_PATH)
+                    .expect("physical archive manifest path is a static C string");
+                let root_manifest_bytes = metadata_files.root_manifest.as_bytes();
+                let backup_manifest_bytes = metadata_files.backup_manifest.as_bytes();
+                let generated_files = [
+                    NativeArchiveFile {
+                        path: root_manifest_path.as_ptr(),
+                        data: root_manifest_bytes.as_ptr(),
+                        len: root_manifest_bytes.len(),
+                        mode: 0o600,
+                        reserved_flags: 0,
+                    },
+                    NativeArchiveFile {
+                        path: backup_manifest_path.as_ptr(),
+                        data: backup_manifest_bytes.as_ptr(),
+                        len: backup_manifest_bytes.len(),
+                        mode: 0o600,
+                        reserved_flags: 0,
+                    },
+                ];
+                let options = NativeBackupOptions {
+                    abi_version: ABI_VERSION,
+                    format: BACKUP_FORMAT_PHYSICAL_ARCHIVE,
+                    generated_files: generated_files.as_ptr(),
+                    generated_file_count: generated_files.len(),
+                    reserved_flags: 0,
+                };
                 let guard = self.handle.handle.read().map_err(|_| {
                     Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
                 })?;
@@ -701,8 +705,9 @@ impl EngineSession for OliphauntSession {
                     data: ptr::null_mut(),
                     len: 0,
                 };
-                let rc = unsafe { backup(handle, BACKUP_FORMAT_PHYSICAL_ARCHIVE, &mut response) };
+                let rc = unsafe { (self.symbols.backup)(handle, &options, &mut response) };
                 if rc != 0 {
+                    self.free_failed_response(&mut response);
                     let message = self
                         .symbols
                         .last_error_text(handle)
@@ -712,17 +717,10 @@ impl EngineSession for OliphauntSession {
                     )));
                 }
                 let bytes = self.bytes_from_native_response(response);
-                drop(guard);
-                let artifact = BackupArtifact {
+                Ok(BackupArtifact {
                     format: BackupFormat::PhysicalArchive,
                     bytes,
-                };
-                annotate_physical_archive_backup(
-                    artifact,
-                    &pgdata,
-                    &selected_extensions,
-                    |request| self.exec_protocol_raw(request),
-                )
+                })
             }
             BackupFormat::Sql => Err(Error::Engine(format!(
                 "logical SQL backup requires NativeServer mode with pg_dump; direct mode C ABI format {} is intentionally unavailable",
@@ -779,9 +777,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn direct_temporary_storage_matches_the_process_resident_instance() {
+        let key = DirectResidentKey {
+            requested_root_key: None,
+            actual_root_key: PathBuf::from("/tmp/oliphaunt-resident"),
+            username: "postgres".to_owned(),
+            database: "postgres".to_owned(),
+            startup_args: Vec::new(),
+            selected_extensions: Vec::new(),
+        };
+        let requested = DirectResidentKey {
+            actual_root_key: PathBuf::new(),
+            ..key.clone()
+        };
+
+        assert!(key.matches_storage(&requested));
+        assert!(key.matches_configuration(&requested));
+    }
+
+    #[test]
+    fn failed_direct_open_storage_can_retry_with_corrected_configuration() {
+        let key = DirectResidentKey {
+            requested_root_key: None,
+            actual_root_key: PathBuf::from("/tmp/oliphaunt-failed-open"),
+            username: "missing-role".to_owned(),
+            database: "postgres".to_owned(),
+            startup_args: Vec::new(),
+            selected_extensions: Vec::new(),
+        };
+        let corrected = DirectResidentKey {
+            requested_root_key: None,
+            actual_root_key: PathBuf::new(),
+            username: "postgres".to_owned(),
+            database: "postgres".to_owned(),
+            startup_args: Vec::new(),
+            selected_extensions: Vec::new(),
+        };
+
+        assert!(key.matches_storage(&corrected));
+        assert!(!key.matches_configuration(&corrected));
+    }
+
+    #[test]
     fn direct_startup_args_include_required_preload_libraries_before_init() {
         let mut config = OpenConfig::native_direct("target/test-roots/native-direct-preload");
-        config.extensions = vec![Extension::PgSearch, Extension::PgSearch];
+        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
         let extensions = config.resolved_extensions().unwrap();
         let args = startup_args(&config, &extensions).unwrap();
         let args = args
@@ -789,10 +829,10 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_search");
+        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_search")
+                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
                 .count(),
             1,
             "preload libraries must be deduplicated before oliphaunt_init"
@@ -802,7 +842,7 @@ mod tests {
     #[test]
     fn direct_startup_args_omit_preload_when_selected_extensions_do_not_require_it() {
         let config = OpenConfig::native_direct("target/test-roots/native-direct-no-preload");
-        let args = startup_args(&config, &[Extension::Graph]).unwrap();
+        let args = startup_args(&config, &[Extension::Vector]).unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())

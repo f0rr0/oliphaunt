@@ -1,0 +1,109 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index b21b6eb..4a26370 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -126,7 +126,7 @@ wasmer-types = { version = "4.2.5", default-features = false }
+
+ [profile.release]
+ lto = true
+-opt-level = 'z'
++opt-level = 3
+
+ [package.metadata.wasm-pack.profile.release.wasm-bindgen]
+ debug-js-glue = false
+@@ -135,9 +135,11 @@ demangle-name-section = false
+ dwarf-debug-info = false
+
+ [package.metadata.wasm-pack.profile.release]
+-wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-Oz"]
++wasm-opt = ["--enable-threads", "--enable-bulk-memory", "-O3"]
+
+ [patch.crates-io]
++wasmer = { path = "../wasmer-6.1.0" }
++wasmer-wasix = { path = "../wasmer-wasix-0.601.0" }
+ #webc = {git = "https://github.com/wasmerio/pirita", branch = "in-memory-manifest"}
+ #virtual-net = { git = "https://github.com/wasmerio/wasmer", branch = "master" }
+ #virtual-fs = { git = "https://github.com/wasmerio/wasmer", branch = "master" }
+diff --git a/src/run.rs b/src/run.rs
+index 6e25018..99ee44e 100644
+--- a/src/run.rs
++++ b/src/run.rs
+@@ -1,11 +1,10 @@
+ use futures::channel::oneshot;
+-use wasmer_types::ModuleHash;
+ use std::sync::Arc;
+ use wasm_bindgen::{prelude::wasm_bindgen, JsCast};
++use wasm_bindgen_futures::JsFuture;
+ use wasmer_wasix::Runtime as _;
+-use wasmer_wasix::WasiEnvBuilder;
+-use wasmer_wasix::runtime::module_cache::HashedModuleData;
+-use wasmer_wasix::runners::wasi::{WasiRunner, RuntimeOrEngine};
++use wasmer_wasix::runtime::task_manager::VirtualTaskManagerExt;
++use wasmer_wasix::{WasiEnvBuilder, WasiError, WasiRuntimeError};
+
+ use crate::{instance::ExitCondition, utils::Error, Instance, RunOptions};
+
+@@ -43,9 +42,9 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
+     let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
+
+     let (exit_code_tx, exit_code_rx) = oneshot::channel();
+-    let mut runner = WasiRunner::new();
+
+     let module: wasmer::Module = wasm_module.to_module(&*runtime).await?;
++    let module_bytes = module.serialize().unwrap();
+
+     // Note: The WasiEnvBuilder::run() method blocks, so we need to run it on
+     // the thread pool.
+@@ -54,8 +53,26 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
+         module,
+         Box::new(move |module| {
+             let _span = tracing::debug_span!("run").entered();
+-            let hash = ModuleHash::random();
+-            let result = runner.run_wasm(RuntimeOrEngine::Runtime(runtime), &program_name, module, hash );
++            let module: js_sys::WebAssembly::Module = module.into();
++            let module: wasmer::Module = (module, module_bytes).into();
++            let result = (|| -> Result<(), anyhow::Error> {
++                let env = builder.build()?;
++                let runtime = env.runtime.clone();
++                let tasks = runtime.task_manager().clone();
++                let mut task_handle =
++                    wasmer_wasix::bin_factory::spawn_exec_module(module, env, &runtime)?;
++                let result = tasks.spawn_and_block_on(async move {
++                    task_handle.wait_finished().await
++                })?;
++
++                match result {
++                    Ok(exit_code) if exit_code.raw() == 0 => Ok(()),
++                    Ok(exit_code) => {
++                        Err(WasiRuntimeError::Wasi(WasiError::Exit(exit_code)).into())
++                    }
++                    Err(err) => Err(anyhow::anyhow!(err.to_string())),
++                }
++            })();
+             let _ = exit_code_tx.send(ExitCondition::from_result(result));
+         }),
+     )?;
+@@ -77,15 +94,19 @@ extern "C" {
+ impl WasmModule {
+     async fn to_module(
+         &self,
+-        runtime: &dyn wasmer_wasix::Runtime,
++        _runtime: &dyn wasmer_wasix::Runtime,
+     ) -> Result<wasmer::Module, Error> {
+         if let Some(module) = self.dyn_ref::<js_sys::WebAssembly::Module>() {
+             Ok(module.clone().into())
+         } else if let Some(buffer) = self.dyn_ref::<js_sys::Uint8Array>() {
+             let buffer = buffer.to_vec();
+-            let hashed_module = HashedModuleData::new(&buffer);
+-            let module: wasmer::Module = runtime.load_hashed_module(hashed_module, None).await?;
+-            Ok(module)
++            let bytes = js_sys::Uint8Array::from(buffer.as_slice());
++            let module = JsFuture::from(js_sys::WebAssembly::compile(&bytes))
++                .await
++                .map_err(Error::js)?
++                .dyn_into::<js_sys::WebAssembly::Module>()
++                .map_err(Error::js)?;
++            Ok((module, buffer).into())
+         } else {
+             unreachable!();
+         }

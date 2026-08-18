@@ -1,0 +1,348 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-wasix-ts"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
+dependsOn:
+  - "liboliphaunt-wasix"
+  - "shared-js-core"
+
+project:
+  title: "Oliphaunt WASIX TypeScript binding"
+  description: "Portable TypeScript WASIX binding for browser, Node, Bun, and Deno direct/Worker placement."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-wasix-ts"
+    packagePath: "src/bindings/wasix-ts"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+  paths:
+    "**/*.ts": ["@oliphaunt/sdk-js"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "pnpm --dir src/bindings/wasix-ts typecheck"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/shared/js-core/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    command: "pnpm --dir src/bindings/wasix-ts test"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/shared/js-core/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/tools/test/run-js-tests.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package:
+    tags: ["package"]
+    command: "pnpm --dir src/bindings/wasix-ts package:check"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke-node:
+    tags: ["quality", "smoke", "node"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  smoke-bun:
+    tags: ["quality", "smoke", "bun"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  smoke-deno:
+    tags: ["quality", "smoke", "deno"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/sources/toolchains/deno.toml"
+      - "/tools/dev/deno.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-smoke-node:
+    tags: ["quality", "smoke", "package", "node"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-smoke-bun:
+    tags: ["quality", "smoke", "package", "bun"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-smoke-deno:
+    tags: ["quality", "smoke", "package", "deno"]
+    command: "node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno --package-only"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+    inputs:
+      - "/.prototools"
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/sources/toolchains/deno.toml"
+      - "/tools/dev/deno.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench:
+    tags: ["bench", "plan"]
+    script: |
+      node --test tools/perf/wasix-browser/plan.test.mjs
+      node --test tools/perf/wasix-node/plan.test.mjs
+      node --check tools/perf/wasix-browser/plan.mjs
+      node --check tools/perf/wasix-node/engine-runner.mjs
+      node --check tools/perf/wasix-node/benchmark.mjs
+      node --check tools/perf/wasix-node/pglite-node-worker.mjs
+      node tools/perf/wasix-node/benchmark.mjs --validate
+    deps:
+      - "benchmarks:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/benchmarks/wasix/node-pglite-memory-v1.json"
+      - "/benchmarks/wasix/browser-pglite-memory-v1.json"
+      - "/src/bindings/wasix-ts/host/**/*"
+      - "/src/bindings/wasix-ts/package.json"
+      - "/src/bindings/wasix-ts/tools/packed-node-fixture.mjs"
+      - "/tools/perf/wasix-node/*.mjs"
+      - "/tools/perf/wasix-node/package.json"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench-run:
+    tags: ["bench", "measured", "local-only"]
+    script: |
+      pnpm --dir src/bindings/wasix-ts package:build
+      node tools/perf/wasix-node/benchmark.mjs --run
+    deps:
+      - "oliphaunt-wasix-ts:bench"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/benchmarks/wasix/node-pglite-memory-v1.json"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/perf/wasix-node/*.mjs"
+      - "/tools/perf/wasix-node/package.json"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  bench-browser:
+    tags: ["bench", "measured", "browser", "local-only"]
+    script: |
+      pnpm --dir src/bindings/wasix-ts package:build
+      node src/bindings/wasix-ts/tools/smoke-browser.mjs --benchmark
+    deps:
+      - "oliphaunt-wasix-ts:bench"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/benchmarks/wasix/browser-pglite-memory-v1.json"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts"
+    deps:
+      - "oliphaunt-wasix-ts:package-smoke-bun"
+      - "oliphaunt-wasix-ts:package-smoke-deno"
+      - "oliphaunt-wasix-ts:package-smoke-node"
+    inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/sdk-artifacts/wasix-ts.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["quality", "smoke", "local-only"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  smoke-pg-uuidv7:
+    tags: ["quality", "smoke", "extension", "local-only"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser:pg-uuidv7"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  smoke-postgis-worker:
+    tags: ["quality", "smoke", "extension", "browser", "worker"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser:postgis-worker"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/extensions/external/postgis/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

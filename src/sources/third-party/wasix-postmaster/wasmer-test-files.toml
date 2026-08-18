@@ -1,0 +1,4 @@
+name = "wasmer-postmaster-test-files"
+url = "https://github.com/wasmerio/wasmer-test-files.git"
+branch = "main"
+commit = "7f27e84c69af3b772f751d6c4a733d9f448b2c70"

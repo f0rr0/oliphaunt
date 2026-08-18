@@ -1,10 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 #[cfg(feature = "tools")]
@@ -22,10 +19,12 @@ use crate::oliphaunt::assets;
 use crate::oliphaunt::backend::{BackendOpenKind, BackendSession};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_bundled_extension_bytes;
-use crate::oliphaunt::base::{InstallOutcome, OliphauntPaths, RootLock};
+use crate::oliphaunt::base::{DirectoryLock, InstallOutcome};
 use crate::oliphaunt::builder::OliphauntBuilder;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
-use crate::oliphaunt::data_dir::{DataDirArchiveFormat, dump_pgdata_archive};
+use crate::oliphaunt::data_dir::{
+    PhysicalArchiveEncoding, dump_pgdata_archive, dump_virtual_pgdata_archive,
+};
 use crate::oliphaunt::engine::EngineCapabilities;
 use crate::oliphaunt::errors::OliphauntError;
 #[cfg(feature = "extensions")]
@@ -45,13 +44,16 @@ use crate::oliphaunt::parse::{
 use crate::oliphaunt::pg_dump::{PgDumpOptions, PgDumpVirtualSocket, dump_direct_sql};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::postgres_mod::PostgresMod;
+#[cfg(feature = "extensions")]
+use crate::oliphaunt::storage::StorageRoot;
+use crate::oliphaunt::storage::{DatabaseInitialization, PgDataStorage};
 use crate::oliphaunt::timing;
 use crate::oliphaunt::types::{
     ArrayTypeInfo, DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, register_array_type,
 };
 #[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
-use crate::protocol::messages::{BackendMessage, DatabaseError};
+use crate::protocol::messages::{BackendMessage, PostgresError};
 use crate::protocol::parser::Parser as ProtocolParser;
 use crate::protocol::serializer::{BindConfig, BindValue, PortalTarget, Serialize};
 
@@ -104,8 +106,8 @@ enum ExecTransportResult {
 /// Primary entry point for interacting with the embedded Postgres runtime.
 pub struct Oliphaunt {
     backend: BackendSession,
-    _temp_dir: Option<TempDir>,
-    _root_lock: Option<RootLock>,
+    _workspace: Option<TempDir>,
+    _directory_lock: Option<DirectoryLock>,
     parser: ProtocolParser,
     serializers: SerializerMap,
     parsers: ParserMap,
@@ -122,41 +124,26 @@ pub struct Oliphaunt {
 }
 
 impl Oliphaunt {
-    /// Create a builder for opening persistent or temporary Oliphaunt databases.
+    /// Create a builder for an in-memory Oliphaunt database.
     pub fn builder() -> OliphauntBuilder {
         OliphauntBuilder::new()
     }
 
-    /// Open a persistent Oliphaunt database rooted at `root`, installing and initializing it if needed.
-    pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        Self::builder().path(root.as_ref().to_path_buf()).open()
-    }
-
-    /// Open a persistent Oliphaunt database under the platform data directory for `app_id`.
-    pub fn open_app(app_id: (&str, &str, &str)) -> Result<Self> {
-        Self::builder().app_id(app_id).open()
-    }
-
-    /// Create an ephemeral Oliphaunt database whose files are removed when the instance is dropped.
-    pub fn temporary() -> Result<Self> {
-        Self::builder().temporary().open()
+    /// Open an in-memory database initialized from the packaged template.
+    pub fn open() -> Result<Self> {
+        Self::builder().open()
     }
 
     /// Warm the runtime module and bundled AOT artifact cache without opening a database.
     pub fn preload() -> Result<()> {
-        let (temp_dir, paths) = {
-            let _phase = timing::phase("preload.tempdir");
-            OliphauntPaths::with_temp_dir()?
-        };
         {
             let _phase = timing::phase("preload.runtime_module");
-            crate::oliphaunt::base::preload_runtime_module(&paths)?;
+            crate::oliphaunt::base::preload_runtime_module()?;
         }
         {
             let _phase = timing::phase("preload.aot_runtime");
             aot::preload_runtime_artifact()?;
         }
-        drop(temp_dir);
         Ok(())
     }
 
@@ -165,6 +152,7 @@ impl Oliphaunt {
     pub fn preload_extensions(extensions: impl IntoIterator<Item = Extension>) -> Result<()> {
         Self::preload()?;
         let extensions = extensions.into_iter().collect::<Vec<_>>();
+        let runtime_storage = StorageRoot::memory();
         for extension in resolve_extension_set(&extensions)? {
             let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
                 anyhow!(
@@ -172,45 +160,23 @@ impl Oliphaunt {
                     extension.sql_name()
                 )
             })?;
-            let (temp_dir, paths) = {
-                let _phase = timing::phase("preload.extension_tempdir");
-                OliphauntPaths::with_temp_dir()?
-            };
-            {
-                let _phase = timing::phase("preload.extension_runtime_module");
-                crate::oliphaunt::base::preload_runtime_module(&paths)?;
-            }
             {
                 let _phase = timing::phase("preload.extension_archive_install");
-                install_bundled_extension_bytes(&paths, extension.sql_name(), bytes)?;
+                install_bundled_extension_bytes(&runtime_storage, extension.sql_name(), bytes)?;
             }
             {
                 let _phase = timing::phase("preload.extension_side_module");
-                PostgresMod::preload_extension_module_from_paths(&paths, extension)?;
+                PostgresMod::preload_extension_module_from_storage(&runtime_storage, extension)?;
             }
             {
                 let _phase = timing::phase("preload.extension_aot");
                 aot::preload_extension_artifact(extension)?;
             }
-            drop(temp_dir);
         }
         Ok(())
     }
 
-    /// Create a new Oliphaunt instance backed by the provided runtime paths.
-    #[doc(hidden)]
-    pub fn new(paths: OliphauntPaths) -> Result<Self> {
-        let outcome = crate::oliphaunt::base::prepare_database_root(
-            paths,
-            crate::oliphaunt::base::RootPrepareOptions::template(),
-        )?;
-        Self::new_prepared(outcome)
-    }
-
-    pub(crate) fn new_prepared(outcome: InstallOutcome) -> Result<Self> {
-        Self::new_prepared_with_config(outcome, PostgresConfig::default(), StartupConfig::default())
-    }
-
+    #[cfg(not(feature = "extensions"))]
     pub(crate) fn new_prepared_with_config(
         outcome: InstallOutcome,
         postgres_config: PostgresConfig,
@@ -272,8 +238,8 @@ impl Oliphaunt {
             let _phase = timing::phase("oliphaunt.client_struct_init");
             Self {
                 backend,
-                _temp_dir: None,
-                _root_lock: None,
+                _workspace: None,
+                _directory_lock: None,
                 parser: ProtocolParser::new(),
                 serializers: DEFAULT_SERIALIZERS.clone(),
                 parsers: DEFAULT_PARSERS.clone(),
@@ -319,7 +285,11 @@ impl Oliphaunt {
                 extension.sql_name()
             )
         })?;
-        install_bundled_extension_bytes(self.paths(), extension.sql_name(), bytes)?;
+        install_bundled_extension_bytes(
+            self.backend.runtime_storage(),
+            extension.sql_name(),
+            bytes,
+        )?;
         self.backend.preload_extension_module(extension)?;
         for sql in extension_setup_sql(extension) {
             self.exec(&sql, None)?;
@@ -421,7 +391,7 @@ impl Oliphaunt {
         })();
 
         if let Err(err) = result {
-            match err.downcast::<DatabaseError>() {
+            match err.downcast::<PostgresError>() {
                 Ok(db_err) => {
                     let enriched =
                         OliphauntError::new(db_err, sql, params_snapshot, options_snapshot);
@@ -449,40 +419,30 @@ impl Oliphaunt {
         self.backend.capabilities()
     }
 
-    /// Return the host-side runtime and data-directory paths backing this instance.
-    #[doc(hidden)]
-    pub fn paths(&self) -> &OliphauntPaths {
-        self.backend.paths()
+    #[cfg(all(feature = "extensions", test))]
+    pub(crate) fn runtime_storage(&self) -> &StorageRoot {
+        self.backend.runtime_storage()
     }
 
-    /// Return debug-build bridge allocation/free counters for ownership tests.
-    #[doc(hidden)]
-    #[cfg(debug_assertions)]
-    pub fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
-        self.backend.guest_bridge_allocation_counts()
-    }
-
-    /// Dump the physical PGDATA directory to a gzipped tar archive.
+    /// Back up the physical database state to a gzipped tar archive.
     ///
     /// The archive is intended to be loaded back into oliphaunt-wasix/Oliphaunt with
     /// the same PostgreSQL/Oliphaunt version. Use [`dump_sql`](Self::dump_sql) for
     /// logical backups across versions.
-    pub fn dump_data_dir(&mut self) -> Result<Vec<u8>> {
-        self.dump_data_dir_with_format(DataDirArchiveFormat::TarGz)
-    }
-
-    /// Dump the physical PGDATA directory with the selected archive format.
-    pub fn dump_data_dir_with_format(&mut self, format: DataDirArchiveFormat) -> Result<Vec<u8>> {
+    pub fn backup(&mut self) -> Result<Vec<u8>> {
         self.check_ready()?;
-        self.archive_quiesced_pgdata("dump PGDATA archive", format)
+        self.archive_quiesced_pgdata("physical backup", PhysicalArchiveEncoding::TarGz)
     }
 
-    /// Clone this database into a new temporary [`Oliphaunt`] instance.
+    /// Clone this database into a new in-memory [`Oliphaunt`] instance.
     pub fn try_clone(&mut self) -> Result<Self> {
         #[cfg(feature = "extensions")]
         let extensions = self.bundled_extensions_in_database()?;
-        let archive = self.dump_data_dir_with_format(DataDirArchiveFormat::Tar)?;
-        let builder = Self::builder().temporary().load_data_dir_archive(archive);
+        self.check_ready()?;
+        let archive =
+            self.archive_quiesced_pgdata("physical clone", PhysicalArchiveEncoding::Tar)?;
+        let builder =
+            Self::builder().initialization(DatabaseInitialization::PhysicalArchive(archive));
         #[cfg(feature = "extensions")]
         let builder = builder.extensions(extensions);
         builder.open()
@@ -515,18 +475,21 @@ impl Oliphaunt {
     fn archive_quiesced_pgdata(
         &mut self,
         operation: &'static str,
-        format: DataDirArchiveFormat,
+        format: PhysicalArchiveEncoding,
     ) -> Result<Vec<u8>> {
         self.checkpoint_backend_for_physical_snapshot(operation)?;
         self.backend
             .shutdown()
             .with_context(|| format!("quiesce backend before {operation}"))?;
 
-        let archive = dump_pgdata_archive(
-            &self.backend.paths().pgdata,
-            self.backend.pgdata_template_root(),
-            format,
-        )
+        let archive = match self.backend.pgdata_storage() {
+            PgDataStorage::HostDirectory(pgdata) => {
+                dump_pgdata_archive(pgdata, self.backend.pgdata_template_root(), format)
+            }
+            PgDataStorage::Memory(filesystem) => {
+                dump_virtual_pgdata_archive(filesystem.as_ref(), format)
+            }
+        }
         .with_context(|| format!("materialize physical PGDATA archive for {operation}"));
         let restart = self
             .backend
@@ -674,12 +637,12 @@ impl Oliphaunt {
         Ok(extensions)
     }
 
-    pub(crate) fn attach_temp_dir(&mut self, temp_dir: TempDir) {
-        self._temp_dir = Some(temp_dir);
+    pub(crate) fn attach_workspace(&mut self, workspace: TempDir) {
+        self._workspace = Some(workspace);
     }
 
-    pub(crate) fn attach_root_lock(&mut self, root_lock: RootLock) {
-        self._root_lock = Some(root_lock);
+    pub(crate) fn attach_directory_lock(&mut self, directory_lock: DirectoryLock) {
+        self._directory_lock = Some(directory_lock);
     }
 
     /// Return `true` if the instance has already been closed.
@@ -712,14 +675,10 @@ impl Oliphaunt {
             self.ready = false;
             self.notify_listeners.clear();
             self.global_notify_listeners.clear();
-            self._root_lock = None;
+            self._directory_lock = None;
+            self._workspace = None;
         }
         result
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn close_for_template_cache(&mut self) -> Result<()> {
-        self.close_backend()
     }
 
     /// Execute a simple SQL statement that may contain multiple commands.
@@ -755,7 +714,7 @@ impl Oliphaunt {
         };
         let transport_result = match transport_result {
             Ok(data) => data,
-            Err(err) => match err.downcast::<DatabaseError>() {
+            Err(err) => match err.downcast::<PostgresError>() {
                 Ok(db_err) => {
                     let enriched = OliphauntError::new(db_err, sql, Vec::new(), options_snapshot);
                     return Err(enriched.into());
@@ -775,7 +734,7 @@ impl Oliphaunt {
         let ExecProtocolResult { messages, .. } =
             match self.parse_protocol_data(data, exec_opts.throw_on_error, exec_opts.on_notice) {
                 Ok(result) => result,
-                Err(err) => match err.downcast::<DatabaseError>() {
+                Err(err) => match err.downcast::<PostgresError>() {
                     Ok(db_err) => {
                         let enriched =
                             OliphauntError::new(db_err, sql, Vec::new(), options_snapshot);
@@ -911,7 +870,7 @@ impl Oliphaunt {
         })();
 
         if let Err(err) = result {
-            match err.downcast::<DatabaseError>() {
+            match err.downcast::<PostgresError>() {
                 Ok(db_err) => {
                     let enriched = OliphauntError::new(db_err, sql, Vec::new(), options_snapshot);
                     return Err(enriched.into());
@@ -1234,7 +1193,7 @@ impl Oliphaunt {
             })
         };
         if let Err(err) = parse_result {
-            match err.downcast::<DatabaseError>() {
+            match err.downcast::<PostgresError>() {
                 Ok(db_err) => {
                     self.parser = ProtocolParser::new();
                     return Err(anyhow!(db_err));
@@ -1439,25 +1398,19 @@ impl Oliphaunt {
     }
 
     fn handle_blob_input(&mut self, blob: Option<&Vec<u8>>) -> Result<()> {
-        let path = self.dev_blob_path();
         if let Some(bytes) = blob {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create blob directory {}", parent.display())
-                })?;
-            }
-            fs::write(&path, bytes)
-                .with_context(|| format!("write blob input to {}", path.display()))?;
+            self.backend
+                .runtime_storage()
+                .write(Path::new("/dev/blob"), bytes)
+                .context("write blob input to /dev/blob")?;
             self.blob_input_provided = true;
         } else {
             self.blob_input_provided = false;
-            let _ = fs::remove_file(&path);
+            self.backend
+                .runtime_storage()
+                .remove_file_if_exists(Path::new("/dev/blob"))?;
         }
         Ok(())
-    }
-
-    fn dev_blob_path(&self) -> PathBuf {
-        self.backend.paths().runtime_root().join("dev/blob")
     }
 
     fn cleanup_blob(&mut self) -> Result<()> {
@@ -1465,31 +1418,33 @@ impl Oliphaunt {
     }
 
     fn get_written_blob(&mut self) -> Result<Option<Vec<u8>>> {
-        let path = self.dev_blob_path();
-
         if self.blob_input_provided {
             self.blob_input_provided = false;
-            let _ = fs::remove_file(&path);
+            self.backend
+                .runtime_storage()
+                .remove_file_if_exists(Path::new("/dev/blob"))?;
             return Ok(None);
         }
 
-        match fs::read(&path) {
-            Ok(data) => {
+        match self
+            .backend
+            .runtime_storage()
+            .read_optional(Path::new("/dev/blob"))?
+        {
+            Some(data) => {
                 self.blob_input_provided = false;
-                let _ = fs::remove_file(&path);
+                self.backend
+                    .runtime_storage()
+                    .remove_file_if_exists(Path::new("/dev/blob"))?;
                 if data.is_empty() {
                     Ok(None)
                 } else {
                     Ok(Some(data))
                 }
             }
-            Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
-                    self.blob_input_provided = false;
-                    Ok(None)
-                } else {
-                    Err(err).with_context(|| format!("read blob output from {}", path.display()))
-                }
+            None => {
+                self.blob_input_provided = false;
+                Ok(None)
             }
         }
     }
@@ -1714,10 +1669,6 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn is_closed(&self) -> bool {
-        self.closed
-    }
-
-    pub fn closed(&self) -> bool {
         self.closed
     }
 }

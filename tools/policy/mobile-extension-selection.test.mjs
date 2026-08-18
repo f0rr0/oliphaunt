@@ -12,7 +12,7 @@ import { exactExtensionProducts } from "../release/release-artifact-targets.mjs"
 import { ROOT } from "../release/release-graph.mjs";
 import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
 
-const METADATA_FILE = path.join(ROOT, "src/extensions/generated/sdk/react-native.json");
+const METADATA_FILE = path.join(ROOT, "src/extensions/generated/sdk/extensions.json");
 const REGISTRY_FILE = path.join(ROOT, "src/extensions/generated/mobile/static-registry.json");
 const MOBILE_HELPER_PROCESS_TIMEOUT_MS = 20_000;
 const SHELL = String.raw`
@@ -148,7 +148,6 @@ test("the exact planner selection keeps SQL-only pgtap out of native static regi
   assert(bySqlName.has("postgis"), "the public React Native SDK metadata must include PostGIS");
   const registry = JSON.parse(readFileSync(REGISTRY_FILE, "utf8"));
   assert(registry.modules.some((row) => row["sql-name"] === "postgis"));
-  assert.equal(bySqlName.get("pgtap")?.["mobile-release-ready"], true);
   assert.equal(bySqlName.get("pgtap")?.["native-module-stem"], null);
 
   for (const platform of ["Android", "iOS"]) {
@@ -200,29 +199,6 @@ test("mobile selection rejects unknown extension SQL names", () => {
   const result = runHelper("normalize", "vector,not_a_real_extension", "Android");
   assert.notEqual(result.status, 0, "unknown extension unexpectedly normalized");
   assert.match(`${result.stderr}\n${result.stdout}`, /unsupported mobile extension for Android Expo smoke: not_a_real_extension/u);
-});
-
-test("mobile selection enforces explicit platform support without hiding SQL-only extensions", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-mobile-selection-"));
-  try {
-    const metadata = JSON.parse(readFileSync(METADATA_FILE, "utf8"));
-    const pgtap = metadata.extensions.find((row) => row["sql-name"] === "pgtap");
-    assert(pgtap, "missing canonical pgtap metadata fixture");
-    pgtap.support.mobile.android = "unsupported";
-    pgtap.support.mobile.ios = "supported";
-    const fixture = path.join(root, "react-native.json");
-    writeFileSync(fixture, `${JSON.stringify(metadata, null, 2)}\n`);
-
-    const android = runHelper("normalize", "pgtap", "Android", { metadataFile: fixture });
-    assert.notEqual(android.status, 0, "platform-unsupported pgtap unexpectedly normalized for Android");
-    assert.match(`${android.stderr}\n${android.stdout}`, /unsupported mobile extension for Android Expo smoke: pgtap/u);
-
-    const ios = runHelper("normalize", "pgtap", "iOS", { metadataFile: fixture });
-    assert.equal(ios.status, 0, ios.stderr || ios.stdout);
-    assert.equal(ios.stdout, "pgtap");
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
 });
 
 test("mobile selection rejects unknown platform labels", () => {

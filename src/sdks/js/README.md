@@ -3,10 +3,10 @@
 `@oliphaunt/ts` is the Oliphaunt SDK for JavaScript runtimes outside React
 Native: Node.js, Bun, and Deno. It keeps PostgreSQL protocol bytes as
 `Uint8Array` and defaults to `nativeDirect` everywhere for npm installs.
-Node.js direct mode uses Oliphaunt's prebuilt Node-API adapter package, while
-Bun and Deno use their runtime-owned FFI surfaces. Broker mode is available when
+Node.js and Bun direct mode use Oliphaunt's prebuilt Node-API adapter package,
+while Deno uses its nonblocking runtime FFI surface. Broker mode is available when
 an app wants
-process isolation, crash restart, or multi-root supervision, but it is explicit
+process isolation, crash restart, or multiple-instance supervision, but it is explicit
 rather than a hidden runtime-specific default. Server mode
 starts a local PostgreSQL server when
 `serverExecutable`, `serverToolDirectory`, or `OLIPHAUNT_POSTGRES` is
@@ -20,22 +20,21 @@ The broker/server architecture and implementation gates are documented in
 pnpm add @oliphaunt/ts
 ```
 
-For Deno or pnpm projects that only need protocol/query helpers:
+For Deno:
 
 ```sh
-deno add jsr:@oliphaunt/ts
-pnpm add jsr:@oliphaunt/ts
+deno add npm:@oliphaunt/ts
 ```
 
 Node.js, Bun, and Deno use `nativeDirect` by default. The Node/Bun registry
 artifact is `@oliphaunt/ts`; Deno native applications import
-`npm:@oliphaunt/ts`. Deno can consume packages from the npm registry, and that
-is the native-runtime install path. JSR publishes protocol/query helpers only.
+`npm:@oliphaunt/ts`. Deno consumes the same package from the npm registry, which
+is the native-runtime install path.
 
 On supported desktop targets, package managers install the matching
 `@oliphaunt/liboliphaunt-*`, `@oliphaunt/tools-*`, `@oliphaunt/broker-*`, and
 `@oliphaunt/node-direct-*` packages. Each `@oliphaunt/liboliphaunt-*` package
-contains the matching native library plus the root PostgreSQL runtime
+contains the matching native library plus the base PostgreSQL runtime
 (`postgres`, `initdb`, and `pg_ctl`), while `@oliphaunt/tools-*` carries
 `pg_dump` and `psql`. Node, Bun, and Deno package-managed native startup
 validate the split tools package and use a merged runtime tree from the
@@ -62,8 +61,7 @@ deno add npm:@oliphaunt/icu
 
 Node, Bun, and Deno native modes discover `@oliphaunt/icu` when it is installed
 and set the runtime ICU data environment before opening liboliphaunt. Do not add
-`@oliphaunt/icu` for applications that do not use ICU collations. JSR remains
-protocol/query-only and does not expose native runtime or ICU packages.
+`@oliphaunt/icu` for applications that do not use ICU collations.
 
 PostgreSQL extensions follow the same registry-driven model in Node and Bun.
 Applications add the extension meta package for every extension they pass to
@@ -119,7 +117,7 @@ this package. Advanced consumers can still pass `brokerExecutable` or set
 import { Oliphaunt } from '@oliphaunt/ts';
 
 const db = await Oliphaunt.open({
-  root: '/var/lib/my-app/oliphaunt',
+  storage: { kind: 'directory', path: '/var/lib/my-app/oliphaunt' },
   extensions: ['pg_textsearch'],
 });
 
@@ -130,46 +128,63 @@ const backup = await db.backup('physicalArchive');
 await db.close();
 
 await Oliphaunt.restore({
-  root: '/var/lib/my-app/restored',
+  destination: '/var/lib/my-app/restored',
   artifact: backup,
-  replaceExisting: true,
+  destinationPolicy: 'replaceExisting',
 });
 ```
 
-The configured `root` is the Oliphaunt root directory; PostgreSQL files live
-under `root/pgdata`, matching the Rust, Swift, Kotlin, and React Native SDKs.
-When `root` is omitted, the SDK creates a process temporary root. Native-direct
-close is a logical detach, so the temporary root is not deleted while the
-resident native backend may still own `root/pgdata`.
+Restore is an offline native operation. It always uses the runtime's detected
+native binding, regardless of the engine that produced the physical archive.
+`libraryPath` is the only restore-specific runtime override.
 
-## Runtime Entry Points
+`storage` is either `{ kind: 'directory', path }` for caller-owned persistence
+or `{ kind: 'temporaryDirectory' }` for an SDK-owned host directory. Omitting it
+selects `temporaryDirectory`. Failures before runtime open clean that directory
+immediately. Once native-direct open has entered the native adapter, the SDK
+retains it for a coherent retry because the process-resident backend may already
+own PGDATA. Broker and server modes clean temporary storage after their engine
+process stops.
 
-The default entrypoint detects the JavaScript runtime:
+Native-direct close is a logical detach from a process-resident PostgreSQL
+backend. Its temporary directory therefore cannot be removed safely on close
+and lives for the native process lifetime; later temporary opens through the
+same client reopen that resident instance. Temporary storage has one resident
+identity, so changing `libraryPath` between equivalent path spellings does not
+allocate a competing database. Choose `directory` when data must survive, or
+broker/server mode when close-time temporary cleanup is required. A failed
+logical detach leaves the database open so `close()` can be retried safely.
+Close rejects new work, lets work already in flight finish, and only then
+detaches the logical session. Close is rejected while a transaction is active.
+The resolved filesystem layout, including the internal `pgdata` child, is not
+part of the public storage API.
+
+## Runtime Selection
+
+The package has one consumer entrypoint and detects the JavaScript runtime:
 
 ```ts
-import { Oliphaunt, createOliphauntClient } from '@oliphaunt/ts';
+import { Oliphaunt } from '@oliphaunt/ts';
 ```
 
-Runtime-specific native bindings are also exported:
-
-```ts
-import { createNodeNativeBinding } from '@oliphaunt/ts/node';
-import { createBunNativeBinding } from '@oliphaunt/ts/bun';
-import { createDenoNativeBinding } from '@oliphaunt/ts/deno';
-```
+Node.js, Bun, and Deno select their matching native adapter internally. There
+are no runtime-specific binding factories or `node`, `bun`, and `deno` package
+subpaths to configure. Select an explicit `engine` only when the application
+needs broker or server semantics.
 
 ## Capabilities
 
 `Oliphaunt.supportedModes()` returns the same mode-support shape as the other
 SDKs. For this SDK:
 
-- `nativeDirect` is available when liboliphaunt can be loaded and the runtime
-  has an FFI surface. Bun and Deno provide one; Node.js resolves the matching
-  prebuilt Node-API adapter from installed optional packages.
+- `nativeDirect` is available when liboliphaunt can be loaded. Node.js and Bun
+  resolve the matching prebuilt Node-API adapter from installed optional
+  packages; Deno uses nonblocking FFI calls so `cancel()` remains usable while
+  a query is running.
 - `nativeBroker` is available when the matching broker helper and
   `liboliphaunt` release assets can be resolved.
 - `nativeServer` is available when the PostgreSQL server executable can be
-  resolved. Server mode initializes empty roots with matching `initdb`, exposes
+  resolved. Server mode initializes empty storage directories with matching `initdb`, exposes
   a connection string, and supports both SQL and physical-archive backup.
 
 Native-server physical archives are assembled in a private temporary directory

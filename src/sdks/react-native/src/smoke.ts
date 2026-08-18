@@ -33,7 +33,6 @@ export async function runOliphauntReactNativeSmoke(
   const liveness = startTimerLivenessProbe();
   const db = await client.open({
     engine: 'nativeDirect',
-    temporary: true,
     username: 'postgres',
     database: 'postgres',
     ...options.open,

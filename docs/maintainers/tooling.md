@@ -15,13 +15,12 @@ predictable without hiding ecosystem-native behavior.
 - Product-local `release.toml` files activate a public product and own package
   metadata Release Please does not model: owner, kind, publish targets,
   registry packages, release artifacts, compatibility-version files, and
-  derived version files. A build-only or publication-deferred extension must
-  not have one.
-- Runtime products select published target presets in Moon
-  `project.release.artifactTargets`; exact extension products own explicit
-  support and evidence in `targets/artifacts.toml`.
+  derived version files. Incomplete extension work stays on a branch.
+- Runtime products select target presets in Moon
+  `project.release.artifactTargets`; the global extension target-profile
+  contract applies those concrete targets to every catalogued SQL extension.
 - Product-native build tools own product behavior: Cargo, SwiftPM/Xcode,
-  Gradle, npm/JSR, Expo, React Native Codegen, and PostgreSQL build scripts.
+  Gradle, npm, Expo, React Native Codegen, and PostgreSQL build scripts.
 - Bun helpers under `tools/release/*.mjs` and `.github/scripts/*.mjs` own the
   public and protected release check, dry-run, publish, tag, and draft-release
   command surface.
@@ -76,7 +75,7 @@ The root `package.json` intentionally has no scripts. Run the corresponding
 Moon target or the product-native package command; a second alias layer makes
 affectedness, cache behavior, and ownership harder to inspect.
 
-Cargo, Gradle, SwiftPM, Xcode, npm/JSR publish, Expo, and PostgreSQL build
+Cargo, Gradle, SwiftPM, Xcode, npm publish, Expo, and PostgreSQL build
 scripts stay product-owned and are invoked through Moon tasks where repository
 or CI orchestration is needed. `node_modules/` directories are normal ignored
 local install state; they must never be tracked.

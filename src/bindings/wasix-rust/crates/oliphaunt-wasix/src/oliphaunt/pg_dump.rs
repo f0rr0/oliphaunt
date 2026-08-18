@@ -1133,8 +1133,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_dump_round_trip_plain_sql() -> Result<()> {
-        let server = OliphauntServer::temporary_tcp()?;
-        let mut conn = sqlx::PgConnection::connect(&server.database_url())
+        let server = OliphauntServer::builder().start()?;
+        let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
             .await
             .context("connect to Oliphaunt server")?;
         conn.execute(
@@ -1187,7 +1187,7 @@ mod tests {
         assert!(quoted.contains("CREATE TABLE \"public\".\"dump_items\""));
         assert!(quoted.contains("INSERT INTO \"public\".\"dump_items\""));
 
-        let mut usable = sqlx::PgConnection::connect(&server.database_url())
+        let mut usable = sqlx::PgConnection::connect(&server.connection_uri())
             .await
             .context("reconnect after pg_dump")?;
         let row = sqlx::query("SELECT count(*)::int4 AS count FROM public.dump_items")
@@ -1195,12 +1195,20 @@ mod tests {
             .await
             .context("server should remain usable after pg_dump")?;
         assert_eq!(row.try_get::<i32, _>("count")?, 2);
+        let sequence_state = sqlx::query(
+            "SELECT last_value::int8 AS last_value, is_called FROM public.dump_items_seq",
+        )
+        .fetch_one(&mut usable)
+        .await
+        .context("read source sequence state after pg_dump")?;
+        let source_last_value = sequence_state.try_get::<i64, _>("last_value")?;
+        assert!(sequence_state.try_get::<bool, _>("is_called")?);
         usable.close().await?;
 
         server.shutdown()?;
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut restored = Oliphaunt::builder().temporary().open()?;
+            let mut restored = Oliphaunt::builder().open()?;
             restored.exec(&dump, None).context("restore pg_dump SQL")?;
             let result = restored.query(
                 "SELECT value FROM public.dump_items WHERE id = $1",
@@ -1220,11 +1228,11 @@ mod tests {
             )?;
             assert_eq!(view.rows[0]["count"], json!(2));
             let sequence = restored.query(
-                "SELECT nextval('public.dump_items_seq')::int AS next_value",
+                "SELECT nextval('public.dump_items_seq')::bigint AS next_value",
                 &[],
                 None,
             )?;
-            assert_eq!(sequence.rows[0]["next_value"], json!(11));
+            assert_eq!(sequence.rows[0]["next_value"], json!(source_last_value + 1),);
             restored.close()?;
             Ok(())
         })
@@ -1243,10 +1251,9 @@ mod tests {
         }
 
         let server = OliphauntServer::builder()
-            .temporary()
             .extension(extensions::VECTOR)
             .start()?;
-        let mut conn = sqlx::PgConnection::connect(&server.database_url())
+        let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
             .await
             .context("connect to extension-enabled Oliphaunt server")?;
         conn.execute(
@@ -1273,10 +1280,7 @@ mod tests {
         assert!(dump.contains("'[1,2,3]'"));
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut restored = Oliphaunt::builder()
-                .temporary()
-                .extension(extensions::VECTOR)
-                .open()?;
+            let mut restored = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
             restored
                 .exec(&dump, None)
                 .context("restore vector dump SQL")?;
@@ -1302,7 +1306,7 @@ mod tests {
 
     #[test]
     fn direct_pg_dump_public_api_round_trip() -> Result<()> {
-        let mut db = Oliphaunt::temporary()?;
+        let mut db = Oliphaunt::open()?;
         db.exec("CREATE TABLE direct_dump_items(value TEXT)", None)?;
         db.exec("INSERT INTO direct_dump_items VALUES ('alpha')", None)?;
 
@@ -1326,7 +1330,7 @@ mod tests {
         )?;
         assert_eq!(source_still_usable.rows[0]["count"], json!(1));
 
-        let mut restored = Oliphaunt::temporary()?;
+        let mut restored = Oliphaunt::open()?;
         restored.exec(&dump, None)?;
         let result = restored.query("SELECT value FROM public.direct_dump_items", &[], None)?;
         assert_eq!(result.rows[0]["value"], json!("alpha"));
@@ -1345,10 +1349,7 @@ mod tests {
             return Ok(());
         }
 
-        let mut db = Oliphaunt::builder()
-            .temporary()
-            .extension(extensions::VECTOR)
-            .open()?;
+        let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
         db.exec(
             "CREATE TABLE direct_vector_dump_items(id INTEGER PRIMARY KEY, embedding vector(3));
              INSERT INTO direct_vector_dump_items(id, embedding) VALUES (1, '[1,2,3]');",
@@ -1359,10 +1360,7 @@ mod tests {
         assert!(dump.contains("CREATE EXTENSION IF NOT EXISTS vector"));
         assert!(dump.contains("CREATE TABLE public.direct_vector_dump_items"));
 
-        let mut restored = Oliphaunt::builder()
-            .temporary()
-            .extension(extensions::VECTOR)
-            .open()?;
+        let mut restored = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
         restored.exec(&dump, None)?;
         let result = restored.query(
             "SELECT embedding <-> '[1,2,4]'::vector AS distance \

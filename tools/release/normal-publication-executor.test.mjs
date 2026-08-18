@@ -93,7 +93,6 @@ describe("normal publication executor", () => {
           dependencies: [],
           operationOrder: 1,
         },
-        operation("jsr", 2),
       ],
     };
     const results = await executeNormalPublicationPlan({
@@ -108,11 +107,10 @@ describe("normal publication executor", () => {
         return carrierIds.map((carrierId) => `receipt:${carrierId}`);
       },
     });
-    expect(calls.toSorted()).toEqual(["jsr:package-2", "maven:a+maven:b", "npm:package-0"]);
+    expect(calls.toSorted()).toEqual(["maven:a+maven:b", "npm:package-0"]);
     expect(results.operationResults).toEqual([
       "receipt:npm:package-0",
       ["receipt:maven:a", "receipt:maven:b"],
-      "receipt:jsr:package-2",
     ]);
   });
 
@@ -173,12 +171,12 @@ describe("normal publication executor", () => {
       dependencies: [npm.id],
       operationOrder: 2,
     };
-    const jsr = {
-      ...operation("jsr", 3),
+    const output = {
+      ...operation("npm", 3, "npm:output"),
       dependencies: [maven.id],
     };
     const run = executeNormalPublicationPlan({
-      plan: { operations: [npm, cargo, maven, jsr] },
+      plan: { operations: [npm, cargo, maven, output] },
       cargoVersionPublished: async () => true,
       publishCarrier: async ({ carrierId }) => {
         events.push(`start:${carrierId}`);
@@ -205,11 +203,11 @@ describe("normal publication executor", () => {
     expect(events).not.toContain("start:maven");
     releaseNpm.resolve();
     await mavenStarted.promise;
-    expect(events).not.toContain(`start:${jsr.carrierId}`);
+    expect(events).not.toContain(`start:${output.carrierId}`);
     releaseMaven.resolve();
     await run;
     expect(events.indexOf(`finish:${npm.carrierId}`)).toBeLessThan(events.indexOf("start:maven"));
-    expect(events.indexOf("finish:maven")).toBeLessThan(events.indexOf(`start:${jsr.carrierId}`));
+    expect(events.indexOf("finish:maven")).toBeLessThan(events.indexOf(`start:${output.carrierId}`));
   });
 
   test("splits Cargo token batches at cross-registry dependency barriers", async () => {
@@ -361,7 +359,7 @@ describe("normal publication executor", () => {
     const releaseCargo = deferred();
     const peerFailed = deferred();
     const run = executeNormalPublicationPlan({
-      plan: { operations: [operation("cargo", 0), operation("jsr", 1)] },
+      plan: { operations: [operation("cargo", 0), operation("npm", 1)] },
       cargoVersionPublished: async () => false,
       publishCarrier: async ({ ecosystem }) => {
         if (ecosystem === "cargo") {
