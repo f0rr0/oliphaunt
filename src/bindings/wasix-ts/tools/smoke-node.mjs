@@ -31,7 +31,7 @@ const runtime = ${JSON.stringify(runtime)};
 const runtimeName = ${JSON.stringify(runtimeName)};
 const packageOnly = ${JSON.stringify(packageOnly)};
 const pgtap = packageOnly ? undefined : (await import(extension)).default;
-const { default: Oliphaunt, PostgresError, WasixStorageError } = await import(candidate);
+const { default: Oliphaunt, PostgresError, WasixStorageError, simpleQuery } = await import(candidate);
 const { directory } = await import(candidate + '/storage/' + runtime);
 
 const resolved = import.meta.resolve(candidate);
@@ -98,6 +98,22 @@ if (packageOnly) {
 async function verifyMemory(execution) {
   const db = await Oliphaunt.open({ execution, extensions: [pgtap] });
   const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
+  const retainedProtocol = await db.execProtocolRaw(
+    simpleQuery("SELECT repeat('a', 8192) AS retained_payload"),
+  );
+  const retainedSnapshot = retainedProtocol.slice();
+  await db.execProtocolRaw(simpleQuery("SELECT repeat('z', 8192) AS replacement_payload"));
+  const protocolResponseOwned =
+    retainedProtocol.length === retainedSnapshot.length &&
+    retainedProtocol.every((byte, index) => byte === retainedSnapshot[index]);
+  const wallClockMillis = Number((await db.query(
+    'SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint AS millis',
+  )).getText(0, 'millis'));
+  const wallClockDeltaMillis = Math.abs(Date.now() - wallClockMillis);
+  const explain = JSON.parse((await db.query(
+    'EXPLAIN (ANALYZE, FORMAT JSON) SELECT pg_sleep(0.05)',
+  )).getText(0, 'QUERY PLAN'));
+  const monotonicElapsedMillis = explain[0]?.['Execution Time'];
   await db.query('CREATE TABLE smoke_transaction (value integer NOT NULL)');
   const transactionValue = await db.transaction(async (tx) => {
     await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [7]);
@@ -125,9 +141,23 @@ async function verifyMemory(execution) {
   }
   const answer = (await db.query('SELECT 42::int AS answer')).getText(0, 'answer');
   await db[Symbol.asyncDispose]();
-  const result = { version, transactionValue, transactionRows, sqlstate, answer };
+  const result = {
+    version,
+    protocolResponseOwned,
+    wallClockDeltaMillis,
+    monotonicElapsedMillis,
+    transactionValue,
+    transactionRows,
+    sqlstate,
+    answer,
+  };
   if (
     !version ||
+    !protocolResponseOwned ||
+    wallClockDeltaMillis > 5_000 ||
+    !Number.isFinite(monotonicElapsedMillis) ||
+    monotonicElapsedMillis < 25 ||
+    monotonicElapsedMillis > 5_000 ||
     transactionValue !== '7' ||
     transactionRows !== '1' ||
     sqlstate !== '42601' ||

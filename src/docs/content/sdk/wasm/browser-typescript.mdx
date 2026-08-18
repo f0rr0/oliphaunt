@@ -69,9 +69,9 @@ blocks that JavaScript agent until PostgreSQL returns, and cross-origin
 isolation remains required. Separate memory or persistent-store identities can
 remain open in either browser placement, although direct calls share one event
 loop. Native extension side modules over Chromium's 8 MiB synchronous-module
-limit require worker placement only when the carrier has no other unsupported
-host requirement. The current PostGIS carrier also requires native load-order
-handling and is therefore unsupported in both browser placements.
+limit require worker placement. Worker execution validates and performs the
+carrier's declared native load order before `CREATE EXTENSION`; the checked-in
+Chrome canary qualifies the current PostGIS carrier in that placement.
 
 ## Node.js, Bun, and Deno
 

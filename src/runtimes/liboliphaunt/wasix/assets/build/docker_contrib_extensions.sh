@@ -163,5 +163,6 @@ fi
         find "$BUILD_DIR/contrib/$contrib_dir" -maxdepth 1 -type f -name "*.so" -print >&2
         exit 1
       fi
+      oliphaunt_wasix_verify_side_module_sjlj "$BUILD_DIR/contrib/$contrib_dir/$module_file"
     done < "$PLAN"
   '

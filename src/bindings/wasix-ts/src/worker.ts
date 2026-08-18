@@ -2,11 +2,20 @@
 
 import * as host from './host/index.mjs';
 
+import { openBrowserWorkerSession, type DirectWasixHost } from './direct-client-common.js';
 import type { WorkerRequest, WorkerResponse } from './rpc.js';
-import { createWorkerDispatcher } from './worker-dispatch.js';
+import { createWorkerSessionDispatcher } from './worker-dispatch.js';
 
 const scope = globalThis as unknown as DedicatedWorkerGlobalScope;
-const dispatch = createWorkerDispatcher(host, respond);
+const directHost: DirectWasixHost = {
+  Directory: host.Directory,
+  init: host.init,
+  instantiateOliphauntDirect: host.instantiateOliphauntDirect,
+};
+const dispatch = createWorkerSessionDispatcher(
+  (options) => openBrowserWorkerSession(options, directHost),
+  respond,
+);
 
 scope.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   void dispatch(event.data);

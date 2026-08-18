@@ -54,6 +54,18 @@ pnpm --dir src/bindings/wasix-ts smoke:browser:pg-uuidv7
 That canary is narrow integration evidence. It does not add a browser target
 to the extension catalog or make arbitrary WASIX dynamic modules supported.
 
+The worker-realm canary loads and calls PostGIS through the same direct-memory
+session used by normal browser worker execution. It also asserts from the
+carrier contract that `postgis_deps` is larger than Chromium's 8 MiB
+main-thread synchronous-compilation limit:
+
+```sh
+pnpm --dir src/bindings/wasix-ts smoke:browser:postgis-worker
+```
+
+This qualifies the realm distinction itself: large side modules remain rejected
+on the browser main thread and are accepted only inside a real worker.
+
 ## Compare PGlite in the browser
 
 The checked-in benchmark compares equivalent placements against pinned
@@ -100,9 +112,8 @@ PGXS side modules, and PostgreSQL builds that permit concurrent backends retain
 the normal atomic implementation. Every TypeScript placement passes
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1`, and the source-pinned host denies guest
 process replacement, process creation, and thread creation under that contract.
-This concurrency marker is independent from `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`,
-which browser-worker execution alone uses for its stream transport and recovery
-pump.
+Protocol transport is independent of that concurrency marker: every supported
+placement uses the same direct guest-memory bridge.
 
 The same decomposition separates transport from PostgreSQL execution. Worker
 placement can lose insert wall time to its outer request boundary, while the
@@ -174,11 +185,11 @@ Chromium also rejects synchronous compilation or instantiation of Wasm modules
 larger than 8 MiB on its main realm. Oliphaunt asynchronously constructs the
 14 MiB core guest, while current native side-module loading remains
 synchronous. Direct open therefore rejects an imported extension whose native
-module crosses that limit. The current PostGIS carrier additionally requires
-native load-order handling that the browser worker has not implemented, so it
-is explicitly unsupported in both browser placements today. Oversized carriers
-without that additional requirement can use worker execution; smaller
-qualified extension carriers remain available in direct mode.
+module crosses that limit. Worker execution has no main-realm synchronous
+compilation restriction and performs descriptor-declared native load ordering;
+the checked-in Chrome canary loads PostGIS there, exercises a nested
+side-module error, and proves that the same session recovers. Smaller qualified
+extension carriers remain available in direct mode.
 
 The same code runs on Node.js, Bun, and Deno. Conditional exports select an
 explicit facade for each runtime. Worker placement uses that runtime's
@@ -481,8 +492,8 @@ and portable bytes. It is versioned in the existing
 carrier, rather than owning a second release line. Each extension product
 generates its own `-wasix` package; the development Vite harness derives virtual
 package descriptors from current canonical target outputs during local builds
-and smokes. The optional `pg_uuidv7` canary is dynamically imported only when
-`?pg_uuidv7=1` is present.
+and smokes. Optional `pg_uuidv7` and PostGIS worker canaries are dynamically
+imported only by their explicit smoke profiles.
 
 The checked-in Vite app is a development and smoke harness, not a production
 asset server. Public packaging copies the exact source-built host, its worker,
@@ -513,29 +524,25 @@ runtime artifact URL bookkeeping.
   The first smoke profile selects SQL-only `pgtap`, including its canonical
   `plpgsql` dependency and lifecycle SQL. A separate opt-in profile selects the
   native `pg_uuidv7` carrier and has loaded and called its `.so` in the exact
-  pinned Chrome/host/runtime pairing. This remains a canary rather than a
-  support claim. The current development bytes are produced by the canonical
+  pinned Chrome/host/runtime pairing. Another profile loads PostGIS in a real
+  Chrome worker, including its explicit native load order and a dependency side
+  module larger than 8 MiB. These remain exact integration canaries rather than
+  claims about arbitrary third-party modules. The current development bytes are produced by the canonical
   `liboliphaunt-wasix` asset pipeline, outside this binding; the generated WASIX
   package places that exact carrier in the owning extension product's existing
-  version stream. Selected rows that require an explicit native `load-order` or
-  shared-memory behavior are outside this binding's qualified contract and fail
-  closed.
+  version stream. Selected rows that require shared-memory behavior remain
+  outside this binding's qualified contract and fail closed.
 - Optional ICU data, tools, backup/restore, server mode, query cancellation,
   and COPY streaming are outside this binding's public surface.
-- Browser worker execution alone uses the explicit stdio-pgwire recovery pump.
-  Wasmer JS's WASIX 0.601 runner lets the guest's wasm-EH `longjmp` escape the
-  asynchronous `_start` call as a `WebAssembly.Exception`. Before Wasmer closes
-  stdio or marks the process finished, the source-patched host recognizes that
-  exception only when `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`, calls the existing
-  `PostgresMainLongJmp` cleanup export, and continues through the existing loop
-  exports. Later errors use the same pump. Browser direct and server-runtime worker
-  execution instead use the direct Oliphaunt export driver, matching the Rust
-  host lifecycle: it treats `PostgresMainLoopOnce` traps as the exported
-  recovery boundary and also cleans up non-trapping `ErrorResponse`s. This
-  Wasmer version erases the wasm exception tag at the Rust boundary, so the
-  stdio pairing assumes the only escaping `WebAssembly.Exception` on that
-  explicit transport is PostgreSQL's top-level jump. Non-exception runtime
-  errors and traps still fail closed.
+- Browser direct, browser worker, and server-runtime worker execution all use
+  the direct Oliphaunt export driver. The browser worker runs synchronous guest
+  calls in its isolated realm, but otherwise shares the same request state
+  machine, native-module load ordering, error recovery, and owned-response
+  contract as the server workers. The driver treats `PostgresMainLoopOnce`
+  traps as the exported recovery boundary and also cleans up non-trapping
+  `ErrorResponse`s. Requests are copied into guest-owned reusable input memory;
+  each response is copied once into owned JavaScript storage before PostgreSQL
+  can reuse or grow guest memory. There is no second TypeScript stdio transport.
 - PostgreSQL errors retain `PostgresError`, SQLSTATE, and backend fields across
   the worker boundary, including startup database rejection and failures in
   selected-extension lifecycle SQL during `open()`. Storage ownership and
@@ -558,14 +565,16 @@ runtime artifact URL bookkeeping.
   source-built compatibility host; no opaque host
   binary is checked in. The patches compile and instantiate the large main
   module asynchronously, preserve module bytes across the blocking worker, and
-  run the configured builder so args, environment, mounts, and stdio survive process launch. The
-  host also owns the two narrow PostgreSQL recovery paths described above.
+  run the configured builder so args, environment, and mounts survive process
+  launch. The direct database driver replaces stdin/stdout with its guest-memory
+  protocol bridge and retains only a bounded 16 KiB stderr tail for failed
+  lifecycle operations. The host also owns the narrow PostgreSQL recovery path
+  described above.
   The resulting JS, worker, Wasm, license, and provenance files are published
   package-relative so ordinary browser, Node, Bun, and Deno resolution selects the same
   qualified host without an application alias.
-- That host is qualified only for Oliphaunt's single-process stdio-pgwire path
-  in a browser worker and its direct export path in browser direct or a Node,
-  Bun, or Deno worker.
+- That host is qualified only for Oliphaunt's single-process direct export path
+  in browser direct, browser worker, or a Node, Bun, or Deno placement.
   `proc_exit2` maps to the older normal-exit implementation, while
   `proc_fork_env` and context create/switch/destroy fail with `ENOTSUP`.
   Those shims are installed for both WASIX memory widths. The host also creates
@@ -575,13 +584,11 @@ runtime artifact URL bookkeeping.
   used for the qualified PostgreSQL error-recovery path. Generic WASIX 0.702
   compatibility, broader filesystem behavior, and general native
   dynamic-extension support are not claimed.
-- The browser-worker stdio lifecycle attaches the existing protocol Port before
-  standalone initialization can report a PostgreSQL startup failure. An `ErrorResponse`
-  can therefore end startup without `ReadyForQuery` and still retain its
-  SQLSTATE. Successful startup has a nonstandard two-part boundary: the first
-  response ends after authentication/connection data; the standalone main loop
-  then emits `ParameterStatus*` and a second `ReadyForQuery`. The worker drains
-  and validates that second batch before exposing the session.
+- The direct lifecycle captures startup output before exposing the session. An
+  `ErrorResponse` can therefore end startup without `ReadyForQuery` and still
+  retain its SQLSTATE. A successful startup consumes and validates the complete
+  exported startup transition in the same realm that will execute later
+  protocol calls.
 - The Wasmer npm release records source commit `93b8b738...`, whose checked-in
   package metadata says `0.8.0` and whose npm lock has stale root metadata. The
   host build pins that exact Git commit plus Cargo crate checksums, applies a
@@ -605,8 +612,8 @@ runtime artifact URL bookkeeping.
   coherent 0.601 host remains pinned; mixing generations is not papered over as
   an update. A full 0.702 host port also changes the exact engine identity and
   requires rebuilding and qualifying the runtime and extension carrier set.
-- The `pg_uuidv7` canary proves this exact small native module, not generic
-  dynamic loading. Wasmer's broader pending
+- The `pg_uuidv7` and PostGIS canaries prove the exact small-module and
+  large-worker-module contracts, not arbitrary dynamic loading. Wasmer's broader pending
   [`fd_read`/`dlopen` correction](https://github.com/wasmerio/wasmer/pull/6485)
   still has an unresolved memory-safety review concern, so native browser
   extension promotion remains blocked on a safer host boundary and broader

@@ -92,9 +92,9 @@ export function layoutRuntime(
 ): WasixRuntimeLayout {
   const runtimeFiles = runtime.files;
   const pgdataFiles = pgdata.files;
-  const module = runtimeFiles.get('oliphaunt/bin/oliphaunt');
+  const module = runtimeFiles.get('oliphaunt/bin/postgres');
   if (module === undefined || module.length === 0) {
-    throw new Error('runtime archive is missing oliphaunt/bin/oliphaunt');
+    throw new Error('runtime archive is missing oliphaunt/bin/postgres');
   }
   if (!pgdataFiles.has('PG_VERSION') || !pgdataFiles.has('global/pg_control')) {
     throw new Error('PGDATA template is missing PG_VERSION or global/pg_control');

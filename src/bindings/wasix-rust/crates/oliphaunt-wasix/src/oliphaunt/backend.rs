@@ -192,11 +192,6 @@ impl WasixBackendSession {
         &self.postgres_config
     }
 
-    #[cfg(debug_assertions)]
-    pub(crate) fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
-        self.pg.guest_bridge_allocation_counts()
-    }
-
     pub(crate) fn send_buffered(
         &mut self,
         message: &[u8],
@@ -364,11 +359,6 @@ impl BackendSession {
     #[cfg(feature = "extensions")]
     pub(crate) fn postgres_config(&self) -> &PostgresConfig {
         self.0.postgres_config()
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
-        self.0.guest_bridge_allocation_counts()
     }
 
     pub(crate) fn send_buffered(

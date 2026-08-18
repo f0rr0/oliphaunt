@@ -71,6 +71,7 @@ const DEFAULT_ASSET_BUILD_PROFILE: &str = "release";
 const SOURCE_CHECKOUT_ROOT: &str = "target/oliphaunt-sources/checkouts";
 const GENERATED_ASSETS_DIR: &str = "target/oliphaunt-wasix/assets";
 const GENERATED_AOT_DIR: &str = "target/oliphaunt-wasix/aot";
+const RUNTIME_MODULE_ARCHIVE_MEMBER: &str = "oliphaunt/bin/postgres";
 const ASSET_CRATE_PAYLOAD_DIR: &str = "src/runtimes/liboliphaunt/wasix/crates/assets/payload";
 const RELEASE_STAGE_DIR: &str = "target/oliphaunt-wasix/release";
 const RELEASE_ASSET_BUNDLE_DIR: &str = "target/oliphaunt-wasix/release-assets";
@@ -89,11 +90,13 @@ const RUST_HOST_REQUIRED_RUNTIME_EXPORTS: &[&str] = &[
     "PostgresMainLongJmp",
     "oliphaunt_wasix_protocol_stream_active",
     "oliphaunt_wasix_input_reset",
-    "oliphaunt_wasix_input_write",
+    "oliphaunt_wasix_input_reserve",
+    "oliphaunt_wasix_input_commit",
     "oliphaunt_wasix_input_available",
     "oliphaunt_wasix_output_reset",
     "oliphaunt_wasix_output_len",
-    "oliphaunt_wasix_output_read",
+    "oliphaunt_wasix_output_data",
+    "oliphaunt_wasix_output_contains_error",
 ];
 const RUST_HOST_OPTIONAL_RUNTIME_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_set_force_host_error_recovery",
@@ -103,8 +106,31 @@ const RUST_HOST_OPTIONAL_RUNTIME_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_set_protocol_transport",
 ];
 const RUNTIME_EXPORT_LIST_COMPAT_EXPORTS: &[&str] = &[
-    "oliphaunt_wasix_set_protocol_stdio",
     "oliphaunt_wasix_set_force_host_error_recovery",
+    "oliphaunt_wasix_set_protocol_transport",
+];
+const REQUIRED_RUNTIME_ABI_EXPORTS: &[&str] = &[
+    "_start",
+    "oliphaunt_wasix_set_active",
+    "oliphaunt_wasix_start",
+    "oliphaunt_wasix_get_proc_port",
+    "ProcessStartupPacket",
+    "oliphaunt_wasix_send_conn_data",
+    "oliphaunt_wasix_pq_flush",
+    "pq_buffer_remaining_data",
+    "PostgresMainLoopOnce",
+    "PostgresSendReadyForQueryIfNecessary",
+    "PostgresMainLongJmp",
+    "oliphaunt_wasix_set_force_host_error_recovery",
+    "oliphaunt_wasix_protocol_stream_active",
+    "oliphaunt_wasix_input_reset",
+    "oliphaunt_wasix_input_reserve",
+    "oliphaunt_wasix_input_commit",
+    "oliphaunt_wasix_input_available",
+    "oliphaunt_wasix_output_reset",
+    "oliphaunt_wasix_output_len",
+    "oliphaunt_wasix_output_data",
+    "oliphaunt_wasix_output_contains_error",
     "oliphaunt_wasix_set_protocol_transport",
 ];
 const PG18_POSTGRES_HOST_EXPORTS: &[&str] = &[

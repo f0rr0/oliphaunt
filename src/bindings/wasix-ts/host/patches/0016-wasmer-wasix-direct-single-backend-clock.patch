@@ -1,0 +1,304 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -92,6 +92,178 @@ pub use crate::{
+ };
+ use wasmer_wasix_types::wasi::{Errno, ExitCode};
+ 
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
++
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++#[wasm_bindgen(inline_js = r#"
++export function oliphauntFastClockImport(memory, fallback) {
++    let lastFallbackWallMillis;
++    const monotonicAnchors = new Map();
++    let buffer = memory.buffer;
++    let view = new DataView(buffer);
++    function refreshView(timePointer) {
++        const pointer = timePointer >>> 0;
++        if (buffer !== memory.buffer) {
++            buffer = memory.buffer;
++            view = new DataView(buffer);
++        }
++        return pointer + 8 <= buffer.byteLength ? pointer : undefined;
++    }
++    function callFallback(clockId, precision, timePointer) {
++        const errno = fallback(clockId, precision, timePointer);
++        if (errno === 0) {
++            const wallMillis = Date.now();
++            if (Number.isFinite(wallMillis) && wallMillis >= 0) {
++                lastFallbackWallMillis = wallMillis;
++            }
++        }
++        return errno;
++    }
++    function fallbackAndCalibrate(clockId, precision, timePointer, monotonicMillis) {
++        const errno = callFallback(clockId, precision, timePointer);
++        if (errno !== 0 || monotonicMillis === undefined) {
++            return errno;
++        }
++        const pointer = refreshView(timePointer);
++        if (pointer === undefined) {
++            return errno;
++        }
++        const sampledMillis = globalThis.performance.now();
++        if (!Number.isFinite(sampledMillis) || sampledMillis < monotonicMillis) {
++            monotonicAnchors.delete(clockId);
++            return errno;
++        }
++        monotonicAnchors.set(clockId, {
++            millis: sampledMillis,
++            nanoseconds: view.getBigUint64(pointer, true),
++        });
++        return errno;
++    }
++    return function clock_time_get(clockId, precision, timePointer) {
++        let millis;
++        let nanoseconds;
++        if (clockId === 0) {
++            millis = Date.now();
++            if (!Number.isFinite(millis) || millis < 0) {
++                return callFallback(clockId, precision, timePointer);
++            }
++            nanoseconds = BigInt(Math.trunc(millis)) * 1000000n;
++        } else if (clockId === 1) {
++            if (globalThis.performance === undefined) {
++                return callFallback(clockId, precision, timePointer);
++            }
++            millis = globalThis.performance.now();
++            if (!Number.isFinite(millis) || millis < 0) {
++                return callFallback(clockId, precision, timePointer);
++            }
++            const anchor = monotonicAnchors.get(clockId);
++            if (anchor === undefined || millis < anchor.millis || millis - anchor.millis >= 16) {
++                return fallbackAndCalibrate(clockId, precision, timePointer, millis);
++            }
++            nanoseconds = anchor.nanoseconds + BigInt(Math.round((millis - anchor.millis) * 1000000));
++        } else {
++            return callFallback(clockId, precision, timePointer);
++        }
++
++        // Service Wasmer's pending signal/timer work on a real-time bound,
++        // independent of how quickly or slowly the guest reads its clock.
++        // Keep scheduling in one clock domain. Date.now() rollback forces an
++        // immediate canonical fallback, which also re-establishes the bound.
++        const wallMillis = Date.now();
++        if (!Number.isFinite(wallMillis) || wallMillis < 0 ||
++            lastFallbackWallMillis === undefined ||
++            wallMillis < lastFallbackWallMillis ||
++            wallMillis - lastFallbackWallMillis >= 16) {
++            return callFallback(clockId, precision, timePointer);
++        }
++
++        const pointer = refreshView(timePointer);
++        if (pointer === undefined) {
++            return callFallback(clockId, precision, timePointer);
++        }
++        view.setBigUint64(pointer, nanoseconds, true);
++        return 0;
++    };
++}
++"#)]
++extern "C" {
++    #[wasm_bindgen(js_name = oliphauntFastClockImport)]
++    fn oliphaunt_fast_clock_import(
++        memory: &JsValue,
++        fallback: &JsValue,
++    ) -> js_sys::Function;
++}
++
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++pub(crate) fn install_oliphaunt_fast_clock(
++    store: &mut impl AsStoreMut,
++    module: &wasmer::Module,
++    env: &FunctionEnv<WasiEnv>,
++    memory: &wasmer::Memory,
++    imports: &mut Imports,
++) -> Result<(), String> {
++    use wasmer::js::AsJs;
++
++    if !env.as_ref(&store.as_store_ref()).oliphaunt_single_backend {
++        return Ok(());
++    }
++
++    const CLOCK_NAMESPACES: [&str; 2] = ["wasi_snapshot_preview1", "wasi_unstable"];
++    if module.imports().any(|import| {
++        CLOCK_NAMESPACES.contains(&import.module()) && import.name() == "clock_time_set"
++    }) {
++        return Ok(());
++    }
++
++    let namespaces = module
++        .imports()
++        .filter(|import| {
++            CLOCK_NAMESPACES.contains(&import.module()) && import.name() == "clock_time_get"
++        })
++        .map(|import| import.module().to_string())
++        .collect::<Vec<_>>();
++    if namespaces.is_empty() {
++        return Ok(());
++    }
++
++    let raw_memory = memory.as_jsvalue(&store.as_store_ref());
++    for namespace in namespaces {
++        let fallback = imports
++            .get_export(&namespace, "clock_time_get")
++            .and_then(|export| match export {
++                wasmer::Extern::Function(function) => Some(function),
++                _ => None,
++            })
++            .ok_or_else(|| format!("missing {namespace}.clock_time_get fallback"))?;
++        let function_type = fallback.ty(&store.as_store_ref());
++        let raw_fallback = fallback.as_jsvalue(&store.as_store_ref());
++        let raw_fast = oliphaunt_fast_clock_import(&raw_memory, &raw_fallback);
++        let fast = wasmer::Function::from_jsvalue(
++            store,
++            &function_type,
++            raw_fast.as_ref(),
++        )
++        .map_err(|error| format!("{error:?}"))?;
++        imports.define(&namespace, "clock_time_get", fast);
++    }
++    env.as_mut(&mut store.as_store_mut())
++        .oliphaunt_direct_clock_active = true;
++    Ok(())
++}
++
++#[cfg(all(feature = "js", target_arch = "wasm32"))]
++pub fn oliphaunt_direct_memory(
++    env: &WasiFunctionEnv,
++    store: &impl wasmer::AsStoreRef,
++) -> Option<JsValue> {
++    use wasmer::js::AsJs;
++
++    env.data(store)
++        .try_memory()
++        .map(|memory| memory.as_jsvalue(store))
++}
++
+ pub use crate::{
+     fs::{default_fs_backing, Fd, WasiFs, WasiInodes, VIRTUAL_ROOT_FD},
+     os::{
+diff --git a/src/state/env.rs b/src/state/env.rs
+--- a/src/state/env.rs
++++ b/src/state/env.rs
+@@ -145,6 +145,8 @@ pub struct WasiEnv {
+     /// Counts fast clock reads so pending signals are still serviced at a
+     /// bounded interval without paying that cost on every timing sample.
+     pub(crate) oliphaunt_fast_clock_calls: u16,
++    /// Whether the guest clock import uses the direct JavaScript wrapper.
++    pub(crate) oliphaunt_direct_clock_active: bool,
+     /// Whether this environment has installed a synthetic WASI clock offset.
+     pub(crate) oliphaunt_clock_offset_active: bool,
+     /// Shared state of the WASI system. Manages all the data that the
+@@ -203,6 +205,7 @@ impl Clone for WasiEnv {
+             poll_seed: self.poll_seed,
+             oliphaunt_single_backend: self.oliphaunt_single_backend,
+             oliphaunt_fast_clock_calls: 0,
++            oliphaunt_direct_clock_active: false,
+             oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
+             thread: self.thread.clone(),
+             layout: self.layout.clone(),
+@@ -250,6 +253,7 @@ impl WasiEnv {
+             poll_seed: 0,
+             oliphaunt_single_backend: self.oliphaunt_single_backend,
+             oliphaunt_fast_clock_calls: 0,
++            oliphaunt_direct_clock_active: false,
+             oliphaunt_clock_offset_active: self.oliphaunt_clock_offset_active,
+             bin_factory,
+             state,
+@@ -403,6 +407,7 @@ impl WasiEnv {
+             poll_seed: 0,
+             oliphaunt_single_backend,
+             oliphaunt_fast_clock_calls: 0,
++            oliphaunt_direct_clock_active: false,
+             oliphaunt_clock_offset_active: false,
+             state: Arc::new(init.state),
+             inner: Default::default(),
+@@ -568,6 +573,22 @@ impl WasiEnv {
+             None
+         };
+ 
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        if let Some(memory) = imported_memory.as_ref() {
++            crate::install_oliphaunt_fast_clock(
++                &mut store,
++                &module,
++                &func_env.env,
++                memory,
++                &mut import_object,
++            )
++            .map_err(|error| {
++                WasiThreadError::InstanceCreateFailed(Box::new(
++                    wasmer::InstantiationError::Link(wasmer::LinkError::Resource(error)),
++                ))
++            })?;
++        }
++
+         // Construct the instance.
+         let instance_result = if async_instantiation {
+             #[cfg(all(feature = "js", target_arch = "wasm32"))]
+diff --git a/src/state/linker.rs b/src/state/linker.rs
+--- a/src/state/linker.rs
++++ b/src/state/linker.rs
+@@ -1180,6 +1180,20 @@ impl Linker {
+             &well_known_imports,
+         )?;
+ 
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_fast_clock(
++            store,
++            main_module,
++            &func_env.env,
++            &memory,
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(
++                wasmer::LinkError::Resource(error),
++            ))
++        })?;
++
+         // TODO: figure out which way is faster (stubs in main or stubs in sides),
+         // use that ordering. My *guess* is that, since main exports all the libc
+         // functions and those are called frequently by basically any code, then giving
+@@ -1428,6 +1442,20 @@ impl Linker {
+             &mut pending_resolutions,
+         )?;
+ 
++        #[cfg(all(feature = "js", target_arch = "wasm32"))]
++        crate::install_oliphaunt_fast_clock(
++            store,
++            &main_module,
++            &func_env.env,
++            &memory,
++            &mut imports,
++        )
++        .map_err(|error| {
++            LinkError::InstantiationError(InstantiationError::Link(
++                wasmer::LinkError::Resource(error),
++            ))
++        })?;
++
+         let main_instance = Instance::new(store, &main_module, &imports)?;
+ 
+         instance_group.main_instance = Some(main_instance.clone());
+diff --git a/src/syscalls/wasi/clock_time_get.rs b/src/syscalls/wasi/clock_time_get.rs
+--- a/src/syscalls/wasi/clock_time_get.rs
++++ b/src/syscalls/wasi/clock_time_get.rs
+@@ -32,8 +32,12 @@ pub fn clock_time_get<M: MemorySize>(
+     if oliphaunt_fast_path {
+         let check_pending = {
+             let env = ctx.data_mut();
+-            env.oliphaunt_fast_clock_calls = env.oliphaunt_fast_clock_calls.wrapping_add(1);
+-            env.oliphaunt_fast_clock_calls & 0x03ff == 0
++            if env.oliphaunt_direct_clock_active {
++                true
++            } else {
++                env.oliphaunt_fast_clock_calls = env.oliphaunt_fast_clock_calls.wrapping_add(1);
++                env.oliphaunt_fast_clock_calls & 0x03ff == 0
++            }
+         };
+         if check_pending {
+             WasiEnv::do_pending_operations(&mut ctx)?;

@@ -277,12 +277,17 @@ function validateInstall(
     throw new Error(`${label} dependencies must not include its own SQL name '${sqlName}'`);
   }
   requireUniqueStringArray(install.coreExportsRequired, `${label} core exports required`);
-  requireUniquePathArray(install.loadOrder, `${label} load order`);
+  const loadOrder = requireUniquePathArray(install.loadOrder, `${label} load order`);
   validateLifecycle(install.lifecycle, `${label} lifecycle`);
   const installedFiles = requireUniquePathArray(install.installedFiles, `${label} installed files`);
   for (const module of install.nativeModules) {
     if (!installedFiles.includes(module.path)) {
       throw new Error(`${label} native module path is absent from installedFiles: ${module.path}`);
+    }
+  }
+  for (const path of loadOrder) {
+    if (!installedFiles.includes(path)) {
+      throw new Error(`${label} load-order path is absent from installedFiles: ${path}`);
     }
   }
   if (!Array.isArray(install.unresolvedImports)) {

@@ -146,6 +146,17 @@ describe('WASIX extension descriptors', () => {
         carriers: [carrier('pgtap', { install: duplicateStartupConfig })],
       }),
     ).toThrow('startupConfig must not repeat values');
+
+    const missingLoadOrderFile = {
+      ...install('pgtap'),
+      loadOrder: ['lib/postgresql/pgtap.so'],
+    };
+    expect(() =>
+      defineWasixExtension({
+        ...descriptorInput('pgtap'),
+        carriers: [carrier('pgtap', { install: missingLoadOrderFile })],
+      }),
+    ).toThrow('load-order path is absent from installedFiles');
   });
 
   it('freezes package-authored descriptors and their carrier rows', () => {

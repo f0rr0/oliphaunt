@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <pwd.h>
 #include <stddef.h>
@@ -54,16 +55,17 @@ struct passwd *oliphaunt_wasix_getpwuid(uid_t uid);
 int oliphaunt_wasix_getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
 				   struct passwd **result);
 int oliphaunt_wasix_input_reset(void);
-int oliphaunt_wasix_input_write(const void *buffer, size_t length);
+void *oliphaunt_wasix_input_reserve(size_t length);
+int oliphaunt_wasix_input_commit(size_t length);
 size_t oliphaunt_wasix_input_available(void);
 int oliphaunt_wasix_output_reset(void);
 size_t oliphaunt_wasix_output_len(void);
-size_t oliphaunt_wasix_output_read(void *buffer, size_t max_length);
+const void *oliphaunt_wasix_output_data(void);
+int oliphaunt_wasix_output_contains_error(void);
 int oliphaunt_wasix_fcntl(int fd, int cmd, ...);
 int oliphaunt_wasix_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
 int oliphaunt_wasix_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
 int oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len);
-int oliphaunt_wasix_set_protocol_stdio(int enabled);
 int oliphaunt_wasix_set_protocol_transport(int mode);
 int oliphaunt_wasix_protocol_stream_active(void);
 void oliphaunt_wasix_protocol_report_copy_response(int state);
@@ -196,23 +198,52 @@ check_protocol_socket(void)
 	CHECK(oliphaunt_wasix_input_reset() == 0);
 	CHECK(oliphaunt_wasix_output_reset() == 0);
 	CHECK(oliphaunt_wasix_recv(1, buf, sizeof(buf), 0) == 0);
-	CHECK(oliphaunt_wasix_input_write(input, sizeof(input) - 1) == (int) (sizeof(input) - 1));
+	void *input_buffer = oliphaunt_wasix_input_reserve(sizeof(input) - 1);
+	CHECK(input_buffer != NULL);
+	memcpy(input_buffer, input, sizeof(input) - 1);
+	CHECK(oliphaunt_wasix_input_commit(sizeof(input) - 1) == (int) (sizeof(input) - 1));
 	CHECK(oliphaunt_wasix_input_available() == sizeof(input) - 1);
 	CHECK(oliphaunt_wasix_recv(1, buf, 2, 0) == 2);
 	CHECK(memcmp(buf, "ab", 2) == 0);
 	CHECK(oliphaunt_wasix_input_available() == 1);
+	CHECK(oliphaunt_wasix_recv(1, buf, 1, 0) == 1);
+	CHECK(oliphaunt_wasix_input_reset() == 0);
+	void *reused_input_buffer = oliphaunt_wasix_input_reserve(sizeof(input) - 1);
+	CHECK(reused_input_buffer == input_buffer);
+	memcpy(reused_input_buffer, input, sizeof(input) - 1);
+	CHECK(oliphaunt_wasix_input_commit(sizeof(input) - 1) == (int) (sizeof(input) - 1));
+	CHECK(oliphaunt_wasix_input_reset() == 0);
 
 	CHECK(oliphaunt_wasix_send(1, output, sizeof(output) - 1, 0) == (ssize_t) (sizeof(output) - 1));
 	CHECK(oliphaunt_wasix_output_len() == sizeof(output) - 1);
+	const void *output_buffer = oliphaunt_wasix_output_data();
 	memset(buf, 0, sizeof(buf));
-	CHECK(oliphaunt_wasix_output_read(buf, sizeof(buf)) == sizeof(output) - 1);
+	memcpy(buf, output_buffer, oliphaunt_wasix_output_len());
 	CHECK(memcmp(buf, output, sizeof(output) - 1) == 0);
+	CHECK(oliphaunt_wasix_output_contains_error() == 0);
 
-	CHECK(oliphaunt_wasix_set_protocol_stdio(0) == 0);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	const unsigned char error_header[] = {'E', 0, 0, 0, 4};
+	CHECK(oliphaunt_wasix_send(1, error_header, 2, 0) == 2);
+	CHECK(oliphaunt_wasix_output_contains_error() == 0);
+	CHECK(oliphaunt_wasix_send(1, error_header + 2, sizeof(error_header) - 2, 0) ==
+		  (ssize_t) (sizeof(error_header) - 2));
+	CHECK(oliphaunt_wasix_output_data() == output_buffer);
+	CHECK(oliphaunt_wasix_output_contains_error() == 1);
+	CHECK(oliphaunt_wasix_output_reset() == 0);
+	CHECK(oliphaunt_wasix_output_contains_error() == 0);
+	errno = 0;
+	CHECK(oliphaunt_wasix_input_reserve((size_t) INT_MAX + 1) == NULL);
+	CHECK(errno == EOVERFLOW);
+	errno = 0;
+	CHECK(oliphaunt_wasix_send(1, output, (size_t) INT_MAX + 1, 0) == -1);
+	CHECK(errno == EOVERFLOW);
+
+	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 0);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
-	CHECK(oliphaunt_wasix_set_protocol_stdio(1) == 0);
+	CHECK(oliphaunt_wasix_set_protocol_transport(1) == 0);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 1);
-	CHECK(oliphaunt_wasix_set_protocol_stdio(0) == 1);
+	CHECK(oliphaunt_wasix_set_protocol_transport(0) == 1);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
 	CHECK(oliphaunt_wasix_set_protocol_transport(2) == 0);
 	CHECK(oliphaunt_wasix_protocol_stream_active() == 0);
@@ -277,7 +308,10 @@ check_protocol_socket(void)
 	struct pollfd fds[1] = {{.fd = 1, .events = POLLIN, .revents = 0}};
 	CHECK(oliphaunt_wasix_poll(fds, 1, 0) == 0);
 	CHECK(fds[0].revents == 0);
-	CHECK(oliphaunt_wasix_input_write("q", 1) == 1);
+	input_buffer = oliphaunt_wasix_input_reserve(1);
+	CHECK(input_buffer != NULL);
+	memcpy(input_buffer, "q", 1);
+	CHECK(oliphaunt_wasix_input_commit(1) == 1);
 	CHECK(oliphaunt_wasix_poll(fds, 1, 0) == 1);
 	CHECK((fds[0].revents & POLLIN) != 0);
 

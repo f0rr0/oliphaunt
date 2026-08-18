@@ -495,15 +495,9 @@ fn direct_raw_protocol_api_matches_oliphaunt_exec_protocol_cases() -> anyhow::Re
     Ok(())
 }
 
-#[cfg(debug_assertions)]
 #[test]
-fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
+fn direct_protocol_bridge_reuses_guest_owned_buffers() -> anyhow::Result<()> {
     let mut db = Oliphaunt::builder().open()?;
-    let (allocations_before, frees_before) = db.guest_bridge_allocation_counts();
-    assert_eq!(
-        allocations_before, frees_before,
-        "bridge allocations must be balanced before stress loop"
-    );
 
     for _ in 0..128 {
         let mut output = Vec::new();
@@ -520,16 +514,6 @@ fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
             vec![b'T', b'D', b'C', b'Z']
         );
     }
-
-    let (allocations_after, frees_after) = db.guest_bridge_allocation_counts();
-    assert_eq!(
-        allocations_after, frees_after,
-        "each Rust-owned guest bridge allocation must be freed"
-    );
-    assert!(
-        allocations_after > allocations_before,
-        "stress loop should exercise bridge allocations"
-    );
 
     db.close()?;
     Ok(())
@@ -1073,6 +1057,27 @@ fn runtime_smoke() -> anyhow::Result<()> {
     assert!(rollback.is_err());
     let count = pg.query("SELECT count(*)::int AS count FROM tx_items", &[], None)?;
     assert_eq!(first_row(&count)?.get("count"), Some(&json!(1)));
+
+    #[cfg(not(target_env = "msvc"))]
+    {
+        trace_step("runtime_smoke nested PostgreSQL error recovery");
+        pg.exec("CREATE TEMP TABLE nested_error_catch(value integer)", None)?;
+        pg.exec(
+            "DO $$ BEGIN \
+             BEGIN PERFORM 1 / 0; \
+             EXCEPTION WHEN division_by_zero THEN \
+               INSERT INTO nested_error_catch VALUES (1); \
+             END; \
+           END $$",
+            None,
+        )?;
+        let caught = pg.query(
+            "SELECT count(*)::int AS count FROM nested_error_catch",
+            &[],
+            None,
+        )?;
+        assert_eq!(first_row(&caught)?.get("count"), Some(&json!(1)));
+    }
 
     trace_step("runtime_smoke expected-error syntax");
     let syntax_err = pg

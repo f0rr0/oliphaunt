@@ -176,6 +176,15 @@ export function assertWasixTypescriptNpmArchive(archive) {
     }
     return Buffer.from(entry.data());
   };
+  for (const name of [
+    'lib/node-web-worker.js',
+    'lib/node-web-worker-thread.js',
+    'lib/wasix-process.js',
+  ]) {
+    if (entries.has(`package/${name}`)) {
+      fail(`${path.basename(file)} retained retired transport artifact package/${name}`);
+    }
+  }
   const manifest = assertWasixTypescriptManifest(
     JSON.parse(requireFile('package.json').toString('utf8')),
     `${path.basename(file)} package.json`,
@@ -191,8 +200,6 @@ export function assertWasixTypescriptNpmArchive(archive) {
     'lib/node-worker.js',
     'lib/node-worker-options.js',
     'lib/node-zstd.js',
-    'lib/node-web-worker.js',
-    'lib/node-web-worker-thread.js',
     'lib/server-runtime.js',
     'lib/storage/bun.js',
     'lib/storage/deno.js',

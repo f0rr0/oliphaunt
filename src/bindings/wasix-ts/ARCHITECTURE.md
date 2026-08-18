@@ -55,10 +55,9 @@ are not a TypeScript or server-runtime host optimization. Frontends, PGXS side m
 and concurrent PostgreSQL builds retain the normal atomic implementation. Host
 lifecycle stays separate. All TypeScript placements assert the shared
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
-denies guest process and thread creation under it. Only browser worker placement
-also uses `OLIPHAUNT_WASIX_STDIO_PGWIRE=1` for the patched stdio-pgwire pump;
-browser direct and server-runtime worker placement remove that transport marker and use
-the Oliphaunt export driver that mirrors the Rust host.
+denies guest process and thread creation under it. Every placement uses the
+Oliphaunt export driver and direct guest-memory protocol bridge that mirrors the
+Rust host; placement does not select a second transport implementation.
 
 ## Browser lifecycle
 
@@ -77,11 +76,11 @@ PostgreSQL session; direct calls also contend for the caller realm's event loop.
 
 The pinned host currently instantiates dynamically loaded native side modules
 synchronously. Chromium refuses main-realm modules above 8 MiB, so direct open
-fails early for a selected carrier above that threshold. The current PostGIS
-carrier also requires native load-order handling that neither browser
-placement implements, so the error does not advertise worker placement as a
-working fallback. The core guest uses the asynchronous path; smaller qualified
-side modules remain supported.
+fails early for a selected carrier above that threshold. Worker execution is
+outside that main-realm restriction and applies descriptor-declared native
+load order; a real Chrome canary loads PostGIS there and verifies recovery
+across its large dependency module. The core guest uses the asynchronous path;
+smaller qualified side modules remain supported in direct placement.
 
 1. Worker execution creates one module Web Worker; direct execution imports the
    package-relative host lazily in the caller realm.
@@ -101,23 +100,19 @@ side modules remain supported.
    `/dev/urandom`. Its narrow `Directory` mutation journal records successful
    writes and truncates through already-open descriptors as well as file,
    directory, remove, and rename paths for every placement and provider.
-   Worker execution passes the verified precompiled main module
-   and its original bytes to `runWasix`; direct execution gives the same pair to
-   `instantiateOliphauntDirect` and keeps the resulting Store in the caller
-   realm.
-4. Worker execution enables the explicit `OLIPHAUNT_WASIX_STDIO_PGWIRE=1`
-   contract, attaches the existing Oliphaunt Port to stdio, and frames backend
-   output through `ReadyForQuery`. Direct execution filters that transport flag
-   and instead pushes protocol bytes through the runtime's exported input and
-   output buffers, mirroring the WASIX Rust host. Both preserve a startup
+   Every placement passes the verified precompiled main module and its original
+   bytes to `instantiateOliphauntDirect`. Worker placement keeps the resulting
+   Store in its package worker; direct placement keeps it in the caller realm.
+4. Every placement pushes protocol bytes through guest-owned reusable input
+   and output buffers. The host writes requests directly into canonical guest
+   memory and returns one owned JavaScript response copy, so PostgreSQL can
+   safely reuse or grow its memory after the call. Startup preserves an
    `ErrorResponse` and its SQLSTATE even when startup terminates the guest.
-5. The worker's standalone loop emits a maintained second startup transition,
-   which `WasixProcess` drains before exposing the session. The direct export
-   driver completes startup without that stdio-only transition. Carrier-owned
-   extension lifecycle SQL then runs while the fixed bootstrap superuser is
-   active. As in the Rust binding, a requested non-default user is selected
-   from existing roles with `SET ROLE`; standalone bootstrap itself remains the
-   fixed `postgres` identity.
+5. The direct export driver completes the exported startup transition before
+   exposing the session. Carrier-owned extension lifecycle SQL then runs while
+   the fixed bootstrap superuser is active. As in the Rust binding, a requested
+   non-default user is selected from existing roles with `SET ROLE`; standalone
+   bootstrap itself remains the fixed `postgres` identity.
 6. The binding frames later responses through `ReadyForQuery` and exposes
    serialized `query`, `execute`, `execProtocolRaw`, `checkpoint`, and
    callback-scoped `transaction` calls through one database contract. The same
@@ -129,22 +124,22 @@ side modules remain supported.
    final boundary. `checkpoint` sends PostgreSQL `CHECKPOINT` without an
    intermediate publication, validates the normal pgwire result, then runs one
    checkpoint provider boundary. If a
-   PostgreSQL `ERROR` crosses either host boundary, the transport-scoped host
+   PostgreSQL `ERROR` crosses the host boundary, the direct host
    invokes `PostgresMainLongJmp`, sends and flushes readiness, and continues
    through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
    top-level cleanup as trapping errors.
-7. Worker `close` writes PostgreSQL Terminate, closes stdin, and waits for a
-   successful zero process exit. Direct `close` deactivates the embedded
-   lifecycle and runs its atexit exports synchronously. A successful close
+7. `close` sends PostgreSQL Terminate through the same direct bridge, then
+   deactivates the embedded lifecycle and runs its atexit exports synchronously
+   in the owning realm. A successful close
    publishes any remaining persistent delta. Every outcome closes the provider,
    releases its exclusive database lease, and frees its placement-owned host
    resources.
 
-The stdio guest entry mode exists because stock Wasmer's public browser API
-exposes streams and process completion, but not arbitrary guest exports. The
-source-pinned direct host deliberately adds only the narrow Oliphaunt export
-driver needed to match the WASIX Rust lifecycle; it is not a general
-synchronous WASIX process API.
+Stock Wasmer's public browser API exposes streams and process completion, but
+not arbitrary guest exports. The source-pinned host deliberately adds only the
+narrow Oliphaunt export driver needed to match the WASIX Rust lifecycle; it is
+not a general synchronous WASIX process API. Generic Wasmer process streams
+remain upstream behavior and are not part of the TypeScript database surface.
 
 ## Node, Bun, and Deno lifecycle
 
@@ -319,7 +314,7 @@ into `lib/host`; direct browser execution imports the host in the caller realm,
 while browser and Node/Bun/Deno direct/worker placements import the same
 package-relative module.
 
-This is not a general backport of WASIX 0.702 to Wasmer 0.601. The thirteen patches:
+This is not a general backport of WASIX 0.702 to Wasmer 0.601. The seventeen patches:
 
 1. compile the large module asynchronously, preserve raw module bytes across
    the blocking worker, and launch the configured `WasiEnvBuilder` rather than
@@ -328,49 +323,73 @@ This is not a general backport of WASIX 0.702 to Wasmer 0.601. The thirteen patc
    `proc_fork_env` and context create/switch/destroy for both memory widths;
 3. add ephemeral `/dev/shm` and Wasmer's unbounded random device without
    replacing the SDK's stream-backed stdio;
-4. recover PostgreSQL wasm-EH exceptions only for the explicit
-   `OLIPHAUNT_WASIX_STDIO_PGWIRE=1` contract, then remain in the existing
-   PostgreSQL export pump for the process lifetime;
-5. call wasm-bindgen through the object-form initializer required by the pinned
+4. call wasm-bindgen through the object-form initializer required by the pinned
    host toolchain;
-6. accept a verified precompiled guest `WebAssembly.Module` together with its
+5. accept a verified precompiled guest `WebAssembly.Module` together with its
    original bytes, so the blocking inner worker can reuse compilation without
    depending on unsupported Wasmer module serialization; and
-7. add a narrow caller-realm Oliphaunt driver that owns one Store, invokes the
+6. add a narrow caller-realm Oliphaunt driver that owns one Store, invokes the
    existing PostgreSQL startup/protocol/cleanup exports synchronously, and
    rejects generic WASIX task, thread, fork, and network work that would require
    another execution context;
-8. add Wasmer's Promise-backed JavaScript instance construction for modules
+7. add Wasmer's Promise-backed JavaScript instance construction for modules
    that exceed Chromium's synchronous main-realm limit; and
-9. carry that async boundary through the pinned WASIX builder and linker only
+8. carry that async boundary through the pinned WASIX builder and linker only
    while constructing the main module. The returned database driver remains
    synchronous, and oversized dynamic side modules are rejected before open;
    and
-10. repair the pinned source commit's stale npm-lock root metadata, then install
+9. repair the pinned source commit's stale npm-lock root metadata, then install
     that integrity-pinned dependency graph without lockfile mutation; and
-11. deny guest process replacement, process creation, and thread creation in
+10. deny guest process replacement, process creation, and thread creation in
     every TypeScript placement while the explicit single-backend contract is
-    active; the separate stdio-pgwire marker remains transport-only;
-12. remove the retired `wasm32-wasi` target from the pinned Wasmer JS build;
+    active;
+11. remove the retired `wasm32-wasi` target from the pinned Wasmer JS build;
     and
-13. cache the single-backend profile and use distinct realtime and monotonic
+12. cache the single-backend profile and use distinct realtime and monotonic
     JavaScript clocks, while amortizing pending-signal checks across high-volume
     PostgreSQL timing samples; and
-14. expose a current-state mutation journal whose write-file wrapper records
+13. expose a current-state mutation journal whose write-file wrapper records
     later writes and truncates through PostgreSQL descriptors retained across
-    protocol operations.
+    protocol operations;
+14. bind the single-backend guest's WASI clock directly to its imported
+    `WebAssembly.Memory`, cache its view until memory growth, and retain the Rust
+    syscall as a bounded pending-work, invalid-input, and compatibility fallback;
+    and
+15. add a narrow direct-PGWire bridge with guest-owned reusable buffers, so
+    requests enter canonical guest memory directly and responses make one final
+    copy into owned JavaScript storage that remains valid after PostgreSQL reuses
+    or grows guest memory; and
+16. retain a bounded 16 KiB tail of direct-session stderr and attach it only to
+    failed startup, protocol, and close operations, avoiding both silent worker
+    failures and an unbounded capture buffer on long-lived databases; and
+17. teach the pinned Wasmer JavaScript module parser to map standard nullable
+    and non-nullable WebAssembly exception references to its existing
+    `ExceptionRef` type, allowing worker-loaded side modules that use native
+    exception handling without adding extension-specific behavior.
 
 The clock specialization is intentionally narrower than a general syscall
-shortcut. Realtime uses the JavaScript epoch clock, monotonic and CPU-time
-compatibility IDs use the host's monotonic clock, synthetic clock offsets
-remain honored after `clock_time_set`, and pending WASIX operations are checked
-at a bounded interval. Other WASIX programs retain the complete upstream
+shortcut. Realtime uses the JavaScript epoch clock, while monotonic reads
+calibrate the host's monotonic clock against the canonical Rust fallback epoch,
+so fast and fallback reads cannot jump between domains. Process and thread CPU
+clocks remain on the canonical fallback because wall time is not an equivalent
+clock. Synthetic clock offsets remain honored by declining the direct import
+for guests that import `clock_time_set`, and pending WASIX operations are
+checked on a real-time bound. Invalid clock IDs, pointers, or host values use
+the complete Rust syscall. Other WASIX programs retain the complete upstream
 per-call path.
 
-The exact pairing is qualified for the single-process stdio-pgwire and direct
-Oliphaunt export paths, including repeated PostgreSQL `ERROR` recovery. The
+The exact pairing is qualified for the single-process direct Oliphaunt export
+path in every placement, including repeated PostgreSQL `ERROR` recovery. The
 direct driver treats every `PostgresMainLoopOnce` trap as the guest's exported
 top-level recovery boundary and also cleans up non-trapping ErrorResponses.
+Its JavaScript memory bridge is limited to the direct Oliphaunt driver: generic
+WASIX streams keep their normal ownership and scheduling semantics. Copy failures
+are caught before guest buffers are released, and protocol responses are copied
+once into owned JavaScript storage rather than exposed as mutable guest views.
+Browser qualification loads and calls PostGIS in a real worker and asserts that
+its dependency side module exceeds Chromium's 8 MiB main-thread compilation
+limit; the exemption is therefore attached to the worker realm, not to an
+extension name or a benchmark payload size.
 This remains an integration contract with the pinned Oliphaunt runtime rather
 than a generic Wasmer guarantee.
 Missing WASIX context switching is a broader compatibility gap, but is not part
@@ -437,10 +456,12 @@ This binding keeps the following deliberate divergences:
   without importing Emscripten FS. Oliphaunt keeps explicit provider-specific
   atomicity and exclusive ownership; multi-tab leadership remains unsupported.
 
-The manifest's native `load-order` metadata is retained but is not driven by
-this host. Selection therefore rejects nonempty `load-order` and
-`shared-memory-required` contracts. `pgtap` and the `pg_uuidv7` canary declare
-neither; affected extensions remain outside the qualified TypeScript host slice.
+The host validates every native `load-order` entry against the carrier's exact
+installed-file inventory, then emits PostgreSQL `LOAD` statements in dependency
+and declared module order before `CREATE EXTENSION`. PostgreSQL and Wasmer's
+dynamic linker remain responsible for each module's declared `dylink-needed`
+closure. `shared-memory-required` contracts remain rejected because the
+single-backend runtime has not qualified that capability.
 
 ## Asset ownership
 

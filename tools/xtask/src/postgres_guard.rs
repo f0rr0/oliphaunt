@@ -96,6 +96,7 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         "0041-oliphaunt-wasix-specialize-single-backend-atomics.patch",
         "0042-oliphaunt-wasix-buffer-strong-random.patch",
         "0043-oliphaunt-wasix-disable-unsupported-writeback-hints.patch",
+        "0044-oliphaunt-wasix-inline-sigsetjmp.patch",
     ] {
         ensure!(
             series.contains(&required),
@@ -176,6 +177,19 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
             "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
             "Actual fsync/fdatasync durability remains enabled.",
             "#elif defined(HAVE_SYNC_FILE_RANGE)",
+        ],
+    )?;
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR).join("0044-oliphaunt-wasix-inline-sigsetjmp.patch"),
+        &[
+            "src/Makefile.shlib",
+            "src/include/port/wasix-dl.h",
+            "src/makefiles/pgxs.mk",
+            "-DOLIPHAUNT_WASM_SIDE_MODULE",
+            "WebAssembly SJLJ requires setjmp to be visible at the protected call site.",
+            "defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)",
+            "#undef sigsetjmp",
+            "#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))",
         ],
     )?;
 
@@ -708,8 +722,8 @@ fn collect_pg18_legacy_symbol_leaks(
 
 fn check_postgres_patch_series_hygiene(patches: &[(String, String)]) -> Result<()> {
     ensure!(
-        patches.len() == 43,
-        "PG18 WASIX patch series should stay reviewable at exactly 43 audited patches; got {}",
+        patches.len() == 44,
+        "PG18 WASIX patch series should stay reviewable at exactly 44 audited patches; got {}",
         patches.len()
     );
     for (index, (patch_name, patch_text)) in patches.iter().enumerate() {
@@ -924,6 +938,9 @@ fn check_postgres_applied_runtime_abi(source: &Path) -> Result<()> {
             "OLIPHAUNT_WASIX_PROTOCOL_COPY_OUT",
             "OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH",
             "extern void oliphaunt_wasix_protocol_report_copy_response(int state)",
+            "defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)",
+            "#undef sigsetjmp",
+            "#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))",
         ],
     )?;
     ensure_file_contains_all(
@@ -998,15 +1015,16 @@ fn check_postgres_applied_runtime_abi(source: &Path) -> Result<()> {
         &[
             "oliphaunt_wasix_set_active",
             "oliphaunt_wasix_set_force_host_error_recovery",
-            "oliphaunt_wasix_set_protocol_stdio",
             "oliphaunt_wasix_set_protocol_transport",
             "oliphaunt_wasix_protocol_stream_active",
             "oliphaunt_wasix_input_reset",
-            "oliphaunt_wasix_input_write",
+            "oliphaunt_wasix_input_reserve",
+            "oliphaunt_wasix_input_commit",
             "oliphaunt_wasix_input_available",
             "oliphaunt_wasix_output_reset",
             "oliphaunt_wasix_output_len",
-            "oliphaunt_wasix_output_read",
+            "oliphaunt_wasix_output_data",
+            "oliphaunt_wasix_output_contains_error",
         ],
     )?;
     Ok(())
@@ -1688,7 +1706,8 @@ pub(crate) fn check_rust_startup_abi_boundary() -> Result<()> {
         "fn record_backend_c_timings",
         "oliphaunt_wasix_backend_timing_reset",
         "oliphaunt_wasix_backend_timing_elapsed_us",
-        "host_requires_process_exit_error_recovery",
+        "fn host_requires_process_exit_error_recovery() -> bool",
+        "cfg!(target_env = \"msvc\")",
         "oliphaunt_wasix_set_force_host_error_recovery",
         "oliphaunt_wasix_set_protocol_transport",
         "oliphaunt_wasix_protocol_stream_active",

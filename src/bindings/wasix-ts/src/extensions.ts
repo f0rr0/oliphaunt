@@ -279,11 +279,6 @@ export function resolveWasixExtensions(
     if (visited.has(sqlName)) {
       return;
     }
-    if (extension['load-order'].length > 0) {
-      throw new Error(
-        `selected WASIX extension '${sqlName}' requires native load-order handling that the @oliphaunt/wasix-ts host does not implement`,
-      );
-    }
     if (extension.lifecycle['shared-memory-required']) {
       throw new Error(
         `selected WASIX extension '${sqlName}' requires shared-memory behavior that the @oliphaunt/wasix-ts host has not qualified`,
@@ -483,8 +478,15 @@ export function extensionSetupSql(resolved: ResolvedWasixExtensions): string[] {
   const statements = resolved.runtimeDependencies.map(
     (dependency) => `CREATE EXTENSION IF NOT EXISTS ${quoteIdentifier(dependency)};`,
   );
+  const loadedModules = new Set<string>();
   for (const extension of resolved.extensions) {
     const lifecycle = extension.lifecycle;
+    for (const path of extension['load-order']) {
+      if (!loadedModules.has(path)) {
+        statements.push(`LOAD ${quoteLiteral(`/${path}`)};`);
+        loadedModules.add(path);
+      }
+    }
     if (lifecycle['create-extension']) {
       const schema = lifecycle['create-schema'] ?? undefined;
       if (schema !== undefined && schema !== 'pg_catalog') {
@@ -637,6 +639,13 @@ function quoteIdentifier(identifier: string): string {
     throw new Error('PostgreSQL identifier contains a NUL byte');
   }
   return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function quoteLiteral(value: string): string {
+  if (value.includes('\0')) {
+    throw new Error('PostgreSQL string literal contains a NUL byte');
+  }
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function appendCsv(value: string | undefined, ordered: string[], seen: Set<string>): void {

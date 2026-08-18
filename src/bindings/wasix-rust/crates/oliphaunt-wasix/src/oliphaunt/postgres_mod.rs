@@ -1,5 +1,3 @@
-#[cfg(debug_assertions)]
-use std::cell::Cell;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
@@ -48,7 +46,7 @@ use wasix_fs::{
 };
 pub use wasix_fs::{FsTraceSnapshot, fs_trace_snapshot, reset_fs_trace};
 
-const OLIPHAUNT_EXE_PATH: &str = "/bin/oliphaunt";
+const POSTGRES_EXE_PATH: &str = "/bin/postgres";
 const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
 const WASM_PREFIX: &str = "/";
@@ -186,7 +184,6 @@ pub struct PostgresMod {
     store: Store,
     _instance: Instance,
     env: WasiFunctionEnv,
-    guest_allocator: GuestAllocator,
     io: WasixOliphauntIo,
     lifecycle: OliphauntLifecycleExports,
     protocol: WasixProtocolExports,
@@ -297,20 +294,13 @@ struct WasixProtocolStdioExports {
 
 struct WasixOliphauntIo {
     input_reset: TypedFunction<(), i32>,
-    input_write: TypedFunction<(i32, i32), i32>,
+    input_reserve: TypedFunction<i32, i32>,
+    input_commit: TypedFunction<i32, i32>,
     input_available: TypedFunction<(), i32>,
     output_reset: TypedFunction<(), i32>,
     output_len: TypedFunction<(), i32>,
-    output_read: TypedFunction<(i32, i32), i32>,
-}
-
-struct GuestAllocator {
-    malloc: TypedFunction<i32, i32>,
-    free: TypedFunction<i32, ()>,
-    #[cfg(debug_assertions)]
-    allocations: Cell<u64>,
-    #[cfg(debug_assertions)]
-    frees: Cell<u64>,
+    output_data: TypedFunction<(), i32>,
+    output_contains_error: TypedFunction<(), i32>,
 }
 
 impl PostgresMod {
@@ -318,7 +308,7 @@ impl PostgresMod {
         let runtime_root = module_path
             .parent()
             .and_then(Path::parent)
-            .context("runtime module path must be under bin/oliphaunt")?;
+            .context("runtime module path must be under bin/postgres")?;
         let (engine, _) = aot::load_runtime_module()?;
         let process_runtime = process_wasix_runtime(&engine)?;
         preload_runtime_side_modules(
@@ -342,9 +332,9 @@ impl PostgresMod {
         let runtime_storage = runtime_layout.mutable_root.clone();
         let module_runtime_root = runtime_layout.module_root.clone();
         ensure!(
-            module_runtime_root.join("bin/oliphaunt").exists(),
-            "WASIX Oliphaunt executable not found at {}",
-            module_runtime_root.join("bin/oliphaunt").display()
+            module_runtime_root.join("bin/postgres").exists(),
+            "WASIX PostgreSQL executable not found at {}",
+            module_runtime_root.join("bin/postgres").display()
         );
 
         let (engine, module) = aot::load_runtime_module()?;
@@ -377,18 +367,17 @@ impl PostgresMod {
             &instance,
             &env,
             "my_exec_path",
-            OLIPHAUNT_EXE_PATH,
+            POSTGRES_EXE_PATH,
         )?;
 
-        let (guest_allocator, io, lifecycle, protocol, protocol_stdio) = {
+        let (io, lifecycle, protocol, protocol_stdio) = {
             let _phase = timing::phase("wasix.export_load");
-            let guest_allocator = GuestAllocator::load(&mut store, &instance)?;
             let io = WasixOliphauntIo::new(&mut store, &instance)?;
             ensure_integrated_oliphaunt_contract(&instance)?;
             let lifecycle = OliphauntLifecycleExports::load(&mut store, &instance)?;
             let protocol = WasixProtocolExports::load(&mut store, &instance)?;
             let protocol_stdio = WasixProtocolStdioExports::load(&mut store, &instance)?;
-            (guest_allocator, io, lifecycle, protocol, protocol_stdio)
+            (io, lifecycle, protocol, protocol_stdio)
         };
 
         let pg = Self {
@@ -399,7 +388,6 @@ impl PostgresMod {
             store,
             _instance: instance,
             env,
-            guest_allocator,
             io,
             lifecycle,
             protocol,
@@ -422,11 +410,6 @@ impl PostgresMod {
 
     pub(crate) fn pgdata_template_root(&self) -> Option<&Path> {
         self.pgdata_template_root.as_deref()
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
-        self.guest_allocator.allocation_counts()
     }
 
     pub(crate) fn ensure_cluster(&mut self) -> Result<()> {
@@ -518,10 +501,7 @@ impl PostgresMod {
 
     fn take_startup_output_after_failure(&mut self) -> Option<Vec<u8>> {
         let _ = self.protocol.pq_flush.call(&mut self.store);
-        match self
-            .io
-            .take_output(&mut self.store, &self.env, &self.guest_allocator)
-        {
+        match self.io.take_output(&mut self.store, &self.env) {
             Ok(output) if !output.is_empty() => Some(output),
             Ok(_) => None,
             Err(err) => {
@@ -750,8 +730,7 @@ impl PostgresMod {
         }
         {
             let _phase = timing::phase("postgres.protocol.input_write");
-            self.io
-                .push_input(&mut self.store, &self.env, &self.guest_allocator, payload)?;
+            self.io.push_input(&mut self.store, &self.env, payload)?;
         }
 
         {
@@ -800,13 +779,14 @@ impl PostgresMod {
                     .call(&mut self.store)
                     .context("oliphaunt_wasix_pq_flush after protocol buffer")?;
             }
+            let contains_error = self.io.output_contains_error(&mut self.store)?;
             let output = {
                 let _phase = timing::phase("postgres.protocol.output_read");
                 self.io
-                    .take_output(&mut self.store, &self.env, &self.guest_allocator)
+                    .take_output(&mut self.store, &self.env)
                     .context("take backend output after protocol buffer")?
             };
-            if !recovered_protocol_error && protocol_response_contains_error(&output) {
+            if !recovered_protocol_error && contains_error {
                 self.recover_non_trapping_protocol_error()?;
             }
             self.record_backend_c_timings()?;
@@ -928,8 +908,7 @@ impl PostgresMod {
         }
         {
             let _phase = timing::phase("postgres.startup_packet.input_write");
-            self.io
-                .push_input(&mut self.store, &self.env, &self.guest_allocator, startup)?;
+            self.io.push_input(&mut self.store, &self.env, startup)?;
         }
 
         // The upstream lifecycle is already running by this point. These calls
@@ -953,9 +932,7 @@ impl PostgresMod {
         };
         if status != 0 {
             let _ = self.protocol.pq_flush.call(&mut self.store);
-            let output = self
-                .io
-                .take_output(&mut self.store, &self.env, &self.guest_allocator)?;
+            let output = self.io.take_output(&mut self.store, &self.env)?;
             return Ok(StartupProtocolResponse {
                 output,
                 accepted: false,
@@ -979,8 +956,7 @@ impl PostgresMod {
             }
             {
                 let _phase = timing::phase("postgres.startup_packet.output_read");
-                self.io
-                    .take_output(&mut self.store, &self.env, &self.guest_allocator)?
+                self.io.take_output(&mut self.store, &self.env)?
             }
         };
         self.started = true;
@@ -1047,9 +1023,7 @@ impl PostgresMod {
             .pq_flush
             .call(&mut self.store)
             .context("oliphaunt_wasix_pq_flush after backend ErrorResponse recovery")?;
-        let _ = self
-            .io
-            .take_output(&mut self.store, &self.env, &self.guest_allocator)?;
+        let _ = self.io.take_output(&mut self.store, &self.env)?;
         Ok(())
     }
 
@@ -1136,12 +1110,12 @@ fn instantiate_wasix_module(
     runner.with_stdin(Box::new(protocol_stdio_file.clone()));
     runner.with_stdout(Box::new(protocol_stdio_file.clone()));
     runner.with_stderr(Box::new(stderr_file));
-    let wasi = Wasi::new(OLIPHAUNT_EXE_PATH);
+    let wasi = Wasi::new(POSTGRES_EXE_PATH);
     let mut builder = {
         let _phase = timing::phase("wasix.instantiate.prepare_env");
         runner
             .prepare_webc_env(
-                OLIPHAUNT_EXE_PATH,
+                POSTGRES_EXE_PATH,
                 &wasi,
                 PackageOrHash::Hash(ModuleHash::random()),
                 RuntimeOrEngine::Runtime(input.wasix_runtime.clone()),
@@ -1792,11 +1766,17 @@ impl WasixOliphauntIo {
     fn new(store: &mut Store, instance: &Instance) -> Result<Self> {
         let io = Self {
             input_reset: typed_export(store, instance, "oliphaunt_wasix_input_reset")?,
-            input_write: typed_export(store, instance, "oliphaunt_wasix_input_write")?,
+            input_reserve: typed_export(store, instance, "oliphaunt_wasix_input_reserve")?,
+            input_commit: typed_export(store, instance, "oliphaunt_wasix_input_commit")?,
             input_available: typed_export(store, instance, "oliphaunt_wasix_input_available")?,
             output_reset: typed_export(store, instance, "oliphaunt_wasix_output_reset")?,
             output_len: typed_export(store, instance, "oliphaunt_wasix_output_len")?,
-            output_read: typed_export(store, instance, "oliphaunt_wasix_output_read")?,
+            output_data: typed_export(store, instance, "oliphaunt_wasix_output_data")?,
+            output_contains_error: typed_export(
+                store,
+                instance,
+                "oliphaunt_wasix_output_contains_error",
+            )?,
         };
         io.reset(store)?;
         Ok(io)
@@ -1820,24 +1800,29 @@ impl WasixOliphauntIo {
         Ok(())
     }
 
-    fn push_input(
-        &self,
-        store: &mut Store,
-        env: &WasiFunctionEnv,
-        allocator: &GuestAllocator,
-        bytes: &[u8],
-    ) -> Result<()> {
+    fn push_input(&self, store: &mut Store, env: &WasiFunctionEnv, bytes: &[u8]) -> Result<()> {
         if bytes.is_empty() {
             return Ok(());
         }
-        let written = allocator.with_bytes(store, env, bytes, |store, ptr| {
-            self.input_write
-                .call(&mut *store, ptr, bytes.len() as i32)
-                .context("oliphaunt_wasix_input_write")
-        })?;
+        let len = i32::try_from(bytes.len()).context("protocol input exceeds i32")?;
+        let ptr = self
+            .input_reserve
+            .call(&mut *store, len)
+            .context("oliphaunt_wasix_input_reserve")?;
+        ensure!(ptr > 0, "oliphaunt_wasix_input_reserve returned null");
+        let view = env
+            .data(&*store)
+            .try_memory_view(&*store)
+            .context("get WASIX memory view")?;
+        view.write(ptr as u64, bytes)
+            .with_context(|| format!("write protocol input at 0x{ptr:x}"))?;
+        let written = self
+            .input_commit
+            .call(&mut *store, len)
+            .context("oliphaunt_wasix_input_commit")?;
         ensure!(
-            written == bytes.len() as i32,
-            "oliphaunt_wasix_input_write wrote {written}, expected {}",
+            written == len,
+            "oliphaunt_wasix_input_commit committed {written}, expected {}",
             bytes.len()
         );
         Ok(())
@@ -1855,12 +1840,7 @@ impl WasixOliphauntIo {
         Ok(available)
     }
 
-    fn take_output(
-        &self,
-        store: &mut Store,
-        env: &WasiFunctionEnv,
-        allocator: &GuestAllocator,
-    ) -> Result<Vec<u8>> {
+    fn take_output(&self, store: &mut Store, env: &WasiFunctionEnv) -> Result<Vec<u8>> {
         let len = self
             .output_len
             .call(&mut *store)
@@ -1872,25 +1852,21 @@ impl WasixOliphauntIo {
         if len == 0 {
             return Ok(Vec::new());
         }
-        let bytes = allocator.with_allocation(store, len, |store, ptr| {
-            let read = self
-                .output_read
-                .call(&mut *store, ptr, len)
-                .context("oliphaunt_wasix_output_read")?;
-            ensure!(
-                read >= 0 && read <= len,
-                "invalid oliphaunt_wasix_output_read length {read}"
-            );
-
-            let mut bytes = vec![0u8; read as usize];
-            let view = env
-                .data(&*store)
-                .try_memory_view(&*store)
-                .context("get WASIX memory view")?;
-            view.read(ptr as u64, &mut bytes)
-                .with_context(|| format!("read SQL output at 0x{ptr:x}"))?;
-            Ok(bytes)
-        })?;
+        let ptr = self
+            .output_data
+            .call(&mut *store)
+            .context("oliphaunt_wasix_output_data")?;
+        ensure!(
+            ptr > 0,
+            "oliphaunt_wasix_output_data returned null for non-empty output"
+        );
+        let mut bytes = vec![0u8; len as usize];
+        let view = env
+            .data(&*store)
+            .try_memory_view(&*store)
+            .context("get WASIX memory view")?;
+        view.read(ptr as u64, &mut bytes)
+            .with_context(|| format!("read protocol output at 0x{ptr:x}"))?;
         ensure!(
             self.output_reset
                 .call(&mut *store)
@@ -1900,92 +1876,13 @@ impl WasixOliphauntIo {
         );
         Ok(bytes)
     }
-}
 
-impl GuestAllocator {
-    fn load(store: &mut Store, instance: &Instance) -> Result<Self> {
-        let malloc = typed_export::<i32, i32>(store, instance, "malloc")?;
-        let free = typed_export::<i32, ()>(store, instance, "pg_free")
-            .or_else(|_| typed_export::<i32, ()>(store, instance, "free"))
-            .context("get pg_free/free export")?;
-        Ok(Self {
-            malloc,
-            free,
-            #[cfg(debug_assertions)]
-            allocations: Cell::new(0),
-            #[cfg(debug_assertions)]
-            frees: Cell::new(0),
-        })
-    }
-
-    #[cfg(debug_assertions)]
-    fn allocation_counts(&self) -> (u64, u64) {
-        (self.allocations.get(), self.frees.get())
-    }
-
-    fn with_bytes<R>(
-        &self,
-        store: &mut Store,
-        env: &WasiFunctionEnv,
-        bytes: &[u8],
-        f: impl FnOnce(&mut Store, i32) -> Result<R>,
-    ) -> Result<R> {
-        let ptr = self.allocate(store, bytes.len() as i32)?;
-        self.run_and_free(store, ptr, |store, ptr| {
-            let view = env
-                .data(&*store)
-                .try_memory_view(&*store)
-                .context("get WASIX memory view")?;
-            view.write(ptr as u64, bytes)
-                .with_context(|| format!("write guest bytes at 0x{ptr:x}"))?;
-            f(store, ptr)
-        })
-    }
-
-    fn with_allocation<R>(
-        &self,
-        store: &mut Store,
-        len: i32,
-        f: impl FnOnce(&mut Store, i32) -> Result<R>,
-    ) -> Result<R> {
-        let ptr = self.allocate(store, len)?;
-        self.run_and_free(store, ptr, f)
-    }
-
-    fn allocate(&self, store: &mut Store, len: i32) -> Result<i32> {
-        let ptr = self
-            .malloc
-            .call(&mut *store, len)
-            .context("malloc guest allocation")?;
-        ensure!(ptr > 0, "malloc returned null for guest allocation");
-        #[cfg(debug_assertions)]
-        self.allocations.set(self.allocations.get() + 1);
-        Ok(ptr)
-    }
-
-    fn run_and_free<R>(
-        &self,
-        store: &mut Store,
-        ptr: i32,
-        f: impl FnOnce(&mut Store, i32) -> Result<R>,
-    ) -> Result<R> {
-        let result = f(store, ptr);
-        let free_result = self
-            .free
-            .call(&mut *store, ptr)
-            .with_context(|| format!("free guest allocation at 0x{ptr:x}"));
-        #[cfg(debug_assertions)]
-        if free_result.is_ok() {
-            self.frees.set(self.frees.get() + 1);
-        }
-        match (result, free_result) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Ok(_), Err(err)) => Err(err),
-            (Err(err), Ok(())) => Err(err),
-            (Err(err), Err(free_err)) => Err(err.context(format!(
-                "failed to free guest allocation at 0x{ptr:x} after previous error: {free_err:#}"
-            ))),
-        }
+    fn output_contains_error(&self, store: &mut Store) -> Result<bool> {
+        Ok(self
+            .output_contains_error
+            .call(store)
+            .context("oliphaunt_wasix_output_contains_error")?
+            != 0)
     }
 }
 
@@ -2042,10 +1939,9 @@ fn is_wasm_uncaught_exception(err: &wasmer::RuntimeError) -> bool {
 }
 
 fn host_requires_process_exit_error_recovery() -> bool {
-    // Wasmer does not implement nested WebAssembly exception throws on MSVC
-    // hosts. The WASIX bridge therefore routes PostgreSQL ERROR longjmps
-    // through the existing process-exit recovery boundary on that host
-    // capability, while preserving normal nested unwinding elsewhere.
+    // Wasmer 7.2.1 disables its WebAssembly exception-handling tests on
+    // Windows. Keep PostgreSQL's proven top-level process-exit recovery there;
+    // other hosts retain nested PG_TRY/PG_CATCH unwinding.
     cfg!(target_env = "msvc")
 }
 

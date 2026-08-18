@@ -394,9 +394,9 @@ Implemented coverage:
   after the C bridge reports active streaming COPY;
 - direct raw protocol streaming is routed through the shared `BackendSession`
   framed sender instead of a separate client-only transport path;
-- Rust-owned guest bridge allocations are scoped through `pg_free`/`free`, and
-  debug builds now have a direct raw-protocol stress test proving repeated
-  bridge round trips keep allocation/free counters balanced;
+- the C bridge owns reusable input/output capacity, and the direct raw-protocol
+  stress test proves repeated bridge round trips remain correct without
+  per-request guest allocation/free calls;
 - direct LISTEN/UNLISTEN quotes channel identifiers and dispatches notifications
   by the exact backend channel name, including case-sensitive and quoted names.
 - a larger PostgreSQL regression subset now ports the relevant Oliphaunt test
@@ -422,13 +422,14 @@ Verified ownership boundaries:
   state, COPY state, portal cleanup, and longjmp recovery boundaries;
 - the WASIX bridge owns only the host ABI that Wasmer/WASIX cannot provide as a
   normal OS process boundary: protocol fd transport, locale/identity shims,
-  single-process shared memory, fail-closed process calls, and explicit
-  allocation/free ownership.
+  single-process shared memory, fail-closed process calls, and reusable
+  guest-owned protocol buffers.
 
 Review conclusions:
 
-- guest-memory ownership is scoped through `GuestAllocator`, `pg_free`/`free`,
-  and debug allocation/free counters;
+- guest-memory ownership is scoped through bridge-owned input/output buffers;
+  hosts copy requests directly into reserved guest memory and copy each
+  response once into host-owned storage before the bridge buffer is reset;
 - detached protocol stdio fails closed rather than silently accepting bytes;
 - COPY state is reported by PostgreSQL through
   `pgl_protocol_report_copy_response`; the proxy no longer parses SQL text,

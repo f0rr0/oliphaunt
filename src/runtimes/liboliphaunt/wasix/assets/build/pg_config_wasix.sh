@@ -106,7 +106,7 @@ case "${1:-}" in
     echo "wasixcc"
     ;;
   --cppflags)
-    echo "-I$BUILD_DIR/src/include -I$PGSRC/src/include -I$PGSRC/src/include/port/wasix-dl"
+    echo "-D_GNU_SOURCE -DOLIPHAUNT_WASM_SIDE_MODULE -I$BUILD_DIR/src/include -I$PGSRC/src/include -I$PGSRC/src/include/port/wasix-dl"
     ;;
   --cflags)
     echo ""

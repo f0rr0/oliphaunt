@@ -219,14 +219,28 @@ Rust binding's AOT artifacts and the portable module used by browser direct,
 browser worker, and Node/Bun/Deno worker execution all benefit. They are not
 host-specific patches.
 
-Transport remains host-specific. PostgreSQL patch 0039 adds an opt-in stdio
-pgwire entry point to the shared guest, but only browser-worker execution sets
-`OLIPHAUNT_WASIX_STDIO_PGWIRE=1`. Rust, browser-direct, and Node/Bun/Deno hosts pump the
-existing lifecycle exports instead. The patches under
+Transport remains host-specific. Current TypeScript placements, including the
+dedicated browser worker, use the direct guest-memory PGWire driver; worker
+execution isolates its synchronous guest calls from the browser main thread.
+PostgreSQL patch 0039 declares the hybrid transport ABI used only when the Rust
+proxy enters COPY streaming; it does not add a process-level stdio entry point.
+Rust pumps the existing lifecycle exports through its native Wasmer host. The patches under
 `src/bindings/wasix-ts/host` adapt the pinned Wasmer JS 6.1/WASIX 0.601 host;
-they do not belong in the Rust host, which uses the coherent Wasmer
+that host binds the explicitly single-backend guest clock directly to imported
+memory. Its direct PGWire driver also moves
+request bytes straight from JavaScript into guest memory and returns one owned
+JavaScript response, avoiding intermediate copies without exposing a view that
+PostgreSQL could later mutate. Direct-session stderr is retained only as a
+bounded 16 KiB diagnostic tail and attached on lifecycle failure. These host
+adaptations do not belong in the Rust host,
+which uses the coherent Wasmer
 7.2.1/WASIX 0.702.1 family. Native runtimes keep PostgreSQL's normal concurrent
 atomics and their own transport rather than inheriting either WASIX contract.
+Wasmer 7.2.1 explicitly disables WebAssembly exception-handling tests on
+Windows, so the Rust MSVC host retains PostgreSQL's top-level process-exit
+recovery boundary. Nested `PG_TRY`/`PG_CATCH` qualification applies to the
+other Rust hosts and the JavaScript host; Windows still proves top-level error
+recovery but does not claim nested Wasm-EH support.
 
 ## Wasmer compatibility
 

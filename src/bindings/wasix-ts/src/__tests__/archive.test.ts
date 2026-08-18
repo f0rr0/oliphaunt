@@ -11,13 +11,13 @@ describe('WASIX TypeScript archives', () => {
 
   it('extracts regular files from a tar archive', () => {
     const archive = tar([
-      ['oliphaunt/bin/oliphaunt', Uint8Array.of(0, 97, 115, 109)],
+      ['oliphaunt/bin/postgres', Uint8Array.of(0, 97, 115, 109)],
       ['oliphaunt/share/postgresql/postgres.bki', new TextEncoder().encode('bki')],
     ]);
 
     expect(extractTar(archive)).toEqual({
       files: new Map([
-        ['oliphaunt/bin/oliphaunt', Uint8Array.of(0, 97, 115, 109)],
+        ['oliphaunt/bin/postgres', Uint8Array.of(0, 97, 115, 109)],
         ['oliphaunt/share/postgresql/postgres.bki', new TextEncoder().encode('bki')],
       ]),
       directories: new Set(),
@@ -72,7 +72,7 @@ describe('WASIX TypeScript archives', () => {
   it('separates canonical runtime and PGDATA files into Wasmer mounts', () => {
     const runtime = {
       files: new Map([
-        ['oliphaunt/bin/oliphaunt', Uint8Array.of(0, 97, 115, 109)],
+        ['oliphaunt/bin/postgres', Uint8Array.of(0, 97, 115, 109)],
         ['oliphaunt/lib/postgresql/plpgsql.so', Uint8Array.of(1)],
         ['oliphaunt/share/postgresql/postgres.bki', Uint8Array.of(2)],
       ]),
@@ -89,7 +89,8 @@ describe('WASIX TypeScript archives', () => {
     const layout = layoutRuntime(runtime, pgdata);
 
     expect(layout.module).toEqual(Uint8Array.of(0, 97, 115, 109));
-    expect(layout.mounts['/bin']?.files.oliphaunt).toEqual(layout.module);
+    expect(layout.mounts['/bin']?.files.postgres).toEqual(layout.module);
+    expect(layout.mounts['/bin']?.files.oliphaunt).toBeUndefined();
     expect(layout.mounts['/lib']?.files['postgresql/plpgsql.so']).toEqual(Uint8Array.of(1));
     expect(layout.mounts['/lib']?.directories).toContain('postgresql');
     expect(layout.mounts['/base']?.files['global/pg_control']).toEqual(Uint8Array.of(3));

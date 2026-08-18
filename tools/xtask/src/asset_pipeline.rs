@@ -362,7 +362,7 @@ impl BuildOutputs {
         let runtime_path = base.join("runtime/oliphaunt");
         write_bytes_file(
             &runtime_path,
-            &archive_entry_bytes(&runtime_archive, "oliphaunt/bin/oliphaunt")?,
+            &archive_entry_bytes(&runtime_archive, RUNTIME_MODULE_ARCHIVE_MEMBER)?,
         )?;
 
         let mut modules = vec![BuildModuleOutput {
@@ -981,8 +981,13 @@ pub(crate) fn check_source_controlled_wasix_export_list() -> Result<()> {
         "oliphaunt_wasix_protocol_stream_active",
         "oliphaunt_wasix_start",
         "oliphaunt_wasix_set_protocol_transport",
-        "oliphaunt_wasix_input_write",
-        "oliphaunt_wasix_output_read",
+        "oliphaunt_wasix_input_reserve",
+        "oliphaunt_wasix_input_commit",
+        "oliphaunt_wasix_output_data",
+        "oliphaunt_wasix_output_contains_error",
+        "__wasm_longjmp",
+        "__wasm_setjmp",
+        "__wasm_setjmp_test",
         "malloc",
         "free",
     ] {
@@ -1201,29 +1206,7 @@ fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<
 }
 
 pub(crate) fn required_runtime_abi_exports() -> &'static [&'static str] {
-    &[
-        "_start",
-        "oliphaunt_wasix_set_active",
-        "oliphaunt_wasix_start",
-        "oliphaunt_wasix_get_proc_port",
-        "ProcessStartupPacket",
-        "oliphaunt_wasix_send_conn_data",
-        "oliphaunt_wasix_pq_flush",
-        "pq_buffer_remaining_data",
-        "PostgresMainLoopOnce",
-        "PostgresSendReadyForQueryIfNecessary",
-        "PostgresMainLongJmp",
-        "oliphaunt_wasix_set_protocol_stdio",
-        "oliphaunt_wasix_set_force_host_error_recovery",
-        "oliphaunt_wasix_protocol_stream_active",
-        "oliphaunt_wasix_input_reset",
-        "oliphaunt_wasix_input_write",
-        "oliphaunt_wasix_input_available",
-        "oliphaunt_wasix_output_reset",
-        "oliphaunt_wasix_output_len",
-        "oliphaunt_wasix_output_read",
-        "oliphaunt_wasix_set_protocol_transport",
-    ]
+    REQUIRED_RUNTIME_ABI_EXPORTS
 }
 
 const WASIX_LINKER_RUNTIME_EXPORTS: &[&str] = &[
@@ -2185,7 +2168,6 @@ fn stage_runtime_tree(build: &Path, source: &Path, runtime: &Path) -> Result<()>
     fs::create_dir_all(&lib).with_context(|| format!("create {}", lib.display()))?;
     fs::create_dir_all(&share).with_context(|| format!("create {}", share.display()))?;
 
-    copy_file(&build.join("src/backend/oliphaunt"), &bin.join("oliphaunt"))?;
     copy_file(&build.join("src/backend/oliphaunt"), &bin.join("postgres"))?;
     copy_file(&build.join("src/bin/initdb/initdb"), &bin.join("initdb"))?;
     fs::write(runtime.join("password"), b"password\n")
@@ -3491,7 +3473,7 @@ pub(crate) fn update_staged_root_asset_metadata(workspace: &Path) -> Result<()> 
     let asset_dir = workspace.join(GENERATED_ASSETS_DIR);
     let manifest = read_asset_manifest_from(&asset_dir)?;
     let runtime_archive = asset_dir.join(&manifest.runtime.archive);
-    let runtime_module = archive_entry_bytes(&runtime_archive, "oliphaunt/bin/oliphaunt")?;
+    let runtime_module = archive_entry_bytes(&runtime_archive, RUNTIME_MODULE_ARCHIVE_MEMBER)?;
     update_root_asset_metadata_in(
         workspace,
         &asset_dir,

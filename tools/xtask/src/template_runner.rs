@@ -45,7 +45,7 @@ pub(crate) fn run_wasix_initdb_template(runtime_stage: &Path, work_root: &Path) 
         &package_dir.join("modules/initdb.wasm"),
     )?;
     copy_file(
-        &runtime_stage.join("bin/oliphaunt"),
+        &runtime_stage.join("bin/postgres"),
         &package_dir.join("modules/postgres.wasm"),
     )?;
     let wasmer_toml = r#"

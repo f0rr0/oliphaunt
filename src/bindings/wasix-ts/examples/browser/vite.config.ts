@@ -36,6 +36,7 @@ function wasixAssets(): Plugin {
     ['@oliphaunt/liboliphaunt-wasix', '\0oliphaunt:liboliphaunt-wasix'],
     ['@oliphaunt/extension-pgtap-wasix', '\0oliphaunt:extension-pgtap-wasix'],
     ['@oliphaunt/extension-pg-uuidv7-wasix', '\0oliphaunt:extension-pg-uuidv7-wasix'],
+    ['@oliphaunt/extension-postgis-wasix', '\0oliphaunt:extension-postgis-wasix'],
   ]);
   const packageByVirtualModule = new Map(
     [...virtualModules].map(([packageName, virtualModule]) => [virtualModule, packageName]),
@@ -47,6 +48,7 @@ function wasixAssets(): Plugin {
     ['/manifest', resolve(assetRoot, 'manifest.json')],
     ['/extensions/pgtap', resolve(assetRoot, 'extensions/pgtap.tar.zst')],
     ['/extensions/pg_uuidv7', resolve(assetRoot, 'extensions/pg_uuidv7.tar.zst')],
+    ['/extensions/postgis', resolve(assetRoot, 'extensions/postgis.tar.zst')],
     ['/pglite.data', resolve(pgliteAssetRoot, 'pglite.data')],
     ['/pglite.wasm', resolve(pgliteAssetRoot, 'pglite.wasm')],
     ['/initdb.wasm', resolve(pgliteAssetRoot, 'initdb.wasm')],
@@ -231,6 +233,12 @@ function extensionPackage(packageName: string): {
         product: 'oliphaunt-extension-pg-uuidv7',
         releasePath: 'src/extensions/external/pg_uuidv7',
         sqlName: 'pg_uuidv7',
+      };
+    case '@oliphaunt/extension-postgis-wasix':
+      return {
+        product: 'oliphaunt-extension-postgis',
+        releasePath: 'src/extensions/external/postgis',
+        sqlName: 'postgis',
       };
     default:
       throw new Error(`unsupported development WASIX package ${packageName}`);

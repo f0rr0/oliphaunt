@@ -16,7 +16,7 @@ let environmentInstalled = false;
 
 const directHost: DirectWasixHost = {
   Directory: host.Directory,
-  init: host.initDirect,
+  init: host.init,
   instantiateOliphauntDirect: host.instantiateOliphauntDirect,
 };
 

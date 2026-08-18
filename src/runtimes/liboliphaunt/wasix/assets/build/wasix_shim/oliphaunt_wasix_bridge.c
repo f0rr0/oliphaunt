@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
 #include <poll.h>
 #include <pwd.h>
 #include <setjmp.h>
@@ -78,10 +79,14 @@ pg_encoding_to_char(int encoding)
 static unsigned char *oliphaunt_wasix_input_buf;
 static size_t oliphaunt_wasix_input_len;
 static size_t oliphaunt_wasix_input_off;
+static size_t oliphaunt_wasix_input_cap;
+static size_t oliphaunt_wasix_input_reserved;
 
 static unsigned char *oliphaunt_wasix_output_buf;
 static size_t oliphaunt_wasix_output_len_value;
 static size_t oliphaunt_wasix_output_cap;
+static size_t oliphaunt_wasix_output_scan_off;
+static bool oliphaunt_wasix_output_contains_error_value;
 enum
 {
 	OLIPHAUNT_WASIX_PROTOCOL_BUFFERED = 0,
@@ -106,13 +111,6 @@ static int atexit_func_count;
 int oliphaunt_wasix_set_protocol_transport(int mode);
 ssize_t oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags);
 ssize_t oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags);
-
-int EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_set_protocol_stdio(int enabled)
-{
-	return oliphaunt_wasix_set_protocol_transport(enabled ? OLIPHAUNT_WASIX_PROTOCOL_STREAM
-											  : OLIPHAUNT_WASIX_PROTOCOL_BUFFERED);
-}
 
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_set_protocol_transport(int mode)
@@ -194,7 +192,7 @@ oliphaunt_wasix_longjmp(jmp_buf env, int val)
 	 */
 	if (is_oliphaunt_active &&
 		(force_host_error_recovery ||
-		 memcmp(env, (void *) postgresmain_sigjmp_buf, sizeof(jmp_buf)) == 0))
+		 env == (void *) postgresmain_sigjmp_buf))
 	{
 		exit(POSTGRES_MAIN_LONGJMP);
 	}
@@ -277,18 +275,22 @@ oliphaunt_wasix_input_reset(void)
 {
 	oliphaunt_wasix_input_len = 0;
 	oliphaunt_wasix_input_off = 0;
+	oliphaunt_wasix_input_reserved = 0;
 	return 0;
 }
 
-int EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_input_write(const void *buffer, size_t length)
+void *EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_input_reserve(size_t length)
 {
-	if (length == 0)
-		return 0;
-	if (buffer == NULL)
+	if (length == 0 || oliphaunt_wasix_input_reserved != 0)
 	{
 		errno = EINVAL;
-		return -1;
+		return NULL;
+	}
+	if (length > INT_MAX || oliphaunt_wasix_input_len > (size_t) INT_MAX - length)
+	{
+		errno = EOVERFLOW;
+		return NULL;
 	}
 
 	if (oliphaunt_wasix_input_off == oliphaunt_wasix_input_len)
@@ -297,17 +299,48 @@ oliphaunt_wasix_input_write(const void *buffer, size_t length)
 		oliphaunt_wasix_input_off = 0;
 	}
 
-	size_t new_len = oliphaunt_wasix_input_len + length;
-	unsigned char *new_buf = realloc(oliphaunt_wasix_input_buf, new_len);
-	if (new_buf == NULL)
+	if (length > SIZE_MAX - oliphaunt_wasix_input_len)
 	{
-		errno = ENOMEM;
-		return -1;
+		errno = EOVERFLOW;
+		return NULL;
+	}
+	size_t new_len = oliphaunt_wasix_input_len + length;
+	if (new_len > oliphaunt_wasix_input_cap)
+	{
+		size_t next_cap = oliphaunt_wasix_input_cap ? oliphaunt_wasix_input_cap : 8192;
+		while (next_cap < new_len)
+		{
+			if (next_cap > SIZE_MAX / 2)
+			{
+				next_cap = new_len;
+				break;
+			}
+			next_cap *= 2;
+		}
+		unsigned char *new_buf = realloc(oliphaunt_wasix_input_buf, next_cap);
+		if (new_buf == NULL)
+		{
+			errno = ENOMEM;
+			return NULL;
+		}
+		oliphaunt_wasix_input_buf = new_buf;
+		oliphaunt_wasix_input_cap = next_cap;
 	}
 
-	oliphaunt_wasix_input_buf = new_buf;
-	memcpy(oliphaunt_wasix_input_buf + oliphaunt_wasix_input_len, buffer, length);
-	oliphaunt_wasix_input_len = new_len;
+	oliphaunt_wasix_input_reserved = length;
+	return oliphaunt_wasix_input_buf + oliphaunt_wasix_input_len;
+}
+
+int EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_input_commit(size_t length)
+{
+	if (length == 0 || length != oliphaunt_wasix_input_reserved)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	oliphaunt_wasix_input_len += length;
+	oliphaunt_wasix_input_reserved = 0;
 	return (int) length;
 }
 
@@ -368,6 +401,8 @@ int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_output_reset(void)
 {
 	oliphaunt_wasix_output_len_value = 0;
+	oliphaunt_wasix_output_scan_off = 0;
+	oliphaunt_wasix_output_contains_error_value = false;
 	oliphaunt_wasix_protocol_copy_state_value = OLIPHAUNT_WASIX_PROTOCOL_COPY_NONE;
 	oliphaunt_wasix_protocol_stream_requested = false;
 	return 0;
@@ -379,17 +414,38 @@ oliphaunt_wasix_output_len(void)
 	return oliphaunt_wasix_output_len_value;
 }
 
-size_t EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_output_read(void *buffer, size_t max_length)
+const void *EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_output_data(void)
 {
-	if (buffer == NULL || max_length == 0 || oliphaunt_wasix_output_len_value == 0)
-		return 0;
+	return oliphaunt_wasix_output_buf;
+}
 
-	size_t to_copy = oliphaunt_wasix_output_len_value < max_length
-		? oliphaunt_wasix_output_len_value
-		: max_length;
-	memcpy(buffer, oliphaunt_wasix_output_buf, to_copy);
-	return to_copy;
+int EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_output_contains_error(void)
+{
+	return oliphaunt_wasix_output_contains_error_value ? 1 : 0;
+}
+
+static void
+oliphaunt_wasix_scan_buffered_output(void)
+{
+	while (oliphaunt_wasix_output_scan_off + 5 <= oliphaunt_wasix_output_len_value)
+	{
+		const unsigned char *message =
+			oliphaunt_wasix_output_buf + oliphaunt_wasix_output_scan_off;
+		size_t body_len = ((size_t) message[1] << 24) |
+			((size_t) message[2] << 16) |
+			((size_t) message[3] << 8) |
+			(size_t) message[4];
+		if (body_len < 4 || body_len > SIZE_MAX - 1)
+			return;
+		size_t message_len = body_len + 1;
+		if (message_len > oliphaunt_wasix_output_len_value - oliphaunt_wasix_output_scan_off)
+			return;
+		if (message[0] == 'E')
+			oliphaunt_wasix_output_contains_error_value = true;
+		oliphaunt_wasix_output_scan_off += message_len;
+	}
 }
 
 static ssize_t
@@ -403,12 +459,25 @@ oliphaunt_wasix_buffer_write(const void *buffer, size_t length)
 		return -1;
 	}
 
+	if (length > INT_MAX || oliphaunt_wasix_output_len_value > (size_t) INT_MAX - length)
+	{
+		errno = EOVERFLOW;
+		return -1;
+	}
+
 	size_t required = oliphaunt_wasix_output_len_value + length;
 	if (required > oliphaunt_wasix_output_cap)
 	{
 		size_t next_cap = oliphaunt_wasix_output_cap ? oliphaunt_wasix_output_cap : 8192;
 		while (next_cap < required)
+		{
+			if (next_cap > SIZE_MAX / 2)
+			{
+				next_cap = required;
+				break;
+			}
 			next_cap *= 2;
+		}
 		unsigned char *new_buf = realloc(oliphaunt_wasix_output_buf, next_cap);
 		if (new_buf == NULL)
 		{
@@ -421,6 +490,7 @@ oliphaunt_wasix_buffer_write(const void *buffer, size_t length)
 
 	memcpy(oliphaunt_wasix_output_buf + oliphaunt_wasix_output_len_value, buffer, length);
 	oliphaunt_wasix_output_len_value += length;
+	oliphaunt_wasix_scan_buffered_output();
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_HYBRID &&
 		oliphaunt_wasix_protocol_stream_requested)
 	{

@@ -267,7 +267,7 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
         &manifest.runtime.sha256,
         "runtime archive",
     )?;
-    let runtime_module = archive_entry_bytes(&runtime_archive, "oliphaunt/bin/oliphaunt")?;
+    let runtime_module = archive_entry_bytes(&runtime_archive, RUNTIME_MODULE_ARCHIVE_MEMBER)?;
     ensure_eq(
         &sha256_bytes(&runtime_module),
         &manifest.runtime.module_sha256,
@@ -987,6 +987,9 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "WASIX_HOME:=/opt/wasixcc-home/.wasixcc",
             "ln -s \"$WASIX_HOME\" \"$HOME/.wasixcc\"",
             "export PATH=\"$WASIX_HOME/bin:$PATH\"",
+            "oliphaunt_wasix_verify_side_module_sjlj",
+            "WASIX side module imports out-of-line sigsetjmp",
+            "/\"sigsetjmp\"/",
         ],
     )?;
     for path in wasix_build_scripts_requiring_docker_env()? {
@@ -1100,6 +1103,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "PostgreSQL $(postgres_version)",
             "--includedir-server",
             "$BUILD_DIR/src/include",
+            "-DOLIPHAUNT_WASM_SIDE_MODULE",
         ],
     )?;
     ensure_file_contains_all(
@@ -1117,7 +1121,6 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "oliphaunt_wasix_set_active",
             "oliphaunt_wasix_longjmp",
             "oliphaunt_wasix_siglongjmp",
-            "memcmp(env, (void *) postgresmain_sigjmp_buf, sizeof(jmp_buf)) == 0",
             "oliphaunt_wasix_getegid",
             "oliphaunt_wasix_getpwuid_r",
             "oliphaunt_wasix_run_atexit_funcs",
@@ -1200,8 +1203,17 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "oliphaunt_wasix_run_extension_build_in_docker_if_needed",
             "oliphaunt_wasix_extension_build_outputs_exist",
             "ac_cv_lib_xml2_xmlInitParser=yes",
+            "oliphaunt_wasix_verify_side_module_sjlj \"$postgis_deps_module\"",
+            "oliphaunt_wasix_verify_side_module_sjlj \"$POSTGIS_BUILD_DIR/postgis/postgis-3.so\"",
         ],
     )?;
+    for path in [
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
+    ] {
+        ensure_file_contains_all(path, &["oliphaunt_wasix_verify_side_module_sjlj"])?;
+    }
     ensure_file_contains_all(
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_libiconv.sh",
         &[
@@ -1295,8 +1307,7 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
 
     let runtime_entries = archive_entries(&runtime_archive)?;
     let required_paths = [
-        "oliphaunt/bin/oliphaunt",
-        "oliphaunt/bin/postgres",
+        RUNTIME_MODULE_ARCHIVE_MEMBER,
         "oliphaunt/bin/initdb",
         "oliphaunt/lib/postgresql/dict_snowball.so",
         "oliphaunt/lib/postgresql/plpgsql.so",
@@ -1356,6 +1367,7 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
         "oliphaunt/lib/dict_snowball.so",
         "oliphaunt/bin/pg_dump",
         "oliphaunt/bin/psql",
+        "oliphaunt/bin/oliphaunt",
     ] {
         if runtime_entries.contains(forbidden)
             || runtime_entries

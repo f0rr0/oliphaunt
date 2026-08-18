@@ -22,7 +22,7 @@ diff --git a/src/options.rs b/src/options.rs
 index 967ac16..7b93ca4 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -186,6 +186,23 @@ extern "C" {
+@@ -186,6 +186,19 @@ extern "C" {
  }
 
  impl RunOptions {
@@ -30,11 +30,7 @@ index 967ac16..7b93ca4 100644
 +        &self,
 +        builder: &mut WasiEnvBuilder,
 +    ) -> Result<(), Error> {
-+        self.configure_common_builder(builder, |key| {
-+            // Streaming stdio is mutually exclusive with the caller-realm
-+            // export pump. Keep the rest of RunOptions byte-for-byte shared.
-+            key != "OLIPHAUNT_WASIX_STDIO_PGWIRE"
-+        })?;
++        self.configure_common_builder(builder)?;
 +
 +        builder.set_stdin(Box::<virtual_fs::null_file::NullFile>::default());
 +        builder.set_stdout(Box::<virtual_fs::null_file::NullFile>::default());
@@ -46,7 +42,7 @@ index 967ac16..7b93ca4 100644
      /// Propagate any provided options to the [`WasiEnvBuilder`], returning
      /// streams that can be used for stdin/stdout/stderr.
      pub(crate) fn configure_builder(
-@@ -199,13 +216,7 @@ impl RunOptions {
+@@ -199,13 +212,7 @@ impl RunOptions {
          ),
          Error,
      > {
@@ -57,11 +53,11 @@ index 967ac16..7b93ca4 100644
 -        for (key, value) in self.parse_env()? {
 -            builder.add_env(key, value);
 -        }
-+        self.configure_common_builder(builder, |_| true)?;
++        self.configure_common_builder(builder)?;
 
          let stdin = match self.read_stdin() {
              Some(stdin) => {
-@@ -226,11 +237,32 @@ impl RunOptions {
+@@ -226,11 +233,29 @@ impl RunOptions {
          let (stderr_file, stderr) = crate::streams::output_pipe();
          builder.set_stderr(Box::new(stderr_file));
 
@@ -71,16 +67,13 @@ index 967ac16..7b93ca4 100644
 +    fn configure_common_builder(
 +        &self,
 +        builder: &mut WasiEnvBuilder,
-+        mut include_env: impl FnMut(&str) -> bool,
 +    ) -> Result<(), Error> {
 +        for arg in self.parse_args()? {
 +            builder.add_arg(arg);
 +        }
 +
 +        for (key, value) in self.parse_env()? {
-+            if include_env(&key) {
-+                builder.add_env(key, value);
-+            }
++            builder.add_env(key, value);
 +        }
 +
 +        if let Some(cwd) = self.parse_cwd()? {
@@ -111,7 +104,7 @@ index 0000000..e0f5463
 +
 +use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOptions};
 +
-+const DEFAULT_PROGRAM_NAME: &str = "/bin/oliphaunt";
++const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
 +const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
 +
 +/// Instantiate the integrated Oliphaunt/PostgreSQL guest in this JS realm.

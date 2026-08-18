@@ -69,7 +69,7 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
   const pgdataBytes = zstdCompressSync(deterministicTar(pgdataStage, "."));
 
   const sourceFingerprint = "fixture-postgres-source-fingerprint";
-  const runtimeModuleSha256 = sha256(Buffer.from("fixture:oliphaunt/bin/oliphaunt\n"));
+  const runtimeModuleSha256 = sha256(Buffer.from("fixture:oliphaunt/bin/postgres\n"));
   const manifest = transformManifest({
     "format-version": 1,
     "source-fingerprint": sourceFingerprint,

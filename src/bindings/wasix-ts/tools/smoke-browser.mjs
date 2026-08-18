@@ -49,6 +49,7 @@ const timeoutMs = Number(
   process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
 );
 const pgUuidv7Canary = process.argv.includes('--pg-uuidv7');
+const postgisWorkerCanary = process.argv.includes('--postgis-worker');
 const requiredInputs = [
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/prepopulated/pgdata-template.tar.zst'),
@@ -63,6 +64,11 @@ if (!benchmark) {
 if (pgUuidv7Canary) {
   requiredInputs.push(
     resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/extensions/pg_uuidv7.tar.zst'),
+  );
+}
+if (postgisWorkerCanary) {
+  requiredInputs.push(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/extensions/postgis.tar.zst'),
   );
 }
 if (benchmark) {
@@ -148,7 +154,7 @@ try {
 
   const smokeUrl = benchmark
     ? `http://127.0.0.1:${vitePort}/benchmark.html${quickBenchmark ? '?quick=1' : ''}`
-    : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}`;
+    : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}${postgisWorkerCanary ? '&postgis_worker=1' : ''}`;
   await cdp.send('Page.navigate', { url: smokeUrl });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
