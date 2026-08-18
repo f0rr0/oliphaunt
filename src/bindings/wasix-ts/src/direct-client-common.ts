@@ -30,7 +30,7 @@ import {
   materializeWasixMounts,
   wasixPostgresArgs,
   wasixPostgresEnvironment,
-} from './wasix-process.js';
+} from './wasix-runtime.js';
 
 /** @internal Narrow caller-realm host contract. */
 export type DirectWasixHost = Readonly<{
@@ -54,7 +54,7 @@ export type DirectWasixDependencies = Readonly<{
   compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
 
-export type DirectWasixEnvironment = 'browser' | 'node';
+export type DirectWasixEnvironment = 'browser-main' | 'browser-worker' | 'node';
 
 const preparedRuntimes = new Map<string, Promise<PreparedWasixRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
@@ -73,8 +73,16 @@ export async function openWasixDirect(
   options: SerializedOpenOptions,
   host: DirectWasixHost,
 ): Promise<OliphauntDatabase> {
-  const session = await DirectWasixSession.open(options, host, defaultDependencies);
+  const session = await DirectWasixSession.open(options, host, defaultDependencies, 'browser-main');
   return new WasixDatabaseImpl(session);
+}
+
+/** @internal Open a direct-memory session inside the dedicated browser worker realm. */
+export function openBrowserWorkerSession(
+  options: SerializedOpenOptions,
+  host: DirectWasixHost,
+): Promise<DirectWasixSession> {
+  return DirectWasixSession.open(options, host, defaultDependencies, 'browser-worker');
 }
 
 /** Owns the caller-realm guest, its mounted PGDATA, and their joint lifecycle. */
@@ -101,9 +109,9 @@ export class DirectWasixSession implements WasixDatabaseSession {
     options: SerializedOpenOptions,
     host: DirectWasixHost,
     dependencies: DirectWasixDependencies = defaultDependencies,
-    environment: DirectWasixEnvironment = 'browser',
+    environment: DirectWasixEnvironment = 'browser-main',
   ): Promise<DirectWasixSession> {
-    if (environment === 'browser') assertDirectExtensionCompatibility(options);
+    if (environment === 'browser-main') assertDirectExtensionCompatibility(options);
     const prepared = await dependencies.prepareRuntime(options);
     const pgdataTemplate = prepared.layout.mounts['/base'];
     if (pgdataTemplate === undefined) {
@@ -136,8 +144,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
       instance = await instantiateDirectWithDeadline(
         host.instantiateOliphauntDirect(module, prepared.layout.module, {
-          program: '/bin/oliphaunt',
-          moduleBytes: prepared.layout.module,
+          program: '/bin/postgres',
           args: wasixPostgresArgs(runtimeOptions),
           cwd: '/',
           env: wasixPostgresEnvironment(runtimeOptions),
@@ -320,7 +327,6 @@ function assertDirectExtensionCompatibility(options: SerializedOpenOptions): voi
         .map((module) => ({
           extension: carrier.sqlName,
           module,
-          requiresLoadOrder: carrier.install.loadOrder.length > 0,
         })),
     )
     .sort((left, right) => left.extension.localeCompare(right.extension));
@@ -333,11 +339,6 @@ function assertDirectExtensionCompatibility(options: SerializedOpenOptions): voi
         `${extension}:${module.path} (${module.size.toLocaleString('en-US')} bytes)`,
     )
     .join(', ');
-  if (unsupported.some(({ requiresLoadOrder }) => requiresLoadOrder)) {
-    throw new TypeError(
-      `@oliphaunt/wasix-ts browser execution cannot currently load ${detail}: direct execution exceeds Chromium's 8 MiB synchronous side-module limit, and worker execution does not yet implement the carrier's native load order`,
-    );
-  }
   throw new TypeError(
     `@oliphaunt/wasix-ts direct execution cannot load native extension modules larger than 8 MiB in Chromium; use execution: "worker" for ${detail}`,
   );

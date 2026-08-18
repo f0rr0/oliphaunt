@@ -707,7 +707,7 @@ and any accidental parallel worker use fails through the existing error path.
 ## Release Hygiene
 
 The rebuilt PG18 runtime binary does not contain the old `pgl_*`/`Oliphaunt`
-runtime symbol strings when inspected from the packaged `oliphaunt/bin/oliphaunt`
+runtime symbol strings when inspected from the packaged `oliphaunt/bin/postgres`
 module.  The PG18 patch stack and build scripts also keep the new
 `oliphaunt_wasix_*` naming.
 

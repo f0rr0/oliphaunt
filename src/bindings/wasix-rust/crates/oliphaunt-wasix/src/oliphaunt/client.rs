@@ -424,13 +424,6 @@ impl Oliphaunt {
         self.backend.runtime_storage()
     }
 
-    /// Return debug-build bridge allocation/free counters for ownership tests.
-    #[doc(hidden)]
-    #[cfg(debug_assertions)]
-    pub fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
-        self.backend.guest_bridge_allocation_counts()
-    }
-
     /// Back up the physical database state to a gzipped tar archive.
     ///
     /// The archive is intended to be loaded back into oliphaunt-wasix/Oliphaunt with

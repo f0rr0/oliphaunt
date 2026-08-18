@@ -31,7 +31,6 @@ export const SNOWBALL_STOPWORD_LANGUAGES = [
 ];
 
 export const CORE_RUNTIME_ARCHIVE_FILES = [
-  "oliphaunt/bin/oliphaunt",
   "oliphaunt/bin/initdb",
   "oliphaunt/bin/postgres",
   "oliphaunt/lib/postgresql/dict_snowball.so",

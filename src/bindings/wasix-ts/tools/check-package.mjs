@@ -60,8 +60,6 @@ try {
     'lib/node-worker-options.js',
     'lib/node-zstd.js',
     'lib/server-runtime.js',
-    'lib/node-web-worker.js',
-    'lib/node-web-worker-thread.js',
     'lib/worker.js',
     'lib/host/index.mjs',
     'lib/host/index.d.mts',
@@ -88,6 +86,16 @@ try {
   ]) {
     if (!paths.has(path)) {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
+    }
+  }
+
+  for (const path of [
+    'lib/node-web-worker.js',
+    'lib/node-web-worker-thread.js',
+    'lib/wasix-process.js',
+  ]) {
+    if (paths.has(path)) {
+      throw new Error(`WASIX TypeScript package retained retired transport artifact ${path}`);
     }
   }
 

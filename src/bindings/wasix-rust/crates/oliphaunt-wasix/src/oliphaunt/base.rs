@@ -184,7 +184,7 @@ impl RootPrepareOptions {
 
 impl RuntimeLayout {
     pub(crate) fn module_path(&self) -> PathBuf {
-        self.module_root.join("bin/oliphaunt")
+        self.module_root.join("bin/postgres")
     }
 
     pub(crate) fn uses_shared_overlay(&self) -> bool {
@@ -364,8 +364,8 @@ fn locate_runtime_module(paths: &OliphauntPaths) -> Option<(PathBuf, PathBuf)> {
     if !oliphaunt_dir.exists() {
         return None;
     }
-    let oliphaunt_bin_dir = oliphaunt_dir.join("bin");
-    let module = oliphaunt_bin_dir.join("oliphaunt");
+    let bin_dir = oliphaunt_dir.join("bin");
+    let module = bin_dir.join("postgres");
     if !module.exists() {
         return None;
     }
@@ -384,7 +384,7 @@ fn locate_runtime_module(paths: &OliphauntPaths) -> Option<(PathBuf, PathBuf)> {
     {
         return None;
     }
-    Some((module, oliphaunt_bin_dir))
+    Some((module, bin_dir))
 }
 
 fn ensure_full_runtime(paths: &OliphauntPaths) -> Result<bool> {
@@ -1309,7 +1309,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 pub(crate) fn preload_runtime_module() -> Result<()> {
     let cached_runtime = runtime_cache()?;
-    let module_path = cached_runtime.runtime_root.join("bin/oliphaunt");
+    let module_path = cached_runtime.runtime_root.join("bin/postgres");
     PostgresMod::preload_module(&module_path)
 }
 
@@ -1914,9 +1914,9 @@ mod tests {
             .context("memory runtime should have an immutable shared root")?;
         assert!(
             shared_root
-                .metadata(Path::new("/bin/oliphaunt"))
+                .metadata(Path::new("/bin/postgres"))
                 .is_ok_and(|metadata| metadata.is_file()),
-            "memory runtime is missing /bin/oliphaunt"
+            "memory runtime is missing /bin/postgres"
         );
         let filesystem = prepared
             .outcome

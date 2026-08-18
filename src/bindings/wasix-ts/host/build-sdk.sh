@@ -156,6 +156,19 @@ if grep -Fq 'Local::now()' "$wasmer_wasix_dir/src/syscalls/wasm.rs"; then
   echo "wasix-ts host build: WASM clock regressed to the timezone-aware wall clock" >&2
   exit 1
 fi
+grep -Fq 'oliphaunt_fast_clock_import' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'pub fn oliphaunt_direct_memory' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'fallbackAndCalibrate' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'view.getBigUint64(pointer, true)' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'anchor.nanoseconds' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq '} else if (clockId === 1) {' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'const wallMillis = Date.now();' "$wasmer_wasix_dir/src/lib.rs"
+grep -Fq 'wallMillis - lastFallbackWallMillis >= 16' "$wasmer_wasix_dir/src/lib.rs"
+if grep -Fq 'clockId === 2' "$wasmer_wasix_dir/src/lib.rs"; then
+  echo "wasix-ts host build: wall-time fast path incorrectly handles CPU clocks" >&2
+  exit 1
+fi
+grep -Fq 'oliphaunt_direct_clock_active' "$wasmer_wasix_dir/src/state/env.rs"
 grep -Fq 'js_name = "changedPaths"' "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'js_name = "entryType"' "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'record_change(&changes, &from)' "$wasmer_js_dir/src/fs/directory.rs"
@@ -164,11 +177,27 @@ grep -Fq 'Pin::new(&mut *self.file).poll_write(cx, buffer)' \
   "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'conf.truncate || conf.create_new || (conf.create && !existed)' \
   "$wasmer_js_dir/src/fs/directory.rs"
-grep -Fq 'key != "OLIPHAUNT_WASIX_STDIO_PGWIRE"' "$wasmer_js_dir/src/options.rs"
 if grep -Fq 'key != "OLIPHAUNT_WASIX_SINGLE_BACKEND"' "$wasmer_js_dir/src/options.rs"; then
   echo "wasix-ts host build: direct execution discarded the single-backend invariant" >&2
   exit 1
 fi
+if grep -R -Fq -- 'OLIPHAUNT_WASIX_STDIO_PGWIRE' \
+  "$wasmer_js_dir/src" "$wasmer_wasix_dir/src"; then
+  echo "wasix-ts host build: retired stdio-pgwire product transport returned" >&2
+  exit 1
+fi
+grep -Fq 'new Uint8Array(memory.buffer, pointer, input.byteLength).set(input)' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'new Uint8Array(memory.buffer, pointer, length).slice()' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'struct BoundedStderr' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'const STDERR_LIMIT_BYTES: usize = 16 * 1024' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'WASIX stderr (last 16 KiB)' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'builder.set_stderr(stderr)' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'wasmparser::RefType::EXNREF' "$wasmer_dir/src/utils/polyfill.rs"
+grep -Fq 'wasmparser::RefType::NULLEXNREF' "$wasmer_dir/src/utils/polyfill.rs"
+grep -Fq 'Ok(Type::ExceptionRef)' "$wasmer_dir/src/utils/polyfill.rs"
 
 # The pinned source commit's npm lock predates its package metadata. Patch only
 # the missing root metadata and dependencies, then install the integrity-pinned

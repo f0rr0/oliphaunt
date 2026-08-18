@@ -67,7 +67,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/include/access/xlog.h', 'Exposes the embedded idle-boundary checkpoint handoff within PostgreSQL.'],
   ['src/include/port/atomics.h', 'Selects scalar atomics only for the explicitly single-backend WASIX build.'],
   ['src/include/port/atomics/arch-wasix-single.h', 'Preserves PostgreSQL atomic layouts and contracts without guest atomic instructions.'],
-  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header and ABI redirects.'],
+  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header, ABI redirects, and call-site SJLJ contract.'],
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
   ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
@@ -156,14 +156,13 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
   },
   {
-    requirement: 'Browser-worker hosts can own one blocking stdio pgwire lifecycle',
-    patches: ['0039-oliphaunt-wasix-add-stdio-pgwire-lifecycle.patch'],
+    requirement: 'Rust COPY streaming keeps an explicit hybrid transport ABI',
+    patches: ['0039-oliphaunt-wasix-declare-hybrid-protocol-transport.patch'],
     evidence: [
-      'OLIPHAUNT_WASIX_STDIO_PGWIRE',
-      'oliphaunt_wasix_set_protocol_stdio(1)',
-      'ProcessStartupPacket(MyProcPort, true, true)',
+      'oliphaunt_wasix_set_protocol_transport(int mode)',
+      'oliphaunt_wasix_protocol_stream_active(void)',
     ],
-    posture: 'Only the explicit browser-worker contract enters the blocking stdio path; Rust, browser-direct, and Node hosts keep the export-driven lifecycle.',
+    posture: 'Only COPY switches the Rust proxy from buffered protocol I/O to its attached stream; TypeScript has no process-level stdio lifecycle.',
   },
   {
     requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',
@@ -208,6 +207,18 @@ const REQUIRED_AUDIT_CHECKS = [
       '#elif defined(HAVE_SYNC_FILE_RANGE)',
     ],
     posture: 'The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active.',
+  },
+  {
+    requirement: 'PostgreSQL side modules own their SJLJ catch frames',
+    patches: ['0044-oliphaunt-wasix-inline-sigsetjmp.patch'],
+    evidence: [
+      '-DOLIPHAUNT_WASM_SIDE_MODULE',
+      'WebAssembly SJLJ requires setjmp to be visible at the protected call site.',
+      'defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)',
+      '#undef sigsetjmp',
+      '#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))',
+    ],
+    posture: 'PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler.',
   },
 ];
 

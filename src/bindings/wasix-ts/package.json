@@ -76,7 +76,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node tools/clean-lib.mjs && tsc -p tsconfig.build.json",
     "dev": "pnpm run package:build && vite --config examples/browser/vite.config.ts",
     "host:build": "bash host/build-sdk.sh",
     "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
@@ -84,6 +84,7 @@
     "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
     "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
     "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
+    "smoke:browser:postgis-worker": "pnpm run package:build && node tools/smoke-browser.mjs --postgis-worker",
     "smoke:bun": "pnpm run package:build && node tools/smoke-node.mjs --runtime bun",
     "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
     "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",

@@ -328,3 +328,21 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: false
+  smoke-postgis-worker:
+    tags: ["quality", "smoke", "extension", "browser", "worker"]
+    command: "pnpm --dir src/bindings/wasix-ts smoke:browser:postgis-worker"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+      - "oliphaunt-wasix-ts:test"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/extensions/external/postgis/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

@@ -1,7 +1,6 @@
 # Compatible PostgreSQL optimizations owned by the main WASIX runtime.
 #
 # Deliberately excluded from this multi-backend lane:
-# - 0039 is the TypeScript browser-worker stdio pgwire transport.
 # - 0040 and 0041 specialize spinlocks and atomics for the canonical guest
 #   shared by Rust and TypeScript bindings, whose hosts enforce one PostgreSQL
 #   backend execution context per isolated instance.
