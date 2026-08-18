@@ -243,11 +243,19 @@ PostgreSQL has recovered through `ReadyForQuery`. Callback transactions defer
 their internal publications and synchronize exactly once after confirmed
 `COMMIT` or `ROLLBACK`. Each IndexedDB identity owns one physical IndexedDB
 database, stores one row per normalized path, and commits metadata, upserts,
-and deletes atomically in a single transaction. Node, Bun, and Deno expose the selected directory as raw
-PGDATA and durably apply the same delta (WAL first and `pg_control` last).
-Browser OPFS exposes raw PGDATA with the same ordering and Web Lock ownership;
-because OPFS has no cross-file transaction, an interrupted publication is
-reported as unknown durability and the session is poisoned. Explicit
+and deletes atomically in a single transaction. Node, Bun, and Deno expose the
+selected directory as raw PGDATA and durably apply the same delta (WAL first
+and `pg_control` last). Browser OPFS uses an opaque logical namespace and flat
+backing-file pool under the same Web Lock ownership. Worker placement runs
+PostgreSQL, WASIX, and the pool in one realm with exact-range calls to preopened
+synchronous handles; 32 spares cover ordinary path creation and larger bursts
+spill to memory until the next boundary. PostgreSQL descriptor fsyncs flush
+addressed records; the managed `fdatasync` profile replaces the unrepresentable
+`O_DSYNC` flag, completed operations drain dirty WAL, and checkpoints or clean
+close drain every dirty record. Other realms hydrate Wasmer memory from the
+same format and publish changed files copy-on-write before atomically replacing
+logical state. Because direct OPFS writes have no cross-file transaction,
+failures are still reported as unknown durability and the session is poisoned. Explicit
 `checkpoint()` remains a PostgreSQL `CHECKPOINT` followed by the same storage
 boundary. Extension migration remains absent until its real contract exists.
 The binding README is the detailed divergence record.

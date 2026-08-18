@@ -78,8 +78,9 @@ pnpm --dir src/bindings/wasix-ts bench:browser
 It rotates engine order, keeps raw samples, separates cold from warm startup,
 warms representative PostgreSQL and JavaScript paths before timed workloads,
 and reports direct/direct and worker/worker medians independently. The result
-also records `fsync`, `synchronous_commit`, `full_page_writes`, and `wal_level`;
-performance claims must not conceal durability differences. Each matched
+also records `fsync`, `wal_sync_method`, `synchronous_commit`,
+`full_page_writes`, and `wal_level`; performance claims must not conceal
+durability differences. Each matched
 topology must independently achieve a geometric mean of median paired
 Oliphaunt/PGlite ratios no greater than `0.80`, so a strong worker result cannot
 hide a weak direct result. Descriptive cold-open, close, insert-decomposition,
@@ -93,6 +94,15 @@ canonical runtime and staged host build identities, the built SDK tree, harness
 source hashes, browser/machine identity, and the resolved installed PGlite
 closure. `--quick` remains available as a correctness/parity smoke profile but
 is explicitly ineligible for a performance claim.
+
+For implementation diagnostics, the persistent worker comparison exercises
+Oliphaunt's direct OPFS bridge against PGlite's OPFS AHP without producing a
+qualifying report:
+
+```sh
+pnpm --dir src/bindings/wasix-ts package:build
+node src/bindings/wasix-ts/tools/smoke-browser.mjs --diagnostic-opfs --quick
+```
 
 The insert diagnostic records WAL volume alongside expression, heap, indexed,
 and server-reported execution time. Separate root-cause runs also compared
@@ -117,8 +127,8 @@ placement uses the same direct guest-memory bridge.
 
 The same decomposition separates transport from PostgreSQL execution. Worker
 placement can lose insert wall time to its outer request boundary, while the
-matched direct diagnostic places expression, heap, indexed, and server-reported
-insert work near PGlite with equal WAL volume. A repeated alternating-process
+matched direct diagnostic isolates expression, heap, indexed, and
+server-reported insert work with equal WAL volume. A repeated alternating-process
 A/B also replaced only the generic 64-bit compare-exchange read in XLogWrite's
 page-readiness check with an atomic load; it produced mixed sub-2% changes and
 worse commit tails. That hypothesis is retired rather than shipped as an
@@ -388,16 +398,32 @@ lifecycle:
   browser's default durability policy. A rejected transaction
   leaves the prior generation current and activity in another named database
   cannot contend on the same IndexedDB transaction or object stores;
-- OPFS stores raw files under an origin-private directory, publishes WAL before
-  ordinary files and `global/pg_control`, then removals, and reports unknown
-  durability if a cross-file update stops partway through;
+- OPFS stores a validated logical namespace over opaque flat backing files and
+  reports unknown durability for direct cross-file failures. In worker
+  placement, PostgreSQL, WASIX, and the access-handle pool share one worker;
+  filesystem calls are ordinary same-realm function calls, with no nested OPFS
+  worker, `Atomics`, or copied mailbox. Writes expose the bounded WASIX slice
+  directly and reads fill the WASIX read buffer without an intermediate Rust
+  copy. Every live backing plus 32 spares is preopened, and a larger create burst
+  spills safely to memory until the next storage boundary. PostgreSQL descriptor
+  fsyncs flush addressed records. Completed operations drain dirty WAL under the
+  managed `fdatasync` profile, while explicit checkpoints and clean close drain
+  all dirty records. Other realms hydrate Wasmer memory from the same format and
+  publish changed files copy-on-write before atomically replacing logical state;
 - a PostgreSQL statement error still completes recovery through `ReadyForQuery`
   and remains an ordinary `PostgresError`; it does not poison persistence;
 - a persistence failure is a distinct `WasixStorageError` and poisons the live
   handle because retrying a PostgreSQL operation whose commit already ran is
   unsafe; and
-- OPFS is a delta-backed persistence provider, not a synchronous-access-handle
-  guest mount. That distinction keeps its failure semantics honest.
+- OPFS is one provider: its direct worker mount and portable publication
+  fallback share the opaque pool, compatibility metadata, ownership, and
+  cleanup. The transport choice is internal and does not change its public
+  lifecycle or unknown cross-file failure classification.
+
+The opaque pool intentionally replaces the retired raw-PGDATA OPFS layout.
+Opening a non-empty legacy store fails closed as `incompatible` rather than
+silently shadowing it; export that database with a compatible release before
+moving it to this format.
 
 Choose OPFS when a browser-native file hierarchy is preferable:
 
@@ -407,6 +433,12 @@ import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 const database = await Oliphaunt.open({ storage: opfs('todos') });
 ```
+
+OPFS belongs to the origin's default storage bucket and is best-effort unless
+the browser grants persistent storage. Applications with irreplaceable local
+data should make that policy explicit with `navigator.storage.persisted()` /
+`navigator.storage.persist()` and use `navigator.storage.estimate()` before
+large imports. Clearing site data still removes the database.
 
 There is likewise no browser `temporaryDirectory()` spelling: omitted storage
 already means anonymous in-memory lifetime. Rust WASIX follows the same minimal
@@ -508,8 +540,9 @@ runtime artifact URL bookkeeping.
 - Portable WASM only; browser, Node, Bun, and Deno hosts never consume host AOT artifacts.
 - One serialized WASIX database session per open. Placement is
   selected by `execution: 'worker' | 'direct'`; worker remains the default. Its
-  active filesystem is always Wasmer memory; storage adapters control how PGDATA
-  is hydrated and incrementally published around that process.
+  active filesystem is Wasmer memory except when capable browser-worker OPFS
+  selects the direct lazy mount. Storage adapters own that choice and preserve
+  one lease/reopen contract across direct I/O and incremental publication.
 - A prepopulated PGDATA template is required; browser `initdb` is not run.
 - Omitted storage is fresh memory. IndexedDB, OPFS, and server-directory
   adapters prove exact compatible reopen, exclusive ownership,

@@ -271,7 +271,18 @@ exclusively leased despite support for separate instances.
 IndexedDB and OPFS are selectively imported persistent browser adapters, and
 omitted storage already covers temporary in-memory use. Node, Bun, and Deno
 offer direct or `worker_threads` placement with memory plus explicit raw-PGDATA
-directory storage. No host routes through native `@oliphaunt/ts`.
+directory storage. Browser workers mount an opaque OPFS backing pool directly:
+PostgreSQL, WASIX, and preopened synchronous access handles share one worker,
+so bounded I/O uses ordinary function calls rather than a nested worker or
+`Atomics`; reads fill the WASIX buffer directly. PostgreSQL descriptor fsyncs
+flush addressed records; the managed
+`fdatasync` profile replaces the unrepresentable `O_DSYNC` flag, completed
+operations drain dirty WAL, and checkpoints or clean close drain the rest.
+Main-thread placement and browsers without synchronous handles hydrate Wasmer
+memory from the same format and publish copy-on-write backings before atomically
+replacing logical state. Origin storage
+remains best-effort unless the application requests and receives persistent
+storage. No host routes through native `@oliphaunt/ts`.
 
 Use [Rust WASIX](./index) when Rust owns the portable host. Use
 [TypeScript](/docs/sdk/typescript) for Node.js, Bun, or Deno applications that

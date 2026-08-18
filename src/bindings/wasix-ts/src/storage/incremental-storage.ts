@@ -19,6 +19,10 @@ export type ExclusiveStorageLock = { release(): Promise<void> };
 export type IncrementalStorageStore = {
   read(): Promise<StoredSnapshot | undefined>;
   apply(delta: StorageDelta): Promise<void>;
+  /** Override snapshot-presence state for a format that requires an explicit setup marker. */
+  initializationState?(snapshot: StoredSnapshot | undefined): 'new' | 'existing';
+  /** Atomically publish that format's setup marker after the final data publication. */
+  completeInitialization?(): Promise<void>;
   close(): void | Promise<void>;
 };
 
@@ -44,12 +48,15 @@ export async function acquireIncrementalStorage(
   try {
     store = await backend.openStore();
     const snapshot = await store.read();
+    const state = store.initializationState?.(snapshot) ??
+      (snapshot === undefined ? 'new' : 'existing');
     return new IncrementalStorageLease(
       label,
       store,
       lock,
       template,
       snapshot,
+      state,
       backend.writeFailureDurability ?? 'not-persisted',
     );
   } catch (error) {
@@ -96,17 +103,33 @@ class IncrementalStorageLease implements WasixStorageLease {
     lock: ExclusiveStorageLock,
     template: WasixDirectoryMount,
     snapshot: StoredSnapshot | undefined,
+    state: 'new' | 'existing',
     writeFailureDurability: WasixStorageDurability,
   ) {
     this.#label = label;
     this.#store = store;
     this.#lock = lock;
-    this.state = snapshot === undefined ? 'new' : 'existing';
+    this.state = state;
     this.mount = snapshot === undefined ? template : snapshotToMount(snapshot);
     this.#hasStoredGeneration = snapshot !== undefined;
     this.#writeFailureDurability = writeFailureDurability;
     for (const path of snapshot?.directories ?? []) this.#persistedEntries.set(path, 'dir');
     for (const { path } of snapshot?.files ?? []) this.#persistedEntries.set(path, 'file');
+  }
+
+  async completeInitialization(directory: StorageDirectory): Promise<void> {
+    if (this.state === 'existing') return;
+    try {
+      // Persist the complete post-setup PGDATA before publishing the marker.
+      await this.sync(directory, 'checkpoint');
+      await this.#store.completeInitialization?.();
+    } catch (error) {
+      if (error instanceof WasixStorageError) throw error;
+      throw new WasixStorageError(
+        `could not complete first-open setup for ${this.#label}: ${describeError(error)}`,
+        { code: 'checkpoint-failed', durability: 'unknown', cause: error },
+      );
+    }
   }
 
   async sync(directory: StorageDirectory, _boundary: WasixStorageSyncBoundary): Promise<void> {

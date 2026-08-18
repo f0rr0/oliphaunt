@@ -74,6 +74,7 @@ try {
     'lib/storage/opfs.js',
     'lib/storage/opfs.d.ts',
     'lib/storage/opfs-provider.js',
+    'lib/storage/opfs-pool.js',
     'lib/storage/web-lock.js',
     'lib/storage/bun.js',
     'lib/storage/bun.d.ts',

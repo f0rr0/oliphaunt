@@ -1,7 +1,7 @@
 import type { WasixDirectoryMount } from '../archive.js';
 import { WasixStorageError } from '../errors.js';
 import {
-  canonicalStorageContract,
+  validateStoredCompatibility,
   type WasixStorageCompatibility,
   type WasixStorageLease,
 } from '../storage-provider.js';
@@ -118,27 +118,10 @@ export function validateStoredDatabase(
   if (stored.schema !== 'oliphaunt-wasix-indexed-db-v3' || stored.name !== name) {
     throw corrupt(name, 'has an unsupported or mismatched database record');
   }
-  let storedCompatibility: Record<string, unknown>;
-  try {
-    storedCompatibility = requireRecord(
-      stored.compatibility,
-      `IndexedDB storage ${JSON.stringify(name)} compatibility`,
-    );
-  } catch (error) {
-    throw corrupt(name, `has malformed compatibility metadata: ${describeError(error)}`, error);
-  }
-  let storedContract: string;
-  try {
-    storedContract = canonicalStorageContract(storedCompatibility);
-  } catch (error) {
-    throw corrupt(name, `has malformed compatibility metadata: ${describeError(error)}`, error);
-  }
-  if (storedContract !== canonicalStorageContract(compatibility)) {
-    throw new WasixStorageError(
-      `IndexedDB storage ${JSON.stringify(name)} is incompatible with the selected runtime or extensions`,
-      { code: 'incompatible', durability: 'unchanged' },
-    );
-  }
+  validateStoredCompatibility(stored.compatibility, compatibility, {
+    label: `IndexedDB storage ${JSON.stringify(name)}`,
+    corrupt: (detail, cause) => corrupt(name, detail, cause),
+  });
   if (!Array.isArray(stored.entries)) throw corrupt(name, 'has malformed entry rows');
   const directories: string[] = [];
   const files: { path: string; bytes: Uint8Array }[] = [];

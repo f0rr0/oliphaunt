@@ -35,13 +35,17 @@ export async function materializeWasixMounts(
   DirectoryConstructor: typeof Directory,
   layout: WasixRuntimeLayout,
   pgdata: WasixDirectoryMount,
+  createPgdata?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<{ mounts: Record<string, Directory>; baseDirectory: Directory }> {
   const mounts: Record<string, Directory> = {};
   for (const [mountPath, contents] of Object.entries(layout.mounts)) {
-    mounts[mountPath] = await materializeDirectory(
-      DirectoryConstructor,
-      mountPath === '/base' ? pgdata : contents,
-    );
+    mounts[mountPath] =
+      mountPath === '/base' && createPgdata !== undefined
+        ? await createPgdata(DirectoryConstructor)
+        : await materializeDirectory(
+            DirectoryConstructor,
+            mountPath === '/base' ? pgdata : contents,
+          );
   }
   const baseDirectory = mounts['/base'];
   if (baseDirectory === undefined) {
@@ -127,6 +131,9 @@ const SINGLE_BACKEND_GUCS = {
   max_parallel_workers_per_gather: '0',
   max_parallel_maintenance_workers: '0',
   io_method: 'sync',
+  // WASIX VirtualFile cannot represent PostgreSQL's O_DSYNC open flag.
+  // fdatasync keeps the durability boundary explicit for direct storage.
+  wal_sync_method: 'fdatasync',
 } as const;
 
 /** @internal PostgreSQL environment shared by both execution placements. */

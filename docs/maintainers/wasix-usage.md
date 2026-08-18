@@ -188,8 +188,18 @@ storage boundary. Web Locks enforce one browser owner per name. SQL errors
 recover without poisoning storage; storage failures poison the handle because
 retrying a commit is unsafe.
 
-OPFS is an honest asynchronous delta provider, not a claimed synchronous guest
-mount, and reports unknown durability after partial cross-file failure.
+OPFS uses an opaque logical namespace and backing-file pool and reports unknown
+durability after a direct partial cross-file failure. In worker placement,
+PostgreSQL, WASIX, and the pool run in the same realm: exact range I/O is one
+ordinary function call, with every live backing and 32 spares opened before
+guest execution. A larger create burst spills to memory until a safe boundary.
+PostgreSQL descriptor fsyncs flush the addressed record. The managed
+`fdatasync` profile replaces the unrepresentable `O_DSYNC` open flag; completed
+operations drain dirty WAL, and explicit checkpoints or clean close drain all
+dirty records. Main-thread placement and browsers without synchronous access
+handles hydrate Wasmer memory from the same format, publish changed backings
+copy-on-write, and atomically replace logical state. Both transports share
+compatibility metadata, one Web Lock, and the same reopenable opaque layout.
 Node, Bun, and Deno add selectively imported `storage/node`, `storage/bun`, and
 `storage/deno` raw-PGDATA adapters with an exclusive cross-process path lock for
 local filesystems on one host. Linux
