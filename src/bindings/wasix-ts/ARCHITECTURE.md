@@ -131,7 +131,7 @@ smaller qualified side modules remain supported in direct placement.
 7. `close` sends PostgreSQL Terminate through the same direct bridge, then
    deactivates the embedded lifecycle and runs its atexit exports synchronously
    in the owning realm. A successful close
-   publishes any remaining persistent delta. Every outcome closes the provider,
+   completes the provider's final persistence boundary. Every outcome closes the provider,
    releases its exclusive database lease, and frees its placement-owned host
    resources.
 
@@ -172,14 +172,12 @@ opaque storage descriptor
           v
  acquire provider lease ---- exact physical compatibility
           |
-          v
- hydrate worker-owned /base Directory
+          +---- direct OPFS /base ---- synchronous file I/O
           |
-          v
- PostgreSQL ReadyForQuery / clean exit
-          |
-          v
- journaled delta publication + release
+          `---- portable /base ------ journaled publication
+                           |
+                           v
+              PostgreSQL boundary + release
 ```
 
 The main package owns the fresh-memory descriptor and default. IndexedDB and
@@ -187,29 +185,33 @@ OPFS are selective `./storage/indexed-db` and `./storage/opfs` entrypoints whose
 implementations load only when an opaque descriptor reaches the execution
 realm. Raw serialized descriptors are not accepted from consumers. The
 internal lease exposes `state`, one initial PGDATA mount,
-`sync(directory, boundary)`, and `close(directory, outcome)`; it does not own
-runtime or extension assets.
+an optional direct PGDATA materializer, `sync(directory, boundary)`, and
+`close(directory, outcome)`; it does not own runtime or extension assets.
 
 The source-pinned Wasmer `Directory` exposes a compact current-state mutation
 journal. Write-capable files are wrapped so a PostgreSQL descriptor retained
 across multiple operations records every later write, not only its initial
-open. The shared delta layer drains the journal only at PostgreSQL-safe host
-boundaries, collapses overlapping paths, reads changed files and subtrees, and
-expresses removals explicitly. A provider without that host capability falls
-back to a full scan, so correctness does not depend on the optimization.
-Process-lifetime `postmaster.pid` and `postmaster.opts` never enter persistent
-storage.
+open. The shared portable delta layer drains the journal only at
+PostgreSQL-safe host boundaries, collapses overlapping paths, reads changed
+files and subtrees, and expresses removals explicitly. A provider without that
+host capability falls back to a full scan, so correctness does not depend on
+the optimization. Direct OPFS mounts bypass mutation tracking and serve the
+guest synchronously in its owning worker. Process-lifetime `postmaster.pid` and
+`postmaster.opts` never enter persistent storage.
 
 Each logical IndexedDB name owns a separate physical IndexedDB database with
 fixed metadata and one row per PGDATA path. Each boundary applies upserts and
 removals in one atomic read-write transaction using the browser's default
 commitState policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
-stores PGDATA files in a provider-private directory plus one
-sidecar identity and publishes WAL first, ordinary files second,
-`global/pg_control` last, then removals. OPFS has native-filesystem recovery
-ordering but no cross-file transaction, so a failed publication reports unknown
-publication state instead of claiming that nothing changed.
+stores a strict logical namespace and physical identity over flat backing files.
+Worker execution preopens synchronous access handles and performs exact-range
+guest I/O without a mailbox or nested worker. Guest file flushes are immediate;
+operation boundaries drain WAL; checkpoint, close, and namespace publication
+flush WAL before ordinary files and `global/pg_control`. The portable path uses
+copy-on-write backing files and atomically replaces namespace state last. OPFS
+has PostgreSQL recovery ordering but no cross-file transaction, so a failed
+publication reports unknown state instead of claiming that nothing changed.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
 Runtime hashes and source fingerprints still reject mixed runtime, template,
@@ -224,13 +226,12 @@ the single-owner invariant rather than suggesting that one single-user
 PostgreSQL backend represents independent connections. There is no leader
 proxy or multi-tab transaction ownership yet.
 
-Provider acquisition and hydration happen before PostgreSQL starts. Delta
-publication happens only after pgwire recovery returns `ReadyForQuery`, so
-ordinary PostgreSQL errors retain their existing `PostgresError` identity. A
-host persistence failure is instead a typed storage error and poisons the live
-handle: committed work may be present in its memory directory while publication
-failed or was partial, so retrying the application operation is not known to be
-safe.
+Provider acquisition and PGDATA materialization happen before PostgreSQL
+starts. Provider boundaries happen only after pgwire recovery returns
+`ReadyForQuery`, so ordinary PostgreSQL errors retain their existing
+`PostgresError` identity. A host persistence failure is instead a typed storage
+error and poisons the live handle: guest state may be ahead of confirmed durable
+storage, so retrying the application operation is not known to be safe.
 
 ## Selective extension descriptor contract
 

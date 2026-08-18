@@ -137,6 +137,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
         host.Directory,
         prepared.layout,
         storage.mount,
+        storage.createPgdataDirectory,
       );
       baseDirectory = materialized.baseDirectory;
       const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
@@ -155,8 +156,11 @@ export class DirectWasixSession implements WasixDatabaseSession {
         instance.startup(startupPacket(options.username, options.database)),
       );
       await configureWasixDatabase(options, prepared, storage.state, (input) =>
-        session.exec(input),
+        session.exec(input, 'defer'),
       );
+      if (storage.state === 'new') {
+        await storage.sync(baseDirectory, 'checkpoint');
+      }
       return session;
     } catch (error) {
       let failure = directStartupFailure(error);

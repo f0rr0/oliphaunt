@@ -74,15 +74,19 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
-  it('closes an opened guest as failed when extension setup returns PostgreSQL ERROR', async () => {
+  it('does not publish partial first-open setup when a later statement fails', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
     }, 'new');
+    storage.sync = async (_directory, boundary) => {
+      events.push(`sync:${boundary}`);
+    };
+    const responses = [querySuccess(), queryError('22012', 'division by zero')];
     const host = fakeHost({
       events,
       execProtocolRaw() {
-        return queryError('22012', 'division by zero');
+        return nextResponse(responses);
       },
     });
 
@@ -90,7 +94,7 @@ describe('direct WASIX session lifecycle', () => {
       DirectWasixSession.open(
         openOptions(),
         host,
-        fakeDependencies(storage, preparedRuntime(['SELECT 1 / 0'])),
+        fakeDependencies(storage, preparedRuntime(['SELECT 1', 'SELECT 1 / 0'])),
       ),
     );
 
@@ -99,7 +103,34 @@ describe('direct WASIX session lifecycle', () => {
       sqlstate: '22012',
       postgresMessage: 'division by zero',
     });
-    expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
+    expect(events).toEqual(['startup', 'exec', 'exec', 'close', 'storage:failed', 'free']);
+  });
+
+  it('publishes successful first-open setup once at its final checkpoint boundary', async () => {
+    const events: string[] = [];
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+    }, 'new');
+    storage.sync = async (_directory, boundary) => {
+      events.push(`sync:${boundary}`);
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({ events }),
+      fakeDependencies(storage, preparedRuntime(['SELECT 1', 'SELECT 2'])),
+    );
+
+    await session.close();
+
+    expect(events).toEqual([
+      'startup',
+      'exec',
+      'exec',
+      'sync:checkpoint',
+      'close',
+      'storage:clean',
+      'free',
+    ]);
   });
 
   it('closes the guest before publishing storage and frees it last', async () => {

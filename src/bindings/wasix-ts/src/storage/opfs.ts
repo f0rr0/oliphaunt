@@ -1,8 +1,9 @@
 import { defineOpfsStorage, type PersistentWasixStorage } from '../storage.js';
 
 /**
- * Select an origin-private persistent database. Each completed protocol
- * operation publishes only journaled PGDATA paths before it resolves.
+ * Select an origin-private opaque database pool. Worker execution uses
+ * same-realm synchronous exact-range I/O; other placements publish to the
+ * same format through the portable journaled path.
  */
 export function opfs(name: string): PersistentWasixStorage {
   return defineOpfsStorage(name);

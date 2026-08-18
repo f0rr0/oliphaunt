@@ -68,17 +68,22 @@ Memory is the default. Persistent providers are selective imports:
 - `storage/indexed-db` and `storage/opfs` in browsers;
 - `storage/node`, `storage/bun`, and `storage/deno` on those runtimes.
 
-The browser providers hydrate a Wasmer memory directory and publish journaled
-changes. Node, Bun, and Deno directory providers publish below the managed root's
-`pgdata` child. Ordinary operations publish after `ReadyForQuery`; callback
-transactions publish once after confirmed `COMMIT` or `ROLLBACK`; explicit
-`checkpoint()` sends PostgreSQL `CHECKPOINT` and then publishes.
+IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
+OPFS worker execution uses direct synchronous access to an opaque backing-file
+pool; other browser placements publish the same journal to that same format.
+Node, Bun, and Deno directory providers publish below the managed root's
+`pgdata` child. Ordinary operations complete a provider boundary after
+`ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
+`ROLLBACK`; explicit `checkpoint()` sends PostgreSQL `CHECKPOINT` and then
+publishes.
 
-IndexedDB publication is one transaction. OPFS and directory publication order
-WAL before ordinary files and `global/pg_control` last. A publication failure
-poisons the handle because the live guest may be ahead of the durable
-generation. PostgreSQL statement errors that recover through `ReadyForQuery`
-do not poison storage.
+IndexedDB publication is one transaction. Direct OPFS honors guest file flushes,
+drains WAL at operation boundaries, and flushes all dirty files in PostgreSQL
+order for checkpoint, close, or namespace publication. Its portable path uses
+copy-on-write file backings and publishes namespace state last. A publication
+failure poisons the handle because the live guest may be ahead of durable
+storage. PostgreSQL statement errors that recover through `ReadyForQuery` do
+not poison storage.
 
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects

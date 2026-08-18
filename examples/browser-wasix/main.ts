@@ -98,6 +98,7 @@ try {
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
+      opfsTransport: 'direct',
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
       ...(postgisVersion === undefined ? {} : { postgis: postgisVersion }),
     });
@@ -385,17 +386,74 @@ async function expectOpfsPersistence(
 
   database = await Oliphaunt.open({ execution: 'worker', storage, extensions });
   try {
+    await expectDirectOpfsTransport('browser-smoke');
     const reopened = await database.query(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
     );
     const answers = reopened.getText(0, 'answers');
     if (answers !== '1,2') {
-      throw new Error(`browser smoke did not reopen OPFS delta PGDATA: ${answers}`);
+      throw new Error(`browser smoke did not reopen OPFS state: ${answers}`);
+    }
+    await database.query('INSERT INTO opfs_reopen_probe VALUES (3)');
+    await database.query('CREATE TABLE opfs_direct_create_probe (answer integer NOT NULL)');
+    await database.query('INSERT INTO opfs_direct_create_probe VALUES (99)');
+    await database.checkpoint();
+  } finally {
+    await database.close();
+  }
+
+  database = await Oliphaunt.open({ execution: 'direct', storage, extensions });
+  try {
+    const reopened = await database.query(
+      'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
+      [','],
+    );
+    const answers = reopened.getText(0, 'answers');
+    if (answers !== '1,2,3') {
+      throw new Error(`browser smoke did not reopen direct OPFS writes: ${answers}`);
+    }
+    const created = await database.query('SELECT answer FROM opfs_direct_create_probe');
+    if (created.getText(0, 'answer') !== '99') {
+      throw new Error('browser smoke did not reopen a relation created through direct OPFS');
     }
     return answers;
   } finally {
     await database.close();
+  }
+}
+
+async function expectDirectOpfsTransport(name: string): Promise<void> {
+  const worker = new Worker(new URL('./opfs-transport-probe-worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  try {
+    const response = await new Promise<
+      | { ok: true; transport: 'direct' | 'portable' }
+      | { ok: false; error: string }
+    >((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('OPFS transport probe timed out')),
+        10_000,
+      );
+      worker.addEventListener('error', (event) => {
+        clearTimeout(timeout);
+        reject(event.error ?? new Error(event.message));
+      }, { once: true });
+      worker.addEventListener('message', (event: MessageEvent) => {
+        clearTimeout(timeout);
+        resolve(event.data as
+          | { ok: true; transport: 'direct' | 'portable' }
+          | { ok: false; error: string });
+      }, { once: true });
+      worker.postMessage({ name });
+    });
+    if (!response.ok) throw new Error(`OPFS transport probe failed: ${response.error}`);
+    if (response.transport !== 'direct') {
+      throw new Error('browser smoke selected portable OPFS instead of the direct worker path');
+    }
+  } finally {
+    worker.terminate();
   }
 }
 

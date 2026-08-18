@@ -12,6 +12,8 @@ const directHost: DirectWasixHost = {
   init: host.init,
   instantiateOliphauntDirect: host.instantiateOliphauntDirect,
 };
+// This package worker is the isolation boundary. Opening the direct session
+// here keeps PostgreSQL and synchronous OPFS handles in the same realm.
 const dispatch = createWorkerSessionDispatcher(
   (options) => openBrowserWorkerSession(options, directHost),
   respond,

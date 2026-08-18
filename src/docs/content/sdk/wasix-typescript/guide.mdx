@@ -92,6 +92,12 @@ content. A persistent identity may have one owner at a time within its provider;
 simultaneous cross-binding mutation is unsupported rather than coordinated by a
 new public lock protocol.
 
+With the default worker placement, OPFS uses browser synchronous access handles
+for direct exact-range PostgreSQL file I/O when available. Direct caller-realm
+placement and browsers without that facility use the portable journal against
+the same opaque OPFS format. This selection is automatic and adds no public
+mode or tuning option.
+
 </Step>
 <Step>
 
