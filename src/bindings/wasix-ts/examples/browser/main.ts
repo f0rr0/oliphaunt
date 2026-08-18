@@ -1,6 +1,7 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, {
   PostgresError,
+  simpleQuery,
   type QueryParam,
   type OliphauntDatabase,
   type WasixExtensionDescriptor,
@@ -17,6 +18,7 @@ const output = requireElement<HTMLPreElement>('output');
 const searchParams = new URL(globalThis.location.href).searchParams;
 const smoke = searchParams.has('smoke');
 const pgUuidv7Canary = searchParams.has('pg_uuidv7');
+const postgisWorkerCanary = searchParams.has('postgis_worker');
 const directWorkerAudit = smoke ? auditDirectWorkerConstruction() : undefined;
 
 try {
@@ -26,6 +28,7 @@ try {
     extensions.push(pgUuidv7);
   }
   if (smoke) {
+    expectOwnedMemoryCopyAcrossGrowth();
     await expectFailedDirectOpenRecovery();
   }
   const storage = indexedDB('browser-smoke');
@@ -52,6 +55,7 @@ try {
     await expectSqlstate(database, 'SELECT 1 / $1::int', '22012', [0]);
     await expectAnswer(database);
     await expectTransaction(database);
+    await expectClockConsistency(database);
     const recoveredPgtapVersion = await readPgtapVersion(database);
     if (recoveredPgtapVersion !== pgtapVersion) {
       throw new Error('browser smoke observed a different pgtap version after recovery');
@@ -63,8 +67,15 @@ try {
 
     directWorkerAudit?.assertNoneAndRestore();
     await expectDirectWithoutWorker();
+    await expectFailedWorkerOpenRecovery();
 
     database = await Oliphaunt.open({ execution: 'worker', storage, extensions });
+    await expectSqlstate(database, 'SELEC 1', '42601');
+    await expectAnswer(database);
+    await expectSqlstate(database, 'SELECT 1 / $1::int', '22012', [0]);
+    await expectAnswer(database);
+    await expectDirectMemoryProtocol(database);
+    await expectClockConsistency(database);
     const reopened = await database.query(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM browser_reopen_probe',
       [','],
@@ -80,6 +91,7 @@ try {
     }
     await database.close();
     const opfsAnswers = await expectOpfsPersistence(extensions);
+    const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
     status.textContent = 'Browser smoke passed.';
     output.textContent = JSON.stringify({
       answers: [42, 43],
@@ -88,6 +100,7 @@ try {
       startupSqlstate: '3D000',
       directWorkers: 0,
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
+      ...(postgisVersion === undefined ? {} : { postgis: postgisVersion }),
     });
     document.documentElement.dataset.oliphauntSmoke = 'passed';
   } else {
@@ -117,6 +130,78 @@ try {
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 } finally {
   directWorkerAudit?.restore();
+}
+
+async function expectLargePostgisWorkerModule(): Promise<string> {
+  const { default: postgis } = await import('@oliphaunt/extension-postgis-wasix');
+  const dependencyModule = postgis.carriers
+    .flatMap((carrier) => carrier.install.nativeModules)
+    .find((module) => module.name === 'postgis_deps');
+  if (dependencyModule === undefined || dependencyModule.size <= 8 * 1024 * 1024) {
+    throw new Error('browser worker canary requires a PostGIS side module larger than 8 MiB');
+  }
+
+  const database = await Oliphaunt.open({ execution: 'worker', extensions: [postgis] });
+  try {
+    const version = await readPostgisVersion(database);
+    await database.query('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
+    await database.query(
+      `DO $$ BEGIN
+         BEGIN
+           PERFORM ST_GeomFromText('POINT(');
+         EXCEPTION WHEN OTHERS THEN
+           INSERT INTO postgis_nested_error_catch VALUES (1);
+         END;
+       END $$`,
+    );
+    const caught = await database.query(
+      'SELECT count(*)::int AS count FROM postgis_nested_error_catch',
+    );
+    if (caught.getText(0, 'count') !== '1') {
+      throw new Error('browser worker did not catch an error crossing PostGIS side modules');
+    }
+    try {
+      await database.query("SELECT ST_GeomFromText('POINT(')");
+      throw new Error('browser worker expected malformed PostGIS geometry to fail');
+    } catch (error) {
+      if (!(error instanceof PostgresError)) {
+        throw error;
+      }
+    }
+    if ((await readPostgisVersion(database)) !== version) {
+      throw new Error('browser worker did not recover its PostGIS session after an error');
+    }
+    return version;
+  } finally {
+    await database.close();
+  }
+}
+
+async function readPostgisVersion(database: OliphauntDatabase): Promise<string> {
+  const result = await database.query('SELECT postgis_full_version()::text AS version');
+  const version = result.getText(0, 'version');
+  if (version === null || !version.includes('POSTGIS=')) {
+    throw new Error(
+      `browser worker returned an invalid PostGIS version: ${JSON.stringify(version)}`,
+    );
+  }
+  return version;
+}
+
+function expectOwnedMemoryCopyAcrossGrowth(): void {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  const guest = new Uint8Array(memory.buffer, 0, 4);
+  guest.set([1, 2, 3, 4]);
+  const owned = guest.slice();
+  const previousBuffer = memory.buffer;
+  memory.grow(1);
+  if (memory.buffer === previousBuffer) {
+    throw new Error('WebAssembly memory growth did not replace its backing buffer');
+  }
+  new Uint8Array(memory.buffer, 0, 4).fill(9);
+  if (!owned.every((byte, index) => byte === index + 1)) {
+    throw new Error('owned protocol bytes changed after explicit WebAssembly memory growth');
+  }
 }
 
 async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promise<void> {
@@ -158,6 +243,7 @@ async function expectDirectWithoutWorker(): Promise<void> {
     const database = await Oliphaunt.open({ execution: 'direct' });
     try {
       await expectAnswer(database);
+      await expectDirectMemoryProtocol(database);
     } finally {
       await database.close();
     }
@@ -180,9 +266,50 @@ async function expectTransaction(database: OliphauntDatabase): Promise<void> {
   }
 }
 
-async function expectStartupSqlstate(database: string, sqlstate: string): Promise<void> {
+async function expectDirectMemoryProtocol(database: OliphauntDatabase): Promise<void> {
+  const retained = await database.execProtocolRaw(
+    simpleQuery("SELECT repeat('a', 10240) AS retained_payload"),
+  );
+  const snapshot = retained.slice();
+  const large = await database.execProtocolRaw(
+    simpleQuery("SELECT repeat('z', 1048576) AS large_payload"),
+  );
+  if (large.byteLength < 1048576) {
+    throw new Error(
+      `browser worker returned a truncated large PGWire response: ${large.byteLength}`,
+    );
+  }
+  if (
+    retained.byteLength !== snapshot.byteLength ||
+    !retained.every((byte, index) => byte === snapshot[index])
+  ) {
+    throw new Error('browser worker response changed after the guest reused its output memory');
+  }
+}
+
+async function expectClockConsistency(database: OliphauntDatabase): Promise<void> {
+  const wallClock = await database.query(
+    'SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint AS millis',
+  );
+  const wallClockMillis = Number(wallClock.getText(0, 'millis'));
+  if (!Number.isFinite(wallClockMillis) || Math.abs(Date.now() - wallClockMillis) > 5_000) {
+    throw new Error(`browser WASI realtime clock drifted: ${wallClockMillis}`);
+  }
+  const plan = await database.query('EXPLAIN (ANALYZE, FORMAT JSON) SELECT pg_sleep(0.05)');
+  const explain = JSON.parse(plan.getText(0, 'QUERY PLAN') ?? 'null');
+  const elapsed = explain?.[0]?.['Execution Time'];
+  if (!Number.isFinite(elapsed) || elapsed < 25 || elapsed > 5_000) {
+    throw new Error(`browser WASI monotonic clock returned invalid elapsed time: ${elapsed}`);
+  }
+}
+
+async function expectStartupSqlstate(
+  database: string,
+  sqlstate: string,
+  execution: 'direct' | 'worker',
+): Promise<void> {
   try {
-    const unexpected = await Oliphaunt.open({ database, execution: 'direct' });
+    const unexpected = await Oliphaunt.open({ database, execution });
     await unexpected.close();
     throw new Error(
       `browser smoke unexpectedly opened missing database ${JSON.stringify(database)}`,
@@ -199,8 +326,18 @@ async function expectStartupSqlstate(database: string, sqlstate: string): Promis
 }
 
 async function expectFailedDirectOpenRecovery(): Promise<void> {
-  await expectStartupSqlstate('oliphaunt_browser_smoke_missing_database', '3D000');
+  await expectStartupSqlstate('oliphaunt_browser_smoke_missing_database', '3D000', 'direct');
   const reopened = await Oliphaunt.open({ execution: 'direct' });
+  try {
+    await expectAnswer(reopened);
+  } finally {
+    await reopened.close();
+  }
+}
+
+async function expectFailedWorkerOpenRecovery(): Promise<void> {
+  await expectStartupSqlstate('oliphaunt_browser_worker_missing_database', '3D000', 'worker');
+  const reopened = await Oliphaunt.open({ execution: 'worker' });
   try {
     await expectAnswer(reopened);
   } finally {

@@ -11,6 +11,7 @@ index 34af7da..51fafa5 100644
 +    sync::{Arc, Mutex},
 +    task::{Context as TaskContext, Poll},
  };
+ 
  use anyhow::Context;
 -use js_sys::Reflect;
 +use js_sys::{Array, Reflect};
@@ -22,6 +23,7 @@ index 34af7da..51fafa5 100644
 +};
  use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
  use wasmer_wasix::runtime::task_manager::InlineWaker;
+ 
 @@ -15,7 +21,10 @@ use crate::{utils::Error, StringOrBytes};
  /// A directory that can be mounted inside a WASIX instance.
  #[derive(Debug, Clone, wasm_bindgen_derive::TryFromJsValue)]
@@ -92,6 +94,7 @@ index 34af7da..51fafa5 100644
 +        }
 +    }
  }
+ 
  impl Directory {
 +    fn from_filesystem(fs: Arc<dyn FileSystem>) -> Self {
 +        Self {
@@ -200,7 +203,7 @@ index 34af7da..51fafa5 100644
      }
  }
  
-@@ -226,7 +309,168 @@ impl virtual_fs::FileOpener for Directory {
+@@ -226,8 +309,169 @@ impl virtual_fs::FileOpener for Directory {
          path: &std::path::Path,
          conf: &virtual_fs::OpenOptionsConfig,
      ) -> virtual_fs::Result<Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>> {
@@ -369,3 +372,5 @@ index 34af7da..51fafa5 100644
 +        journal.insert(relative.to_string_lossy().replace('\\', "/"));
      }
  }
+ 
+ #[wasm_bindgen(typescript_custom_section)]

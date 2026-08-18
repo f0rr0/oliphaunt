@@ -250,7 +250,7 @@ describe('direct WASIX session lifecycle', () => {
     expect(attempts).toBe(2);
   });
 
-  it('rejects an oversized load-ordered side module without promising an invalid worker fallback', async () => {
+  it('keeps Chromium oversized-module policy on the main realm while allowing workers', async () => {
     let prepared = false;
     const options = openOptions();
     options.extensionCarriers.postgis = {
@@ -308,17 +308,19 @@ describe('direct WASIX session lifecycle', () => {
 
     await expect(
       DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
-    ).rejects.toThrow(/worker execution does not yet implement.*native load order/);
-    expect(prepared).toBe(false);
-
-    const postgisCarrier = options.extensionCarriers.postgis;
-    if (postgisCarrier === undefined) throw new Error('postgis test carrier is missing');
-    postgisCarrier.install.loadOrder = [];
-    await expect(
-      DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
     ).rejects.toThrow(/use execution: "worker" for postgis/);
     expect(prepared).toBe(false);
 
+    const workerSession = await DirectWasixSession.open(
+      options,
+      fakeHost({}),
+      guardedDependencies,
+      'browser-worker',
+    );
+    expect(prepared).toBe(true);
+    await workerSession.close();
+
+    prepared = false;
     const nodeSession = await DirectWasixSession.open(
       options,
       fakeHost({}),

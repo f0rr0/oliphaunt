@@ -157,11 +157,14 @@ describe('WASIX TypeScript extensions', () => {
     ).toEqual([]);
   });
 
-  it('fails closed with host-neutral diagnostics for Node and browser callers', () => {
-    const ordered = extension('ordered', { loadOrder: ['lib/postgresql/ordered.so'] });
-    expect(() => resolveWasixExtensions(manifest(), carrierMap(ordered), ['ordered'])).toThrow(
-      'requires native load-order handling that the @oliphaunt/wasix-ts host does not implement',
-    );
+  it('drives declared native load order and fails closed on shared-memory requirements', () => {
+    const ordered = extension('ordered', {
+      installedFiles: ['share/postgresql/extension/ordered.control', 'lib/postgresql/ordered.so'],
+      loadOrder: ['lib/postgresql/ordered.so'],
+    });
+    expect(
+      extensionSetupSql(resolveWasixExtensions(manifest(), carrierMap(ordered), ['ordered'])),
+    ).toEqual(["LOAD '/lib/postgresql/ordered.so';", 'CREATE EXTENSION IF NOT EXISTS "ordered";']);
 
     const shared = extension('shared', { sharedMemoryRequired: true });
     expect(() => resolveWasixExtensions(manifest(), carrierMap(shared), ['shared'])).toThrow(

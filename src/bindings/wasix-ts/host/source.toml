@@ -26,7 +26,6 @@ series = [
   "0001-wasmer-js-run-configured-wasix-process.patch",
   "0002-wasmer-wasix-add-0702-compatibility-imports.patch",
   "0003-wasmer-js-install-browser-runtime-devices.patch",
-  "0004-wasmer-wasix-recover-stdio-pgwire-errors.patch",
   "0005-wasmer-js-use-object-wasm-init.patch",
   "0006-wasmer-js-reuse-precompiled-wasix-module.patch",
   "0007-wasmer-js-run-oliphaunt-direct.patch",
@@ -37,4 +36,8 @@ series = [
   "0012-wasmer-js-remove-retired-wasm32-wasi-target.patch",
   "0013-wasmer-wasix-fast-single-backend-clock.patch",
   "0014-wasmer-js-track-directory-mutations.patch",
+  "0016-wasmer-wasix-direct-single-backend-clock.patch",
+  "0017-wasmer-js-direct-pgwire-memory-bridge.patch",
+  "0018-wasmer-js-bound-direct-stderr.patch",
+  "0019-wasmer-parse-exception-reference-types.patch",
 ]

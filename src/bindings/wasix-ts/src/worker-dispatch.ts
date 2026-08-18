@@ -6,7 +6,6 @@ import {
   type WorkerResponse,
 } from './rpc.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
-import { type WasixHost, WasixProcess } from './wasix-process.js';
 import { prepareTransferableBytes } from './worker-transfer.js';
 
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
@@ -19,12 +18,7 @@ type WorkerSession = Readonly<{
 
 export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WorkerSession>;
 
-/** One RPC dispatcher shared by browser Workers and Node worker_threads. */
-export function createWorkerDispatcher(host: WasixHost, respond: WorkerResponder) {
-  return createWorkerSessionDispatcher((options) => WasixProcess.open(options, host), respond);
-}
-
-/** @internal One request state machine shared by stream and in-realm worker hosts. */
+/** @internal One request state machine shared by browser and server worker realms. */
 export function createWorkerSessionDispatcher(
   openSession: WorkerSessionOpener,
   respond: WorkerResponder,

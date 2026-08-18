@@ -58,9 +58,11 @@ per-database skeleton by default. Temporary and template-backed databases use a
 cached PGDATA template as a lower filesystem and materialize files into database
 storage only when PostgreSQL opens them for mutation.
 
-The runtime tree keeps both `/bin/oliphaunt` and `/bin/postgres`. They are the same
-backend module; the `postgres` path exists so upstream `initdb` can discover and
-spawn the backend through PostgreSQL's normal `find_other_exec()` path.
+The portable artifact installs the backend once under PostgreSQL's conventional
+`/bin/postgres` name. Both direct hosts execute that path, and upstream `initdb`
+discovers the same regular file through its normal `find_other_exec()` path.
+The internal build output and AOT artifact retain the Oliphaunt product identity,
+but that branding does not leak into PostgreSQL's installed executable layout.
 
 The cache is content-addressed by the asset manifest and artifact hashes. If an
 asset hash does not match the manifest, startup fails instead of using a mixed

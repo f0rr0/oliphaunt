@@ -86,5 +86,7 @@ fi
     make -s -j"$JOBS" -C "$BUILD_DIR/src/backend/snowball" all
     test -f "$BUILD_DIR/src/pl/plpgsql/src/plpgsql.so"
     test -f "$BUILD_DIR/src/backend/snowball/dict_snowball.so"
+    oliphaunt_wasix_verify_side_module_sjlj "$BUILD_DIR/src/pl/plpgsql/src/plpgsql.so"
+    oliphaunt_wasix_verify_side_module_sjlj "$BUILD_DIR/src/backend/snowball/dict_snowball.so"
     test -f "$BUILD_DIR/src/backend/snowball/snowball_create.sql"
   '

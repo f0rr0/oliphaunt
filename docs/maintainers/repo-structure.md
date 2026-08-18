@@ -112,7 +112,7 @@ synthetic root:
 - `src/bindings/wasix-ts` is the public browser, Node, Bun, and Deno binding over the same
   portable WASIX runtime. It owns module-Worker and worker-thread orchestration,
   archive-to-memory mounts, the patched package-relative Wasmer host, and the
-  stdio pgwire client. It must not depend on `src/sdks/js`, native runtime
+  direct guest-memory pgwire client. It must not depend on `src/sdks/js`, native runtime
   carriers, Node direct, or the broker. Ordinary opens consume the generated
   host-neutral `@oliphaunt/liboliphaunt-wasix` carrier; conditional exports
   select the host adapter without changing the public package identity.
