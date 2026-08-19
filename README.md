@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Native-first embedded PostgreSQL 18 for desktop, mobile, and WASIX applications.<br>Same engine, new name: pglite-oxide is now <a href="/">Oliphaunt</a>.</strong>
+  <strong>Native-first embedded PostgreSQL 18 for desktop, mobile, and WASIX applications.</strong><br>Same engine, new name: <strong>pglite&#8209;oxide</strong> is now <strong>Oliphaunt</strong>.
 </p>
 
 <p align="center">
