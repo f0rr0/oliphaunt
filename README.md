@@ -2,23 +2,18 @@
   <img src="docs/assets/oliphaunt.png" alt="Oliphaunt" width="360">
 </p>
 
-<h1 align="center">Oliphaunt</h1>
+<p align="center">
+  <strong>Native-first embedded PostgreSQL 18 for desktop, mobile, and WASIX applications.<br>Same engine, new name: pglite-oxide is now <a href="/">Oliphaunt</a>.</strong>
+</p>
 
 <p align="center">
-  <strong>Native-first embedded PostgreSQL 18 for desktop, mobile, and WASIX applications.</strong>
+    <strong></strong>
 </p>
 
 Oliphaunt is a family of peer SDKs and runtime products over the same embedded
 PostgreSQL model. Applications own their database roots, choose an honest
 runtime mode for their platform, and package only the exact PostgreSQL
 extensions they select.
-
-> **Release availability:** Oliphaunt products are independently versioned and
-> can become visible on different registries at different times during a
-> publication transaction. Release Please-generated version metadata in the
-> exact source tree is the version authority; an install example is a contract,
-> while the corresponding registry entry or promoted GitHub product tag is the
-> availability evidence.
 
 ## Product model
 
@@ -46,12 +41,12 @@ that product; they use the product version and are not extra products.
 
 The published target manifests currently declare:
 
-| Surface | Declared release targets |
-| --- | --- |
-| Desktop native | Linux x64 GNU, Linux arm64 GNU, macOS arm64, Windows x64 MSVC |
-| Android | `arm64-v8a`, `x86_64` |
-| Apple | iOS XCFramework carrier plus the declared macOS arm64 runtime carrier, delivered through SwiftPM and GitHub release assets |
-| WASIX | portable runtime plus AOT carriers for Linux x64/arm64 GNU, macOS arm64, and Windows x64 MSVC |
+| Surface        | Declared release targets                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Desktop native | Linux x64 GNU, Linux arm64 GNU, macOS arm64, Windows x64 MSVC                                                              |
+| Android        | `arm64-v8a`, `x86_64`                                                                                                      |
+| Apple          | iOS XCFramework carrier plus the declared macOS arm64 runtime carrier, delivered through SwiftPM and GitHub release assets |
+| WASIX          | portable runtime plus AOT carriers for Linux x64/arm64 GNU, macOS arm64, and Windows x64 MSVC                              |
 
 The first release intentionally does **not** claim macOS x64, Windows ARM64,
 Linux musl, Android 32-bit, or undeclared Apple architectures. A compiler,
@@ -70,15 +65,15 @@ and physical-iOS boundaries.
 
 The declared public entry points are:
 
-| App surface | Package entry point | Distribution boundary |
-| --- | --- | --- |
-| Rust/Tauri desktop | `oliphaunt` | Cargo and target-specific native artifact crates |
-| WASIX Rust | `oliphaunt-wasix` | Cargo portable/AOT artifact crates |
-| Swift | `Oliphaunt` | SwiftPM source tag and checksum-pinned release assets |
-| Android | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers |
-| React Native | `@oliphaunt/react-native` | npm package delegating runtime work to Swift and Kotlin |
-| Node.js, Bun, and Deno | `@oliphaunt/ts` | npm for native runtime support; JSR for protocol/query helpers only |
-| Native bindings | `liboliphaunt` C ABI | declared native runtime carriers |
+| App surface            | Package entry point                                           | Distribution boundary                                               |
+| ---------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Rust/Tauri desktop     | `oliphaunt`                                                   | Cargo and target-specific native artifact crates                    |
+| WASIX Rust             | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                  |
+| Swift                  | `Oliphaunt`                                                   | SwiftPM source tag and checksum-pinned release assets               |
+| Android                | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers  |
+| React Native           | `@oliphaunt/react-native`                                     | npm package delegating runtime work to Swift and Kotlin             |
+| Node.js, Bun, and Deno | `@oliphaunt/ts`                                               | npm for native runtime support; JSR for protocol/query helpers only |
+| Native bindings        | `liboliphaunt` C ABI                                          | declared native runtime carriers                                    |
 
 Kotlin host-native and JVM compilations are development/parity evidence, not
 public Kotlin Multiplatform or JVM artifacts. The first Swift release starts at
