@@ -99,14 +99,28 @@ check_static() {
     "Node direct fake libraries must match the canonical backup ABI"
   if command -v c++ >/dev/null 2>&1; then
     local node_include
-    node_include="$(node -e 'const path = require("node:path"); process.stdout.write(path.resolve(process.execPath, "../../include/node"));')"
-    if [ ! -f "$node_include/node_api.h" ]; then
-      echo "could not locate node_api.h for Node direct ABI syntax check at $node_include" >&2
-      exit 1
+    node_include="$(
+      node -e '
+const path = require("node:path");
+const adjacent = path.resolve(process.execPath, "../../include/node");
+try {
+  process.stdout.write(require("node:fs").existsSync(path.join(adjacent, "node_api.h"))
+    ? adjacent
+    : path.dirname(require.resolve("node-api-headers/include/node_api.h", {
+        paths: [process.cwd(), path.join(process.cwd(), "src/runtimes/node-direct")]
+      })));
+} catch {
+  process.exit(1);
+}
+' 2>/dev/null || true
+    )"
+    if [ -n "$node_include" ] && [ -f "$node_include/node_api.h" ]; then
+      c++ -std=c++17 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+        -I"$node_include" -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
+        "$package_dir/native/node-addon/oliphaunt_node.cc"
+    else
+      echo "Node direct addon syntax check deferred to the product build with pinned headers"
     fi
-    c++ -std=c++17 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
-      -I"$node_include" -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
-      "$package_dir/native/node-addon/oliphaunt_node.cc"
     c++ -std=c++17 -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
       "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   fi
