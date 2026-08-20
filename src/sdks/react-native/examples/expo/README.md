@@ -5,17 +5,13 @@ This is a real Expo development-build app for validating
 Architecture JSI `ArrayBuffer` transport.
 
 The first screen is a small field-ops task board rather than a static smoke
-screen. On launch it opens one `nativeDirect` database, creates a
+screen. On launch it opens one direct database, creates a
 project/task/event schema, seeds 240 tasks in a transaction, updates work items
 in a second transaction, runs parameterized aggregate/search queries, and logs
-latency percentiles plus package-size evidence through
-`OLIPHAUNT_EXPO_SMOKE_PASS`.
+latency percentiles through `OLIPHAUNT_EXPO_SMOKE_PASS`.
 
-When the bundled mobile runtime resources reports `mobileStaticRegistryState =
-complete` and registers the `vector` module, the same workload requests that
-extension, creates `pgvector`, and runs an HNSW nearest-neighbor query. Builds
-without a complete mobile static registry keep running the base Postgres
-workload and report the extension selection in the validation list.
+The installed-app smoke activates the generated mobile extension set and runs
+the extension-specific runtime proofs, including the pgvector HNSW query.
 
 Fast Android smoke:
 
@@ -48,11 +44,11 @@ process that already has the desired `EXPO_PUBLIC_OLIPHAUNT_*` env.
 Device benchmark runs use the same native build/package path but launch the app
 with the benchmark runner. They emit `OLIPHAUNT_EXPO_BENCH_PASS` and write the
 parsed JSON report under `target/oliphaunt-expo-<platform>-benchmark/reports/`.
-The report includes raw/typed/parameterized RTT, bulk insert/update, large
-result transfer, package size, JS timer liveness, platform memory evidence, and
-background checkpoint latency. It also runs a same-device Expo SQLite WAL
-baseline with the same durability label so mobile reports can compare
-liboliphaunt against native SQLite without using host-side numbers:
+The report includes typed and parameterized RTT, set-based insert throughput,
+JS timer liveness, effective PostgreSQL settings, and checkpoint latency. The
+platform harness records process memory and built artifact sizes separately. A
+same-device Expo SQLite WAL baseline uses its own explicit SQLite durability
+profile so comparisons do not invent an Oliphaunt durability mode:
 
 ```sh
 pnpm run bench:android
@@ -64,9 +60,9 @@ two-phase crash harness. The write phase opens persistent app-private storage,
 writes committed data, and leaves the database open. The platform script then
 force-stops/terminates the app process and relaunches the verify phase against
 the same storage with a fresh phase-specific dev-client bundle, expecting
-PostgreSQL recovery to make the committed row visible. Crash runs default to
-`durability=safe`; `balanced` keeps `synchronous_commit=off`, so it is a
-latency/footprint profile rather than a last-commit survival guarantee:
+PostgreSQL recovery to make the committed row visible. Before writing, the app
+verifies the effective PostgreSQL `fsync`, `full_page_writes`, and
+`synchronous_commit` settings are all `on`:
 
 ```sh
 pnpm run crash:android
@@ -93,8 +89,6 @@ The smoke script:
 Useful overrides:
 
 ```sh
-OLIPHAUNT_EXPO_MOBILE_DURABILITY=safe pnpm run bench:android
-OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT=smallMobile pnpm run bench:android
 OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=shared_buffers=8MB,wal_buffers=-1 pnpm run bench:android
 OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick pnpm run bench:android
 OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD=1 pnpm run smoke:android
@@ -106,18 +100,14 @@ OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR=/path/to/pgdata pnpm run smoke:androi
 OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO=/path/to/liboliphaunt.so pnpm run smoke:android
 ```
 
-Expo smoke and benchmark runs default to `balancedMobile` because they are
-resident mobile app harnesses. Set `OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT` and
-`OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS` to sweep the same footprint/GUC matrix used
-by the Rust perf harness. `tools/perf/matrix/run_mobile_footprint_matrix.sh`
+Expo smoke and benchmark tuning uses explicit PostgreSQL startup GUCs through
+`OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS`.
+`tools/perf/matrix/run_mobile_footprint_matrix.sh`
 prints or runs the full Android/iOS device matrix, stores each case in its own
 scratch directory, and writes `summary.json` plus `summary.md` under
-`target/perf/mobile-footprint-<run-id>/`. The matrix defaults to
-`balancedMobile`; pass `--runtime-footprint all` to compare `throughput`,
-`balancedMobile`, and `smallMobile` under the same startup-GUC axes. Matrix cases
-run the benchmark lane for Safe/Balanced durability and the process-death
-recovery lane for Safe durability so recovery evidence is not falsely attached
-to `synchronous_commit=off` runs.
+`target/perf/mobile-footprint-<run-id>/`. Matrix cases run the benchmark and,
+by default, process-death recovery lanes under the same explicit GUCs and
+PostgreSQL safe defaults.
 Pass `--quick` to the matrix wrapper, or set
 `OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick` directly, when validating harness
 changes; leave the default full preset for reportable performance numbers.
@@ -129,7 +119,6 @@ Use the matrix axis filters for iterative tuning slices, for example:
   --wal-buffers -1 \
   --min-wal-size 32MB \
   --max-wal-size 64MB \
-  --durability balanced \
   --crash-recovery off
 ```
 

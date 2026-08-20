@@ -132,10 +132,8 @@ class OliphauntAndroidRuntimeAssetsTest {
             )
 
             val report = OliphauntAndroidRuntimeAssets.packageSizeReport(resourceRoot)
-            val facadeReport = OliphauntAndroid.packageSizeReport(resourceRoot)
 
             assertEquals("complete", report?.mobileStaticRegistryState)
-            assertEquals(report, facadeReport)
             assertEquals(listOf("hstore", "vector"), report?.mobileStaticRegistryRegistered)
             assertEquals(emptyList(), report?.mobileStaticRegistryPending)
             assertEquals(listOf("hstore", "vector"), report?.nativeModuleStems)

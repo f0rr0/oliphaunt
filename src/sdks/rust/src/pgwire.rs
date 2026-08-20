@@ -174,15 +174,6 @@ impl PostgresWireClient {
         Ok(ProtocolResponse::new(bytes))
     }
 
-    pub(crate) fn exec_protocol_stream(
-        &mut self,
-        request: ProtocolRequest,
-        mut on_chunk: impl FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        write_protocol_request(self.stream.get_mut().as_mut(), request.as_bytes())?;
-        read_until_ready_stream(&mut self.stream, false, &mut on_chunk)
-    }
-
     pub(crate) fn terminate(&mut self) -> Result<()> {
         let stream = self.stream.get_mut();
         stream
@@ -303,14 +294,6 @@ fn read_until_ready(
         backend_key,
     )?;
     Ok(out)
-}
-
-fn read_until_ready_stream(
-    stream: &mut dyn Read,
-    error_is_fatal: bool,
-    on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-) -> Result<()> {
-    read_until_ready_stream_with_key(stream, error_is_fatal, on_chunk, None)
 }
 
 fn read_until_ready_stream_with_key(

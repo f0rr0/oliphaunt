@@ -1,17 +1,12 @@
 import {
   Oliphaunt,
-  MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
-  mobileReleaseExtensionProofPlan,
-  runOliphauntReactNativeBenchmark,
-  type EngineCapabilities,
-  type EngineModeSupport,
   type DatabaseStorage,
-  type PackageSizeReport,
   type OliphauntDatabase,
-  type ReactNativeBenchmarkOptions,
-  type ReactNativeBenchmarkReport,
-  type ReactNativeBenchmarkWorkload,
 } from '@oliphaunt/react-native';
+import {
+  GENERATED_EXTENSION_METADATA,
+  GENERATED_EXTENSION_METADATA_SHA256,
+} from '../../../src/generated/extensions';
 import {
   runMobileBindingProof,
   runMobileReleaseExtensionProof,
@@ -21,6 +16,7 @@ import {
 import {
   runExpoSQLiteBenchmark,
   type ExpoSQLiteBenchmarkReport,
+  type ReactNativeBenchmarkWorkload,
 } from './sqlite-benchmark';
 import {
   EXPO_SMOKE_PASS_TAG,
@@ -56,7 +52,7 @@ type SmokeReport = {
 
 type AppReport = {
   smoke?: SmokeReport;
-  benchmark?: ReactNativeBenchmarkReport;
+  benchmark?: NativeBenchmarkReport;
   sqliteBenchmark?: ExpoSQLiteBenchmarkReport;
   crashRecovery?: {
     phase: 'write' | 'verify';
@@ -64,10 +60,8 @@ type AppReport = {
     value: string;
     openMs: number;
     elapsedMs: number;
+    postgresSettings: PostgresSettings;
   };
-  modes?: EngineModeSupport[];
-  capabilities?: EngineCapabilities;
-  packageSize?: PackageSizeReport | null;
   checks?: OperationCheck[];
   lifecycle?: OperationCheck;
   icuProof?: OperationCheck;
@@ -81,27 +75,34 @@ type SmokeGlobalState = {
 };
 
 type OpenTuning = {
-  durability: 'safe' | 'balanced' | 'fastDev';
-  runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile';
-  startupGUCs?: string[];
-  walSegmentSizeMB: string;
+  startupGUCs?: Readonly<Record<string, string>>;
   storage?: DatabaseStorage;
   storageLabel?: string;
 };
 
-type BenchmarkTuning = Pick<
-  ReactNativeBenchmarkOptions,
-  | 'warmupIterations'
-  | 'rawRttIterations'
-  | 'typedRttIterations'
-  | 'parameterizedRttIterations'
-  | 'insertRows'
-  | 'lookupIterations'
-  | 'aggregateIterations'
-  | 'updateIterations'
-  | 'checkpointIterations'
-  | 'largeResultRows'
->;
+type BenchmarkTuning = {
+  readonly warmupIterations: number;
+  readonly typedRttIterations: number;
+  readonly parameterizedRttIterations: number;
+  readonly insertRows: number;
+  readonly checkpointIterations: number;
+};
+
+type PostgresSettings = Readonly<Record<string, string>>;
+
+type NativeBenchmarkReport = {
+  readonly schemaVersion: 1;
+  readonly engine: 'direct';
+  readonly rawProtocolTransport: 'jsi-array-buffer';
+  readonly startedAt: string;
+  readonly elapsedMs: number;
+  readonly openMs: number;
+  readonly closeMs: number;
+  readonly jsTimerTicks: number;
+  readonly metadata: Record<string, string | number | boolean | null>;
+  readonly postgresSettings: PostgresSettings;
+  readonly workloads: ReactNativeBenchmarkWorkload[];
+};
 
 const smokeGlobalKey = '__OLIPHAUNT_EXPO_SMOKE_STATE__';
 const initialUrlTimeoutMs = 2_500;
@@ -144,36 +145,15 @@ export default function HomeScreen() {
           return;
         }
 
-        stage('metadata:start');
-        const [modes, packageSize] = await Promise.all([
-          Oliphaunt.supportedModes(),
-          Oliphaunt.packageSizeReport(),
-        ]);
-        if (packageSize === null) {
-          throw new Error('installed mobile release proof requires a package-size report');
-        }
-        stage('metadata:done', {
-          modes: modes.length,
-          packageBytes: packageSize.packageBytes,
-        });
         if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
           throw new Error(`installed mobile release proof does not support platform ${Platform.OS}`);
         }
-        const extensionPlan = mobileReleaseExtensionProofPlan(packageSize, Platform.OS);
+        const extensionPlan = mobileReleaseExtensionProofPlan();
         const extensions = extensionPlan.map((extension) => extension.sqlName);
-        stage('extensions:selected', {
-          extensions,
-          mobileStaticRegistryState: packageSize?.mobileStaticRegistryState ?? null,
-          mobileStaticRegistryRegistered: packageSize?.mobileStaticRegistryRegistered ?? [],
-        });
+        stage('extensions:selected', { extensions });
         const databaseOpen = await openDatabase(stage, extensions);
         stage('open:done', { openMs: databaseOpen.openMs });
         const db = databaseOpen.database;
-        stage('capabilities:start');
-        const capabilities = await db.capabilities();
-        assertNativeDirectCapabilities(capabilities);
-        stage('capabilities:done', { engine: capabilities.engine });
-
         stage('extensions:activation:start', { count: extensionPlan.length });
         const extensionProofResult = await runMobileReleaseExtensionProof(
           db,
@@ -203,11 +183,7 @@ export default function HomeScreen() {
               checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
             }),
         );
-        const icuProof = await runSelectedIcuRuntimeProof(
-          db,
-          packageSize?.runtimeFeatures ?? [],
-          stage,
-        );
+        const icuProof = await runSelectedIcuRuntimeProof(db, stage);
         const lifecycle = await runLifecycleResumeValidation(db, stage);
         liveness.stop();
         const checks = [
@@ -218,8 +194,8 @@ export default function HomeScreen() {
         ];
 
         const smoke = {
-          engine: capabilities.engine,
-          rawProtocolTransport: capabilities.rawProtocolTransport,
+          engine: 'direct',
+          rawProtocolTransport: 'jsi-array-buffer',
           selectOne,
           parameterRoundTrip,
           jsTimerTicks: liveness.ticks(),
@@ -227,9 +203,6 @@ export default function HomeScreen() {
         };
         const nextReport = {
           smoke,
-          modes,
-          capabilities,
-          packageSize,
           checks,
           lifecycle,
           icuProof,
@@ -241,7 +214,7 @@ export default function HomeScreen() {
           activatedExtensions: extensionProofResult.activatedExtensions,
           extensionCatalogComplete: extensionProofResult.extensionCatalogComplete,
           pgTextsearchEnglishBm25: extensionProofResult.pgTextsearchEnglishBm25,
-          extensionCatalogSha256: MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
+          extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
           icuRuntimeProof: icuProof !== undefined,
         });
         setReport(nextReport);
@@ -315,7 +288,7 @@ export default function HomeScreen() {
             <Metric label="platform" value={Platform.OS} />
             <Metric
               label="engine"
-              value={report.smoke?.engine ?? firstAvailableMode(report.modes) ?? 'pending'}
+              value={report.smoke?.engine ?? report.benchmark?.engine ?? 'pending'}
             />
             <Metric label="transport" value={report.smoke?.rawProtocolTransport ?? 'pending'} />
             <Metric label="contract" value={report.smoke ? 'passed' : 'pending'} />
@@ -335,7 +308,6 @@ export default function HomeScreen() {
                   : 'pending'
               }
             />
-            <Metric label="package" value={formatBytes(report.packageSize?.packageBytes)} />
             <Metric label="checks" value={report.checks ? String(report.checks.length) : 'pending'} />
           </View>
 
@@ -453,13 +425,8 @@ async function runLifecycleResumeValidation(
 
 async function runSelectedIcuRuntimeProof(
   db: OliphauntDatabase,
-  runtimeFeatures: readonly string[],
   stage: (name: string, extra?: Record<string, unknown>) => void,
-): Promise<OperationCheck | undefined> {
-  if (!runtimeFeatures.includes('icu')) {
-    return undefined;
-  }
-
+): Promise<OperationCheck> {
   const started = now();
   stage('icu:runtime:start');
   await db.execute('DROP COLLATION IF EXISTS public.oliphaunt_icu_numeric');
@@ -495,6 +462,35 @@ async function runSelectedIcuRuntimeProof(
   const detail = `provider=icu; numeric order ${values}${version ? `; version ${version}` : ''}`;
   stage('icu:runtime:done', { detail, elapsedMs });
   return { name: 'ICU numeric collation', detail, elapsedMs };
+}
+
+function mobileReleaseExtensionProofPlan() {
+  return GENERATED_EXTENSION_METADATA.map((extension) => ({
+    sqlName: extension.sqlName,
+    createsExtension: extension.createsExtension,
+    selectedExtensionDependencies: extension.selectedExtensionDependencies,
+    activationSql: activationSqlForExtension(extension),
+  }));
+}
+
+function activationSqlForExtension(extension: {
+  readonly sqlName: string;
+  readonly createsExtension: boolean;
+}): readonly string[] {
+  if (extension.createsExtension) {
+    return [`CREATE EXTENSION "${extension.sqlName}"`];
+  }
+  if (extension.sqlName === 'auto_explain') {
+    return [
+      "LOAD 'auto_explain'",
+      "SET auto_explain.log_min_duration = '0'",
+      "SET auto_explain.log_analyze = 'true'",
+      "SET auto_explain.log_level = 'NOTICE'",
+    ];
+  }
+  throw new Error(
+    `generated mobile extension ${extension.sqlName} does not create an extension and has no runtime proof`,
+  );
 }
 
 function waitForBackgroundAndForeground(
@@ -550,38 +546,28 @@ async function runBenchmark(
     osVersion: String(Platform.Version),
     runner: 'expo-dev-client',
     benchmarkPreset,
-    durability: openConfig.durability,
-    runtimeFootprint: openConfig.runtimeFootprint,
-    startupGUCs: openConfig.startupGUCs?.join(',') ?? '',
-    walSegmentSizeMB: openConfig.walSegmentSizeMB,
+    startupGUCs: JSON.stringify(openConfig.startupGUCs ?? {}),
   };
   stage('benchmark:liboliphaunt:start');
-  const report = await runOliphauntReactNativeBenchmark(Oliphaunt, {
-    open: openConfig as ReactNativeBenchmarkOptions['open'],
-    requirePackageSizeReport: true,
-    ...benchmarkOptions,
-    metadata,
-  });
+  const report = await runNativeBenchmark(openConfig, benchmarkOptions, metadata, liveness.ticks);
   stage('benchmark:sqlite:start');
   const sqliteBenchmark = await runExpoSQLiteBenchmark({
-    durability: openConfig.durability,
+    durability: 'balanced',
     warmupIterations: benchmarkOptions.warmupIterations,
     simpleRttIterations: benchmarkOptions.typedRttIterations,
     parameterizedRttIterations: benchmarkOptions.parameterizedRttIterations,
     insertRows: benchmarkOptions.insertRows,
-    lookupIterations: benchmarkOptions.lookupIterations,
-    aggregateIterations: benchmarkOptions.aggregateIterations,
-    updateIterations: benchmarkOptions.updateIterations,
+    lookupIterations: benchmarkOptions.typedRttIterations,
+    aggregateIterations: benchmarkOptions.parameterizedRttIterations,
+    updateIterations: benchmarkOptions.parameterizedRttIterations,
     checkpointIterations: benchmarkOptions.checkpointIterations,
-    largeResultRows: benchmarkOptions.largeResultRows,
+    largeResultRows: benchmarkOptions.insertRows,
     metadata,
   });
   liveness.stop();
   const nextReport: AppReport = {
     benchmark: report,
     sqliteBenchmark,
-    capabilities: report.capabilities,
-    packageSize: report.packageSizeReport,
   };
   setReport(nextReport);
   setState('passed');
@@ -597,10 +583,122 @@ async function runBenchmark(
       sqliteBenchmark,
       appElapsedMs: Math.round(now() - started),
       jsTimerTicks: liveness.ticks(),
-      packageBytes: report.packageSizeReport?.packageBytes ?? null,
     }),
   );
   (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_BENCH_REPORT__ = nextReport;
+}
+
+async function runNativeBenchmark(
+  tuning: OpenTuning,
+  options: BenchmarkTuning,
+  metadata: Record<string, string | number | boolean | null>,
+  timerTicks: () => number,
+): Promise<NativeBenchmarkReport> {
+  const startedAt = new Date().toISOString();
+  const started = now();
+  const { storageLabel: _storageLabel, ...openConfig } = tuning;
+  const openStarted = now();
+  const db = await Oliphaunt.open(openConfig);
+  const openMs = now() - openStarted;
+  let closeMs = 0;
+
+  try {
+    const postgresSettings = await readPostgresSettings(db);
+    for (let index = 0; index < options.warmupIterations; index += 1) {
+      await db.query('SELECT 1');
+    }
+    const workloads = [
+      await benchmarkLatency('typed_select_rtt', 'SELECT 1 query round trip', options.typedRttIterations, () =>
+        db.query('SELECT 1'),
+      ),
+      await benchmarkLatency(
+        'parameterized_select_rtt',
+        'parameterized query round trip',
+        options.parameterizedRttIterations,
+        () => db.query('SELECT $1::integer', [1]),
+      ),
+    ];
+
+    await db.execute('DROP TABLE IF EXISTS oliphaunt_expo_benchmark');
+    await db.execute('CREATE TABLE oliphaunt_expo_benchmark(id integer PRIMARY KEY, value text NOT NULL)');
+    const insertStarted = now();
+    await db.execute(
+      'INSERT INTO oliphaunt_expo_benchmark SELECT value, md5(value::text) FROM generate_series(1, $1::integer) AS value',
+      [options.insertRows],
+    );
+    const insertMs = now() - insertStarted;
+    workloads.push({
+      id: 'transaction_insert',
+      description: 'set-based transaction insert',
+      throughput: {
+        rows: options.insertRows,
+        totalMs: insertMs,
+        rowsPerSecond: insertMs === 0 ? 0 : options.insertRows * 1_000 / insertMs,
+      },
+      rows: options.insertRows,
+    });
+    workloads.push(
+      await benchmarkLatency(
+        'background_checkpoint',
+        'checkpoint latency',
+        options.checkpointIterations,
+        () => db.checkpoint(),
+      ),
+    );
+
+    const closeStarted = now();
+    await db.close();
+    closeMs = now() - closeStarted;
+    return {
+      schemaVersion: 1,
+      engine: 'direct',
+      rawProtocolTransport: 'jsi-array-buffer',
+      startedAt,
+      elapsedMs: now() - started,
+      openMs,
+      closeMs,
+      jsTimerTicks: timerTicks(),
+      metadata,
+      postgresSettings,
+      workloads,
+    };
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
+async function benchmarkLatency(
+  id: string,
+  description: string,
+  iterations: number,
+  operation: () => Promise<unknown>,
+): Promise<ReactNativeBenchmarkWorkload> {
+  const samples: number[] = [];
+  const started = now();
+  for (let index = 0; index < iterations; index += 1) {
+    const sampleStarted = now();
+    await operation();
+    samples.push(now() - sampleStarted);
+  }
+  const totalMs = now() - started;
+  samples.sort((left, right) => left - right);
+  const percentile = (fraction: number) =>
+    samples[Math.min(samples.length - 1, Math.floor((samples.length - 1) * fraction))] ?? 0;
+  return {
+    id,
+    description,
+    latency: {
+      iterations,
+      totalMs,
+      minMs: samples[0] ?? 0,
+      meanMs: iterations === 0 ? 0 : totalMs / iterations,
+      p50Ms: percentile(0.5),
+      p90Ms: percentile(0.9),
+      p95Ms: percentile(0.95),
+      p99Ms: percentile(0.99),
+      maxMs: samples[samples.length - 1] ?? 0,
+    },
+  };
 }
 
 async function runCrashRecoveryPhase(
@@ -618,8 +716,8 @@ async function runCrashRecoveryPhase(
   stage('crash:open:start', { phase: runner, storage: openTuning.storageLabel });
   const databaseOpen = await openDatabase(stage, []);
   const db = databaseOpen.database;
-  const capabilities = await db.capabilities();
-  assertNativeDirectCapabilities(capabilities);
+  const postgresSettings = await readPostgresSettings(db);
+  assertSafeCrashSettings(postgresSettings);
 
   if (runner === 'crash-write') {
     const value = `crash-${Platform.OS}-${Math.round(started)}`;
@@ -647,8 +745,9 @@ async function runCrashRecoveryPhase(
       value,
       openMs: databaseOpen.openMs,
       elapsedMs: now() - started,
+      postgresSettings,
     };
-    setReport({ crashRecovery: payload, capabilities });
+    setReport({ crashRecovery: payload });
     setState('passed');
     stage('crash:write:ready', { value });
     console.log(
@@ -677,8 +776,9 @@ async function runCrashRecoveryPhase(
     value,
     openMs: databaseOpen.openMs,
     elapsedMs: now() - started,
+    postgresSettings,
   };
-  setReport({ crashRecovery: payload, capabilities });
+  setReport({ crashRecovery: payload });
   setState('passed');
   stage('crash:verify:done', { value });
   console.log(
@@ -690,6 +790,41 @@ async function runCrashRecoveryPhase(
     }),
   );
   (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_CRASH_RECOVERY_REPORT__ = payload;
+}
+
+async function readPostgresSettings(db: OliphauntDatabase): Promise<PostgresSettings> {
+  const names = [
+    'shared_buffers',
+    'wal_buffers',
+    'wal_segment_size',
+    'min_wal_size',
+    'max_wal_size',
+    'synchronous_commit',
+    'fsync',
+    'full_page_writes',
+    'io_method',
+  ] as const;
+  const columns = names.map((name) => `current_setting('${name}') AS ${name}`).join(', ');
+  const row = await db.query(`SELECT ${columns}`);
+  return Object.fromEntries(
+    names.map((name) => {
+      const value = row.getText(0, name);
+      if (value === null) {
+        throw new Error(`PostgreSQL did not report current_setting('${name}')`);
+      }
+      return [name, value];
+    }),
+  );
+}
+
+function assertSafeCrashSettings(settings: PostgresSettings): void {
+  for (const name of ['fsync', 'full_page_writes', 'synchronous_commit'] as const) {
+    if (settings[name] !== 'on') {
+      throw new Error(
+        `crash recovery evidence requires PostgreSQL ${name}=on; observed ${settings[name] ?? 'missing'}`,
+      );
+    }
+  }
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -718,13 +853,12 @@ async function openDatabase(
     const started = now();
     const { storage, storageLabel: _storageLabel, ...tuning } = openTuning;
     const config = {
-      engine: 'nativeDirect',
       ...(storage ? { storage } : {}),
       ...tuning,
       extensions,
       username: 'postgres',
       database: 'postgres',
-    } as Parameters<typeof Oliphaunt.open>[0] & OpenTuning;
+    } satisfies Parameters<typeof Oliphaunt.open>[0];
     smokeState.databasePromise = Oliphaunt.open(config).then((database) => {
       smokeState.databaseInstance = database;
       (database as unknown as { __liboliphauntOpenMs?: number }).__liboliphauntOpenMs = now() - started;
@@ -745,36 +879,28 @@ async function openDatabase(
 
 async function resolveOpenTuning(): Promise<OpenTuning> {
   const url = await resolveInitialLaunchUrl();
-  const runtimeFootprint = String(
-    process.env.EXPO_PUBLIC_OLIPHAUNT_RUNTIME_FOOTPRINT ??
-    extractQueryParam(url, 'liboliphauntRuntimeFootprint') ??
-    'balancedMobile',
-  );
-  const durability = String(
-    process.env.EXPO_PUBLIC_OLIPHAUNT_DURABILITY ??
-    extractQueryParam(url, 'liboliphauntDurability') ??
-    'balanced',
-  );
   const rawStartupGUCs = String(
     process.env.EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS ??
     extractQueryParam(url, 'liboliphauntStartupGUCs') ??
     '',
   );
-  const startupGUCs = rawStartupGUCs
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+  const startupGUCs = parseStartupGUCs(rawStartupGUCs);
   return {
-    durability: normalizeDurability(durability),
-    runtimeFootprint: normalizeRuntimeFootprint(runtimeFootprint),
-    startupGUCs: startupGUCs.length > 0 ? startupGUCs : undefined,
-    walSegmentSizeMB: String(
-      process.env.EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB ??
-      extractQueryParam(url, 'liboliphauntWalSegsizeMB') ??
-      '16',
-    ),
+    startupGUCs: Object.keys(startupGUCs).length > 0 ? startupGUCs : undefined,
     ...resolveHarnessStorage(url),
   };
+}
+
+function parseStartupGUCs(value: string): Record<string, string> {
+  const gucs: Record<string, string> = {};
+  for (const entry of value.split(',').map((part) => part.trim()).filter(Boolean)) {
+    const separator = entry.indexOf('=');
+    if (separator <= 0) {
+      throw new Error(`startup GUC must use name=value syntax: ${entry}`);
+    }
+    gucs[entry.slice(0, separator).trim()] = entry.slice(separator + 1).trim();
+  }
+  return gucs;
 }
 
 function resolveHarnessStorage(url: string | null): Pick<OpenTuning, 'storage' | 'storageLabel'> {
@@ -835,28 +961,18 @@ function benchmarkOptionsForPreset(preset: BenchmarkPreset): BenchmarkTuning {
     case 'full':
       return {
         warmupIterations: 75,
-        rawRttIterations: 750,
         typedRttIterations: 750,
         parameterizedRttIterations: 750,
         insertRows: 1_500,
-        lookupIterations: 750,
-        aggregateIterations: 300,
-        updateIterations: 300,
         checkpointIterations: 20,
-        largeResultRows: 750,
       };
     case 'quick':
       return {
         warmupIterations: 10,
-        rawRttIterations: 75,
         typedRttIterations: 75,
         parameterizedRttIterations: 75,
         insertRows: 250,
-        lookupIterations: 75,
-        aggregateIterations: 40,
-        updateIterations: 40,
         checkpointIterations: 3,
-        largeResultRows: 250,
       };
   }
 }
@@ -878,35 +994,6 @@ function sqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-function normalizeDurability(value: string): OpenTuning['durability'] {
-  switch (value) {
-    case 'safe':
-      return 'safe';
-    case 'balanced':
-      return 'balanced';
-    case 'fast-dev':
-    case 'fastDev':
-      return 'fastDev';
-    default:
-      throw new Error(`unsupported durability profile: ${value}`);
-  }
-}
-
-function normalizeRuntimeFootprint(value: string): OpenTuning['runtimeFootprint'] {
-  switch (value) {
-    case 'throughput':
-      return 'throughput';
-    case 'balanced-mobile':
-    case 'balancedMobile':
-      return 'balancedMobile';
-    case 'small-mobile':
-    case 'smallMobile':
-      return 'smallMobile';
-    default:
-      throw new Error(`unsupported runtime footprint profile: ${value}`);
-  }
-}
-
 function extractQueryParam(url: string | null, name: string): string | undefined {
   if (!url) {
     return undefined;
@@ -924,22 +1011,6 @@ function extractQueryParam(url: string | null, name: string): string | undefined
     }
   }
   return undefined;
-}
-
-function assertNativeDirectCapabilities(capabilities: EngineCapabilities) {
-  if (capabilities.engine !== 'nativeDirect') {
-    throw new Error(`expected nativeDirect, got ${capabilities.engine}`);
-  }
-  if (capabilities.rawProtocolTransport !== 'jsi-array-buffer') {
-    throw new Error(`expected JSI ArrayBuffer transport, got ${capabilities.rawProtocolTransport}`);
-  }
-  if (!capabilities.protocolRaw || !capabilities.simpleQuery) {
-    throw new Error('nativeDirect must expose raw protocol and simple query support');
-  }
-}
-
-function firstAvailableMode(modes: EngineModeSupport[] | undefined): string | undefined {
-  return modes?.find((mode) => mode.available)?.engine;
 }
 
 function formatResult(report: AppReport): string {
@@ -968,22 +1039,17 @@ function formatResult(report: AppReport): string {
 }
 
 function formatBenchmarkResult(
-  report: ReactNativeBenchmarkReport,
+  report: NativeBenchmarkReport,
   sqliteBenchmark?: ExpoSQLiteBenchmarkReport,
 ): string {
   const lines = [
     `engine = ${report.engine}`,
     `transport = ${report.rawProtocolTransport}`,
     `open = ${report.openMs.toFixed(2)} ms`,
-    `raw RTT p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'raw_simple_query_rtt'))}`,
     `typed RTT p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'typed_select_rtt'))}`,
     `param RTT p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'parameterized_select_rtt'))}`,
-    `lookup p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'indexed_lookup'))}`,
-    `aggregate p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'indexed_aggregate'))}`,
-    `update p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'indexed_update'))}`,
-    `background checkpoint p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'background_checkpoint'))}`,
+    `checkpoint p50/p90/p99 = ${formatLatencyTriplet(benchmarkWorkload(report, 'background_checkpoint'))}`,
     `insert throughput = ${formatThroughput(benchmarkWorkload(report, 'transaction_insert'))}`,
-    `large result p90 = ${formatLatency(benchmarkWorkload(report, 'large_result_raw'))}`,
     `elapsed = ${report.elapsedMs.toFixed(2)} ms`,
     `JS timer ticks = ${report.jsTimerTicks}`,
   ];
@@ -1002,7 +1068,7 @@ function formatBenchmarkResult(
 }
 
 function benchmarkWorkload(
-  report: Pick<ReactNativeBenchmarkReport, 'workloads'>,
+  report: Pick<NativeBenchmarkReport | ExpoSQLiteBenchmarkReport, 'workloads'>,
   id: string,
 ): ReactNativeBenchmarkWorkload | undefined {
   return report.workloads.find((workload) => workload.id === id);
@@ -1024,19 +1090,6 @@ function formatThroughput(workload: ReactNativeBenchmarkWorkload | undefined): s
   return workload?.throughput
     ? `${Math.round(workload.throughput.rowsPerSecond)} rows/s`
     : 'pending';
-}
-
-function formatBytes(bytes: number | undefined): string {
-  if (bytes === undefined) {
-    return 'pending';
-  }
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function now(): number {

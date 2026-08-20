@@ -27,6 +27,11 @@ const RUST_PRODUCT = "oliphaunt-rust";
 const DEFAULT_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt");
 const DEFAULT_BUILD_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt-build");
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
+const RUST_SDK_TESTDATA = Object.freeze([
+  ["testdata/query-response-cases.json", "src/shared/fixtures/protocol/query-response-cases.json"],
+  ["testdata/database-root.json", "src/shared/fixtures/storage/database-root.json"],
+  ["testdata/behavior-contract.json", "src/shared/fixtures/postgres/behavior-contract.json"],
+]);
 
 function fail(message) {
   console.error(`${TOOL}: ${message}`);
@@ -181,7 +186,18 @@ function releaseStageDir(stageDir) {
   return resolved;
 }
 
+export function assertRustSdkTestdataCopies() {
+  for (const [packageRelative, canonicalRelative] of RUST_SDK_TESTDATA) {
+    const packageBytes = readFileSync(path.join(ROOT, "src/sdks/rust", packageRelative));
+    const canonicalBytes = readFileSync(path.join(ROOT, canonicalRelative));
+    if (!packageBytes.equals(canonicalBytes)) {
+      fail(`Rust SDK package fixture ${packageRelative} must exactly match ${canonicalRelative}`);
+    }
+  }
+}
+
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
+  assertRustSdkTestdataCopies();
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
   const nativeVersion = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   const brokerVersion = currentProductVersionSync(BROKER_PRODUCT, TOOL);

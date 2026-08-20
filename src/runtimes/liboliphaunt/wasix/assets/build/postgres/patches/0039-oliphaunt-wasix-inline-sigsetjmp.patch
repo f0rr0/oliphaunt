@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000039 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Tue, 18 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: inline sigsetjmp
+
+The released WASIX exception-handling sysroot exposes sigsetjmp as a normal
+function.  That is not sufficient for WebAssembly SJLJ: the compiler must see
+setjmp at each call site so that it emits the exception handler in the module
+whose frame is being protected.  A PostgreSQL side module otherwise calls the
+main executable's sigsetjmp, returns from its handler frame, and later turns a
+perfectly catchable PostgreSQL ERROR into an uncaught WebAssembly exception.
+
+Mark PostgreSQL's shared-library and PGXS module compilations explicitly, then
+define the POSIX spelling in the WASIX port header in terms of the
+compiler-recognized setjmp call for those modules only.  The pinned WASIX
+implementation currently does not preserve a signal mask in sigsetjmp either,
+so discarding savesigs retains its existing semantics while making
+PG_TRY/PG_CATCH correct in every PostgreSQL side module.
+---
+ src/Makefile.shlib              |  1 +
+ src/include/port/wasix-dl.h     | 16 +++++++++++++++-
+ src/makefiles/pgxs.mk           |  5 +++++
+ 3 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/src/Makefile.shlib b/src/Makefile.shlib
+index 55129150fa..8340cb90bd 100644
+--- a/src/Makefile.shlib
++++ b/src/Makefile.shlib
+@@ -197,6 +197,7 @@ ifeq ($(PORTNAME), linux)
+ endif
+ 
+ ifeq ($(PORTNAME), wasix-dl)
++  override CPPFLAGS += -DOLIPHAUNT_WASM_SIDE_MODULE
+   LINK.shared		= $(COMPILER) -shared
+   ifdef SO_MAJOR_VERSION
+     shlib		= $(shlib_bare)
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index ba0d68bb70..aac596375e 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -8,6 +8,21 @@
+-#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#if defined(OLIPHAUNT_WASM_SINGLE_USER) || defined(OLIPHAUNT_WASM_SIDE_MODULE)
+ #include <setjmp.h>
++#endif
++
++#if defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)
++/*
++ * WebAssembly SJLJ requires setjmp to be visible at the protected call site.
++ * The released WASIX EH sysroot implements sigsetjmp as an out-of-line
++ * wrapper, whose exception handler has already returned by the time a side
++ * module calls siglongjmp.  Its implementation ignores savesigs, so this
++ * call-site expansion preserves the same signal-mask semantics.
++ */
++#undef sigsetjmp
++#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))
++#endif
++
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
+ #include <pwd.h>
+ #include <sys/types.h>
+ #include <sys/ipc.h>
+ #include <sys/shm.h>
+diff --git a/src/makefiles/pgxs.mk b/src/makefiles/pgxs.mk
+index 4a1474db44..ab8037f33a 100644
+--- a/src/makefiles/pgxs.mk
++++ b/src/makefiles/pgxs.mk
+@@ -101,6 +101,12 @@
+ 
+ override CPPFLAGS := -I. -I$(srcdir) $(CPPFLAGS)
+ 
++ifeq ($(PORTNAME), wasix-dl)
++ifdef MODULES
++override CPPFLAGS += -DOLIPHAUNT_WASM_SIDE_MODULE
++endif
++endif
++
+ # See equivalent block in Makefile.shlib
+ ifdef MODULES
+ override LDFLAGS_SL += $(CFLAGS_SL_MODULE)
+-- 
+2.49.0

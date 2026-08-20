@@ -41,15 +41,13 @@ extensions plus declared dependencies.
 Open a database from a coroutine:
 
 ```kotlin
-import dev.oliphaunt.EngineMode
 import dev.oliphaunt.DatabaseStorage
-import dev.oliphaunt.OliphauntAndroid
+import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntConfig
 
-val database = OliphauntAndroid.open(
+val database = Oliphaunt.open(
     context = applicationContext,
     config = OliphauntConfig(
-        mode = EngineMode.NativeDirect,
         storage = DatabaseStorage.Directory(
             applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
         ),
@@ -64,8 +62,7 @@ database.close()
 ## Runtime Shape
 
 Android direct mode owns one resident backend per app process and one serialized
-physical session. The SDK reports capabilities for any additional runtime modes
-available on the selected Android target.
+physical session.
 
 Coroutine callers may share a database handle. Direct mode queues work against
 the resident backend and preserves transaction ordering. Android packaging owns
@@ -78,11 +75,8 @@ first open.
   exports a backup.
 - Select exact SQL extension names at build/configuration time so the APK or AAB
   contains only selected extension artifacts and declared dependencies.
-- Use lifecycle hooks around background and foreground transitions.
 - Use SDK backup and restore APIs for archive validation and destination
   materialization.
-- Check `capabilities()` before showing optional UI for streaming, backup
-  formats, or additional runtime modes.
 
 ## First Query
 

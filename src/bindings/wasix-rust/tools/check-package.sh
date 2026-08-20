@@ -73,18 +73,39 @@ require_cfg_tools_line() {
 
 require_entry "Cargo.toml"
 require_entry "README.md"
+require_entry "src/error.rs"
 require_entry "src/lib.rs"
 require_entry "src/bin/oliphaunt_wasix_dump.rs"
 require_entry "src/bin/oliphaunt_wasix_proxy.rs"
 require_entry "src/oliphaunt/aot.rs"
 require_entry "src/oliphaunt/assets.rs"
-require_entry "src/protocol/parser.rs"
+require_entry "src/testdata/database-root.json"
+require_entry "src/testdata/physical-archive-wasix-v1.properties"
+require_entry "src/testdata/physical-backup-wal-range-v1.properties"
 require_entry "src/testdata/postgis-smoke.sql"
+require_entry "src/testdata/postgres-behavior-contract.json"
+require_entry "src/testdata/protocol-query-response-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
+require_entry "tests/public_api.rs"
 
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/database-root.json \
+  src/shared/fixtures/storage/database-root.json
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/physical-archive-wasix-v1.properties \
+  src/shared/fixtures/storage/physical-archive-wasix-v1.properties
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/physical-backup-wal-range-v1.properties \
+  src/shared/fixtures/storage/physical-backup-wal-range-v1.properties
 require_exact_package_fixture \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgis-smoke.sql \
   src/extensions/external/postgis/tests/smoke.sql
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgres-behavior-contract.json \
+  src/shared/fixtures/postgres/behavior-contract.json
+require_exact_package_fixture \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/protocol-query-response-cases.json \
+  src/shared/fixtures/protocol/query-response-cases.json
 require_exact_package_fixture \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
   src/sources/toolchains/wasix.toml
@@ -140,11 +161,17 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"
   "oliphaunt-wasix tools feature must select the macOS arm64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",' \
   "oliphaunt-wasix tools feature must select the Windows x64 tools-AOT crate"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub mod pg_dump;" \
-  "WASIX split-tools public module must stay behind cfg(feature = \"tools\")"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub use pg_dump::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};" \
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub(crate) mod pg_dump;" \
+  "WASIX split-tools implementation module must stay private behind cfg(feature = \"tools\")"
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub use pg_dump::{PgDumpOptions, PsqlOptions};" \
   "WASIX split-tools internal exports must stay behind cfg(feature = \"tools\")"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub use oliphaunt::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};" \
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub use oliphaunt::{PgDumpOptions, PsqlOptions};" \
   "WASIX split-tools crate-root exports must stay behind cfg(feature = \"tools\")"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs "pub fn pg_dump(&self, options: PgDumpOptions)" \
+  "WASIX server must expose pg_dump through PgDumpOptions"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs "pub fn psql(&self, options: PsqlOptions)" \
+  "WASIX server must expose psql through PsqlOptions"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs "pub fn script(mut self, sql: impl Into<String>)" \
+  "WASIX PsqlOptions must expose standard script input"
 
 echo "oliphaunt-wasix package shape verified: $listing"

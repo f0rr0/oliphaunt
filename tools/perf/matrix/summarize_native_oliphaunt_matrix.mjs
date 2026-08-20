@@ -683,7 +683,6 @@ async function main() {
   const nativeServerRtt = await loadMeasuredRun(runDir, 'native-liboliphaunt-server-rtt')
   const nativeServerSpeed = await loadMeasuredRun(runDir, 'native-liboliphaunt-server-speed')
   const nativeServerStreaming = await loadMeasuredRun(runDir, 'native-liboliphaunt-server-streaming')
-  const nativeServerBackup = await loadMeasuredRun(runDir, 'native-liboliphaunt-server-backup')
   const nativeTokioRtt = await loadFirstMeasuredRun(runDir, [
     'native-postgres-tokio-all',
     'native-postgres-tokio-rtt',
@@ -745,7 +744,6 @@ async function main() {
   const nativePreparedServer = await loadMeasuredRun(runDir, 'native-liboliphaunt-prepared-server')
   const nativeBackupDirectRepeats = await loadBackupRepeatMeasurements(runDir, 'native-liboliphaunt-backup-')
   const nativeBackupBrokerRepeats = await loadBackupRepeatMeasurements(runDir, 'native-liboliphaunt-broker-backup-')
-  const nativeBackupServerRepeats = await loadBackupRepeatMeasurements(runDir, 'native-liboliphaunt-server-backup-')
   const nativePostgresBackupRepeats = await loadBackupRepeatMeasurements(runDir, 'native-postgres-backup-', 'native_postgres')
   const nativePostgresPhysicalBackupRepeats = await loadBackupRepeatMeasurements(runDir, 'native-postgres-backup-', 'native_postgres_physical')
   const sqliteBackupRepeats = await loadBackupRepeatMeasurements(runDir, 'sqlite-backup-')
@@ -844,12 +842,6 @@ async function main() {
       run: collectRun(nativeBrokerBackup.report, 'backup-restore', 'native_liboliphaunt_broker'),
       resource: nativeBrokerBackup.resource,
       repeats: nativeBackupBrokerRepeats,
-    },
-    {
-      label: 'Native liboliphaunt server',
-      run: collectRun(nativeServerBackup.report, 'backup-restore', 'native_liboliphaunt_server'),
-      resource: nativeServerBackup.resource,
-      repeats: nativeBackupServerRepeats,
     },
     {
       label: 'Native Postgres physical archive',
@@ -1011,9 +1003,7 @@ async function main() {
     nativeServerRtt.report ||
       nativeServerSpeed.report ||
       nativeServerStreaming.report ||
-      nativeServerBackup.report ||
       nativePreparedServer.report ||
-      nativeBackupServerRepeats.length ||
       nativePreparedServerRepeats.length,
   )
 

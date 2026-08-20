@@ -20,6 +20,16 @@
   "module": "lib/module/index.js",
   "types": "lib/typescript/index.d.ts",
   "react-native": "lib/module/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./lib/module/index.js",
+      "import": "./lib/module/index.js",
+      "require": "./lib/commonjs/index.js",
+      "default": "./lib/module/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "oliphaunt": {
     "swiftSdkVersion": "0.6.1",
     "kotlinSdkVersion": "0.1.1"

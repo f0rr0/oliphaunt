@@ -26,6 +26,7 @@
     "access": "public",
     "provenance": true,
     "executableFiles": [
+      "./runtime/bin/pg_basebackup.exe",
       "./runtime/bin/pg_dump.exe",
       "./runtime/bin/psql.exe"
     ]

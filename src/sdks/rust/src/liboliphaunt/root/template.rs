@@ -14,31 +14,19 @@ use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
 use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
 use crate::error::{Error, Result};
-use crate::storage::DatabaseInitialization;
 
 const PGDATA_TEMPLATE_VERSION: &str = "pg18-pgdata-template-v4";
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
-    runtime_dir: &Path,
+    _runtime_dir: &Path,
     pgdata: &Path,
-    strategy: &DatabaseInitialization,
-    username: &str,
 ) -> Result<()> {
     if pgdata.join("PG_VERSION").is_file() {
         return Ok(());
     }
 
-    match strategy {
-        DatabaseInitialization::PackagedTemplate => restore_pgdata_template(profile, pgdata),
-        DatabaseInitialization::FreshInitdb => {
-            run_initdb(runtime_dir, pgdata, username, "fresh database")
-        }
-        DatabaseInitialization::ExistingOnly => Err(Error::Engine(format!(
-            "native PGDATA at {} has not been bootstrapped",
-            pgdata.display()
-        ))),
-    }
+    restore_pgdata_template(profile, pgdata)
 }
 
 fn run_initdb(runtime_dir: &Path, pgdata: &Path, username: &str, context: &str) -> Result<()> {

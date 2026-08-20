@@ -3,28 +3,35 @@
 SDK source lives under `src/` with the product it releases. This document is
 the cross-SDK policy and parity contract.
 
-These are product SDKs, not auxiliary bindings. Rust, Swift, Kotlin, React
-Native, and TypeScript should expose the same product concepts where the target
-platform can do so honestly:
+These are product SDKs, not auxiliary bindings. Native Rust, Rust WASIX, Swift,
+Kotlin, React Native, native TypeScript, and WASIX TypeScript should expose the
+same product concepts where the target platform can do so honestly:
 
-- Rust is the SDK for Tauri and Rust desktop apps.
+- Native Rust is the SDK for Tauri and Rust desktop apps using `liboliphaunt`.
+- Rust WASIX is the portable/AOT SDK for Tauri and Rust desktop apps that embed
+  the WASIX runtime.
 - Swift is the SDK for iOS and macOS apps.
 - Kotlin is the SDK for Android apps. Only the Android AAR, Gradle plugin and
   marker, and declared Android ABI carriers are public release surfaces.
 - React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin SDKs.
-- TypeScript is the SDK for Node.js, Bun, and Deno. A direct Tauri
-  JavaScript/webview adapter is planned.
+- TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps use the Rust SDK
+  behind narrow app-owned commands.
+- WASIX TypeScript is the SDK for browser, Node.js, Bun, and Deno applications
+  that embed the WASIX runtime directly or in a Worker.
 
 `tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
 product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
 rejects ownership or package-identity drift. Product tests and package checks,
 not source-text assertions, prove runtime delegation and consumer behavior.
 
-- `src/sdks/rust/`: canonical Rust SDK for Tauri and Rust desktop apps.
+- `src/sdks/rust/`: canonical native Rust SDK for Tauri and Rust desktop apps.
+- `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
+  and host-AOT `liboliphaunt-wasix` runtime products.
+- `src/bindings/wasix-ts/`: TypeScript SDK over the portable WASIX carrier for
+  browser, Node.js, Bun, and Deno direct or Worker placement.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
-  native-direct C ABI engine over `liboliphaunt`; `.nativeDirect` uses that engine
-  by default and can materialize packaged runtime/template resources for iOS and
-  macOS apps.
+  native-direct C ABI product boundary over `liboliphaunt`; it can materialize
+  packaged runtime/template resources for iOS and macOS apps.
 - `src/sdks/kotlin/`: Kotlin Multiplatform source/build project with a
   suspend-first common API, host-native conformance targets, and the Android
   native-direct JNI engine. The host-native compilations are development and
@@ -34,8 +41,8 @@ not source-text assertions, prove runtime delegation and consumer behavior.
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.
 - `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
-  Tauri apps currently expose narrow app-owned commands from the Rust SDK; a
-  direct JavaScript/webview adapter is planned. `nativeDirect` is the default across supported JavaScript
+  Tauri apps expose narrow app-owned commands from the Rust SDK. Direct execution
+  is the default across supported JavaScript
   runtimes; Node.js and Bun use the package-owned prebuilt Node direct adapter,
   while Deno uses nonblocking runtime FFI. TypeScript broker mode consumes the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol
@@ -43,20 +50,25 @@ not source-text assertions, prove runtime delegation and consumer behavior.
   release assets by default instead of building Rust locally. The npm package
   is the native-runtime distribution for Node, Bun, and Deno.
 
-The Rust SDK is canonical for now; Swift, Kotlin, React Native, and TypeScript
-mirror its mode, raw protocol, typed query, transaction, checkpoint, structured PostgreSQL error, capabilities, backup, restore, exact extension, and resource packaging terminology unless a platform restriction is documented.
+The native Rust SDK is canonical for native mode and resource terminology;
+Swift, Kotlin, React Native, and native TypeScript mirror it unless a platform
+restriction is documented. Rust WASIX and WASIX TypeScript use the same raw
+protocol, typed query, transaction, checkpoint, structured PostgreSQL error,
+backup, restore, and exact-extension vocabulary where their runtime supports
+the behavior honestly. Native-only process modes are not WASIX requirements.
 React Native must not duplicate database runtime behavior: iOS calls flow
 through `Oliphaunt`, and Android calls flow through the `oliphaunt`
-`OliphauntAndroid` facade.
-Every SDK-facing feature must either be implemented with equivalent semantics or
-fail with an explicit unsupported error that is justified in
-[`sdk-parity-policy.md`](sdk-parity-policy.md). Silent drift between SDKs is a
-release blocker.
+`Oliphaunt` facade.
+Unsupported product features are absent from an SDK unless
+[`sdk-parity-policy.md`](sdk-parity-policy.md) explicitly documents a current
+runtime error. Silent drift between SDKs is a release blocker.
 
 Validation is package-native:
 
 ```sh
 moon run oliphaunt-rust:check
+moon run oliphaunt-wasix-rust:check
+moon run oliphaunt-wasix-ts:check
 moon run oliphaunt-swift:check
 moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:check
@@ -76,7 +88,7 @@ runtime tree.
 Build app-bundle resources from the Rust/native track with:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --force
@@ -117,12 +129,8 @@ SDK-bound artifacts can be audited independently of the local build path.
 Swift and Kotlin reject unknown package layouts rather than silently accepting
 stale app resources; React Native inherits those checks through the platform
 SDKs.
-The resource root also carries `package-size.tsv`. Swift exposes it through
-`OliphauntRuntimeResources.packageSizeReport()`, Kotlin Android exposes it through
-`OliphauntAndroid.packageSizeReport(context)` or
-`OliphauntAndroid.packageSizeReport(resourceRoot)`, and React Native exposes the
-same typed report through `Oliphaunt.packageSizeReport(...)` while still delegating
-the actual resource lookup to Swift/Kotlin.
+The resource root also carries `package-size.tsv` for packaging and release
+audits. It is maintainer evidence, not a database SDK API.
 
 Android packages the native C ABI library separately from runtime resources.
 Pass a `jniLibs`-style directory with ABI subdirectories through

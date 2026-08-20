@@ -402,6 +402,9 @@ export function renderWasixRuntimeDescriptorModule(input) {
     "  })",
   ].join("\n");
   return [
+    "export const POSTGRES_MAJOR = 18;",
+    'export const PHYSICAL_FORMAT = "wasix-pg18-v1";',
+    "",
     "const runtimeArchive =",
     `${asset(runtimeArchive, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive, true)};`,
     "const pgdataArchive =",
@@ -426,7 +429,10 @@ export function renderWasixRuntimeDescriptorModule(input) {
 }
 
 export function renderWasixRuntimeDescriptorTypes() {
-  return `export type OliphauntWasixRuntimeAsset = Readonly<{
+  return `export declare const POSTGRES_MAJOR: 18;
+export declare const PHYSICAL_FORMAT: "wasix-pg18-v1";
+
+export type OliphauntWasixRuntimeAsset = Readonly<{
   archive: string;
   sha256: string;
   size: number;

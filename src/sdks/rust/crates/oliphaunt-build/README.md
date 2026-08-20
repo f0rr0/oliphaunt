@@ -21,7 +21,8 @@ For `runtime = "liboliphaunt-wasix"`, root runtime staging includes only the
 portable runtime and matching AOT runtime artifacts. If the application enables
 the `oliphaunt-wasix` `tools` feature, `oliphaunt-build` also stages the split
 `oliphaunt-wasix-tools` and tools-AOT artifacts that provide `pg_dump` and
-`psql`. Applications that enable tools indirectly can set
+`psql`. Native `oliphaunt-tools` artifacts provide `pg_basebackup`, `pg_dump`,
+and `psql`. Applications that enable tools indirectly can set
 `[package.metadata.oliphaunt] tools = true` to make that intent explicit.
 
 It performs no network I/O, does not mutate `Cargo.toml`, and writes no generated

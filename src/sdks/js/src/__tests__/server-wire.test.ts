@@ -6,13 +6,11 @@ import {
   encodeStartupMessage,
   parseBackendKeyData,
 } from '../runtime/pgwire.js';
-import { serverConnectionString } from '../runtime/server.js';
 
 function main(): void {
   startupMessageUsesPostgresV3AndUtf8();
   cancelRequestMatchesPostgresWireShape();
   backendKeyValidationMatchesRust();
-  connectionStringPercentEncodesIdentity();
 }
 
 function startupMessageUsesPostgresV3AndUtf8(): void {
@@ -39,13 +37,6 @@ function backendKeyValidationMatchesRust(): void {
     secretKey: 11,
   });
   assert.throws(() => parseBackendKeyData(new Uint8Array([1, 2, 3])), /BackendKeyData/);
-}
-
-function connectionStringPercentEncodesIdentity(): void {
-  assert.equal(
-    serverConnectionString('app user', 'app/db', 15432),
-    'postgres://app%20user@127.0.0.1:15432/app%2Fdb',
-  );
 }
 
 function readI32(bytes: Uint8Array, offset: number): number {

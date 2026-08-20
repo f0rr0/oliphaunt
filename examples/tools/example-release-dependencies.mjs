@@ -22,14 +22,6 @@ const ELECTRON_SMOKE_PACKAGES = [
       keys: ["version"],
     },
   },
-  {
-    packageName: "@oliphaunt/tools-linux-x64-gnu",
-    versionSource: {
-      type: "json",
-      path: "src/runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu/package.json",
-      keys: ["version"],
-    },
-  },
 ];
 
 function fail(message) {

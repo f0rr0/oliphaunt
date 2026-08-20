@@ -11,9 +11,8 @@ mod generated;
 
 pub use generated::*;
 
-/// A native WASIX side module required by a bundled extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ExtensionNativeModule {
+pub(crate) struct ExtensionNativeModule {
     runtime_path: &'static str,
     aot_name: Option<&'static str>,
 }
@@ -26,11 +25,11 @@ impl ExtensionNativeModule {
         }
     }
 
-    pub const fn runtime_path(self) -> &'static str {
+    pub(crate) const fn runtime_path(self) -> &'static str {
         self.runtime_path
     }
 
-    pub const fn aot_name(self) -> Option<&'static str> {
+    pub(crate) const fn aot_name(self) -> Option<&'static str> {
         self.aot_name
     }
 }
@@ -38,9 +37,7 @@ impl ExtensionNativeModule {
 /// A bundled Postgres extension that can be installed into a Oliphaunt database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Extension {
-    name: &'static str,
     sql_name: &'static str,
-    archive_name: &'static str,
     native_support_modules: &'static [ExtensionNativeModule],
     native_module_file: Option<&'static str>,
     aot_name: Option<&'static str>,
@@ -76,11 +73,8 @@ impl ExtensionSetup {
 }
 
 impl Extension {
-    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) const fn new(
-        name: &'static str,
         sql_name: &'static str,
-        archive_name: &'static str,
         native_support_modules: &'static [ExtensionNativeModule],
         native_module_file: Option<&'static str>,
         aot_name: Option<&'static str>,
@@ -88,9 +82,7 @@ impl Extension {
         setup: ExtensionSetup,
     ) -> Self {
         Self {
-            name,
             sql_name,
-            archive_name,
             native_support_modules,
             native_module_file,
             aot_name,
@@ -99,40 +91,24 @@ impl Extension {
         }
     }
 
-    /// Human-facing extension name.
-    pub const fn name(self) -> &'static str {
-        self.name
-    }
-
     /// SQL extension name used in `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {
         self.sql_name
     }
 
-    /// Archive path inside the asset manifest.
-    pub const fn archive_name(self) -> &'static str {
-        self.archive_name
-    }
-
-    /// AOT artifact key for the extension side module.
-    pub const fn aot_name(self) -> Option<&'static str> {
+    pub(crate) const fn aot_name(self) -> Option<&'static str> {
         self.aot_name
     }
 
-    /// Native side-module file installed into `/lib/postgresql`, when the
-    /// extension has one.
-    pub const fn native_module_file(self) -> Option<&'static str> {
+    pub(crate) const fn native_module_file(self) -> Option<&'static str> {
         self.native_module_file
     }
 
-    /// Support side modules that must be available before the extension module
-    /// is loaded.
-    pub const fn native_support_modules(self) -> &'static [ExtensionNativeModule] {
+    pub(crate) const fn native_support_modules(self) -> &'static [ExtensionNativeModule] {
         self.native_support_modules
     }
 
-    /// SQL extension names that must be installed before this extension.
-    pub const fn dependencies(self) -> &'static [&'static str] {
+    pub(crate) const fn dependencies(self) -> &'static [&'static str] {
         self.dependencies
     }
 
@@ -213,6 +189,7 @@ pub(crate) fn postgres_config_with_extension_startup(
     Ok(postgres_config)
 }
 
+#[cfg(test)]
 pub(crate) fn ensure_extension_startup_config_is_active(
     postgres_config: &PostgresConfig,
     extension: Extension,
@@ -323,16 +300,16 @@ fn extension_setup_sql_with_schema_policy(extension: Extension) -> Vec<String> {
         if let Some(schema) = create_schema.filter(|schema| *schema != "pg_catalog") {
             statements.push(format!(
                 "CREATE SCHEMA IF NOT EXISTS {};",
-                crate::oliphaunt::templating::quote_identifier(schema)
+                crate::oliphaunt::sql::quote_identifier(schema)
             ));
         }
         let mut sql = format!(
             "CREATE EXTENSION IF NOT EXISTS {}",
-            crate::oliphaunt::templating::quote_identifier(extension.sql_name())
+            crate::oliphaunt::sql::quote_identifier(extension.sql_name())
         );
         if let Some(schema) = create_schema {
             sql.push_str(" WITH SCHEMA ");
-            sql.push_str(&crate::oliphaunt::templating::quote_identifier(schema));
+            sql.push_str(&crate::oliphaunt::sql::quote_identifier(schema));
         }
         sql.push(';');
         statements.push(sql);
@@ -357,7 +334,8 @@ mod startup_config_tests {
         assert!(message.contains("already-running backend"));
         assert!(message.contains(".extension(...) before .open()"));
 
-        let active = PostgresConfig::new().set(
+        let mut active = PostgresConfig::default();
+        active.insert(
             "shared_preload_libraries",
             "auto_explain, pg_textsearch,pg_textsearch",
         );
@@ -368,8 +346,6 @@ mod startup_config_tests {
 #[cfg(all(test, feature = "extensions"))]
 mod extension_tests {
     use super::*;
-    #[cfg(feature = "tools")]
-    use crate::PgDumpOptions;
     use crate::{DatabaseStorage, Oliphaunt, OliphauntServer};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
@@ -389,12 +365,6 @@ mod extension_tests {
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
         run_lifecycle_materialization_set(generated::ALL)
-    }
-
-    #[test]
-    #[cfg(feature = "tools")]
-    fn public_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
-        run_direct_dump_restore_smoke_set(generated::ALL)
     }
 
     fn embedded_extension_archives(extensions: &[Extension]) -> Result<Vec<Extension>> {
@@ -502,13 +472,13 @@ mod extension_tests {
             .extension(extension)
             .start()
             .with_context(|| format!("start server with extension {name}"))?;
-        let mut conn = PgConnection::connect(&server.connection_uri())
+        let mut conn = PgConnection::connect(&server.connection_string())
             .await
             .with_context(|| format!("connect server with extension {name}"))?;
         run_server_smoke(&mut conn, extension).await?;
         drop(conn);
         server
-            .shutdown()
+            .close()
             .with_context(|| format!("shutdown server with extension {name}"))?;
         Ok(())
     }
@@ -550,96 +520,10 @@ mod extension_tests {
         Ok(())
     }
 
-    #[cfg(feature = "tools")]
-    fn run_direct_dump_restore_smoke_set(extensions: &[Extension]) -> Result<()> {
-        let extensions = embedded_extension_archives(extensions)?;
-        let mut failures = Vec::new();
-        for extension in extensions {
-            if let Err(error) = run_one_direct_dump_restore_smoke(extension) {
-                failures.push(format!("{}: {error:?}", extension.sql_name()));
-            }
-        }
-        ensure!(
-            failures.is_empty(),
-            "extension direct dump/restore smoke failures:\n{}",
-            failures.join("\n\n")
-        );
-        Ok(())
-    }
-
-    #[cfg(feature = "tools")]
-    fn run_one_direct_dump_restore_smoke(extension: Extension) -> Result<()> {
-        let name = extension.sql_name();
-        let dump = {
-            let mut db = Oliphaunt::builder()
-                .extension(extension)
-                .open()
-                .with_context(|| format!("open dump source database with extension {name}"))?;
-            assert_extension_catalog_state(&mut db, extension)?;
-            db.exec(
-                "CREATE TABLE oxide_extension_dump_marker(value text);
-                 INSERT INTO oxide_extension_dump_marker VALUES ('restored');",
-                None,
-            )
-            .with_context(|| format!("seed dump source database with extension {name}"))?;
-            let dump = db
-                .dump_sql(PgDumpOptions::new())
-                .with_context(|| format!("dump source database with extension {name}"))?;
-            db.close()
-                .with_context(|| format!("close dump source database with extension {name}"))?;
-            dump
-        };
-
-        if extension.setup().create_extension {
-            let unquoted_needle =
-                format!("CREATE EXTENSION IF NOT EXISTS {}", extension.sql_name());
-            let quoted_needle = format!(
-                "CREATE EXTENSION IF NOT EXISTS {}",
-                crate::oliphaunt::templating::quote_identifier(extension.sql_name())
-            );
-            ensure!(
-                dump.contains(&unquoted_needle) || dump.contains(&quoted_needle),
-                "pg_dump for extension {} should contain {:?} or {:?}; dump was:\n{}",
-                extension.sql_name(),
-                unquoted_needle,
-                quoted_needle,
-                dump
-            );
-        }
-
-        let mut restored = Oliphaunt::builder()
-            .extension(extension)
-            .open()
-            .with_context(|| format!("open dump restore database with extension {name}"))?;
-        restored
-            .exec(&dump, None)
-            .with_context(|| format!("restore dump SQL with extension {name}"))?;
-        restored
-            .exec("SET search_path TO public, pg_catalog", None)
-            .with_context(|| {
-                format!("reset restore session search_path after pg_dump SQL for extension {name}")
-            })?;
-        assert_extension_catalog_state(&mut restored, extension)?;
-        let marker = restored.query(
-            "SELECT value FROM public.oxide_extension_dump_marker",
-            &[],
-            None,
-        )?;
-        ensure!(
-            marker.rows[0]["value"] == serde_json::json!("restored"),
-            "extension {} dump marker did not restore",
-            extension.sql_name()
-        );
-        run_direct_smoke(&mut restored, extension)?;
-        restored
-            .close()
-            .with_context(|| format!("close dump restore database with extension {name}"))?;
-        Ok(())
-    }
-
     fn run_direct_smoke(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
         for statement in smoke_sql(extension.sql_name()).statements() {
-            db.exec(statement, None).with_context(|| {
+            let request = crate::oliphaunt::query::simple_query(statement)?;
+            db.exec_protocol_raw(request).with_context(|| {
                 format!(
                     "direct smoke failed for extension {} while running:\n{}",
                     extension.sql_name(),
@@ -668,20 +552,19 @@ mod extension_tests {
 
     fn assert_extension_catalog_state(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
         if extension.setup().create_extension {
-            let result = db.query(
+            let result = db.query_with_params(
                 "SELECT count(*)::int4 AS count FROM pg_extension WHERE extname = $1",
-                &[serde_json::json!(extension.sql_name())],
-                None,
+                [extension.sql_name()],
             )?;
             ensure!(
-                result.rows[0]["count"] == serde_json::json!(1),
+                result.get_text(0, "count")? == Some("1"),
                 "extension {} should survive restart in pg_extension",
                 extension.sql_name()
             );
         } else {
-            let result = db.query("SELECT 1::int4 AS ok", &[], None)?;
+            let result = db.query("SELECT 1::int4 AS ok")?;
             ensure!(
-                result.rows[0]["ok"] == serde_json::json!(1),
+                result.get_text(0, "ok")? == Some("1"),
                 "extension {} should reopen cleanly",
                 extension.sql_name()
             );

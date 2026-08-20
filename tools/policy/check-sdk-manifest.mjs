@@ -6,151 +6,60 @@ import { loadGraph } from '../release/release-graph.mjs';
 
 const manifestPath = 'tools/policy/sdk-manifest.toml';
 const jsPackagePath = 'src/sdks/js/package.json';
+const parityPolicyPath = 'docs/maintainers/sdk-parity-policy.md';
+const deferredIds = [
+  'FUTURE-EXTENSION-MIGRATION',
+  'FUTURE-NATIVE-SERVER-SDK-BACKUP',
+  'FUTURE-RESTORE-REPLACE',
+  'FUTURE-WASIX-CANCELLATION',
+  'FUTURE-WASIX-DIRECT-COPY',
+  'FUTURE-WASIX-TS-SERVER-TOOLS',
+];
 const jsPackage = JSON.parse(readFileSync(jsPackagePath, 'utf8'));
 const brokerHelperProduct = jsPackage?.oliphaunt?.brokerHelper;
+const releaseProducts = loadGraph('check-sdk-manifest.mjs').products;
+const releaseSdkProducts = Object.values(releaseProducts).filter((product) => product.kind === 'sdk');
 
-const expected = {
-  rust: {
-    classification: 'sdk',
-    package_identity: 'cargo:oliphaunt',
-    implementation_path: 'src/sdks/rust',
-    documentation_path: 'src/docs/content/sdk/rust',
-    supported_consumer_targets: ['tauri', 'rust-desktop'],
-    planned_consumer_targets: [],
-    runtime_owner: true,
-    runtime_boundary: 'oliphaunt',
-    parity_role: 'canonical',
-    available_modes: ['native-direct', 'native-broker', 'native-server'],
-    unsupported_modes: [],
-    artifact_resolution: 'cargo-artifact-crates',
-    tool_resolution: 'split-oliphaunt-tools-cargo-crates',
-    extension_resolution: 'exact-extension-cargo-crates',
-    resource_override: 'OLIPHAUNT_RESOURCES_DIR',
-  },
-  'wasix-rust': {
-    classification: 'sdk',
-    package_identity: 'cargo:oliphaunt-wasix',
-    implementation_path: 'src/bindings/wasix-rust/crates/oliphaunt-wasix',
-    documentation_path: 'src/docs/content/sdk/wasm',
-    supported_consumer_targets: ['wasix', 'wasm'],
-    planned_consumer_targets: [],
-    runtime_owner: true,
-    runtime_boundary: 'oliphaunt-wasix',
-    parity_role: 'wasm-peer',
-    available_modes: ['wasix-direct', 'wasix-server'],
-    unsupported_modes: ['native-direct', 'native-broker', 'native-server'],
-    unsupported_mode_reason:
-      'WASIX embeds PostgreSQL as WebAssembly modules; native liboliphaunt process modes do not apply',
-    artifact_resolution: 'liboliphaunt-wasix-cargo-artifact-crates',
-    tool_resolution: 'optional-oliphaunt-wasix-tools-cargo-crates',
-    extension_resolution: 'exact-extension-wasix-cargo-crates',
-    resource_override: 'OLIPHAUNT_WASM_GENERATED_ASSETS_DIR',
-  },
-  'wasix-typescript': {
-    classification: 'sdk',
-    package_identity: 'npm:@oliphaunt/wasix-ts',
-    implementation_path: 'src/bindings/wasix-ts',
-    documentation_path: 'src/docs/content/sdk/wasm',
-    supported_consumer_targets: ['browser', 'node', 'bun', 'deno'],
-    planned_consumer_targets: [],
-    runtime_owner: true,
-    runtime_boundary: '@oliphaunt/wasix-ts',
-    parity_role: 'wasm-peer',
-    available_modes: ['wasix-browser', 'wasix-node', 'wasix-bun', 'wasix-deno'],
-    unsupported_modes: [
-      'wasix-server',
-      'native-direct',
-      'native-broker',
-      'native-server',
-    ],
-    unsupported_mode_reason:
-      'the binding owns portable browser, Node, Bun, and Deno worker hosts; server and every native mode remain separate products',
-    artifact_resolution: 'liboliphaunt-wasix-npm-carrier',
-    tool_resolution: 'not-exposed-browser',
-    extension_resolution: 'exact-extension-wasix-npm-packages',
-    resource_override: 'advanced-runtime-descriptor-only',
-  },
-  swift: {
-    classification: 'sdk',
-    package_identity: 'swiftpm:Oliphaunt',
-    implementation_path: 'src/sdks/swift',
-    documentation_path: 'src/docs/content/sdk/swift',
-    supported_consumer_targets: ['ios', 'macos'],
-    planned_consumer_targets: [],
-    runtime_owner: true,
-    runtime_boundary: 'Oliphaunt',
-    parity_role: 'platform-peer',
-    available_modes: ['native-direct'],
-    unsupported_modes: ['native-broker', 'native-server'],
-    unsupported_mode_reason:
-      'platform broker/server adapters are not implemented yet; direct mode remains a single-session runtime',
-    artifact_resolution: 'swiftpm-release-assets',
-    tool_resolution: 'not-applicable-mobile-native-direct',
-    extension_resolution: 'exact-extension-xcframework-artifacts',
-    resource_override: 'runtimeDirectory-resourceRoot',
-  },
-  kotlin: {
-    classification: 'sdk',
-    package_identity: 'maven:dev.oliphaunt:oliphaunt-android',
-    implementation_path: 'src/sdks/kotlin',
-    documentation_path: 'src/docs/content/sdk/kotlin',
-    supported_consumer_targets: ['android'],
-    planned_consumer_targets: [],
-    runtime_owner: true,
-    runtime_boundary: 'OliphauntAndroid',
-    parity_role: 'platform-peer',
-    available_modes: ['native-direct'],
-    unsupported_modes: ['native-broker', 'native-server'],
-    unsupported_mode_reason:
-      'Android broker/server adapters are not implemented yet; direct mode remains a single-session runtime',
-    artifact_resolution: 'maven-runtime-artifacts',
-    tool_resolution: 'not-applicable-mobile-native-direct',
-    extension_resolution: 'exact-extension-maven-artifacts',
-    resource_override: 'runtimeDirectory-resourceRoot',
-  },
-  'react-native': {
-    classification: 'sdk',
-    package_identity: 'npm:@oliphaunt/react-native',
-    implementation_path: 'src/sdks/react-native',
-    documentation_path: 'src/docs/content/sdk/react-native',
-    supported_consumer_targets: ['react-native-ios', 'react-native-android'],
-    planned_consumer_targets: ['react-native-macos'],
-    runtime_owner: false,
-    runtime_boundary: 'TurboModule adapter',
-    delegates_apple_to: 'swift',
-    delegates_android_to: 'kotlin',
-    parity_role: 'delegating-platform-peer',
-    available_modes: ['native-direct'],
-    unsupported_modes: ['native-broker', 'native-server'],
-    unsupported_mode_reason: 'runtime availability is delegated to Swift and Kotlin supportedModes',
-    artifact_resolution: 'delegated-swiftpm-maven',
-    tool_resolution: 'delegated-platform-sdk',
-    extension_resolution: 'delegated-exact-extension-artifacts',
-    resource_override: 'runtimeDirectory-resourceRoot',
-  },
-  typescript: {
-    classification: 'sdk',
-    package_identity: 'npm:@oliphaunt/ts',
-    implementation_path: 'src/sdks/js',
-    documentation_path: 'src/docs/content/sdk/typescript',
-    supported_consumer_targets: ['node', 'bun', 'deno'],
-    planned_consumer_targets: ['tauri-javascript'],
-    runtime_owner: true,
-    runtime_boundary: '@oliphaunt/ts',
-    parity_role: 'desktop-javascript-peer',
-    available_modes: ['native-direct', 'native-broker', 'native-server'],
-    unsupported_modes: [],
-    depends_on_rust_broker_helper: true,
-    broker_helper_product: brokerHelperProduct,
-    artifact_resolution: 'npm-optional-platform-packages',
-    tool_resolution: 'split-oliphaunt-tools-npm-packages',
-    extension_resolution:
-      'node-bun-exact-extension-npm-packages-prepared-runtimeDirectory-validation',
-    resource_override: 'libraryPath-runtimeDirectory',
-  },
-};
-
-const expectedSdkIds = Object.keys(expected);
+const requiredFields = new Set([
+  'classification',
+  'package_identity',
+  'implementation_path',
+  'documentation_path',
+  'supported_consumer_targets',
+  'runtime_owner',
+  'runtime_boundary',
+  'parity_role',
+  'available_modes',
+  'unsupported_modes',
+  'artifact_resolution',
+  'tool_resolution',
+  'extension_resolution',
+  'resource_override',
+]);
+const optionalFields = new Set([
+  'unsupported_mode_reason',
+  'delegates_apple_to',
+  'delegates_android_to',
+  'depends_on_rust_broker_helper',
+  'broker_helper_product',
+]);
+const stringFields = new Set([
+  'classification',
+  'package_identity',
+  'implementation_path',
+  'documentation_path',
+  'runtime_boundary',
+  'parity_role',
+  'artifact_resolution',
+  'tool_resolution',
+  'extension_resolution',
+  'resource_override',
+]);
+const listFields = new Set([
+  'supported_consumer_targets',
+  'available_modes',
+  'unsupported_modes',
+]);
 const errors = [];
 
 function fail(message) {
@@ -166,31 +75,14 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function sameValue(left, right) {
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) => sameValue(value, right[index]))
-    );
-  }
-  if (isPlainObject(left) || isPlainObject(right)) {
-    if (!isPlainObject(left) || !isPlainObject(right)) {
-      return false;
-    }
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-    return (
-      sameValue(leftKeys, rightKeys) &&
-      leftKeys.every((key) => sameValue(left[key], right[key]))
-    );
-  }
-  return Object.is(left, right);
-}
-
 function formatValue(value) {
   return JSON.stringify(value);
+}
+
+function releaseRegistryIdentity(packageIdentity) {
+  return packageIdentity.startsWith('cargo:')
+    ? `crates:${packageIdentity.slice('cargo:'.length)}`
+    : packageIdentity;
 }
 
 function requireDirectory(path, sdkId, field) {
@@ -201,10 +93,6 @@ function requireDirectory(path, sdkId, field) {
   if (!statSync(path).isDirectory()) {
     errors.push(`[sdks.${sdkId}].${field} must point at a directory: ${formatValue(path)}`);
   }
-}
-
-function sorted(value) {
-  return [...value].sort();
 }
 
 const args = process.argv.slice(2);
@@ -221,45 +109,81 @@ if (!['check', '--list', '--json'].includes(mode)) {
 }
 
 const manifest = Bun.TOML.parse(readFileSync(manifestPath, 'utf8'));
-if (manifest.schema_version !== 2) {
-  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 2`);
+const parityPolicy = readFileSync(parityPolicyPath, 'utf8');
+const actualDeferredIds = [...parityPolicy.matchAll(/\bFUTURE-[A-Z0-9-]+\b/g)].map(
+  ([id]) => id,
+);
+if (
+  actualDeferredIds.length !== deferredIds.length ||
+  [...actualDeferredIds].sort().some((id, index) => id !== deferredIds[index])
+) {
+  errors.push(
+    `${parityPolicyPath} must contain each canonical deferred ID exactly once; found ${formatValue(
+      actualDeferredIds,
+    )}`,
+  );
+}
+if (manifest.schema_version !== 3) {
+  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 3`);
 }
 if (!isPlainObject(manifest.sdks)) {
   errors.push('manifest must contain an [sdks] table');
 }
 
 const sdks = isPlainObject(manifest.sdks) ? manifest.sdks : {};
-const actualSdkIds = Object.keys(sdks);
-if (!sameValue(sorted(actualSdkIds), sorted(expectedSdkIds))) {
-  errors.push(
-    `SDK ids are ${formatValue(sorted(actualSdkIds))}; expected ${formatValue(sorted(expectedSdkIds))}`,
-  );
-}
+const sdkIds = Object.keys(sdks).sort();
+if (sdkIds.length === 0) errors.push('manifest must register at least one SDK');
 
 const seenImplementationPaths = new Map();
-for (const sdkId of expectedSdkIds) {
+const seenPackageIdentities = new Map();
+for (const sdkId of sdkIds) {
   const actual = sdks[sdkId];
-  const contract = expected[sdkId];
   if (!isPlainObject(actual)) {
-    errors.push(`missing [sdks.${sdkId}]`);
+    errors.push(`[sdks.${sdkId}] must be a table`);
     continue;
   }
 
-  const actualFields = Object.keys(actual).sort();
-  const expectedFields = Object.keys(contract).sort();
-  if (!sameValue(actualFields, expectedFields)) {
-    errors.push(
-      `[sdks.${sdkId}] fields are ${formatValue(actualFields)}; expected ${formatValue(expectedFields)}`,
-    );
+  for (const field of requiredFields) {
+    if (!(field in actual)) errors.push(`[sdks.${sdkId}] is missing required field ${field}`);
   }
-
-  for (const [field, expectedValue] of Object.entries(contract)) {
-    if (!sameValue(actual[field], expectedValue)) {
+  for (const field of Object.keys(actual)) {
+    if (!requiredFields.has(field) && !optionalFields.has(field)) {
+      errors.push(`[sdks.${sdkId}] has unknown field ${field}`);
+    }
+  }
+  for (const field of stringFields) {
+    if (typeof actual[field] !== 'string' || actual[field].length === 0) {
+      errors.push(`[sdks.${sdkId}].${field} must be a non-empty string`);
+    }
+  }
+  for (const field of listFields) {
+    const value = actual[field];
+    if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.length > 0)) {
+      errors.push(`[sdks.${sdkId}].${field} must be a list of non-empty strings`);
+    } else if (new Set(value).size !== value.length) {
+      errors.push(`[sdks.${sdkId}].${field} must not contain duplicates`);
+    }
+  }
+  if (actual.classification !== 'sdk') errors.push(`[sdks.${sdkId}].classification must be "sdk"`);
+  if (typeof actual.runtime_owner !== 'boolean') {
+    errors.push(`[sdks.${sdkId}].runtime_owner must be a boolean`);
+  }
+  if (typeof actual.package_identity === 'string') {
+    if (!actual.package_identity.includes(':')) {
+      errors.push(`[sdks.${sdkId}].package_identity must include its registry kind`);
+    } else if (seenPackageIdentities.has(actual.package_identity)) {
       errors.push(
-        `[sdks.${sdkId}].${field} is ${formatValue(actual[field])}; expected ${formatValue(
-          expectedValue,
-        )}`,
+        `[sdks.${sdkId}].package_identity duplicates [sdks.${seenPackageIdentities.get(
+          actual.package_identity,
+        )}] identity ${formatValue(actual.package_identity)}`,
       );
+    }
+    seenPackageIdentities.set(actual.package_identity, sdkId);
+  }
+  if (Array.isArray(actual.available_modes) && Array.isArray(actual.unsupported_modes)) {
+    const overlap = actual.available_modes.filter((mode) => actual.unsupported_modes.includes(mode));
+    if (overlap.length > 0) {
+      errors.push(`[sdks.${sdkId}] lists modes as both available and unsupported: ${overlap.join(', ')}`);
     }
   }
 
@@ -288,7 +212,43 @@ for (const sdkId of expectedSdkIds) {
   }
 }
 
-for (const sdkId of expectedSdkIds) {
+const releaseSdkByPath = new Map();
+for (const product of releaseSdkProducts) {
+  if (releaseSdkByPath.has(product.path)) {
+    errors.push(
+      `release SDK products ${releaseSdkByPath.get(product.path).id} and ${product.id} share path ${formatValue(product.path)}`,
+    );
+  }
+  releaseSdkByPath.set(product.path, product);
+}
+for (const product of releaseSdkProducts) {
+  const sdkId = seenImplementationPaths.get(product.path);
+  if (sdkId === undefined) {
+    errors.push(`release SDK product ${product.id} at ${formatValue(product.path)} is missing from the SDK manifest`);
+  }
+}
+for (const sdkId of sdkIds) {
+  const actual = sdks[sdkId];
+  if (!isPlainObject(actual) || typeof actual.implementation_path !== 'string') continue;
+  const product = releaseSdkByPath.get(actual.implementation_path);
+  if (product === undefined) {
+    errors.push(
+      `[sdks.${sdkId}] path ${formatValue(actual.implementation_path)} is not an SDK product in the release graph`,
+    );
+    continue;
+  }
+  if (
+    Array.isArray(product.registry_packages) &&
+    product.registry_packages.length > 0 &&
+    !product.registry_packages.includes(releaseRegistryIdentity(actual.package_identity))
+  ) {
+    errors.push(
+      `[sdks.${sdkId}].package_identity ${formatValue(actual.package_identity)} is not published by release SDK product ${product.id}`,
+    );
+  }
+}
+
+for (const sdkId of sdkIds) {
   const actual = sdks[sdkId];
   if (!isPlainObject(actual)) {
     continue;
@@ -298,13 +258,16 @@ for (const sdkId of expectedSdkIds) {
     if (delegate === undefined) {
       continue;
     }
-    if (!expectedSdkIds.includes(delegate)) {
+    if (!sdkIds.includes(delegate)) {
       errors.push(`[sdks.${sdkId}].${delegateField} points at unknown SDK ${formatValue(delegate)}`);
       continue;
     }
     if (sdks[delegate]?.runtime_owner !== true) {
       errors.push(`[sdks.${sdkId}].${delegateField} must point at a runtime-owning SDK`);
     }
+  }
+  if (actual.runtime_owner === false && actual.delegates_apple_to === undefined && actual.delegates_android_to === undefined) {
+    errors.push(`[sdks.${sdkId}] does not own a runtime and must declare at least one delegation`);
   }
 }
 
@@ -316,7 +279,6 @@ if (sdks.typescript?.depends_on_rust_broker_helper === true) {
       `[sdks.typescript].broker_helper_product must match ${jsPackagePath} oliphaunt.brokerHelper`,
     );
   }
-  const releaseProducts = loadGraph('check-sdk-manifest.mjs').products;
   if (!(sdks.typescript.broker_helper_product in releaseProducts)) {
     errors.push('[sdks.typescript].broker_helper_product must identify a canonical release product');
   }
@@ -332,9 +294,9 @@ if (errors.length > 0) {
 if (mode === '--json') {
   const summary = {
     schemaVersion: manifest.schema_version,
-    sdkCount: expectedSdkIds.length,
+    sdkCount: sdkIds.length,
     sdks: Object.fromEntries(
-      expectedSdkIds.map((sdkId) => [
+      sdkIds.map((sdkId) => [
         sdkId,
         {
           packageIdentity: sdks[sdkId].package_identity,
@@ -350,7 +312,7 @@ if (mode === '--json') {
   };
   console.log(JSON.stringify(summary, null, 2));
 } else if (mode === '--list') {
-  for (const sdkId of expectedSdkIds) {
+  for (const sdkId of sdkIds) {
     const sdk = sdks[sdkId];
     console.log(
       `${sdkId}: modes=${sdk.available_modes.join(',')} unsupported=${
@@ -361,5 +323,5 @@ if (mode === '--json') {
     );
   }
 } else {
-  console.log(`SDK manifest contract verified (${expectedSdkIds.length} SDKs).`);
+  console.log(`SDK manifest contract verified (${sdkIds.length} SDKs).`);
 }

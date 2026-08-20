@@ -11,12 +11,11 @@ Use the TypeDoc reference for exact declarations. This page maps native
 | Area | Public surface | Use it for |
 | --- | --- | --- |
 | Opening | `Oliphaunt.open`, `OpenConfig`, `DatabaseStorage` | Open with temporary storage by default or an explicit persistent directory |
-| Runtime mode | `engine`, `supportedModes()` | Choose direct, broker, or server where the desktop runtime supports it |
-| Capabilities | `capabilities()` | Check protocol, streaming, backup, restore, extension, and lifecycle support |
+| Execution | `execution` | Use direct execution (the default) or select broker execution |
+| Server | `Oliphaunt.openServer` | Start PostgreSQL as a server for tools and independent clients |
 | SQL | `query`, `execute`, typed result helpers | Run SQL and read typed values from JavaScript |
-| Raw protocol | `execProtocolRaw`, protocol utilities | Send PostgreSQL protocol bytes through the selected native path |
-| Streaming | `execProtocolStream` | Consume large result sets without materializing one huge JS buffer |
-| Data movement | `backup`, `restore`, `RestoreDestinationPolicy` | Restore validated physical archives to an explicit destination |
+| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through the selected native path |
+| Data movement | `backup`, `restore` | Move the native physical archive to a new or empty destination |
 | Errors | `PostgresError` | Handle SQLSTATE-bearing PostgreSQL failures |
 
 The root package is the only native runtime entrypoint. It detects Node.js,
@@ -26,4 +25,4 @@ not consumer APIs.
 
 React Native apps use `@oliphaunt/react-native`. This package is for desktop
 JavaScript runtimes over the native runtime family. Browser applications use
-[`@oliphaunt/wasix-ts`](/docs/sdk/wasix/browser-typescript).
+[`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript).

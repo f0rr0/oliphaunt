@@ -132,7 +132,6 @@ assert_library_slice() {
     _oliphaunt_register_static_extensions \
     _oliphaunt_last_error \
     _oliphaunt_version \
-    _oliphaunt_capabilities \
     _oliphaunt_free_response
   do
     case "$symbols" in

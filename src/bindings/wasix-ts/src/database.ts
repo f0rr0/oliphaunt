@@ -3,7 +3,10 @@ import { simpleQuery } from './protocol.js';
 import {
   assertSuccessfulQueryResponse,
   extendedQuery,
+  parseCommandResponse,
   parseQueryResponse,
+  type CommandResult,
+  PostgresError,
   type QueryParam,
   type QueryResult,
   toUint8Array,
@@ -22,6 +25,8 @@ export type WasixPersistenceMode = 'sync' | 'defer';
 export type WasixDatabaseSession = {
   exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
+  /** Internal test seams may omit backup; production sessions always provide it. */
+  backup?(): Promise<Uint8Array>;
   close(): Promise<void>;
   /** Force-stop an isolated execution placement when orderly shutdown stalls. */
   abort?(): void | Promise<void>;
@@ -34,16 +39,16 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   #closed = false;
   #closeAttempt: Promise<void> | undefined;
   #persistenceFailure: WasixStorageError | undefined;
+  #transactionFailure: Error | undefined;
   #activeTransaction = false;
 
   constructor(session: WasixDatabaseSession) {
     this.#session = session;
   }
 
-  async execute(sql: string): Promise<Uint8Array> {
-    const response = await this.#execOwned(simpleQuery(sql));
-    assertSuccessfulQueryResponse(response);
-    return response;
+  async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
+    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
+    return parseCommandResponse(await this.#execOwned(input));
   }
 
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
@@ -53,6 +58,19 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     return this.#execOwned(toUint8Array(input).slice());
+  }
+
+  async backup(): Promise<Uint8Array> {
+    this.#assertAvailable();
+    return this.#serialize(async () => {
+      this.#assertHealthy();
+      if (this.#session.backup === undefined) {
+        throw new Error('this WASIX execution session does not support physical backup');
+      }
+      const bytes = await this.#session.backup();
+      await this.#syncPersistence('operation');
+      return bytes;
+    });
   }
 
   #execOwned(bytes: Uint8Array): Promise<Uint8Array> {
@@ -92,28 +110,56 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     const attempt = this.#serialize(async () => {
       this.#assertHealthy();
       const transaction = new WasixTransactionImpl((input) => this.#session.exec(input, 'defer'));
-      let committed = false;
+      let commitAttempted = false;
+      let commitConfirmed = false;
       try {
         await transaction.execute('BEGIN');
         const result = await body(transaction);
         transaction.seal();
+        commitAttempted = true;
         await transaction.finish('COMMIT');
-        committed = true;
+        commitConfirmed = true;
         await this.#syncPersistence('operation');
         return result;
       } catch (error) {
         transaction.seal();
-        // COMMIT has already changed PostgreSQL state. A failed publication
-        // must reject and poison the handle, but sending ROLLBACK afterwards
-        // cannot undo the commit and would obscure the actual boundary.
-        if (committed) throw error;
+        // Once COMMIT is on the wire, a later ROLLBACK cannot undo it. A clean
+        // PostgreSQL response is safe to publish and report; transport or
+        // malformed-protocol failures leave the outcome unknown and poison
+        // this handle until it is closed.
+        if (commitAttempted) {
+          if (
+            !commitConfirmed &&
+            !(error instanceof CommitRolledBackError) &&
+            !(error instanceof PostgresError)
+          ) {
+            this.#transactionFailure = asError(error, 'COMMIT outcome is unknown');
+            throw error;
+          }
+          if (!commitConfirmed) {
+            const primary = error instanceof CommitRolledBackError ? error.primary : error;
+            try {
+              await this.#syncPersistence('operation');
+            } catch (persistenceError) {
+              throw composeWasixStorageFailure(
+                persistenceError as WasixStorageError,
+                'transaction also failed',
+                primary,
+              );
+            }
+            throw primary;
+          }
+          throw error;
+        }
         let rolledBack = false;
         try {
           await transaction.finish('ROLLBACK');
           rolledBack = true;
-        } catch {
+        } catch (rollbackError) {
+          this.#transactionFailure = asError(rollbackError, 'ROLLBACK outcome is unknown');
           // Preserve the callback/BEGIN/COMMIT error as the primary failure,
-          // matching the existing best-effort rollback contract.
+          // while preventing later work on a session that did not prove its
+          // final transaction boundary.
         }
         if (rolledBack) {
           try {
@@ -173,12 +219,18 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 
   #assertHealthy(): void {
+    if (this.#transactionFailure !== undefined) {
+      throw new Error(
+        'Oliphaunt WASIX database cannot be used after a transaction outcome became unknown; close and reopen it',
+        { cause: this.#transactionFailure },
+      );
+    }
     if (this.#persistenceFailure !== undefined) {
       throw new WasixStorageError(
         'Oliphaunt WASIX database cannot be used after a persistence boundary failed; close and reopen it',
         {
           code: this.#persistenceFailure.code,
-          durability: this.#persistenceFailure.durability,
+          commitState: this.#persistenceFailure.commitState,
           cause: this.#persistenceFailure,
         },
       );
@@ -193,8 +245,8 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         error instanceof WasixStorageError
           ? error
           : new WasixStorageError(`WASIX persistence ${boundary} failed`, {
-              code: 'checkpoint-failed',
-              durability: 'unknown',
+              code: 'publication-failed',
+              commitState: 'unknown',
               cause: error,
             });
       // PostgreSQL may already have completed the operation in the live
@@ -254,11 +306,9 @@ class WasixTransactionImpl implements OliphauntTransaction {
     this.#exec = exec;
   }
 
-  execute(sql: string): Promise<Uint8Array> {
-    return this.#execOwned(simpleQuery(sql), (response) => {
-      assertSuccessfulQueryResponse(response);
-      return response;
-    });
+  execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
+    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
+    return this.#execOwned(input, parseCommandResponse);
   }
 
   query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
@@ -277,23 +327,32 @@ class WasixTransactionImpl implements OliphauntTransaction {
   finish(sql: 'COMMIT' | 'ROLLBACK'): Promise<void> {
     return this.#enqueue(async () => {
       const response = await this.#exec(simpleQuery(sql));
-      assertSuccessfulQueryResponse(response);
+      const result = parseCommandResponse(response);
       // PostgreSQL spells COMMIT in an aborted transaction as a successful
       // `ROLLBACK` CommandComplete. Sending the command is important: a caught
       // error may have been recovered with ROLLBACK TO SAVEPOINT and should be
       // allowed to commit. Only propagate the first queued failure when the
       // server confirms that COMMIT actually rolled the transaction back.
       if (sql === 'COMMIT') {
-        const commandTag = parseQueryResponse(response).commandTag;
-        if (commandTag !== 'COMMIT') {
-          if (this.#failed) {
-            throw this.#firstFailure;
-          }
+        if (result.commandTag === 'ROLLBACK') {
           // Raw protocol callers own response decoding, so an ErrorResponse
           // can abort the server transaction without rejecting its JS promise.
           // Never report success when PostgreSQL answers COMMIT with ROLLBACK.
-          throw new Error('PostgreSQL rolled back the transaction instead of committing');
+          throw new CommitRolledBackError(
+            this.#failed
+              ? this.#firstFailure
+              : new Error('PostgreSQL rolled back the transaction instead of committing'),
+          );
         }
+        if (result.commandTag !== 'COMMIT') {
+          throw new Error(
+            `PostgreSQL returned ${result.commandTag ?? 'no command tag'} for COMMIT`,
+          );
+        }
+      } else if (result.commandTag !== 'ROLLBACK') {
+        throw new Error(
+          `PostgreSQL returned ${result.commandTag ?? 'no command tag'} for ROLLBACK`,
+        );
       }
     });
   }
@@ -318,4 +377,16 @@ class WasixTransactionImpl implements OliphauntTransaction {
     );
     return result;
   }
+}
+
+class CommitRolledBackError extends Error {
+  constructor(readonly primary: unknown) {
+    super('PostgreSQL returned ROLLBACK for COMMIT');
+    this.name = 'CommitRolledBackError';
+  }
+}
+
+function asError(value: unknown, fallback: string): Error {
+  if (value instanceof Error) return value;
+  return new Error(fallback, { cause: value });
 }

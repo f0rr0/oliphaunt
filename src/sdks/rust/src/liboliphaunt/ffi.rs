@@ -4,25 +4,9 @@ use std::path::{Path, PathBuf};
 
 use libloading::Library;
 
-use super::OliphauntRuntimeSource;
 use crate::error::{Error, Result};
 
-pub(super) const ABI_VERSION: u32 = 7;
-pub(super) const CAP_PROTOCOL_RAW: u64 = 1 << 0;
-pub(super) const CAP_PROTOCOL_STREAM: u64 = 1 << 1;
-pub(super) const CAP_MULTI_INSTANCE: u64 = 1 << 2;
-pub(super) const CAP_SERVER_MODE: u64 = 1 << 3;
-pub(super) const CAP_EXTENSIONS: u64 = 1 << 4;
-pub(super) const CAP_QUERY_CANCEL: u64 = 1 << 5;
-pub(super) const CAP_BACKUP_RESTORE: u64 = 1 << 6;
-pub(super) const CAP_SIMPLE_QUERY: u64 = 1 << 7;
-pub(super) const CAP_LOGICAL_REOPEN: u64 = 1 << 9;
-
-pub(super) const CONFIG_EXTERNAL_ROOT_LOCK: u64 = 1 << 0;
-
-pub(super) const BACKUP_FORMAT_SQL: u32 = 1;
-pub(super) const BACKUP_FORMAT_PHYSICAL_ARCHIVE: u32 = 2;
-pub(super) const BACKUP_FORMAT_OLIPHAUNT_ARCHIVE: u32 = 3;
+pub(super) const ABI_VERSION: u32 = 8;
 
 pub(super) const ENV_OLIPHAUNT: &str = "LIBOLIPHAUNT_PATH";
 pub(super) const ENV_INSTALL_DIR: &str = "OLIPHAUNT_INSTALL_DIR";
@@ -50,21 +34,11 @@ pub(super) struct NativeResponse {
 }
 
 #[repr(C)]
-pub(super) struct NativeArchiveFile {
-    pub(super) path: *const c_char,
+pub(super) struct NativeRestoreOptions {
+    pub(super) abi_version: u32,
+    pub(super) destination: *const c_char,
     pub(super) data: *const c_uchar,
     pub(super) len: usize,
-    pub(super) mode: u32,
-    pub(super) reserved_flags: u64,
-}
-
-#[repr(C)]
-pub(super) struct NativeBackupOptions {
-    pub(super) abi_version: u32,
-    pub(super) format: u32,
-    pub(super) generated_files: *const NativeArchiveFile,
-    pub(super) generated_file_count: usize,
-    pub(super) reserved_flags: u64,
 }
 
 pub(super) type NativeHandle = c_void;
@@ -73,42 +47,28 @@ type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
 type ExecSimpleQueryFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_char, usize, *mut NativeResponse) -> c_int;
-pub(super) type StreamCallbackFn =
-    unsafe extern "C" fn(*mut c_void, *const c_uchar, usize) -> c_int;
-type ExecProtocolStreamFn = unsafe extern "C" fn(
-    *mut NativeHandle,
-    *const c_uchar,
-    usize,
-    StreamCallbackFn,
-    *mut c_void,
-) -> c_int;
 type CloseFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
 type DetachFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
 type CancelFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
 type LastErrorFn = unsafe extern "C" fn(*mut NativeHandle) -> *const c_char;
 type VersionFn = unsafe extern "C" fn() -> *const c_char;
-type CapabilitiesFn = unsafe extern "C" fn() -> u64;
 type FreeResponseFn = unsafe extern "C" fn(*mut NativeResponse);
-type BackupFn = unsafe extern "C" fn(
-    *mut NativeHandle,
-    *const NativeBackupOptions,
-    *mut NativeResponse,
-) -> c_int;
+type BackupFn = unsafe extern "C" fn(*mut NativeHandle, *mut NativeResponse) -> c_int;
+type RestoreFn = unsafe extern "C" fn(*const NativeRestoreOptions) -> c_int;
 
 pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
     pub(super) init: InitFn,
     pub(super) exec_protocol: ExecProtocolFn,
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
-    pub(super) exec_protocol_stream: Option<ExecProtocolStreamFn>,
     pub(super) cancel: CancelFn,
     pub(super) detach: DetachFn,
     _close: CloseFn,
     pub(super) last_error: LastErrorFn,
     _version: VersionFn,
-    pub(super) capabilities: CapabilitiesFn,
     pub(super) free_response: FreeResponseFn,
     pub(super) backup: BackupFn,
+    pub(super) restore: RestoreFn,
 }
 
 // SAFETY: NativeSymbols is immutable after load. Function pointers are plain C
@@ -122,22 +82,20 @@ unsafe impl Send for NativeSymbols {}
 unsafe impl Sync for NativeSymbols {}
 
 impl NativeSymbols {
-    pub(super) fn load(source: &OliphauntRuntimeSource) -> Result<Self> {
-        let path = resolve_library_path(source)?;
+    pub(super) fn load() -> Result<Self> {
+        let path = resolve_library_path()?;
         let library = load_native_library(&path)?;
         let init = load_symbol(&library, b"oliphaunt_init\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
-        let exec_protocol_stream =
-            load_optional_symbol(&library, b"oliphaunt_exec_protocol_stream\0");
         let cancel = load_symbol(&library, b"oliphaunt_cancel\0")?;
         let detach = load_symbol(&library, b"oliphaunt_detach\0")?;
         let close = load_symbol(&library, b"oliphaunt_close\0")?;
         let last_error = load_symbol(&library, b"oliphaunt_last_error\0")?;
         let version = load_symbol(&library, b"oliphaunt_version\0")?;
-        let capabilities = load_symbol(&library, b"oliphaunt_capabilities\0")?;
         let free_response = load_symbol(&library, b"oliphaunt_free_response\0")?;
         let backup = load_symbol(&library, b"oliphaunt_backup\0")?;
+        let restore = load_symbol(&library, b"oliphaunt_restore\0")?;
         Ok(Self {
             // liboliphaunt embeds PostgreSQL, which owns process-global runtime
             // state while a backend session is active. Logical SDK close uses
@@ -149,15 +107,14 @@ impl NativeSymbols {
             init,
             exec_protocol,
             exec_simple_query,
-            exec_protocol_stream,
             cancel,
             detach,
             _close: close,
             last_error,
             _version: version,
-            capabilities,
             free_response,
             backup,
+            restore,
         })
     }
 
@@ -167,18 +124,15 @@ impl NativeSymbols {
     }
 }
 
-fn resolve_library_path(source: &OliphauntRuntimeSource) -> Result<PathBuf> {
-    match source {
-        OliphauntRuntimeSource::Path(path) => Ok(path.clone()),
-        OliphauntRuntimeSource::Env => resolve_library_path_candidates()
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                Error::Engine(format!(
-                    "{ENV_OLIPHAUNT} is not set; set it to a native liboliphaunt dynamic library"
-                ))
-            }),
-    }
+fn resolve_library_path() -> Result<PathBuf> {
+    resolve_library_path_candidates()
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            Error::Engine(format!(
+                "{ENV_OLIPHAUNT} is not set; set it to a native liboliphaunt dynamic library"
+            ))
+        })
 }
 
 pub(super) fn resolve_library_path_candidates() -> Vec<PathBuf> {

@@ -7,70 +7,102 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 mod ffi;
 mod root;
 
-pub(crate) use self::root::{
-    MaterializedNativeResources, materialize_native_resources_for_runtime,
-};
-pub(crate) use self::root::{
-    NativeRootLock, PreparedNativeRoot, ROOT_MANIFEST_FILE as NATIVE_ROOT_MANIFEST_FILE,
-    configure_native_tool_env, ensure_root_manifest as ensure_native_root_manifest,
-    native_root_key, root_manifest_text as native_root_manifest_text,
-    validate_root_manifest_text as validate_native_root_manifest_text,
-};
+pub(crate) use self::root::{PreparedNativeRoot, configure_native_tool_env, native_root_key};
 
 use self::ffi::{
-    ABI_VERSION, BACKUP_FORMAT_OLIPHAUNT_ARCHIVE, BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-    BACKUP_FORMAT_SQL, CAP_BACKUP_RESTORE, CAP_EXTENSIONS, CAP_LOGICAL_REOPEN, CAP_MULTI_INSTANCE,
-    CAP_PROTOCOL_RAW, CAP_PROTOCOL_STREAM, CAP_QUERY_CANCEL, CAP_SERVER_MODE, CAP_SIMPLE_QUERY,
-    NativeArchiveFile, NativeBackupOptions, NativeConfig, NativeHandle, NativeResponse,
-    NativeSymbols, path_to_cstring,
+    ABI_VERSION, NativeConfig, NativeHandle, NativeResponse, NativeRestoreOptions, NativeSymbols,
+    path_to_cstring,
 };
-use crate::backup::{PHYSICAL_ARCHIVE_MANIFEST_PATH, physical_archive_metadata_files};
 use crate::config::{EngineMode, OpenConfig};
-use crate::engine::{
-    EngineCancel, EngineCapabilities, EngineSession, NativeRuntime, SessionConcurrency,
-};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::extension::{Extension, required_shared_preload_libraries};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::storage::{BackupArtifact, BackupFormat, BackupRequest, DatabaseStorage};
+use crate::storage::DatabaseStorage;
 
 static DIRECT_INSTANCE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static DIRECT_RESIDENT_ROOT: OnceLock<Mutex<Option<DirectResidentRoot>>> = OnceLock::new();
 
-/// Source used to locate the native `liboliphaunt` dynamic library.
+/// Runtime implementation backed by the native PostgreSQL `liboliphaunt` C ABI.
+#[derive(Debug, Clone, Default)]
+pub struct OliphauntRuntime;
+
+/// Materialized native inputs consumed only by Oliphaunt's unpublished
+/// packaging tool.
+#[cfg(feature = "internal-native-packaging")]
+#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OliphauntRuntimeSource {
-    /// Resolve from `LIBOLIPHAUNT_PATH`.
-    Env,
-    /// Load from an explicit path.
-    Path(PathBuf),
+pub struct NativePackagingResources {
+    /// Fully materialized PostgreSQL runtime directory.
+    pub runtime_dir: PathBuf,
+    /// Fully initialized template PGDATA directory.
+    pub template_pgdata: PathBuf,
+    /// Content key for the runtime directory.
+    pub runtime_cache_key: String,
+    /// Content key for the template PGDATA directory.
+    pub template_cache_key: String,
 }
 
-/// Runtime implementation backed by the native PostgreSQL `liboliphaunt` C ABI.
-#[derive(Debug, Clone)]
-pub struct OliphauntRuntime {
-    source: OliphauntRuntimeSource,
+/// Physical runtime layout requested by unpublished native packaging tools.
+#[cfg(feature = "internal-native-packaging")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePackagingRuntime {
+    /// In-process and broker products share the embedded layout.
+    Embedded,
+    /// The local PostgreSQL server layout.
+    PostgresServer,
+}
+
+/// Materialize the exact native inputs used by the unpublished packaging tool.
+#[cfg(feature = "internal-native-packaging")]
+#[doc(hidden)]
+pub fn materialize_native_packaging_resources(
+    runtime: NativePackagingRuntime,
+    extensions: &[Extension],
+) -> Result<NativePackagingResources> {
+    let mode = match runtime {
+        NativePackagingRuntime::Embedded => EngineMode::Direct,
+        NativePackagingRuntime::PostgresServer => EngineMode::Server,
+    };
+    let resources = root::materialize_native_resources_for_runtime(mode, extensions)?;
+    Ok(NativePackagingResources {
+        runtime_dir: resources.runtime_dir,
+        template_pgdata: resources.template_pgdata,
+        runtime_cache_key: resources.runtime_cache_key,
+        template_cache_key: resources.template_cache_key,
+    })
 }
 
 impl OliphauntRuntime {
     /// Create a runtime that resolves the library path from the environment.
     pub fn from_env() -> Self {
-        Self {
-            source: OliphauntRuntimeSource::Env,
-        }
+        Self
     }
 
-    /// Create a runtime that loads a specific library path.
-    pub fn from_path(path: impl Into<PathBuf>) -> Self {
-        Self {
-            source: OliphauntRuntimeSource::Path(path.into()),
+    pub(crate) fn restore(&self, destination: &std::path::Path, bytes: &[u8]) -> Result<()> {
+        let symbols = NativeSymbols::load()?;
+        let destination = path_to_cstring(destination, "restore destination")?;
+        let options = NativeRestoreOptions {
+            abi_version: ABI_VERSION,
+            destination: destination.as_ptr(),
+            data: if bytes.is_empty() {
+                std::ptr::null()
+            } else {
+                bytes.as_ptr()
+            },
+            len: bytes.len(),
+        };
+        let rc = unsafe { (symbols.restore)(&options) };
+        if rc != 0 {
+            let message = symbols
+                .last_error_text(std::ptr::null_mut())
+                .unwrap_or_else(|| format!("oliphaunt_restore failed with status {rc}"));
+            return Err(Error::Engine(format!(
+                "native liboliphaunt restore failed: {message}"
+            )));
         }
-    }
-}
-
-impl Default for OliphauntRuntime {
-    fn default() -> Self {
-        Self::from_env()
+        Ok(())
     }
 }
 
@@ -134,18 +166,13 @@ struct DirectResidentRoot {
 
 impl NativeRuntime for OliphauntRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
-        if config.mode != EngineMode::NativeDirect {
-            return Err(Error::UnsupportedEngineMode {
-                mode: config.mode,
-                reason: "the current liboliphaunt C ABI is an in-process direct engine; broker and true server modes need their own runtimes".to_owned(),
-            });
-        }
+        debug_assert_eq!(config.mode, EngineMode::Direct);
         config.validate()?;
         let instance_lease = acquire_direct_instance_lease()?;
         let extensions = config.resolved_extensions()?;
         let startup_args = startup_arg_strings(&config, &extensions);
         let requested_key = DirectResidentKey::requested(&config, &extensions, startup_args)?;
-        let symbols = Arc::new(NativeSymbols::load(&self.source)?);
+        let symbols = Arc::new(NativeSymbols::load()?);
         let (root, configuration_bound) =
             take_or_prepare_direct_root(&config, &extensions, &requested_key)?;
         let resident_key = requested_key.bind_actual_root(&root)?;
@@ -198,7 +225,7 @@ fn take_or_prepare_direct_root(
         let bound_root = existing.key.actual_root_key.display().to_string();
         *resident = Some(existing);
         return Err(Error::Engine(format!(
-            "native direct resident runtime is already bound to root {bound_root}; use NativeBroker or NativeServer for multiple roots in one process"
+            "native direct resident runtime is already bound to root {bound_root}; use .broker() or .open_server() for multiple roots in one process"
         )));
     }
     drop(resident);
@@ -247,7 +274,6 @@ struct OliphauntSession {
     root: Option<PreparedNativeRoot>,
     resident_key: DirectResidentKey,
     _lease: Option<DirectInstanceLease>,
-    selected_extensions: Vec<Extension>,
 }
 
 struct DirectOpenFailure {
@@ -334,7 +360,7 @@ impl OliphauntSession {
         resident_key: DirectResidentKey,
         lease: DirectInstanceLease,
     ) -> std::result::Result<Self, Box<DirectOpenFailure>> {
-        if let Err(error) = root.refresh_manifest() {
+        if let Err(error) = root.refresh_descriptor() {
             return Err(DirectOpenFailure::before_native(root, error));
         }
         let pgdata = match path_to_cstring(&root.pgdata, "PGDATA") {
@@ -385,7 +411,7 @@ impl OliphauntSession {
             module_dir: module_dir.as_ptr(),
             username: username.as_ptr(),
             database: database.as_ptr(),
-            reserved_flags: ffi::CONFIG_EXTERNAL_ROOT_LOCK,
+            reserved_flags: 0,
             startup_args: startup_arg_ptrs.as_ptr(),
             startup_arg_count: startup_arg_ptrs.len(),
         };
@@ -414,7 +440,6 @@ impl OliphauntSession {
             root: Some(root),
             resident_key,
             _lease: Some(lease),
-            selected_extensions: extensions.to_vec(),
         })
     }
 
@@ -468,30 +493,6 @@ impl OliphauntSession {
 }
 
 impl EngineSession for OliphauntSession {
-    fn capabilities(&self) -> EngineCapabilities {
-        let flags = unsafe { (self.symbols.capabilities)() };
-        EngineCapabilities {
-            mode: EngineMode::NativeDirect,
-            session_concurrency: SessionConcurrency::SerializedSingleSession,
-            process_isolated: false,
-            multiple_instances: flags & CAP_MULTI_INSTANCE != 0,
-            same_instance_logical_reopen: flags & CAP_LOGICAL_REOPEN != 0,
-            instance_switchable: false,
-            crash_restartable: false,
-            max_client_sessions: 1,
-            protocol_raw: flags & CAP_PROTOCOL_RAW != 0,
-            protocol_stream: flags & CAP_PROTOCOL_STREAM != 0,
-            query_cancel: flags & CAP_QUERY_CANCEL != 0,
-            backup_restore: flags & CAP_BACKUP_RESTORE != 0,
-            backup_formats: vec![BackupFormat::PhysicalArchive],
-            restore_formats: vec![BackupFormat::PhysicalArchive],
-            simple_query: flags & CAP_SIMPLE_QUERY != 0,
-            extensions: flags & CAP_EXTENSIONS != 0,
-            connection_strings: flags & CAP_SERVER_MODE != 0,
-            connection_string: None,
-        }
-    }
-
     fn cancel_handle(&self) -> Option<Arc<dyn EngineCancel>> {
         let cancel: Arc<dyn EngineCancel> = self.cancel.clone();
         Some(cancel)
@@ -572,11 +573,7 @@ impl EngineSession for OliphauntSession {
         Ok(self.protocol_response_from_native(response))
     }
 
-    fn exec_protocol_stream(
-        &mut self,
-        request: ProtocolRequest,
-        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
+    fn backup(&mut self) -> Result<Vec<u8>> {
         let guard =
             self.handle.handle.read().map_err(|_| {
                 Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
@@ -585,152 +582,22 @@ impl EngineSession for OliphauntSession {
         if handle.is_null() {
             return Err(Error::EngineStopped);
         }
-        let Some(exec_stream) = self.symbols.exec_protocol_stream else {
-            drop(guard);
-            let response = self.exec_protocol_raw(request)?;
-            return on_chunk(response.as_bytes());
+        let mut response = NativeResponse {
+            data: ptr::null_mut(),
+            len: 0,
         };
-
-        struct StreamContext<'a> {
-            on_chunk: &'a mut dyn FnMut(&[u8]) -> Result<()>,
-            error: Option<Error>,
-        }
-
-        unsafe extern "C" fn stream_callback(
-            context: *mut std::ffi::c_void,
-            data: *const std::ffi::c_uchar,
-            len: usize,
-        ) -> std::ffi::c_int {
-            let context = unsafe { &mut *(context as *mut StreamContext<'_>) };
-            if data.is_null() && len > 0 {
-                context.error = Some(Error::Engine(
-                    "native liboliphaunt stream callback received null data".to_owned(),
-                ));
-                return -1;
-            }
-            let bytes = if len == 0 {
-                &[]
-            } else {
-                unsafe { std::slice::from_raw_parts(data, len) }
-            };
-            match (context.on_chunk)(bytes) {
-                Ok(()) => 0,
-                Err(error) => {
-                    context.error = Some(error);
-                    -1
-                }
-            }
-        }
-
-        let bytes = request.as_bytes();
-        let mut context = StreamContext {
-            on_chunk,
-            error: None,
-        };
-        let rc = unsafe {
-            exec_stream(
-                handle,
-                bytes.as_ptr(),
-                bytes.len(),
-                stream_callback,
-                &mut context as *mut StreamContext<'_> as *mut std::ffi::c_void,
-            )
-        };
+        let rc = unsafe { (self.symbols.backup)(handle, &mut response) };
         if rc != 0 {
-            if let Some(error) = context.error {
-                return Err(error);
-            }
-            let message = self.symbols.last_error_text(handle).unwrap_or_else(|| {
-                format!("oliphaunt_exec_protocol_stream failed with status {rc}")
-            });
+            self.free_failed_response(&mut response);
+            let message = self
+                .symbols
+                .last_error_text(handle)
+                .unwrap_or_else(|| format!("oliphaunt_backup failed with status {rc}"));
             return Err(Error::Engine(format!(
-                "native liboliphaunt protocol stream failed: {message}"
+                "native liboliphaunt physical backup failed: {message}"
             )));
         }
-        Ok(())
-    }
-
-    fn checkpoint(&mut self) -> Result<()> {
-        self.exec_simple_query("CHECKPOINT").map(|_| ())
-    }
-
-    fn backup(&mut self, request: BackupRequest) -> Result<BackupArtifact> {
-        match request.format {
-            BackupFormat::PhysicalArchive => {
-                let root = self.root.as_ref().ok_or(Error::EngineStopped)?;
-                let pgdata = root.pgdata.clone();
-                let selected_extensions = self.selected_extensions.clone();
-
-                let metadata_files =
-                    physical_archive_metadata_files(&pgdata, &selected_extensions, |request| {
-                        self.exec_protocol_raw(request)
-                    })?;
-                let root_manifest_path = CString::new(NATIVE_ROOT_MANIFEST_FILE)
-                    .expect("native root manifest path is a static C string");
-                let backup_manifest_path = CString::new(PHYSICAL_ARCHIVE_MANIFEST_PATH)
-                    .expect("physical archive manifest path is a static C string");
-                let root_manifest_bytes = metadata_files.root_manifest.as_bytes();
-                let backup_manifest_bytes = metadata_files.backup_manifest.as_bytes();
-                let generated_files = [
-                    NativeArchiveFile {
-                        path: root_manifest_path.as_ptr(),
-                        data: root_manifest_bytes.as_ptr(),
-                        len: root_manifest_bytes.len(),
-                        mode: 0o600,
-                        reserved_flags: 0,
-                    },
-                    NativeArchiveFile {
-                        path: backup_manifest_path.as_ptr(),
-                        data: backup_manifest_bytes.as_ptr(),
-                        len: backup_manifest_bytes.len(),
-                        mode: 0o600,
-                        reserved_flags: 0,
-                    },
-                ];
-                let options = NativeBackupOptions {
-                    abi_version: ABI_VERSION,
-                    format: BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-                    generated_files: generated_files.as_ptr(),
-                    generated_file_count: generated_files.len(),
-                    reserved_flags: 0,
-                };
-                let guard = self.handle.handle.read().map_err(|_| {
-                    Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
-                })?;
-                let handle = *guard;
-                if handle.is_null() {
-                    return Err(Error::EngineStopped);
-                }
-                let mut response = NativeResponse {
-                    data: ptr::null_mut(),
-                    len: 0,
-                };
-                let rc = unsafe { (self.symbols.backup)(handle, &options, &mut response) };
-                if rc != 0 {
-                    self.free_failed_response(&mut response);
-                    let message = self
-                        .symbols
-                        .last_error_text(handle)
-                        .unwrap_or_else(|| format!("oliphaunt_backup failed with status {rc}"));
-                    return Err(Error::Engine(format!(
-                        "native liboliphaunt physical backup failed: {message}"
-                    )));
-                }
-                let bytes = self.bytes_from_native_response(response);
-                Ok(BackupArtifact {
-                    format: BackupFormat::PhysicalArchive,
-                    bytes,
-                })
-            }
-            BackupFormat::Sql => Err(Error::Engine(format!(
-                "logical SQL backup requires NativeServer mode with pg_dump; direct mode C ABI format {} is intentionally unavailable",
-                BACKUP_FORMAT_SQL
-            ))),
-            BackupFormat::OliphauntArchive => Err(Error::Engine(format!(
-                "OliphauntArchive has no stable on-disk format yet; direct mode C ABI format {} is intentionally unavailable",
-                BACKUP_FORMAT_OLIPHAUNT_ARCHIVE
-            ))),
-        }
+        Ok(self.bytes_from_native_response(response))
     }
 
     fn close(&mut self) -> Result<()> {
@@ -820,7 +687,7 @@ mod tests {
 
     #[test]
     fn direct_startup_args_include_required_preload_libraries_before_init() {
-        let mut config = OpenConfig::native_direct("target/test-roots/native-direct-preload");
+        let mut config = OpenConfig::direct("target/test-roots/native-direct-preload");
         config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
         let extensions = config.resolved_extensions().unwrap();
         let args = startup_args(&config, &extensions).unwrap();
@@ -841,7 +708,7 @@ mod tests {
 
     #[test]
     fn direct_startup_args_omit_preload_when_selected_extensions_do_not_require_it() {
-        let config = OpenConfig::native_direct("target/test-roots/native-direct-no-preload");
+        let config = OpenConfig::direct("target/test-roots/native-direct-no-preload");
         let args = startup_args(&config, &[Extension::Vector]).unwrap();
         let args = args
             .iter()
@@ -857,40 +724,18 @@ mod tests {
     }
 
     #[test]
-    fn direct_startup_args_apply_footprint_before_durability_and_overrides() {
-        let mut config = OpenConfig::native_direct("target/test-roots/native-direct-footprint");
-        config.runtime_footprint = crate::RuntimeFootprintProfile::BalancedMobile;
-        config.durability = crate::DurabilityProfile::Balanced;
-        config.startup_gucs = vec![
-            crate::PostgresStartupGuc::new("shared_buffers", "64MB"),
-            crate::PostgresStartupGuc::new("synchronous_commit", "local"),
-        ];
-        let args = startup_arg_strings(&config, &[]);
-
-        assert_startup_config_arg(&args, "shared_buffers=32MB");
-        assert_startup_config_arg(&args, "synchronous_commit=off");
-        assert_startup_config_arg(&args, "shared_buffers=64MB");
-        assert_startup_config_arg(&args, "synchronous_commit=local");
-        assert!(
-            index_of(&args, "shared_buffers=32MB") < index_of(&args, "shared_buffers=64MB"),
-            "explicit startup GUCs must be able to override the runtime footprint: {args:?}"
-        );
-        assert!(
-            index_of(&args, "synchronous_commit=off") < index_of(&args, "synchronous_commit=local"),
-            "explicit startup GUCs must be able to override durability defaults: {args:?}"
-        );
-    }
-
-    #[test]
     fn invalid_startup_gucs_are_rejected_before_open() {
-        let mut config = OpenConfig::native_direct("target/test-roots/native-direct-invalid-guc");
-        config.startup_gucs = vec![crate::PostgresStartupGuc::new("shared-buffers", "16MB")];
+        let mut config = OpenConfig::direct("target/test-roots/native-direct-invalid-guc");
+        config.startup_gucs = vec![crate::config::PostgresStartupGuc::new(
+            "shared-buffers",
+            "16MB",
+        )];
 
         let error = config.validate().unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("must contain only ASCII letters, digits, '_' or '.'"),
+                .contains("each dot-separated component must start"),
             "{error}"
         );
     }
@@ -904,11 +749,5 @@ mod tests {
             Some("-c"),
             "direct startup argument {expected:?} must be passed through postgres -c"
         );
-    }
-
-    fn index_of(args: &[String], expected: &str) -> usize {
-        args.iter()
-            .position(|arg| arg == expected)
-            .unwrap_or_else(|| panic!("missing startup argument {expected:?} in {args:?}"))
     }
 }

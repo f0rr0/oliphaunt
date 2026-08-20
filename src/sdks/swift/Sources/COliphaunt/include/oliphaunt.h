@@ -8,23 +8,8 @@
 extern "C" {
 #endif
 
-#define OLIPHAUNT_ABI_VERSION 7u
+#define OLIPHAUNT_ABI_VERSION 8u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
-
-#define OLIPHAUNT_CAP_PROTOCOL_RAW (1ull << 0)
-#define OLIPHAUNT_CAP_PROTOCOL_STREAM (1ull << 1)
-#define OLIPHAUNT_CAP_MULTI_INSTANCE (1ull << 2)
-#define OLIPHAUNT_CAP_SERVER_MODE (1ull << 3)
-#define OLIPHAUNT_CAP_EXTENSIONS (1ull << 4)
-#define OLIPHAUNT_CAP_QUERY_CANCEL (1ull << 5)
-#define OLIPHAUNT_CAP_BACKUP_RESTORE (1ull << 6)
-#define OLIPHAUNT_CAP_SIMPLE_QUERY (1ull << 7)
-#define OLIPHAUNT_CAP_STATIC_EXTENSIONS (1ull << 8)
-#define OLIPHAUNT_CAP_LOGICAL_REOPEN (1ull << 9)
-
-#define OLIPHAUNT_BACKUP_FORMAT_SQL 1u
-#define OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE 2u
-#define OLIPHAUNT_BACKUP_FORMAT_OLIPHAUNT_ARCHIVE 3u
 
 #if defined(_WIN32) && defined(OLIPHAUNT_BUILDING_DLL)
 #define OLIPHAUNT_API __declspec(dllexport)
@@ -33,20 +18,6 @@ extern "C" {
 #else
 #define OLIPHAUNT_API
 #endif
-
-/*
- * The caller already owns an equivalent root lock for this PGDATA path.
- *
- * Leave this flag unset for plain C, Swift, Kotlin, and other direct C ABI
- * callers; oliphaunt_init will then take a non-blocking stable filesystem lease
- * for <parent-of-pgdata> and create <parent-of-pgdata>/.oliphaunt.lock as the
- * visible root marker. The Rust SDK sets this flag because it owns a stronger
- * process-plus-filesystem root coordinator across direct, broker, server,
- * backup, and restore paths.
- */
-#define OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK (1ull << 0)
-
-#define OLIPHAUNT_RESTORE_REPLACE_EXISTING (1ull << 0)
 
 typedef struct OliphauntHandle OliphauntHandle;
 
@@ -64,17 +35,6 @@ typedef struct OliphauntStaticExtension {
     size_t symbol_count;
     uint64_t reserved_flags;
 } OliphauntStaticExtension;
-
-/*
- * Registers statically linked PostgreSQL extension modules for the embedded
- * backend's normal LOAD path.
- *
- * Call this before oliphaunt_init in processes that link extension code directly
- * into the application or SDK library. The registry is process-wide and becomes
- * immutable once backend startup begins. Each extension name is the module stem
- * used by SQL, for example AS 'vector', and each symbol row exposes the C
- * symbols PostgreSQL would otherwise resolve with dlsym().
- */
 
 /*
  * Direct-mode extension compatibility contract:
@@ -98,6 +58,7 @@ typedef struct OliphauntStaticExtension {
  */
 typedef struct OliphauntConfig {
     uint32_t abi_version;
+    /* The pgdata child of an already-prepared managed root. Init does not create it. */
     const char *pgdata;
     const char *runtime_dir;
     /*
@@ -118,29 +79,13 @@ typedef struct OliphauntResponse {
     size_t len;
 } OliphauntResponse;
 
-typedef struct OliphauntArchiveFile {
-    const char *path;
-    const uint8_t *data;
-    size_t len;
-    uint32_t mode;
-    uint64_t reserved_flags;
-} OliphauntArchiveFile;
-
-typedef struct OliphauntBackupOptions {
-    uint32_t abi_version;
-    uint32_t format;
-    const OliphauntArchiveFile *generated_files;
-    size_t generated_file_count;
-    uint64_t reserved_flags;
-} OliphauntBackupOptions;
-
 typedef struct OliphauntRestoreOptions {
     uint32_t abi_version;
+    /* New or existing-empty managed-root path; this is not a PGDATA path. */
     const char *destination;
-    uint32_t format;
+    /* Bytes in the single native physical archive format returned by oliphaunt_backup. */
     const uint8_t *data;
     size_t len;
-    uint64_t flags;
 } OliphauntRestoreOptions;
 
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
@@ -164,7 +109,6 @@ OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
     void *callback_context);
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *handle,
-    const OliphauntBackupOptions *options,
     OliphauntResponse *out);
 OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *options);
 OLIPHAUNT_API int32_t oliphaunt_cancel(OliphauntHandle *handle);
@@ -189,10 +133,19 @@ OLIPHAUNT_API int32_t oliphaunt_close_if_generation(
  * oliphaunt_close_if_generation and retain only its generation token.
  */
 OLIPHAUNT_API int32_t oliphaunt_close(OliphauntHandle *handle);
+/*
+ * Registers statically linked PostgreSQL extension modules for the embedded
+ * backend's normal LOAD path.
+ *
+ * Call this before oliphaunt_init in processes that link extension code directly
+ * into the application or SDK library. The registry is process-wide and becomes
+ * immutable once backend startup begins. Each extension name is the module stem
+ * used by SQL, for example AS 'vector', and each symbol row exposes the C
+ * symbols PostgreSQL would otherwise resolve with dlsym().
+ */
 OLIPHAUNT_API int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count);
 OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *handle);
 OLIPHAUNT_API const char *oliphaunt_version(void);
-OLIPHAUNT_API uint64_t oliphaunt_capabilities(void);
 OLIPHAUNT_API void oliphaunt_free_response(OliphauntResponse *response);
 
 #ifdef __cplusplus

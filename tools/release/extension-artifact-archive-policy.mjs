@@ -3,7 +3,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 export const EXTENSION_ARTIFACT_ARCHIVE_POLICY_PATH =
-  "src/sdks/rust/extension-artifact-archive-policy.properties";
+  "tools/native-packaging/extension-artifact-archive-policy.properties";
 
 const EXPECTED_SCHEMA = "oliphaunt-extension-artifact-archive-policy-v1";
 const EXPECTED_KEYS = Object.freeze([

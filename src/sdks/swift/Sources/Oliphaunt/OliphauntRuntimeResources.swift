@@ -4,20 +4,20 @@ private let oliphauntRuntimeResourcesSchema = "oliphaunt-runtime-resources-v1"
 private let oliphauntRuntimePackageLayout = "postgres-runtime-files-v1"
 private let oliphauntTemplatePgdataPackageLayout = "postgres-template-pgdata-v1"
 
-public struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
-    public var packageBytes: UInt64
-    public var runtimeBytes: UInt64
-    public var templatePgdataBytes: UInt64
-    public var staticRegistryBytes: UInt64
-    public var selectedExtensionBytes: UInt64
-    public var extensions: [OliphauntExtensionSizeReport]
-    public var runtimeFeatures: [String]
-    public var mobileStaticRegistryState: String?
-    public var mobileStaticRegistryRegistered: [String]
-    public var mobileStaticRegistryPending: [String]
-    public var nativeModuleStems: [String]
+struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
+    var packageBytes: UInt64
+    var runtimeBytes: UInt64
+    var templatePgdataBytes: UInt64
+    var staticRegistryBytes: UInt64
+    var selectedExtensionBytes: UInt64
+    var extensions: [OliphauntExtensionSizeReport]
+    var runtimeFeatures: [String]
+    var mobileStaticRegistryState: String?
+    var mobileStaticRegistryRegistered: [String]
+    var mobileStaticRegistryPending: [String]
+    var nativeModuleStems: [String]
 
-    public init(
+    init(
         packageBytes: UInt64,
         runtimeBytes: UInt64,
         templatePgdataBytes: UInt64,
@@ -44,28 +44,28 @@ public struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     }
 }
 
-public struct OliphauntExtensionSizeReport: Equatable, Sendable {
-    public var name: String
-    public var fileCount: Int
-    public var bytes: UInt64
+struct OliphauntExtensionSizeReport: Equatable, Sendable {
+    var name: String
+    var fileCount: Int
+    var bytes: UInt64
 
-    public init(name: String, fileCount: Int, bytes: UInt64) {
+    init(name: String, fileCount: Int, bytes: UInt64) {
         self.name = name
         self.fileCount = fileCount
         self.bytes = bytes
     }
 }
 
-public struct OliphauntRuntimeResources: Sendable {
-    public var resourceRoot: URL
-    public var cacheRoot: URL
+@_spi(ExtensionSupport) public struct OliphauntRuntimeResources: Sendable {
+    var resourceRoot: URL
+    var cacheRoot: URL
 
-    public init(resourceRoot: URL, cacheRoot: URL = Self.defaultCacheRoot()) {
+    init(resourceRoot: URL, cacheRoot: URL = Self.defaultCacheRoot()) {
         self.resourceRoot = resourceRoot
         self.cacheRoot = cacheRoot
     }
 
-    public init(bundle: Bundle, cacheRoot: URL = Self.defaultCacheRoot()) throws {
+    init(bundle: Bundle, cacheRoot: URL = Self.defaultCacheRoot()) throws {
         guard let resourceURL = bundle.resourceURL else {
             throw OliphauntError.engine("bundle has no resource URL for Oliphaunt resources")
         }
@@ -75,7 +75,7 @@ public struct OliphauntRuntimeResources: Sendable {
         )
     }
 
-    public static func bundled(cacheRoot: URL = Self.defaultCacheRoot()) -> OliphauntRuntimeResources? {
+    static func bundled(cacheRoot: URL = Self.defaultCacheRoot()) -> OliphauntRuntimeResources? {
         try? bundledResource(
             inResourceDirectories: defaultBundleResourceURLs(),
             containing: [],
@@ -83,7 +83,7 @@ public struct OliphauntRuntimeResources: Sendable {
         )
     }
 
-    public static func bundled(
+    static func bundled(
         containing requestedExtensions: [String],
         cacheRoot: URL = Self.defaultCacheRoot()
     ) throws -> OliphauntRuntimeResources? {
@@ -126,7 +126,7 @@ public struct OliphauntRuntimeResources: Sendable {
         return nil
     }
 
-    public static func defaultCacheRoot() -> URL {
+    static func defaultCacheRoot() -> URL {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -134,7 +134,7 @@ public struct OliphauntRuntimeResources: Sendable {
         return base.appendingPathComponent("oliphaunt/runtime-cache", isDirectory: true)
     }
 
-    public func packageSizeReport() throws -> OliphauntRuntimeResourceSizeReport? {
+    func packageSizeReport() throws -> OliphauntRuntimeResourceSizeReport? {
         let url = resourceRoot.appendingPathComponent("package-size.tsv", isDirectory: false)
         guard FileManager.default.fileExists(atPath: url.path) else {
             return nil
@@ -153,7 +153,7 @@ public struct OliphauntRuntimeResources: Sendable {
         return report
     }
 
-    public func materializeRuntime(requestedExtensions: [String] = []) throws -> URL {
+    func materializeRuntime(requestedExtensions: [String] = []) throws -> URL {
         let requested = try Self.validateExtensionIds(requestedExtensions)
         let runtime = try assetPackage(kind: .runtime)
         try require(runtime: runtime, contains: requested)
@@ -233,7 +233,7 @@ public struct OliphauntRuntimeResources: Sendable {
     }
 
     @discardableResult
-    public func preparePgdata(at pgdata: URL) throws -> Bool {
+    func preparePgdata(at pgdata: URL) throws -> Bool {
         if FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
         ) {

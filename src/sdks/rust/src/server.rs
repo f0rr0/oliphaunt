@@ -12,13 +12,8 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::backup::{
-    annotate_physical_archive_backup, physical_archive_backup, sql_backup_with_pg_dump,
-};
 use crate::config::{EngineMode, NativeServerConfig, OpenConfig};
-use crate::engine::{
-    EngineCancel, EngineCapabilities, EngineSession, NativeRuntime, SessionConcurrency,
-};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::extension::{
     Extension, extension_runtime_environment, required_shared_preload_libraries,
@@ -26,7 +21,6 @@ use crate::extension::{
 use crate::liboliphaunt::{PreparedNativeRoot, configure_native_tool_env};
 use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::storage::{BackupArtifact, BackupFormat, BackupRequest};
 
 const SERVER_HOST: &str = "127.0.0.1";
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
@@ -37,24 +31,15 @@ const AUTO_PORT_START_ATTEMPTS: usize = 16;
 /// Native PostgreSQL server runtime.
 ///
 /// Server mode starts and owns a real local PostgreSQL-compatible server
-/// process. It is the mode to use for independent client connections, pools,
-/// `psql`, `pg_dump`, and ORMs.
+/// process. It is the mode to use for independent client connections, external
+/// PostgreSQL clients, pools, and ORMs.
 #[derive(Debug, Clone, Default)]
-pub struct NativeServerRuntime {
+pub(crate) struct NativeServerRuntime {
     executable: Option<PathBuf>,
     port: Option<u16>,
 }
 
 impl NativeServerRuntime {
-    /// Create a server runtime that resolves the server executable from package
-    /// assets.
-    pub fn from_package() -> Self {
-        Self {
-            executable: None,
-            port: None,
-        }
-    }
-
     /// Create a server runtime from builder/server configuration.
     pub fn from_config(config: &NativeServerConfig) -> Self {
         Self {
@@ -62,38 +47,14 @@ impl NativeServerRuntime {
             port: config.port,
         }
     }
-
-    /// Create a server runtime with an explicit executable.
-    pub fn from_executable(path: impl Into<PathBuf>) -> Self {
-        Self {
-            executable: Some(path.into()),
-            port: None,
-        }
-    }
-
-    /// Return the configured executable, if any.
-    pub fn executable(&self) -> Option<&PathBuf> {
-        self.executable.as_ref()
-    }
-
-    /// Use a fixed localhost port.
-    pub fn with_port(mut self, port: u16) -> Self {
-        self.port = Some(port);
-        self
-    }
 }
 
 impl NativeRuntime for NativeServerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
-        if config.mode != EngineMode::NativeServer {
-            return Err(Error::UnsupportedEngineMode {
-                mode: config.mode,
-                reason: "NativeServerRuntime only serves native-server mode".to_owned(),
-            });
-        }
+        debug_assert_eq!(config.mode, EngineMode::Server);
         config.validate()?;
         let extensions = config.resolved_extensions()?;
-        let root = PreparedNativeRoot::prepare(&config, &extensions)?;
+        let root = PreparedNativeRoot::prepare_for_server(&config, &extensions)?;
         let executable = self
             .executable
             .clone()
@@ -134,10 +95,8 @@ impl NativeRuntime for NativeServerRuntime {
                         connection: Some(connection),
                         cancel,
                         connection_string,
-                        max_client_sessions: config.server.max_client_sessions,
                         socket_dir,
                         closed: false,
-                        selected_extensions: extensions.clone(),
                     }));
                 }
                 Err(error)
@@ -170,36 +129,11 @@ struct NativeServerSession {
     connection: Option<PostgresWireClient>,
     cancel: Arc<NativeServerCancel>,
     connection_string: String,
-    max_client_sessions: usize,
     socket_dir: Option<PathBuf>,
     closed: bool,
-    selected_extensions: Vec<Extension>,
 }
 
 impl EngineSession for NativeServerSession {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            mode: EngineMode::NativeServer,
-            session_concurrency: SessionConcurrency::IndependentSessions,
-            process_isolated: true,
-            multiple_instances: false,
-            same_instance_logical_reopen: false,
-            instance_switchable: true,
-            crash_restartable: false,
-            max_client_sessions: self.max_client_sessions,
-            protocol_raw: true,
-            protocol_stream: true,
-            query_cancel: true,
-            backup_restore: true,
-            backup_formats: vec![BackupFormat::Sql, BackupFormat::PhysicalArchive],
-            restore_formats: vec![BackupFormat::PhysicalArchive],
-            simple_query: true,
-            extensions: true,
-            connection_strings: true,
-            connection_string: Some(self.connection_string.clone()),
-        }
-    }
-
     fn cancel_handle(&self) -> Option<Arc<dyn EngineCancel>> {
         let cancel: Arc<dyn EngineCancel> = self.cancel.clone();
         Some(cancel)
@@ -214,45 +148,6 @@ impl EngineSession for NativeServerSession {
             .as_mut()
             .ok_or(Error::EngineStopped)?
             .exec_protocol_raw(request)
-    }
-
-    fn exec_protocol_stream(
-        &mut self,
-        request: ProtocolRequest,
-        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        self.connection
-            .as_mut()
-            .ok_or(Error::EngineStopped)?
-            .exec_protocol_stream(request, on_chunk)
-    }
-
-    fn checkpoint(&mut self) -> Result<()> {
-        self.exec_protocol_raw(ProtocolRequest::simple_query("CHECKPOINT")?)
-            .map(|_| ())
-    }
-
-    fn backup(&mut self, request: BackupRequest) -> Result<BackupArtifact> {
-        match request.format {
-            BackupFormat::Sql => {
-                sql_backup_with_pg_dump(&self.root.tool_path("pg_dump"), &self.connection_string)
-            }
-            BackupFormat::PhysicalArchive => {
-                let pgdata = self.root.pgdata.clone();
-                let artifact =
-                    physical_archive_backup(&pgdata, |request| self.exec_protocol_raw(request))?;
-                let selected_extensions = self.selected_extensions.clone();
-                annotate_physical_archive_backup(
-                    artifact,
-                    &pgdata,
-                    &selected_extensions,
-                    |request| self.exec_protocol_raw(request),
-                )
-            }
-            BackupFormat::OliphauntArchive => Err(Error::Engine(
-                "OliphauntArchive has no stable on-disk format yet; request PhysicalArchive for same-version clones or Sql for portable logical dumps".to_owned(),
-            )),
-        }
     }
 
     fn close(&mut self) -> Result<()> {
@@ -449,11 +344,6 @@ fn postgres_startup_args(
         args.push(OsString::from("-c"));
         args.push(OsString::from(assignment));
     }
-    args.push(OsString::from("-c"));
-    args.push(OsString::from(format!(
-        "max_connections={}",
-        config.server.max_client_sessions
-    )));
     let preload_libraries = required_shared_preload_libraries(extensions);
     if !preload_libraries.is_empty() {
         args.push(OsString::from("-c"));
@@ -658,8 +548,8 @@ mod tests {
 
     #[test]
     fn server_startup_args_include_required_preload_libraries_before_spawn() {
-        let mut config = OpenConfig::native_direct("target/test-roots/native-server-preload");
-        config.mode = EngineMode::NativeServer;
+        let mut config = OpenConfig::direct("target/test-roots/native-server-preload");
+        config.mode = EngineMode::Server;
         let args = postgres_startup_args(
             Path::new("/tmp/oliphaunt-preload/pgdata"),
             15432,
@@ -773,8 +663,8 @@ mod tests {
 
     #[test]
     fn server_connection_string_uses_configured_identity() {
-        let mut config = OpenConfig::native_direct("target/test-roots/native-server-identity");
-        config.mode = EngineMode::NativeServer;
+        let mut config = OpenConfig::direct("target/test-roots/native-server-identity");
+        config.mode = EngineMode::Server;
         config.username = "app user".to_owned();
         config.database = "app/db".to_owned();
 

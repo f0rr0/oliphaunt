@@ -12,7 +12,7 @@ export async function createDefaultNativeBinding(
     // also runs blocking database work off the JavaScript thread, which keeps
     // cancel() and timers live while a query is executing.
     const { createNodeNativeBinding } = await import('./node.js');
-    return createNodeNativeBinding(options, 'bun');
+    return createNodeNativeBinding(options);
   }
   const { createNodeNativeBinding } = await import('./node.js');
   return createNodeNativeBinding(options);

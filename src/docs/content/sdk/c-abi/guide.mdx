@@ -30,8 +30,10 @@ developers install one SDK surface.
 
 ### Open and query
 
-Open a PGDATA directory, send raw protocol bytes, read backend messages, and close the
-handle.
+Prepare a managed root, open its `pgdata` directory, send raw protocol bytes,
+read backend messages, and close the handle. The C runtime validates an exact
+`.oliphaunt.json`, PostgreSQL 18 `PG_VERSION`, a real `global` directory with
+nonempty `pg_control`, and a real `pg_wal`; it does not initialize an empty root.
 
 <!-- oliphaunt-snippet: liboliphaunt-native -->
 
@@ -68,19 +70,18 @@ selection, and lifecycle integration.
 ### Configure
 
 `OliphauntConfig` contains the PGDATA path, optional runtime and module
-directories, username, database, PostgreSQL startup arguments, and reserved
-flags. Higher-level SDKs translate their storage, durability, and engine-mode
-settings into this direct-runtime record.
+directories, username, database, and PostgreSQL startup arguments.
+`reserved_flags` must be zero. Higher-level SDKs prepare storage and translate
+direct-runtime settings into this record.
 
 </Step>
 <Step>
 
 ### Choose a mode
 
-`oliphaunt_capabilities()` returns `OLIPHAUNT_CAP_*` bits for the loaded
-artifact. The C ABI itself is the native-direct boundary and owns one serialized
-embedded session; choose broker or server through a language SDK when process
-isolation or independent client sessions are required.
+The C ABI is the native-direct boundary and owns one serialized embedded
+session. Choose broker or server through a language SDK when process isolation
+or independent client sessions are required.
 
 </Step>
 <Step>
@@ -113,8 +114,9 @@ extension with PostgreSQL SQL such as `CREATE EXTENSION`.
 
 ### Back up and restore
 
-Use ABI backup and restore calls for supported physical archive formats.
-Bindings validate user input before crossing the ABI boundary.
+Use `oliphaunt_backup` and `oliphaunt_restore` for the one native PostgreSQL 18
+physical archive. Restore accepts a new or existing-empty managed-root
+destination and does not replace nonempty data.
 
 </Step>
 </Steps>

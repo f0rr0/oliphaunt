@@ -34,6 +34,17 @@ function manifest() {
         types: './lib/storage/deno.d.ts',
         deno: './lib/storage/deno.js',
       },
+      './storage/indexed-db': {
+        types: './lib/storage/indexed-db.d.ts',
+        default: './lib/storage/indexed-db.js',
+      },
+      './storage/opfs': {
+        types: './lib/storage/opfs.d.ts',
+        default: './lib/storage/opfs.js',
+      },
+      './package.json': {
+        default: './package.json',
+      },
     },
     engines: {
       node: '>=22.13 <25',
@@ -72,6 +83,14 @@ describe('WASIX TypeScript release dependency closure', () => {
     candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
       'must expose Deno directory storage only under the Deno condition',
+    );
+  });
+
+  test('rejects an extra Node storage export condition', () => {
+    const candidate = manifest();
+    candidate.exports['./storage/node'].development = './lib/storage/node.js';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose directory storage only under the Node condition',
     );
   });
 

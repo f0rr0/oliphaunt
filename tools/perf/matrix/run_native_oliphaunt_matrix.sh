@@ -320,7 +320,6 @@ native_case_name() {
     server:speed) echo "native-liboliphaunt-server-speed" ;;
     server:streaming) echo "native-liboliphaunt-server-streaming" ;;
     server:prepared) echo "native-liboliphaunt-prepared-server" ;;
-    server:backup) echo "native-liboliphaunt-server-backup" ;;
     *)
       echo "unsupported native case: $engine $suite" >&2
       exit 2
@@ -340,6 +339,9 @@ print_native_plan_cases() {
     fi
     for engine in direct broker server; do
       if csv_has "$NATIVE_ENGINES" "$engine"; then
+        if [[ "$suite" == "backup" && "$engine" == "server" ]]; then
+          continue
+        fi
         echo "case=$(native_case_name "$engine" "$suite")"
       fi
     done
@@ -380,7 +382,6 @@ print_native_postgres_plan_cases() {
 print_plan() {
   cat <<PLAN
 nativeOnly=true
-legacyWasixControls=false
 runId=$RUN_ID
 nativeEngines=$NATIVE_ENGINES
 suites=$SUITES
@@ -639,6 +640,9 @@ for suite in rtt speed streaming prepared backup; do
   fi
   for engine in direct broker server; do
     if csv_has "$NATIVE_ENGINES" "$engine"; then
+      if [[ "$suite" == "backup" && "$engine" == "server" ]]; then
+        continue
+      fi
       run_native_liboliphaunt_case "$engine" "$suite"
     fi
   done
@@ -742,7 +746,7 @@ fi
 if csv_has "$SUITES" backup && [[ "$BACKUP_REPEATS" -gt 1 ]]; then
   mkdir -p "$RUN_DIR/repeats"
   for index in $(seq -w 1 "$BACKUP_REPEATS"); do
-    for engine in direct broker server; do
+    for engine in direct broker; do
       if csv_has "$NATIVE_ENGINES" "$engine"; then
         run_native_liboliphaunt_case "$engine" backup "repeats/$(native_case_name "$engine" backup)-$index"
       fi

@@ -1,10 +1,14 @@
 import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 
 import { serializeWasixExtensionDescriptors } from './extension-descriptor.js';
+import { prepareWasixRuntime } from './extensions.js';
+import { decodePhysicalArchive } from './physical-archive.js';
+import { toUint8Array } from './query.js';
 import type { SerializedAssetSource, SerializedOpenOptions } from './rpc.js';
 import { serializeWasixRuntimeDescriptor } from './runtime-descriptor.js';
 import { serializeWasixStorage } from './storage.js';
-import type { OliphauntDatabase, OpenConfig } from './types.js';
+import { restoreWasixStorage } from './storage-provider.js';
+import type { BinaryInput, OliphauntDatabase, OpenConfig } from './types.js';
 import { openWorkerDatabase, type WasixWorkerPort } from './worker-rpc.js';
 
 export type { WasixWorkerPort } from './worker-rpc.js';
@@ -31,6 +35,19 @@ export async function openWasixWithWorker(
 ): Promise<OliphauntDatabase> {
   validate?.(openOptions);
   return openWorkerDatabase(createWorker(openOptions), openOptions, assetTransfers(openOptions));
+}
+
+export async function restoreWasix(
+  storage: OpenConfig['storage'],
+  bytes: BinaryInput,
+  validate?: (options: SerializedOpenOptions) => void,
+): Promise<void> {
+  if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
+  const openOptions = serializeOpenConfig({ storage });
+  validate?.(openOptions);
+  const snapshot = decodePhysicalArchive(toUint8Array(bytes).slice());
+  const runtime = await prepareWasixRuntime(openOptions);
+  await restoreWasixStorage(openOptions.storage, snapshot, runtime.storageCompatibility);
 }
 
 function assetTransfers(options: SerializedOpenOptions): Transferable[] {

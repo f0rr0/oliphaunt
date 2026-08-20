@@ -66,8 +66,6 @@ struct OliphauntHandle {
     bool closing;
     bool logical_active;
     uint64_t logical_generation;
-    bool external_root_lock;
-
     unsigned char *input;
     size_t input_len;
     size_t input_off;
@@ -108,9 +106,7 @@ struct OliphauntHandle {
 
     OliphauntEmbeddedIO io;
     int stable_root_lock_fd;
-    int root_marker_lock_fd;
     char *stable_root_lock_path;
-    char *root_marker_lock_path;
     char last_error[1024];
 };
 
@@ -134,7 +130,6 @@ void oliphaunt_static_extension_init(const OliphauntStaticExtension *extension);
 
 char *oliphaunt_dup_config_string(const char *value, const char *fallback);
 int oliphaunt_dup_startup_args(OliphauntHandle *handle, const OliphauntConfig *config);
-int oliphaunt_run_initdb_if_needed(OliphauntHandle *handle);
 char *oliphaunt_resolve_postgres_argv0(const char *runtime_dir);
 
 int oliphaunt_build_backend_argv(OliphauntHandle *handle, OliphauntBackendArgv *out);
@@ -193,13 +188,32 @@ int oliphaunt_remove_tree(const char *path);
 int oliphaunt_directory_is_empty(const char *path);
 int oliphaunt_acquire_stable_root_lock(OliphauntHandle *handle, const char *root, int *out_fd, char **out_path);
 void oliphaunt_release_file_lock(int *fd, char **path);
-int oliphaunt_acquire_root_marker_lock(OliphauntHandle *handle, const char *pgdata);
-void oliphaunt_release_root_marker_lock(OliphauntHandle *handle);
+int oliphaunt_acquire_root_lock(OliphauntHandle *handle, const char *pgdata);
+int oliphaunt_validate_managed_root(OliphauntHandle *handle, const char *pgdata);
+int oliphaunt_publish_native_root_descriptor(OliphauntHandle *handle, const char *pgdata);
+void oliphaunt_release_root_lock(OliphauntHandle *handle);
+int oliphaunt_path_is_reparse_point(const char *path);
+int oliphaunt_path_is_filesystem_root(const char *path);
 
 int oliphaunt_archive_append_pgdata_tree(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *pgdata);
-int oliphaunt_archive_append_pg_wal_tree(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *pgdata);
-int oliphaunt_archive_append_generated_file(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents);
-int oliphaunt_archive_append_generated_bytes(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const uint8_t *contents, size_t len, uint32_t mode);
+int oliphaunt_archive_append_pg_control(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *pgdata);
+typedef int (*OliphauntWalSegmentVisitor)(void *context, const char *wal_file);
+int oliphaunt_visit_wal_range(
+    OliphauntHandle *handle,
+    const char *start_wal_file,
+    const char *stop_wal_file,
+    uint64_t wal_segment_size,
+    OliphauntWalSegmentVisitor visitor,
+    void *context);
+int oliphaunt_archive_append_wal_range(
+    OliphauntByteBuffer *archive,
+    OliphauntHandle *handle,
+    const char *pgdata,
+    const char *start_wal_file,
+    const char *stop_wal_file,
+    uint64_t wal_segment_size);
+int oliphaunt_archive_append_text(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents);
+int oliphaunt_archive_append_bytes(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const uint8_t *contents, size_t len);
 int oliphaunt_archive_finish(OliphauntByteBuffer *archive, OliphauntHandle *handle);
 int oliphaunt_unpack_physical_archive(OliphauntHandle *handle, const uint8_t *data, size_t len, const char *staging_root);
 

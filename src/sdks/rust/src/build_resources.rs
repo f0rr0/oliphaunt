@@ -7,7 +7,7 @@ static BUILD_RESOURCES_DIR: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 
 /// Register the Oliphaunt resource directory staged by `oliphaunt-build`.
 ///
-/// Applications usually call [`register_build_resources!`] once during startup
+/// Applications usually call [`crate::register_build_resources!`] once during startup
 /// after their `build.rs` has called `oliphaunt_build::configure()`. The native
 /// runtime locator uses this directory before falling back to explicit
 /// environment variables and source-tree build layouts.
@@ -92,11 +92,12 @@ mod tests {
         register_build_resources_dir(registered.clone())
             .expect("registering the exact same resource directory must be idempotent");
 
-        let replacement = if registered == PathBuf::from("oliphaunt-other-resources") {
-            PathBuf::from("oliphaunt-third-resources")
-        } else {
-            PathBuf::from("oliphaunt-other-resources")
-        };
+        let replacement =
+            if registered.as_path() == std::path::Path::new("oliphaunt-other-resources") {
+                PathBuf::from("oliphaunt-third-resources")
+            } else {
+                PathBuf::from("oliphaunt-other-resources")
+            };
         let replacement_error = register_build_resources_dir(replacement.clone())
             .expect_err("a process-wide resource directory must not be replaceable");
         let Error::InvalidConfig(message) = replacement_error else {

@@ -19,6 +19,12 @@ or initialization policy.
 | Application data | Until the application removes it | Application | Never |
 | IndexedDB / OPFS | Until the origin removes it | Application/origin | Never |
 
+Where a selector accepts a filesystem path, `Directory` always names a managed
+Oliphaunt root, not PGDATA itself. The root contains `.oliphaunt.json` and a
+`pgdata` child. Ownership locks are host-side state, not part of the managed
+root or its backup. Raw PGDATA is an internal engine detail and is not a public
+interchange format.
+
 Native SDKs default to an SDK-owned temporary directory because native
 PostgreSQL requires a real PGDATA directory. WASIX SDKs default to a true
 in-memory virtual filesystem. A native temporary directory is not called
@@ -50,7 +56,7 @@ configuration schema.
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
 | React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
 | Rust WASIX | `DatabaseStorage::Memory` | `DatabaseStorage::Directory(path)` |
-| TypeScript WASIX | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, and Deno |
+| WASIX TypeScript | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, and Deno |
 
 The React Native `applicationData` case is intentional. JavaScript has no
 portable API for constructing an iOS/Android app-sandbox path, so the native
@@ -59,36 +65,29 @@ and File APIs and do not need a second path abstraction. Rust WASIX callers
 likewise resolve temporary or application-data paths with their preferred host
 crate and pass the result through `Directory(path)`.
 
-TypeScript WASIX does not expose a browser `temporaryDirectory` case: omitted
+WASIX TypeScript does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
 hosts use the same memory default and selectively expose delta-backed browser
-or raw-directory providers. Those providers hydrate Wasmer memory and publish
+or managed-directory providers. Those providers hydrate Wasmer memory and publish
 journaled changes at PostgreSQL-safe boundaries; they are not described as
 direct guest mounts. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
 
-Initialization is orthogonal to storage. A newly empty store can use a packaged
-template, run `initdb` where the product supports it, or load a compatible
-archive. Reopening a non-empty persistent store does not silently reinitialize
-it. Runtime, PostgreSQL, template, and extension identities are validated before
-reuse.
+Opening a new or empty store initializes it with the product's packaged
+template. Reopening a non-empty persistent store never silently reinitializes
+it. Restore is a separate static operation into a new or empty destination.
+Tooling that needs `initdb` invokes the packaged tool directly; ordinary SDKs do
+not expose an initialization-mode abstraction.
 
 An incomplete non-empty persistent cluster fails closed and remains untouched.
 Only SDK-owned memory and temporary allocations may discard interrupted setup
 state during their own construction.
 
-An SDK exposes an initialization selector only when that product supports more
-than one useful consumer policy. Mobile and browser SDKs automatically open an
-existing database or use their packaged template for an empty store; asking the
-consumer to repeat that policy would add configuration without adding control.
-Rust and Rust WASIX expose the selector because their host and tooling
-use cases genuinely support multiple initialization sources.
-
 Restore uses `destination`, not `root`. A restore destination is an external
-filesystem location receiving a backup artifact; it is not an open database's
-storage selector. Replacement must remain explicit.
+filesystem location receiving backup bytes; it is not an open database's
+storage selector. The current API accepts only a new or empty destination.
 
 ## WASIX persistence contract
 
@@ -104,14 +103,16 @@ provider boundary.
 Each logical IndexedDB name owns an independent physical IndexedDB database.
 Compatibility metadata and path rows change in one atomic read-write
 transaction using the browser's default durability policy, so an aborted
-publication leaves the prior generation current. OPFS, Node, Bun, and Deno
-expose raw PGDATA layouts and apply WAL before ordinary files,
-`global/pg_control` last, and removals after upserts.
+publication leaves the prior generation current. OPFS applies WAL before
+ordinary files, `global/pg_control` last, and removals after upserts inside its
+provider-private directory. Node, Bun, and Deno apply the same order below the
+managed root's `pgdata` child.
 
 Consequences are part of the public contract:
 
 - one open database owns a persistent identity at a time, enforced with Web
-  Locks in browsers or an exact local owner lease for host directories;
+  Locks in browsers or a binding-local stable sibling owner outside the managed
+  root for Rust and TypeScript host directories;
 - distinct IndexedDB names use distinct physical databases and never share
   their metadata/path object-store transaction;
 - a PostgreSQL statement error recovers through `ReadyForQuery` and does not
@@ -123,33 +124,79 @@ Consequences are part of the public contract:
 - a successful operation or callback transaction does not settle before its
   persistence boundary; abrupt termination may lose only work whose boundary
   had not completed;
-- one fixed atomic Node lock slot owns a local-filesystem directory; its
-  published child is the complete unique lease identity, concurrent or
-  cross-process opens on one host fail `busy`, proven-dead local owners and
-  leases from an earlier boot of the same Linux host are reaped by exact-owner
-  removal, foreign identities fail closed, and a main-thread parent performs
-  token-scoped cleanup after a database worker exit; non-Linux recovery uses
-  local PID liveness, while network and cross-host shared filesystems are
-  unsupported; and
-- Node rejects symlinked or foreign adapter state and never treats unrelated
+- each binding prevents concurrent opens through its native host mechanism;
+  these locks do not coordinate across Rust and TypeScript, and cross-binding
+  use is not a supported or qualified workflow; and
+- host-directory providers reject symlinked or foreign adapter state and never treat unrelated
   files in the application directory as generations.
 
 OPFS is deliberately an asynchronous delta provider rather than a claimed
-synchronous guest mount. Its cross-file failure durability is `unknown`, while
-IndexedDB can report `not-persisted` when its atomic transaction aborts.
+synchronous guest mount. Its cross-file failure `commitState` is `unknown`,
+while IndexedDB can report `not-persisted` when its atomic transaction aborts.
 
-## Capabilities
+## Physical compatibility domains
 
-Database-facing capabilities describe instances, never filesystem topology:
+Managed roots make engine ownership explicit; they do not make every PostgreSQL
+build physically interchangeable. Native roots are shared among compatible
+native SDKs. Rust and WASIX TypeScript use the same root descriptor and WASIX
+physical-format value, but cross-binding root handoff is not a supported or
+qualified workflow. The managed-root descriptor is
+written once when the root is created. Source fingerprints remain asset-graph coherence identities
+used to reject mixed runtime, template, AOT, and extension build outputs; they
+are not a physical-reopen key or binding identity in the root. Both runtime
+families validate either exact descriptor shape. Opening another family's root
+is not a supported transfer path, so the SDKs add no cross-family rejection
+policy; the underlying PostgreSQL/runtime behavior is authoritative.
 
-- `multipleInstances`
-- `sameInstanceLogicalReopen`
-- `instanceSwitchable`
-- `crashRestartable`
+`.oliphaunt.json` is SDK-owned creation-time identity, not user configuration,
+a lock, or a copy of runtime provenance. Its five fields name the schema,
+engine family, `pgdata` location, PostgreSQL major, and versioned physical
+format. Directory-backed native and WASIX SDKs use that file directly;
+IndexedDB and OPFS persist the same physical key inside their provider-private
+metadata because they do not expose a filesystem root.
 
-Rust uses the corresponding snake_case fields. Internal lock files, PGDATA
-paths, resource roots, archive roots, and C ABI fields retain `root` when it is
-the accurate filesystem term.
+Root descriptors are destination-owned and never travel inside physical
+backups. A physical archive carries its own family and physical-format metadata;
+restore validates the archive and creates the destination descriptor during
+staging. Logical SQL dump/restore is the portable bridge between native and
+WASIX products.
+
+Reopening a persistent extension-bearing root requires the binding to provide
+the installed extension code. PostgreSQL's standard `ALTER EXTENSION ... UPDATE`
+is the upgrade mechanism; Oliphaunt does not add a generic extension-migration
+framework.
+
+## Implementation boundaries
+
+The shared unit is the invariant, not a universal filesystem interface:
+
+| Concern | Shared owner | Language/provider-specific part |
+| --- | --- | --- |
+| Database-root identity | The neutral fixture defines the `.oliphaunt.json` schema and `pgdata` location; each runtime family owns its physical-format value | Native SDKs publish descriptors last during root preparation; `liboliphaunt` validates them on open and creates one only in private restore staging. `liboliphaunt-wasix` defines the WASIX value consumed by Rust and TypeScript hosts; cross-family opens have no special guard because they are outside the supported contract |
+| Native ownership | `liboliphaunt` owns direct, broker-helper, and restore sibling leases and validates descriptors | SDKs resolve paths and hydrate packaged PGDATA; Rust server takes the same sibling lease because it bypasses C |
+| WASIX host-directory persistence | PostgreSQL major plus the versioned WASIX physical format define reopen compatibility | Rust accesses host PGDATA directly and uses a binding-local stable sibling owner; TypeScript hydrates Wasmer memory, publishes journaled deltas, and uses its own stable sibling owner |
+| Browser persistence | Public lifecycle and error vocabulary | IndexedDB keeps atomic row transactions; OPFS keeps ordered file publication; both use Web Locks |
+| Cross-family transfer | Logical SQL dump/restore | Physical backup formats remain family-scoped |
+
+This deliberately leaves implementation details local when sharing them would
+hide real semantics or add indirection to a hot path.
+
+## Intentional differences
+
+- Native defaults to an SDK-owned temporary directory; WASIX defaults to a true
+  memory filesystem.
+- IndexedDB and OPFS are TypeScript browser providers. Rust WASIX does not grow
+  browser-shaped APIs that its ecosystem cannot use naturally.
+- React Native keeps `applicationData(name)` because JavaScript cannot resolve
+  mobile sandbox paths portably; native Swift and Kotlin callers use URL/File.
+- Native direct storage and Rust WASIX host storage are direct filesystem I/O.
+  WASIX TypeScript providers publish deltas, so publication failure state is a
+  real part of that SDK's error API.
+- Rust errors retain idiomatic error chains. WASIX TypeScript exposes stable
+  storage codes and `commitState` because callers must branch on asynchronous
+  publication outcomes.
+- Network and cross-host shared filesystems remain unsupported. The ownership
+  protocols intentionally fail closed instead of claiming distributed locking.
 
 ## References
 

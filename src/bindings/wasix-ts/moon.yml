@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable TypeScript WASIX binding for browser, Node, Bun, and Deno direct/Worker placement."
+  description: "Portable WASIX TypeScript binding for browser, Node, Bun, and Deno direct/Worker placement."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"
@@ -47,8 +47,29 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/shared/js-core/**/*"
+      - "/src/shared/fixtures/storage/database-root.json"
+      - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
+      - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/test/run-js-tests.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-wasix-ts"
+    inputs:
+      - "/coverage/baseline.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/tools/coverage/**/*"
+      - "/tools/test/run-js-tests.mjs"
+    outputs:
+      - "/target/coverage/oliphaunt-wasix-ts/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -63,6 +84,9 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -81,6 +105,9 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -100,6 +127,9 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
       - "/tools/dev/bun.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"
@@ -122,6 +152,9 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
       - "/tools/dev/deno.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"
@@ -141,6 +174,9 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -158,6 +194,9 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
       - "/tools/dev/bun.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"
@@ -178,6 +217,9 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
       - "/tools/dev/deno.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"

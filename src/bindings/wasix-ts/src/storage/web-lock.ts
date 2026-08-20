@@ -18,7 +18,7 @@ export async function acquireExclusiveWebLock(
   if (locks === undefined) {
     throw new WasixStorageError(`${label} requires the browser Web Locks API`, {
       code: 'unavailable',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
   }
 
@@ -55,14 +55,14 @@ export async function acquireExclusiveWebLock(
     void request.catch(() => undefined);
     throw new WasixStorageError(
       `could not acquire ownership of ${label}: ${describeError(error)}`,
-      { code: 'unavailable', durability: 'unchanged', cause: error },
+      { code: 'unavailable', commitState: 'unchanged', cause: error },
     );
   }
   if (!available) {
     await request;
     throw new WasixStorageError(`${label} is already open in this origin`, {
       code: 'busy',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
   }
   let released = false;

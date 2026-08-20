@@ -12,18 +12,13 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::backup::annotate_physical_archive_backup;
 use crate::config::{EngineMode, NativeBrokerConfig, OpenConfig};
-use crate::engine::{
-    EngineCancel, EngineCapabilities, EngineSession, NativeRuntime, SessionConcurrency,
-};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::ipc::{RequestFrame, ResponseFrame, read_response, write_request};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::storage::{
-    BackupArtifact, BackupFormat, BackupRequest, DatabaseInitialization, DatabaseStorage,
-};
+use crate::storage::DatabaseStorage;
 
 const ENV_BROKER: &str = "OLIPHAUNT_BROKER";
 const ENV_BROKER_ASSET_DIR: &str = "OLIPHAUNT_BROKER_ASSET_DIR";
@@ -45,7 +40,7 @@ impl<T> BrokerTransport for T where T: Read + Write + Send {}
 /// owns the native database instance and the direct PostgreSQL backend; the Rust SDK client
 /// talks to it over a small length-prefixed local IPC protocol.
 #[derive(Debug, Clone)]
-pub struct NativeBrokerRuntime {
+pub(crate) struct NativeBrokerRuntime {
     executable: Option<PathBuf>,
     supervisor: Arc<BrokerSupervisor>,
 }
@@ -53,49 +48,19 @@ pub struct NativeBrokerRuntime {
 impl NativeBrokerRuntime {
     /// Create a broker runtime that resolves the broker executable from package
     /// assets.
-    pub fn from_package() -> Self {
+    pub(crate) fn from_package() -> Self {
         Self {
             executable: None,
-            supervisor: Arc::new(BrokerSupervisor::new(1)),
+            supervisor: Arc::new(BrokerSupervisor::new()),
         }
     }
 
     /// Create a broker runtime from builder/broker configuration.
-    pub fn from_config(config: &NativeBrokerConfig) -> Self {
+    pub(crate) fn from_config(config: &NativeBrokerConfig) -> Self {
         Self {
             executable: config.executable.clone(),
-            supervisor: Arc::new(BrokerSupervisor::new(config.max_instances)),
+            supervisor: Arc::new(BrokerSupervisor::new()),
         }
-    }
-
-    /// Create a broker runtime with an explicit helper executable.
-    pub fn from_executable(path: impl Into<PathBuf>) -> Self {
-        Self {
-            executable: Some(path.into()),
-            supervisor: Arc::new(BrokerSupervisor::new(1)),
-        }
-    }
-
-    /// Set the maximum number of active database instances this runtime
-    /// supervises.
-    ///
-    /// Broker mode uses one helper process per instance while the native direct
-    /// backend remains process-global. This limit therefore controls the
-    /// number of concurrently supervised helper processes, not the number of
-    /// sessions within an instance.
-    pub fn with_max_instances(mut self, max_instances: usize) -> Self {
-        self.supervisor = Arc::new(BrokerSupervisor::new(max_instances));
-        self
-    }
-
-    /// Return the configured helper executable, if any.
-    pub fn executable(&self) -> Option<&PathBuf> {
-        self.executable.as_ref()
-    }
-
-    /// Return the maximum number of active database instances this runtime admits.
-    pub fn max_instances(&self) -> usize {
-        self.supervisor.max_instances()
     }
 }
 
@@ -107,21 +72,14 @@ impl Default for NativeBrokerRuntime {
 
 impl NativeRuntime for NativeBrokerRuntime {
     fn open(&self, config: OpenConfig) -> Result<Box<dyn EngineSession>> {
-        if config.mode != EngineMode::NativeBroker {
-            return Err(Error::UnsupportedEngineMode {
-                mode: config.mode,
-                reason: "NativeBrokerRuntime only serves native-broker mode".to_owned(),
-            });
-        }
+        debug_assert_eq!(config.mode, EngineMode::Broker);
         config.validate()?;
         let executable = self
             .executable
             .clone()
             .or_else(|| config.broker.executable.clone())
             .or_else(resolve_broker_executable)
-            .ok_or(Error::RuntimeUnavailable {
-                mode: EngineMode::NativeBroker,
-            })?;
+            .ok_or_else(|| Error::Engine("native broker executable is unavailable".to_owned()))?;
         let (root_path, temporary_root) = materialize_broker_root(&config.storage)?;
         let mut open_guard = BrokerOpenGuard {
             child: None,
@@ -158,7 +116,6 @@ impl NativeRuntime for NativeBrokerRuntime {
             temporary_root,
             ipc_cleanup,
             root_lease: Some(root_lease),
-            max_instances: self.supervisor.max_instances(),
             closed: false,
         }))
     }
@@ -172,34 +129,10 @@ struct NativeBrokerSession {
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
     root_lease: Option<BrokerRootLease>,
-    max_instances: usize,
     closed: bool,
 }
 
 impl EngineSession for NativeBrokerSession {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            mode: EngineMode::NativeBroker,
-            session_concurrency: SessionConcurrency::SerializedSingleSession,
-            process_isolated: true,
-            multiple_instances: self.max_instances > 1,
-            same_instance_logical_reopen: false,
-            instance_switchable: true,
-            crash_restartable: true,
-            max_client_sessions: 1,
-            protocol_raw: true,
-            protocol_stream: true,
-            query_cancel: true,
-            backup_restore: true,
-            backup_formats: vec![BackupFormat::PhysicalArchive],
-            restore_formats: vec![BackupFormat::PhysicalArchive],
-            simple_query: true,
-            extensions: true,
-            connection_strings: false,
-            connection_string: None,
-        }
-    }
-
     fn cancel_handle(&self) -> Option<Arc<dyn EngineCancel>> {
         let cancel: Arc<dyn EngineCancel> = self.cancel.clone();
         Some(cancel)
@@ -217,9 +150,6 @@ impl EngineSession for NativeBrokerSession {
         match self.read_response_or_mark_failed(response)? {
             ResponseFrame::Ok(bytes) => Ok(ProtocolResponse::new(bytes)),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
-            ResponseFrame::Chunk(_) => Err(Error::Engine(
-                "broker returned a stream chunk for raw protocol execution".to_owned(),
-            )),
         }
     }
 
@@ -232,93 +162,17 @@ impl EngineSession for NativeBrokerSession {
         match self.read_response_or_mark_failed(response)? {
             ResponseFrame::Ok(bytes) => Ok(ProtocolResponse::new(bytes)),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
-            ResponseFrame::Chunk(_) => Err(Error::Engine(
-                "broker returned a stream chunk for simple-query execution".to_owned(),
-            )),
         }
     }
 
-    fn checkpoint(&mut self) -> Result<()> {
+    fn backup(&mut self) -> Result<Vec<u8>> {
         let response = {
             let transport = self.ensure_transport()?;
-            write_request(transport, RequestFrame::Checkpoint)
-                .and_then(|()| read_response(transport))
+            write_request(transport, RequestFrame::Backup).and_then(|()| read_response(transport))
         };
         match self.read_response_or_mark_failed(response)? {
-            ResponseFrame::Ok(_) => Ok(()),
+            ResponseFrame::Ok(bytes) => Ok(bytes),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
-            ResponseFrame::Chunk(_) => Err(Error::Engine(
-                "broker returned a stream chunk for checkpoint".to_owned(),
-            )),
-        }
-    }
-
-    fn exec_protocol_stream(
-        &mut self,
-        request: ProtocolRequest,
-        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        {
-            let transport = self.ensure_transport()?;
-            if let Err(error) = write_request(
-                transport,
-                RequestFrame::ExecProtocolStream(request.as_bytes().to_vec()),
-            ) {
-                self.mark_broker_failed();
-                return Err(error);
-            }
-        }
-
-        let mut callback_error = None;
-        loop {
-            let response = {
-                let transport = self.ensure_transport()?;
-                read_response(transport)
-            };
-            match self.read_response_or_mark_failed(response)? {
-                ResponseFrame::Chunk(bytes) => {
-                    if callback_error.is_none()
-                        && let Err(error) = on_chunk(&bytes)
-                    {
-                        callback_error = Some(error);
-                    }
-                }
-                ResponseFrame::Ok(_) => return callback_error.map_or(Ok(()), Err),
-                ResponseFrame::Error(message) => {
-                    return callback_error.map_or(Err(Error::Engine(message)), Err);
-                }
-            }
-        }
-    }
-
-    fn backup(&mut self, request: BackupRequest) -> Result<BackupArtifact> {
-        let response = {
-            let transport = self.ensure_transport()?;
-            write_request(transport, RequestFrame::Backup(request.format))
-                .and_then(|()| read_response(transport))
-        };
-        match self.read_response_or_mark_failed(response)? {
-            ResponseFrame::Ok(bytes) => {
-                let artifact = BackupArtifact {
-                    format: request.format,
-                    bytes,
-                };
-                if request.format != BackupFormat::PhysicalArchive {
-                    return Ok(artifact);
-                }
-                let pgdata = self.launch_plan.root_path.join("pgdata");
-                let selected_extensions = self.launch_plan.extensions.clone();
-                annotate_physical_archive_backup(
-                    artifact,
-                    &pgdata,
-                    &selected_extensions,
-                    |request| self.exec_protocol_raw(request),
-                )
-            }
-            ResponseFrame::Error(message) => Err(Error::Engine(message)),
-            ResponseFrame::Chunk(_) => Err(Error::Engine(
-                "broker returned a stream chunk for backup".to_owned(),
-            )),
         }
     }
 
@@ -431,9 +285,6 @@ impl EngineCancel for BrokerCancel {
             ResponseFrame::Error(message) => Err(Error::Engine(format!(
                 "native broker cancel failed: {message}"
             ))),
-            ResponseFrame::Chunk(_) => Err(Error::Engine(
-                "broker returned a stream chunk for cancellation".to_owned(),
-            )),
         }
     }
 }
@@ -631,28 +482,17 @@ fn create_temporary_root() -> Result<PathBuf> {
 
 #[derive(Debug)]
 struct BrokerSupervisor {
-    max_instances: usize,
     roots: Mutex<HashSet<PathBuf>>,
 }
 
 impl BrokerSupervisor {
-    fn new(max_instances: usize) -> Self {
+    fn new() -> Self {
         Self {
-            max_instances,
             roots: Mutex::new(HashSet::new()),
         }
     }
 
-    fn max_instances(&self) -> usize {
-        self.max_instances
-    }
-
     fn acquire_root(self: &Arc<Self>, root: &Path) -> Result<BrokerRootLease> {
-        if self.max_instances == 0 {
-            return Err(Error::InvalidConfig(
-                "native broker max_instances must be greater than zero".to_owned(),
-            ));
-        }
         let key = broker_root_key(root)?;
         let mut roots = self
             .roots
@@ -662,13 +502,6 @@ impl BrokerSupervisor {
             return Err(Error::Engine(format!(
                 "native broker root {} is already open in this broker runtime",
                 key.display()
-            )));
-        }
-        if roots.len() >= self.max_instances {
-            return Err(Error::Engine(format!(
-                "native broker runtime already owns {} instance(s), at configured capacity {}",
-                roots.len(),
-                self.max_instances
             )));
         }
         roots.insert(key.clone());
@@ -776,28 +609,7 @@ fn broker_spawn_args(
     extensions: &[Extension],
     endpoint: &BrokerEndpoint,
 ) -> Vec<OsString> {
-    let mut args = vec![
-        OsString::from("--root"),
-        root.as_os_str().to_os_string(),
-        OsString::from("--bootstrap"),
-        OsString::from(match &config.initialization {
-            DatabaseInitialization::PackagedTemplate => "packaged-template",
-            DatabaseInitialization::FreshInitdb => "fresh-initdb",
-            DatabaseInitialization::ExistingOnly => "existing-only",
-        }),
-        OsString::from("--durability"),
-        OsString::from(match config.durability {
-            crate::DurabilityProfile::Safe => "safe",
-            crate::DurabilityProfile::Balanced => "balanced",
-            crate::DurabilityProfile::FastDev => "fast-dev",
-        }),
-        OsString::from("--runtime-footprint"),
-        OsString::from(match config.runtime_footprint {
-            crate::RuntimeFootprintProfile::Throughput => "throughput",
-            crate::RuntimeFootprintProfile::BalancedMobile => "balanced-mobile",
-            crate::RuntimeFootprintProfile::SmallMobile => "small-mobile",
-        }),
-    ];
+    let mut args = vec![OsString::from("--root"), root.as_os_str().to_os_string()];
     args.push(OsString::from("--username"));
     args.push(OsString::from(&config.username));
     args.push(OsString::from("--database"));
@@ -827,9 +639,6 @@ fn authenticate_broker(
         ResponseFrame::Error(message) => Err(Error::Engine(format!(
             "native broker authentication failed: {message}"
         ))),
-        ResponseFrame::Chunk(_) => Err(Error::Engine(
-            "broker returned a stream chunk during authentication".to_owned(),
-        )),
     }
 }
 
@@ -1243,8 +1052,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supervisor_admits_distinct_roots_until_capacity() {
-        let supervisor = Arc::new(BrokerSupervisor::new(2));
+    fn supervisor_admits_distinct_roots_without_an_artificial_capacity() {
+        let supervisor = Arc::new(BrokerSupervisor::new());
         let first = supervisor
             .acquire_root(Path::new("target/liboliphaunt-broker-root-a"))
             .unwrap();
@@ -1252,25 +1061,22 @@ mod tests {
             .acquire_root(Path::new("target/liboliphaunt-broker-root-b"))
             .unwrap();
 
-        let error = supervisor
+        let third = supervisor
             .acquire_root(Path::new("target/liboliphaunt-broker-root-c"))
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("configured capacity 2"),
-            "unexpected capacity error: {error}"
-        );
+            .unwrap();
 
         drop(first);
         let reopened = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root-c"))
+            .acquire_root(Path::new("target/liboliphaunt-broker-root-a"))
             .unwrap();
         drop(reopened);
+        drop(third);
         drop(second);
     }
 
     #[test]
     fn supervisor_rejects_duplicate_open_roots() {
-        let supervisor = Arc::new(BrokerSupervisor::new(2));
+        let supervisor = Arc::new(BrokerSupervisor::new());
         let root =
             Path::new("target/liboliphaunt-broker-duplicate/../liboliphaunt-broker-duplicate");
         let _lease = supervisor.acquire_root(root).unwrap();
@@ -1285,23 +1091,9 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_rejects_zero_capacity() {
-        let supervisor = Arc::new(BrokerSupervisor::new(0));
-        let error = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root"))
-            .unwrap_err();
-        assert_eq!(
-            error,
-            Error::InvalidConfig(
-                "native broker max_instances must be greater than zero".to_owned()
-            )
-        );
-    }
-
-    #[test]
     fn broker_spawn_args_forward_preload_required_extensions_to_helper_before_startup() {
-        let mut config = OpenConfig::native_direct("target/liboliphaunt-broker-preload");
-        config.mode = EngineMode::NativeBroker;
+        let mut config = OpenConfig::direct("target/liboliphaunt-broker-preload");
+        config.mode = EngineMode::Broker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
         config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];

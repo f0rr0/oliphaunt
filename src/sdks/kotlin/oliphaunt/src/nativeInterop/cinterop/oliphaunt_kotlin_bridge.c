@@ -3,11 +3,17 @@
 #include "oliphaunt_kotlin_bridge.h"
 
 #include <dlfcn.h>
+#include <dirent.h>
+#include <errno.h>
 #include <ftw.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #ifndef RTLD_DEFAULT
 #define RTLD_DEFAULT ((void *)-2)
@@ -19,21 +25,13 @@ typedef int32_t (*OliphauntExecProtocolFn)(
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out);
-typedef int32_t (*OliphauntExecProtocolStreamFn)(
-    OliphauntHandle *handle,
-    const uint8_t *request,
-    size_t request_len,
-    OliphauntStreamCallback callback,
-    void *callback_context);
 typedef int32_t (*OliphauntCancelFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntDetachFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntCloseFn)(OliphauntHandle *handle);
 typedef const char *(*OliphauntLastErrorFn)(OliphauntHandle *handle);
-typedef uint64_t (*OliphauntCapabilitiesFn)(void);
 typedef void (*OliphauntFreeResponseFn)(OliphauntResponse *response);
 typedef int32_t (*OliphauntBackupFn)(
     OliphauntHandle *handle,
-    const OliphauntBackupOptions *options,
     OliphauntResponse *out);
 typedef int32_t (*OliphauntRestoreFn)(const OliphauntRestoreOptions *options);
 
@@ -42,12 +40,10 @@ typedef struct OliphauntKotlinSymbols {
     bool owns_library;
     OliphauntInitFn init;
     OliphauntExecProtocolFn exec_protocol;
-    OliphauntExecProtocolStreamFn exec_protocol_stream;
     OliphauntCancelFn cancel;
     OliphauntDetachFn detach;
     OliphauntCloseFn close;
     OliphauntLastErrorFn last_error;
-    OliphauntCapabilitiesFn capabilities;
     OliphauntFreeResponseFn free_response;
     OliphauntBackupFn backup;
     OliphauntRestoreFn restore;
@@ -131,12 +127,10 @@ static int load_symbols(const char *library_path, OliphauntKotlinSymbols *symbol
 
     if (load_symbol(symbols, "oliphaunt_init", (void **)&symbols->init) != 0 ||
         load_symbol(symbols, "oliphaunt_exec_protocol", (void **)&symbols->exec_protocol) != 0 ||
-        load_symbol(symbols, "oliphaunt_exec_protocol_stream", (void **)&symbols->exec_protocol_stream) != 0 ||
         load_symbol(symbols, "oliphaunt_cancel", (void **)&symbols->cancel) != 0 ||
         load_symbol(symbols, "oliphaunt_detach", (void **)&symbols->detach) != 0 ||
         load_symbol(symbols, "oliphaunt_close", (void **)&symbols->close) != 0 ||
         load_symbol(symbols, "oliphaunt_last_error", (void **)&symbols->last_error) != 0 ||
-        load_symbol(symbols, "oliphaunt_capabilities", (void **)&symbols->capabilities) != 0 ||
         load_symbol(symbols, "oliphaunt_free_response", (void **)&symbols->free_response) != 0 ||
         load_symbol(symbols, "oliphaunt_backup", (void **)&symbols->backup) != 0 ||
         load_symbol(symbols, "oliphaunt_restore", (void **)&symbols->restore) != 0) {
@@ -144,6 +138,234 @@ static int load_symbols(const char *library_path, OliphauntKotlinSymbols *symbol
         return -1;
     }
 
+    return 0;
+}
+
+static int remove_tree_entry(const char *path, const struct stat *statbuf, int typeflag, struct FTW *ftwbuf);
+
+static void remove_partial_pgdata(const char *pgdata) {
+    struct stat status;
+    if (pgdata != NULL && lstat(pgdata, &status) == 0) {
+        (void)nftw(pgdata, remove_tree_entry, 64, FTW_DEPTH | FTW_PHYS);
+    }
+}
+
+static bool root_is_empty(const char *root) {
+    DIR *directory = opendir(root);
+    if (directory == NULL) {
+        return false;
+    }
+    bool empty = true;
+    struct dirent *entry;
+    errno = 0;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            empty = false;
+            break;
+        }
+    }
+    if (errno != 0) {
+        empty = false;
+    }
+    closedir(directory);
+    return empty;
+}
+
+static bool real_directory(const char *path) {
+    struct stat status;
+    return lstat(path, &status) == 0 && S_ISDIR(status.st_mode);
+}
+
+static bool nonempty_regular_file(const char *path) {
+    struct stat status;
+    return lstat(path, &status) == 0 && S_ISREG(status.st_mode) && status.st_size > 0;
+}
+
+static bool complete_postgres_18_pgdata(const char *pgdata) {
+    char version_path[PATH_MAX];
+    char global_path[PATH_MAX];
+    char control_path[PATH_MAX];
+    char wal_path[PATH_MAX];
+    if (snprintf(version_path, sizeof(version_path), "%s/PG_VERSION", pgdata) >= (int)sizeof(version_path) ||
+        snprintf(global_path, sizeof(global_path), "%s/global", pgdata) >= (int)sizeof(global_path) ||
+        snprintf(control_path, sizeof(control_path), "%s/global/pg_control", pgdata) >= (int)sizeof(control_path) ||
+        snprintf(wal_path, sizeof(wal_path), "%s/pg_wal", pgdata) >= (int)sizeof(wal_path)) {
+        return false;
+    }
+    if (!nonempty_regular_file(version_path) || !real_directory(global_path) ||
+        !nonempty_regular_file(control_path) || !real_directory(wal_path)) {
+        return false;
+    }
+    FILE *version = fopen(version_path, "rb");
+    if (version == NULL) {
+        return false;
+    }
+    char text[32] = {0};
+    size_t length = fread(text, 1, sizeof(text) - 1, version);
+    bool read_ok = ferror(version) == 0;
+    fclose(version);
+    while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r' ||
+                          text[length - 1] == ' ' || text[length - 1] == '\t')) {
+        text[--length] = '\0';
+    }
+    return read_ok && strcmp(text, "18") == 0;
+}
+
+static int write_root_descriptor(const char *root) {
+    static const char descriptor_json[] =
+        "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n";
+    char descriptor[PATH_MAX];
+    char temporary[PATH_MAX];
+    if (snprintf(descriptor, sizeof(descriptor), "%s/.oliphaunt.json", root) >= (int)sizeof(descriptor) ||
+        snprintf(temporary, sizeof(temporary), "%s/.oliphaunt.json.tmp.XXXXXX", root) >= (int)sizeof(temporary)) {
+        set_global_error("database root descriptor path is too long");
+        return -1;
+    }
+    int fd = mkstemp(temporary);
+    if (fd < 0) {
+        set_global_error("failed to create database root descriptor");
+        return -1;
+    }
+    const char *cursor = descriptor_json;
+    size_t remaining = sizeof(descriptor_json) - 1;
+    while (remaining > 0) {
+        ssize_t written = write(fd, cursor, remaining);
+        if (written > 0) {
+            cursor += written;
+            remaining -= (size_t)written;
+            continue;
+        }
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        close(fd);
+        unlink(temporary);
+        set_global_error("failed to write database root descriptor");
+        return -1;
+    }
+    int sync_result = fsync(fd);
+    int close_result = close(fd);
+    if (sync_result != 0 || close_result != 0) {
+        unlink(temporary);
+        set_global_error("failed to persist database root descriptor");
+        return -1;
+    }
+    if (link(temporary, descriptor) != 0) {
+        unlink(temporary);
+        set_global_error("failed to publish database root descriptor");
+        return -1;
+    }
+    unlink(temporary);
+    return 0;
+}
+
+int32_t oliphaunt_kotlin_initialize_root(
+    const char *root,
+    const char *runtime_directory,
+    const char *username) {
+    if (root == NULL || root[0] == '\0') {
+        set_global_error("database storage directory must not be empty");
+        return -1;
+    }
+    char descriptor[PATH_MAX];
+    char pgdata[PATH_MAX];
+    if (snprintf(descriptor, sizeof(descriptor), "%s/.oliphaunt.json", root) >= (int)sizeof(descriptor) ||
+        snprintf(pgdata, sizeof(pgdata), "%s/pgdata", root) >= (int)sizeof(pgdata)) {
+        set_global_error("database storage path is too long");
+        return -1;
+    }
+    struct stat status;
+    if (lstat(descriptor, &status) == 0) {
+        return 0;
+    }
+    if (errno != ENOENT) {
+        set_global_error("failed to inspect database root descriptor");
+        return -1;
+    }
+    if (!root_is_empty(root)) {
+        set_global_error("database storage directory is nonempty but has no .oliphaunt.json descriptor");
+        return -1;
+    }
+
+    const char *configured_initdb = getenv("OLIPHAUNT_INITDB");
+    char packaged_initdb[PATH_MAX];
+    const char *initdb = configured_initdb;
+    if (initdb == NULL || initdb[0] == '\0') {
+        if (runtime_directory == NULL || runtime_directory[0] == '\0' ||
+            snprintf(packaged_initdb, sizeof(packaged_initdb), "%s/bin/initdb", runtime_directory) >= (int)sizeof(packaged_initdb)) {
+            set_global_error("new Kotlin/Native database storage requires packaged initdb; set OLIPHAUNT_INSTALL_DIR or OLIPHAUNT_INITDB");
+            return -1;
+        }
+        initdb = packaged_initdb;
+    }
+    if (access(initdb, X_OK) != 0) {
+        set_global_error("packaged initdb is not executable");
+        return -1;
+    }
+
+    pid_t child = fork();
+    if (child < 0) {
+        set_global_error("failed to fork packaged initdb");
+        return -1;
+    }
+    if (child == 0) {
+        if (runtime_directory != NULL && runtime_directory[0] != '\0') {
+            char library_path[PATH_MAX * 2];
+#ifdef __APPLE__
+            const char *library_variable = "DYLD_LIBRARY_PATH";
+#else
+            const char *library_variable = "LD_LIBRARY_PATH";
+#endif
+            const char *inherited = getenv(library_variable);
+            int library_length = snprintf(
+                    library_path,
+                    sizeof(library_path),
+                    inherited != NULL && inherited[0] != '\0' ? "%s/lib:%s" : "%s/lib",
+                    runtime_directory,
+                    inherited);
+            if (library_length >= 0 && library_length < (int)sizeof(library_path)) {
+                (void)setenv(library_variable, library_path, 1);
+            }
+            char icu_data[PATH_MAX];
+            if (snprintf(icu_data, sizeof(icu_data), "%s/share/icu", runtime_directory) < (int)sizeof(icu_data) &&
+                real_directory(icu_data)) {
+                (void)setenv("ICU_DATA", icu_data, 1);
+            }
+        }
+        execl(
+            initdb,
+            initdb,
+            "-D",
+            pgdata,
+            "-U",
+            username != NULL && username[0] != '\0' ? username : "postgres",
+            "--auth=trust",
+            "--locale-provider=libc",
+            "--locale=C",
+            "--encoding=UTF8",
+            (char *)NULL);
+        _exit(127);
+    }
+
+    int child_status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &child_status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited < 0 || !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0) {
+        remove_partial_pgdata(pgdata);
+        set_global_error("packaged initdb failed to initialize PostgreSQL 18 PGDATA");
+        return -1;
+    }
+    if (!complete_postgres_18_pgdata(pgdata)) {
+        remove_partial_pgdata(pgdata);
+        set_global_error("packaged initdb did not create complete PostgreSQL 18 PGDATA");
+        return -1;
+    }
+    if (write_root_descriptor(root) != 0) {
+        remove_partial_pgdata(pgdata);
+        return -1;
+    }
     return 0;
 }
 
@@ -193,41 +415,12 @@ int32_t oliphaunt_kotlin_exec_protocol(
     return rc;
 }
 
-int32_t oliphaunt_kotlin_exec_protocol_stream(
-    OliphauntKotlinSession *session,
-    const uint8_t *request,
-    size_t request_len,
-    OliphauntStreamCallback callback,
-    void *callback_context) {
-    if (session == NULL || callback == NULL) {
-        set_session_error(session, "invalid oliphaunt_kotlin_exec_protocol_stream arguments");
-        return -1;
-    }
-    int32_t rc = session->symbols.exec_protocol_stream(
-        session->handle,
-        request,
-        request_len,
-        callback,
-        callback_context);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
-    }
-    return rc;
-}
-
-int32_t oliphaunt_kotlin_backup(OliphauntKotlinSession *session, uint32_t format, OliphauntResponse *out) {
+int32_t oliphaunt_kotlin_backup(OliphauntKotlinSession *session, OliphauntResponse *out) {
     if (session == NULL || out == NULL) {
         set_session_error(session, "invalid oliphaunt_kotlin_backup arguments");
         return -1;
     }
-    const OliphauntBackupOptions options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .format = format,
-        .generated_files = NULL,
-        .generated_file_count = 0,
-        .reserved_flags = 0,
-    };
-    int32_t rc = session->symbols.backup(session->handle, &options, out);
+    int32_t rc = session->symbols.backup(session->handle, out);
     if (rc != 0 && session->symbols.last_error != NULL) {
         set_session_error(session, session->symbols.last_error(session->handle));
     }
@@ -283,13 +476,6 @@ int32_t oliphaunt_kotlin_close(OliphauntKotlinSession *session) {
 
 const char *oliphaunt_kotlin_last_error(OliphauntKotlinSession *session) {
     return session != NULL ? session->last_error : global_last_error;
-}
-
-uint64_t oliphaunt_kotlin_capabilities(OliphauntKotlinSession *session) {
-    if (session == NULL || session->symbols.capabilities == NULL) {
-        return 0;
-    }
-    return session->symbols.capabilities();
 }
 
 void oliphaunt_kotlin_free_response(OliphauntKotlinSession *session, OliphauntResponse *response) {

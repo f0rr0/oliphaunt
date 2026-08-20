@@ -21,7 +21,7 @@ internal data class OliphauntAndroidAssetPackage(
     val nativeModuleStems: Set<String> = emptySet(),
 )
 
-public data class OliphauntPackageSizeReport(
+internal data class OliphauntPackageSizeReport(
     val packageBytes: Long,
     val runtimeBytes: Long,
     val templatePgdataBytes: Long,
@@ -35,7 +35,7 @@ public data class OliphauntPackageSizeReport(
     val nativeModuleStems: List<String> = emptyList(),
 )
 
-public data class OliphauntExtensionSizeReport(
+internal data class OliphauntExtensionSizeReport(
     val name: String,
     val fileCount: Int,
     val bytes: Long,

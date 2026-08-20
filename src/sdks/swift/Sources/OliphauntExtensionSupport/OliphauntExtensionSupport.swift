@@ -1,6 +1,6 @@
 import COliphaunt
 import Foundation
-import Oliphaunt
+@_spi(ExtensionSupport) import Oliphaunt
 
 /// Registers independently packaged static PostgreSQL extensions as one
 /// deterministic liboliphaunt registry before the first database starts.

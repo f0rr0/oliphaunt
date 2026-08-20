@@ -1,6 +1,6 @@
 ---
 title: Build With Swift
-description: Add Oliphaunt to iOS or macOS with Swift concurrency, app-container storage, lifecycle hooks, exact extensions, and backup APIs.
+description: Add Oliphaunt to iOS or macOS with Swift concurrency, app-container storage, exact extensions, backup, and app-owned lifecycle actions.
 ---
 
 # Build With Swift
@@ -50,7 +50,6 @@ let appSupport = FileManager.default.urls(
 
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
-        mode: .nativeDirect,
         storage: .directory(appSupport.appending(path: "main.oliphaunt")),
         extensions: ["vector"]
     )
@@ -104,8 +103,8 @@ database actor.
 
 ### Configure
 
-Configure storage, runtime mode, selected exact extensions, startup identity,
-and durability through the Swift configuration API. Storage defaults to
+Configure storage, selected exact extensions, startup identity, and PostgreSQL
+startup GUCs through the Swift configuration API. Storage defaults to
 `.temporaryDirectory`; choose `.directory(url)` for persistence. Advanced
 resource overrides retain packaged defaults for normal apps.
 
@@ -114,18 +113,17 @@ resource overrides retain packaged defaults for normal apps.
 
 ### Choose a mode
 
-Mobile direct mode is the primary Apple runtime. It uses one resident backend per
-app process and one physical session. Desktop/server boundaries are available on
-Apple targets only when `capabilities()` advertises them.
+Native direct is the Apple runtime. It uses one resident backend per app process
+and one physical session.
 
 </Step>
 <Step>
 
 ### Handle lifecycle
 
-Swift exposes lifecycle as async API over a serial execution model. Use the
-provided background/foreground hooks around app lifecycle transitions so the SDK
-can checkpoint, close transient work, and resume cleanly where supported.
+Swift exposes lifecycle as async API over a serial execution model. Use
+`checkpoint()`, `cancel()`, and `close()` explicitly when app lifecycle policy
+requires them.
 
 </Step>
 <Step>
@@ -142,10 +140,9 @@ Apple target.
 
 ### Back up and restore
 
-Use SDK backup and restore APIs with app-owned file URLs. The SDK validates
-formats and destination directories before calling into the native runtime.
-`OliphauntRestoreRequest` defaults to `.failIfExists`; call
-`.replaceExisting()` only when replacement is deliberate.
+Use `backup()` and static `restore(destination:bytes:)` with app-owned file
+URLs. Restore accepts a new or existing-empty destination and rejects nonempty
+data without mutation.
 
 </Step>
 </Steps>
@@ -155,5 +152,5 @@ formats and destination directories before calling into the native runtime.
 ## Troubleshooting
 
 Most Apple failures come from invalid file URLs, missing runtime resources, storage
-locks, mode capability errors, or extension selection mismatches. PostgreSQL
+locks, runtime errors, or extension selection mismatches. PostgreSQL
 errors preserve SQLSTATE where the backend returns it.

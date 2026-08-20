@@ -4,11 +4,22 @@ import { describe, expect, it } from 'vitest';
 
 import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
+import type { PersistentWasixStorage } from '../public.js';
 import { deserializeWorkerError, serializeWorkerError } from '../rpc.js';
 import { indexedDB } from '../storage/indexed-db.js';
 import { directory } from '../storage/node.js';
 import { opfs } from '../storage/opfs.js';
 import { memory, serializeWasixStorage, type WasixStorage } from '../storage.js';
+
+const persistentStorageProof: PersistentWasixStorage[] = [
+  indexedDB('type-proof'),
+  opfs('type-proof'),
+  directory('/type-proof'),
+];
+// @ts-expect-error Memory storage cannot be a physical-restore destination.
+const memoryIsNotPersistent: PersistentWasixStorage = memory();
+void persistentStorageProof;
+void memoryIsNotPersistent;
 
 type MainPackage = typeof import('../index.js');
 const mainPackageOmitsIndexedDb: 'indexedDB' extends keyof MainPackage ? false : true = true;
@@ -16,7 +27,7 @@ const mainPackageOmitsIndexedDb: 'indexedDB' extends keyof MainPackage ? false :
 describe('WASIX storage descriptors', () => {
   it('defaults to memory and keeps storage values opaque', () => {
     expect(serializeWasixStorage(undefined)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'memory',
     });
 
@@ -24,7 +35,7 @@ describe('WASIX storage descriptors', () => {
     expect(Object.isFrozen(descriptor)).toBe(true);
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'memory',
     });
   });
@@ -34,7 +45,7 @@ describe('WASIX storage descriptors', () => {
     const descriptor = indexedDB('todos');
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'indexed-db',
       name: 'todos',
     });
@@ -48,7 +59,7 @@ describe('WASIX storage descriptors', () => {
     const descriptor = opfs('todos-v2');
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'opfs',
       name: 'todos-v2',
     });
@@ -62,13 +73,13 @@ describe('WASIX storage descriptors', () => {
     const descriptor = directory('./data/with spaces');
     expect(Object.keys(descriptor)).toEqual([]);
     expect(serializeWasixStorage(descriptor)).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'directory',
       path: './data/with spaces',
     });
     const fileUrl = new URL('file:///tmp/data%20space');
     expect(serializeWasixStorage(directory(fileUrl))).toEqual({
-      schema: 'oliphaunt-wasix-storage-v2',
+      schema: 'oliphaunt-wasix-storage-v1',
       kind: 'directory',
       path: fileURLToPath(fileUrl),
     });
@@ -82,7 +93,7 @@ describe('WASIX storage descriptors', () => {
   it('rejects user-authored and structured-cloned lookalikes', () => {
     expect(() =>
       serializeWasixStorage({
-        schema: 'oliphaunt-wasix-storage-v2',
+        schema: 'oliphaunt-wasix-storage-v1',
         kind: 'memory',
       } as unknown as WasixStorage),
     ).toThrow('must come from @oliphaunt/wasix-ts');
@@ -94,8 +105,8 @@ describe('WASIX storage descriptors', () => {
 
   it('preserves typed storage failures across the worker boundary', () => {
     const original = new WasixStorageError('the prior generation is still current', {
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
     });
 
     const roundTrip = deserializeWorkerError(serializeWorkerError(original));
@@ -104,8 +115,8 @@ describe('WASIX storage descriptors', () => {
     expect(roundTrip).toMatchObject({
       name: 'WasixStorageError',
       message: 'the prior generation is still current',
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
     });
   });
 

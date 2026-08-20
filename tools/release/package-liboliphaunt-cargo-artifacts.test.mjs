@@ -93,7 +93,7 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
         relativePath.startsWith("lib/postgresql/") ? fixtureElf : `${relativePath}\n`,
       );
     }
-    for (const name of ["pg_dump", "psql"]) {
+    for (const name of ["pg_basebackup", "pg_dump", "psql"]) {
       writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);
     }
     stageReleaseNotices(runtime, { profile: "native-runtime" });

@@ -1,6 +1,6 @@
 import type { WasixDirectoryMount } from './archive.js';
 import type { WasixStorageError } from './errors.js';
-import type { StorageDirectory, WasixStorageCompatibility } from './storage-provider.js';
+import type { StorageDirectory } from './storage-provider.js';
 
 export const VOLATILE_DATABASE_FILES = new Set(['postmaster.opts', 'postmaster.pid']);
 
@@ -8,12 +8,6 @@ export type StoredSnapshot = {
   schema: 'oliphaunt-wasix-directory-snapshot-v1';
   directories: string[];
   files: { path: string; bytes: Uint8Array }[];
-};
-
-export type StoredDatabase = {
-  schema: 'oliphaunt-wasix-stored-database-v1';
-  compatibility: WasixStorageCompatibility;
-  snapshot: StoredSnapshot;
 };
 
 /** A current-state delta. Deletions and upserts are committed as one boundary. */
@@ -43,6 +37,10 @@ export type SnapshotErrorContext = Readonly<{
 
 export async function snapshotStorageDirectory(
   directory: StorageDirectory,
+  filter: Readonly<{
+    skipFile?: (path: string) => boolean;
+    skipDirectoryContents?: (path: string) => boolean;
+  }> = {},
 ): Promise<StoredSnapshot> {
   const directories: string[] = [];
   const files: { path: string; bytes: Uint8Array }[] = [];
@@ -57,8 +55,9 @@ export async function snapshotStorageDirectory(
       if (parent.length === 0 && VOLATILE_DATABASE_FILES.has(entry.name)) continue;
       if (entry.type === 'dir') {
         directories.push(path);
-        await walk(path);
+        if (filter.skipDirectoryContents?.(path) !== true) await walk(path);
       } else if (entry.type === 'file') {
+        if (filter.skipFile?.(path) === true) continue;
         files.push({ path, bytes: (await directory.readFile(path)).slice() });
       } else {
         throw new Error(
@@ -256,8 +255,8 @@ function validateSnapshotSemantics(
 
   const pgVersion = fileByPath.get('PG_VERSION');
   const pgControl = fileByPath.get('global/pg_control');
-  if (pgVersion === undefined || pgControl === undefined) {
-    throw context.corrupt('is missing PG_VERSION or global/pg_control');
+  if (pgVersion === undefined || pgControl === undefined || !directoryPaths.has('pg_wal')) {
+    throw context.corrupt('is missing PG_VERSION, global/pg_control, or pg_wal');
   }
   if (pgControl.length === 0) throw context.corrupt('contains an empty global/pg_control');
 

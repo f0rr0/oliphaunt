@@ -4,12 +4,12 @@ id: "oliphaunt-wasix-rust"
 language: "rust"
 layer: "library"
 stack: "systems"
-tags: ["binding", "wasix", "rust", "postgres", "release-product"]
+tags: ["binding", "wasix", "rust", "postgres", "sdk", "release-product"]
 dependsOn:
   - "liboliphaunt-wasix"
 
 project:
-  title: "Oliphaunt WASIX Rust"
+  title: "Oliphaunt Rust WASIX"
   description: "Rust binding over the liboliphaunt WASIX runtime."
   owner: "oliphaunt"
   release:
@@ -74,6 +74,11 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/extensions/external/postgis/tests/smoke.sql"
+      - "/src/shared/fixtures/postgres/behavior-contract.json"
+      - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/storage/database-root.json"
+      - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
+      - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
@@ -97,6 +102,11 @@ tasks:
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
+      - "/src/shared/fixtures/postgres/behavior-contract.json"
+      - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/storage/database-root.json"
+      - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
+      - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/src/runtimes/liboliphaunt/icu/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
@@ -148,6 +158,11 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/extensions/external/postgis/tests/smoke.sql"
+      - "/src/shared/fixtures/postgres/behavior-contract.json"
+      - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/storage/database-root.json"
+      - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
+      - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
@@ -181,26 +196,6 @@ tasks:
       cache: local
       runFromWorkspaceRoot: true
 
-  bench:
-    tags: ["bench", "plan"]
-    command: "cargo test -p oliphaunt-wasix --locked --test performance_smoke --no-run"
-    deps:
-      - "liboliphaunt-wasix:check"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/bench"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false
-
   coverage:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-wasix-rust"
@@ -223,23 +218,3 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-
-  bench-run:
-    tags: ["bench", "measured"]
-    command: "cargo test -p oliphaunt-wasix --locked --test performance_smoke -- --nocapture"
-    deps:
-      - "liboliphaunt-wasix:check"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/bench-run"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false

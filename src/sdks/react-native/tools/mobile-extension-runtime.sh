@@ -299,8 +299,8 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   local module_stems
   module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
   local -a package_args=(
-    run -p oliphaunt --bin oliphaunt-resources --locked --
-    --mode server
+    run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked --
+    --mode native-server
     --output "$package_root"
     --extension-target "$extension_target"
     --liboliphaunt-native-version "$native_runtime_version"

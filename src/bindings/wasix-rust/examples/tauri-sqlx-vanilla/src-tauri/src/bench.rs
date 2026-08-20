@@ -4,14 +4,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntServer, PgDumpOptions, PsqlOptions};
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, PgDumpOptions, PsqlOptions};
 use serde::Serialize;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex as AsyncMutex;
 
 const DEFAULT_ROW_COUNT: u32 = 10_000;
-const INITIALIZED_MARKER: &str = ".tauri-sqlx-profile-initialized";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,29 +99,40 @@ impl DatabaseHarness {
                 )
             })?;
         }
-        let initialized_marker = database_directory.join(INITIALIZED_MARKER);
-        let cold_start = !initialized_marker.is_file();
+        let cold_start = match fs::read_dir(&database_directory) {
+            Ok(mut entries) => entries
+                .next()
+                .transpose()
+                .with_context(|| {
+                    format!(
+                        "inspect profile database directory {}",
+                        database_directory.display()
+                    )
+                })?
+                .is_none(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect profile database directory {}",
+                        database_directory.display()
+                    )
+                });
+            }
+        };
         let mut startup = Vec::new();
-
-        time_blocking(&mut startup, "preload Wasmer runtime", Oliphaunt::preload).await?;
 
         let server_directory = database_directory.clone();
         let server = time_blocking(&mut startup, "start oliphaunt server", move || {
             preferred_server(server_directory)
         })
         .await?;
-        fs::write(&initialized_marker, b"packaged-template\n").with_context(|| {
-            format!(
-                "write profile initialization marker {}",
-                initialized_marker.display()
-            )
-        })?;
         let server = time_blocking(&mut startup, "validate split WASIX tools", move || {
             validate_wasix_tools(&server)?;
             Ok(server)
         })
         .await?;
-        let database_url = server.connection_uri();
+        let database_url = server.connection_string();
 
         let pool = time_async(&mut startup, "sqlx pool connect", async {
             let options =
@@ -332,10 +342,7 @@ impl DatabaseHarness {
 }
 
 fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
-    server
-        .preflight_tools()
-        .context("preflight split WASIX pg_dump and psql tools")?;
-    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    let dump = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
@@ -357,7 +364,7 @@ fn preferred_server(database_directory: PathBuf) -> Result<OliphauntServer> {
 fn pg_connect_options(server: &OliphauntServer) -> Result<PgConnectOptions> {
     let options = PgConnectOptions::new()
         .username("postgres")
-        .database("template1")
+        .database("postgres")
         .ssl_mode(PgSslMode::Disable);
 
     #[cfg(unix)]

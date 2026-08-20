@@ -57,7 +57,6 @@ import { Oliphaunt } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
   storage: { kind: 'applicationData', name: 'main' },
-  engine: 'nativeDirect',
   extensions: ['vector'],
 });
 
@@ -65,20 +64,18 @@ const rows = await db.query('SELECT 1::text AS value');
 await db.close();
 ```
 
-Use high-level SQL helpers for app code. Use raw protocol and streaming APIs
+Use high-level SQL helpers for app code. Use the buffered raw protocol API
 when building adapters that need PostgreSQL wire messages directly.
 
 ## Runtime Shape
 
 React Native owns the JavaScript boundary: typed configuration, SQL helpers,
-raw protocol bytes, chunked streaming, lifecycle hooks, and package reporting.
+raw protocol bytes, backup/restore, and explicit lifecycle operations.
 Apple calls flow through Swift; Android calls flow through Kotlin.
 
 Direct mobile mode owns one resident backend per app process and one serialized
 physical PostgreSQL session. Multiple JavaScript calls can share a handle and
-are queued through the platform SDK. `OpenConfig.engine` currently accepts
-`nativeDirect` only; broker and server mode entries in capability reports are
-discovery signals until the React Native bridge exposes those open paths.
+are queued through the platform SDK.
 
 ## App Responsibilities
 
@@ -87,9 +84,6 @@ discovery signals until the React Native bridge exposes those open paths.
   app data without constructing platform-specific paths.
 - Select exact SQL extension names so only selected extension artifacts and
   declared dependencies enter the iOS or Android app artifact.
-- Call lifecycle hooks around background and foreground transitions.
-- Check `capabilities()` before showing UI that depends on streaming,
-  extensions, backup formats, or additional runtime modes.
 - Use SDK backup and restore APIs for user-visible export/import flows instead
   of copying platform storage directories from JavaScript.
 

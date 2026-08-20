@@ -1,349 +1,138 @@
-# SDK Parity
+# SDK parity policy
 
-`oliphaunt` is a native PostgreSQL product with peer SDK surfaces:
+Oliphaunt has two runtime families, seven public SDKs, and one lower-level C
+binding surface:
 
-- Rust: SDK for Tauri and Rust desktop apps;
-- Swift: Apple SDK for iOS and macOS apps;
-- Kotlin: Android SDK;
-- React Native: TypeScript/TurboModule SDK over Swift and Kotlin.
-- TypeScript: desktop JavaScript SDK for Node.js, Bun, and Deno. A direct
-  Tauri JavaScript/webview adapter is planned.
-- WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
-- WASIX TypeScript: public browser, Node, Bun, and Deno binding for the WASIX/WASM runtime.
+- native SDKs: Rust, Swift, Kotlin, React Native, and desktop TypeScript;
+- WASIX: Rust and TypeScript, both consuming `liboliphaunt-wasix` carriers.
+- native C ABI: the common low-level boundary beneath the native SDK family.
 
-The machine-checked SDK registry is
-`tools/policy/sdk-manifest.toml`. It is the compact source
-of truth for SDK classification, target platforms, runtime ownership, artifact
-resolution, and React Native delegation. The prose below explains the contract;
-CI parses the registry and product graph directly. This document is maintainer
-guidance and review context, not an input to source-text assertions.
+Parity means the same product concepts and decided behavior where the runtime
+can support them. It does not mean identical signatures, configuration records,
+or host implementations. Each SDK uses its language's normal errors, async
+model, byte buffers, paths, and resource-lifetime conventions.
 
-The generated public surface inventory is
-[`sdk-api-surface.md`](sdk-api-surface.md). It is intentionally no-build so
-normal iteration stays fast, but it still makes public Rust, Swift, Kotlin,
-React Native, and TypeScript symbol drift visible in review. WASIX Rust is
-tracked through its product test/release gates because its runtime surface is
-generated from WASIX asset crates rather than the native C ABI wrappers.
+## Stable semantic core
 
-Shared semantics use product-native tests fed by shared fixture corpora, not a
-fake universal harness. `src/shared/fixtures/protocol/query-response-cases.json` is the
-backend-response corpus consumed by Rust, Swift, Kotlin, React Native,
-TypeScript, and the WASM wire parser. Additional shared contracts live under
-`src/shared/fixtures/sdk-capabilities/`, `src/shared/fixtures/runtime-resources/`,
-`src/shared/fixtures/backup/`, and `src/shared/fixtures/lifecycle/`; RN-specific binary transport
-fixtures live under `src/shared/fixtures/react-native-jsi/`.
+Every app-facing SDK exposes the concepts below unless the table records a
+deliberate runtime-specific limit. The C ABI is the lower-level native binding
+boundary: it supplies handles, protocol bytes, backup/restore, cancellation,
+and lifecycle; typed queries and callback transactions belong in language SDKs.
 
-Mobile crash/reopen/concurrency semantics are tracked separately in
-[`Mobile Stability`](/learn/mobile-stability) because they differ by platform
-sandbox.
+| Concept | Native SDK family | Rust WASIX | WASIX TypeScript |
+| --- | --- | --- | --- |
+| Open and close | yes | yes | yes; `AsyncDisposable` also closes |
+| Default storage | SDK-owned temporary directory | true WASIX memory filesystem | true WASIX memory filesystem |
+| Persistent storage | managed filesystem root | managed filesystem root | IndexedDB or OPFS in browsers; managed filesystem root on Node, Bun, and Deno |
+| Query and command helpers | yes | yes | yes |
+| Raw PostgreSQL protocol | yes | yes | yes, owned byte response |
+| Callback transaction | yes | yes | yes |
+| Checkpoint | PostgreSQL `CHECKPOINT` | PostgreSQL `CHECKPOINT` / storage sync | PostgreSQL `CHECKPOINT` followed by provider publication |
+| Exact extension selection | yes | yes | yes |
+| Physical backup | direct and broker; mobile direct | yes | yes |
+| Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
+| Listening server | Rust and desktop TypeScript | yes | no |
+| PostgreSQL tools | separate desktop products; desktop TypeScript has no SDK tools API or dependency | `tools` feature: `pg_dump` and `psql` | no |
+| Cancellation | native C and language SDKs | no public direct cancellation contract | no |
+| Protocol/COPY streaming | SDK calls are buffered; the low-level C callback boundary remains private to adapters | buffered raw protocol | buffered raw protocol |
 
-The common product concepts are defined by the native and WASIX runtime
-products, shared fixture contracts, the public parity matrix, and release
-metadata. Rust, Swift, Kotlin, TypeScript, and React Native are peers over the
-native product boundary. WASIX Rust and the public WASIX TypeScript binding
-are peers over the separate WASIX asset/runtime contract. Any deviation needs
-an explicit reason, not silent drift.
+These are language-native deltas, not parity failures:
 
-Database storage naming, ownership, defaults, and the allowed platform
-divergences are defined in
-[`database-storage.md`](../architecture/database-storage.md). This is a semantic
-contract and fixture boundary, not a shared native/WASIX implementation.
+- Rust uses builders, enums, futures, and owned byte buffers.
+- Swift uses actors, `URL`, and `Data`.
+- Kotlin uses coroutines, sealed storage types, and `ByteArray`.
+- React Native delegates runtime behavior to Swift or Kotlin and owns the
+  TypeScript/TurboModule boundary.
+- TypeScript uses promises, opaque storage values, `Uint8Array`, selective
+  package subpaths, and `Symbol.asyncDispose` where appropriate.
+- Rust WASIX exposes its local server and optional tools because a Rust host can
+  provide sockets and tool execution. The browser-capable TypeScript package
+  does not pretend those host facilities are universal.
+- Native Rust server mode owns an SDK pgwire client, so its database handle
+  retains the ordinary session helpers. Rust WASIX dedicates its one embedded
+  backend to the listener; its server handle therefore owns only the endpoint
+  and lifecycle, and applications use an ordinary PostgreSQL client for SQL.
 
-## SDK Taxonomy
+## Storage and physical data
 
-SDK ownership is product ownership, not just source layout:
+`storage` means where mutable PostgreSQL files live. It does not choose a
+runtime, archive format, capability profile, initialization mode, or extension
+set.
 
-- Rust is the Tauri/Rust desktop SDK. Its Cargo crate lives under
-  `src/sdks/rust`; its public docs live under
-  `src/docs/content/sdk/rust`.
-- Swift owns iOS and macOS runtime behavior.
-- Kotlin owns Android runtime behavior.
-- React Native owns TypeScript DX and TurboModule transport, while delegating
-  runtime behavior to Swift on Apple platforms and Kotlin on Android.
-- TypeScript owns desktop JavaScript runtime behavior for Node.js, Bun, and
-  Deno. Tauri apps currently use narrow app-owned Rust commands; a direct
-  JavaScript/webview adapter is planned. Its broker mode consumes the published
-  `oliphaunt-broker` runtime and the shared `PGOB` protocol.
-- WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
-  liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
-  resolve through Cargo artifact crates.
-- WASIX TypeScript owns direct or Worker placement in browsers, Node.js, Bun, and Deno for
-  the portable WASIX runtime. It is separate from desktop `@oliphaunt/ts` and
-  has no native runtime, native Node-direct carrier, or broker dependency.
+Filesystem-backed SDK storage is a managed root with exactly one
+`.oliphaunt.json` object and one `pgdata` child. The descriptor has exactly five
+fields: `schema`, `engineFamily`, `pgdata`, `postgresMajor`, and
+`physicalFormat`. JSON key order and ordinary whitespace are irrelevant;
+missing, duplicate, unknown, wrongly typed, or incompatible fields are rejected.
+Native and WASIX descriptors are both structurally accepted. There is no
+special cross-family rejection because cross-family direct opening is not a
+documented transfer path.
 
-The native SDKs are peers over the `liboliphaunt` C ABI and native
-runtime-resource model. The WASIX bindings are peers over
-`liboliphaunt-wasix` portable assets and its WASIX lifecycle contract; they do
-not cross the native C ABI. React Native is not another runtime. Its native
-modules adapt the Swift and Kotlin SDKs so platform behavior is fixed once in
-the SDK native app developers also use.
+The descriptor is destination identity. It is not configuration, provenance,
+a lock, or backup content. Descriptorless nonempty roots are rejected without
+mutation; only a known-new or empty destination may receive a descriptor.
 
-The Rust SDK owns the runtime-resource producer contract. Generated manifests
-must declare `schema=oliphaunt-runtime-resources-v1` and the expected
-per-package `layout`, full `selectedExtensions`, createable `extensions`,
-`runtimeFeatures`, `sharedPreloadLibraries`, and mobile static-registry
-metadata. The registered SQL-name and native-module-stem domains must exactly
-match the selected native subset, and all domains are sorted and duplicate-free.
-Swift and Kotlin validate those fields before using generated resources, React
-Native inherits the same checks through those platform SDKs, and every
-availability check uses `selectedExtensions` so module-only selections are not
-lost.
+Native and WASIX each have one PostgreSQL 18 physical archive. The exact
+five-key `.oliphaunt/backup-manifest.properties` inside the tar identifies the
+archive; the destination creates `.oliphaunt.json` after validation. There is
+no public format enum or negotiation API. Native archives are compatible among
+native SDKs. Rust and TypeScript implement the same WASIX archive envelope, but
+cross-binding transfer is not a supported or qualified workflow. Native and
+WASIX archives are not physically interchangeable; logical SQL is the bridge.
 
-## Artifact Resolution
+Provider ownership remains binding-specific implementation:
 
-Normal installs must use the host ecosystem's package manager. SDKs can still
-offer explicit local overrides for contributor and custom-runtime workflows, but
-those overrides are not the consumer install path.
+- native direct/broker and C restore use the C runtime's stable sibling lease;
+- native Rust server uses the same lease contract because it bypasses C;
+- desktop TypeScript native server uses its own sibling owner;
+- Rust WASIX uses its host-directory owner;
+- TypeScript uses Web Locks or a Node/Bun/Deno sibling owner as appropriate.
 
-| SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
-| --- | --- | --- | --- | --- |
-| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | the PostgreSQL 18 contrib bundle or independently versioned external extension Cargo carriers, selected by exact SQL name | `OLIPHAUNT_RESOURCES_DIR` |
-| WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | contrib-bundle or external WASIX/AOT carriers selected by exact SQL name | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
-| WASIX TypeScript | exact `@oliphaunt/liboliphaunt-wasix` dependency selected internally; its descriptor binds the portable runtime, PGDATA, and core-only manifest as one identity | unavailable | selectively imported host-neutral `@oliphaunt/extension-*-wasix` descriptors with product-owned install contracts; `pgtap` is qualified, with `pg_uuidv7` as a narrow native canary | `advanced.runtime` only for explicit custom runtime replacement |
-| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
-| Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | checksum-covered release carriers composed over the embedded base snapshot; contrib has one 32-row carrier and each external release has one row | `--carrier`, repeatable `--extension-carrier`, `runtimeDirectory`, or `resourceRoot` |
-| Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
-| React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
+Each mechanism prevents duplicate ownership within its provider. They do not
+coordinate simultaneous direct/broker/server mutation of one root, which is
+application error. Locks are provider-local state outside the managed root and
+backups. Cross-binding root use is not a supported or qualified workflow.
 
-Swift and React Native resolve logical extensions by exact SQL name even when
-the physical carrier is an aggregate contrib bundle. The native runtime
-product/tag/version identifies that release; generated Swift products remain SQL-member
-specific. Multi-carrier composition requires one identical native base,
-dependency-closed member rows, and non-conflicting checksums. This distinction
-allows an independently versioned external extension to publish usable Apple
-assets without forcing a Swift SDK release.
+## Deferred work with decided current behavior
 
-## Parity Bar
+These identifiers are the complete deferred list for this contract. They are
+not hidden modes or partly supported capabilities.
 
-Rust is classified as an SDK, not an internal implementation detail. Its release
-contract matters in the same way as Swift, Kotlin, TypeScript, React Native,
-and WASM contracts. It owns Rust/Tauri ergonomics, direct/broker/server APIs,
-and the broker helper used by TypeScript; it is not the only proof layer for
-shared semantics.
+| ID | Current behavior | Evidence required before implementation |
+| --- | --- | --- |
+| `FUTURE-NATIVE-SERVER-SDK-BACKUP` | Native server handles expose no SDK physical-backup method; applications use ordinary PostgreSQL tools such as `pg_basebackup`. Direct and broker physical backup work | A server-safe online backup design and round-trip tests without routing through a live direct handle |
+| `FUTURE-WASIX-TS-SERVER-TOOLS` | WASIX TypeScript exposes neither a listener nor `pg_dump`/`psql` | A concrete supported host use case and a package/runtime design that does not burden browsers |
+| `FUTURE-WASIX-CANCELLATION` | WASIX app-facing bindings have no public direct-query cancellation API | A guest interrupt contract that preserves PostgreSQL recovery plus idiomatic Rust and JS cancellation tests |
+| `FUTURE-WASIX-DIRECT-COPY` | WASIX typed APIs buffer responses; no dedicated COPY stream/backpressure API is promised | A guest protocol pump and language-native stream tests for COPY IN and COPY OUT |
+| `FUTURE-RESTORE-REPLACE` | Restore accepts only a nonexistent or empty destination and rejects nonempty data without mutation | A recoverable replacement contract with crash tests and an app-facing need stronger than delete-then-restore |
+| `FUTURE-EXTENSION-MIGRATION` | Persistent data must reopen with required extension code; PostgreSQL SQL such as `ALTER EXTENSION` is explicit application work | A real cross-version extension case that cannot be handled honestly with standard PostgreSQL operations |
 
-Parity is required where the target platform can support the behavior without
-lying about PostgreSQL semantics or degrading developer experience. A feature is
-allowed to differ only when the difference is documented with a product reason:
+## Non-goals
 
-- impossible or inappropriate for the platform sandbox;
-- better expressed through a platform-native API shape;
-- intentionally not implemented yet because a fake implementation would be
-  worse than an explicit unsupported error.
+- backward compatibility with removed capability, format, profile,
+  initialization, background-preparation, or replace-policy APIs;
+- identical method names and configuration records across languages;
+- runtime auto-selection or fallback between native and WASIX packages;
+- automatic adoption of descriptorless PGDATA or legacy archive envelopes;
+- physical interchange between native and WASIX builds;
+- calling a native temporary directory “memory” before PostgreSQL has a real
+  in-memory filesystem implementation;
+- configuration variables for behavior that is fixed today.
 
-Unsupported does not mean undefined. Each SDK must expose a clear error for
-unsupported modes or backup formats, and the parity matrix must explain why the
-gap is acceptable.
+## Review and release rule
 
-Mode support is part of the public contract, not tribal knowledge. Each SDK
-must expose a `supportedModes`-style API that lists `nativeDirect`,
-`nativeBroker`, and `nativeServer`, marks whether the current platform adapter
-can open each mode, and carries the canonical capability shape plus the product
-reason for any unavailable mode.
+A public SDK change is complete when all affected language surfaces, C/header
+copies, generated API inventory, docs route, package shape, and behavioral tests
+agree. A deliberate delta must appear above with current behavior; a future idea
+must use one of the six exact deferred IDs or be rejected until a concrete need
+exists.
 
-## Required Concepts
-
-| Concept | Rust | Swift | Kotlin | React Native |
-| --- | --- | --- | --- | --- |
-| Native direct mode | yes | yes | yes | via Swift/Kotlin |
-| Native broker mode | yes | future platform adapter | future platform adapter | via Swift/Kotlin |
-| Native server mode | yes | future platform adapter | future platform adapter | via Swift/Kotlin |
-| Raw protocol API | `exec_protocol_raw` | `execProtocolRaw` | `execProtocolRaw` | `execProtocolRaw` |
-| Streaming protocol API | `exec_protocol_raw_stream` | `execProtocolStream` | `execProtocolStream` | `execProtocolStream` over the selected raw transport; New Architecture builds use `jsi-array-buffer` |
-| Typed query helpers | yes | yes, simple and parameterized result parser | yes, simple and parameterized result parser | yes, JS simple and parameterized result parser |
-| Simple-query SQL validation | simple-query builders reject NUL-containing SQL before frontend frame construction | simple-query builders reject NUL-containing SQL before frontend frame construction | simple-query builders reject NUL-containing SQL before frontend frame construction | simple-query builders reject NUL-containing SQL before frontend frame construction |
-| Extended-query input validation | extended-query builders reject NUL-containing SQL and parameter lists above the PostgreSQL protocol `Int16` limit before frontend frame construction | extended-query builders reject NUL-containing SQL and parameter lists above the PostgreSQL protocol `Int16` limit before frontend frame construction | extended-query builders reject NUL-containing SQL and parameter lists above the PostgreSQL protocol `Int16` limit before frontend frame construction | extended-query builders reject NUL-containing SQL and parameter lists above the PostgreSQL protocol `Int16` limit before frontend frame construction |
-| Backend UTF-8 parsing | backend C-strings and text accessors reject malformed UTF-8 instead of replacement decoding | backend C-strings and text accessors reject malformed UTF-8 instead of replacement decoding | backend C-strings and text accessors reject malformed UTF-8 instead of replacement decoding | backend C-strings and text accessors reject malformed UTF-8 instead of replacement decoding |
-| Backend response validation | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them | typed query parsers accept known simple/extended-query control tags, validate async backend control-message framing and `ReadyForQuery` transaction status, and reject unexpected backend tags instead of ignoring them |
-| Transaction helper | `transaction()` returns an explicit pinned handle; `with_transaction(...)` commits or rolls back an async closure; unpinned work is rejected | `transaction {}` uses the actor-owned session for raw and streaming work and rejects database work outside the active transaction handle | `transaction {}` uses the serialized session for raw and streaming work and rejects database work outside the active transaction handle | `transaction(async tx => ...)` preserves the platform session boundary for raw and streaming work and rejects database work outside the active transaction handle |
-| Structured PostgreSQL errors | `Error::Postgres(Box<PostgresError>)` with SQLSTATE and raw ErrorResponse fields | `OliphauntError.postgres(OliphauntPostgresError)` with SQLSTATE and raw ErrorResponse fields | `PostgresException(PostgresError)` with SQLSTATE and raw ErrorResponse fields | `PostgresError` with SQLSTATE and raw ErrorResponse fields |
-| Capability reporting | raw, stream, cancel, backup/restore, simple query, extensions, and instance/session model | same C ABI capability bits surfaced as Swift properties, including `multipleInstances` | same C ABI capability bits surfaced as Kotlin properties, including `multipleInstances` | same capability fields delegated from Swift/Kotlin, including `multipleInstances` |
-| Backup/restore format discovery | direct/broker: physical archive; server: SQL and physical archive backup; restore: physical archive; capability and handle `supports_backup_format`/`supports_restore_format` helpers | `backupFormats`, `restoreFormats`, and capability/database `supportsBackupFormat`/`supportsRestoreFormat` helpers | `backupFormats`, `restoreFormats`, and capability/database `supportsBackupFormat`/`supportsRestoreFormat` helpers | delegated `backupFormats` and `restoreFormats` capability fields plus TypeScript `supportsBackupFormat`/`supportsRestoreFormat` helpers and matching database methods |
-| Backup format enforcement | `EngineExecutor::backup` rejects unsupported formats before the owner queue | `OliphauntDatabase.backup` rejects unsupported formats before the native session call | `OliphauntDatabase.backup` rejects unsupported formats before the platform session call | `OliphauntDatabase.backup` rejects unsupported formats before the TurboModule backup call |
-| Checkpoint | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the opened engine and rejects while a session pin is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the actor-owned session and rejects while a transaction is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the serialized session and rejects while a transaction is active | `checkpoint()` sends PostgreSQL `CHECKPOINT` through the delegated platform session and rejects while a transaction is active |
-| Restore format enforcement | `Oliphaunt::restore` rejects non-physical artifacts before target materialization | `OliphauntDatabase.restore` rejects non-physical artifacts before the engine call | `OliphauntDatabase.restore` rejects non-physical artifacts before the platform engine call | `Oliphaunt.restore` rejects non-physical artifacts before the TurboModule restore call |
-| Storage | `DatabaseStorage::TemporaryDirectory` by default; explicit application-owned directory for persistence | `.temporaryDirectory` by default; explicit file-URL directory for persistence | `DatabaseStorage.TemporaryDirectory` by default; explicit directory for persistence | temporary directory by default; explicit directory or portable application-data name for persistence |
-| Storage/destination validation | persistent directories and restore destinations are rejected when empty or NUL-containing before runtime selection | storage directories and restore destinations must be file URLs and are validated before engine calls | blank or NUL-containing storage directories and restore destinations are rejected before platform calls | invalid storage descriptors and restore destinations are rejected before TurboModule calls |
-| Mode support discovery | `EngineCapabilities::rust_sdk_support()` | `OliphauntDatabase.supportedModes()` | `OliphauntDatabase.supportedModes()` and `OliphauntAndroid.supportedModes()` | `Oliphaunt.supportedModes()` delegated from Swift/Kotlin |
-| Handle/executor ownership | Cloned Rust `Oliphaunt` handles share one SDK executor, FIFO owner queue, session pin, cancel handle, and close state in direct, broker, and server modes; cloning is not a connection pool | Swift database values are actor-owned session handles guarded by a FIFO async serial gate; additional references share the same actor/session and server-mode independent clients must use server support when implemented | Kotlin database values are coroutine session handles guarded by `executionMutex`; additional references share the same coroutine/session boundary and server-mode independent clients must use server support when implemented | React Native `OliphauntDatabase` objects wrap the delegated Swift/Kotlin session handle and delegate ordering to the platform serial session; JS references do not create independent sessions |
-| Connection identity | `Oliphaunt::builder().username(...).database(...)` feeds direct, broker, and server startup identity; invalid empty/NUL values are rejected before runtime open | `OliphauntConfiguration(username:database:)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `OliphauntConfig(username, database)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `open({ username, database })` forwards the same identity through Swift/Kotlin and rejects invalid empty/NUL values before the TurboModule call |
-| Runtime footprint profiles | `RuntimeFootprintProfile::{Throughput,BalancedMobile,SmallMobile}` defines the shared PostgreSQL startup-GUC contract; balanced/small mobile lower slot counts, shared buffers, WAL footprint, and PG18 AIO concurrency | `OliphauntRuntimeFootprintProfile` carries the same three profiles and generated startup args for Apple direct mode; the Apple SDK default is `balancedMobile` + `balanced` | `RuntimeFootprintProfile` carries the same three profiles and generated startup args for Android/Kotlin direct mode; the Android/Kotlin default is `BalancedMobile` + `Balanced` | `runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile'` forwards the selected profile through Swift/Kotlin; the React Native default is `balancedMobile` + `balanced` |
-| Startup GUC overrides | `startup_guc`/`startup_gucs` append validated `name=value` overrides after durability and footprint profiles so benchmark/device sweeps can override profile defaults | `startupGUCs` appends validated overrides after the selected profile before the Swift engine call | `startupGucs` appends validated overrides after the selected profile before the Kotlin engine call | `startupGUCs` accepts validated string or object values in TypeScript and forwards string assignments through the TurboModule to Swift/Kotlin |
-| Extensions | yes | yes | yes | via Swift/Kotlin |
-| Packaged runtime resources | yes, producer | yes, consumer | yes, consumer | via platform SDK consumers |
-| Package-size evidence | `NativeRuntimeResources::size_report` and `oliphaunt/package-size.tsv` producer | `OliphauntRuntimeResources.packageSizeReport()` parses the shared TSV | `OliphauntAndroid.packageSizeReport(context)` and `OliphauntAndroid.packageSizeReport(resourceRoot)` parse the shared TSV | `Oliphaunt.packageSizeReport(...)` delegates to Swift/Kotlin and returns the same typed report |
-| Packaged native library | host library path today | XCFramework target | Android `jniLibs` | Swift/Kotlin package artifacts |
-| Physical backup/restore | yes | yes | yes | via Swift/Kotlin |
-| Cancellation | yes | yes | yes | via Swift/Kotlin |
-| Close behavior | `Oliphaunt::close` rejects queued work, waits for active work, then closes/detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` delegates the same wait-and-detach behavior through Swift/Kotlin |
-| True concurrent sessions | server mode only | server mode only | server mode only | server mode only |
-
-### Desktop TypeScript Deltas
-
-`@oliphaunt/ts` is a peer SDK for Node.js, Bun, and Deno, but it is not a
-separate mobile runtime layer. Direct Tauri JavaScript/webview integration is
-planned; current Tauri apps use the Rust SDK behind app-owned commands. It owns desktop
-JavaScript concerns that do not map one-for-one to the Swift/Kotlin mobile
-table above:
-
-- Direct, broker, and server modes are all exposed for desktop JavaScript.
-- The default open profile is `runtimeFootprint: 'throughput'` with
-  `durability: 'safe'`, matching the desktop-first default rather than the
-  mobile `balancedMobile` + `balanced` default.
-- Node.js and Bun direct mode resolve the prebuilt
-  `@oliphaunt/node-direct-*` optional package; Deno uses nonblocking native FFI.
-- Native runtime artifacts come from `@oliphaunt/liboliphaunt-*` optional npm
-  packages, PostgreSQL client tools come from split `@oliphaunt/tools-*`
-  optional npm packages, and Node/Bun extensions come from exact extension npm
-  packages. Explicit prepared `runtimeDirectory` values are validated for
-  selected extension files across Node/Bun/Deno before nativeDirect opens or
-  nativeBroker launches. Deno still requires an explicit prepared
-  `runtimeDirectory` for extension materialization.
-
-### WASIX Rust Deltas
-
-`oliphaunt-wasix` is the Rust SDK for the WASIX runtime product. It does not
-share the native liboliphaunt process model; its runtime, ICU data, root AOT,
-split tools, tools-AOT, and extension artifacts are all Cargo-resolved WASIX
-artifact crates. `pg_dump` and `psql` are available only when the `tools`
-feature selects `oliphaunt-wasix-tools` and the matching tools-AOT crate for
-the host target. `pg_ctl` is intentionally absent because there is no external
-WASIX postmaster lifecycle to control.
-
-Release metadata and consumer-readiness checks validate the WASIX package and
-proof-task contracts. The WASIX Rust product `release-check` owns executable
-behavior: the split tools preflight must load both `pg_dump` and `psql`
-artifacts before tool APIs run, and AOT manifests must reject missing,
-duplicate, or non-tool entries.
-
-### WASIX TypeScript Deltas
-
-Public `@oliphaunt/wasix-ts` runs PostgreSQL with direct or worker-isolated
-execution in a cross-origin-isolated browser, Node.js, Bun, or Deno. Every
-placement consumes portable WASIX assets only, shares one serialized
-PostgreSQL/pgwire database contract plus lifecycle configuration, and never
-reuses or extends native `@oliphaunt/ts`.
-
-Current allowed gaps are explicit: one serialized session, required
-prepopulated PGDATA, no ICU/tools/backup/restore/server/cancellation/COPY
-streaming surface, and no generic native-extension claim. Ordinary runtime
-assets come from the exact `@oliphaunt/liboliphaunt-wasix` dependency; explicit
-sources remain an advanced custom-runtime override. The package-owned patched
-source-pinned Wasmer JS 0.8/WASIX 0.601 host has executable browser and fresh external Node/Bun/Deno
-consumer proofs for the exact portable 0.702 guest pairing. Simple and extended
-PostgreSQL errors recover repeatedly, SQL-only `pgtap` completes a real test
-lifecycle, and clean close requires a zero worker-process exit or successful
-caller-realm atexit cleanup. The browser-only
-`pg_uuidv7` canary executes on both sides of recovery, but generic 0.702 or
-native-module compatibility is not claimed.
-
-Memory is the zero-configuration default on every host. Selectively imported
-persistent adapters own one exclusive database lease and synchronize changed
-PGDATA paths after each completed protocol exchange, including an error that
-PostgreSQL has recovered through `ReadyForQuery`. Callback transactions defer
-their internal publications and synchronize exactly once after confirmed
-`COMMIT` or `ROLLBACK`. Each IndexedDB identity owns one physical IndexedDB
-database, stores one row per normalized path, and commits metadata, upserts,
-and deletes atomically in a single transaction. Node, Bun, and Deno expose the selected directory as raw
-PGDATA and durably apply the same delta (WAL first and `pg_control` last).
-Browser OPFS exposes raw PGDATA with the same ordering and Web Lock ownership;
-because OPFS has no cross-file transaction, an interrupted publication is
-reported as unknown durability and the session is poisoned. Explicit
-`checkpoint()` remains a PostgreSQL `CHECKPOINT` followed by the same storage
-boundary. Extension migration remains absent until its real contract exists.
-The binding README is the detailed divergence record.
-
-## Current Platform Stance
-
-| SDK | Primary app target | Runtime owner | Current native mode | Non-parity that is allowed today |
-| --- | --- | --- | --- | --- |
-| Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
-| WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
-| WASIX TypeScript | cross-origin-isolated browsers, Node.js, Bun, and Deno | `liboliphaunt-wasix` portable assets | not native; direct or worker-isolated execution on every host | exact error-recovery, selected-extension, and memory paths are proven in both placements; IndexedDB, OPFS, and Node/Bun/Deno raw-directory adapters publish changed paths at successful operation boundaries; no generic native-extension contract or tool/server/backup surface; explicit runtime replacement is advanced-only |
-| Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
-| Kotlin | Android apps | `oliphaunt` | Android direct | Host-native compilations are development/parity evidence and are not published; JVM runtime is explicitly unavailable; Android common defaults require the `OliphauntAndroid` Context facade; Android broker/server must be separate platform adapters, not direct-mode aliases |
-| React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |
-
-## React Native Ownership
-
-React Native should not own a separate database runtime. It owns:
-
-- TypeScript types and ergonomic JS handles;
-- TurboModule Codegen;
-- versioned JSI ArrayBuffer transport installers for protocol, backup, and restore bytes;
-- JS protocol/query helpers, including chunked JSI streaming when the installed
-  transport provides it and explicit `protocolStream=false` when a custom or
-  stale transport can only return one owned response;
-- a typed `packageSizeReport(...)` facade over the Swift/Kotlin resource
-  package readers;
-- error normalization for JS callers.
-
-Swift owns Apple runtime behavior for iOS and macOS. Kotlin owns Android runtime
-behavior. The React Native native modules are adapters over those SDKs. RN iOS
-delegates open, protocol execution, backup, restore, cancellation, and close to
-`Oliphaunt`; any future RN macOS target must use the same Swift SDK boundary.
-RN Android delegates the same operations to the Kotlin SDK through the
-`OliphauntAndroid` facade, not by constructing a private native-direct runtime.
-
-### React Native Installed-App Harness
-
-The Expo dev-client example is the installed-app validation harness. The default
-combined lane is `moon run oliphaunt-react-native:smoke-mobile`;
-platform-specific local lanes are backed by
-`src/sdks/react-native/tools/expo-android-runner.sh` and
-`src/sdks/react-native/tools/expo-ios-runner.sh`.
-
-Local Expo MCP validation must run with `EXPO_UNSTABLE_MCP_SERVER=1` so the
-example can be driven through the same dev-client app surface that developers
-use during iteration.
-
-## Defensible Deviations
-
-- React Native keeps TurboModule Codegen for lifecycle/control calls while
-  requiring a New Architecture JSI ArrayBuffer transport for binary protocol,
-  backup, and restore traffic.
-- Swift and Kotlin use platform-native async/actor/coroutine shapes rather than
-  copying Rust names exactly.
-- Android requires packaged template PGDATA for new storage directories because mobile apps
-  cannot rely on executing `initdb` from writable app storage.
-
-## Release Rule
-
-An SDK feature is complete only when its SDK-specific tests prove the behavior
-and the parity matrix either marks it present or documents a justified platform
-deviation. Green Rust tests do not prove Swift, Kotlin, or React Native parity.
-Green Swift/Kotlin tests do not prove React Native parity unless the RN adapter
-tests demonstrate that calls route through those SDKs rather than through a
-private runtime.
-
-Evidence is deliberately split by ownership:
-
-- `sdk-contracts:check` verifies the generated public API inventory, SDK
-  registry schema, C ABI header copies, native boundary model, and tracked
-  README examples;
-- `extension-model:check` verifies exact extension availability, release
-  identity, platform support, and generated SDK catalogs;
-- each SDK's `check`, `test`, `package`, and `release-check` targets own
-  compilation, behavior, clean-consumer shape, and registry candidate proof;
-- installed-app and native lifecycle targets own platform/runtime behavior.
-
-Stable CI does not grep this document, implementation spellings, or test names.
-When a contract needs enforcement, express it in generated data, a parsed
-schema/package shape, or a product-owned behavioral test.
-
-The local cross-SDK contract aggregate is:
+The lightweight contract checks are:
 
 ```sh
 moon run sdk-contracts:check
-```
-
-The compatibility shell entry point runs the same lightweight validators:
-
-```sh
 tools/policy/check-sdk-parity.sh
 ```
 
-The full product SDK aggregate is:
-
-```sh
-src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
-```
+Product-owned compile, package, smoke, and release tasks remain the authority
+for executable behavior.

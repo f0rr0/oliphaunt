@@ -32,7 +32,7 @@ use oliphaunt::{Extension, Oliphaunt};
 async fn open_database() -> oliphaunt::Result<()> {
     let db = Oliphaunt::builder()
         .directory("./app-data/main.oliphaunt")
-        .native_direct()
+        .direct()
         .extension(Extension::Vector)
         .open()
         .await?;
@@ -56,8 +56,8 @@ Rust exposes the complete native mode model:
 Direct and broker mode serialize work through one physical PostgreSQL session.
 Server mode is the mode for independent concurrent PostgreSQL clients.
 
-Read `capabilities()` after opening when an app enables optional features such
-as streaming, backup formats, server compatibility, or exact extensions.
+The selected mode defines support. Use the static runtime support matrix when
+choosing a mode; opened handles expose operations directly.
 
 ## App Responsibilities
 

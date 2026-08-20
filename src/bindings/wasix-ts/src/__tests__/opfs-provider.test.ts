@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { applyOpfsDelta, readOpfsDatabase } from '../storage/opfs-provider.js';
+import { applyOpfsDelta, readOpfsDatabase, restoreOpfsStorage } from '../storage/opfs-provider.js';
 import type { WasixStorageCompatibility } from '../storage-provider.js';
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('WASIX OPFS storage', () => {
-  it('writes WAL first and control last, then hydrates raw PGDATA', async () => {
+  it('writes WAL first and control last, then hydrates managed PGDATA', async () => {
     const writes: string[] = [];
     const root = new FakeDirectory('', writes);
     await applyOpfsDelta(root.asHandle(), 'todos', compatible(), {
@@ -23,7 +25,7 @@ describe('WASIX OPFS storage', () => {
       'base/value',
       'PG_VERSION',
       'global/pg_control',
-      '.oliphaunt-wasix.json',
+      '.oliphaunt-storage.json',
     ]);
     const snapshot = await readOpfsDatabase(root.asHandle(), 'todos', compatible());
     expect(snapshot?.files.map(({ path }) => path)).toEqual([
@@ -38,12 +40,12 @@ describe('WASIX OPFS storage', () => {
     const partial = new FakeDirectory('', []);
     await partial.getFileHandle('PG_VERSION', { create: true });
     await expect(readOpfsDatabase(partial.asHandle(), 'todos', compatible())).rejects.toMatchObject(
-      { code: 'corrupt', durability: 'unchanged' },
+      { code: 'corrupt', commitState: 'unchanged' },
     );
 
     const root = new FakeDirectory('', []);
     await applyOpfsDelta(root.asHandle(), 'todos', compatible(), {
-      directories: ['global'],
+      directories: ['global', 'pg_wal'],
       files: [
         { path: 'PG_VERSION', bytes: new TextEncoder().encode('18\n') },
         { path: 'global/pg_control', bytes: Uint8Array.of(1) },
@@ -55,19 +57,34 @@ describe('WASIX OPFS storage', () => {
         ...compatible(),
         runtime: { ...compatible().runtime, moduleSha256: '9'.repeat(64) },
       }),
-    ).rejects.toMatchObject({ code: 'incompatible', durability: 'unchanged' });
+    ).resolves.toBeDefined();
+
+    const metadataHandle = await root.getFileHandle('.oliphaunt-storage.json');
+    const metadata = JSON.parse(await (await metadataHandle.getFile()).text()) as {
+      physicalCompatibility: { physicalFormat: string };
+    };
+    metadata.physicalCompatibility.physicalFormat = 'wasix-pg18-v2';
+    const writable = await metadataHandle.createWritable();
+    await writable.write(
+      new TextEncoder().encode(JSON.stringify(metadata)) as Uint8Array<ArrayBuffer>,
+    );
+    await writable.close();
+    await expect(readOpfsDatabase(root.asHandle(), 'todos', compatible())).rejects.toMatchObject({
+      code: 'incompatible',
+      commitState: 'unchanged',
+    });
   });
 
   it('classifies malformed compatibility metadata as corrupt', async () => {
     const root = new FakeDirectory('', []);
-    const metadata = await root.getFileHandle('.oliphaunt-wasix.json', { create: true });
+    const metadata = await root.getFileHandle('.oliphaunt-storage.json', { create: true });
     const writable = await metadata.createWritable();
     await writable.write(
       new TextEncoder().encode(
         JSON.stringify({
-          schema: 'oliphaunt-wasix-opfs-v2',
+          schema: 'oliphaunt-wasix-opfs-v1',
           name: 'todos',
-          compatibility: 'not-an-object',
+          physicalCompatibility: 'not-an-object',
         }),
       ) as Uint8Array<ArrayBuffer>,
     );
@@ -75,7 +92,70 @@ describe('WASIX OPFS storage', () => {
 
     await expect(readOpfsDatabase(root.asHandle(), 'todos', compatible())).rejects.toMatchObject({
       code: 'corrupt',
-      durability: 'unchanged',
+      commitState: 'unchanged',
+    });
+
+    for (const text of [
+      '{"schema":"oliphaunt-wasix-opfs-v1","schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{}}',
+      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{},"unexpected":true}',
+      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{"schema":"oliphaunt-physical-format-v1","engineFamily":"wasix","postgresMajor":18,"physicalFormat":"wasix-pg18-v1","physicalFormat":"wasix-pg18-v1"}}',
+    ]) {
+      const replacement = await metadata.createWritable();
+      await replacement.write(new TextEncoder().encode(text) as Uint8Array<ArrayBuffer>);
+      await replacement.close();
+      await expect(readOpfsDatabase(root.asHandle(), 'todos', compatible())).rejects.toMatchObject({
+        code: 'corrupt',
+        commitState: 'unchanged',
+      });
+    }
+  });
+
+  it('preserves a caller-owned empty restore destination after publication fails', async () => {
+    const origin = new FakeDirectory('', [], 'global/pg_control');
+    const providerRoot = await origin.getDirectoryHandle('.oliphaunt-wasix-v1', { create: true });
+    await providerRoot.getDirectoryHandle('todos', { create: true });
+    vi.stubGlobal('navigator', {
+      storage: { getDirectory: async () => origin.asHandle() },
+      locks: webLocks(new Error('injected ownership release failure')),
+    });
+
+    await expect(restoreOpfsStorage('todos', completeSnapshot(), compatible())).rejects.toThrow(
+      /injected OPFS write failure.*ownership release also failed/u,
+    );
+
+    const restoredEmpty = await providerRoot.getDirectoryHandle('todos');
+    expect([...(await collectFakeKeys(restoredEmpty))]).toEqual([]);
+  });
+
+  it('reports persisted when ownership release fails after restore publication', async () => {
+    const origin = new FakeDirectory('', []);
+    vi.stubGlobal('navigator', {
+      storage: { getDirectory: async () => origin.asHandle() },
+      locks: webLocks(new Error('injected ownership release failure')),
+    });
+
+    await expect(
+      restoreOpfsStorage('todos', completeSnapshot(), compatible()),
+    ).rejects.toMatchObject({ code: 'unavailable', commitState: 'persisted' });
+    const providerRoot = await origin.getDirectoryHandle('.oliphaunt-wasix-v1');
+    const pgdata = await providerRoot.getDirectoryHandle('todos');
+    await expect(readOpfsDatabase(pgdata.asHandle(), 'todos', compatible())).resolves.toBeDefined();
+  });
+
+  it('removes an SDK-created restore destination after publication fails', async () => {
+    const origin = new FakeDirectory('', [], 'global/pg_control');
+    vi.stubGlobal('navigator', {
+      storage: { getDirectory: async () => origin.asHandle() },
+      locks: webLocks(),
+    });
+
+    await expect(restoreOpfsStorage('todos', completeSnapshot(), compatible())).rejects.toThrow(
+      'injected OPFS write failure',
+    );
+
+    const providerRoot = await origin.getDirectoryHandle('.oliphaunt-wasix-v1');
+    await expect(providerRoot.getDirectoryHandle('todos')).rejects.toMatchObject({
+      name: 'NotFoundError',
     });
   });
 });
@@ -84,11 +164,13 @@ class FakeDirectory {
   readonly kind = 'directory';
   readonly #path: string;
   readonly #writes: string[];
+  readonly #failWritePath: string | undefined;
   readonly #entries = new Map<string, FakeDirectory | FakeFile>();
 
-  constructor(path: string, writes: string[]) {
+  constructor(path: string, writes: string[], failWritePath?: string) {
     this.#path = path;
     this.#writes = writes;
+    this.#failWritePath = failWritePath;
   }
 
   asHandle(): FileSystemDirectoryHandle {
@@ -100,7 +182,7 @@ class FakeDirectory {
     if (existing instanceof FakeDirectory) return existing;
     if (existing !== undefined || options?.create !== true) throw notFound();
     const path = this.#path === '' ? name : `${this.#path}/${name}`;
-    const directory = new FakeDirectory(path, this.#writes);
+    const directory = new FakeDirectory(path, this.#writes, this.#failWritePath);
     this.#entries.set(name, directory);
     return directory;
   }
@@ -110,7 +192,7 @@ class FakeDirectory {
     if (existing instanceof FakeFile) return existing;
     if (existing !== undefined || options?.create !== true) throw notFound();
     const path = this.#path === '' ? name : `${this.#path}/${name}`;
-    const file = new FakeFile(path, this.#writes);
+    const file = new FakeFile(path, this.#writes, this.#failWritePath);
     this.#entries.set(name, file);
     return file;
   }
@@ -137,11 +219,13 @@ class FakeFile {
   readonly kind = 'file';
   readonly #path: string;
   readonly #writes: string[];
+  readonly #failWritePath: string | undefined;
   #bytes = new Uint8Array();
 
-  constructor(path: string, writes: string[]) {
+  constructor(path: string, writes: string[], failWritePath?: string) {
     this.#path = path;
     this.#writes = writes;
+    this.#failWritePath = failWritePath;
   }
 
   asHandle(): FileSystemFileHandle {
@@ -160,12 +244,42 @@ class FakeFile {
         next = (value as Uint8Array).slice();
       },
       close: async () => {
+        if (this.#path.endsWith(this.#failWritePath ?? '\0')) {
+          throw new Error('injected OPFS write failure');
+        }
         this.#bytes = next;
         this.#writes.push(this.#path);
       },
       abort: async () => undefined,
     } as unknown as FileSystemWritableFileStream;
   }
+}
+
+function completeSnapshot() {
+  return {
+    schema: 'oliphaunt-wasix-directory-snapshot-v1' as const,
+    directories: ['global', 'pg_wal'],
+    files: [
+      { path: 'PG_VERSION', bytes: new TextEncoder().encode('18\n') },
+      { path: 'global/pg_control', bytes: Uint8Array.of(1) },
+    ],
+  };
+}
+
+async function collectFakeKeys(directory: FakeDirectory): Promise<string[]> {
+  const keys: string[] = [];
+  for await (const key of directory.keys()) keys.push(key);
+  return keys;
+}
+
+function webLocks(releaseFailure?: Error): LockManager {
+  return {
+    async request(_name: string, _options: LockOptions, callback: (lock: Lock | null) => unknown) {
+      const result = await callback({ name: 'test', mode: 'exclusive' } as Lock);
+      if (releaseFailure !== undefined) throw releaseFailure;
+      return result;
+    },
+  } as LockManager;
 }
 
 function compatible(): WasixStorageCompatibility {
@@ -178,7 +292,6 @@ function compatible(): WasixStorageCompatibility {
       runtimeArchiveSha256: '2'.repeat(64),
       pgdataTemplateSha256: '3'.repeat(64),
       moduleSha256: '4'.repeat(64),
-      sourceFingerprint: 'source-v1',
       postgresVersion: '18.4',
     },
     extensions: [],

@@ -90,8 +90,7 @@ function requireDependencyVersion(path, packageName, expectedVersion) {
 }
 
 function requireWasixToolsSmoke(path) {
-  requireText(path, String.raw`preflight_tools\(\)`);
-  requireText(path, "dump_sql");
+  requireText(path, String.raw`pg_dump\(|PgDumpOptions::new\(\)`);
   requireText(path, String.raw`psql\(|PsqlOptions::new\(\)`);
 }
 
@@ -157,10 +156,6 @@ requireText(
 requireText(
   "examples/tools/run-electron-driver-smoke.sh",
   String.raw`pnpm --dir "\$app_dir" install --no-frozen-lockfile`,
-);
-requireText(
-  "examples/tools/run-electron-driver-smoke.sh",
-  String.raw`example_package_version "@oliphaunt/tools-linux-x64-gnu"`,
 );
 rejectText(
   "examples/tools/run-electron-driver-smoke.sh",

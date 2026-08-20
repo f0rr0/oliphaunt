@@ -1551,10 +1551,10 @@ jobs:
             libxdo-dev \
             pkg-config
 
-      - name: Build WASIX Rust binding package artifacts
+      - name: Build Rust WASIX binding package artifacts
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-rust-package
 
-      - name: Upload WASIX Rust binding package artifacts
+      - name: Upload Rust WASIX binding package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: oliphaunt-wasix-rust-package-artifacts

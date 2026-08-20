@@ -624,11 +624,9 @@ require_jar_entry_pattern "$metadata_jar" '^commonMain/default/linkdata/package_
 
 require_jar_entry "$jvm_jar" "dev/oliphaunt/OliphauntDatabase.class" \
   "Kotlin JVM artifact must include the public SDK database class"
-require_jar_entry "$jvm_jar" "dev/oliphaunt/RuntimeUnavailableEngine.class" \
-  "Kotlin JVM artifact must preserve the explicit unavailable-runtime implementation"
+reject_jar_entry_pattern "$jvm_jar" 'dev/oliphaunt/(ProtocolRequest|ProtocolResponse|RuntimeUnavailableEngine)\.class' \
+  "Kotlin JVM artifact must not expose removed protocol wrappers or the generic unavailable-runtime abstraction"
 
-require_jar_entry "$jvm_sources" "jvmMain/dev/oliphaunt/DefaultEngine.kt" \
-  "Kotlin JVM sources artifact must include the JVM runtime boundary"
 require_jar_entry "$jvm_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin JVM sources artifact must include the common SDK API"
 

@@ -159,7 +159,7 @@ use oliphaunt::{Extension, Oliphaunt};
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .native_direct()
+    .direct()
     .extension(Extension::Vector)
     .open()
     .await?;
@@ -173,7 +173,7 @@ db.close().await?;
 The same rule applies to package tooling:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --force
@@ -181,15 +181,15 @@ cargo run -p oliphaunt --bin oliphaunt-resources -- \
 
 Selecting `vector` ships `vector`. It must not ship `hstore`, `pg_trgm`,
 `cube`, `earthdistance`, pgGraph, ParadeDB, or any other unselected extension.
-The only exception is a mandatory dependency declared by
-`NATIVE_EXTENSION_MANIFEST`; for example `earthdistance` includes `cube`.
+The only exception is a mandatory dependency declared by the canonical
+generated extension metadata; for example `earthdistance` includes `cube`.
 
 End developers should not have to build PostgreSQL or extension source to know
 what they can ship. The runtime-resource CLI exposes the public prebuilt
 catalog without requiring a local native build:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- --list-extensions
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- --list-extensions
 ```
 
 The catalog is TSV so CI, SwiftPM plugins, Gradle tasks, Expo config plugins,
@@ -207,7 +207,7 @@ extension is selected by passing a prebuilt artifact directory or archive, not
 by compiling source inside the app project:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --prebuilt-extension vendor/acme_ext.tar.zst \
@@ -216,10 +216,10 @@ cargo run -p oliphaunt --bin oliphaunt-resources -- \
 ```
 
 Artifacts are produced from already-built PostgreSQL runtime files with the
-Rust SDK artifact tool:
+unpublished native-packaging tool:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-extension-artifact -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-artifact -- \
   --runtime target/acme-pg18-runtime/files \
   --sql-name acme_ext \
   --native-module-stem acme_ext \
@@ -265,7 +265,7 @@ For release distribution, publish an exact artifact index next to the binary
 artifacts:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-extension-index -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-index -- \
   --output vendor/oliphaunt-extensions.toml \
   --target macos-arm64 \
   --artifact vendor/acme_ext-macos-arm64.tar.zst \
@@ -309,7 +309,7 @@ Developers can inspect built-in plus signed external availability without a
 native build:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --list-extensions \
   --extension-index vendor/oliphaunt-extensions.toml \
   --extension-target macos-arm64 \
@@ -319,7 +319,7 @@ cargo run -p oliphaunt --bin oliphaunt-resources -- \
 Then app/package tooling can select the external extension by exact SQL name:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension acme_ext \
   --extension-index vendor/oliphaunt-extensions.toml \
@@ -335,14 +335,14 @@ extension dependencies from the index. Built-in extension names
 cannot be overridden by index entries. Local sidecar artifacts next to the index
 are preferred. If a URL-backed artifact is missing locally, `--extension-cache`
 downloads it to a target-scoped cache and verifies bytes, SHA-256, and manifest
-before packaging. HTTPS artifact downloads are a packaging-tool capability; Rust
-SDK release binaries enable the `extension-download` feature, while the embedded
-library remains usable without HTTP/TLS dependencies. Signed index verification
+before packaging. HTTPS artifact downloads are available only when maintainer
+packaging tool builds enable the `extension-download` feature; the published SDK
+does not expose or compile this HTTP/TLS implementation. Signed index verification
 uses `--trusted-extension-index-key-file <key-id>:<path>`, which requires a
 matching `<index>.sig` sidecar before any indexed artifact can be used. The key
 file contains a hex-encoded 32-byte Ed25519 public key. Signing and verification
-are packaging-tool capabilities behind the `extension-signing` feature, so
-embedded Rust/Tauri apps do not compile signing code unless they opt into it.
+are maintainer packaging-tool operations behind the `extension-signing`
+feature. They are not application SDK capabilities.
 
 `--prebuilt-extension` accepts an unpacked artifact directory, `.tar`,
 `.tar.gz`, or `.tar.zst`. The artifact root must contain
@@ -433,7 +433,11 @@ errors.
 
 ## Runtime Resources
 
-The Rust SDK owns the runtime-resource CLI and manifest contract.
+The unpublished `oliphaunt-native-packaging` workspace crate owns the
+runtime-resource CLI and manifest contract. Public SDKs consume its generated
+resource packages; they do not expose packaging implementation APIs.
+Native tool payload validation requires `pg_basebackup`, `pg_dump`, and `psql`
+as one complete tools set; an incomplete payload is rejected before packaging.
 
 Runtime resources are shared by Swift, Kotlin, and React Native:
 
@@ -497,11 +501,8 @@ extensions	selected	-	3	63478
 extension	vector	-	3	63478
 ```
 
-Swift reads this through `OliphauntRuntimeResources.packageSizeReport()`;
-Kotlin reads packaged app assets through
-`OliphauntAndroid.packageSizeReport(context)` and unpacked smoke roots through
-`OliphauntAndroid.packageSizeReport(resourceRoot)`; React Native delegates
-`Oliphaunt.packageSizeReport(...)` to those platform SDK readers.
+Packaging and release checks read this report directly. It is build evidence,
+not a public Swift, Kotlin, React Native, or database runtime API.
 
 ## Mobile Static Registry
 
@@ -510,7 +511,7 @@ release package that includes module-backed extensions must also include and
 register a matching static extension registry:
 
 ```sh
-cargo run -p oliphaunt --bin oliphaunt-resources -- \
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --mobile-static-module vector \
@@ -539,10 +540,10 @@ extension magic and SQL entry points. A missing selected prebuilt archive must
 fail the app build or link, not degrade into a late runtime `CREATE EXTENSION`
 failure.
 
-## Manifest
+## Canonical Metadata
 
-`NATIVE_EXTENSION_MANIFEST` is the PG18 native build inventory. It is not a
-public target-support declaration. Each row records:
+The generated extension metadata is the single PG18 extension inventory. It is
+not a public target-support declaration. Each row records:
 
 - SQL extension name;
 - required control, SQL, data, and native module assets;
@@ -552,19 +553,17 @@ public target-support declaration. Each row records:
 - mobile static-link status;
 - first-party or external artifact policy.
 
-`Extension::FIRST_PARTY_PG18_SUPPORTED` is the exact inventory of first-party
-PG18 artifacts owned by Oliphaunt; vendor-provided artifact-index rows remain a
-separate runtime input.
-
 `Extension::ALL_PG18_SUPPORTED` is the public exact-extension catalog used by
-release packages. Per-target support remains explicit in the canonical
-metadata: desktop native, mobile, and WASIX can differ where their artifacts or
-platform constraints differ. PostGIS, for example, requires the selected iOS
-and Android static dependency archives, hash-dependency sets, and runtime data
-on mobile. The runtime-resource CLI rejects attempts to mark a module without a
-mobile prebuilt artifact as complete with `--mobile-static-module`; that
-prevents apps from shipping a manifest that claims an extension is linked when
-the archive does not exist.
+application code. The native-packaging tools consume the same generated
+metadata for artifact ownership and target support; vendor-provided
+artifact-index rows remain a separate runtime input. Desktop native, mobile,
+and WASIX can differ where their artifacts or platform constraints differ.
+PostGIS, for example, requires the selected iOS and Android static dependency
+archives, hash-dependency sets, and runtime data on mobile. The
+runtime-resource CLI rejects attempts to mark a module without a mobile
+prebuilt artifact as complete with `--mobile-static-module`; that prevents apps
+from shipping a manifest that claims an extension is linked when the archive
+does not exist.
 
 `pgcrypto` is mobile-prebuilt through the first-party OpenSSL for `pgcrypto`
 static `libcrypto` archive. The Windows native producer also builds the pinned

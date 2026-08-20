@@ -254,11 +254,11 @@ const RUNTIME_MODES: readonly RuntimeMode[] = [
   },
   {
     id: 'wasix',
-    label: 'WASM family',
-    title: 'The WebAssembly runtime family',
-    useWhen: 'The app targets a WASM/WASIX host or deliberately carries portable runtime assets.',
+    label: 'WASIX family',
+    title: 'The WASIX runtime family',
+    useWhen: 'The app targets a WASIX host or deliberately carries portable runtime assets.',
     boundary:
-      'Runtime-specific WASM assets with direct Rust or a local PostgreSQL endpoint, depending on the selected API.',
+      'Runtime-specific WASIX assets with direct Rust or a local PostgreSQL endpoint, depending on the selected API.',
     groups: [
       {
         id: 'host',
@@ -266,7 +266,7 @@ const RUNTIME_MODES: readonly RuntimeMode[] = [
         nodes: [
           { id: 'app', label: 'App code', detail: 'Direct API or local URL' },
           { id: 'wasix', label: 'oliphaunt-wasix', detail: 'Own runtime assets' },
-          { id: 'postgres', label: 'PostgreSQL', detail: 'Managed by the WASM runtime' },
+          { id: 'postgres', label: 'PostgreSQL', detail: 'Managed by the WASIX runtime' },
         ],
       },
     ],
@@ -298,7 +298,7 @@ const SDK_EXAMPLES: readonly SdkExample[] = [
 async fn open_database() -> oliphaunt::Result<()> {
     let db = Oliphaunt::builder()
         .path(".oliphaunt")
-        .native_direct()
+        .direct()
         .open()
         .await?;
 
@@ -336,8 +336,7 @@ async fn open_database() -> oliphaunt::Result<()> {
 
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
-        root: appSupport.appending(path: "main.oliphaunt"),
-        mode: .nativeDirect,
+        storage: .directory(appSupport.appending(path: "main.oliphaunt")),
         extensions: []
     )
 )
@@ -367,11 +366,12 @@ try await database.close()`,
     brand: 'kotlin',
     packageName: 'dev.oliphaunt:oliphaunt-android',
     language: 'kotlin',
-    code: `val database = OliphauntAndroid.open(
+    code: `val database = Oliphaunt.open(
     context = applicationContext,
     config = OliphauntConfig(
-        root = applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
-        mode = EngineMode.NativeDirect,
+        storage = DatabaseStorage.Directory(
+            applicationContext.filesDir.resolve("main.oliphaunt").absolutePath,
+        ),
         extensions = emptyList(),
     ),
 )
@@ -404,8 +404,7 @@ database.close()`,
     code: `import { Oliphaunt } from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
-  root: 'main.oliphaunt',
-  engine: 'nativeDirect',
+  storage: { kind: 'applicationData', name: 'main' },
   extensions: [],
 });
 
@@ -437,8 +436,8 @@ await db.close();`,
     code: `import { Oliphaunt } from '@oliphaunt/ts';
 
 const db = await Oliphaunt.open({
-  engine: 'nativeBroker',
-  root: './app-data/main.oliphaunt',
+  execution: 'broker',
+  storage: { kind: 'directory', path: './app-data/main.oliphaunt' },
   extensions: [],
 });
 

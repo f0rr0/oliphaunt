@@ -1,23 +1,5 @@
 import Foundation
 
-public enum OliphauntEngineMode: String, Sendable {
-    case nativeDirect
-    case nativeBroker
-    case nativeServer
-}
-
-public enum OliphauntDurability: String, Sendable {
-    case safe
-    case balanced
-    case fastDev
-}
-
-public enum OliphauntRuntimeFootprintProfile: String, Sendable {
-    case throughput
-    case balancedMobile
-    case smallMobile
-}
-
 public struct OliphauntStartupGUC: Equatable, Sendable {
     public var name: String
     public var value: String
@@ -28,201 +10,26 @@ public struct OliphauntStartupGUC: Equatable, Sendable {
     }
 }
 
-public struct OliphauntCapabilities: Equatable, Sendable {
-    public var mode: OliphauntEngineMode
-    public var processIsolated: Bool
-    public var multipleInstances: Bool
-    public var sameInstanceLogicalReopen: Bool
-    public var instanceSwitchable: Bool
-    public var crashRestartable: Bool
-    public var independentSessions: Bool
-    public var maxClientSessions: Int
-    public var protocolRaw: Bool
-    public var protocolStream: Bool
-    public var queryCancel: Bool
-    public var backupRestore: Bool
-    public var backupFormats: [OliphauntBackupFormat]
-    public var restoreFormats: [OliphauntBackupFormat]
-    public var simpleQuery: Bool
-    public var extensions: Bool
-    public var connectionString: String?
-
-    public init(
-        mode: OliphauntEngineMode,
-        processIsolated: Bool,
-        multipleInstances: Bool = false,
-        sameInstanceLogicalReopen: Bool = false,
-        instanceSwitchable: Bool = false,
-        crashRestartable: Bool = false,
-        independentSessions: Bool,
-        maxClientSessions: Int,
-        protocolRaw: Bool = true,
-        protocolStream: Bool = true,
-        queryCancel: Bool = true,
-        backupRestore: Bool = true,
-        backupFormats: [OliphauntBackupFormat] = [.physicalArchive],
-        restoreFormats: [OliphauntBackupFormat] = [.physicalArchive],
-        simpleQuery: Bool = true,
-        extensions: Bool = true,
-        connectionString: String? = nil
-    ) {
-        self.mode = mode
-        self.processIsolated = processIsolated
-        self.multipleInstances = multipleInstances
-        self.sameInstanceLogicalReopen = sameInstanceLogicalReopen
-        self.instanceSwitchable = instanceSwitchable
-        self.crashRestartable = crashRestartable
-        self.independentSessions = independentSessions
-        self.maxClientSessions = maxClientSessions
-        self.protocolRaw = protocolRaw
-        self.protocolStream = protocolStream
-        self.queryCancel = queryCancel
-        self.backupRestore = backupRestore
-        self.backupFormats = backupFormats
-        self.restoreFormats = restoreFormats
-        self.simpleQuery = simpleQuery
-        self.extensions = extensions
-        self.connectionString = connectionString
-    }
-
-    public func supportsBackupFormat(_ format: OliphauntBackupFormat) -> Bool {
-        backupRestore && backupFormats.contains(format)
-    }
-
-    public func supportsRestoreFormat(_ format: OliphauntBackupFormat) -> Bool {
-        backupRestore && restoreFormats.contains(format)
-    }
-}
-
-public struct OliphauntEngineModeSupport: Equatable, Sendable {
-    public var mode: OliphauntEngineMode
-    public var available: Bool
-    public var capabilities: OliphauntCapabilities
-    public var unavailableReason: String?
-
-    public init(
-        mode: OliphauntEngineMode,
-        available: Bool,
-        capabilities: OliphauntCapabilities,
-        unavailableReason: String? = nil
-    ) {
-        self.mode = mode
-        self.available = available
-        self.capabilities = capabilities
-        self.unavailableReason = unavailableReason
-    }
-}
-
-public enum OliphauntSDKSupport {
-    public static let allModes: [OliphauntEngineMode] = [
-        .nativeDirect,
-        .nativeBroker,
-        .nativeServer,
-    ]
-
-    public static func capabilities(for mode: OliphauntEngineMode) -> OliphauntCapabilities {
-        switch mode {
-        case .nativeDirect:
-            OliphauntCapabilities(
-                mode: mode,
-                processIsolated: false,
-                sameInstanceLogicalReopen: true,
-                instanceSwitchable: false,
-                crashRestartable: false,
-                independentSessions: false,
-                maxClientSessions: 1
-            )
-        case .nativeBroker:
-            OliphauntCapabilities(
-                mode: mode,
-                processIsolated: true,
-                multipleInstances: true,
-                sameInstanceLogicalReopen: false,
-                instanceSwitchable: true,
-                crashRestartable: true,
-                independentSessions: false,
-                maxClientSessions: 1
-            )
-        case .nativeServer:
-            OliphauntCapabilities(
-                mode: mode,
-                processIsolated: true,
-                sameInstanceLogicalReopen: false,
-                instanceSwitchable: true,
-                crashRestartable: false,
-                independentSessions: true,
-                maxClientSessions: 32,
-                backupFormats: [.sql, .physicalArchive]
-            )
-        }
-    }
-
-    public static func nativeDirectOnly(
-        brokerReason: String,
-        serverReason: String
-    ) -> [OliphauntEngineModeSupport] {
-        [
-            OliphauntEngineModeSupport(
-                mode: .nativeDirect,
-                available: true,
-                capabilities: capabilities(for: .nativeDirect)
-            ),
-            OliphauntEngineModeSupport(
-                mode: .nativeBroker,
-                available: false,
-                capabilities: capabilities(for: .nativeBroker),
-                unavailableReason: brokerReason
-            ),
-            OliphauntEngineModeSupport(
-                mode: .nativeServer,
-                available: false,
-                capabilities: capabilities(for: .nativeServer),
-                unavailableReason: serverReason
-            ),
-        ]
-    }
-
-    public static func unavailable(reason: String) -> [OliphauntEngineModeSupport] {
-        allModes.map { mode in
-            OliphauntEngineModeSupport(
-                mode: mode,
-                available: false,
-                capabilities: capabilities(for: mode),
-                unavailableReason: reason
-            )
-        }
-    }
-}
-
 public enum OliphauntDatabaseStorage: Equatable, Sendable {
     case temporaryDirectory
     case directory(URL)
 }
 
 public struct OliphauntConfiguration: Equatable, Sendable {
-    public var mode: OliphauntEngineMode
     public var storage: OliphauntDatabaseStorage
-    public var durability: OliphauntDurability
-    public var runtimeFootprint: OliphauntRuntimeFootprintProfile
     public var startupGUCs: [OliphauntStartupGUC]
     public var username: String?
     public var database: String?
     public var extensions: [String]
 
     public init(
-        mode: OliphauntEngineMode = .nativeDirect,
         storage: OliphauntDatabaseStorage = .temporaryDirectory,
-        durability: OliphauntDurability = .balanced,
-        runtimeFootprint: OliphauntRuntimeFootprintProfile = .balancedMobile,
         startupGUCs: [OliphauntStartupGUC] = [],
         username: String? = nil,
         database: String? = nil,
         extensions: [String] = []
     ) {
-        self.mode = mode
         self.storage = storage
-        self.durability = durability
-        self.runtimeFootprint = runtimeFootprint
         self.startupGUCs = startupGUCs
         self.username = username
         self.database = database
@@ -251,21 +58,29 @@ func validateOliphauntStartupGUCs(_ gucs: [OliphauntStartupGUC]) throws {
         if name.utf8.contains(0) || guc.value.utf8.contains(0) {
             throw OliphauntError.engine("PostgreSQL startup GUC must not contain NUL bytes")
         }
-        if !name.utf8.allSatisfy({ byte in
-            (byte >= 65 && byte <= 90) ||
-                (byte >= 97 && byte <= 122) ||
-                (byte >= 48 && byte <= 57) ||
-                byte == 95 ||
-                byte == 46
-        }) {
+        if !isPortablePostgresGUCName(name) {
             throw OliphauntError.engine(
-                "PostgreSQL startup GUC name '\(guc.name)' must contain only ASCII letters, digits, '_' or '.'"
+                "PostgreSQL startup GUC name '\(guc.name)': each dot-separated component must start " +
+                    "with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'"
             )
         }
-        if guc.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw OliphauntError.engine("PostgreSQL startup GUC '\(guc.name)' value must not be empty")
+    }
+}
+
+private func isPortablePostgresGUCName(_ name: String) -> Bool {
+    name.split(separator: ".", omittingEmptySubsequences: false).allSatisfy { component in
+        guard let first = component.utf8.first,
+              isASCIIAlpha(first) || first == 95 else {
+            return false
+        }
+        return component.utf8.dropFirst().allSatisfy { byte in
+            isASCIIAlpha(byte) || (byte >= 48 && byte <= 57) || byte == 95 || byte == 36
         }
     }
+}
+
+private func isASCIIAlpha(_ byte: UInt8) -> Bool {
+    (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
 }
 
 func validateOliphauntStorage(_ storage: OliphauntDatabaseStorage) throws {
@@ -288,103 +103,13 @@ func validateOliphauntDirectory(_ directory: URL, label: String) throws {
     }
 }
 
-public enum OliphauntBackupFormat: String, Sendable {
-    case sql
-    case physicalArchive
-    case oliphauntArchive
-}
-
-public struct OliphauntBackupRequest: Equatable, Sendable {
-    public var format: OliphauntBackupFormat
-
-    public init(format: OliphauntBackupFormat = .physicalArchive) {
-        self.format = format
-    }
-}
-
-public struct OliphauntBackupArtifact: Equatable, Sendable {
-    public var format: OliphauntBackupFormat
-    public var bytes: Data
-
-    public init(format: OliphauntBackupFormat, bytes: Data) {
-        self.format = format
-        self.bytes = bytes
-    }
-}
-
-public enum OliphauntRestoreDestinationPolicy: String, Sendable {
-    case failIfExists
-    case replaceExisting
-}
-
-public struct OliphauntRestoreRequest: Equatable, Sendable {
-    public var artifact: OliphauntBackupArtifact
-    public var destination: URL
-    public var destinationPolicy: OliphauntRestoreDestinationPolicy
-
-    public init(
-        artifact: OliphauntBackupArtifact,
-        destination: URL,
-        destinationPolicy: OliphauntRestoreDestinationPolicy = .failIfExists
-    ) {
-        self.artifact = artifact
-        self.destination = destination
-        self.destinationPolicy = destinationPolicy
-    }
-
-    public func replaceExisting() -> OliphauntRestoreRequest {
-        OliphauntRestoreRequest(
-            artifact: artifact,
-            destination: destination,
-            destinationPolicy: .replaceExisting
-        )
-    }
-}
-
-public struct OliphauntBackgroundPreparationOptions: Equatable, Sendable {
-    public var cancelActiveWork: Bool
-    public var checkpointWhenIdle: Bool
-
-    public init(
-        cancelActiveWork: Bool = true,
-        checkpointWhenIdle: Bool = true
-    ) {
-        self.cancelActiveWork = cancelActiveWork
-        self.checkpointWhenIdle = checkpointWhenIdle
-    }
-}
-
-public enum OliphauntBackgroundCheckpointSkipReason: String, Equatable, Sendable {
-    case activeWork
-    case transactionActive
-}
-
-public struct OliphauntBackgroundPreparationResult: Equatable, Sendable {
-    public var cancelledActiveWork: Bool
-    public var checkpointed: Bool
-    public var skippedCheckpointReason: OliphauntBackgroundCheckpointSkipReason?
-
-    public init(
-        cancelledActiveWork: Bool,
-        checkpointed: Bool,
-        skippedCheckpointReason: OliphauntBackgroundCheckpointSkipReason? = nil
-    ) {
-        self.cancelledActiveWork = cancelledActiveWork
-        self.checkpointed = checkpointed
-        self.skippedCheckpointReason = skippedCheckpointReason
-    }
-}
-
 public enum OliphauntError: Error, Equatable, Sendable, CustomStringConvertible {
-    case runtimeUnavailable(OliphauntEngineMode)
     case databaseClosed
     case engine(String)
     case postgres(OliphauntPostgresError)
 
     public var description: String {
         switch self {
-        case .runtimeUnavailable(let mode):
-            "no Oliphaunt runtime is linked for \(mode)"
         case .databaseClosed:
             "database is closed"
         case .engine(let message):
@@ -395,80 +120,28 @@ public enum OliphauntError: Error, Equatable, Sendable, CustomStringConvertible 
     }
 }
 
-public protocol OliphauntEngine: Sendable {
+// The engine boundary is deliberately internal. Applications use
+// OliphauntDatabase; the protocol exists only to keep the facade testable and
+// to isolate the native C bridge.
+protocol OliphauntEngine: Sendable {
     func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession
-    func restore(_ request: OliphauntRestoreRequest) async throws -> URL
+    func restore(destination: URL, bytes: Data) async throws
 }
 
-public protocol OliphauntEngineSupportProvider: Sendable {
-    var supportedModes: [OliphauntEngineModeSupport] { get }
-}
-
-public protocol OliphauntSession: Sendable {
-    func capabilities() async -> OliphauntCapabilities
+protocol OliphauntSession: Sendable {
     func execProtocolRaw(_ bytes: Data) async throws -> Data
-    func execProtocolStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws
-    func backup(_ request: OliphauntBackupRequest) async throws -> OliphauntBackupArtifact
+    func backup() async throws -> Data
     func cancel() async throws
     func close() async throws
 }
 
-public extension OliphauntSession {
-    func execProtocolStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws {
-        try onChunk(try await execProtocolRaw(bytes))
-    }
-}
-
-public struct RuntimeUnavailableEngine: OliphauntEngine, OliphauntEngineSupportProvider {
-    public init() {}
-
-    public var supportedModes: [OliphauntEngineModeSupport] {
-        OliphauntSDKSupport.unavailable(reason: "no native Oliphaunt runtime is linked")
+struct OliphauntDefaultEngine: OliphauntEngine {
+    func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
+        try await OliphauntNativeDirectEngine().open(configuration: configuration)
     }
 
-    public func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
-        throw OliphauntError.runtimeUnavailable(configuration.mode)
-    }
-
-    public func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
-        throw OliphauntError.engine(
-            "no native Oliphaunt restore runtime is linked for \(request.artifact.format.rawValue)"
-        )
-    }
-}
-
-public struct OliphauntDefaultEngine: OliphauntEngine, OliphauntEngineSupportProvider {
-    public static let brokerUnavailableReason =
-        "Swift broker mode requires a platform broker adapter; it is not aliased to direct mode"
-    public static let serverUnavailableReason =
-        "Swift server mode requires a platform server adapter; it is not aliased to direct mode"
-
-    public init() {}
-
-    public var supportedModes: [OliphauntEngineModeSupport] {
-        OliphauntSDKSupport.nativeDirectOnly(
-            brokerReason: Self.brokerUnavailableReason,
-            serverReason: Self.serverUnavailableReason
-        )
-    }
-
-    public func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
-        switch configuration.mode {
-        case .nativeDirect:
-            return try await OliphauntNativeDirectEngine().open(configuration: configuration)
-        case .nativeBroker, .nativeServer:
-            throw OliphauntError.runtimeUnavailable(configuration.mode)
-        }
-    }
-
-    public func restore(_ request: OliphauntRestoreRequest) async throws -> URL {
-        try await OliphauntNativeDirectEngine().restore(request)
+    func restore(destination: URL, bytes: Data) async throws {
+        try await OliphauntNativeDirectEngine().restore(destination: destination, bytes: bytes)
     }
 }
 
@@ -498,9 +171,9 @@ private actor OliphauntAsyncSerialGate {
 public actor OliphauntDatabase {
     private var session: (any OliphauntSession)?
     private var closing = false
+    private var poisonedMessage: String?
     private var activeTransactionToken: UInt64?
     private var nextTransactionToken: UInt64 = 1
-    private var activeOperationCount: Int = 0
     private let operationGate = OliphauntAsyncSerialGate()
 
     private init(session: any OliphauntSession) {
@@ -508,8 +181,14 @@ public actor OliphauntDatabase {
     }
 
     public static func open(
+        configuration: OliphauntConfiguration = .init()
+    ) async throws -> OliphauntDatabase {
+        try await open(configuration: configuration, engine: OliphauntDefaultEngine())
+    }
+
+    static func open(
         configuration: OliphauntConfiguration = .init(),
-        engine: any OliphauntEngine = OliphauntDefaultEngine()
+        engine: any OliphauntEngine
     ) async throws -> OliphauntDatabase {
         try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
@@ -519,123 +198,39 @@ public actor OliphauntDatabase {
         normalized.extensions = try OliphauntRuntimeResources.normalizedExtensionIds(
             configuration.extensions
         )
-        let session = try await engine.open(configuration: normalized)
-        return OliphauntDatabase(session: session)
+        return OliphauntDatabase(session: try await engine.open(configuration: normalized))
     }
 
-    public static func restore(
-        _ request: OliphauntRestoreRequest,
-        engine: any OliphauntEngine = OliphauntDefaultEngine()
-    ) async throws -> URL {
-        try validateOliphauntDirectory(request.destination, label: "restore destination")
-        guard request.artifact.format == .physicalArchive else {
-            throw OliphauntError.engine(
-                "restore currently requires a physicalArchive artifact, got \(request.artifact.format.rawValue)"
-            )
-        }
-        return try await engine.restore(request)
+    public static func restore(destination: URL, bytes: Data) async throws {
+        try await restore(
+            destination: destination,
+            bytes: bytes,
+            engine: OliphauntDefaultEngine()
+        )
     }
 
-    public static func supportedModes(
-        engine: any OliphauntEngine = OliphauntDefaultEngine()
-    ) -> [OliphauntEngineModeSupport] {
-        guard let supportProvider = engine as? any OliphauntEngineSupportProvider else {
-            return OliphauntSDKSupport.unavailable(
-                reason: "engine does not publish static mode support"
-            )
-        }
-        return supportProvider.supportedModes
-    }
-
-    public func capabilities() async throws -> OliphauntCapabilities {
-        try await runSessionOperation(allowDuringTransaction: true) { session in
-            await session.capabilities()
-        }
-    }
-
-    public func connectionString() async throws -> String? {
-        try await capabilities().connectionString
-    }
-
-    public func supportsBackupFormat(_ format: OliphauntBackupFormat) async throws -> Bool {
-        try await capabilities().supportsBackupFormat(format)
-    }
-
-    public func supportsRestoreFormat(_ format: OliphauntBackupFormat) async throws -> Bool {
-        try await capabilities().supportsRestoreFormat(format)
+    static func restore(
+        destination: URL,
+        bytes: Data,
+        engine: any OliphauntEngine
+    ) async throws {
+        try validateOliphauntDirectory(destination, label: "restore destination")
+        try await engine.restore(destination: destination, bytes: bytes)
     }
 
     public func execProtocolRaw(_ bytes: Data) async throws -> Data {
         try await execProtocolRaw(bytes, transactionToken: nil)
     }
 
-    public func execProtocolStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws {
-        try await execProtocolStream(bytes, transactionToken: nil, onChunk: onChunk)
-    }
-
-    public func backup(_ request: OliphauntBackupRequest = OliphauntBackupRequest()) async throws -> OliphauntBackupArtifact {
+    public func backup() async throws -> Data {
         try validateTransactionAccess(token: nil)
         return try await runSessionOperation { session in
-            let capabilities = await session.capabilities()
-            guard capabilities.supportsBackupFormat(request.format) else {
-                throw OliphauntError.engine(
-                    "\(request.format.rawValue) backup is not supported by \(capabilities.mode.rawValue)"
-                )
-            }
-            return try await session.backup(request)
+            try await session.backup()
         }
     }
 
     public func checkpoint() async throws {
         _ = try await execute("CHECKPOINT")
-    }
-
-    public func prepareForBackground(
-        _ options: OliphauntBackgroundPreparationOptions = OliphauntBackgroundPreparationOptions()
-    ) async throws -> OliphauntBackgroundPreparationResult {
-        let session = try liveSession()
-        let hadActiveWork = activeOperationCount > 0
-        let cancelledActiveWork: Bool
-        if options.cancelActiveWork && hadActiveWork {
-            try await session.cancel()
-            cancelledActiveWork = true
-        } else {
-            cancelledActiveWork = false
-        }
-
-        guard options.checkpointWhenIdle else {
-            return OliphauntBackgroundPreparationResult(
-                cancelledActiveWork: cancelledActiveWork,
-                checkpointed: false
-            )
-        }
-        if activeTransactionToken != nil {
-            return OliphauntBackgroundPreparationResult(
-                cancelledActiveWork: cancelledActiveWork,
-                checkpointed: false,
-                skippedCheckpointReason: .transactionActive
-            )
-        }
-        if hadActiveWork || activeOperationCount > 0 {
-            return OliphauntBackgroundPreparationResult(
-                cancelledActiveWork: cancelledActiveWork,
-                checkpointed: false,
-                skippedCheckpointReason: .activeWork
-            )
-        }
-
-        try await checkpoint()
-        return OliphauntBackgroundPreparationResult(
-            cancelledActiveWork: cancelledActiveWork,
-            checkpointed: true
-        )
-    }
-
-    public func resumeFromBackground() async throws {
-        _ = try await execute("SELECT 1")
     }
 
     public func transaction<T: Sendable>(
@@ -649,21 +244,48 @@ public actor OliphauntDatabase {
         activeTransactionToken = token
         let transaction = OliphauntTransaction(database: self, token: token)
 
+        let result: T
         do {
-            _ = try await transaction.execute("BEGIN")
-            let result = try await body(transaction)
-            _ = try await transaction.execute("COMMIT")
-            activeTransactionToken = nil
-            return result
+            let begin = try await transaction.execute("BEGIN")
+            guard begin.commandTag == "BEGIN" else {
+                throw OliphauntError.engine("BEGIN returned unexpected command tag \(begin.commandTag ?? "<none>")")
+            }
+            result = try await body(transaction)
         } catch {
             do {
-                _ = try await transaction.execute("ROLLBACK")
-            } catch {
-                // Preserve the original transaction failure; rollback is best-effort cleanup.
+                let rollback = try await transaction.execute("ROLLBACK")
+                guard rollback.commandTag == "ROLLBACK" else {
+                    throw OliphauntError.engine(
+                        "ROLLBACK returned unexpected command tag \(rollback.commandTag ?? "<none>")"
+                    )
+                }
+            } catch let rollbackError {
+                poisonedMessage = "transaction rollback failed; close and reopen the database: \(rollbackError)"
             }
             activeTransactionToken = nil
             throw error
         }
+
+        let commit: OliphauntCommandResult
+        do {
+            commit = try await transaction.execute("COMMIT")
+        } catch {
+            poisonedMessage = "transaction COMMIT outcome is unknown; close and reopen the database: \(error)"
+            activeTransactionToken = nil
+            throw error
+        }
+        guard commit.commandTag == "COMMIT" else {
+            if commit.commandTag != "ROLLBACK" {
+                poisonedMessage =
+                    "transaction COMMIT outcome is unknown after command tag \(commit.commandTag ?? "<none>"); close and reopen the database"
+            }
+            activeTransactionToken = nil
+            throw OliphauntError.engine(
+                "COMMIT returned unexpected command tag \(commit.commandTag ?? "<none>")"
+            )
+        }
+        activeTransactionToken = nil
+        return result
     }
 
     public func cancel() async throws {
@@ -674,6 +296,9 @@ public actor OliphauntDatabase {
         guard let closingSession = session else {
             return
         }
+        guard activeTransactionToken == nil else {
+            throw OliphauntError.engine(Self.sessionPinnedMessage)
+        }
         guard !closing else {
             throw OliphauntError.engine("database close is already in progress")
         }
@@ -681,8 +306,7 @@ public actor OliphauntDatabase {
         await operationGate.acquire()
         do {
             try await closingSession.close()
-            self.session = nil
-            activeTransactionToken = nil
+            session = nil
             closing = false
             await operationGate.release()
         } catch {
@@ -696,50 +320,32 @@ public actor OliphauntDatabase {
         guard let session, !closing else {
             throw OliphauntError.databaseClosed
         }
+        if let poisonedMessage {
+            throw OliphauntError.engine(poisonedMessage)
+        }
         return session
     }
 
     fileprivate func execProtocolRaw(_ bytes: Data, transactionToken: UInt64?) async throws -> Data {
-        _ = try liveSession()
         try validateTransactionAccess(token: transactionToken)
         return try await runSessionOperation(transactionToken: transactionToken) {
             try await $0.execProtocolRaw(bytes)
         }
     }
 
-    fileprivate func execProtocolStream(
-        _ bytes: Data,
-        transactionToken: UInt64?,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws {
-        _ = try liveSession()
-        try validateTransactionAccess(token: transactionToken)
-        try await runSessionOperation(transactionToken: transactionToken) {
-            try await $0.execProtocolStream(bytes, onChunk: onChunk)
-        }
-    }
-
     private func runSessionOperation<T: Sendable>(
         transactionToken: UInt64? = nil,
-        allowDuringTransaction: Bool = false,
         _ body: (any OliphauntSession) async throws -> T
     ) async throws -> T {
-        if !allowDuringTransaction {
-            try validateTransactionAccess(token: transactionToken)
-        }
+        try validateTransactionAccess(token: transactionToken)
         await operationGate.acquire()
-        activeOperationCount += 1
         do {
             let session = try liveSession()
-            if !allowDuringTransaction {
-                try validateTransactionAccess(token: transactionToken)
-            }
+            try validateTransactionAccess(token: transactionToken)
             let result = try await body(session)
-            activeOperationCount -= 1
             await operationGate.release()
             return result
         } catch {
-            activeOperationCount -= 1
             await operationGate.release()
             throw error
         }
@@ -769,19 +375,11 @@ public struct OliphauntTransaction: Sendable {
         try await database.execProtocolRaw(bytes, transactionToken: token)
     }
 
-    public func execProtocolStream(
-        _ bytes: Data,
-        onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws {
-        try await database.execProtocolStream(bytes, transactionToken: token, onChunk: onChunk)
-    }
 }
-
 
 extension OliphauntConfiguration {
     func postgresStartupArgs(sharedPreloadLibraries: [String] = []) -> [String] {
-        var args = runtimeFootprint.postgresStartupArgs()
-        args.append(contentsOf: durability.postgresStartupArgs())
+        var args: [String] = []
         for guc in startupGUCs {
             args.append("-c")
             args.append("\(guc.name.trimmingCharacters(in: .whitespacesAndNewlines))=\(guc.value)")
@@ -792,75 +390,5 @@ extension OliphauntConfiguration {
             args.append("shared_preload_libraries=\(preloadLibraries.joined(separator: ","))")
         }
         return args
-    }
-}
-
-private extension OliphauntRuntimeFootprintProfile {
-    func postgresStartupArgs() -> [String] {
-        switch self {
-        case .throughput:
-            return [
-                "-c", "shared_buffers=128MB",
-                "-c", "wal_buffers=4MB",
-                "-c", "min_wal_size=80MB"
-            ]
-        case .balancedMobile:
-            return [
-                "-c", "max_connections=1",
-                "-c", "superuser_reserved_connections=0",
-                "-c", "reserved_connections=0",
-                "-c", "autovacuum_worker_slots=1",
-                "-c", "max_wal_senders=0",
-                "-c", "max_replication_slots=0",
-                "-c", "shared_buffers=32MB",
-                "-c", "wal_buffers=-1",
-                "-c", "min_wal_size=32MB",
-                "-c", "max_wal_size=64MB",
-                "-c", "io_method=sync",
-                "-c", "io_max_concurrency=1"
-            ]
-        case .smallMobile:
-            return [
-                "-c", "max_connections=1",
-                "-c", "superuser_reserved_connections=0",
-                "-c", "reserved_connections=0",
-                "-c", "autovacuum_worker_slots=1",
-                "-c", "max_wal_senders=0",
-                "-c", "max_replication_slots=0",
-                "-c", "shared_buffers=8MB",
-                "-c", "wal_buffers=256kB",
-                "-c", "min_wal_size=32MB",
-                "-c", "max_wal_size=64MB",
-                "-c", "work_mem=1MB",
-                "-c", "maintenance_work_mem=16MB",
-                "-c", "io_method=sync",
-                "-c", "io_max_concurrency=1"
-            ]
-        }
-    }
-}
-
-private extension OliphauntDurability {
-    func postgresStartupArgs() -> [String] {
-        switch self {
-        case .safe:
-            return [
-                "-c", "fsync=on",
-                "-c", "full_page_writes=on",
-                "-c", "synchronous_commit=on"
-            ]
-        case .balanced:
-            return [
-                "-c", "fsync=on",
-                "-c", "full_page_writes=on",
-                "-c", "synchronous_commit=off"
-            ]
-        case .fastDev:
-            return [
-                "-c", "fsync=off",
-                "-c", "full_page_writes=off",
-                "-c", "synchronous_commit=off"
-            ]
-        }
     }
 }

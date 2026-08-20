@@ -63,6 +63,9 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.4
+      typedoc:
+        specifier: 'catalog:'
+        version: 0.28.19(typescript@6.0.3)
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -246,18 +249,6 @@ importers:
       '@oliphaunt/node-direct-win32-x64-msvc':
         specifier: workspace:0.1.1
         version: link:../../runtimes/node-direct/packages/win32-x64-msvc
-      '@oliphaunt/tools-darwin-arm64':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/darwin-arm64
-      '@oliphaunt/tools-linux-arm64-gnu':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu
-      '@oliphaunt/tools-linux-x64-gnu':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu
-      '@oliphaunt/tools-win32-x64-msvc':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc
 
   src/sdks/react-native:
     devDependencies:
@@ -8343,7 +8334,9 @@ snapshots:
       metro-config: 0.84.4
       metro-runtime: 0.84.4
     transitivePeerDependencies:
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 

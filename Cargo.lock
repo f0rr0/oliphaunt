@@ -2356,23 +2356,13 @@ name = "oliphaunt"
 version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
- "ed25519-dalek",
- "flate2",
  "fs2",
- "futures-util",
  "getrandom 0.3.4",
  "libloading",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "sqlx",
- "tar",
  "tokio",
- "tokio-postgres",
- "toml 0.9.12+spec-1.1.0",
- "ureq",
- "zip",
- "zstd",
 ]
 
 [[package]]
@@ -2410,14 +2400,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-native-packaging"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "flate2",
+ "oliphaunt",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "ureq",
+ "zip",
+ "zstd",
+]
+
+[[package]]
 name = "oliphaunt-perf"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "directories",
  "futures-util",
  "oliphaunt",
- "oliphaunt-wasix",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2443,7 +2449,6 @@ dependencies = [
  "dunce",
  "filetime",
  "flate2",
- "hex",
  "liboliphaunt-wasix-aot-aarch64-apple-darwin",
  "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
  "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
@@ -2455,7 +2460,6 @@ dependencies = [
  "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
  "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
  "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
- "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",

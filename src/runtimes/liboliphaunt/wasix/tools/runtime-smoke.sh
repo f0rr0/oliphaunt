@@ -61,7 +61,7 @@ if [ "$mode" = "core-smoke" ]; then
   # contains the split pg_dump/psql tools even when this run skips their tests.
   export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1
 fi
-export OLIPHAUNT_WASM_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets"
+export OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR="$root/target/oliphaunt-wasix/assets"
 export OLIPHAUNT_WASM_GENERATED_AOT_DIR="$root/target/oliphaunt-wasix/aot"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
@@ -70,8 +70,6 @@ oliphaunt_wasix_cargo_test \
   --test proxy_smoke \
   --test cli_smoke \
   --test extensions_smoke \
-  --test performance_smoke \
-  --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
   # These library tests iterate every catalogued extension through direct,

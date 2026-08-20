@@ -253,14 +253,16 @@ tools/dev/bootstrap-tools.sh
 tools/dev/bun.sh tools/dev/install-hooks.mjs
 ```
 
-`src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs` starts the real WASM backend and
+`src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs` starts the real WASIX backend and
 is intentionally slower than the protocol unit tests.
 
 ## Maintenance Utilities
 
 The repository includes maintenance commands:
 
-- `oliphaunt-wasix-dump` is the logical dump CLI entry point.
+- `oliphaunt-wasix-dump` is the logical dump CLI entry point. Its typed
+  `--database`, `--username`, and repeatable `--extension` options configure
+  the embedded server; arguments after `--` shape `pg_dump` output.
 - `oliphaunt-wasix-proxy` exposes a local PostgreSQL socket backed by the embedded
   runtime.
 - `xtask assets template` generates the architecture-independent PGDATA
@@ -390,7 +392,7 @@ tools/dev/bun.sh tools/release/release-check.mjs
 ```
 
 Developers should not be expected to build every target locally. Local runtime
-work validates the host target; the `CI` workflow's WASM runtime/AOT lane is
+work validates the host target; the `CI` workflow's WASIX runtime/AOT lane is
 the authority for the full macOS, Linux, and Windows AOT matrix.
 
 Contributors do not need upstream source checkouts for normal Rust, docs,

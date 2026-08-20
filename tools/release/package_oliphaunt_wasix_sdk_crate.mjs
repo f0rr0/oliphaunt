@@ -20,6 +20,25 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
+const PACKAGE_FIXTURES = Object.freeze([
+  ['src/testdata/database-root.json', 'src/shared/fixtures/storage/database-root.json'],
+  [
+    'src/testdata/physical-archive-wasix-v1.properties',
+    'src/shared/fixtures/storage/physical-archive-wasix-v1.properties',
+  ],
+  [
+    'src/testdata/physical-backup-wal-range-v1.properties',
+    'src/shared/fixtures/storage/physical-backup-wal-range-v1.properties',
+  ],
+  [
+    'src/testdata/postgres-behavior-contract.json',
+    'src/shared/fixtures/postgres/behavior-contract.json',
+  ],
+  [
+    'src/testdata/protocol-query-response-cases.json',
+    'src/shared/fixtures/protocol/query-response-cases.json',
+  ],
+]);
 
 function fail(message) {
   console.error(`package_oliphaunt_wasix_sdk_crate.mjs: ${message}`);
@@ -148,11 +167,24 @@ async function copySourceTree(source, destination, ignoredNames) {
   });
 }
 
+async function validatePackageFixtures(sourceDir) {
+  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+    const [packaged, canonical] = await Promise.all([
+      fs.readFile(path.join(sourceDir, packageFixture)),
+      fs.readFile(path.join(root, canonicalFixture)),
+    ]);
+    if (!packaged.equals(canonical)) {
+      fail(`${rel(path.join(sourceDir, packageFixture))} must exactly match ${canonicalFixture}`);
+    }
+  }
+}
+
 export async function prepareOliphauntWasixReleaseSource(version) {
   const runtimeVersion = await currentLiboliphauntWasixVersion();
   const registryPackages = await wasixCargoRegistryPackages();
   const sourceDir = path.join(root, 'src/bindings/wasix-rust/crates/oliphaunt-wasix');
   const stageDir = path.join(root, 'target/release/cargo-package-sources/oliphaunt-wasix');
+  await validatePackageFixtures(sourceDir);
   await copySourceTree(sourceDir, stageDir, new Set(['target']));
   const cargoToml = path.join(stageDir, 'Cargo.toml');
   const rendered = renderOliphauntWasixReleaseCargoToml(

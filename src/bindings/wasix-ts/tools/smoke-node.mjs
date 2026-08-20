@@ -31,8 +31,16 @@ const runtime = ${JSON.stringify(runtime)};
 const runtimeName = ${JSON.stringify(runtimeName)};
 const packageOnly = ${JSON.stringify(packageOnly)};
 const pgtap = packageOnly ? undefined : (await import(extension)).default;
-const { default: Oliphaunt, PostgresError, WasixStorageError, simpleQuery } = await import(candidate);
+const { default: Oliphaunt, PostgresError, WasixStorageError } = await import(candidate);
 const { directory } = await import(candidate + '/storage/' + runtime);
+const simpleQuery = (sql) => {
+  const body = new TextEncoder().encode(sql + '\\0');
+  const message = new Uint8Array(body.length + 5);
+  message[0] = 0x51;
+  new DataView(message.buffer).setUint32(1, body.length + 4);
+  message.set(body, 5);
+  return message;
+};
 
 const resolved = import.meta.resolve(candidate);
 if (!resolved.endsWith('/lib/${expectedEntrypoint}')) {
@@ -78,7 +86,7 @@ if (
   throw new Error('persistent storage caller-worker guard failed: ' + JSON.stringify(callerResult));
 }
 try {
-  await access(new URL('./nested-worker-storage/.oliphaunt-wasix-ts', import.meta.url));
+  await access(new URL('./nested-worker-storage', import.meta.url));
   throw new Error('caller-worker rejection created persistent storage state');
 } catch (error) {
   if (error?.code !== 'ENOENT') throw error;
@@ -96,6 +104,7 @@ if (packageOnly) {
   }));
 } else {
 async function verifyMemory(execution) {
+  // OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart
   const db = await Oliphaunt.open({ execution, extensions: [pgtap] });
   const version = (await db.query('SELECT pgtap_version()::text AS version')).getText(0, 'version');
   const retainedProtocol = await db.execProtocolRaw(

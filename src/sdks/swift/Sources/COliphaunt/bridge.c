@@ -12,12 +12,6 @@ typedef int32_t (*OliphauntExecProtocolFn)(
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out);
-typedef int32_t (*OliphauntExecProtocolStreamFn)(
-    OliphauntHandle *handle,
-    const uint8_t *request,
-    size_t request_len,
-    OliphauntStreamCallback callback,
-    void *callback_context);
 typedef int32_t (*OliphauntCancelFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntDetachFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntCloseFn)(OliphauntHandle *handle);
@@ -25,11 +19,9 @@ typedef int32_t (*OliphauntRegisterStaticExtensionsFn)(const OliphauntStaticExte
 typedef const OliphauntStaticExtension *(*OliphauntSelectedStaticExtensionsFn)(size_t *count);
 typedef const char *(*OliphauntLastErrorFn)(OliphauntHandle *handle);
 typedef const char *(*OliphauntVersionFn)(void);
-typedef uint64_t (*OliphauntCapabilitiesFn)(void);
 typedef void (*OliphauntFreeResponseFn)(OliphauntResponse *response);
 typedef int32_t (*OliphauntBackupFn)(
     OliphauntHandle *handle,
-    const OliphauntBackupOptions *options,
     OliphauntResponse *out);
 typedef int32_t (*OliphauntRestoreFn)(const OliphauntRestoreOptions *options);
 
@@ -38,14 +30,12 @@ typedef struct OliphauntSymbols {
     bool owns_library;
     OliphauntInitFn init;
     OliphauntExecProtocolFn exec_protocol;
-    OliphauntExecProtocolStreamFn exec_protocol_stream;
     OliphauntCancelFn cancel;
     OliphauntDetachFn detach;
     OliphauntCloseFn close;
     OliphauntRegisterStaticExtensionsFn register_static_extensions;
     OliphauntLastErrorFn last_error;
     OliphauntVersionFn version;
-    OliphauntCapabilitiesFn capabilities;
     OliphauntFreeResponseFn free_response;
     OliphauntBackupFn backup;
     OliphauntRestoreFn restore;
@@ -129,14 +119,12 @@ static int load_symbols(const char *library_path, OliphauntSymbols *symbols) {
 
     if (load_symbol(symbols, "oliphaunt_init", (void **)&symbols->init) != 0 ||
         load_symbol(symbols, "oliphaunt_exec_protocol", (void **)&symbols->exec_protocol) != 0 ||
-        load_symbol(symbols, "oliphaunt_exec_protocol_stream", (void **)&symbols->exec_protocol_stream) != 0 ||
         load_symbol(symbols, "oliphaunt_cancel", (void **)&symbols->cancel) != 0 ||
         load_symbol(symbols, "oliphaunt_detach", (void **)&symbols->detach) != 0 ||
         load_symbol(symbols, "oliphaunt_close", (void **)&symbols->close) != 0 ||
         load_symbol(symbols, "oliphaunt_register_static_extensions", (void **)&symbols->register_static_extensions) != 0 ||
         load_symbol(symbols, "oliphaunt_last_error", (void **)&symbols->last_error) != 0 ||
         load_symbol(symbols, "oliphaunt_version", (void **)&symbols->version) != 0 ||
-        load_symbol(symbols, "oliphaunt_capabilities", (void **)&symbols->capabilities) != 0 ||
         load_symbol(symbols, "oliphaunt_free_response", (void **)&symbols->free_response) != 0 ||
         load_symbol(symbols, "oliphaunt_backup", (void **)&symbols->backup) != 0 ||
         load_symbol(symbols, "oliphaunt_restore", (void **)&symbols->restore) != 0) {
@@ -244,41 +232,12 @@ int32_t oliphaunt_swift_exec_protocol(
     return rc;
 }
 
-int32_t oliphaunt_swift_exec_protocol_stream(
-    OliphauntSession *session,
-    const uint8_t *request,
-    size_t request_len,
-    OliphauntStreamCallback callback,
-    void *callback_context) {
-    if (session == NULL || callback == NULL) {
-        set_session_error(session, "invalid oliphaunt_swift_exec_protocol_stream arguments");
-        return -1;
-    }
-    int32_t rc = session->symbols.exec_protocol_stream(
-        session->handle,
-        request,
-        request_len,
-        callback,
-        callback_context);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
-    }
-    return rc;
-}
-
-int32_t oliphaunt_swift_backup(OliphauntSession *session, uint32_t format, OliphauntResponse *out) {
+int32_t oliphaunt_swift_backup(OliphauntSession *session, OliphauntResponse *out) {
     if (session == NULL || out == NULL) {
         set_session_error(session, "invalid oliphaunt_swift_backup arguments");
         return -1;
     }
-    const OliphauntBackupOptions options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .format = format,
-        .generated_files = NULL,
-        .generated_file_count = 0,
-        .reserved_flags = 0,
-    };
-    int32_t rc = session->symbols.backup(session->handle, &options, out);
+    int32_t rc = session->symbols.backup(session->handle, out);
     if (rc != 0 && session->symbols.last_error != NULL) {
         set_session_error(session, session->symbols.last_error(session->handle));
     }
@@ -341,13 +300,6 @@ const char *oliphaunt_swift_version(OliphauntSession *session) {
         return "";
     }
     return session->symbols.version();
-}
-
-uint64_t oliphaunt_swift_capabilities(OliphauntSession *session) {
-    if (session == NULL || session->symbols.capabilities == NULL) {
-        return 0;
-    }
-    return session->symbols.capabilities();
 }
 
 void oliphaunt_swift_free_response(OliphauntSession *session, OliphauntResponse *response) {

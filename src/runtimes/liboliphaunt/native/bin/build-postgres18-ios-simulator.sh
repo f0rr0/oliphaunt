@@ -62,7 +62,7 @@ liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c"
-  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_bootstrap.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_trace.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c"
@@ -308,7 +308,6 @@ artifact_ready() {
     _oliphaunt_register_static_extensions \
     _oliphaunt_last_error \
     _oliphaunt_version \
-    _oliphaunt_capabilities \
     _oliphaunt_free_response \
     _oliphaunt_embedded_kill \
     _oliphaunt_embedded_raise

@@ -8,17 +8,10 @@ import type { NativeHandle, NativeOpenConfig } from './types.js';
 import { envVar } from './common.js';
 
 export type NodeDirectAddon = {
-  version(libraryPath: string): string;
-  capabilities(libraryPath: string): bigint | number;
   open(config: NodeDirectOpenConfig): NativeHandle;
   execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array | ArrayBuffer>;
   execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
-  execProtocolStream(
-    handle: NativeHandle,
-    request: Uint8Array,
-    onChunk: (chunk: Uint8Array | ArrayBuffer) => void,
-  ): void;
-  backup(handle: NativeHandle, format: number): Uint8Array | ArrayBuffer;
+  backup(handle: NativeHandle): Uint8Array | ArrayBuffer;
   restore(options: NodeDirectRestoreOptions): void;
   cancel(handle: NativeHandle): void;
   detach(handle: NativeHandle): void;
@@ -32,9 +25,7 @@ export type NodeDirectOpenConfig = NativeOpenConfig & {
 export type NodeDirectRestoreOptions = {
   libraryPath: string;
   destination: string;
-  format: number;
   bytes: Uint8Array;
-  replaceExisting: boolean;
 };
 
 type PackageMetadata = {
@@ -207,12 +198,9 @@ function normalizeAddon(loaded: unknown): NodeDirectAddon {
 
 function validateAddon(addon: NodeDirectAddon, addonPath: string): void {
   for (const name of [
-    'version',
-    'capabilities',
     'open',
     'execProtocolRaw',
     'execSimpleQuery',
-    'execProtocolStream',
     'backup',
     'restore',
     'cancel',

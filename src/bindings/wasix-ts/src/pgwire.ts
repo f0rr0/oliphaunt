@@ -84,8 +84,8 @@ function throwStartupPostgresError(response: Uint8Array): never {
 }
 
 function assertStartupValue(label: string, value: string): void {
-  if (value.length === 0 || value.includes('\0')) {
-    throw new Error(`${label} must be a non-empty string without NUL bytes`);
+  if (value.includes('\0')) {
+    throw new Error(`${label} must not contain NUL bytes`);
   }
 }
 

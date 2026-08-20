@@ -1,12 +1,10 @@
-import {
-  applyNativeIcuDataEnvironment,
-  applyNativeRuntimeLibraryEnvironment,
-  assertSupportedDirectBackupFormat,
-  nativeBackupFormat,
-} from './common.js';
+import { applyNativeIcuDataEnvironment, applyNativeRuntimeLibraryEnvironment } from './common.js';
 import { loadNodeDirectAddon } from './node-addon.js';
 import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
-import type { BackupFormat } from '../types.js';
+import { spawn } from 'node:child_process';
+import { mkdir, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { publishNativeDescriptor, validateManagedRoot } from '../root-descriptor.js';
 import type {
   NativeBinding,
   NativeBindingOptions,
@@ -17,7 +15,6 @@ import type {
 
 export async function createNodeNativeBinding(
   options: NativeBindingOptions = {},
-  runtime: 'node' | 'bun' = 'node',
 ): Promise<NativeBinding> {
   const install = await resolveNodeNativeInstall(options.libraryPath);
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
@@ -25,19 +22,6 @@ export async function createNodeNativeBinding(
   const addon = await loadNodeDirectAddon(options.nodeAddonPath);
 
   return {
-    runtime,
-    rawProtocolTransport: 'node-addon',
-    // Raw and simple queries run as Node-API async work so the event loop can
-    // deliver cancel(). The legacy callback stream entry point is synchronous;
-    // keep it out of the public capability until it has the same property.
-    protocolStream: false,
-    defaultRuntimeDirectory: install.runtimeDirectory,
-    version(): string {
-      return addon.version(install.libraryPath);
-    },
-    capabilities(): bigint {
-      return BigInt(addon.capabilities(install.libraryPath));
-    },
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
       const extensionInstall = await prepareNodeExtensionInstall(
         {
@@ -51,6 +35,7 @@ export async function createNodeNativeBinding(
         },
       );
       applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
+      await prepareNodePgdata(config.pgdata, config.username, extensionInstall.runtimeDirectory);
       return addon.open({
         ...config,
         libraryPath: extensionInstall.libraryPath,
@@ -64,22 +49,14 @@ export async function createNodeNativeBinding(
     async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
       return toUint8Array(await addon.execSimpleQuery(handle, sql));
     },
-    backup(handle: NativeHandle, format: BackupFormat): Uint8Array {
-      assertSupportedDirectBackupFormat(format);
-      return toUint8Array(addon.backup(handle, nativeBackupFormat(format)));
+    backup(handle: NativeHandle): Uint8Array {
+      return toUint8Array(addon.backup(handle));
     },
     restore(options: NativeRestoreOptions): void {
-      if (options.format !== 'physicalArchive') {
-        throw new Error(
-          `restore currently requires a physicalArchive artifact, got ${options.format}`,
-        );
-      }
       addon.restore({
         libraryPath: install.libraryPath,
         destination: options.destination,
-        format: nativeBackupFormat(options.format),
         bytes: options.bytes,
-        replaceExisting: options.replaceExisting,
       });
     },
     cancel(handle: NativeHandle): void {
@@ -89,6 +66,59 @@ export async function createNodeNativeBinding(
       addon.detach(handle);
     },
   };
+}
+
+async function prepareNodePgdata(
+  pgdata: string,
+  username: string,
+  runtimeDirectory?: string,
+): Promise<void> {
+  const root = dirname(pgdata);
+  if (await validateManagedRoot(root)) return;
+  if (runtimeDirectory === undefined) {
+    throw new Error('initializing a native database requires runtimeDirectory with initdb');
+  }
+  await mkdir(pgdata);
+  const executable = join(
+    runtimeDirectory,
+    'bin',
+    process.platform === 'win32' ? 'initdb.exe' : 'initdb',
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        executable,
+        [
+          '-D',
+          pgdata,
+          '-U',
+          username,
+          '--auth=trust',
+          '--no-sync',
+          '--locale-provider=libc',
+          '--locale=C',
+          '--encoding=UTF8',
+        ],
+        { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+      const errors: Buffer[] = [];
+      child.stderr.on('data', (chunk: Buffer) => errors.push(chunk));
+      child.once('error', reject);
+      child.once('exit', (code) =>
+        code === 0
+          ? resolve()
+          : reject(
+              new Error(
+                `initdb failed with exit code ${code ?? 'unknown'}: ${Buffer.concat(errors).toString('utf8').trim()}`,
+              ),
+            ),
+      );
+    });
+    await publishNativeDescriptor(root);
+  } catch (error) {
+    await rm(pgdata, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function toUint8Array(value: Uint8Array | ArrayBuffer): Uint8Array {

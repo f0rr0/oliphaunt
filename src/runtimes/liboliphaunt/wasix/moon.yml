@@ -233,8 +233,14 @@ tasks:
     tags: ["regression", "runtime"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh regression"
     inputs:
+      - "/.release-please-manifest.json"
       - "/Cargo.lock"
       - "/Cargo.toml"
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
       - "/rust-toolchain.toml"
       - "/src/postgres/versions/18/**/*"
       - "/src/sources/toolchains/**/*"
@@ -247,7 +253,13 @@ tasks:
       - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/shared/js-core/**/*"
       - "/tools/runtime/**/*"
+      - "/tools/release/wasix-runtime-npm-carrier.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/release-notices.mjs"
       - "/tools/xtask/**/*"
       - "/tools/policy/verify-source-tree.py"
     options:

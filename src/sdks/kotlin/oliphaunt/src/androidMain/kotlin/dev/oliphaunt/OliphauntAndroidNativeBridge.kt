@@ -19,32 +19,15 @@ internal object OliphauntAndroidNativeBridge {
         request: ByteArray,
     ): ByteArray
 
-    external fun execProtocolStreamNative(
-        handle: Long,
-        request: ByteArray,
-        sink: OliphauntAndroidProtocolStreamSink,
-    )
-
-    external fun backupNative(
-        handle: Long,
-        format: String,
-    ): ByteArray
+    external fun backupNative(handle: Long): ByteArray
 
     external fun restoreNative(
         destination: String,
-        format: String,
-        artifact: ByteArray,
-        replaceExisting: Boolean,
+        bytes: ByteArray,
         libraryPath: String?,
     )
 
     external fun cancelNative(handle: Long)
 
     external fun closeNative(handle: Long)
-
-    external fun capabilitiesNative(handle: Long): Long
-}
-
-internal fun interface OliphauntAndroidProtocolStreamSink {
-    fun onChunk(chunk: ByteArray): Int
 }

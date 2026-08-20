@@ -1,59 +1,45 @@
-# oliphaunt Rust SDK Policy
+# Rust SDK policy
 
-The Rust SDK is a peer product SDK for Tauri and Rust desktop apps. Its package
-source lives in `src/sdks/rust` rather than root docs so Cargo workspace
-ownership, release metadata, examples, benches, and tests stay idiomatic.
+The published `oliphaunt` crate is the idiomatic native Rust SDK. It owns app
+configuration, typed queries, transactions, async execution, direct/broker/
+server orchestration, exact extension selection, template hydration, and
+language-native errors. `liboliphaunt` remains the compiled direct/broker
+boundary.
 
-Target users:
+The public crate stays application focused. Native resource construction,
+extension artifact/index creation and signing, package size reporting, and
+release-policy generation belong to the unpublished workspace crate
+`oliphaunt-native-packaging`, not to `oliphaunt`.
 
-- Tauri desktop apps;
-- Rust desktop apps that want embedded PostgreSQL without sidecars in direct
-  mode;
-- Rust services or developer tools that want broker/server modes with local
-  PostgreSQL compatibility.
+Current public concepts are:
 
-Validate the Rust SDK with:
+- `Oliphaunt::builder()` and explicit native mode selection;
+- SDK-owned temporary or application-owned directory storage;
+- startup `username`, `database`, and validated PostgreSQL GUCs;
+- exact typed `Extension` selections;
+- typed query/command results, raw protocol, transactions, checkpoint, cancel,
+  and close;
+- one physical backup for direct and broker, plus static restore into a new or
+  empty destination; and
+- a connection string only in server mode.
 
-```bash
-moon run oliphaunt-rust:check
+Do not reintroduce capability reports, archive-format selectors, initialization
+enums, tuning profiles, background lifecycle modes, or replacement switches.
+Unsupported operations return a direct mode-specific error. Fixed support is
+documented in the shared parity matrix.
+
+Internal packaging commands use the workspace tool explicitly, for example:
+
+```sh
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources -- ...
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-artifact -- ...
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-index -- ...
 ```
 
-Other SDKs should match the shared Oliphaunt concepts where the platform allows it:
+Validate the application crate with:
 
-- engine modes: native direct, native broker, native server;
-- raw PostgreSQL protocol boundary;
-- typed query helpers layered above raw protocol;
-- transaction helpers that keep one physical session pinned and reject
-  unpinned interleaving, including backup/checkpoint work, while still allowing
-  pinned raw and streaming protocol calls. Use `transaction()` when you want an
-  explicit handle, or `with_transaction(async |tx| { ... })` for commit/rollback
-  closure ergonomics;
-- `checkpoint()` for explicit PostgreSQL checkpoint requests through the opened
-  engine;
-- startup identity through builder-level `username(...)` and `database(...)`
-  options that feed direct, broker, and server-owned PostgreSQL sessions;
-- packaged `initdb` resolution through `fresh_initdb()` so consumers never
-  provide a tooling path; explicit broker and server executable overrides are
-  rejected when empty or NUL-containing before process startup;
-- structured PostgreSQL errors with SQLSTATE and raw `ErrorResponse` fields;
-- exact extensions selected before open;
-- physical backup/restore for same-version archives;
-- capability reporting for raw and streaming protocol, cancellation,
-  backup/restore, simple-query execution, extensions, and session
-  semantics, including concrete backup and restore format support through
-  capability and opened-handle `supports_backup_format` and
-  `supports_restore_format` helpers;
-- `max_client_sessions(...)` is an honest concurrency knob: direct and broker mode reject values other than `1`; server mode is the mode for independent
-  PostgreSQL client sessions and pools;
-- SDK-boundary rejection for unsupported backup formats before work is queued
-  onto the engine executor, and unsupported restore formats before a target
-  root is materialized;
-- explicit mode support discovery through
-  `EngineCapabilities::rust_sdk_support()`;
-- cancellation and close semantics;
-- packaged runtime/template resources.
-
-Swift, Kotlin, TypeScript, React Native, and WASM may expose platform-native
-naming, async, and packaging conventions, but deviations from the shared
-Oliphaunt contract should be documented and justified rather than allowed to
-drift silently.
+```sh
+moon run oliphaunt-rust:check
+moon run oliphaunt-rust:test
+moon run oliphaunt-rust:package
+```

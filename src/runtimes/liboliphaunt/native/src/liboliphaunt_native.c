@@ -67,14 +67,12 @@ static bool startup_args_match(OliphauntHandle *handle, const OliphauntConfig *c
 static bool config_matches_resident_runtime(
     OliphauntHandle *handle,
     const OliphauntConfig *config) {
-    bool external_root_lock = (config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0;
     return handle != NULL &&
            config_string_matches(handle->pgdata, config->pgdata, "") &&
            config_string_matches(handle->runtime_dir, config->runtime_dir, "") &&
            config_string_matches(handle->module_dir, config->module_dir, "") &&
            config_string_matches(handle->username, config->username, "postgres") &&
            config_string_matches(handle->database, config->database, "postgres") &&
-           handle->external_root_lock == external_root_lock &&
            startup_args_match(handle, config);
 }
 
@@ -353,10 +351,6 @@ static void *backend_thread_main(void *arg) {
 }
 
 static int start_backend(OliphauntHandle *handle) {
-    if (oliphaunt_run_initdb_if_needed(handle) != 0) {
-        return -1;
-    }
-
     handle->postgres_path = oliphaunt_resolve_postgres_argv0(handle->runtime_dir);
     if (handle->postgres_path == NULL) {
         set_error(handle, "out of memory while resolving postgres path");
@@ -419,7 +413,7 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         set_error(NULL, "invalid oliphaunt_init module_dir");
         return -1;
     }
-    if ((config->reserved_flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
+    if (config->reserved_flags != 0) {
         set_error(NULL, "invalid oliphaunt_init config flags");
         return -1;
     }
@@ -446,9 +440,7 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         return -1;
     }
     handle->stable_root_lock_fd = -1;
-    handle->root_marker_lock_fd = -1;
     handle->trace_protocol = oliphaunt_trace_enabled();
-    handle->external_root_lock = (config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0;
     handle->transaction_status = 'I';
 
     handle->pgdata = oliphaunt_dup_config_string(config->pgdata, "");
@@ -469,8 +461,14 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         set_error(NULL, message);
         return -1;
     }
-    if ((config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) == 0 &&
-        oliphaunt_acquire_root_marker_lock(handle, handle->pgdata) != 0) {
+    if (oliphaunt_acquire_root_lock(handle, handle->pgdata) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "%s", handle->last_error);
+        close_unpublished_handle(handle);
+        set_error(NULL, message);
+        return -1;
+    }
+    if (oliphaunt_validate_managed_root(handle, handle->pgdata) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "%s", handle->last_error);
         close_unpublished_handle(handle);
@@ -607,7 +605,7 @@ int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
     free(handle->previous_proj_data_env);
     free(handle->previous_icu_data_env);
     free(handle->previous_module_dir_env);
-    oliphaunt_release_root_marker_lock(handle);
+    oliphaunt_release_root_lock(handle);
     for (size_t i = 0; i < handle->startup_arg_count; i++) {
         free(handle->startup_args[i]);
     }
@@ -708,17 +706,6 @@ const char *oliphaunt_last_error(OliphauntHandle *handle) {
 
 const char *oliphaunt_version(void) {
     return OLIPHAUNT_PRODUCT_VERSION;
-}
-
-uint64_t oliphaunt_capabilities(void) {
-    return OLIPHAUNT_CAP_PROTOCOL_RAW |
-           OLIPHAUNT_CAP_PROTOCOL_STREAM |
-           OLIPHAUNT_CAP_EXTENSIONS |
-           OLIPHAUNT_CAP_QUERY_CANCEL |
-           OLIPHAUNT_CAP_BACKUP_RESTORE |
-           OLIPHAUNT_CAP_SIMPLE_QUERY |
-           OLIPHAUNT_CAP_STATIC_EXTENSIONS |
-           OLIPHAUNT_CAP_LOGICAL_REOPEN;
 }
 
 void oliphaunt_free_response(OliphauntResponse *response) {

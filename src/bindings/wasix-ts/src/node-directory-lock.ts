@@ -1,26 +1,20 @@
-import { rmdirSync, rmSync } from 'node:fs';
-import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { rmdirSync } from 'node:fs';
+import { mkdir, rmdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 import { WasixStorageError } from './errors.js';
-import { isNodeError, syncNodeDirectory } from './node-fs-durability.js';
-import {
-  NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX,
-  NODE_DIRECTORY_LOCK_SLOT,
-  nodeDirectoryLockCandidateToken,
-  nodeDirectoryLockIsStale,
-  nodeDirectoryLockName,
-  parseNodeDirectoryLockName,
-} from './node-lock-identity.js';
+import { isNodeError } from './node-fs-commit-state.js';
+
+const NODE_DIRECTORY_LOCK_SUFFIX = '.oliphaunt-wasix-ts.lock';
 
 const OWNER_TOKEN = /^[A-Za-z0-9-]{16,128}$/u;
-const ACQUIRE_ATTEMPTS = 16;
+const OWNER_PREFIX = 'owner-';
 
-export type HeldNodeDirectoryLock = { release(): Promise<void> };
+type HeldNodeDirectoryLock = { release(): Promise<void> };
 
 /**
- * Elect one owner through a fixed atomic rename target. The candidate is fully
- * populated first, so the published directory is also the complete lease.
+ * Claim one local managed root. A pre-existing slot fails closed: callers may
+ * remove a stale slot only after establishing that no process owns the root.
  */
 export async function acquireNodeDirectoryLock(
   root: string,
@@ -29,55 +23,38 @@ export async function acquireNodeDirectoryLock(
   if (!OWNER_TOKEN.test(ownerToken)) {
     throw unavailable(root, 'received an invalid ownership token');
   }
-  const ownerName = nodeDirectoryLockName(process.pid, ownerToken);
-  const candidate = join(root, `${NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX}${ownerToken}`);
-  const slot = join(root, NODE_DIRECTORY_LOCK_SLOT);
-  let candidateExists = false;
-  let published = false;
-  try {
-    await mkdir(candidate, { mode: 0o700 });
-    candidateExists = true;
-    await mkdir(join(candidate, ownerName), { mode: 0o700 });
-    await syncNodeDirectory(candidate);
-    await syncNodeDirectory(root);
 
-    for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
-      try {
-        await rename(candidate, slot);
-        candidateExists = false;
-        published = true;
-        await syncNodeDirectory(root);
-        await reapLockCandidates(root);
-        let released = false;
-        return {
-          async release() {
-            if (released) return;
-            await releaseNodeDirectoryLock(root, ownerName);
-            released = true;
-          },
-        };
-      } catch (error) {
-        if (!isRenameContention(error)) throw error;
-        await reapStaleSlot(root, slot);
-      }
-    }
-    throw busy(root);
+  const slot = nodeDirectoryLockPath(root);
+  const owner = join(slot, ownerName(ownerToken));
+  try {
+    await mkdir(slot, { mode: 0o700 });
   } catch (error) {
-    if (published) {
-      await releaseNodeDirectoryLock(root, ownerName).catch(() => undefined);
-    } else if (candidateExists) {
-      await rm(candidate, { force: true, recursive: true }).catch(() => undefined);
-    }
-    if (error instanceof WasixStorageError) throw error;
+    if (isNodeError(error, 'EEXIST')) throw busy(root, slot);
+    throw unavailable(root, `could not claim ownership: ${describeError(error)}`, error);
+  }
+
+  try {
+    await mkdir(owner, { mode: 0o700 });
+  } catch (error) {
+    await rmdir(slot).catch(() => undefined);
     throw unavailable(root, `could not record ownership: ${describeError(error)}`, error);
   }
+
+  let released = false;
+  return {
+    async release() {
+      if (released) return;
+      await releaseNodeDirectoryLock(root, ownerToken);
+      released = true;
+    },
+  };
 }
 
-/** Remove only the exact owner child before retiring the fixed slot. */
-export async function releaseNodeDirectoryLock(root: string, ownerName: string): Promise<void> {
-  const slot = join(root, NODE_DIRECTORY_LOCK_SLOT);
+/** Remove the slot only after removing this exact owner's child. */
+async function releaseNodeDirectoryLock(root: string, ownerToken: string): Promise<void> {
+  const slot = nodeDirectoryLockPath(root);
   try {
-    await rmdir(join(slot, ownerName));
+    await rmdir(join(slot, ownerName(ownerToken)));
   } catch (error) {
     if (isNodeError(error, 'ENOENT')) return;
     throw error;
@@ -85,120 +62,49 @@ export async function releaseNodeDirectoryLock(root: string, ownerName: string):
   try {
     await rmdir(slot);
   } catch (error) {
-    // A successor may atomically replace the now-empty slot. Never remove it.
-    if (!isRetiredSlotRace(error)) throw error;
+    if (!isNodeError(error, 'ENOENT')) throw error;
   }
-  await syncNodeDirectory(root);
 }
 
-/** Last-resort exact-owner cleanup from the caller's worker exit handler. */
+/** Best-effort exact-owner cleanup after the database worker exits. */
 export function releaseNodeDirectoryLockSync(root: string, ownerToken: string): void {
+  if (!OWNER_TOKEN.test(ownerToken)) return;
+  const slot = nodeDirectoryLockPath(root);
   try {
-    rmSync(join(root, `${NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX}${ownerToken}`), {
-      force: true,
-      recursive: true,
-    });
-  } catch {
-    // The candidate may already be published or retired. Continue with the
-    // exact fixed-slot owner cleanup below.
-  }
-  const slot = join(root, NODE_DIRECTORY_LOCK_SLOT);
-  const owner = join(slot, nodeDirectoryLockName(process.pid, ownerToken));
-  try {
-    rmdirSync(owner);
+    rmdirSync(join(slot, ownerName(ownerToken)));
   } catch {
     return;
   }
   try {
     rmdirSync(slot);
   } catch {
-    // A non-empty replacement belongs to a successor and must remain intact.
+    // Foreign content keeps the slot busy; never remove it recursively.
   }
 }
 
-/** A fixed-slot owner may retire every fully namespaced loser candidate. */
-async function reapLockCandidates(root: string): Promise<void> {
-  const entries = await readdir(root, { withFileTypes: true });
-  let removed = false;
-  for (const entry of entries) {
-    if (nodeDirectoryLockCandidateToken(entry.name) === undefined) continue;
-    if (!entry.isDirectory() || entry.isSymbolicLink()) throw busy(root);
-    await rm(join(root, entry.name), { force: true, recursive: true });
-    removed = true;
-  }
-  if (removed) await syncNodeDirectory(root);
+/** Stable sibling lock identity shared by this binding's open and restore paths. */
+export function nodeDirectoryLockPath(root: string): string {
+  const name = basename(root);
+  if (name.length === 0) throw unavailable(root, 'cannot lock a filesystem root');
+  return join(dirname(root), `.${name}${NODE_DIRECTORY_LOCK_SUFFIX}`);
 }
 
-async function reapStaleSlot(root: string, slot: string): Promise<boolean> {
-  let info: Awaited<ReturnType<typeof lstat>>;
-  try {
-    info = await lstat(slot);
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false;
-    throw busy(root);
-  }
-  if (!info.isDirectory() || info.isSymbolicLink()) throw busy(root);
-
-  let entries: Array<{
-    name: string;
-    isDirectory(): boolean;
-    isSymbolicLink(): boolean;
-  }>;
-  try {
-    entries = await readdir(slot, { withFileTypes: true });
-  } catch {
-    throw busy(root);
-  }
-  if (entries.length === 0) {
-    try {
-      await rmdir(slot);
-    } catch (error) {
-      if (!isRetiredSlotRace(error)) throw busy(root);
-    }
-    return true;
-  }
-  if (entries.length !== 1) throw busy(root);
-  const entry = entries[0];
-  if (entry === undefined || !entry.isDirectory() || entry.isSymbolicLink()) throw busy(root);
-  const owner = parseNodeDirectoryLockName(entry.name);
-  if (owner === undefined || !nodeDirectoryLockIsStale(owner)) throw busy(root);
-
-  try {
-    await rmdir(join(slot, entry.name));
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return true;
-    throw busy(root);
-  }
-  try {
-    await rmdir(slot);
-  } catch (error) {
-    if (!isRetiredSlotRace(error)) throw busy(root);
-  }
-  await syncNodeDirectory(root);
-  return true;
+function ownerName(ownerToken: string): string {
+  return `${OWNER_PREFIX}${ownerToken}`;
 }
 
-function isRenameContention(error: unknown): boolean {
-  return ['EACCES', 'EEXIST', 'ENOENT', 'ENOTEMPTY', 'EPERM'].some((code) =>
-    isNodeError(error, code),
+function busy(root: string, slot: string): WasixStorageError {
+  return new WasixStorageError(
+    `Node directory storage ${JSON.stringify(root)} is already open; ` +
+      `if no process owns it, remove the stale lock directory ${JSON.stringify(slot)}`,
+    { code: 'busy', commitState: 'unchanged' },
   );
-}
-
-function isRetiredSlotRace(error: unknown): boolean {
-  return ['EEXIST', 'ENOENT', 'ENOTEMPTY'].some((code) => isNodeError(error, code));
-}
-
-function busy(root: string): WasixStorageError {
-  return new WasixStorageError(`Node directory storage ${JSON.stringify(root)} is already open`, {
-    code: 'busy',
-    durability: 'unchanged',
-  });
 }
 
 function unavailable(root: string, detail: string, cause?: unknown): WasixStorageError {
   return new WasixStorageError(`Node directory storage ${JSON.stringify(root)} ${detail}`, {
     code: 'unavailable',
-    durability: 'unchanged',
+    commitState: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
   });
 }

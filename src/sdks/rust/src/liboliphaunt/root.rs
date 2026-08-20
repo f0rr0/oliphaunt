@@ -1,7 +1,7 @@
+mod descriptor;
 mod extensions;
 mod files;
 mod fingerprint;
-mod manifest;
 mod runtime;
 mod template;
 
@@ -24,18 +24,15 @@ use crate::storage::DatabaseStorage;
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
-pub(super) const NATIVE_TOOLS_PACKAGE_TOOLS: [&str; 2] = ["pg_dump", "psql"];
+pub(super) const NATIVE_TOOLS_PACKAGE_TOOLS: [&str; 3] = ["pg_basebackup", "pg_dump", "psql"];
 
+#[cfg(feature = "internal-native-packaging")]
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,
     pub(crate) template_pgdata: PathBuf,
     pub(crate) runtime_cache_key: String,
     pub(crate) template_cache_key: String,
 }
-
-pub(crate) use self::manifest::{
-    ROOT_MANIFEST_FILE, ensure_root_manifest, root_manifest_text, validate_root_manifest_text,
-};
 
 pub(crate) struct PreparedNativeRoot {
     pub(crate) root: PathBuf,
@@ -47,43 +44,77 @@ pub(crate) struct PreparedNativeRoot {
 
 impl PreparedNativeRoot {
     pub(crate) fn prepare(config: &OpenConfig, extensions: &[Extension]) -> Result<Self> {
+        Self::prepare_inner(config, extensions, false)
+    }
+
+    pub(crate) fn prepare_for_server(
+        config: &OpenConfig,
+        extensions: &[Extension],
+    ) -> Result<Self> {
+        Self::prepare_inner(config, extensions, true)
+    }
+
+    fn prepare_inner(
+        config: &OpenConfig,
+        extensions: &[Extension],
+        lock_root: bool,
+    ) -> Result<Self> {
         let (root, temporary) = match &config.storage {
             DatabaseStorage::Directory(root) => (root.clone(), false),
             DatabaseStorage::TemporaryDirectory => (create_temporary_root()?, true),
         };
         let mut temporary_cleanup =
             TemporaryNativeRootCleanup::new(temporary.then(|| root.clone()));
+        if root.exists() || fs::symlink_metadata(&root).is_ok() {
+            let metadata = fs::symlink_metadata(&root).map_err(|err| {
+                Error::Engine(format!(
+                    "inspect native database root {}: {err}",
+                    root.display()
+                ))
+            })?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(Error::Engine(format!(
+                    "native database root {} must be a real directory",
+                    root.display()
+                )));
+            }
+        }
         fs::create_dir_all(&root).map_err(|err| {
             Error::Engine(format!(
                 "create native database root {}: {err}",
                 root.display()
             ))
         })?;
-        let lock = NativeRootLock::acquire(&root, "native root")?;
-
+        let lock = lock_root
+            .then(|| NativeRootLock::acquire(&root, "native server root"))
+            .transpose()?;
+        let initialized = descriptor::validate_root_for_open(&root)?;
         let pgdata = root.join("pgdata");
-        fs::create_dir_all(&pgdata).map_err(|err| {
-            Error::Engine(format!("create native PGDATA {}: {err}", pgdata.display()))
-        })?;
         let runtime_dir =
             runtime::materialize_runtime(NativeRuntimeProfile::for_mode(config.mode), extensions)?;
-        template::bootstrap_pgdata_if_needed(
-            NativeRuntimeProfile::for_mode(config.mode),
-            &runtime_dir,
-            &pgdata,
-            &config.initialization,
-            &config.username,
-        )?;
-        ensure_root_manifest(&root, &pgdata)?;
+        let mut pgdata_cleanup = CreatedPgdataCleanup::new();
+        if !initialized {
+            fs::create_dir(&pgdata).map_err(|err| {
+                Error::Engine(format!("create native PGDATA {}: {err}", pgdata.display()))
+            })?;
+            pgdata_cleanup.arm(pgdata.clone());
+            template::bootstrap_pgdata_if_needed(
+                NativeRuntimeProfile::for_mode(config.mode),
+                &runtime_dir,
+                &pgdata,
+            )?;
+            descriptor::publish_native_root_descriptor(&root)?;
+        }
 
         let prepared = Self {
             root,
             pgdata,
             runtime_dir,
-            lock: Some(lock),
+            lock,
             temporary,
         };
         temporary_cleanup.disarm();
+        pgdata_cleanup.disarm();
         Ok(prepared)
     }
 
@@ -91,12 +122,38 @@ impl PreparedNativeRoot {
         native_tool_path(&self.runtime_dir, tool_name)
     }
 
-    pub(crate) fn refresh_manifest(&self) -> Result<()> {
-        ensure_root_manifest(&self.root, &self.pgdata)
+    pub(crate) fn refresh_descriptor(&self) -> Result<()> {
+        descriptor::validate_existing_root(&self.root)
     }
 
     pub(crate) fn root_key(&self) -> Result<PathBuf> {
         native_root_key(&self.root)
+    }
+}
+
+struct CreatedPgdataCleanup {
+    path: Option<PathBuf>,
+}
+
+impl CreatedPgdataCleanup {
+    fn new() -> Self {
+        Self { path: None }
+    }
+
+    fn arm(&mut self, path: PathBuf) {
+        self.path = Some(path);
+    }
+
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for CreatedPgdataCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_dir_all(path);
+        }
     }
 }
 
@@ -192,19 +249,10 @@ impl Drop for PreparedNativeRoot {
 pub(crate) struct NativeRootLock {
     key: PathBuf,
     stable_file: File,
-    root_file: Option<File>,
 }
 
 impl NativeRootLock {
     pub(crate) fn acquire(root: &Path, label: &str) -> Result<Self> {
-        Self::acquire_inner(root, label, true)
-    }
-
-    pub(crate) fn reserve_path(root: &Path, label: &str) -> Result<Self> {
-        Self::acquire_inner(root, label, false)
-    }
-
-    fn acquire_inner(root: &Path, label: &str, lock_root_marker: bool) -> Result<Self> {
         let key = canonical_root_key(root)?;
         let roots = ACTIVE_ROOTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
         {
@@ -231,36 +279,12 @@ impl NativeRootLock {
             }
         };
 
-        let root_file = if lock_root_marker {
-            let root_lock_path = root.join(".oliphaunt.lock");
-            match lock_file(&root_lock_path) {
-                Ok(file) => Some(file),
-                Err(err) => {
-                    drop(stable_file);
-                    release_active_root(&key);
-                    return Err(Error::Engine(format!(
-                        "lock {label} {}: {err}",
-                        root.display()
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
-        Ok(Self {
-            key,
-            stable_file,
-            root_file,
-        })
+        Ok(Self { key, stable_file })
     }
 }
 
 impl Drop for NativeRootLock {
     fn drop(&mut self) {
-        if let Some(root_file) = &self.root_file {
-            let _ = root_file.unlock();
-        }
         let _ = self.stable_file.unlock();
         release_active_root(&self.key);
     }
@@ -374,6 +398,7 @@ fn release_active_root(key: &Path) {
     }
 }
 
+#[cfg(feature = "internal-native-packaging")]
 pub(crate) fn materialize_native_resources_for_runtime(
     mode: EngineMode,
     extensions: &[Extension],
@@ -409,8 +434,8 @@ pub(super) enum NativeRuntimeProfile {
 impl NativeRuntimeProfile {
     fn for_mode(mode: EngineMode) -> Self {
         match mode {
-            EngineMode::NativeDirect | EngineMode::NativeBroker => Self::OliphauntEmbedded,
-            EngineMode::NativeServer => Self::PostgresServer,
+            EngineMode::Direct | EngineMode::Broker => Self::OliphauntEmbedded,
+            EngineMode::Server => Self::PostgresServer,
         }
     }
 
@@ -426,6 +451,7 @@ impl NativeRuntimeProfile {
     }
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn cache_key_from_leaf(path: &std::path::Path, label: &str) -> Result<String> {
     let key = path
         .file_name()
@@ -510,32 +536,19 @@ mod tests {
     }
 
     #[test]
-    fn native_root_lock_reserves_missing_target_paths() {
+    fn native_root_lock_uses_a_stable_sibling_without_mutating_the_root() {
         let parent = create_temporary_root().unwrap();
-        let root = parent.join("missing-target");
-        let first = NativeRootLock::reserve_path(&root, "restore target").unwrap();
-        assert!(
-            !root.exists(),
-            "path reservation must not materialize the restore target"
-        );
-
-        let duplicate = NativeRootLock::reserve_path(&root, "restore target").unwrap_err();
+        let root = parent.join("database");
+        fs::create_dir(&root).unwrap();
+        let first = NativeRootLock::acquire(&root, "native root").unwrap();
+        assert!(!root.join(".oliphaunt.lock").exists());
+        let duplicate = NativeRootLock::acquire(&root, "native root").unwrap_err();
         assert!(
             duplicate
                 .to_string()
                 .contains("already open in this process"),
-            "unexpected duplicate reservation error: {duplicate}"
+            "unexpected duplicate lock error: {duplicate}"
         );
-
-        fs::create_dir_all(&root).unwrap();
-        let open_error = NativeRootLock::acquire(&root, "native root").unwrap_err();
-        assert!(
-            open_error
-                .to_string()
-                .contains("already open in this process"),
-            "missing-target reservation did not block later root open: {open_error}"
-        );
-
         drop(first);
         NativeRootLock::acquire(&root, "native root").unwrap();
         let _ = fs::remove_dir_all(parent);

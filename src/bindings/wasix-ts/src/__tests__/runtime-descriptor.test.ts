@@ -55,6 +55,48 @@ describe('WASIX runtime descriptors', () => {
       }),
     ).toThrow('runtime and PGDATA archives must have distinct paths');
   });
+
+  it('rejects malformed scalar fields before loading package-owned assets', () => {
+    expect(() => serializeWasixRuntimeDescriptor(null)).toThrow('must be an object');
+    expect(() => serializeWasixRuntimeDescriptor({ ...descriptor(), version: 'latest' })).toThrow(
+      'must be a SemVer version',
+    );
+    expect(() =>
+      serializeWasixRuntimeDescriptor({
+        ...descriptor(),
+        manifest: { ...descriptor().manifest, sha256: 'A'.repeat(64) },
+      }),
+    ).toThrow('must be 64 lowercase hexadecimal characters');
+    expect(() =>
+      serializeWasixRuntimeDescriptor({
+        ...descriptor(),
+        manifest: { ...descriptor().manifest, size: 0 },
+      }),
+    ).toThrow('must be a positive safe integer');
+    expect(() =>
+      serializeWasixRuntimeDescriptor({
+        ...descriptor(),
+        manifest: { ...descriptor().manifest, source: true },
+      }),
+    ).toThrow('must be a URL, string, ArrayBuffer, or Uint8Array');
+  });
+
+  it('copies byte-backed asset sources at the worker boundary', () => {
+    const runtimeBytes = new Uint8Array(100).fill(1);
+    const manifestBytes = new Uint8Array(300).fill(3);
+    const serialized = serializeWasixRuntimeDescriptor({
+      ...descriptor(),
+      runtimeArchive: { ...descriptor().runtimeArchive, source: runtimeBytes },
+      manifest: { ...descriptor().manifest, source: manifestBytes.buffer },
+    });
+
+    runtimeBytes[0] = 9;
+    manifestBytes[0] = 9;
+    expect(serialized.runtimeArchive.source).toBeInstanceOf(Uint8Array);
+    expect((serialized.runtimeArchive.source as Uint8Array)[0]).toBe(1);
+    expect(serialized.manifest.source).toBeInstanceOf(Uint8Array);
+    expect((serialized.manifest.source as Uint8Array)[0]).toBe(3);
+  });
 });
 
 function descriptor(): WasixRuntimeDescriptor {

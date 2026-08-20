@@ -7,8 +7,14 @@ import { DirectWasixSession, type DirectWasixHost } from './direct-client-common
 import * as host from './node-host.js';
 import { nodeZstdDecompressor } from './node-zstd.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import { acquireNodeDirectoryStorage } from './storage/node-directory-provider.js';
-import { installNodeDirectoryStorageProvider } from './storage-provider.js';
+import {
+  acquireNodeDirectoryStorage,
+  restoreNodeDirectoryStorage,
+} from './storage/node-directory-provider.js';
+import {
+  installNodeDirectoryStorageProvider,
+  installNodeDirectoryStorageRestorer,
+} from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
 import { installZstdDecompressor } from './zstd.js';
 
@@ -33,10 +39,11 @@ export async function openNodeDirect(options: SerializedOpenOptions): Promise<Ol
   return new WasixDatabaseImpl(await openNodeDirectSession(options));
 }
 
-function installNodeEnvironment(): void {
+export function installNodeEnvironment(): void {
   if (environmentInstalled) return;
   installPackageAssetReader((source) => readFile(source));
   installNodeDirectoryStorageProvider(acquireNodeDirectoryStorage);
+  installNodeDirectoryStorageRestorer(restoreNodeDirectoryStorage);
   const nativeZstd = nodeZstdDecompressor(Reflect.get(zlib, 'zstdDecompressSync'), zlib);
   if (nativeZstd !== undefined) installZstdDecompressor(nativeZstd);
   environmentInstalled = true;

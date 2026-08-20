@@ -68,7 +68,7 @@ rationale = "Disabling bottom-up deletion changes PostgreSQL's index maintenance
 [[patch]]
 experiment = "0011-btree-first-int4-compare-fast-path.patch"
 status = "ported-with-tighter-guards"
-wasix_runtime_decision = "ported as 0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch"
+wasix_runtime_decision = "ported as 0026-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch"
 rationale = "The PG18 patch keeps the direct tuple-data read only for embedded WASIX, leaf pages, one-key non-null non-posting non-pivot tuples, built-in int4 btree family, int4 input type, InvalidOid collation, and non-DESC scan keys. Equal values still fall through to PostgreSQL's existing heap-TID and truncated-key tie-break logic."
 
 [[patch]]

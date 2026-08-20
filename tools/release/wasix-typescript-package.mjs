@@ -66,6 +66,18 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     );
   }
   const root = manifest.exports?.['.'];
+  const expectedExports = [
+    '.',
+    './package.json',
+    './storage/bun',
+    './storage/deno',
+    './storage/indexed-db',
+    './storage/node',
+    './storage/opfs',
+  ].sort(compareText);
+  if (JSON.stringify(sortedKeys(manifest.exports)) !== JSON.stringify(expectedExports)) {
+    fail(`${label} exports do not match the deliberate public package surface`);
+  }
   if (
     JSON.stringify(Object.keys(root ?? {}))
       !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
@@ -80,7 +92,8 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const nodeStorage = manifest.exports?.['./storage/node'];
   if (
-    nodeStorage?.types !== './lib/storage/node.d.ts'
+    JSON.stringify(sortedKeys(nodeStorage)) !== JSON.stringify(['node', 'types'])
+    || nodeStorage?.types !== './lib/storage/node.d.ts'
     || nodeStorage?.node !== './lib/storage/node.js'
     || nodeStorage?.browser !== undefined
     || nodeStorage?.default !== undefined
@@ -102,6 +115,29 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     || sortedKeys(denoStorage).some((condition) => !['deno', 'types'].includes(condition))
   ) {
     fail(`${label} must expose Deno directory storage only under the Deno condition`);
+  }
+  const indexedDbStorage = manifest.exports?.['./storage/indexed-db'];
+  if (
+    JSON.stringify(sortedKeys(indexedDbStorage)) !== JSON.stringify(['default', 'types'])
+    || indexedDbStorage?.types !== './lib/storage/indexed-db.d.ts'
+    || indexedDbStorage?.default !== './lib/storage/indexed-db.js'
+  ) {
+    fail(`${label} must expose the exact IndexedDB storage entrypoint`);
+  }
+  const opfsStorage = manifest.exports?.['./storage/opfs'];
+  if (
+    JSON.stringify(sortedKeys(opfsStorage)) !== JSON.stringify(['default', 'types'])
+    || opfsStorage?.types !== './lib/storage/opfs.d.ts'
+    || opfsStorage?.default !== './lib/storage/opfs.js'
+  ) {
+    fail(`${label} must expose the exact OPFS storage entrypoint`);
+  }
+  const packageJson = manifest.exports?.['./package.json'];
+  if (
+    JSON.stringify(sortedKeys(packageJson)) !== JSON.stringify(['default'])
+    || packageJson?.default !== './package.json'
+  ) {
+    fail(`${label} must expose only its package.json at the package metadata entrypoint`);
   }
   if (
     manifest.engines?.node !== '>=22.13 <25'
@@ -176,15 +212,6 @@ export function assertWasixTypescriptNpmArchive(archive) {
     }
     return Buffer.from(entry.data());
   };
-  for (const name of [
-    'lib/node-web-worker.js',
-    'lib/node-web-worker-thread.js',
-    'lib/wasix-process.js',
-  ]) {
-    if (entries.has(`package/${name}`)) {
-      fail(`${path.basename(file)} retained retired transport artifact package/${name}`);
-    }
-  }
   const manifest = assertWasixTypescriptManifest(
     JSON.parse(requireFile('package.json').toString('utf8')),
     `${path.basename(file)} package.json`,
@@ -196,11 +223,10 @@ export function assertWasixTypescriptNpmArchive(archive) {
     'lib/index.node.js',
     'lib/node-client.js',
     'lib/node-directory-lock.js',
-    'lib/node-lock-identity.js',
     'lib/node-worker.js',
     'lib/node-worker-options.js',
     'lib/node-zstd.js',
-    'lib/server-runtime.js',
+    'lib/host-runtime.js',
     'lib/storage/bun.js',
     'lib/storage/deno.js',
     'lib/storage/node.js',

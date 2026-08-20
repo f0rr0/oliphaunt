@@ -98,7 +98,7 @@ $LiboliphauntSources = @(
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c",
-    "src/runtimes/liboliphaunt/native/src/liboliphaunt_bootstrap.c",
+    "src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_trace.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c",
@@ -2540,7 +2540,7 @@ function Get-ExactExtensionCatalogRows([string]$Purpose) {
     if ($null -eq $script:ExactExtensionCatalogRows) {
         Push-Location $RepoRoot
         try {
-            $catalogText = cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions
+            $catalogText = cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- --list-extensions
             $exitCode = $LASTEXITCODE
         } finally {
             Pop-Location
@@ -2909,7 +2909,6 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
         "oliphaunt_register_static_extensions",
         "oliphaunt_last_error",
         "oliphaunt_version",
-        "oliphaunt_capabilities",
         "oliphaunt_free_response",
         "oliphaunt_embedded_kill",
         "oliphaunt_embedded_raise"
@@ -3150,7 +3149,6 @@ function Artifact-Ready {
         "oliphaunt_close_if_generation",
         "oliphaunt_close",
         "oliphaunt_version",
-        "oliphaunt_capabilities",
         "oliphaunt_free_response"
     )) {
         if ($exports -notmatch "\b$symbol\b") {

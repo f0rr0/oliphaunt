@@ -8,27 +8,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Error type for SDK configuration, lifecycle, and engine execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// The selected engine mode cannot provide the requested client sessions.
-    UnsupportedClientSessions {
-        /// Engine mode that rejected the request.
-        mode: crate::EngineMode,
-        /// Requested client sessions.
-        requested: usize,
-        /// Maximum supported client sessions.
-        supported: usize,
-    },
-    /// No concrete native runtime has been linked into the builder.
-    RuntimeUnavailable {
-        /// Engine mode the caller attempted to open.
-        mode: crate::EngineMode,
-    },
-    /// The selected runtime does not implement the selected engine mode.
-    UnsupportedEngineMode {
-        /// Engine mode the caller attempted to open.
-        mode: crate::EngineMode,
-        /// Reason this runtime cannot serve the mode.
-        reason: String,
-    },
     /// The owner executor has stopped.
     EngineStopped,
     /// A runtime returned an execution failure.
@@ -47,21 +26,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedClientSessions {
-                mode,
-                requested,
-                supported,
-            } => write!(
-                f,
-                "{mode} supports at most {supported} client session(s), requested {requested}"
-            ),
-            Self::RuntimeUnavailable { mode } => write!(
-                f,
-                "no native runtime is linked for {mode}; provide a NativeRuntime implementation"
-            ),
-            Self::UnsupportedEngineMode { mode, reason } => {
-                write!(f, "{mode} is not supported by this runtime: {reason}")
-            }
             Self::EngineStopped => f.write_str("native engine executor has stopped"),
             Self::Engine(message) => f.write_str(message),
             Self::Postgres(error) => error.fmt(f),
@@ -110,10 +74,9 @@ pub struct PostgresError {
 }
 
 impl PostgresError {
-    /// Build a structured PostgreSQL error from raw protocol fields.
-    pub fn from_fields(fields: Vec<PostgresErrorField>) -> Self {
+    pub(crate) fn from_fields(fields: Vec<PostgresErrorField>) -> Self {
         Self {
-            severity: field_value(&fields, b'S').or_else(|| field_value(&fields, b'V')),
+            severity: field_value(&fields, b'V').or_else(|| field_value(&fields, b'S')),
             sqlstate: field_value(&fields, b'C'),
             message: field_value(&fields, b'M')
                 .unwrap_or_else(|| "PostgreSQL ErrorResponse".to_owned()),
@@ -187,4 +150,28 @@ fn read_error_cstring(input: &[u8]) -> Option<(String, &[u8])> {
     let nul = input.iter().position(|byte| *byte == 0)?;
     let value = str::from_utf8(&input[..nul]).ok()?.to_owned();
     Some((value, &input[nul + 1..]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonlocalized_severity_takes_precedence() {
+        let error = PostgresError::from_fields(vec![
+            PostgresErrorField {
+                code: b'S',
+                value: "ERREUR".to_owned(),
+            },
+            PostgresErrorField {
+                code: b'V',
+                value: "ERROR".to_owned(),
+            },
+            PostgresErrorField {
+                code: b'M',
+                value: "failure".to_owned(),
+            },
+        ]);
+        assert_eq!(error.severity.as_deref(), Some("ERROR"));
+    }
 }

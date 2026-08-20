@@ -4,3 +4,28 @@ schema_version = 1
 id = "postgres-18-core-behavior"
 path = "postgres/behavior-contract.json"
 owner = "postgres-engine-runners"
+
+[[fixtures]]
+id = "database-root-v1"
+path = "storage/database-root.json"
+owner = "native-and-wasix-storage"
+
+[[fixtures]]
+id = "physical-archive-native-v1"
+path = "storage/physical-archive-native-v1.properties"
+owner = "liboliphaunt-native"
+
+[[fixtures]]
+id = "physical-archive-wasix-v1"
+path = "storage/physical-archive-wasix-v1.properties"
+owner = "liboliphaunt-wasix"
+
+[[fixtures]]
+id = "physical-backup-wal-range-v1"
+path = "storage/physical-backup-wal-range-v1.properties"
+owner = "native-and-wasix-physical-backup"
+
+[[fixtures]]
+id = "postgres-query-response-cases"
+path = "protocol/query-response-cases.json"
+owner = "sdk-query-parsers"

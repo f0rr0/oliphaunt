@@ -23,7 +23,9 @@ export async function createPackedWasixConsumer({
   useStubRuntime = false,
 }) {
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) {
-    throw new Error('packed WASIX server-runtime fixture requires an absolute scratch directory');
+    throw new Error(
+      'packed WASIX Node/Bun/Deno host fixture requires an absolute scratch directory',
+    );
   }
   const releaseVersions = JSON.parse(
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),

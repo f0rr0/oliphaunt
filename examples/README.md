@@ -25,7 +25,7 @@ Run the static Cargo manifest checks with:
 tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
 The native examples run a SQL backup smoke through `pg_dump` during startup.
-The WASIX examples run `dump_sql("--schema-only")` and a non-interactive `psql`
+The WASIX examples run `pg_dump(PgDumpOptions)` and a non-interactive `psql`
 `SELECT 1` smoke during startup.
 
 Run Tauri GUI smoke tests through WebDriver on Linux:

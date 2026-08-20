@@ -334,7 +334,7 @@ Consumer code uses the SDK without environment variables:
 ```rust
 let db = oliphaunt::Oliphaunt::builder()
     .directory(".oliphaunt")
-    .native_direct()
+    .direct()
     .extension(oliphaunt::Extension::Vector)
     .open()
     .await?;
@@ -506,7 +506,7 @@ ICU product model:
   - Maven: `dev.oliphaunt.runtime:oliphaunt-icu`
   - SwiftPM: `OliphauntICU`
   - Rust native: `oliphaunt-icu` plus `[package.metadata.oliphaunt] icu = true`
-  - WASIX Rust: `oliphaunt-icu` behind the `oliphaunt-wasix/icu` feature
+  - Rust WASIX: `oliphaunt-icu` behind the `oliphaunt-wasix/icu` feature
 - builders fail on ICU selection without a matching ICU data artifact.
 
 ## Release Graph

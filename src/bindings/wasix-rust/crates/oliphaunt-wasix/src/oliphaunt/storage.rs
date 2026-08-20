@@ -9,29 +9,14 @@ use wasmer_wasix::virtual_fs::{self, FileSystem};
 
 /// The storage used for PostgreSQL's mutable database files.
 ///
-/// Storage and initialization are deliberately independent. For example, a
-/// memory database can be initialized from the packaged template or from an
-/// archive, while a directory can be initialized with `initdb`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DatabaseStorage {
     /// A true in-memory WASIX filesystem. No host PGDATA directory is created.
     #[default]
     Memory,
-    /// A caller-owned host directory retained after the database closes.
+    /// A caller-owned managed database root retained after the database closes.
+    /// PostgreSQL data lives under its `pgdata` child.
     Directory(PathBuf),
-}
-
-/// How a database is initialized when its storage does not contain a cluster.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum DatabaseInitialization {
-    /// Install the PostgreSQL cluster template packaged with this runtime.
-    #[default]
-    PackagedTemplate,
-    /// Run the packaged WASIX `initdb` tool.
-    FreshInitdb,
-    /// Initialize from a same-version physical backup produced by
-    /// [`Oliphaunt::backup`](crate::Oliphaunt::backup).
-    PhysicalArchive(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
@@ -79,22 +64,6 @@ impl StorageRoot {
         }
     }
 
-    pub(crate) fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        match self {
-            Self::HostDirectory(root) => {
-                let path = storage_host_path(root, path)?;
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("create storage directory {}", parent.display())
-                    })?;
-                }
-                std::fs::write(&path, bytes)
-                    .with_context(|| format!("write storage file {}", path.display()))
-            }
-            Self::Memory(filesystem) => vfs_write(filesystem.as_ref(), path, bytes),
-        }
-    }
-
     #[cfg(feature = "extensions")]
     pub(crate) fn read(&self, path: &Path) -> Result<Vec<u8>> {
         match self {
@@ -104,43 +73,6 @@ impl StorageRoot {
                     .with_context(|| format!("read storage file {}", path.display()))
             }
             Self::Memory(filesystem) => vfs_read(filesystem.as_ref(), path),
-        }
-    }
-
-    pub(crate) fn read_optional(&self, path: &Path) -> Result<Option<Vec<u8>>> {
-        match self {
-            Self::HostDirectory(root) => {
-                let path = storage_host_path(root, path)?;
-                match std::fs::read(&path) {
-                    Ok(bytes) => Ok(Some(bytes)),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                    Err(error) => {
-                        Err(error).with_context(|| format!("read storage file {}", path.display()))
-                    }
-                }
-            }
-            Self::Memory(filesystem) => match filesystem.metadata(path) {
-                Ok(metadata) if metadata.is_file() => vfs_read(filesystem.as_ref(), path).map(Some),
-                Ok(_) | Err(virtual_fs::FsError::EntryNotFound) => Ok(None),
-                Err(error) => {
-                    Err(error).with_context(|| format!("stat virtual file {}", path.display()))
-                }
-            },
-        }
-    }
-
-    pub(crate) fn remove_file_if_exists(&self, path: &Path) -> Result<()> {
-        match self {
-            Self::HostDirectory(root) => {
-                let path = storage_host_path(root, path)?;
-                match std::fs::remove_file(&path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error)
-                        .with_context(|| format!("remove storage file {}", path.display())),
-                }
-            }
-            Self::Memory(filesystem) => vfs_remove_file_if_exists(filesystem.as_ref(), path),
         }
     }
 

@@ -728,7 +728,7 @@ Run before claiming this architecture complete:
   extension source fetch skip PostgreSQL preparation and making the Windows base
   runtime prune exact-extension artifacts before packaging:
   `bash -n src/extensions/artifacts/native/tools/package-release-assets.sh`,
-  `git diff --check`, `cargo run -p oliphaunt --bin oliphaunt-resources
+  `git diff --check`, `cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources
   --locked -- --list-extensions`, `cargo run -p xtask -- assets
   verify-committed`, `actionlint .github/workflows/ci.yml
   .github/workflows/mobile-e2e.yml .github/workflows/release.yml`,

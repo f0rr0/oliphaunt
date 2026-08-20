@@ -28,7 +28,7 @@ use oliphaunt::{Extension, Oliphaunt};
 
 # async fn demo() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
-    .native_direct()
+    .direct()
     .extension(Extension::Vector)
     .open()
     .await?;

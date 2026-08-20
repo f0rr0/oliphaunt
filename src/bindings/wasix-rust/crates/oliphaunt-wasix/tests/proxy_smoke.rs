@@ -22,7 +22,7 @@ fn tcp_proxy_handles_psql_style_connections() -> Result<()> {
     let second = query_proxy(addr, true, "SELECT 2 AS two")?;
     assert_eq!(second, vec!["2"]);
 
-    server.shutdown()?;
+    server.close()?;
     Ok(())
 }
 
@@ -145,7 +145,7 @@ fn startup_message() -> Vec<u8> {
     message.extend_from_slice(&PROTOCOL_3.to_be_bytes());
     for (key, value) in [
         ("user", "postgres"),
-        ("database", "template1"),
+        ("database", "postgres"),
         ("application_name", "oliphaunt-wasix-test"),
     ] {
         message.extend_from_slice(key.as_bytes());

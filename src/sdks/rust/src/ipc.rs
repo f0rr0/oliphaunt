@@ -1,7 +1,6 @@
 use std::io::{Read, Write};
 
 use crate::error::{Error, Result};
-use crate::storage::{BackupFormat, BackupRequest};
 
 const MAGIC: &[u8; 4] = b"PGOB";
 const HEADER_LEN: usize = 13;
@@ -14,8 +13,7 @@ pub(crate) enum RequestFrame {
     ExecSimpleQuery(String),
     Checkpoint,
     Close,
-    ExecProtocolStream(Vec<u8>),
-    Backup(BackupFormat),
+    Backup,
     Cancel,
 }
 
@@ -23,7 +21,6 @@ pub(crate) enum RequestFrame {
 pub(crate) enum ResponseFrame {
     Ok(Vec<u8>),
     Error(String),
-    Chunk(Vec<u8>),
 }
 
 /// Internal broker IPC request used by the packaged broker helper.
@@ -36,12 +33,10 @@ pub enum BrokerIpcRequest {
     ExecProtocol(Vec<u8>),
     /// Execute SQL through PostgreSQL's simple-query protocol.
     ExecSimpleQuery(String),
-    /// Execute raw PostgreSQL protocol bytes and stream backend response chunks.
-    ExecProtocolStream(Vec<u8>),
     /// Force a checkpoint.
     Checkpoint,
     /// Create a backup artifact.
-    Backup(BackupRequest),
+    Backup,
     /// Cancel the active backend query.
     Cancel,
     /// Close the broker session.
@@ -55,9 +50,8 @@ pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcReques
         RequestFrame::Authenticate(token) => Ok(BrokerIpcRequest::Authenticate(token)),
         RequestFrame::ExecProtocol(bytes) => Ok(BrokerIpcRequest::ExecProtocol(bytes)),
         RequestFrame::ExecSimpleQuery(sql) => Ok(BrokerIpcRequest::ExecSimpleQuery(sql)),
-        RequestFrame::ExecProtocolStream(bytes) => Ok(BrokerIpcRequest::ExecProtocolStream(bytes)),
         RequestFrame::Checkpoint => Ok(BrokerIpcRequest::Checkpoint),
-        RequestFrame::Backup(format) => Ok(BrokerIpcRequest::Backup(BackupRequest { format })),
+        RequestFrame::Backup => Ok(BrokerIpcRequest::Backup),
         RequestFrame::Cancel => Ok(BrokerIpcRequest::Cancel),
         RequestFrame::Close => Ok(BrokerIpcRequest::Close),
     }
@@ -67,12 +61,6 @@ pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcReques
 #[doc(hidden)]
 pub fn broker_ipc_write_ok(writer: &mut impl Write, bytes: Vec<u8>) -> Result<()> {
     write_response(writer, ResponseFrame::Ok(bytes))
-}
-
-/// Write one successful broker IPC stream chunk.
-#[doc(hidden)]
-pub fn broker_ipc_write_chunk(writer: &mut impl Write, bytes: &[u8]) -> Result<()> {
-    write_response(writer, ResponseFrame::Chunk(bytes.to_vec()))
 }
 
 /// Write a failed broker IPC response.
@@ -88,8 +76,7 @@ pub(crate) fn write_request(writer: &mut impl Write, frame: RequestFrame) -> Res
         RequestFrame::ExecSimpleQuery(sql) => write_frame(writer, 8, sql.as_bytes()),
         RequestFrame::Checkpoint => write_frame(writer, 2, &[]),
         RequestFrame::Close => write_frame(writer, 3, &[]),
-        RequestFrame::ExecProtocolStream(bytes) => write_frame(writer, 4, &bytes),
-        RequestFrame::Backup(format) => write_frame(writer, 5, &[encode_backup_format(format)]),
+        RequestFrame::Backup => write_frame(writer, 5, &[]),
         RequestFrame::Cancel => write_frame(writer, 7, &[]),
     }
 }
@@ -106,8 +93,7 @@ pub(crate) fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
             .map_err(|err| Error::Engine(format!("broker simple-query frame is not UTF-8: {err}"))),
         2 => empty_payload(payload, RequestFrame::Checkpoint),
         3 => empty_payload(payload, RequestFrame::Close),
-        4 => Ok(RequestFrame::ExecProtocolStream(payload)),
-        5 => decode_backup_request(payload).map(RequestFrame::Backup),
+        5 => empty_payload(payload, RequestFrame::Backup),
         7 => empty_payload(payload, RequestFrame::Cancel),
         _ => Err(Error::Engine(format!(
             "unknown broker request frame {kind}"
@@ -115,36 +101,10 @@ pub(crate) fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
     }
 }
 
-fn encode_backup_format(format: BackupFormat) -> u8 {
-    match format {
-        BackupFormat::Sql => 1,
-        BackupFormat::PhysicalArchive => 2,
-        BackupFormat::OliphauntArchive => 3,
-    }
-}
-
-fn decode_backup_request(payload: Vec<u8>) -> Result<BackupFormat> {
-    match payload.as_slice() {
-        [1] => Ok(BackupFormat::Sql),
-        [2] => Ok(BackupFormat::PhysicalArchive),
-        [3] => Ok(BackupFormat::OliphauntArchive),
-        [] => Err(Error::Engine(
-            "broker backup request frame is missing a format".to_owned(),
-        )),
-        [value] => Err(Error::Engine(format!(
-            "unknown broker backup format {value}"
-        ))),
-        _ => Err(Error::Engine(
-            "broker backup request frame unexpectedly had extra payload".to_owned(),
-        )),
-    }
-}
-
 pub(crate) fn write_response(writer: &mut impl Write, frame: ResponseFrame) -> Result<()> {
     match frame {
         ResponseFrame::Ok(bytes) => write_frame(writer, 101, &bytes),
         ResponseFrame::Error(message) => write_frame(writer, 102, message.as_bytes()),
-        ResponseFrame::Chunk(bytes) => write_frame(writer, 103, &bytes),
     }
 }
 
@@ -155,7 +115,6 @@ pub(crate) fn read_response(reader: &mut impl Read) -> Result<ResponseFrame> {
         102 => String::from_utf8(payload)
             .map(ResponseFrame::Error)
             .map_err(|err| Error::Engine(format!("broker error frame is not UTF-8: {err}"))),
-        103 => Ok(ResponseFrame::Chunk(payload)),
         _ => Err(Error::Engine(format!(
             "unknown broker response frame {kind}"
         ))),
@@ -237,17 +196,10 @@ mod tests {
     #[test]
     fn backup_frame_still_round_trips() {
         let mut bytes = Vec::new();
-        write_request(
-            &mut bytes,
-            RequestFrame::Backup(BackupFormat::PhysicalArchive),
-        )
-        .unwrap();
+        write_request(&mut bytes, RequestFrame::Backup).unwrap();
 
         let mut cursor = Cursor::new(bytes);
-        assert_eq!(
-            read_request(&mut cursor).unwrap(),
-            RequestFrame::Backup(BackupFormat::PhysicalArchive)
-        );
+        assert_eq!(read_request(&mut cursor).unwrap(), RequestFrame::Backup);
     }
 
     #[test]

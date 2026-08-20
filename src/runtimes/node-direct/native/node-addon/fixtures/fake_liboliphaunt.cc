@@ -117,16 +117,6 @@ OLIPHAUNT_API int32_t oliphaunt_exec_simple_query(
   return UnsupportedResponse(out);
 }
 
-OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
-    OliphauntHandle *,
-    const uint8_t *,
-    size_t,
-    OliphauntStreamCallback,
-    void *) {
-  SetError("fake cleanup fixture does not implement protocol streaming");
-  return -1;
-}
-
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *,
     const OliphauntBackupOptions *,
@@ -240,10 +230,6 @@ OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *) {
 
 OLIPHAUNT_API const char *oliphaunt_version(void) {
   return "cleanup-fixture";
-}
-
-OLIPHAUNT_API uint64_t oliphaunt_capabilities(void) {
-  return OLIPHAUNT_CAP_LOGICAL_REOPEN;
 }
 
 OLIPHAUNT_API void oliphaunt_free_response(OliphauntResponse *response) {

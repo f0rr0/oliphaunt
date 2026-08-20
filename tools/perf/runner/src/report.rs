@@ -2,64 +2,14 @@ use super::*;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct ColdPerfReport {
-    pub(super) wasmer_version: &'static str,
-    pub(super) wasmer_wasix_version: &'static str,
-    pub(super) wasix_runtime_assets: WasixRuntimeAssetReport,
-    pub(super) cache_reset_requested: bool,
-    pub(super) cache_dir: String,
-    pub(super) cache_state_at_start: &'static str,
-    pub(super) measurement_model: &'static str,
-    pub(super) operations: Vec<PerfOperation>,
-    pub(super) experiments: Vec<ColdPerfExperiment>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct PerfOperation {
-    pub(super) name: &'static str,
-    pub(super) description: &'static str,
-    pub(super) cache_state_before: String,
-    pub(super) process_state_before: &'static str,
-    pub(super) root_state: &'static str,
-    pub(super) query_state: &'static str,
-    pub(super) workload: &'static str,
-    pub(super) primary_latency_phase: &'static str,
-    pub(super) primary_latency_micros: u128,
-    pub(super) elapsed_micros: u128,
-    pub(super) correct: bool,
-    pub(super) phases: Vec<PhaseTiming>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct WarmPerfReport {
-    pub(super) wasmer_version: &'static str,
-    pub(super) wasmer_wasix_version: &'static str,
-    pub(super) wasix_runtime_assets: WasixRuntimeAssetReport,
-    pub(super) query_iterations: usize,
-    pub(super) connection_iterations: usize,
-    pub(super) measurement_model: &'static str,
-    pub(super) operations: Vec<PerfOperation>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct BenchmarkReport {
-    pub(super) wasmer_version: &'static str,
-    pub(super) wasmer_wasix_version: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) wasix_runtime_assets: Option<WasixRuntimeAssetReport>,
+    pub(super) engine: &'static str,
     pub(super) source_model: &'static str,
     pub(super) measurement_model: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) native_tuning: Option<NativeBenchmarkTuningReport>,
     pub(super) rtt_iterations: usize,
     pub(super) speed_scale: f64,
-    pub(super) preload_micros: u128,
     pub(super) runs: Vec<BenchmarkRun>,
 }
 
@@ -100,9 +50,6 @@ pub(super) struct BenchmarkTestResult {
 pub(super) struct PreparedUpdateReport {
     pub(super) source_model: &'static str,
     pub(super) measurement_model: &'static str,
-    pub(super) gate_model: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) wasix_runtime_assets: Option<WasixRuntimeAssetReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) native_tuning: Option<NativeBenchmarkTuningReport>,
     pub(super) rows: usize,
@@ -114,7 +61,6 @@ pub(super) struct PreparedUpdateReport {
 pub(super) struct PreparedUpdateRun {
     pub(super) mode: String,
     pub(super) description: String,
-    pub(super) protocol_stats: Option<ProtocolStatsSnapshot>,
     pub(super) tests: Vec<PreparedUpdateTest>,
 }
 
@@ -215,72 +161,9 @@ pub(super) struct NativeBenchmarkTuningReport {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct WasixRuntimeAssetReport {
-    pub(super) source_lane: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) source_fingerprint: Option<String>,
-    pub(super) postgres_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) pgdata_template_source_lane: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) pgdata_template_source_fingerprint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) pgdata_template_postgres_version: Option<String>,
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) fn wasix_runtime_asset_report() -> Result<WasixRuntimeAssetReport> {
-    let metadata =
-        oliphaunt_wasix::asset_manifest_metadata().context("read bundled WASIX asset manifest")?;
-    Ok(WasixRuntimeAssetReport {
-        source_lane: metadata
-            .source_lane
-            .unwrap_or_else(|| "oliphaunt-wasix".to_owned()),
-        source_fingerprint: metadata.source_fingerprint,
-        postgres_version: metadata.postgres_version,
-        pgdata_template_source_lane: metadata.pgdata_template_source_lane,
-        pgdata_template_source_fingerprint: metadata.pgdata_template_source_fingerprint,
-        pgdata_template_postgres_version: metadata.pgdata_template_postgres_version,
-    })
-}
-
-#[cfg(not(feature = "legacy-oliphaunt"))]
-pub(super) fn wasix_runtime_asset_report() -> Result<WasixRuntimeAssetReport> {
-    legacy_oliphaunt_unavailable("WASIX runtime asset provenance")
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct IndexedUpdateDiagnosticReport {
-    pub(super) source_model: &'static str,
-    pub(super) measurement_model: &'static str,
-    pub(super) wasix_runtime_assets: WasixRuntimeAssetReport,
-    pub(super) cases: Vec<IndexedUpdateDiagnosticCase>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct IndexedUpdateDiagnosticCase {
-    pub(super) name: &'static str,
-    pub(super) description: &'static str,
-    pub(super) setup_micros: u128,
-    pub(super) elapsed_micros: u128,
-    pub(super) operation_count: usize,
-    pub(super) stats_before: serde_json::Value,
-    pub(super) stats_after: serde_json::Value,
-    pub(super) fs_trace: serde_json::Value,
-    pub(super) phases: Vec<PhaseTiming>,
-}
-
-#[derive(Debug, Serialize)]
 pub(super) struct SpeedHotspotDiagnosticReport {
     pub(super) source_model: &'static str,
     pub(super) measurement_model: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) wasix_runtime_assets: Option<WasixRuntimeAssetReport>,
     pub(super) cases: Vec<SpeedHotspotDiagnosticCase>,
 }
 
@@ -297,51 +180,4 @@ pub(super) struct SpeedHotspotDiagnosticCase {
     pub(super) operation_count: usize,
     pub(super) settings: serde_json::Value,
     pub(super) observed_server_peak_rss_bytes: Option<u64>,
-    pub(super) fs_trace: serde_json::Value,
-    pub(super) phases: Vec<PhaseTiming>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct BufferCacheDiagnosticReport {
-    pub(super) source_model: &'static str,
-    pub(super) measurement_model: &'static str,
-    pub(super) wasix_runtime_assets: WasixRuntimeAssetReport,
-    pub(super) cases: Vec<BufferCacheDiagnosticCase>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct BufferCacheDiagnosticCase {
-    pub(super) id: String,
-    pub(super) label: String,
-    pub(super) setup_micros: u128,
-    pub(super) settings: serde_json::Value,
-    pub(super) relation_sizes: serde_json::Value,
-    pub(super) statements: Vec<BufferCacheDiagnosticStatement>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct BufferCacheDiagnosticStatement {
-    pub(super) sql: String,
-    pub(super) elapsed_micros: u128,
-    pub(super) explain_rows: serde_json::Value,
-    pub(super) fs_trace: serde_json::Value,
-    pub(super) wal_state: serde_json::Value,
-    pub(super) phases: Vec<PhaseTiming>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) struct ColdPerfExperiment {
-    pub(super) name: &'static str,
-    pub(super) status: &'static str,
-    pub(super) implementation_risk: &'static str,
-    pub(super) artifact_size_impact: &'static str,
-    pub(super) notes: &'static str,
 }

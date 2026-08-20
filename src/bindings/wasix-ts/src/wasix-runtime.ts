@@ -87,7 +87,9 @@ export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single'];
   if (options.storage.kind === 'memory') args.push('-F');
   args.push('-O', '-j');
-  const startupGUCs = { ...options.startupGUCs };
+  const startupGUCs = Object.fromEntries(
+    Object.entries(options.startupGUCs).map(([name, value]) => [name.trim(), value]),
+  );
   for (const [configuredName, configuredValue] of Object.entries(startupGUCs)) {
     const managed = Object.entries(SINGLE_BACKEND_GUCS).find(
       ([name]) => name === configuredName.toLowerCase(),
@@ -96,7 +98,7 @@ export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
     const [, requiredValue] = managed;
     if (configuredValue !== requiredValue) {
       throw new Error(
-        `PostgreSQL setting ${JSON.stringify(configuredName)} is managed by @oliphaunt/wasix-ts and must remain ${JSON.stringify(requiredValue)}`,
+        `PostgreSQL startup GUC ${JSON.stringify(configuredName)} is managed by @oliphaunt/wasix-ts and must remain ${JSON.stringify(requiredValue)}`,
       );
     }
     delete startupGUCs[configuredName];
@@ -156,11 +158,13 @@ export function wasixPostgresEnvironment(options: SerializedOpenOptions): Record
 }
 
 function validateGuc(name: string, value: string): void {
-  if (!/^[A-Za-z][A-Za-z0-9_.]*$/.test(name)) {
-    throw new Error(`invalid PostgreSQL setting name ${JSON.stringify(name)}`);
+  if (!/^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/u.test(name)) {
+    throw new Error(
+      `PostgreSQL startup GUC name ${JSON.stringify(name)} must use dot-separated components that start with an ASCII letter or '_' and continue with ASCII letters, digits, '_', or '$'`,
+    );
   }
   if (value.includes('\0')) {
-    throw new Error(`PostgreSQL setting ${name} contains a NUL byte`);
+    throw new Error(`PostgreSQL startup GUC ${JSON.stringify(name)} contains a NUL byte`);
   }
 }
 
@@ -191,7 +195,7 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
   if (primary instanceof WasixStorageError) {
     return new WasixStorageError(message, {
       code: primary.code,
-      durability: primary.durability,
+      commitState: primary.commitState,
       cause,
     });
   }

@@ -138,6 +138,14 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     await this.#rpc.request({ method: 'sync', boundary });
   }
 
+  async backup(): Promise<Uint8Array> {
+    const response = await this.#rpc.request({ method: 'backup' });
+    if (!(response instanceof Uint8Array)) {
+      throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
+    }
+    return response;
+  }
+
   close(): Promise<void> {
     return this.#closeOrderly();
   }

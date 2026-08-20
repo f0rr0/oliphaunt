@@ -95,14 +95,9 @@ kover {
         filters {
             includes {
                 classes(
-                    "dev.oliphaunt.AndroidContextRequiredEngine",
-                    "dev.oliphaunt.Backup*",
-                    "dev.oliphaunt.Engine*",
                     "dev.oliphaunt.GeneratedExtensionsKt",
                     "dev.oliphaunt.Oliphaunt*",
-                    "dev.oliphaunt.Protocol*",
                     "dev.oliphaunt.Query*",
-                    "dev.oliphaunt.Restore*",
                 )
             }
             excludes {
@@ -111,9 +106,7 @@ kover {
                     "dev.oliphaunt.AndroidNativeDirectEngine",
                     "dev.oliphaunt.AndroidNativeDirectEngineKt",
                     "dev.oliphaunt.AndroidNativeDirectSession",
-                    "dev.oliphaunt.OliphauntAndroid",
                     "dev.oliphaunt.OliphauntAndroidNativeBridge",
-                    "dev.oliphaunt.OliphauntAndroidProtocolStreamSink",
                 )
             }
         }
@@ -828,6 +821,10 @@ kotlin {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
             implementation(libs.kotlinx.serialization.json)
+        }
+        androidUnitTest.dependencies {
+            // Android's SDK jar contains only throwing org.json stubs on the host JVM.
+            implementation("org.json:json:20240303")
         }
     }
 }

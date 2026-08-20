@@ -40,18 +40,6 @@ export class PostgresWireClient {
     return readUntilReady(this.#stream, { includeMessages: true, errorIsFatal: false });
   }
 
-  async execProtocolStream(
-    request: Uint8Array,
-    onChunk: (chunk: Uint8Array) => void,
-  ): Promise<void> {
-    await this.#stream.writeAll(request);
-    await readUntilReady(this.#stream, {
-      includeMessages: true,
-      errorIsFatal: false,
-      onChunk,
-    });
-  }
-
   async terminate(): Promise<void> {
     await this.#stream.writeAll(new Uint8Array([0x58, 0, 0, 0, 4]));
     await this.#stream.close();
@@ -108,7 +96,6 @@ async function readUntilReady(
     includeMessages: boolean;
     errorIsFatal: boolean;
     backendKey?: { current: BackendKeyData | undefined };
-    onChunk?: (chunk: Uint8Array) => void;
   },
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
@@ -128,7 +115,6 @@ async function readUntilReady(
     frame.set(body, 5);
     if (options.includeMessages) {
       chunks.push(frame);
-      options.onChunk?.(frame);
     }
     switch (tag) {
       case 0x52:

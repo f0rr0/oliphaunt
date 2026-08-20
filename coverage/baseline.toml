@@ -114,8 +114,8 @@ owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-kotlin.waivers]]
-path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt"
-reason = "Android app-facing helper binds packaged resources and is covered by Android resource/package tests"
+path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/Oliphaunt.kt"
+reason = "Android app-facing facade binds packaged resources and is covered by Android resource/package tests"
 evidence = "OliphauntAndroidRuntimeAssetsTest and package-shape checks"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
@@ -124,20 +124,6 @@ expires = "before-0.2.0"
 path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidNativeBridge.kt"
 reason = "JNI bridge shell is validated by native runtime smoke and bridge compile checks"
 evidence = "Android CMake compile, JNI smoke, and liboliphaunt C ABI tests"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
-[[products.oliphaunt-kotlin.waivers]]
-path = "src/sdks/kotlin/oliphaunt/src/jvmMain/kotlin/dev/oliphaunt/DefaultEngine.kt"
-reason = "JVM target intentionally reports runtime unavailable until the JVM/native artifact resolver is implemented"
-evidence = "Kotlin package-shape tests and SDK parity mode-support fixtures"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
-[[products.oliphaunt-kotlin.waivers]]
-path = "src/sdks/kotlin/oliphaunt/src/nativeMain/kotlin/dev/oliphaunt/DefaultEngine.kt"
-reason = "Kotlin/Native default engine selection is validated with native target smoke rather than Kover JVM reports"
-evidence = "Kotlin native smoke/regression lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
@@ -210,14 +196,14 @@ expires = "before-0.2.0"
 [[products.oliphaunt-js.waivers]]
 path = "src/sdks/js/src/runtime/broker.ts"
 reason = "broker helper lifecycle requires Rust helper/runtime artifacts and belongs in smoke/regression evidence"
-evidence = "runtime-modes tests, broker frame tests, and TypeScript native broker smoke"
+evidence = "runtime-adapters.test.ts, broker-frames.test.ts, and TypeScript native broker smoke"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-js.waivers]]
 path = "src/sdks/js/src/runtime/node-adapter.ts"
 reason = "Node process adapter is partially exercised but runtime process behavior belongs in smoke lanes"
-evidence = "runtime-modes tests and broker/server smoke lanes"
+evidence = "runtime-adapters.test.ts and broker/server smoke lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
@@ -231,7 +217,7 @@ expires = "before-0.2.0"
 [[products.oliphaunt-js.waivers]]
 path = "src/sdks/js/src/runtime/server.ts"
 reason = "server process lifecycle requires runtime artifacts and belongs in smoke/regression evidence"
-evidence = "runtime-modes tests and TypeScript native server smoke"
+evidence = "runtime-adapters.test.ts, root-descriptor.test.ts, and TypeScript native server smoke"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
@@ -268,13 +254,14 @@ expires = "before-0.2.0"
 [products.oliphaunt-wasix-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 85.71
+measured_line_coverage = 99.03
 summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
 reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
-source_globs = ["src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/*.rs"]
+source_globs = [
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query*.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod*.rs",
+]
 exclude_globs = [
-  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/shared_fixture_tests.rs",
-  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/tests.rs",
   "src/runtimes/liboliphaunt/wasix/assets/generated/**",
   "src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**",
   "src/runtimes/liboliphaunt/wasix/crates/aot/**",
@@ -285,8 +272,79 @@ branch_coverage = "advisory"
 function_coverage = "advisory"
 
 [[products.oliphaunt-wasix-rust.waivers]]
-path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/mod.rs"
-reason = "protocol module root is an export shim; behavior lives in the measured protocol modules"
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs"
+reason = "oliphaunt module root is an export shim; behavior lives in the measured query module"
 evidence = "oliphaunt-wasix protocol nextest and doctest coverage"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-wasix-ts]
+tool = "vitest-v8"
+line_threshold = 80.0
+measured_line_coverage = 80.36
+summary = "target/coverage/oliphaunt-wasix-ts/summary.json"
+reports = [
+  "target/coverage/oliphaunt-wasix-ts/coverage-summary.json",
+  "target/coverage/oliphaunt-wasix-ts/lcov.info",
+]
+source_globs = [
+  "src/bindings/wasix-ts/src/*.ts",
+  "src/bindings/wasix-ts/src/storage/*.ts",
+]
+exclude_globs = [
+  "src/bindings/wasix-ts/src/__tests__/**",
+  "src/bindings/wasix-ts/src/**/*.d.ts",
+  "src/bindings/wasix-ts/src/types.ts",
+  "src/bindings/wasix-ts/src/public.ts",
+  "src/bindings/wasix-ts/src/index.ts",
+  "src/bindings/wasix-ts/src/index.*.ts",
+  "src/bindings/wasix-ts/src/storage/bun.ts",
+  "src/bindings/wasix-ts/src/storage/deno.ts",
+  "src/bindings/wasix-ts/lib/**",
+  "src/bindings/wasix-ts/node_modules/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/client.ts"
+reason = "browser entrypoint lifecycle requires the packaged WASIX runtime and browser host"
+evidence = "browser direct and Worker smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/node-client.ts"
+reason = "Node entrypoint lifecycle requires packaged WASIX assets and a worker_threads or direct host"
+evidence = "Node, Bun, and Deno package smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/node-direct.ts"
+reason = "direct Node startup requires the patched Wasmer host and packaged runtime carrier"
+evidence = "Node direct package smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/node-host.ts"
+reason = "Node host adapter delegates to the patched Wasmer package loaded by the release artifact"
+evidence = "Node package build and direct smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/node-worker.ts"
+reason = "Node Worker entrypoint lifecycle requires the packaged WASIX runtime and worker_threads host"
+evidence = "Node Worker package smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/worker.ts"
+reason = "browser Worker entrypoint lifecycle requires a real WASIX runtime and browser worker host"
+evidence = "browser Worker smoke and package lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"

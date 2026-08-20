@@ -541,10 +541,8 @@ for required in \
   "lib/module/index.js" \
   "lib/module/protocol.js" \
   "lib/typescript/index.d.ts" \
-  "lib/typescript/smoke.d.ts" \
-  "src/generated/extensions.json" \
-  "src/generated/ios-static-dependencies.json" \
-  "src/smoke.ts" \
+  "lib/typescript/client.d.ts" \
+  "src/generated/extensions.ts" \
   "lib/typescript/specs/NativeOliphaunt.d.ts"
 do
   if ! grep -Fq "$required" "$tmp_pack"; then

@@ -107,10 +107,6 @@ elif [ "${OLIPHAUNT_EXPO_MOBILE_EXTENSIONS+x}" = "x" ]; then
 else
   mobile_extensions_raw="vector"
 fi
-runtime_footprint="${OLIPHAUNT_EXPO_IOS_RUNTIME_FOOTPRINT:-${OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT:-balancedMobile}}"
-default_durability_profile=balanced
-[ "$runner" = "crash" ] && default_durability_profile=safe
-durability_profile="${OLIPHAUNT_EXPO_IOS_DURABILITY:-${OLIPHAUNT_EXPO_MOBILE_DURABILITY:-$default_durability_profile}}"
 startup_gucs="${OLIPHAUNT_EXPO_IOS_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
 wal_segsize_mb="${OLIPHAUNT_EXPO_IOS_WAL_SEGSIZE_MB:-${OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB:-16}}"
 benchmark_preset="${OLIPHAUNT_EXPO_IOS_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
@@ -874,11 +870,8 @@ start_metro_if_needed() {
       CI=1 EXPO_NO_TELEMETRY=1 EXPO_UNSTABLE_MCP_SERVER=1 \
       EXPO_PUBLIC_OLIPHAUNT_RUNNER="$bundle_runner" \
       EXPO_PUBLIC_OLIPHAUNT_LIFECYCLE_SMOKE="$lifecycle_smoke" \
-      EXPO_PUBLIC_OLIPHAUNT_DURABILITY="$durability_profile" \
-      EXPO_PUBLIC_OLIPHAUNT_RUNTIME_FOOTPRINT="$runtime_footprint" \
       EXPO_PUBLIC_OLIPHAUNT_BENCHMARK_PRESET="$benchmark_preset" \
       EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS="$startup_gucs" \
-      EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB="$wal_segsize_mb" \
       EXPO_PUBLIC_OLIPHAUNT_STORAGE_DIRECTORY="$bundle_storage" \
       pnpm exec expo start --dev-client --port "$metro_port" --host lan --clear \
         >"$scratch_root/metro.log" 2>&1

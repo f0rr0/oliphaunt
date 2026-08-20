@@ -12,8 +12,25 @@ import type { OliphauntDirectInstance } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
 import type { WasixStorageLease } from '../storage-provider.js';
+import { wasixPostgresArgs } from '../wasix-runtime.js';
 
 describe('direct WASIX session lifecycle', () => {
+  it('uses PostgreSQL startup GUC name and value grammar', () => {
+    const valid = openOptions();
+    valid.startupGUCs = { _name: '', 'ext.name$1': 'value', '  trimmed_name  ': '  ' };
+    expect(wasixPostgresArgs(valid)).toEqual(
+      expect.arrayContaining(['-c', '_name=', '-c', 'trimmed_name=  ']),
+    );
+    for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name', 'a b']) {
+      const invalid = openOptions();
+      invalid.startupGUCs = { [name]: 'value' };
+      expect(() => wasixPostgresArgs(invalid)).toThrow('must use dot-separated components');
+    }
+    const invalidValue = openOptions();
+    invalidValue.startupGUCs = { valid_name: 'bad\0value' };
+    expect(() => wasixPostgresArgs(invalidValue)).toThrow('contains a NUL byte');
+  });
+
   it('keeps startup SQLSTATE while composing cleanup failures in ownership order', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
@@ -122,7 +139,7 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
-  it('defers storage publication only when the caller owns the durability boundary', async () => {
+  it('defers storage publication only when the caller owns the commitState boundary', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
@@ -155,12 +172,12 @@ describe('direct WASIX session lifecycle', () => {
 
   it('preserves typed checkpoint and close storage errors', async () => {
     const checkpointFailure = new WasixStorageError('checkpoint generation failed', {
-      code: 'checkpoint-failed',
-      durability: 'unknown',
+      code: 'publication-failed',
+      commitState: 'unknown',
     });
     const closeFailure = new WasixStorageError('storage metadata is corrupt', {
       code: 'corrupt',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
     const events: string[] = [];
     const storage: WasixStorageLease = {
@@ -184,7 +201,7 @@ describe('direct WASIX session lifecycle', () => {
     const failure = await rejection(session.close());
 
     expect(failure).toBe(closeFailure);
-    expect(failure).toMatchObject({ code: 'corrupt', durability: 'unchanged' });
+    expect(failure).toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
@@ -449,7 +466,6 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
         runtimeArchiveSha256: '2'.repeat(64),
         pgdataTemplateSha256: '3'.repeat(64),
         moduleSha256: '4'.repeat(64),
-        sourceFingerprint: 'source',
         postgresVersion: '18.4',
       },
       extensions: [],
@@ -493,7 +509,7 @@ function openOptions(): SerializedOpenOptions {
     username: 'postgres',
     database: 'postgres',
     startupGUCs: {},
-    storage: { schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' },
+    storage: { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
   };
 }
 

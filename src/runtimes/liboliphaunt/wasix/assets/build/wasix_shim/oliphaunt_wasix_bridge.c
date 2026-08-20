@@ -42,9 +42,6 @@
 #define OLIPHAUNT_PROTOCOL_FD 1
 #define POSTGRES_MAIN_LONGJMP 100
 #define MAX_ATEXIT_FUNCS 32
-#ifdef OLIPHAUNT_WASIX_BACKEND_TIMING
-#define OLIPHAUNT_BACKEND_TIMING_MAX 104
-#endif
 
 volatile int is_oliphaunt_active = 0;
 volatile int force_host_error_recovery = 0;
@@ -204,71 +201,6 @@ oliphaunt_wasix_siglongjmp(sigjmp_buf env, int val)
 {
 	oliphaunt_wasix_longjmp(env, val);
 }
-
-#ifdef OLIPHAUNT_WASIX_BACKEND_TIMING
-static uint64_t oliphaunt_wasix_backend_timing_started_us[OLIPHAUNT_BACKEND_TIMING_MAX];
-static uint64_t oliphaunt_wasix_backend_timing_elapsed_us_value[OLIPHAUNT_BACKEND_TIMING_MAX];
-static bool oliphaunt_wasix_backend_timing_seen[OLIPHAUNT_BACKEND_TIMING_MAX];
-
-static uint64_t
-oliphaunt_wasix_monotonic_us(void)
-{
-	struct timespec ts;
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-		return 0;
-	return ((uint64_t) ts.tv_sec * 1000000ULL) + ((uint64_t) ts.tv_nsec / 1000ULL);
-}
-
-void EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_backend_timing_reset(void)
-{
-	memset(oliphaunt_wasix_backend_timing_started_us, 0, sizeof(oliphaunt_wasix_backend_timing_started_us));
-	memset(oliphaunt_wasix_backend_timing_elapsed_us_value, 0, sizeof(oliphaunt_wasix_backend_timing_elapsed_us_value));
-	memset(oliphaunt_wasix_backend_timing_seen, 0, sizeof(oliphaunt_wasix_backend_timing_seen));
-}
-
-void EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_backend_timing_start(int id)
-{
-	if (id <= 0 || id >= OLIPHAUNT_BACKEND_TIMING_MAX)
-		return;
-	oliphaunt_wasix_backend_timing_started_us[id] = oliphaunt_wasix_monotonic_us();
-}
-
-void EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_backend_timing_end(int id)
-{
-	if (id <= 0 || id >= OLIPHAUNT_BACKEND_TIMING_MAX)
-		return;
-
-	uint64_t started = oliphaunt_wasix_backend_timing_started_us[id];
-	uint64_t ended = oliphaunt_wasix_monotonic_us();
-	if (started == 0 || ended < started)
-		return;
-
-	oliphaunt_wasix_backend_timing_elapsed_us_value[id] += ended - started;
-	oliphaunt_wasix_backend_timing_seen[id] = true;
-	oliphaunt_wasix_backend_timing_started_us[id] = 0;
-}
-
-void EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_backend_timing_add(int id, uint64_t value)
-{
-	if (id <= 0 || id >= OLIPHAUNT_BACKEND_TIMING_MAX)
-		return;
-
-	oliphaunt_wasix_backend_timing_elapsed_us_value[id] += value;
-	oliphaunt_wasix_backend_timing_seen[id] = true;
-}
-
-int64_t EMSCRIPTEN_KEEPALIVE
-oliphaunt_wasix_backend_timing_elapsed_us(int id)
-{
-	if (id <= 0 || id >= OLIPHAUNT_BACKEND_TIMING_MAX || !oliphaunt_wasix_backend_timing_seen[id])
-		return -1;
-	return (int64_t) oliphaunt_wasix_backend_timing_elapsed_us_value[id];
-}
-#endif
 
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_input_reset(void)

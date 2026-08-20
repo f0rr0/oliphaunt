@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000038 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 17 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: disable unsupported writeback hints
+
+PostgreSQL uses pg_flush_data() as an optional asynchronous writeback hint.
+During startup it opens every data file read-only before issuing that hint.
+WASIX exposes posix_fadvise(), but its descriptor-capability implementation
+rejects the operation on those read-only descriptors with EACCES. PostgreSQL
+promotes the otherwise ignorable hint failure to PANIC during recovery.
+
+Do not advertise pg_flush_data() for the explicitly single-backend WASIX
+build. Real durability remains provided by PostgreSQL's fsync/fdatasync calls;
+only the unsupported pre-writeback optimization is disabled. Other PostgreSQL
+targets retain the upstream selection logic.
+---
+ src/backend/storage/file/fd.c | 7 ++++++-
+ src/common/file_utils.c       | 7 ++++++-
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
+index 739b1b9..b1f0a22 100644
+--- a/src/backend/storage/file/fd.c
++++ b/src/backend/storage/file/fd.c
+@@ -103,7 +103,12 @@
+ #include "utils/varlena.h"
+ 
+ /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
+-#if defined(HAVE_SYNC_FILE_RANGE)
++#if defined(OLIPHAUNT_WASM_SINGLE_USER)
++/*
++ * WASIX rejects the startup pre-sync hint on PostgreSQL's read-only file
++ * descriptors.  Actual fsync/fdatasync durability remains enabled.
++ */
++#elif defined(HAVE_SYNC_FILE_RANGE)
+ #define PG_FLUSH_DATA_WORKS 1
+ #elif !defined(WIN32) && defined(MS_ASYNC)
+ #define PG_FLUSH_DATA_WORKS 1
+diff --git a/src/common/file_utils.c b/src/common/file_utils.c
+index d0ddfd9..066d455 100644
+--- a/src/common/file_utils.c
++++ b/src/common/file_utils.c
+@@ -34,7 +34,12 @@
+ #include "common/logging.h"
+ 
+ /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
+-#if defined(HAVE_SYNC_FILE_RANGE)
++#if defined(OLIPHAUNT_WASM_SINGLE_USER)
++/*
++ * WASIX rejects the startup pre-sync hint on PostgreSQL's read-only file
++ * descriptors.  Actual fsync/fdatasync durability remains enabled.
++ */
++#elif defined(HAVE_SYNC_FILE_RANGE)
+ #define PG_FLUSH_DATA_WORKS 1
+ #elif !defined(WIN32) && defined(MS_ASYNC)
+ #define PG_FLUSH_DATA_WORKS 1
+-- 
+2.51.0

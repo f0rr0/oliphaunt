@@ -15,7 +15,7 @@ fn main() -> Result<()> {
         .context("build WASIX sidecar Tokio runtime")?;
     let _runtime_context = runtime.enter();
     let server = start_server(directory)?;
-    println!("{}", json!({ "databaseUrl": server.connection_uri() }));
+    println!("{}", json!({ "databaseUrl": server.connection_string() }));
     io::stdout().flush()?;
     let _server = server;
     loop {
@@ -38,10 +38,7 @@ fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
 }
 
 fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
-    server
-        .preflight_tools()
-        .context("preflight split WASIX pg_dump and psql tools")?;
-    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    let dump = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"

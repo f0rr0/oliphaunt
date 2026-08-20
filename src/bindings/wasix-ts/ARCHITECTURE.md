@@ -51,7 +51,7 @@ The canonical guest also owns the backend-only single-backend spinlock and
 scalar-atomic specializations carried by PostgreSQL patches 0040 and 0041.
 They follow the guest into the Rust binding's AOT artifacts and the portable
 module used by browser direct, browser worker, and Node/Bun/Deno worker execution; they
-are not a TypeScript or server-runtime host optimization. Frontends, PGXS side modules,
+are not a TypeScript or Node/Bun/Deno host optimization. Frontends, PGXS side modules,
 and concurrent PostgreSQL builds retain the normal atomic implementation. Host
 lifecycle stays separate. All TypeScript placements assert the shared
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
@@ -137,7 +137,7 @@ smaller qualified side modules remain supported in direct placement.
 
 Stock Wasmer's public browser API exposes streams and process completion, but
 not arbitrary guest exports. The source-pinned host deliberately adds only the
-narrow Oliphaunt export driver needed to match the WASIX Rust lifecycle; it is
+narrow Oliphaunt export driver needed to match the Rust WASIX lifecycle; it is
 not a general synchronous WASIX process API. Generic Wasmer process streams
 remain upstream behavior and are not part of the TypeScript database surface.
 
@@ -155,10 +155,10 @@ and explicitly accepts blocking the calling JavaScript thread. Descriptor valida
 archive verification, extension installation, query serialization, close
 semantics, and the memory default are not forked by placement.
 
-IndexedDB and OPFS remain browser-only and are rejected before a server-runtime
+IndexedDB and OPFS remain browser-only and are rejected before a Node/Bun/Deno host
 worker starts. Directory persistence is exposed through matching
 `storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
-portable raw-PGDATA provider with exclusive path ownership. No host falls back
+portable managed-root provider with exclusive path ownership. No host falls back
 to native `@oliphaunt/ts`.
 
 ## Browser storage boundary
@@ -170,7 +170,7 @@ configuration:
 opaque storage descriptor
           |
           v
- acquire provider lease ---- exact compatibility metadata
+ acquire provider lease ---- exact physical compatibility
           |
           v
  hydrate worker-owned /base Directory
@@ -203,22 +203,21 @@ storage.
 Each logical IndexedDB name owns a separate physical IndexedDB database with
 fixed metadata and one row per PGDATA path. Each boundary applies upserts and
 removals in one atomic read-write transaction using the browser's default
-durability policy; an aborted write leaves the preceding generation intact,
+commitState policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
-stores raw PGDATA files plus one
+stores PGDATA files in a provider-private directory plus one
 sidecar identity and publishes WAL first, ordinary files second,
 `global/pg_control` last, then removals. OPFS has native-filesystem recovery
 ordering but no cross-file transaction, so a failed publication reports unknown
-durability instead of claiming that nothing changed.
+publication state instead of claiming that nothing changed.
 
-Compatibility includes the exact runtime product/version, manifest, runtime
-archive, PGDATA template, module, source fingerprint, PostgreSQL version, and
-the sorted selected extension carrier/install identities. A reopen remounts
-the extension files before PostgreSQL starts and skips first-open extension
-lifecycle SQL. Any identity-set change fails before stored bytes reach Wasmer.
-That fail-closed restriction is an explicit first implementation divergence;
-safe extension add/upgrade/remove requires separately versioned migration
-semantics.
+Compatibility uses the PostgreSQL major and versioned WASIX physical format.
+Runtime hashes and source fingerprints still reject mixed runtime, template,
+AOT, and extension build outputs, while package and carrier changes do not
+rewrite the managed-root descriptor or reject an unchanged physical format.
+Safe extension upgrade or removal remains an explicit migration concern rather
+than a reason to reject every change in the available carrier set.
+Cross-binding root handoff is not a supported or qualified workflow.
 
 Persistent databases use an origin-scoped exclusive Web Lock. This preserves
 the single-owner invariant rather than suggesting that one single-user
@@ -439,7 +438,7 @@ caches by exact runtime/carrier/GUC identity. Mutable directories and storage
 leases never enter those caches. The checked-in insert benchmark compares WAL
 volume alongside timing; separate root-cause diagnostics compare buffer
 activity and relation sizes. Both keep host/runtime overhead visible without
-changing PostgreSQL work or durability settings.
+changing PostgreSQL work or commitState settings.
 
 This binding keeps the following deliberate divergences:
 
@@ -452,7 +451,7 @@ This binding keeps the following deliberate divergences:
   superuser is active, whereas PGlite normally stages it for an explicit
   `CREATE EXTENSION`; and
 - IndexedDB and OPFS now use source-pinned dirty-path synchronization at each
-  completed protocol operation, matching PGlite's useful durability boundary
+  completed protocol operation, matching PGlite's useful commitState boundary
   without importing Emscripten FS. Oliphaunt keeps explicit provider-specific
   atomicity and exclusive ownership; multi-tab leadership remains unsupported.
 
@@ -522,7 +521,7 @@ The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
 continue with `42` on the same handle, persist through IndexedDB operation
 boundaries, run an explicit checkpoint, and close with a
-successful zero exit status. Each server-runtime smoke installs packed release
+successful zero exit status. Each Node/Bun/Deno host smoke installs packed release
 candidates into a fresh external project, verifies the runtime selects its conditional export,
 starts the same portable runtime with package-relative assets, activates
 `pgtap`, recovers from an error, and closes cleanly. The opt-in native browser

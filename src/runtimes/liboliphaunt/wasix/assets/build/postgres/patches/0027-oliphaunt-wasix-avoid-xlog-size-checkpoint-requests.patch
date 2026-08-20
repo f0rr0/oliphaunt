@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000027 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: avoid XLog-size checkpoint requests
+
+The embedded backend has no checkpointer process, and running a checkpoint
+inside XLogWrite is unsafe. Record the normal XLog-size request there and let
+the host-pumped traffic cop perform it at the next ReadyForQuery boundary when
+the backend is outside a transaction. This keeps PostgreSQL's WAL recycling
+policy without recursive checkpoints or an absent background process.
+---
+ src/backend/access/transam/xlog.c    | 29 +++++++++++++++++++++++++++--
+ src/backend/postmaster/checkpointer.c |  2 ++
+ src/backend/tcop/postgres.c           |  6 ++++++
+ src/include/access/xlog.h             |  4 ++++
+ 4 files changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -164,6 +164,10 @@ static WalLevel wal_level = WAL_LEVEL_MINIMAL;
+ /* See check_wal_consistency_checking */
+ static bool check_wal_consistency_checking_deferred = false;
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++static bool oliphaunt_wasix_checkpoint_deferred = false;
++#endif
++
+ /*
+  * During recovery, we keep a copy of the latest checkpoint record here.
+  * lastCheckPointRecPtr points to start of checkpoint record and
+@@ -2300,6 +2304,17 @@ XLogCheckpointNeeded(XLogSegNo new_segno)
+ 	return false;
+ }
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++void
++OliphauntWasixPerformDeferredCheckpoint(void)
++{
++	if (!oliphaunt_wasix_checkpoint_deferred)
++		return;
++	RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
++	oliphaunt_wasix_checkpoint_deferred = false;
++}
++#endif
++
+ /*
+  * Write and/or fsync the log at least as far as WriteRqst indicates.
+  *
+@@ -2501,15 +2516,24 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 				 * like a checkpoint is needed, forcibly update RedoRecPtr and
+ 				 * recheck.
+ 				 */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++				if (XLogCheckpointNeeded(openLogSegNo))
++				{
++					(void) GetRedoRecPtr();
++					if (XLogCheckpointNeeded(openLogSegNo))
++						oliphaunt_wasix_checkpoint_deferred = true;
++				}
++#else
+ 				if (IsUnderPostmaster && XLogCheckpointNeeded(openLogSegNo))
+ 				{
+ 					(void) GetRedoRecPtr();
+ 					if (XLogCheckpointNeeded(openLogSegNo))
+ 						RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
+ 				}
++#endif
+ 			}
+ 		}
+ 
+ 		if (ispartialpage)
+ 		{
+ 			/* Only asked to write a partial page */
+diff --git a/src/backend/postmaster/checkpointer.c b/src/backend/postmaster/checkpointer.c
+--- a/src/backend/postmaster/checkpointer.c
++++ b/src/backend/postmaster/checkpointer.c
+@@ -1009,7 +1009,9 @@ RequestCheckpoint(int flags)
+ 	/*
+ 	 * If in a standalone backend, just do it ourselves.
+ 	 */
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	if (!IsPostmasterEnvironment)
++#endif
+ 	{
+ 		/*
+ 		 * There's no point in doing slow checkpoints in a standalone backend,
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -31,6 +31,9 @@
+ #include "access/parallel.h"
+ #include "access/printtup.h"
+ #include "access/xact.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "access/xlog.h"
++#endif
+ #include "catalog/pg_type.h"
+ #include "commands/async.h"
+ #include "commands/event_trigger.h"
+@@ -4470,6 +4473,9 @@ PostgresSendReadyForQueryIfNecessary(void)
+ 		else
+ 		{
+ 			long		stats_timeout;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++			OliphauntWasixPerformDeferredCheckpoint();
++#endif
+ 
+ 			/*
+ 			 * Process incoming notifies (including self-notifies), if
+diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
+--- a/src/include/access/xlog.h
++++ b/src/include/access/xlog.h
+@@ -242,7 +242,11 @@ extern void LocalProcessControlFile(bool reset);
+ extern WalLevel GetActiveWalLevelOnStandby(void);
+ extern void StartupXLOG(void);
+ extern void ShutdownXLOG(int code, Datum arg);
+ extern bool CreateCheckPoint(int flags);
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++extern void OliphauntWasixPerformDeferredCheckpoint(void);
++#endif
++
+ extern bool CreateRestartPoint(int flags);
+ extern WALAvailability GetWALAvailability(XLogRecPtr targetLSN);
+ extern void XLogPutNextOid(Oid nextOid);
+--
+2.39.5

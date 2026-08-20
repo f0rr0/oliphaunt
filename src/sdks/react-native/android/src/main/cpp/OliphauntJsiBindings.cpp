@@ -43,15 +43,8 @@ struct PendingPromise final {
   std::shared_ptr<AsyncCallback<>> reject;
 };
 
-struct PendingStream final {
-  std::shared_ptr<AsyncCallback<>> onChunk;
-  std::shared_ptr<AsyncCallback<>> resolve;
-  std::shared_ptr<AsyncCallback<>> reject;
-};
-
 std::mutex gPendingMutex;
 std::unordered_map<int64_t, PendingPromise> gPendingPromises;
-std::unordered_map<int64_t, std::shared_ptr<PendingStream>> gPendingStreams;
 std::atomic<int64_t> gNextToken{1};
 
 jsi::ArrayBuffer arrayBufferFromBytes(jsi::Runtime &runtime, std::vector<uint8_t> bytes)
@@ -175,31 +168,6 @@ std::optional<PendingPromise> takePendingPromise(int64_t token)
   return promise;
 }
 
-void storePendingStream(int64_t token, std::shared_ptr<PendingStream> stream)
-{
-  std::lock_guard<std::mutex> lock(gPendingMutex);
-  gPendingStreams.emplace(token, std::move(stream));
-}
-
-std::shared_ptr<PendingStream> findPendingStream(int64_t token)
-{
-  std::lock_guard<std::mutex> lock(gPendingMutex);
-  auto iter = gPendingStreams.find(token);
-  return iter == gPendingStreams.end() ? nullptr : iter->second;
-}
-
-std::shared_ptr<PendingStream> takePendingStream(int64_t token)
-{
-  std::lock_guard<std::mutex> lock(gPendingMutex);
-  auto iter = gPendingStreams.find(token);
-  if (iter == gPendingStreams.end()) {
-    return nullptr;
-  }
-  auto stream = std::move(iter->second);
-  gPendingStreams.erase(iter);
-  return stream;
-}
-
 jni::local_ref<jbyteArray> makeByteArray(const std::vector<uint8_t> &bytes)
 {
   if (bytes.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
@@ -303,70 +271,6 @@ class OliphauntJsiPromiseCallback
   }
 };
 
-class OliphauntJsiStreamCallback
-    : public jni::JavaClass<OliphauntJsiStreamCallback> {
- public:
-  static constexpr const char *kJavaDescriptor =
-      "Ldev/oliphaunt/reactnative/OliphauntJsiStreamCallback;";
-
-  static void registerNatives()
-  {
-    javaClassLocal()->registerNatives({
-        makeNativeMethod("nativeEmitChunk", nativeEmitChunk),
-        makeNativeMethod("nativeResolveUnit", nativeResolveUnit),
-        makeNativeMethod("nativeReject", nativeReject),
-    });
-  }
-
- private:
-  static void nativeEmitChunk(
-      jni::alias_ref<OliphauntJsiStreamCallback>,
-      jlong token,
-      jni::alias_ref<jbyteArray> chunk)
-  {
-    auto stream = findPendingStream(static_cast<int64_t>(token));
-    if (stream == nullptr) {
-      return;
-    }
-    std::vector<uint8_t> bytes = copyByteArray(chunk);
-    stream->onChunk->call([bytes = std::move(bytes)](
-                              jsi::Runtime &runtime,
-                              jsi::Function &chunkFunction) mutable {
-      chunkFunction.call(runtime, arrayBufferFromBytes(runtime, std::move(bytes)));
-    });
-  }
-
-  static void nativeResolveUnit(
-      jni::alias_ref<OliphauntJsiStreamCallback>,
-      jlong token)
-  {
-    auto stream = takePendingStream(static_cast<int64_t>(token));
-    if (stream == nullptr) {
-      return;
-    }
-    stream->resolve->call([](jsi::Runtime &runtime, jsi::Function &resolveFunction) {
-      resolveFunction.call(runtime, jsi::Value::undefined());
-    });
-  }
-
-  static void nativeReject(
-      jni::alias_ref<OliphauntJsiStreamCallback>,
-      jlong token,
-      jni::alias_ref<jni::JString> message)
-  {
-    auto stream = takePendingStream(static_cast<int64_t>(token));
-    if (stream == nullptr) {
-      return;
-    }
-    std::string errorMessage = message != nullptr ? message->toStdString() : "liboliphaunt stream failed";
-    stream->reject->call([errorMessage](
-                             jsi::Runtime &runtime,
-                             jsi::Function &rejectFunction) {
-      rejectFunction.call(runtime, createError(runtime, errorMessage));
-    });
-  }
-};
-
 class OliphauntModuleJSIBindings
     : public jni::JavaClass<OliphauntModuleJSIBindings> {
  public:
@@ -397,7 +301,7 @@ class OliphauntModuleJSIBindings
               jsi::Function::createFromHostFunction(
                   runtime,
                   jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolRaw"),
-                  2,
+                  1,
                   [moduleGlobal, callInvoker](
                       jsi::Runtime &runtime,
                       const jsi::Value &,
@@ -475,101 +379,6 @@ class OliphauntModuleJSIBindings
                   }));
           transport.setProperty(
               runtime,
-              "execProtocolStream",
-              jsi::Function::createFromHostFunction(
-                  runtime,
-                  jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolStream"),
-                  3,
-                  [moduleGlobal, callInvoker](
-                      jsi::Runtime &runtime,
-                      const jsi::Value &,
-                      const jsi::Value *args,
-                      size_t count) -> jsi::Value {
-                    if (count != 3 ||
-                        !args[2].isObject() ||
-                        !args[2].asObject(runtime).isFunction(runtime)) {
-                      throw jsi::JSError(
-                          runtime,
-                          "liboliphaunt JSI execProtocolStream expects handle, request, and onChunk");
-                    }
-
-                    int64_t handle = copyHandleArgument(runtime, args[0]);
-                    std::vector<uint8_t> request = copyBinaryArgument(runtime, args[1]);
-                    auto onChunk = std::make_shared<AsyncCallback<>>(
-                        runtime,
-                        args[2].asObject(runtime).getFunction(runtime),
-                        callInvoker);
-                    auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
-                    auto executor = jsi::Function::createFromHostFunction(
-                        runtime,
-                        jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolStreamExecutor"),
-                        2,
-                        [moduleGlobal,
-                         callInvoker,
-                         handle,
-                         request = std::move(request),
-                         onChunk = std::move(onChunk)](
-                            jsi::Runtime &runtime,
-                            const jsi::Value &,
-                            const jsi::Value *promiseArgs,
-                            size_t promiseArgCount) mutable -> jsi::Value {
-                          if (promiseArgCount < 2 ||
-                              !promiseArgs[0].isObject() ||
-                              !promiseArgs[0].asObject(runtime).isFunction(runtime) ||
-                              !promiseArgs[1].isObject() ||
-                              !promiseArgs[1].asObject(runtime).isFunction(runtime)) {
-                            throw jsi::JSError(
-                                runtime,
-                                "liboliphaunt JSI Promise executor received invalid callbacks");
-                          }
-
-                          int64_t token = gNextToken.fetch_add(1);
-                          auto stream = std::make_shared<PendingStream>(PendingStream{
-                              onChunk,
-                              std::make_shared<AsyncCallback<>>(
-                                  runtime,
-                                  promiseArgs[0].asObject(runtime).getFunction(runtime),
-                                  callInvoker),
-                              std::make_shared<AsyncCallback<>>(
-                                  runtime,
-                                  promiseArgs[1].asObject(runtime).getFunction(runtime),
-                                  callInvoker),
-                          });
-                          auto reject = stream->reject;
-                          storePendingStream(token, stream);
-
-                          try {
-                            auto requestArray = makeByteArray(request);
-                            static const auto callbackConstructor =
-                                OliphauntJsiStreamCallback::javaClassStatic()
-                                    ->getConstructor<OliphauntJsiStreamCallback::javaobject(jlong)>();
-                            auto callback =
-                                OliphauntJsiStreamCallback::javaClassStatic()
-                                    ->newObject(callbackConstructor, static_cast<jlong>(token));
-                            static const auto execProtocolStreamBytes =
-                                OliphauntModuleJSIBindings::javaClassStatic()
-                                    ->getMethod<void(jlong, jbyteArray, OliphauntJsiStreamCallback::javaobject)>(
-                                        "execProtocolStreamBytes");
-                            execProtocolStreamBytes(
-                                moduleGlobal,
-                                static_cast<jlong>(handle),
-                                requestArray.get(),
-                                callback.get());
-                          } catch (const std::exception &error) {
-                            takePendingStream(token);
-                            std::string message = error.what();
-                            reject->call([message](
-                                             jsi::Runtime &runtime,
-                                             jsi::Function &rejectFunction) {
-                              rejectFunction.call(runtime, createError(runtime, message));
-                            });
-                          }
-                          return jsi::Value::undefined();
-                        });
-                    return promiseConstructor.callAsConstructor(runtime, std::move(executor));
-                  }));
-          transport.setProperty(
-              runtime,
               "backup",
               jsi::Function::createFromHostFunction(
                   runtime,
@@ -580,18 +389,17 @@ class OliphauntModuleJSIBindings
                       const jsi::Value &,
                       const jsi::Value *args,
                       size_t count) -> jsi::Value {
-                    if (count != 2) {
-                      throw jsi::JSError(runtime, "liboliphaunt JSI backup expects handle and format");
+                    if (count != 1) {
+                      throw jsi::JSError(runtime, "liboliphaunt JSI backup expects a handle");
                     }
 
                     int64_t handle = copyHandleArgument(runtime, args[0]);
-                    std::string format = copyStringArgument(runtime, args[1], "backup format");
                     auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
                     auto executor = jsi::Function::createFromHostFunction(
                         runtime,
                         jsi::PropNameID::forAscii(runtime, "liboliphauntBackupExecutor"),
                         2,
-                        [moduleGlobal, callInvoker, handle, format = std::move(format)](
+                        [moduleGlobal, callInvoker, handle](
                             jsi::Runtime &runtime,
                             const jsi::Value &,
                             const jsi::Value *promiseArgs,
@@ -629,13 +437,11 @@ class OliphauntModuleJSIBindings
                                     ->newObject(callbackConstructor, static_cast<jlong>(token));
                             static const auto backupBytes =
                                 OliphauntModuleJSIBindings::javaClassStatic()
-                                    ->getMethod<void(jlong, jni::JString::javaobject, OliphauntJsiPromiseCallback::javaobject)>(
+                                    ->getMethod<void(jlong, OliphauntJsiPromiseCallback::javaobject)>(
                                         "backupBytes");
-                            auto formatString = jni::make_jstring(format);
                             backupBytes(
                                 moduleGlobal,
                                 static_cast<jlong>(handle),
-                                formatString.get(),
                                 callback.get());
                           } catch (const std::exception &error) {
                             takePendingPromise(token);
@@ -656,23 +462,35 @@ class OliphauntModuleJSIBindings
               jsi::Function::createFromHostFunction(
                   runtime,
                   jsi::PropNameID::forAscii(runtime, "liboliphauntRestore"),
-                  5,
+                  2,
                   [moduleGlobal, callInvoker](
                       jsi::Runtime &runtime,
                       const jsi::Value &,
                       const jsi::Value *args,
                       size_t count) -> jsi::Value {
-                    if (count != 5 || !args[3].isBool()) {
+                    if (count != 2) {
                       throw jsi::JSError(
                           runtime,
-                          "liboliphaunt JSI restore expects destination, format, artifact, replaceExisting, and libraryPath");
+                          "liboliphaunt JSI restore expects destination and backup bytes");
                     }
 
-                    std::string destination = copyStringArgument(runtime, args[0], "restore destination");
-                    std::string format = copyStringArgument(runtime, args[1], "restore format");
-                    std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[2]);
-                    bool replaceExisting = args[3].getBool();
-                    auto libraryPath = copyOptionalStringArgument(runtime, args[4], "restore libraryPath");
+                    if (!args[0].isObject()) {
+                      throw jsi::JSError(runtime, "liboliphaunt JSI restore destination must be an object");
+                    }
+                    auto destination = args[0].asObject(runtime);
+                    std::string storageKind = copyStringArgument(
+                        runtime,
+                        destination.getProperty(runtime, "storageKind"),
+                        "restore storageKind");
+                    auto storagePath = copyOptionalStringArgument(
+                        runtime,
+                        destination.getProperty(runtime, "storagePath"),
+                        "restore storagePath");
+                    auto storageName = copyOptionalStringArgument(
+                        runtime,
+                        destination.getProperty(runtime, "storageName"),
+                        "restore storageName");
+                    std::vector<uint8_t> artifact = copyBinaryArgument(runtime, args[1]);
                     auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
                     auto executor = jsi::Function::createFromHostFunction(
                         runtime,
@@ -680,11 +498,10 @@ class OliphauntModuleJSIBindings
                         2,
                         [moduleGlobal,
                          callInvoker,
-                         destination = std::move(destination),
-                         format = std::move(format),
-                         artifact = std::move(artifact),
-                         replaceExisting,
-                         libraryPath = std::move(libraryPath)](
+                         storageKind = std::move(storageKind),
+                         storagePath = std::move(storagePath),
+                         storageName = std::move(storageName),
+                         artifact = std::move(artifact)](
                             jsi::Runtime &runtime,
                             const jsi::Value &,
                             const jsi::Value *promiseArgs,
@@ -714,15 +531,10 @@ class OliphauntModuleJSIBindings
                           storePendingPromise(token, std::move(pending));
 
                           try {
-                            auto destinationString = jni::make_jstring(destination);
-                            auto formatString = jni::make_jstring(format);
+                            auto storageKindString = jni::make_jstring(storageKind);
+                            auto storagePathString = jni::make_jstring(storagePath.value_or(""));
+                            auto storageNameString = jni::make_jstring(storageName.value_or(""));
                             auto artifactArray = makeByteArray(artifact);
-                            jni::local_ref<jni::JString> libraryPathString;
-                            jni::JString::javaobject libraryPathObject = nullptr;
-                            if (libraryPath) {
-                              libraryPathString = jni::make_jstring(*libraryPath);
-                              libraryPathObject = libraryPathString.get();
-                            }
                             static const auto callbackConstructor =
                                 OliphauntJsiPromiseCallback::javaClassStatic()
                                     ->getConstructor<OliphauntJsiPromiseCallback::javaobject(jlong)>();
@@ -734,17 +546,15 @@ class OliphauntModuleJSIBindings
                                     ->getMethod<void(
                                         jni::JString::javaobject,
                                         jni::JString::javaobject,
-                                        jbyteArray,
-                                        jboolean,
                                         jni::JString::javaobject,
+                                        jbyteArray,
                                         OliphauntJsiPromiseCallback::javaobject)>("restoreBytes");
                             restoreBytes(
                                 moduleGlobal,
-                                destinationString.get(),
-                                formatString.get(),
+                                storageKindString.get(),
+                                storagePathString.get(),
+                                storageNameString.get(),
                                 artifactArray.get(),
-                                static_cast<jboolean>(replaceExisting),
-                                libraryPathObject,
                                 callback.get());
                           } catch (const std::exception &error) {
                             takePendingPromise(token);
@@ -773,6 +583,5 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *)
   return facebook::jni::initialize(vm, [] {
     facebook::react::OliphauntModuleJSIBindings::registerNatives();
     facebook::react::OliphauntJsiPromiseCallback::registerNatives();
-    facebook::react::OliphauntJsiStreamCallback::registerNatives();
   });
 }

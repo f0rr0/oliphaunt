@@ -759,7 +759,7 @@ export function typescriptOptionalRuntimePackageProducts(prefix = "release-artif
     if (target.product === "oliphaunt-broker" && target.kind === "broker-helper") {
       return target.surfaces.includes("typescript-broker");
     }
-    if (target.product === "liboliphaunt-native" && ["native-runtime", "native-tools"].includes(target.kind)) {
+    if (target.product === "liboliphaunt-native" && target.kind === "native-runtime") {
       return target.surfaces.includes("typescript-native-direct");
     }
     if (target.product === "oliphaunt-node-direct" && target.kind === "node-direct-addon") {

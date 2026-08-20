@@ -1,33 +1,22 @@
-use std::fmt;
 use std::io::{Cursor, Read, Seek, Write};
-use std::mem::MaybeUninit;
-use std::net::Shutdown;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
-use std::thread;
-use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 use wasmer::Store;
 use wasmer_types::ModuleHash;
 use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
 use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
 use wasmer_wasix::virtual_fs::{self, AsyncRead, AsyncSeek, AsyncWrite};
-use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalf;
-use wasmer_wasix::virtual_net::{
-    self, InterestHandler, NetworkError, SocketStatus, VirtualConnectedSocket, VirtualIoSource,
-    VirtualNetworking, VirtualSocket, VirtualTcpSocket,
-};
+use wasmer_wasix::virtual_net::VirtualNetworking;
 use wasmer_wasix::{LocalNetworking, PluggableRuntime, VirtualFile};
 
 use crate::oliphaunt::base::{install_optional_icu_data, unpack_runtime_archive_reader};
 use crate::oliphaunt::sync_host_fs::SyncHostFileSystem;
-use crate::oliphaunt::timing;
 use crate::oliphaunt::{aot, assets};
 
 /// Options for the bundled WASIX `pg_dump` runner.
@@ -42,7 +31,7 @@ impl Default for PgDumpOptions {
     fn default() -> Self {
         Self {
             args: Vec::new(),
-            database: "template1".to_owned(),
+            database: "postgres".to_owned(),
             username: "postgres".to_owned(),
         }
     }
@@ -93,14 +82,6 @@ impl PgDumpOptions {
         }
         Ok(())
     }
-
-    pub(crate) fn database_ref(&self) -> &str {
-        &self.database
-    }
-
-    pub(crate) fn username_ref(&self) -> &str {
-        &self.username
-    }
 }
 
 /// Options for the bundled WASIX `psql` runner.
@@ -109,14 +90,22 @@ pub struct PsqlOptions {
     args: Vec<String>,
     database: String,
     username: String,
+    input: Option<PsqlInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PsqlInput {
+    Command(String),
+    Script(String),
 }
 
 impl Default for PsqlOptions {
     fn default() -> Self {
         Self {
             args: Vec::new(),
-            database: "template1".to_owned(),
+            database: "postgres".to_owned(),
             username: "postgres".to_owned(),
+            input: None,
         }
     }
 }
@@ -140,8 +129,13 @@ impl PsqlOptions {
 
     /// Run a non-interactive SQL command with `psql -c`.
     pub fn command(mut self, sql: impl Into<String>) -> Self {
-        self.args.push("-c".to_owned());
-        self.args.push(sql.into());
+        self.input = Some(PsqlInput::Command(sql.into()));
+        self
+    }
+
+    /// Run a SQL script with `psql -f`.
+    pub fn script(mut self, sql: impl Into<String>) -> Self {
+        self.input = Some(PsqlInput::Script(sql.into()));
         self
     }
 
@@ -165,8 +159,8 @@ impl PsqlOptions {
             );
         }
         anyhow::ensure!(
-            !self.args.is_empty(),
-            "psql runner requires non-interactive arguments; use PsqlOptions::command or pass raw psql args"
+            !self.args.is_empty() || self.input.is_some(),
+            "psql runner requires non-interactive input; use PsqlOptions::command, PsqlOptions::script, or pass a non-input psql argument"
         );
         for arg in &self.args {
             anyhow::ensure!(
@@ -174,6 +168,16 @@ impl PsqlOptions {
                 "psql argument must not contain NUL bytes"
             );
             validate_psql_passthrough_arg(arg)?;
+        }
+        if let Some(input) = &self.input {
+            let (name, value) = match input {
+                PsqlInput::Command(value) => ("command", value),
+                PsqlInput::Script(value) => ("script", value),
+            };
+            anyhow::ensure!(
+                !value.contains('\0'),
+                "psql {name} must not contain NUL bytes"
+            );
         }
         Ok(())
     }
@@ -192,6 +196,8 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
     const LONG_FLAGS: &[(&str, &str)] = &[
         ("--file", "output file"),
         ("--format", "output format"),
+        ("--compress", "output compression"),
+        ("--encoding", "output encoding"),
         ("--host", "host"),
         ("--port", "port"),
         ("--username", "username"),
@@ -211,6 +217,8 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
     const SHORT_FLAGS: &[(&str, &str)] = &[
         ("-f", "output file"),
         ("-F", "output format"),
+        ("-Z", "output compression"),
+        ("-E", "output encoding"),
         ("-h", "host"),
         ("-p", "port"),
         ("-U", "username"),
@@ -242,6 +250,8 @@ fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
         ("--dbname", "database"),
         ("--output", "stdout capture"),
         ("--log-file", "stderr capture"),
+        ("--command", "input"),
+        ("--file", "input"),
     ];
     for (flag, label) in LONG_FLAGS {
         if arg == *flag
@@ -260,6 +270,8 @@ fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
         ("-d", "database"),
         ("-o", "stdout capture"),
         ("-L", "stderr capture"),
+        ("-c", "input"),
+        ("-f", "input"),
     ];
     for (flag, label) in SHORT_FLAGS {
         if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
@@ -275,30 +287,6 @@ pub(crate) fn dump_server_sql(addr: SocketAddr, options: &PgDumpOptions) -> Resu
 
 pub(crate) fn run_server_psql(addr: SocketAddr, options: &PsqlOptions) -> Result<String> {
     run_psql_with_networking(addr, options, LocalNetworking::new())
-}
-
-/// Validate that the split WASIX `pg_dump` and `psql` tools are bundled and
-/// loadable before invoking either tool.
-pub fn preflight_wasix_tools() -> Result<()> {
-    preflight_pg_dump_tool().context("preflight split WASIX pg_dump tool")?;
-    preflight_psql_tool().context("preflight split WASIX psql tool")?;
-    Ok(())
-}
-
-fn preflight_pg_dump_tool() -> Result<()> {
-    let _ = pg_dump_wasm_asset()?;
-    let engine = aot::headless_engine();
-    let _ = aot::load_pg_dump_module(&engine)
-        .context("load pg_dump AOT artifact from oliphaunt-wasix-tools-aot-*")?;
-    Ok(())
-}
-
-fn preflight_psql_tool() -> Result<()> {
-    let _ = psql_wasm_asset()?;
-    let engine = aot::headless_engine();
-    let _ = aot::load_psql_module(&engine)
-        .context("load psql AOT artifact from oliphaunt-wasix-tools-aot-*")?;
-    Ok(())
 }
 
 fn pg_dump_wasm_asset() -> Result<&'static [u8]> {
@@ -321,40 +309,6 @@ fn psql_wasm_asset() -> Result<&'static [u8]> {
         })
 }
 
-pub(crate) type PgDumpVirtualSocket = TcpSocketHalf;
-
-pub(crate) fn dump_direct_sql<F>(options: &PgDumpOptions, serve: F) -> Result<String>
-where
-    F: FnOnce(PgDumpVirtualSocket) -> Result<()>,
-{
-    options.validate()?;
-    let (socket_tx, socket_rx) = mpsc::sync_channel(1);
-    let networking = DirectPgDumpNetworking::new(socket_tx);
-    let runner_options = options.clone();
-    let runner = thread::spawn(move || {
-        dump_sql_with_networking(DIRECT_PG_DUMP_ADDR, &runner_options, networking)
-    });
-
-    let accepted = receive_direct_pg_dump_socket(&socket_rx, &runner)
-        .context("accept direct pg_dump virtual protocol connection");
-    let serve_result = match accepted {
-        Ok(socket) => serve(socket),
-        Err(err) => Err(err),
-    };
-    let dump_result = runner
-        .join()
-        .map_err(|_| anyhow!("direct pg_dump runner thread panicked"))?;
-
-    match (serve_result, dump_result) {
-        (Ok(()), Ok(sql)) => Ok(sql),
-        (Err(err), Ok(_)) => Err(err),
-        (Ok(()), Err(err)) => Err(err),
-        (Err(err), Err(dump_err)) => {
-            Err(err.context(format!("direct pg_dump runner also failed: {dump_err:#}")))
-        }
-    }
-}
-
 fn dump_sql_with_networking<N>(
     addr: SocketAddr,
     options: &PgDumpOptions,
@@ -364,14 +318,9 @@ where
     N: VirtualNetworking + Sync,
 {
     options.validate()?;
-    let _phase = timing::phase("pg_dump");
-    let wasm = {
-        let _phase = timing::phase("pg_dump.load_embedded_module");
-        pg_dump_wasm_asset()?
-    };
+    let wasm = pg_dump_wasm_asset()?;
     let engine = aot::headless_engine();
     let module = {
-        let _phase = timing::phase("pg_dump.load_aot");
         aot::load_pg_dump_module(&engine)
             .context("load pg_dump AOT artifact from oliphaunt-wasix-tools-aot-*")?
     };
@@ -389,14 +338,12 @@ where
             .context("install WASIX ICU data for pg_dump")?;
     }
     let runtime = {
-        let _phase = timing::phase("pg_dump.tokio_runtime");
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .context("create Tokio runtime for WASIX pg_dump")?
     };
     let (host_fs, wasix_runtime) = {
-        let _phase = timing::phase("pg_dump.wasix_runtime");
         let _runtime_guard = runtime.enter();
         let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
             format!(
@@ -427,9 +374,6 @@ where
         host,
         "-p".to_owned(),
         port,
-        "--inserts".to_owned(),
-        "-j".to_owned(),
-        "1".to_owned(),
         "-f".to_owned(),
         output_path.to_owned(),
     ]);
@@ -454,7 +398,6 @@ where
         runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
     }
     {
-        let _phase = timing::phase("pg_dump.run_wasm");
         runner
             .run_wasm(
                 RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
@@ -477,7 +420,6 @@ where
     }
 
     let sql = {
-        let _phase = timing::phase("pg_dump.read_output");
         match std::fs::read_to_string(fs_root.path().join("out.sql")) {
             Ok(sql) => Ok(sql),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -501,7 +443,7 @@ where
             }),
         }
     }?;
-    Ok(strip_pg_dump_restrict_meta_commands(sql))
+    Ok(sql)
 }
 
 fn run_psql_with_networking<N>(
@@ -513,14 +455,9 @@ where
     N: VirtualNetworking + Sync,
 {
     options.validate()?;
-    let _phase = timing::phase("psql");
-    let wasm = {
-        let _phase = timing::phase("psql.load_embedded_module");
-        psql_wasm_asset()?
-    };
+    let wasm = psql_wasm_asset()?;
     let engine = aot::headless_engine();
     let module = {
-        let _phase = timing::phase("psql.load_aot");
         aot::load_psql_module(&engine)
             .context("load psql AOT artifact from oliphaunt-wasix-tools-aot-*")?
     };
@@ -537,15 +474,17 @@ where
         install_optional_icu_data(&fs_root.path().join("oliphaunt"))
             .context("install WASIX ICU data for psql")?;
     }
+    if let Some(PsqlInput::Script(script)) = &options.input {
+        std::fs::write(fs_root.path().join("input.sql"), script)
+            .context("stage psql input script")?;
+    }
     let runtime = {
-        let _phase = timing::phase("psql.tokio_runtime");
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .context("create Tokio runtime for WASIX psql")?
     };
     let (host_fs, wasix_runtime) = {
-        let _phase = timing::phase("psql.wasix_runtime");
         let _runtime_guard = runtime.enter();
         let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
             format!(
@@ -581,6 +520,15 @@ where
         options.database.clone(),
     ];
     args.extend(options.args.clone());
+    match &options.input {
+        Some(PsqlInput::Command(command)) => {
+            args.extend(["-c".to_owned(), command.clone()]);
+        }
+        Some(PsqlInput::Script(_)) => {
+            args.extend(["-f".to_owned(), "/host/input.sql".to_owned()]);
+        }
+        None => {}
+    }
 
     let stdout = Arc::new(Mutex::new(Vec::new()));
     let stderr = Arc::new(Mutex::new(Vec::new()));
@@ -601,7 +549,6 @@ where
         runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
     }
     {
-        let _phase = timing::phase("psql.run_wasm");
         runner
             .run_wasm(
                 RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
@@ -625,258 +572,6 @@ where
 
     String::from_utf8(stdout.lock().expect("stdout capture poisoned").clone())
         .context("decode psql stdout as UTF-8")
-}
-
-fn strip_pg_dump_restrict_meta_commands(script: String) -> String {
-    let mut stripped = String::with_capacity(script.len());
-    for line in script.split_inclusive('\n') {
-        let body = line.trim_end_matches(['\r', '\n']);
-        if is_pg_dump_restrict_meta_command(body) {
-            continue;
-        }
-        stripped.push_str(line);
-    }
-    stripped
-}
-
-fn is_pg_dump_restrict_meta_command(line: &str) -> bool {
-    let Some(key) = line
-        .strip_prefix("\\restrict ")
-        .or_else(|| line.strip_prefix("\\unrestrict "))
-    else {
-        return false;
-    };
-    !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_alphanumeric())
-}
-
-const DIRECT_PG_DUMP_PORT: u16 = 65_432;
-const DIRECT_PG_DUMP_SOCKET_BUFFER: usize = 8 * 1024 * 1024;
-const DIRECT_PG_DUMP_LOCAL_PORT: u16 = 65_431;
-const DIRECT_PG_DUMP_ADDR: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DIRECT_PG_DUMP_PORT);
-const DIRECT_PG_DUMP_LOCAL_ADDR: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DIRECT_PG_DUMP_LOCAL_PORT);
-
-struct DirectPgDumpNetworking {
-    socket_tx: Mutex<Option<SyncSender<PgDumpVirtualSocket>>>,
-}
-
-impl DirectPgDumpNetworking {
-    fn new(socket_tx: SyncSender<PgDumpVirtualSocket>) -> Self {
-        Self {
-            socket_tx: Mutex::new(Some(socket_tx)),
-        }
-    }
-}
-
-impl fmt::Debug for DirectPgDumpNetworking {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DirectPgDumpNetworking")
-            .finish_non_exhaustive()
-    }
-}
-
-#[async_trait::async_trait]
-impl VirtualNetworking for DirectPgDumpNetworking {
-    async fn connect_tcp(
-        &self,
-        addr: SocketAddr,
-        peer: SocketAddr,
-    ) -> virtual_net::Result<Box<dyn VirtualTcpSocket + Sync>> {
-        if peer != DIRECT_PG_DUMP_ADDR {
-            return Err(NetworkError::ConnectionRefused);
-        }
-
-        let sender = self
-            .socket_tx
-            .lock()
-            .map_err(|_| NetworkError::IOError)?
-            .take()
-            .ok_or(NetworkError::ConnectionRefused)?;
-        let local = if addr.port() == 0 {
-            DIRECT_PG_DUMP_LOCAL_ADDR
-        } else {
-            addr
-        };
-        let (guest, host) = TcpSocketHalf::channel(DIRECT_PG_DUMP_SOCKET_BUFFER, local, peer);
-        sender
-            .send(host)
-            .map_err(|_| NetworkError::ConnectionAborted)?;
-        Ok(Box::new(DirectPgDumpTcpSocket {
-            inner: guest,
-            first_write_ready_probe: true,
-        }))
-    }
-
-    async fn resolve(
-        &self,
-        host: &str,
-        _port: Option<u16>,
-        _dns_server: Option<IpAddr>,
-    ) -> virtual_net::Result<Vec<IpAddr>> {
-        match host {
-            "localhost" | "127.0.0.1" => Ok(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]),
-            _ => Err(NetworkError::AddressNotAvailable),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DirectPgDumpTcpSocket {
-    inner: TcpSocketHalf,
-    // WASIX probes writability once while completing a blocking connect.
-    // `TcpSocketHalf` suppresses an immediate second write-ready poll until a
-    // write happens, but libpq polls again before its first StartupMessage.
-    // Keep the adapter level-triggered for that connect-to-first-write handoff.
-    first_write_ready_probe: bool,
-}
-
-impl VirtualIoSource for DirectPgDumpTcpSocket {
-    fn remove_handler(&mut self) {
-        self.inner.remove_handler();
-    }
-
-    fn poll_read_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<virtual_net::Result<usize>> {
-        self.inner.poll_read_ready(cx)
-    }
-
-    fn poll_write_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<virtual_net::Result<usize>> {
-        if self.first_write_ready_probe {
-            self.first_write_ready_probe = false;
-            return Poll::Ready(Ok(self.inner.send_buf_size().unwrap_or(1).max(1)));
-        }
-        self.inner.poll_write_ready(cx)
-    }
-}
-
-impl VirtualSocket for DirectPgDumpTcpSocket {
-    fn set_ttl(&mut self, ttl: u32) -> virtual_net::Result<()> {
-        self.inner.set_ttl(ttl)
-    }
-
-    fn ttl(&self) -> virtual_net::Result<u32> {
-        self.inner.ttl()
-    }
-
-    fn addr_local(&self) -> virtual_net::Result<SocketAddr> {
-        self.inner.addr_local()
-    }
-
-    fn status(&self) -> virtual_net::Result<SocketStatus> {
-        self.inner.status()
-    }
-
-    fn set_handler(
-        &mut self,
-        handler: Box<dyn InterestHandler + Send + Sync>,
-    ) -> virtual_net::Result<()> {
-        self.inner.set_handler(handler)
-    }
-}
-
-impl VirtualConnectedSocket for DirectPgDumpTcpSocket {
-    fn set_linger(&mut self, linger: Option<Duration>) -> virtual_net::Result<()> {
-        self.inner.set_linger(linger)
-    }
-
-    fn linger(&self) -> virtual_net::Result<Option<Duration>> {
-        self.inner.linger()
-    }
-
-    fn try_send(&mut self, data: &[u8]) -> virtual_net::Result<usize> {
-        self.inner.try_send(data)
-    }
-
-    fn try_flush(&mut self) -> virtual_net::Result<()> {
-        self.inner.try_flush()
-    }
-
-    fn close(&mut self) -> virtual_net::Result<()> {
-        self.inner.close()
-    }
-
-    fn try_recv(&mut self, buf: &mut [MaybeUninit<u8>], peek: bool) -> virtual_net::Result<usize> {
-        self.inner.try_recv(buf, peek)
-    }
-}
-
-impl VirtualTcpSocket for DirectPgDumpTcpSocket {
-    fn set_recv_buf_size(&mut self, size: usize) -> virtual_net::Result<()> {
-        self.inner.set_recv_buf_size(size)
-    }
-
-    fn recv_buf_size(&self) -> virtual_net::Result<usize> {
-        self.inner.recv_buf_size()
-    }
-
-    fn set_send_buf_size(&mut self, size: usize) -> virtual_net::Result<()> {
-        self.inner.set_send_buf_size(size)
-    }
-
-    fn send_buf_size(&self) -> virtual_net::Result<usize> {
-        self.inner.send_buf_size()
-    }
-
-    fn set_nodelay(&mut self, reuse: bool) -> virtual_net::Result<()> {
-        self.inner.set_nodelay(reuse)
-    }
-
-    fn nodelay(&self) -> virtual_net::Result<bool> {
-        self.inner.nodelay()
-    }
-
-    fn set_keepalive(&mut self, keepalive: bool) -> virtual_net::Result<()> {
-        self.inner.set_keepalive(keepalive)
-    }
-
-    fn keepalive(&self) -> virtual_net::Result<bool> {
-        self.inner.keepalive()
-    }
-
-    fn set_dontroute(&mut self, keepalive: bool) -> virtual_net::Result<()> {
-        self.inner.set_dontroute(keepalive)
-    }
-
-    fn dontroute(&self) -> virtual_net::Result<bool> {
-        self.inner.dontroute()
-    }
-
-    fn addr_peer(&self) -> virtual_net::Result<SocketAddr> {
-        self.inner.addr_peer()
-    }
-
-    fn shutdown(&mut self, how: Shutdown) -> virtual_net::Result<()> {
-        self.inner.shutdown(how)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.inner.is_closed()
-    }
-}
-
-fn receive_direct_pg_dump_socket(
-    socket_rx: &Receiver<PgDumpVirtualSocket>,
-    runner: &thread::JoinHandle<Result<String>>,
-) -> Result<PgDumpVirtualSocket> {
-    let started = Instant::now();
-    loop {
-        match socket_rx.recv_timeout(Duration::from_millis(5)) {
-            Ok(socket) => return Ok(socket),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if runner.is_finished() {
-                    bail!("pg_dump exited before opening the direct virtual protocol connection");
-                }
-                if started.elapsed() > Duration::from_secs(30) {
-                    bail!(
-                        "timed out waiting for pg_dump to open the direct virtual protocol connection"
-                    );
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("pg_dump direct virtual networking channel closed before connect")
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1000,10 +695,8 @@ impl Seek for CaptureFile {
 #[cfg(all(test, feature = "tools", feature = "extensions"))]
 mod tests {
     use super::*;
-    use crate::oliphaunt::Oliphaunt;
     use crate::oliphaunt::extensions;
     use crate::oliphaunt::server::OliphauntServer;
-    use serde_json::json;
     use sqlx::{Connection, Executor, Row};
 
     fn vector_extension_archive_is_embedded() -> bool {
@@ -1021,6 +714,14 @@ mod tests {
             "-Fc",
             "--format",
             "--format=custom",
+            "-Z",
+            "-Z9",
+            "--compress",
+            "--compress=zstd",
+            "-E",
+            "-EUTF8",
+            "--encoding",
+            "--encoding=UTF8",
             "-h",
             "-hlocalhost",
             "--host=localhost",
@@ -1063,6 +764,25 @@ mod tests {
     }
 
     #[test]
+    fn pg_dump_options_explain_fixed_text_output() {
+        for (arg, label) in [
+            ("--compress=zstd", "output compression"),
+            ("-Z9", "output compression"),
+            ("--encoding=UTF8", "output encoding"),
+            ("-EUTF8", "output encoding"),
+        ] {
+            let error = PgDumpOptions::new()
+                .arg(arg)
+                .validate()
+                .expect_err("fixed-output pg_dump argument must be rejected");
+            assert!(
+                error.to_string().contains(label),
+                "unexpected error for {arg}: {error:#}"
+            );
+        }
+    }
+
+    #[test]
     fn psql_options_reject_managed_args() {
         for arg in [
             "-h",
@@ -1083,10 +803,15 @@ mod tests {
             "-L",
             "-L/tmp/log",
             "--log-file=/tmp/log",
+            "-c",
+            "-cSELECT 1",
+            "--command=SELECT 1",
+            "-f",
+            "-f/tmp/input.sql",
+            "--file=/tmp/input.sql",
         ] {
             let err = PsqlOptions::new()
-                .arg("-c")
-                .arg("SELECT 1")
+                .command("SELECT 1")
                 .arg(arg)
                 .validate()
                 .expect_err("managed psql arg should be rejected");
@@ -1103,8 +828,7 @@ mod tests {
             .validate()
             .expect_err("psql without args should be rejected");
         assert!(
-            err.to_string()
-                .contains("requires non-interactive arguments"),
+            err.to_string().contains("requires non-interactive input"),
             "unexpected error: {err:#}"
         );
     }
@@ -1115,26 +839,22 @@ mod tests {
     }
 
     #[test]
-    fn preflight_wasix_tools_loads_split_artifacts() -> Result<()> {
-        preflight_wasix_tools()
-    }
-
-    #[test]
-    fn pg_dump_sql_strips_only_pg18_restrict_meta_commands() {
-        let script = "\\restrict AbC123\n\
-                      CREATE TABLE public.items(id integer);\n\
-                      \\copy public.items FROM stdin\n\
-                      \\unrestrict AbC123\n";
-        assert_eq!(
-            strip_pg_dump_restrict_meta_commands(script.to_owned()),
-            "CREATE TABLE public.items(id integer);\n\\copy public.items FROM stdin\n"
-        );
+    fn psql_options_accept_script_and_reject_nul() -> Result<()> {
+        PsqlOptions::new()
+            .script("\\restrict AbC123\nSELECT 1;\n\\unrestrict AbC123\n")
+            .validate()?;
+        let error = PsqlOptions::new()
+            .script("SELECT '\0'")
+            .validate()
+            .expect_err("NUL-bearing psql script must be rejected");
+        assert!(error.to_string().contains("script must not contain NUL"));
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_dump_round_trip_plain_sql() -> Result<()> {
         let server = OliphauntServer::builder().start()?;
-        let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        let mut conn = sqlx::PgConnection::connect(&server.connection_string())
             .await
             .context("connect to Oliphaunt server")?;
         conn.execute(
@@ -1150,7 +870,7 @@ mod tests {
         drop(conn);
 
         let (server, dump) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let dump = server.dump_sql(PgDumpOptions::default())?;
+            let dump = server.pg_dump(PgDumpOptions::default())?;
             Ok((server, dump))
         })
         .await
@@ -1164,30 +884,32 @@ mod tests {
         assert!(dump.contains("CREATE INDEX dump_items_value_idx"));
         assert!(dump.contains("CREATE SEQUENCE public.dump_items_seq"));
         assert!(dump.contains("CREATE VIEW public.dump_item_values"));
-        assert!(dump.contains("INSERT INTO"));
+        assert!(dump.contains("COPY public.dump_items (id, value) FROM stdin;"));
+        assert!(dump.lines().any(|line| line.starts_with("\\restrict ")));
+        assert!(dump.lines().any(|line| line.starts_with("\\unrestrict ")));
 
         let (server, schema_only) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+            let dump = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
             Ok((server, dump))
         })
         .await
         .context("join schema-only pg_dump task")??;
         assert!(schema_only.contains("CREATE TABLE public.dump_items"));
         assert!(
-            !schema_only.contains("INSERT INTO public.dump_items"),
+            !schema_only.contains("COPY public.dump_items"),
             "schema-only dump unexpectedly contained data:\n{schema_only}"
         );
 
         let (server, quoted) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let dump = server.dump_sql(PgDumpOptions::new().arg("--quote-all-identifiers"))?;
+            let dump = server.pg_dump(PgDumpOptions::new().arg("--quote-all-identifiers"))?;
             Ok((server, dump))
         })
         .await
         .context("join quoted pg_dump task")??;
         assert!(quoted.contains("CREATE TABLE \"public\".\"dump_items\""));
-        assert!(quoted.contains("INSERT INTO \"public\".\"dump_items\""));
+        assert!(quoted.contains("COPY \"public\".\"dump_items\" (\"id\", \"value\") FROM stdin;"));
 
-        let mut usable = sqlx::PgConnection::connect(&server.connection_uri())
+        let mut usable = sqlx::PgConnection::connect(&server.connection_string())
             .await
             .context("reconnect after pg_dump")?;
         let row = sqlx::query("SELECT count(*)::int4 AS count FROM public.dump_items")
@@ -1205,39 +927,38 @@ mod tests {
         assert!(sequence_state.try_get::<bool, _>("is_called")?);
         usable.close().await?;
 
-        server.shutdown()?;
+        server.close()?;
 
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut restored = Oliphaunt::builder().open()?;
-            restored.exec(&dump, None).context("restore pg_dump SQL")?;
-            let result = restored.query(
-                "SELECT value FROM public.dump_items WHERE id = $1",
-                &[json!(2)],
-                None,
-            )?;
-            let value = result
-                .rows
-                .first()
-                .and_then(|row| row.get("value"))
-                .cloned();
-            assert_eq!(value, Some(json!("beta")));
-            let view = restored.query(
-                "SELECT count(*)::int AS count FROM public.dump_item_values",
-                &[],
-                None,
-            )?;
-            assert_eq!(view.rows[0]["count"], json!(2));
-            let sequence = restored.query(
-                "SELECT nextval('public.dump_items_seq')::bigint AS next_value",
-                &[],
-                None,
-            )?;
-            assert_eq!(sequence.rows[0]["next_value"], json!(source_last_value + 1),);
-            restored.close()?;
-            Ok(())
+        let restored = OliphauntServer::builder().start()?;
+        let restored = tokio::task::spawn_blocking(move || -> Result<_> {
+            restored
+                .psql(PsqlOptions::new().script(dump))
+                .context("restore standard pg_dump script through packaged psql")?;
+            Ok(restored)
         })
         .await
-        .context("join restore task")??;
+        .context("join packaged psql restore task")??;
+        let mut connection = sqlx::PgConnection::connect(&restored.connection_string())
+            .await
+            .context("connect to restored Oliphaunt server")?;
+        let result = sqlx::query("SELECT value FROM public.dump_items WHERE id = $1")
+            .bind(2_i32)
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(result.try_get::<&str, _>("value")?, "beta");
+        let view = sqlx::query("SELECT count(*)::int AS count FROM public.dump_item_values")
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(view.try_get::<i32, _>("count")?, 2);
+        let sequence = sqlx::query("SELECT nextval('public.dump_items_seq')::bigint AS next_value")
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(
+            sequence.try_get::<i64, _>("next_value")?,
+            source_last_value + 1
+        );
+        connection.close().await?;
+        restored.close()?;
         Ok(())
     }
 
@@ -1253,7 +974,7 @@ mod tests {
         let server = OliphauntServer::builder()
             .extension(extensions::VECTOR)
             .start()?;
-        let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        let mut conn = sqlx::PgConnection::connect(&server.connection_string())
             .await
             .context("connect to extension-enabled Oliphaunt server")?;
         conn.execute(
@@ -1265,113 +986,42 @@ mod tests {
         drop(conn);
 
         let (server, dump) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let dump = server.dump_sql(PgDumpOptions::default())?;
+            let dump = server.pg_dump(PgDumpOptions::default())?;
             Ok((server, dump))
         })
         .await
         .context("join vector pg_dump task")??;
-        server.shutdown()?;
+        server.close()?;
 
         assert!(
             dump.contains("CREATE EXTENSION IF NOT EXISTS vector"),
             "dump did not contain vector extension DDL:\n{dump}"
         );
         assert!(dump.contains("CREATE TABLE public.vector_dump_items"));
-        assert!(dump.contains("'[1,2,3]'"));
+        assert!(dump.contains("1\t[1,2,3]"));
 
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut restored = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
+        let restored = OliphauntServer::builder()
+            .extension(extensions::VECTOR)
+            .start()?;
+        let restored = tokio::task::spawn_blocking(move || -> Result<_> {
             restored
-                .exec(&dump, None)
-                .context("restore vector dump SQL")?;
-            let result = restored.query(
-                "SELECT embedding <-> '[1,2,4]'::vector AS distance \
-                 FROM public.vector_dump_items WHERE id = $1",
-                &[json!(1)],
-                None,
-            )?;
-            let distance = result
-                .rows
-                .first()
-                .and_then(|row| row.get("distance"))
-                .and_then(|value| value.as_f64());
-            assert_eq!(distance, Some(1.0));
-            restored.close()?;
-            Ok(())
+                .psql(PsqlOptions::new().script(dump))
+                .context("restore standard vector dump through packaged psql")?;
+            Ok(restored)
         })
         .await
-        .context("join vector restore task")??;
-        Ok(())
-    }
-
-    #[test]
-    fn direct_pg_dump_public_api_round_trip() -> Result<()> {
-        let mut db = Oliphaunt::open()?;
-        db.exec("CREATE TABLE direct_dump_items(value TEXT)", None)?;
-        db.exec("INSERT INTO direct_dump_items VALUES ('alpha')", None)?;
-
-        let mismatched_database = db
-            .dump_sql(PgDumpOptions::new().database("other_database"))
-            .expect_err("direct pg_dump should reject database switching");
-        assert!(
-            mismatched_database
-                .to_string()
-                .contains("already-open embedded backend database"),
-            "unexpected direct pg_dump database mismatch error: {mismatched_database:#}"
-        );
-
-        let dump = db.dump_sql(PgDumpOptions::new())?;
-        assert!(dump.contains("CREATE TABLE public.direct_dump_items"));
-        assert!(dump.contains("INSERT INTO"));
-        let source_still_usable = db.query(
-            "SELECT count(*)::int AS count FROM direct_dump_items",
-            &[],
-            None,
-        )?;
-        assert_eq!(source_still_usable.rows[0]["count"], json!(1));
-
-        let mut restored = Oliphaunt::open()?;
-        restored.exec(&dump, None)?;
-        let result = restored.query("SELECT value FROM public.direct_dump_items", &[], None)?;
-        assert_eq!(result.rows[0]["value"], json!("alpha"));
-
-        restored.close()?;
-        db.close()?;
-        Ok(())
-    }
-
-    #[test]
-    fn direct_pg_dump_round_trip_vector_extension() -> Result<()> {
-        if !vector_extension_archive_is_embedded() {
-            eprintln!(
-                "skipping direct vector pg_dump smoke; base oliphaunt-wasix assets do not embed extension archives"
-            );
-            return Ok(());
-        }
-
-        let mut db = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
-        db.exec(
-            "CREATE TABLE direct_vector_dump_items(id INTEGER PRIMARY KEY, embedding vector(3));
-             INSERT INTO direct_vector_dump_items(id, embedding) VALUES (1, '[1,2,3]');",
-            None,
-        )?;
-
-        let dump = db.dump_sql(PgDumpOptions::new())?;
-        assert!(dump.contains("CREATE EXTENSION IF NOT EXISTS vector"));
-        assert!(dump.contains("CREATE TABLE public.direct_vector_dump_items"));
-
-        let mut restored = Oliphaunt::builder().extension(extensions::VECTOR).open()?;
-        restored.exec(&dump, None)?;
-        let result = restored.query(
+        .context("join vector packaged psql restore task")??;
+        let mut connection = sqlx::PgConnection::connect(&restored.connection_string()).await?;
+        let result = sqlx::query(
             "SELECT embedding <-> '[1,2,4]'::vector AS distance \
-             FROM public.direct_vector_dump_items WHERE id = $1",
-            &[json!(1)],
-            None,
-        )?;
-        assert_eq!(result.rows[0]["distance"], json!(1.0));
-
+             FROM public.vector_dump_items WHERE id = $1",
+        )
+        .bind(1_i32)
+        .fetch_one(&mut connection)
+        .await?;
+        assert_eq!(result.try_get::<f64, _>("distance")?, 1.0);
+        connection.close().await?;
         restored.close()?;
-        db.close()?;
         Ok(())
     }
 }

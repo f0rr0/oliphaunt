@@ -14,6 +14,11 @@ describe('direct PostgreSQL startup protocol', () => {
     expect(new TextDecoder().decode(packet)).toContain('DateStyle\0ISO, MDY\0TimeZone\0UTC\0');
   });
 
+  it('accepts empty startup values and rejects only unencodable NUL bytes', () => {
+    expect(() => startupPacket('', '  ')).not.toThrow();
+    expect(() => startupPacket('bad\0user', 'postgres')).toThrow('must not contain NUL bytes');
+  });
+
   it('accepts AuthenticationOk followed by ReadyForQuery', () => {
     expect(() => assertSuccessfulStartupResponse(backendResponse('RZ'))).not.toThrow();
   });

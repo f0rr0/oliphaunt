@@ -132,7 +132,9 @@ fn native_install_dir_is_valid(path: &Path) -> bool {
 }
 
 fn native_tools_dir_is_valid(path: &Path) -> bool {
-    native_tool_is_file(path, "pg_dump") && native_tool_is_file(path, "psql")
+    native_tool_is_file(path, "pg_basebackup")
+        && native_tool_is_file(path, "pg_dump")
+        && native_tool_is_file(path, "psql")
 }
 
 fn native_tool_is_file(path: &Path, tool: &str) -> bool {

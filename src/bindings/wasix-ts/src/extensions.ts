@@ -141,7 +141,6 @@ function storageCompatibility(
       runtimeArchiveSha256: runtime.runtimeArchive.sha256,
       pgdataTemplateSha256: runtime.pgdataArchive.sha256,
       moduleSha256: manifest.runtime['module-sha256'],
-      sourceFingerprint: manifest['source-fingerprint'],
       postgresVersion: manifest.runtime['postgres-version'],
     },
     extensions: Object.values(carriers)

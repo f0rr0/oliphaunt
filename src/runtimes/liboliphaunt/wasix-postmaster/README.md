@@ -84,6 +84,10 @@ campaign.
 
 ## Architecture boundary
 
+The launcher's `--data-dir` is a raw PostgreSQL PGDATA directory. It is not an
+Oliphaunt SDK managed root and does not participate in the single-backend
+WASIX root or physical-backup contracts.
+
 PostgreSQL is built with `EXEC_BACKEND`. The postmaster uses the WASIX process
 and exec syscalls to create a fresh Wasmer instance for each backend. The child
 restores PostgreSQL's serialized backend parameters and reattaches the

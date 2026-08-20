@@ -89,6 +89,7 @@ export type WorkerRequest =
   | { id: number; method: 'open'; options: SerializedOpenOptions }
   | { id: number; method: 'exec'; input: Uint8Array; persistence: WasixPersistenceMode }
   | { id: number; method: 'sync'; boundary: WasixStorageSyncBoundary }
+  | { id: number; method: 'backup' }
   | { id: number; method: 'close' };
 
 export type SerializedWorkerError =
@@ -96,7 +97,7 @@ export type SerializedWorkerError =
       name: 'WasixStorageError';
       message: string;
       code: WasixStorageError['code'];
-      durability: WasixStorageError['durability'];
+      commitState: WasixStorageError['commitState'];
     }
   | { name: 'PostgresError'; message: string; fields: PostgresErrorField[] }
   | { name: 'Error'; message: string };
@@ -111,7 +112,7 @@ export function serializeWorkerError(error: unknown): SerializedWorkerError {
       name: 'WasixStorageError',
       message: error.message,
       code: error.code,
-      durability: error.durability,
+      commitState: error.commitState,
     };
   }
   if (error instanceof PostgresError) {
@@ -128,7 +129,7 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
   if (error.name === 'WasixStorageError') {
     return new WasixStorageError(error.message, {
       code: error.code,
-      durability: error.durability,
+      commitState: error.commitState,
     });
   }
   if (error.name === 'PostgresError') {

@@ -1,9 +1,32 @@
 import * as SQLite from 'expo-sqlite';
-import type {
-  LatencySummary,
-  ReactNativeBenchmarkWorkload,
-  ThroughputSummary,
-} from '@oliphaunt/react-native';
+
+export type LatencySummary = {
+  readonly iterations: number;
+  readonly totalMs: number;
+  readonly minMs: number;
+  readonly meanMs: number;
+  readonly p50Ms: number;
+  readonly p90Ms: number;
+  readonly p95Ms: number;
+  readonly p99Ms: number;
+  readonly maxMs: number;
+};
+
+export type ThroughputSummary = {
+  readonly rows: number;
+  readonly totalMs: number;
+  readonly rowsPerSecond: number;
+};
+
+export type ReactNativeBenchmarkWorkload = {
+  readonly id: string;
+  readonly description: string;
+  readonly latency?: LatencySummary;
+  readonly throughput?: ThroughputSummary;
+  readonly rows?: number;
+  readonly responseBytes?: number;
+  readonly checksum?: string;
+};
 
 export type SQLiteDurabilityProfile = 'safe' | 'balanced' | 'fastDev';
 

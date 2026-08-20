@@ -12,14 +12,11 @@ SDK by task.
 | --- | --- | --- |
 | Opening | `Oliphaunt.open`, `OpenConfig`, `DatabaseStorage` | Use temporary storage by default or select an app-data name or directory |
 | Config plugin | Expo plugin options | Include the selected native runtime and exact extension artifacts in iOS and Android builds |
-| Platform support | `supportedModes()`, `capabilities()` | Read what the installed Swift or Kotlin runtime can actually do |
 | Database handle | `OliphauntDatabase` | Keep the opened database in app state and route calls through one native handle |
 | SQL | `query`, `execute`, `QueryResult` | Run SQL and read typed values from JavaScript |
 | Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through JSI `ArrayBuffer` transport |
-| Streaming | `execProtocolStream` | Receive large protocol responses as native-backed chunks |
-| Lifecycle | `prepareForBackground`, `resumeFromBackground`, `close` | Coordinate database work with app background and foreground transitions |
-| Data movement | `backup`, `restore`, `RestoreDestinationPolicy` | Delegate archive validation and destination materialization to Swift or Kotlin |
-| Package report | package-size and extension artifact reports | Verify that the app ships only selected extensions and target ABIs |
+| Lifecycle | `checkpoint`, `cancel`, `close`, `Symbol.asyncDispose` | Coordinate active work and close cleanly |
+| Data movement | `backup`, `restore` | Delegate archive validation and destination materialization to Swift or Kotlin |
 | Errors | standard `Error`, `PostgresError` | Handle SDK errors and PostgreSQL SQLSTATE data in TypeScript |
 
 The React Native SDK owns the JavaScript boundary. Runtime behavior remains

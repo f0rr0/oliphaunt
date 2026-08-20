@@ -1,10 +1,15 @@
 import {
   PostgresError,
-  simpleQuery,
-  type MobileReleaseExtensionProof,
   type OliphauntDatabase,
   type QueryResult,
 } from '@oliphaunt/react-native';
+
+export type MobileReleaseExtensionProof = {
+  readonly sqlName: string;
+  readonly createsExtension: boolean;
+  readonly selectedExtensionDependencies: readonly string[];
+  readonly activationSql: readonly string[];
+};
 
 export type OperationCheck = {
   name: string;
@@ -34,21 +39,11 @@ export async function runMobileBindingProof(
 
   await record(
     checks,
-    'raw protocol and streaming response',
+    'raw protocol response',
     async () => {
       const raw = await db.execProtocolRaw(simpleQuery('SELECT 1 AS raw_value; SELECT 2 AS raw_value'));
-      let streamBytes = 0;
-      let chunks = 0;
-      await db.execProtocolStream(
-        simpleQuery("SELECT repeat('x', 65536) AS payload"),
-        chunk => {
-          chunks += 1;
-          streamBytes += chunk.byteLength;
-        },
-      );
       assertPositiveInteger(raw.byteLength, 'raw protocol byte length');
-      assertPositiveInteger(streamBytes, 'streaming byte length');
-      return `${raw.byteLength} raw bytes, ${streamBytes} streamed bytes in ${chunks} chunk(s)`;
+      return `${raw.byteLength} raw bytes`;
     },
     onCheckStage,
   );
@@ -73,9 +68,9 @@ export async function runMobileBindingProof(
     'checkpoint and physical backup',
     async () => {
       await db.checkpoint();
-      const backup = await db.backup('physicalArchive');
-      assertPositiveInteger(backup.bytes.byteLength, 'physical backup bytes');
-      return `${backup.bytes.byteLength} backup bytes`;
+      const backup = await db.backup();
+      assertPositiveInteger(backup.byteLength, 'physical backup bytes');
+      return `${backup.byteLength} backup bytes`;
     },
     onCheckStage,
   );
@@ -284,4 +279,13 @@ function sleep(ms: number): Promise<void> {
 
 function now(): number {
   return globalThis.performance?.now() ?? Date.now();
+}
+
+function simpleQuery(sql: string): Uint8Array {
+  const payload = new TextEncoder().encode(`${sql}\0`);
+  const request = new Uint8Array(1 + 4 + payload.byteLength);
+  request[0] = 'Q'.charCodeAt(0);
+  new DataView(request.buffer).setUint32(1, 4 + payload.byteLength, false);
+  request.set(payload, 5);
+  return request;
 }

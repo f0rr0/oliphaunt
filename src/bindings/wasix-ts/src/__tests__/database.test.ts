@@ -48,9 +48,12 @@ describe('WASIX database recovery state', () => {
     const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input, persistence) {
-        statements.push(simpleQuerySql(input));
+        const statement = simpleQuerySql(input);
+        statements.push(statement);
         persistenceModes.push(persistence);
-        return ready();
+        return statement === 'ROLLBACK'
+          ? concatenate(commandComplete('ROLLBACK'), ready())
+          : ready();
       },
       async sync(boundary) {
         syncBoundaries.push(boundary);
@@ -77,8 +80,8 @@ describe('WASIX database recovery state', () => {
   it('rejects and poisons the handle when publication fails after COMMIT', async () => {
     const statements: string[] = [];
     const storageFailure = new WasixStorageError('commit generation failed', {
-      code: 'checkpoint-failed',
-      durability: 'unknown',
+      code: 'publication-failed',
+      commitState: 'unknown',
     });
     const session: WasixDatabaseSession = {
       async exec(input, persistence) {
@@ -97,7 +100,7 @@ describe('WASIX database recovery state', () => {
     expect(statements).toEqual(['BEGIN:defer', 'COMMIT:defer']);
     await expect(database.query('SELECT never_runs')).rejects.toMatchObject({
       name: 'WasixStorageError',
-      code: 'checkpoint-failed',
+      code: 'publication-failed',
     });
     expect(statements).toEqual(['BEGIN:defer', 'COMMIT:defer']);
     await database.close();
@@ -106,14 +109,17 @@ describe('WASIX database recovery state', () => {
   it('keeps rollback publication failure primary while retaining the callback error', async () => {
     const callbackFailure = new Error('body failed');
     const storageFailure = new WasixStorageError('rollback generation failed', {
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
     });
     const statements: string[] = [];
     const database = new WasixDatabaseImpl({
       async exec(input) {
-        statements.push(simpleQuerySql(input));
-        return ready();
+        const statement = simpleQuerySql(input);
+        statements.push(statement);
+        return statement === 'ROLLBACK'
+          ? concatenate(commandComplete('ROLLBACK'), ready())
+          : ready();
       },
       async sync() {
         throw storageFailure;
@@ -127,8 +133,8 @@ describe('WASIX database recovery state', () => {
       }),
     ).rejects.toMatchObject({
       name: 'WasixStorageError',
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
       message: expect.stringContaining('transaction also failed: body failed'),
     });
     expect(statements).toEqual(['BEGIN', 'ROLLBACK']);
@@ -155,7 +161,7 @@ describe('WASIX database recovery state', () => {
       async close() {},
     };
     const database = new WasixDatabaseImpl(session);
-    let ignored: Promise<Uint8Array> | undefined;
+    let ignored: ReturnType<WasixDatabaseImpl['execute']> | undefined;
 
     await expect(
       database.transaction((transaction) => {
@@ -165,7 +171,8 @@ describe('WASIX database recovery state', () => {
     ).rejects.toMatchObject({ sqlstate: 'XX000' });
     await expect(ignored).rejects.toMatchObject({ sqlstate: 'XX000' });
 
-    expect(statements).toEqual(['BEGIN', 'SELECT rejected', 'COMMIT', 'ROLLBACK']);
+    expect(statements).toEqual(['BEGIN', 'SELECT rejected', 'COMMIT']);
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
     await database.close();
   });
 
@@ -239,7 +246,30 @@ describe('WASIX database recovery state', () => {
       }),
     ).rejects.toThrow('rolled back the transaction instead of committing');
 
-    expect(statements).toEqual(['BEGIN', 'RAW', 'COMMIT', 'ROLLBACK']);
+    expect(statements).toEqual(['BEGIN', 'RAW', 'COMMIT']);
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
+    await database.close();
+  });
+
+  it('poisons the handle when COMMIT returns a malformed successful response', async () => {
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        const statement = simpleQuerySql(input);
+        statements.push(statement);
+        return ready();
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(database.transaction(async () => 42)).rejects.toThrow(
+      'PostgreSQL returned no command tag for COMMIT',
+    );
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(
+      'transaction outcome became unknown',
+    );
+    expect(statements).toEqual(['BEGIN', 'COMMIT']);
     await database.close();
   });
 
@@ -293,7 +323,9 @@ describe('WASIX database recovery state', () => {
         statements.push(statement);
         return statement === failedStatement
           ? concatenate(backendError('XX000', `${failedStatement} failed`), ready())
-          : ready();
+          : statement === 'ROLLBACK'
+            ? concatenate(commandComplete('ROLLBACK'), ready())
+            : ready();
       },
       async sync() {},
       async close() {},
@@ -305,12 +337,12 @@ describe('WASIX database recovery state', () => {
         await transaction.execute('SELECT inside');
       }),
     ).rejects.toMatchObject({ sqlstate: 'XX000' });
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: 0 });
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
 
     expect(statements).toEqual(
       failedStatement === 'BEGIN'
         ? ['BEGIN', 'ROLLBACK', 'SELECT recovered']
-        : ['BEGIN', 'SELECT inside', 'COMMIT', 'ROLLBACK', 'SELECT recovered'],
+        : ['BEGIN', 'SELECT inside', 'COMMIT', 'SELECT recovered'],
     );
     await database.close();
   });
@@ -336,8 +368,34 @@ describe('WASIX database recovery state', () => {
         throw callbackError;
       }),
     ).rejects.toBe(callbackError);
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: 0 });
-    expect(statements).toEqual(['BEGIN', 'ROLLBACK', 'SELECT recovered']);
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(
+      'transaction outcome became unknown',
+    );
+    expect(statements).toEqual(['BEGIN', 'ROLLBACK']);
+    await database.close();
+  });
+
+  it('preserves the callback error when ROLLBACK has no command tag', async () => {
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        statements.push(simpleQuerySql(input));
+        return ready();
+      },
+      async sync() {},
+      async close() {},
+    });
+    const callbackError = new Error('keep malformed rollback secondary');
+
+    await expect(
+      database.transaction(async () => {
+        throw callbackError;
+      }),
+    ).rejects.toBe(callbackError);
+    expect(statements).toEqual(['BEGIN', 'ROLLBACK']);
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(
+      'transaction outcome became unknown',
+    );
     await database.close();
   });
 
@@ -509,16 +567,16 @@ describe('WASIX database recovery state', () => {
     };
     const database = new WasixDatabaseImpl(session);
     const storageFailure = new WasixStorageError('IndexedDB transaction aborted', {
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
     });
 
     const checkpoint = expect(database.checkpoint()).rejects.toBe(storageFailure);
     await started;
     const queuedQuery = expect(database.query('select 42')).rejects.toMatchObject({
       name: 'WasixStorageError',
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
       message: expect.stringContaining('cannot be used after a persistence boundary failed'),
     });
     rejectPublication?.(storageFailure);
@@ -527,8 +585,8 @@ describe('WASIX database recovery state', () => {
     await queuedQuery;
     await expect(database.query('select 43')).rejects.toMatchObject({
       name: 'WasixStorageError',
-      code: 'checkpoint-failed',
-      durability: 'not-persisted',
+      code: 'publication-failed',
+      commitState: 'not-persisted',
       message: expect.stringContaining('cannot be used after a persistence boundary failed'),
     });
     expect(requests).toEqual(['exec', 'sync']);
@@ -540,8 +598,8 @@ describe('WASIX database recovery state', () => {
   it('retains a typed persistence failure from an ordinary operation boundary', async () => {
     let executions = 0;
     const storageFailure = new WasixStorageError('OPFS publication stopped', {
-      code: 'checkpoint-failed',
-      durability: 'unknown',
+      code: 'publication-failed',
+      commitState: 'unknown',
     });
     const database = new WasixDatabaseImpl({
       async exec() {
@@ -554,8 +612,8 @@ describe('WASIX database recovery state', () => {
 
     await expect(database.query('insert into t values (1)')).rejects.toBe(storageFailure);
     await expect(database.query('select 1')).rejects.toMatchObject({
-      code: 'checkpoint-failed',
-      durability: 'unknown',
+      code: 'publication-failed',
+      commitState: 'unknown',
     });
     expect(executions).toBe(1);
     await database.close();
@@ -581,7 +639,7 @@ describe('WASIX database recovery state', () => {
     const database = new WasixDatabaseImpl(session);
 
     await expect(database.checkpoint()).rejects.toBeInstanceOf(PostgresError);
-    await expect(database.query('select 42')).resolves.toMatchObject({ rows: [], rowCount: 0 });
+    await expect(database.query('select 42')).resolves.toMatchObject({ rows: [], rowCount: null });
     expect(requests).toEqual(['exec', 'exec']);
     await database.close();
   });

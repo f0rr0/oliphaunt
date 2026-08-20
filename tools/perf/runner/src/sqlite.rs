@@ -74,15 +74,12 @@ pub(super) fn perf_sqlite(args: &[String]) -> Result<()> {
         runs.push(run_sqlite_backup_restore_benchmark(durability)?);
     }
     let report = BenchmarkReport {
-        wasmer_version: "sqlite",
-        wasmer_wasix_version: "sqlite",
-        wasix_runtime_assets: None,
+        engine: "sqlite",
         source_model: speed_sql_source.source_model(),
         measurement_model: "SQLite control. xtask opens one temporary file-backed SQLite database in-process through rusqlite, applies an explicit durability profile through PRAGMA settings, then executes the selected speed or backup/restore suite.",
         native_tuning: None,
         rtt_iterations: 0,
         speed_scale,
-        preload_micros: 0,
         runs,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);

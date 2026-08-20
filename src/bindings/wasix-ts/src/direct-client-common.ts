@@ -13,6 +13,7 @@ import type {
   WasmerInitOptions,
 } from './host/index.mjs';
 import { assertSuccessfulStartupResponse, startupPacket } from './pgwire.js';
+import { createPhysicalArchive } from './physical-archive.js';
 import { PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import {
@@ -226,11 +227,19 @@ export class DirectWasixSession implements WasixDatabaseSession {
         throw error;
       }
       throw new WasixStorageError(`WASIX PGDATA ${boundary} failed: ${describeError(error)}`, {
-        code: 'checkpoint-failed',
-        durability: 'unknown',
+        code: 'publication-failed',
+        commitState: 'unknown',
         cause: error,
       });
     }
+  }
+
+  backup(): Promise<Uint8Array> {
+    this.#assertHealthy();
+    return createPhysicalArchive(
+      (input, persistence) => this.exec(input, persistence),
+      this.#baseDirectory,
+    );
   }
 
   close(): Promise<void> {
@@ -376,8 +385,8 @@ function storageCloseFailure(error: unknown): Error {
     return error;
   }
   return new WasixStorageError(`WASIX PGDATA close failed: ${describeError(error)}`, {
-    code: 'checkpoint-failed',
-    durability: 'unknown',
+    code: 'publication-failed',
+    commitState: 'unknown',
     cause: error,
   });
 }

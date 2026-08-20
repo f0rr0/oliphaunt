@@ -394,7 +394,7 @@ function sdkRows(sdkManifest) {
 function generateSdkMatrix(sdkManifest) {
   const rows = sdkRows(sdkManifest).map(([id, sdk]) => {
     const modes = (sdk.available_modes ?? []).join(', ');
-    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown((sdk.supported_consumer_targets ?? []).join(', '))} | ${escapeMarkdown((sdk.planned_consumer_targets ?? []).join(', ') || 'none')} | ${escapeMarkdown(sdk.runtime_boundary)} | ${escapeMarkdown(modes)} |`;
+    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown((sdk.supported_consumer_targets ?? []).join(', '))} | ${escapeMarkdown(sdk.runtime_boundary)} | ${escapeMarkdown(modes)} |`;
   });
   return `---
 title: SDK Matrix
@@ -402,11 +402,11 @@ title: SDK Matrix
 
 # SDK Matrix
 
-Use this matrix to compare registry-qualified package identities, supported and
-planned consumer targets, runtime boundaries, and advertised modes.
+Use this matrix to compare registry-qualified package identities, supported
+consumer targets, runtime boundaries, and advertised modes.
 
-| SDK | Package identity | Supported targets | Planned targets | Runtime boundary | Advertised modes |
-| --- | --- | --- | --- | --- | --- |
+| SDK | Package identity | Supported targets | Runtime boundary | Advertised modes |
+| --- | --- | --- | --- | --- |
 ${rows.join('\n')}
 `;
 }
@@ -579,12 +579,20 @@ function staticArtifactPlan(record) {
         label: 'Open TypeDoc reference',
       },
     ],
-    'oliphaunt-wasix': [
+    'oliphaunt-wasix-rust': [
       {
-        source: 'target/docs/generated/api/wasm/doc',
-        destination: 'wasix/doc',
-        href: apiArtifactHref('wasix/doc/oliphaunt_wasix/index.html'),
+        source: 'target/docs/generated/api/wasix-rust/doc',
+        destination: 'wasix-rust/doc',
+        href: apiArtifactHref('wasix-rust/doc/oliphaunt_wasix/index.html'),
         label: 'Open Rust WASIX rustdoc',
+      },
+    ],
+    'oliphaunt-wasix-typescript': [
+      {
+        source: 'target/docs/generated/api/wasix-typescript/html',
+        destination: 'wasix-typescript/html',
+        href: apiArtifactHref('wasix-typescript/html/index.html'),
+        label: 'Open WASIX TypeScript TypeDoc reference',
       },
     ],
   };
@@ -650,11 +658,11 @@ where exposed, and error handling. Shared concepts do not imply API parity.
 | --- | --- |
 | Open a database | builder or open configuration, storage, runtime host or mode, durability |
 | Run SQL | query, execute, parameters, row access, result typing |
-| Use raw protocol | raw bytes, streaming, response ownership, cancellation |
-| Manage lifecycle | close, background, foreground, cancellation, capability checks |
+| Use raw protocol | owned buffered bytes and response ownership |
+| Manage lifecycle | close, checkpoint, and cancellation where exposed |
 | Move data | backup, restore, dump, checkpoint, or archive APIs where exposed |
 | Ship extensions | exact ecosystem-native selectors, dependency files, artifact reports |
-| Handle errors | SDK errors, PostgreSQL SQLSTATE data, capability errors |
+| Handle errors | SDK errors, PostgreSQL SQLSTATE data, and runtime errors |
 
 ## Language References
 
@@ -692,7 +700,8 @@ function apiReferenceFileName(record) {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasix',
+    'oliphaunt-wasix-rust': 'wasix-rust',
+    'oliphaunt-wasix-typescript': 'wasix-typescript',
   };
   return names[record.id] ?? record.id;
 }
@@ -898,9 +907,12 @@ const routePresentation = {
     description: 'TypeScript SDK for Node.js, Bun, and Deno.',
     icon: 'Braces',
   },
-  'oliphaunt-wasix': {
-    description:
-      'Rust WASIX plus the separate browser, Node, Bun, and Deno WASIX TypeScript binding.',
+  'oliphaunt-wasix-rust': {
+    description: 'Rust SDK for the portable WASIX runtime.',
+    icon: 'Boxes',
+  },
+  'oliphaunt-wasix-typescript': {
+    description: 'Portable TypeScript SDK for browsers, Node.js, Bun, and Deno.',
     icon: 'Boxes',
   },
 };

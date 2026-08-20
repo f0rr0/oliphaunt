@@ -6,30 +6,14 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.ReadableType
-import com.facebook.react.bridge.WritableNativeArray
-import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.turbomodule.core.interfaces.BindingsInstallerHolder
 import com.facebook.react.turbomodule.core.interfaces.TurboModuleWithJSIBindings
 import com.facebook.soloader.SoLoader
-import android.os.Debug
-import dev.oliphaunt.BackupArtifact
-import dev.oliphaunt.BackupFormat
-import dev.oliphaunt.BackupRequest
 import dev.oliphaunt.DatabaseStorage
-import dev.oliphaunt.DurabilityProfile
-import dev.oliphaunt.EngineCapabilities
-import dev.oliphaunt.EngineMode
-import dev.oliphaunt.EngineModeSupport
-import dev.oliphaunt.OliphauntAndroid
+import dev.oliphaunt.Oliphaunt
 import dev.oliphaunt.OliphauntConfig
 import dev.oliphaunt.OliphauntDatabase
-import dev.oliphaunt.OliphauntExtensionSizeReport
-import dev.oliphaunt.OliphauntPackageSizeReport
 import dev.oliphaunt.PostgresStartupGuc
-import dev.oliphaunt.ProtocolRequest
-import dev.oliphaunt.RestoreRequest
-import dev.oliphaunt.RestoreDestinationPolicy
-import dev.oliphaunt.RuntimeFootprintProfile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -87,33 +71,6 @@ class OliphauntModule(
   @DoNotStrip
   external override fun getBindingsInstaller(): BindingsInstallerHolder
 
-  override fun supportedModes(promise: Promise) {
-    promise.resolve(
-      WritableNativeArray().apply {
-        OliphauntAndroid.supportedModes().forEach { pushMap(it.toWritableMap()) }
-      },
-    )
-  }
-
-  override fun packageSizeReport(config: ReadableMap, promise: Promise) {
-    scope.launch {
-      runCatching {
-        val configuredRoot = config.pathOverride("resourceRoot")
-        val report = configuredRoot
-          ?.let { root -> OliphauntAndroid.packageSizeReport(File(root)) }
-          ?: OliphauntAndroid.packageSizeReport(reactContext)
-        report?.toWritableMap()
-      }.fold(
-        onSuccess = promise::resolve,
-        onFailure = { error -> promise.reject("liboliphaunt_package_size_failed", error.message, error) },
-      )
-    }
-  }
-
-  override fun processMemory(promise: Promise) {
-    promise.resolve(processMemoryReport())
-  }
-
   override fun open(config: ReadableMap, promise: Promise) {
     val job = scope.launch(start = CoroutineStart.LAZY) {
       runCatching {
@@ -128,14 +85,11 @@ class OliphauntModule(
           val handle = requireReactNativeHandle(nextHandle.getAndIncrement())
           val claim = nativeDirectProcessOwner.acquire { retained -> retained.close() }
           val session = try {
-            OliphauntAndroid.open(
+            Oliphaunt.open(
               context = reactContext,
               config = openConfig.config,
-              libraryPath = openConfig.libraryPath,
               runtimeDirectory = openConfig.runtimeDirectory,
               resourceRoot = openConfig.resourceRoot?.let(::File),
-              username = openConfig.username,
-              database = openConfig.database,
             )
           } catch (error: Throwable) {
             nativeDirectProcessOwner.release(claim)
@@ -204,7 +158,7 @@ class OliphauntModule(
     }
     scope.launch {
       runCatching {
-        session.execProtocolRaw(ProtocolRequest(request)).bytes
+        session.execProtocolRaw(request)
       }.fold(
         onSuccess = callback::resolveBytes,
         onFailure = { error -> callback.reject("liboliphaunt_exec_failed", error.message) },
@@ -213,38 +167,8 @@ class OliphauntModule(
   }
 
   @DoNotStrip
-  fun execProtocolStreamBytes(
-    handle: Long,
-    request: ByteArray,
-    callback: OliphauntJsiStreamCallback,
-  ) {
-    val key = try {
-      requireReactNativeHandle(handle)
-    } catch (error: IllegalArgumentException) {
-      callback.reject("liboliphaunt_invalid_handle", error.message)
-      return
-    }
-    val session = sessions[key]
-    if (session == null) {
-      callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
-      return
-    }
-    scope.launch {
-      runCatching {
-        session.execProtocolStream(ProtocolRequest(request)) { chunk ->
-          callback.emitChunk(chunk.bytes)
-        }
-      }.fold(
-        onSuccess = { callback.resolveUnit() },
-        onFailure = { error -> callback.reject("liboliphaunt_stream_failed", error.message) },
-      )
-    }
-  }
-
-  @DoNotStrip
   fun backupBytes(
     handle: Long,
-    format: String,
     callback: OliphauntJsiPromiseCallback,
   ) {
     val key = try {
@@ -260,7 +184,7 @@ class OliphauntModule(
     }
     scope.launch {
       runCatching {
-        session.backup(BackupRequest(parseBackupFormat(format))).bytes
+        session.backup()
       }.fold(
         onSuccess = callback::resolveBytes,
         onFailure = { error -> callback.reject("liboliphaunt_backup_failed", error.message) },
@@ -327,32 +251,29 @@ class OliphauntModule(
 
   @DoNotStrip
   fun restoreBytes(
-    destination: String,
-    format: String,
+    storageKind: String,
+    storagePath: String?,
+    storageName: String?,
     artifact: ByteArray,
-    replaceExisting: Boolean,
-    libraryPath: String?,
     callback: OliphauntJsiPromiseCallback,
   ) {
     scope.launch {
       runCatching {
-        validatePath(destination, "restore destination")
-        val request = RestoreRequest(
-          artifact = BackupArtifact(parseBackupFormat(format), artifact),
-          destination = destination,
-          destinationPolicy = if (replaceExisting) {
-            RestoreDestinationPolicy.ReplaceExisting
-          } else {
-            RestoreDestinationPolicy.FailIfExists
-          },
-        )
-        OliphauntAndroid.restore(
+        val destination = when (storageKind) {
+          "directory" -> validatePath(storagePath, "restore destination directory")
+          "applicationData" -> File(
+            File(reactContext.filesDir, "Oliphaunt"),
+            validateApplicationDataName(storageName),
+          ).absolutePath
+          else -> throw IllegalArgumentException("unknown restore destination kind '$storageKind'")
+        }
+        Oliphaunt.restore(
           context = reactContext,
-          request = request,
-          libraryPath = reactNativeLibraryPath(validatePathOverride(libraryPath, "libraryPath")),
+          destination = destination,
+          bytes = artifact,
         )
       }.fold(
-        onSuccess = callback::resolveString,
+        onSuccess = { callback.resolveUnit() },
         onFailure = { error -> callback.reject("liboliphaunt_restore_failed", error.message) },
       )
     }
@@ -366,18 +287,6 @@ class OliphauntModule(
       }.fold(
         onSuccess = { promise.resolve(null) },
         onFailure = { error -> promise.reject("liboliphaunt_cancel_failed", error.message, error) },
-      )
-    }
-  }
-
-  override fun capabilities(handle: Double, promise: Promise) {
-    val session = sessionFor(handle, promise) ?: return
-    scope.launch {
-      runCatching {
-        session.capabilities().toWritableMap()
-      }.fold(
-        onSuccess = promise::resolve,
-        onFailure = { error -> promise.reject("liboliphaunt_capabilities_failed", error.message, error) },
       )
     }
   }
@@ -397,10 +306,6 @@ class OliphauntModule(
   }
 
   private fun parseOpenConfig(config: ReadableMap): ReactNativeAndroidOpenConfig {
-    val mode = parseEngineMode(config.string("engine") ?: "nativeDirect")
-    if (mode != EngineMode.NativeDirect) {
-      throw IllegalArgumentException("React Native Android currently supports NativeDirect, got $mode")
-    }
     val storage = when (val kind = config.string("storageKind") ?: "temporaryDirectory") {
       "temporaryDirectory" -> DatabaseStorage.TemporaryDirectory
       "directory" -> DatabaseStorage.Directory(
@@ -412,38 +317,27 @@ class OliphauntModule(
       }
       else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
-    val runtimeDirectory = reactNativeRuntimeDirectory(config.pathOverride("runtimeDirectory"))
-    val libraryPath = reactNativeLibraryPath(config.pathOverride("libraryPath"))
-    val resourceRoot = config.pathOverride("resourceRoot")
+    val runtimeDirectory = reactNativeRuntimeDirectory(null)
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
     return ReactNativeAndroidOpenConfig(
       config = OliphauntConfig(
-        mode = mode,
         storage = storage,
-        durability = parseDurability(config.string("durability") ?: "balanced"),
-        runtimeFootprint = parseRuntimeFootprint(config.string("runtimeFootprint") ?: "balancedMobile"),
         startupGucs = config.startupGucs("startupGUCs"),
         username = username,
         database = database,
         extensions = config.stringList("extensions"),
       ),
-      libraryPath = libraryPath,
       runtimeDirectory = runtimeDirectory,
-      resourceRoot = resourceRoot,
-      username = username ?: "postgres",
-      database = database ?: "postgres",
+      resourceRoot = null,
     )
   }
 
   private data class ReactNativeAndroidOpenConfig(
     val config: OliphauntConfig,
-    val libraryPath: String?,
     val runtimeDirectory: String?,
     val resourceRoot: String?,
-    val username: String,
-    val database: String,
   )
 
   companion object {
@@ -524,9 +418,6 @@ class OliphauntModule(
 
     private val PORTABLE_STORAGE_NAME = Regex("[A-Za-z0-9._-]{1,128}")
 
-    private fun ReadableMap.pathOverride(name: String): String? =
-      validatePathOverride(string(name), name)
-
     private fun validatePathOverride(value: String?, name: String): String? {
       if (value == null) {
         return null
@@ -547,8 +438,6 @@ class OliphauntModule(
 
     private fun pathOverrideMessage(name: String, error: PathOverrideError): String =
       when (name to error) {
-        "libraryPath" to PathOverrideError.Empty -> "libraryPath must not be empty"
-        "libraryPath" to PathOverrideError.Nul -> "libraryPath must not contain NUL bytes"
         "runtimeDirectory" to PathOverrideError.Empty -> "runtimeDirectory must not be empty"
         "runtimeDirectory" to PathOverrideError.Nul -> "runtimeDirectory must not contain NUL bytes"
         "resourceRoot" to PathOverrideError.Empty -> "resourceRoot must not be empty"
@@ -586,161 +475,12 @@ class OliphauntModule(
     private fun environment(name: String): String? =
       System.getenv(name)?.takeIf(String::isNotEmpty)
 
-    private fun reactNativeLibraryPath(configured: String?): String? =
-      configured
-        ?: environment("OLIPHAUNT_REACT_NATIVE_ANDROID_LIBRARY")
-        ?: environment("OLIPHAUNT_KOTLIN_ANDROID_LIBRARY")
-        ?: environment("LIBOLIPHAUNT_PATH")
-        ?: environment("OLIPHAUNT_LIBRARY")
-
     private fun reactNativeRuntimeDirectory(configured: String?): String? =
       configured
         ?: environment("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_DIR")
         ?: environment("OLIPHAUNT_KOTLIN_ANDROID_RUNTIME_DIR")
         ?: environment("OLIPHAUNT_INSTALL_DIR")
         ?: environment("OLIPHAUNT_RUNTIME_DIR")
-
-    private fun parseEngineMode(engine: String): EngineMode = when (engine) {
-      "nativeDirect" -> EngineMode.NativeDirect
-      "nativeBroker" -> EngineMode.NativeBroker
-      "nativeServer" -> EngineMode.NativeServer
-      else -> throw IllegalArgumentException("unknown liboliphaunt engine '$engine'")
-    }
-
-    private fun parseDurability(durability: String): DurabilityProfile = when (durability) {
-      "safe" -> DurabilityProfile.Safe
-      "balanced" -> DurabilityProfile.Balanced
-      "fastDev" -> DurabilityProfile.FastDev
-      else -> throw IllegalArgumentException("unknown liboliphaunt durability profile '$durability'")
-    }
-
-    private fun parseRuntimeFootprint(profile: String): RuntimeFootprintProfile = when (profile) {
-      "throughput" -> RuntimeFootprintProfile.Throughput
-      "balancedMobile" -> RuntimeFootprintProfile.BalancedMobile
-      "smallMobile" -> RuntimeFootprintProfile.SmallMobile
-      else -> throw IllegalArgumentException("unknown liboliphaunt runtime footprint profile '$profile'")
-    }
-
-    private fun parseBackupFormat(format: String): BackupFormat = when (format) {
-      "sql" -> BackupFormat.Sql
-      "physicalArchive" -> BackupFormat.PhysicalArchive
-      "oliphauntArchive" -> BackupFormat.OliphauntArchive
-      else -> throw IllegalArgumentException("unknown liboliphaunt backup format '$format'")
-    }
-
-    private fun EngineMode.wireName(): String = when (this) {
-      EngineMode.NativeDirect -> "nativeDirect"
-      EngineMode.NativeBroker -> "nativeBroker"
-      EngineMode.NativeServer -> "nativeServer"
-    }
-
-    private fun EngineCapabilities.toWritableMap(): WritableNativeMap =
-      WritableNativeMap().apply {
-        putString("engine", mode.wireName())
-        putBoolean("processIsolated", processIsolated)
-        putBoolean("multipleInstances", multipleInstances)
-        putBoolean("sameInstanceLogicalReopen", sameInstanceLogicalReopen)
-        putBoolean("instanceSwitchable", instanceSwitchable)
-        putBoolean("crashRestartable", crashRestartable)
-        putBoolean("independentSessions", independentSessions)
-        putInt("maxClientSessions", maxClientSessions)
-        putBoolean("protocolRaw", protocolRaw)
-        putBoolean("protocolStream", protocolStream)
-        putBoolean("queryCancel", queryCancel)
-        putBoolean("backupRestore", backupRestore)
-        putArray("backupFormats", backupFormats.toWritableArray())
-        putArray("restoreFormats", restoreFormats.toWritableArray())
-        putBoolean("simpleQuery", simpleQuery)
-        putBoolean("extensions", extensions)
-        if (connectionString != null) {
-          putString("connectionString", connectionString)
-        }
-        putString("rawProtocolTransport", "jsi-array-buffer")
-      }
-
-    private fun EngineModeSupport.toWritableMap(): WritableNativeMap =
-      WritableNativeMap().apply {
-        putString("engine", mode.wireName())
-        putBoolean("available", available)
-        putMap("capabilities", capabilities.toWritableMap())
-        if (unavailableReason != null) {
-          putString("unavailableReason", unavailableReason)
-        }
-      }
-
-    private fun OliphauntPackageSizeReport.toWritableMap(): WritableNativeMap =
-      WritableNativeMap().apply {
-        putDouble("packageBytes", packageBytes.toDouble())
-        putDouble("runtimeBytes", runtimeBytes.toDouble())
-        putDouble("templatePgdataBytes", templatePgdataBytes.toDouble())
-        putDouble("staticRegistryBytes", staticRegistryBytes.toDouble())
-        putDouble("selectedExtensionBytes", selectedExtensionBytes.toDouble())
-        mobileStaticRegistryState?.let { putString("mobileStaticRegistryState", it) }
-        putArray(
-          "mobileStaticRegistryRegistered",
-          WritableNativeArray().apply {
-            mobileStaticRegistryRegistered.forEach(::pushString)
-          },
-        )
-        putArray(
-          "mobileStaticRegistryPending",
-          WritableNativeArray().apply {
-            mobileStaticRegistryPending.forEach(::pushString)
-          },
-        )
-        putArray(
-          "nativeModuleStems",
-          WritableNativeArray().apply {
-            nativeModuleStems.forEach(::pushString)
-          },
-        )
-        putArray(
-          "runtimeFeatures",
-          WritableNativeArray().apply {
-            runtimeFeatures.forEach(::pushString)
-          },
-        )
-        putArray(
-          "extensions",
-          WritableNativeArray().apply {
-            extensions.forEach { pushMap(it.toWritableMap()) }
-          },
-        )
-      }
-
-    private fun OliphauntExtensionSizeReport.toWritableMap(): WritableNativeMap =
-      WritableNativeMap().apply {
-        putString("name", name)
-        putInt("fileCount", fileCount)
-        putDouble("bytes", bytes.toDouble())
-      }
-
-    private fun processMemoryReport(): WritableNativeMap {
-      val info = Debug.MemoryInfo()
-      Debug.getMemoryInfo(info)
-      val runtime = Runtime.getRuntime()
-      return WritableNativeMap().apply {
-        putString("source", "android-debug-memory-info")
-        putDouble("totalPssKb", info.totalPss.toDouble())
-        putDouble("totalPrivateDirtyKb", info.totalPrivateDirty.toDouble())
-        putDouble("totalSharedDirtyKb", info.totalSharedDirty.toDouble())
-        putDouble("nativeHeapAllocatedBytes", Debug.getNativeHeapAllocatedSize().toDouble())
-        putDouble("nativeHeapSizeBytes", Debug.getNativeHeapSize().toDouble())
-        putDouble("runtimeTotalBytes", runtime.totalMemory().toDouble())
-        putDouble("runtimeFreeBytes", runtime.freeMemory().toDouble())
-      }
-    }
-
-    private fun List<BackupFormat>.toWritableArray(): WritableNativeArray =
-      WritableNativeArray().apply {
-        forEach { pushString(it.wireName()) }
-      }
-
-    private fun BackupFormat.wireName(): String = when (this) {
-      BackupFormat.Sql -> "sql"
-      BackupFormat.PhysicalArchive -> "physicalArchive"
-      BackupFormat.OliphauntArchive -> "oliphauntArchive"
-    }
 
   }
 }

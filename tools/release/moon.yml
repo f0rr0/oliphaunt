@@ -38,6 +38,8 @@ dependsOn:
     scope: "build"
   - id: "oliphaunt-wasix-rust"
     scope: "build"
+  - id: "oliphaunt-wasix-ts"
+    scope: "build"
 
 project:
   title: "Release Tools"

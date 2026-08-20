@@ -55,11 +55,10 @@ try {
     'lib/node-client.js',
     'lib/node-direct.js',
     'lib/node-directory-lock.js',
-    'lib/node-lock-identity.js',
     'lib/node-worker.js',
     'lib/node-worker-options.js',
     'lib/node-zstd.js',
-    'lib/server-runtime.js',
+    'lib/host-runtime.js',
     'lib/worker.js',
     'lib/host/index.mjs',
     'lib/host/index.d.mts',
@@ -67,7 +66,7 @@ try {
     'lib/host/wasmer_js_bg.wasm',
     'lib/host/provenance.json',
     'lib/host/LICENSE',
-    'lib/node-fs-durability.js',
+    'lib/node-fs-commit-state.js',
     'lib/storage/indexed-db.js',
     'lib/storage/indexed-db.d.ts',
     'lib/storage/incremental-storage.js',
@@ -86,16 +85,6 @@ try {
   ]) {
     if (!paths.has(path)) {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
-    }
-  }
-
-  for (const path of [
-    'lib/node-web-worker.js',
-    'lib/node-web-worker-thread.js',
-    'lib/wasix-process.js',
-  ]) {
-    if (paths.has(path)) {
-      throw new Error(`WASIX TypeScript package retained retired transport artifact ${path}`);
     }
   }
 
@@ -120,8 +109,6 @@ try {
   const expectedExports = [
     '.',
     './package.json',
-    './protocol',
-    './query',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',

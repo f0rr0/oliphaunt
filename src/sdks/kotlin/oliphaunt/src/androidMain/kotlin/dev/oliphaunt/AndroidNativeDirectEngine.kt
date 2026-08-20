@@ -7,32 +7,24 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipFile
 
-public class AndroidNativeDirectEngine(
+internal class AndroidNativeDirectEngine(
     context: Context,
     private val libraryPath: String? = null,
     private val runtimeDirectory: String? = null,
     private val resourceRoot: File? = null,
-    private val username: String = "postgres",
-    private val database: String = "postgres",
 ) : OliphauntEngine {
     private val appContext = context.applicationContext
 
-    public fun packageSizeReport(): OliphauntPackageSizeReport? = OliphauntAndroid.packageSizeReport(appContext)
-
-    override fun supportedModes(): List<EngineModeSupport> = OliphauntAndroid.supportedModes()
-
     override suspend fun open(config: OliphauntConfig): OliphauntSession {
-        if (config.mode != EngineMode.NativeDirect) {
-            throw OliphauntException("AndroidNativeDirectEngine supports NativeDirect, got ${config.mode}")
-        }
         validateDatabaseStorage(config.storage)
-        validateStartupIdentity(config.username ?: username, "username")
-        validateStartupIdentity(config.database ?: database, "database")
+        validateStartupIdentity(config.username, "username")
+        validateStartupIdentity(config.database, "database")
         validateStartupGucs(config.startupGucs)
         val runtime =
             OliphauntAndroidRuntimeAssets.resolve(
@@ -48,10 +40,14 @@ public class AndroidNativeDirectEngine(
             DatabaseStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
             is DatabaseStorage.Directory -> File(storage.path)
         }
+        if (Files.isSymbolicLink(storageDirectory.toPath())) {
+            throw OliphauntException("database storage directory must be a real directory: ${storageDirectory.absolutePath}")
+        }
         if (!storageDirectory.mkdirs() && !storageDirectory.isDirectory) {
             throw OliphauntException("failed to create database storage directory at ${storageDirectory.absolutePath}")
         }
         val pgdata = File(storageDirectory, "pgdata")
+        val rootState = classifyAndroidManagedRoot(storageDirectory)
         val executionDispatcher =
             Executors
                 .newSingleThreadExecutor { runnable ->
@@ -61,13 +57,26 @@ public class AndroidNativeDirectEngine(
                 }.asCoroutineDispatcher()
         var nativeOpenAttempted = false
         try {
-            OliphauntAndroidRuntimeAssets.preparePgdata(
-                assetManager = appContext.assets,
-                pgdata = pgdata,
-                templatePgdata = runtime.templatePgdata,
-            )
-            val effectiveUsername = config.username ?: username
-            val effectiveDatabase = config.database ?: database
+            when (rootState) {
+                AndroidManagedRootState.Managed -> validateCompleteAndroidPgdata(pgdata)
+
+                AndroidManagedRootState.Empty -> {
+                    try {
+                        OliphauntAndroidRuntimeAssets.preparePgdata(
+                            assetManager = appContext.assets,
+                            pgdata = pgdata,
+                            templatePgdata = runtime.templatePgdata,
+                        )
+                        validateCompleteAndroidPgdata(pgdata)
+                        writeAndroidManagedRootDescriptor(storageDirectory)
+                    } catch (error: Throwable) {
+                        pgdata.deleteRecursively()
+                        throw error
+                    }
+                }
+            }
+            val effectiveUsername = config.username ?: "postgres"
+            val effectiveDatabase = config.database ?: "postgres"
             val effectiveLibraryPath =
                 resolveAndroidLiboliphauntLibraryPath(
                     explicitLibraryPath = libraryPath,
@@ -103,16 +112,11 @@ public class AndroidNativeDirectEngine(
         }
     }
 
-    override suspend fun restore(request: RestoreRequest): String {
-        validateDirectoryPath(request.destination, "restore destination")
-        if (request.artifact.format != BackupFormat.PhysicalArchive) {
-            throw OliphauntException("Kotlin Android restore currently requires PhysicalArchive, got ${request.artifact.format}")
-        }
+    override suspend fun restore(destination: String, bytes: ByteArray) {
+        validateDirectoryPath(destination, "restore destination")
         OliphauntAndroidNativeBridge.restoreNative(
-            destination = request.destination,
-            format = request.artifact.format.wireName(),
-            artifact = request.artifact.bytes,
-            replaceExisting = request.destinationPolicy == RestoreDestinationPolicy.ReplaceExisting,
+            destination = destination,
+            bytes = bytes,
             libraryPath =
             resolveAndroidLiboliphauntLibraryPath(
                 explicitLibraryPath = libraryPath,
@@ -121,9 +125,208 @@ public class AndroidNativeDirectEngine(
                 supportedAbis = Build.SUPPORTED_ABIS.asList(),
             ),
         )
-        return request.destination
     }
 }
+
+internal enum class AndroidManagedRootState {
+    Empty,
+    Managed,
+}
+
+internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootState {
+    val descriptor = File(directory, ".oliphaunt.json")
+    if (descriptor.exists()) {
+        validateAndroidManagedRootDescriptor(descriptor)
+        val entries = directory.list()?.toList()
+            ?: throw OliphauntException("could not inspect database storage directory: ${directory.absolutePath}")
+        if (entries.size != 2 || entries.toSet() != setOf(".oliphaunt.json", "pgdata")) {
+            throw OliphauntException(
+                "managed database storage directory must contain exactly .oliphaunt.json and pgdata: ${directory.absolutePath}",
+            )
+        }
+        return AndroidManagedRootState.Managed
+    }
+    if (!directory.list().orEmpty().isEmpty()) {
+        throw OliphauntException(
+            "database storage directory is nonempty but has no .oliphaunt.json descriptor: ${directory.absolutePath}",
+        )
+    }
+    return AndroidManagedRootState.Empty
+}
+
+internal fun writeAndroidManagedRootDescriptor(directory: File) {
+    val descriptor = File(directory, ".oliphaunt.json")
+    val temporary = File(directory, ".oliphaunt.json.tmp-${UUID.randomUUID()}")
+    temporary.writeText(NATIVE_ROOT_DESCRIPTOR)
+    if (!temporary.renameTo(descriptor)) {
+        temporary.delete()
+        if (!descriptor.isFile) {
+            throw OliphauntException("failed to create database root descriptor at ${descriptor.absolutePath}")
+        }
+    }
+}
+
+internal fun validateCompleteAndroidPgdata(pgdata: File) {
+    val version = File(pgdata, "PG_VERSION")
+    requireRealAndroidFile(version, "PG_VERSION")
+    if (version.readText().trim() != "18") {
+        throw OliphauntException("PGDATA PostgreSQL major must be 18: ${version.absolutePath}")
+    }
+    requireRealAndroidDirectory(File(pgdata, "global"), "global")
+    requireRealAndroidFile(File(pgdata, "global/pg_control"), "global/pg_control")
+    requireRealAndroidDirectory(File(pgdata, "pg_wal"), "pg_wal")
+}
+
+private fun validateAndroidManagedRootDescriptor(descriptor: File) {
+    val parent = descriptor.parentFile
+        ?: throw OliphauntException("database root descriptor has no parent: ${descriptor.absolutePath}")
+    val realLocation = File(parent.canonicalFile, descriptor.name)
+    if (!descriptor.isFile || descriptor.length() == 0L || descriptor.canonicalFile != realLocation) {
+        throw OliphauntException("database root descriptor must be a nonempty real file: ${descriptor.absolutePath}")
+    }
+    val value = runCatching { AndroidFlatJsonParser(descriptor.readText()).parse() }
+        .getOrElse { throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}") }
+    val family = (value["engineFamily"] as? AndroidJsonValue.StringValue)?.value
+    val format = (value["physicalFormat"] as? AndroidJsonValue.StringValue)?.value
+    val expectedFormat = mapOf("native" to "native-pg18-v1", "wasix" to "wasix-pg18-v1")[family]
+    if (
+        value.keys != setOf("schema", "engineFamily", "pgdata", "postgresMajor", "physicalFormat") ||
+        value["schema"] != AndroidJsonValue.StringValue("oliphaunt-database-root-v1") ||
+        value["pgdata"] != AndroidJsonValue.StringValue("pgdata") ||
+        value["postgresMajor"] != AndroidJsonValue.IntegerValue(18) ||
+        expectedFormat == null ||
+        expectedFormat != format
+    ) {
+        throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}")
+    }
+}
+
+private sealed interface AndroidJsonValue {
+    data class StringValue(val value: String) : AndroidJsonValue
+
+    data class IntegerValue(val value: Long) : AndroidJsonValue
+}
+
+private class AndroidFlatJsonParser(private val source: String) {
+    private var offset = 0
+
+    fun parse(): Map<String, AndroidJsonValue> {
+        skipWhitespace()
+        expect('{')
+        skipWhitespace()
+        val values = mutableMapOf<String, AndroidJsonValue>()
+        if (consume('}')) {
+            finish()
+            return values
+        }
+        while (true) {
+            val key = parseString()
+            if (values.containsKey(key)) throw IllegalArgumentException("duplicate key")
+            skipWhitespace()
+            expect(':')
+            skipWhitespace()
+            values[key] = if (peek() == '"') {
+                AndroidJsonValue.StringValue(parseString())
+            } else {
+                AndroidJsonValue.IntegerValue(parseInteger())
+            }
+            skipWhitespace()
+            if (consume('}')) break
+            expect(',')
+            skipWhitespace()
+        }
+        finish()
+        return values
+    }
+
+    private fun parseString(): String {
+        expect('"')
+        val result = StringBuilder()
+        while (offset < source.length) {
+            val character = source[offset++]
+            when {
+                character == '"' -> return result.toString()
+                character.code < 0x20 -> throw IllegalArgumentException("unescaped control character")
+                character != '\\' -> result.append(character)
+                offset >= source.length -> throw IllegalArgumentException("incomplete escape")
+                else -> when (val escaped = source[offset++]) {
+                    '"', '\\', '/' -> result.append(escaped)
+                    'b' -> result.append('\b')
+                    'f' -> result.append('\u000c')
+                    'n' -> result.append('\n')
+                    'r' -> result.append('\r')
+                    't' -> result.append('\t')
+                    'u' -> {
+                        if (offset + 4 > source.length) throw IllegalArgumentException("incomplete unicode escape")
+                        val code = source.substring(offset, offset + 4).toIntOrNull(16)
+                            ?: throw IllegalArgumentException("invalid unicode escape")
+                        result.append(code.toChar())
+                        offset += 4
+                    }
+                    else -> throw IllegalArgumentException("invalid escape")
+                }
+            }
+        }
+        throw IllegalArgumentException("unterminated string")
+    }
+
+    private fun parseInteger(): Long {
+        val start = offset
+        consume('-')
+        when (peek()) {
+            '0' -> {
+                offset += 1
+                if (peek()?.isDigit() == true) throw IllegalArgumentException("leading zero")
+            }
+            in '1'..'9' -> while (peek()?.isDigit() == true) offset += 1
+            else -> throw IllegalArgumentException("expected integer")
+        }
+        return source.substring(start, offset).toLongOrNull()
+            ?: throw IllegalArgumentException("invalid integer")
+    }
+
+    private fun finish() {
+        skipWhitespace()
+        if (offset != source.length) throw IllegalArgumentException("trailing content")
+    }
+
+    private fun skipWhitespace() {
+        while (true) {
+            when (peek()) {
+                ' ', '\t', '\n', '\r' -> offset += 1
+                else -> return
+            }
+        }
+    }
+
+    private fun peek(): Char? = source.getOrNull(offset)
+
+    private fun consume(expected: Char): Boolean = if (peek() == expected) {
+        offset += 1
+        true
+    } else {
+        false
+    }
+
+    private fun expect(expected: Char) {
+        if (!consume(expected)) throw IllegalArgumentException("expected $expected")
+    }
+}
+
+private fun requireRealAndroidDirectory(file: File, label: String) {
+    if (!file.isDirectory || file.canonicalFile != file.absoluteFile) {
+        throw OliphauntException("PGDATA $label must be a real directory: ${file.absolutePath}")
+    }
+}
+
+private fun requireRealAndroidFile(file: File, label: String) {
+    if (!file.isFile || file.length() == 0L || file.canonicalFile != file.absoluteFile) {
+        throw OliphauntException("PGDATA $label must be a nonempty real file: ${file.absolutePath}")
+    }
+}
+
+internal const val NATIVE_ROOT_DESCRIPTOR: String =
+    "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
 
 private object AndroidDirectTemporaryStorage {
     @Volatile
@@ -148,78 +351,19 @@ private class AndroidNativeDirectSession(
     private var closed = false
     private var activeCalls = 0
 
-    override suspend fun capabilities(): EngineCapabilities = withContext(executionDispatcher) {
-        val current = beginCall()
-        val flags =
-            try {
-                OliphauntAndroidNativeBridge.capabilitiesNative(current)
-            } finally {
-                endCall()
-            }
-        EngineCapabilities(
-            mode = EngineMode.NativeDirect,
-            processIsolated = false,
-            independentSessions = false,
-            maxClientSessions = 1,
-            multipleInstances = flags and CAP_MULTI_INSTANCE != 0L,
-            sameInstanceLogicalReopen = flags and CAP_LOGICAL_REOPEN != 0L,
-            instanceSwitchable = false,
-            crashRestartable = false,
-            protocolRaw = flags and CAP_PROTOCOL_RAW != 0L,
-            protocolStream = flags and CAP_PROTOCOL_STREAM != 0L,
-            queryCancel = flags and CAP_QUERY_CANCEL != 0L,
-            backupRestore = flags and CAP_BACKUP_RESTORE != 0L,
-            backupFormats = listOf(BackupFormat.PhysicalArchive),
-            restoreFormats = listOf(BackupFormat.PhysicalArchive),
-            simpleQuery = flags and CAP_SIMPLE_QUERY != 0L,
-            extensions = flags and CAP_EXTENSIONS != 0L,
-        )
-    }
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse = withContext(executionDispatcher) {
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = withContext(executionDispatcher) {
         val current = beginCall()
         try {
-            ProtocolResponse(
-                OliphauntAndroidNativeBridge.execProtocolRawNative(current, request.bytes),
-            )
+            OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
         } finally {
             endCall()
         }
     }
 
-    override suspend fun execProtocolStream(
-        request: ProtocolRequest,
-        onChunk: (ProtocolResponse) -> Unit,
-    ) {
-        withContext(executionDispatcher) {
-            val current = beginCall()
-            try {
-                OliphauntAndroidNativeBridge.execProtocolStreamNative(
-                    current,
-                    request.bytes,
-                    OliphauntAndroidProtocolStreamSink { chunk ->
-                        onChunk(ProtocolResponse(chunk))
-                        0
-                    },
-                )
-            } finally {
-                endCall()
-            }
-        }
-    }
-
-    override suspend fun backup(request: BackupRequest): BackupArtifact = withContext(executionDispatcher) {
-        requireAndroidNativeDirectBackupFormat(request.format)
+    override suspend fun backup(): ByteArray = withContext(executionDispatcher) {
         val current = beginCall()
         try {
-            BackupArtifact(
-                format = BackupFormat.PhysicalArchive,
-                bytes =
-                OliphauntAndroidNativeBridge.backupNative(
-                    current,
-                    request.format.wireName(),
-                ),
-            )
+            OliphauntAndroidNativeBridge.backupNative(current)
         } finally {
             endCall()
         }
@@ -315,29 +459,6 @@ private class AndroidNativeDirectSession(
             throw OliphauntException("database is closed")
         }
     }
-
-    private companion object {
-        const val CAP_PROTOCOL_RAW: Long = 1L shl 0
-        const val CAP_PROTOCOL_STREAM: Long = 1L shl 1
-        const val CAP_MULTI_INSTANCE: Long = 1L shl 2
-        const val CAP_EXTENSIONS: Long = 1L shl 4
-        const val CAP_QUERY_CANCEL: Long = 1L shl 5
-        const val CAP_BACKUP_RESTORE: Long = 1L shl 6
-        const val CAP_SIMPLE_QUERY: Long = 1L shl 7
-        const val CAP_LOGICAL_REOPEN: Long = 1L shl 9
-    }
-}
-
-internal fun requireAndroidNativeDirectBackupFormat(format: BackupFormat) {
-    if (format != BackupFormat.PhysicalArchive) {
-        throw OliphauntException("Kotlin Android native-direct backup currently supports PhysicalArchive, got $format")
-    }
-}
-
-private fun BackupFormat.wireName(): String = when (this) {
-    BackupFormat.Sql -> "sql"
-    BackupFormat.PhysicalArchive -> "physicalArchive"
-    BackupFormat.OliphauntArchive -> "oliphauntArchive"
 }
 
 internal fun resolveAndroidLiboliphauntLibraryPath(

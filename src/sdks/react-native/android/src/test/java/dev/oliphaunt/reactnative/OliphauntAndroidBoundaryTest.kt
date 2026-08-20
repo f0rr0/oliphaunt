@@ -1,6 +1,6 @@
 package dev.oliphaunt.reactnative
 
-import dev.oliphaunt.OliphauntAndroid
+import dev.oliphaunt.Oliphaunt
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,7 +75,7 @@ class OliphauntAndroidBoundaryTest {
 
   @Test
   fun reactNativeAndroidDelegatesRuntimeToKotlinSdk() {
-    assertEquals("dev.oliphaunt.OliphauntAndroid", OliphauntAndroid::class.java.name)
+    assertEquals("dev.oliphaunt.Oliphaunt", Oliphaunt::class.java.name)
 
     val nativeSourceDir = File(System.getProperty("user.dir"), "src/main/cpp")
     val nativeSources = nativeSourceDir
@@ -98,9 +98,9 @@ class OliphauntAndroidBoundaryTest {
       System.getProperty("user.dir"),
       "src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",
     ).readText()
-    assertTrue(
-      "React Native Android must delegate package-size evidence to OliphauntAndroid",
-      moduleSource.contains("OliphauntAndroid.packageSizeReport"),
+    assertFalse(
+      "React Native Android must not expose repository qualification APIs",
+      moduleSource.contains("packageSizeReport") || moduleSource.contains("processMemory"),
     )
     assertTrue(
       "React Native Android must reject non-string extension entries before Kotlin SDK open",
@@ -120,10 +120,9 @@ class OliphauntAndroidBoundaryTest {
       moduleSource.contains("getType(name) == ReadableType.String") &&
         moduleSource.contains("\$name must be a string"),
     )
-    assertTrue(
-      "React Native Android must reject blank native override paths before Kotlin SDK open",
-      moduleSource.contains("pathOverride") &&
-        moduleSource.contains("libraryPath must not be empty"),
+    assertFalse(
+      "React Native Android app configuration must not expose native path overrides",
+      moduleSource.contains("config.pathOverride"),
     )
     assertTrue(
       "React Native Android must reject NUL-containing storage and restore paths before crossing the Kotlin SDK boundary",
@@ -135,11 +134,9 @@ class OliphauntAndroidBoundaryTest {
       moduleSource.contains("fun execProtocolRawBytes") &&
         moduleSource.contains("session.execProtocolRaw(ProtocolRequest(request)).bytes"),
     )
-    assertTrue(
-      "React Native Android must expose a true chunked JSI stream hook that delegates to the Kotlin SDK session",
-      moduleSource.contains("fun execProtocolStreamBytes") &&
-        moduleSource.contains("session.execProtocolStream(ProtocolRequest(request))") &&
-        moduleSource.contains("callback.emitChunk(chunk.bytes)"),
+    assertFalse(
+      "React Native Android must not mirror the unused low-level C stream API",
+      moduleSource.contains("execProtocolStream"),
     )
     assertTrue(
       "React Native Android must expose byte-array JSI backup/restore hooks instead of base64 TurboModule binary APIs",
@@ -170,11 +167,9 @@ class OliphauntAndroidBoundaryTest {
         jsiSource.contains("typed-array byteOffset") &&
         jsiSource.contains("typed-array byteLength"),
     )
-    assertTrue(
-      "React Native Android JSI must install a real chunked stream transport before protocolStream can be advertised",
-      jsiSource.contains("\"execProtocolStream\"") &&
-        jsiSource.contains("OliphauntJsiStreamCallback") &&
-        jsiSource.contains("nativeEmitChunk"),
+    assertFalse(
+      "React Native Android JSI must keep the public transport to raw request/response bytes",
+      jsiSource.contains("execProtocolStream") || jsiSource.contains("OliphauntJsiStreamCallback"),
     )
   }
 

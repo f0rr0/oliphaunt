@@ -4,9 +4,9 @@
 PostgreSQL 18 source pin, upstreamable patch stack, C ABI header, native shim,
 and local smoke/build scripts.
 
-This directory is intentionally not the Rust SDK. Rust lives in
-`src/sdks/rust`; future Swift, Kotlin, React Native, and other targets
-should bind to the same C ABI instead of reaching into PostgreSQL internals.
+This directory is intentionally not an app SDK. Rust, Swift, Kotlin, desktop
+TypeScript, and React Native bind to this C ABI instead of reaching into
+PostgreSQL internals.
 
 ## Layout
 
@@ -17,10 +17,8 @@ should bind to the same C ABI instead of reaching into PostgreSQL internals.
   and backend thread stack sizing policy.
 - `src/liboliphaunt_protocol.c`: raw protocol execution, streaming backpressure,
   readiness scanning, and embedded backend read/write callbacks.
-- `src/liboliphaunt_bootstrap.c`: PGDATA bootstrap, desktop/tooling `initdb`
-  process execution, runtime-tool discovery, and startup argument copying.
-  Apple mobile targets compile this path as template-only because apps cannot
-  rely on spawning `initdb` from app storage.
+- `src/liboliphaunt_config.c`: configuration copying, PostgreSQL executable
+  resolution, and startup argument copying.
 - `src/liboliphaunt_process.c`: process-wide direct-mode instance guard and
   desktop dynamic-extension symbol-scope promotion.
 - `src/liboliphaunt_static_extensions.c`: process-wide static extension registry
@@ -104,8 +102,8 @@ large DataFusion/Tantivy release build; free target space first, or set
 `OLIPHAUNT_EXTERNAL_PGRX_SKIP_DISK_PREFLIGHT=1` only for local experiments.
 `src/runtimes/liboliphaunt/native/tools/check-track.sh external-pgrx` runs the no-build
 `--check-current` gate for those artifacts.
-The currentness fingerprint excludes harness prose and other non-build text.
-When only the fingerprint schema changes, use `--refresh-current-stamps` to
+The build-input digest excludes harness prose and other non-build text.
+When only the digest schema changes, use `--refresh-current-stamps` to
 validate the existing normal/embedded payloads and restamp them without running
 the expensive pgrx packaging step.
 
@@ -117,16 +115,15 @@ lifecycle detach/wait boundary, not an implicit query cancellation primitive.
 
 The C runtime keeps throughput-oriented PostgreSQL defaults for direct callers:
 `shared_buffers=128MB`, `wal_buffers=4MB`, and `min_wal_size=80MB`. SDKs that
-need mobile-sized resident footprints do not need a new C ABI; they pass
-validated PostgreSQL `-c name=value` startup arguments through
-`OliphauntConfig.startup_args`. Later arguments win, so Rust/Swift/Kotlin/RN
-can apply balanced/small mobile profiles and benchmark-specific overrides above
-the stable C boundary.
+need different PostgreSQL settings do not need a new C ABI; they pass validated
+`-c name=value` startup arguments through `OliphauntConfig.startup_args`. Later
+arguments win, so SDKs and benchmark harnesses can apply concrete PostgreSQL
+GUC overrides above the stable C boundary without inventing tuning profiles.
 
-Mobile builds must hydrate PGDATA from a packaged template before calling
-`oliphaunt_init`. On Apple mobile platforms the C layer compiles out the
-`fork`/`exec` `initdb` fallback and returns a direct error if `PG_VERSION` is
-missing. `tools/run-host-c-smoke.mjs` includes a fast iOS simulator syntax
+SDKs must hydrate PGDATA from a packaged template before calling
+`oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty
+root. `tools/run-host-c-smoke.mjs` performs that preparation explicitly before
+running the C consumer and includes a fast iOS simulator syntax
 check over the liboliphaunt C shim files. `bin/check-postgres18-ios-simulator.sh`
 then validates the upstream PostgreSQL patch touchpoints that matter for the
 embedded path: host I/O callbacks, the embedded backend entrypoint, lifecycle
@@ -172,37 +169,33 @@ those three claimed slices.
 
 ## Root Ownership
 
-`oliphaunt_init` takes a non-blocking stable sibling filesystem lease for
-`<parent-of-pgdata>` by default and creates
-`<parent-of-pgdata>/.oliphaunt.lock` as the visible root marker. `oliphaunt_restore`
-takes the same stable lease before staging or publishing a restored root. This
-keeps plain C, Swift, Kotlin, React Native platform adapters, and any future
-direct C ABI caller from accidentally opening, replacing, or restoring the same
-embedded root concurrently.
-Stable lease filenames live beside the root directory and use the same
-`.oliphaunt-root-<sha256-prefix>.lock` algorithm as the Rust SDK, so direct C,
-Rust, Swift, Kotlin, and React Native platform adapters contend on the same root
-identity instead of merely enforcing per-SDK locks.
+Direct init and restore each take one non-blocking sibling lease for the target
+root. The lease is an implementation detail that prevents duplicate ownership
+inside the native runtime; SDK adapters do not add a second lease around the C
+call.
 
-Callers that already own an equivalent root coordinator may set
-`OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK` in `OliphauntConfig.reserved_flags`. Today the
-Rust SDK uses that flag because `oliphaunt` coordinates direct, broker,
-server, backup, and restore through its own process registry plus stable
-filesystem root leases. SDKs must not set the flag unless they can prove the
-same root cannot be opened or replaced concurrently.
+`oliphaunt_init` only validates an existing managed root. It requires the exact
+five-field `<root>/.oliphaunt.json`, a real `<root>/pgdata` directory,
+PostgreSQL 18 `PG_VERSION`, nonempty `global/pg_control`, and a real `pg_wal`
+directory. Exact native and WASIX descriptor tuples are accepted; unknown,
+missing, duplicated, or mismatched fields and other PGDATA leaf names are
+rejected without changing the root. SDK initialization creates PGDATA first and
+publishes the descriptor last.
 
 ## Physical Archive Contract
 
-`oliphaunt_backup` accepts an `OliphauntBackupOptions` record and emits a
-same-version concrete root archive. Its generated-file list can append metadata
-entries such as `manifest.properties` or
-`.oliphaunt/backup-manifest.properties` while the archive is being produced,
-avoiding a second full archive copy in SDKs. The C ABI accepts only regular
+`oliphaunt_backup` emits one PostgreSQL 18 physical archive format with no
+format switch or generated-file hook. Every archive contains the exact
+five-key `.oliphaunt/backup-manifest.properties`; restore requires and consumes
+that manifest. The destination-owned `.oliphaunt.json` is not archive content,
+and restore publishes only to a new or existing-empty destination. The C ABI
+accepts only regular
 files and directories under `pgdata`; symlinks, hardlinks, device nodes, FIFOs,
 sockets, sparse/special tar records, external tablespaces, and linked WAL
 directories are rejected. `oliphaunt_restore` enforces the same rule before
-publishing a restored root, so Swift, Kotlin, React Native, and Rust SDK callers
-inherit one portable archive contract instead of platform-specific tar behavior.
+consuming archive metadata and publishing a restored root, so Swift, Kotlin,
+React Native, and Rust SDK callers inherit one portable archive contract instead
+of platform-specific tar behavior.
 
 ## Fast Native Iteration
 

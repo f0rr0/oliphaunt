@@ -7,6 +7,7 @@ const EXPECTED_PRODUCTS = [
   'oliphaunt-js',
   'oliphaunt-react-native',
   'oliphaunt-wasix-rust',
+  'oliphaunt-wasix-ts',
 ];
 
 function fail(message) {

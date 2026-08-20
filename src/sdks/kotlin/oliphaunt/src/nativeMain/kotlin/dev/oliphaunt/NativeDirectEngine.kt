@@ -8,40 +8,26 @@ package dev.oliphaunt
 
 import cnames.structs.OliphauntKotlinSession
 import dev.oliphaunt.native.c.OLIPHAUNT_ABI_VERSION
-import dev.oliphaunt.native.c.OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_BACKUP_RESTORE
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_EXTENSIONS
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_LOGICAL_REOPEN
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_MULTI_INSTANCE
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_PROTOCOL_RAW
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_PROTOCOL_STREAM
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_QUERY_CANCEL
-import dev.oliphaunt.native.c.OLIPHAUNT_CAP_SIMPLE_QUERY
-import dev.oliphaunt.native.c.OLIPHAUNT_RESTORE_REPLACE_EXISTING
 import dev.oliphaunt.native.c.OliphauntResponse
 import dev.oliphaunt.native.c.OliphauntRestoreOptions
 import dev.oliphaunt.native.c.oliphaunt_kotlin_backup
 import dev.oliphaunt.native.c.oliphaunt_kotlin_cancel
-import dev.oliphaunt.native.c.oliphaunt_kotlin_capabilities
 import dev.oliphaunt.native.c.oliphaunt_kotlin_close
 import dev.oliphaunt.native.c.oliphaunt_kotlin_exec_protocol
-import dev.oliphaunt.native.c.oliphaunt_kotlin_exec_protocol_stream
 import dev.oliphaunt.native.c.oliphaunt_kotlin_free_response
+import dev.oliphaunt.native.c.oliphaunt_kotlin_initialize_root
 import dev.oliphaunt.native.c.oliphaunt_kotlin_last_error
 import dev.oliphaunt.native.c.oliphaunt_kotlin_open
 import dev.oliphaunt.native.c.oliphaunt_kotlin_remove_tree
 import dev.oliphaunt.native.c.oliphaunt_kotlin_restore
 import kotlinx.cinterop.ByteVar
-import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.get
@@ -50,7 +36,6 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
-import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.CloseableCoroutineDispatcher
@@ -64,24 +49,14 @@ import platform.posix.mkdir
 import kotlin.random.Random
 import dev.oliphaunt.native.c.OliphauntConfig as NativeOliphauntConfig
 
-public class NativeDirectEngine(
+internal class NativeDirectEngine(
     private val libraryPath: String? = null,
     private val runtimeDirectory: String? = null,
-    private val username: String = "postgres",
-    private val database: String = "postgres",
 ) : OliphauntEngine {
-    override fun supportedModes(): List<EngineModeSupport> = OliphauntRuntimeSupport.nativeDirectOnly(
-        brokerReason = "Kotlin/Native broker mode requires a platform broker adapter; it is not aliased to direct mode",
-        serverReason = "Kotlin/Native server mode requires a platform server adapter; it is not aliased to direct mode",
-    )
-
     override suspend fun open(config: OliphauntConfig): OliphauntSession {
-        if (config.mode != EngineMode.NativeDirect) {
-            throw OliphauntException("NativeDirectEngine supports NativeDirect, got ${config.mode}")
-        }
         validateDatabaseStorage(config.storage)
-        validateStartupIdentity(config.username ?: username, "username")
-        validateStartupIdentity(config.database ?: database, "database")
+        validateStartupIdentity(config.username, "username")
+        validateStartupIdentity(config.database, "database")
         validateStartupGucs(config.startupGucs)
         validateGeneratedExtensionIds(config.extensions, label = "Kotlin native-direct extension id")
         val resolvedRuntimeDirectory =
@@ -101,15 +76,20 @@ public class NativeDirectEngine(
         }
         val pgdata = "$storageDirectory/pgdata"
         ensureDirectory(storageDirectory)
-        ensureDirectory(pgdata)
+        val effectiveUsername = config.username ?: "postgres"
+        val effectiveDatabase = config.database ?: "postgres"
         val ownerDispatcher = newSingleThreadContext("oliphaunt-native-owner")
         val session: CPointer<OliphauntKotlinSession> =
             try {
                 withContext(ownerDispatcher) {
                     memScoped {
+                        val initializeRc = oliphaunt_kotlin_initialize_root(
+                            storageDirectory,
+                            resolvedRuntimeDirectory,
+                            effectiveUsername,
+                        )
+                        if (initializeRc != 0) throw OliphauntException(lastError(null))
                         val startupArgs = config.postgresStartupArgs()
-                        val effectiveUsername = config.username ?: username
-                        val effectiveDatabase = config.database ?: database
                         val startupArgPointers = allocArray<CPointerVar<ByteVar>>(startupArgs.size)
                         startupArgs.forEachIndexed { index, arg ->
                             startupArgPointers[index] = arg.cstr.getPointer(this)
@@ -147,36 +127,23 @@ public class NativeDirectEngine(
         )
     }
 
-    override suspend fun restore(request: RestoreRequest): String {
-        validateDirectoryPath(request.destination, "restore destination")
-        if (request.artifact.format != BackupFormat.PhysicalArchive) {
-            throw OliphauntException("Kotlin native restore currently requires PhysicalArchive, got ${request.artifact.format}")
-        }
+    override suspend fun restore(destination: String, bytes: ByteArray) {
+        validateDirectoryPath(destination, "restore destination")
         val resolvedLibrary = libraryPath ?: env("OLIPHAUNT_KOTLIN_LIBRARY") ?: env("LIBOLIPHAUNT_PATH")
-        val flags =
-            if (request.destinationPolicy == RestoreDestinationPolicy.ReplaceExisting) {
-                OLIPHAUNT_RESTORE_REPLACE_EXISTING
-            } else {
-                0uL
-            }
         val rc =
             memScoped {
-                request.artifact.bytes.usePinned { pinned ->
+                bytes.usePinned { pinned ->
                     val options =
                         alloc<OliphauntRestoreOptions> {
                             abi_version = OLIPHAUNT_ABI_VERSION
-                            destination = request.destination.cstr.getPointer(this@memScoped)
-                            format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE
+                            this.destination = destination.cstr.getPointer(this@memScoped)
                             data =
-                                if (request.artifact.bytes.isEmpty()) {
+                                if (bytes.isEmpty()) {
                                     null
                                 } else {
                                     pinned.addressOf(0).reinterpret()
                                 }
-                            len =
-                                request.artifact.bytes.size
-                                    .convert()
-                            this.flags = flags
+                            len = bytes.size.convert()
                         }
                     oliphaunt_kotlin_restore(resolvedLibrary, options.ptr)
                 }
@@ -184,7 +151,6 @@ public class NativeDirectEngine(
         if (rc != 0) {
             throw OliphauntException(lastError(null))
         }
-        return request.destination
     }
 }
 
@@ -196,18 +162,7 @@ private class NativeDirectSession(
     private val stateMutex = Mutex()
     private var closing = false
 
-    override suspend fun capabilities(): EngineCapabilities {
-        val flags =
-            withContext(ownerDispatcher) {
-                executionMutex.withLock {
-                    val current = stateMutex.withLock { requireOpenSession() }
-                    oliphaunt_kotlin_capabilities(current)
-                }
-            }
-        return nativeDirectCapabilities(flags)
-    }
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse = withContext(ownerDispatcher) {
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = withContext(ownerDispatcher) {
         executionMutex.withLock {
             val current = stateMutex.withLock { requireOpenSession() }
             memScoped {
@@ -217,9 +172,9 @@ private class NativeDirectSession(
                         len = 0u
                     }
                 val rc =
-                    request.bytes.usePinned { pinned ->
+                    request.usePinned { pinned ->
                         val requestPtr =
-                            if (request.bytes.isEmpty()) {
+                            if (request.isEmpty()) {
                                 null
                             } else {
                                 pinned.addressOf(0).reinterpret<UByteVar>()
@@ -227,7 +182,7 @@ private class NativeDirectSession(
                         oliphaunt_kotlin_exec_protocol(
                             current,
                             requestPtr,
-                            request.bytes.size.convert(),
+                            request.size.convert(),
                             response.ptr,
                         )
                     }
@@ -237,9 +192,9 @@ private class NativeDirectSession(
                 try {
                     val responseData = response.data
                     if (responseData == null || response.len == 0uL) {
-                        ProtocolResponse(ByteArray(0))
+                        ByteArray(0)
                     } else {
-                        ProtocolResponse(responseData.readBytes(response.len.toInt()))
+                        responseData.readBytes(response.len.toInt())
                     }
                 } finally {
                     oliphaunt_kotlin_free_response(current, response.ptr)
@@ -248,77 +203,34 @@ private class NativeDirectSession(
         }
     }
 
-    override suspend fun execProtocolStream(
-        request: ProtocolRequest,
-        onChunk: (ProtocolResponse) -> Unit,
-    ) {
-        withContext(ownerDispatcher) {
-            executionMutex.withLock {
-                val current = stateMutex.withLock { requireOpenSession() }
-                val callbackBox = NativeStreamCallbackBox(onChunk)
-                val stableRef = StableRef.create(callbackBox)
-                try {
-                    val rc =
-                        request.bytes.usePinned { pinned ->
-                            val requestPtr =
-                                if (request.bytes.isEmpty()) {
-                                    null
-                                } else {
-                                    pinned.addressOf(0).reinterpret<UByteVar>()
-                                }
-                            oliphaunt_kotlin_exec_protocol_stream(
-                                current,
-                                requestPtr,
-                                request.bytes.size.convert(),
-                                nativeStreamCallback,
-                                stableRef.asCPointer(),
-                            )
-                        }
-                    callbackBox.error?.let { throw it }
-                    if (rc != 0) {
-                        throw OliphauntException(lastError(current))
+    override suspend fun backup(): ByteArray = withContext(ownerDispatcher) {
+        executionMutex.withLock {
+            val current = stateMutex.withLock { requireOpenSession() }
+            memScoped {
+                val response =
+                    alloc<OliphauntResponse> {
+                        data = null
+                        len = 0u
                     }
-                } finally {
-                    stableRef.dispose()
+                val rc =
+                    oliphaunt_kotlin_backup(
+                        current,
+                        response.ptr,
+                    )
+                if (rc != 0) {
+                    throw OliphauntException(lastError(current))
                 }
-            }
-        }
-    }
-
-    override suspend fun backup(request: BackupRequest): BackupArtifact {
-        if (request.format != BackupFormat.PhysicalArchive) {
-            throw OliphauntException("Kotlin native-direct backup currently supports PhysicalArchive, got ${request.format}")
-        }
-        return withContext(ownerDispatcher) {
-            executionMutex.withLock {
-                val current = stateMutex.withLock { requireOpenSession() }
-                memScoped {
-                    val response =
-                        alloc<OliphauntResponse> {
-                            data = null
-                            len = 0u
+                try {
+                    val responseData = response.data
+                    val bytes =
+                        if (responseData == null || response.len == 0uL) {
+                            ByteArray(0)
+                        } else {
+                            responseData.readBytes(response.len.toInt())
                         }
-                    val rc =
-                        oliphaunt_kotlin_backup(
-                            current,
-                            OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-                            response.ptr,
-                        )
-                    if (rc != 0) {
-                        throw OliphauntException(lastError(current))
-                    }
-                    try {
-                        val responseData = response.data
-                        val bytes =
-                            if (responseData == null || response.len == 0uL) {
-                                ByteArray(0)
-                            } else {
-                                responseData.readBytes(response.len.toInt())
-                            }
-                        BackupArtifact(BackupFormat.PhysicalArchive, bytes)
-                    } finally {
-                        oliphaunt_kotlin_free_response(current, response.ptr)
-                    }
+                    bytes
+                } finally {
+                    oliphaunt_kotlin_free_response(current, response.ptr)
                 }
             }
         }
@@ -379,53 +291,6 @@ private class NativeDirectSession(
         return session ?: throw OliphauntException("database is closed")
     }
 }
-
-private class NativeStreamCallbackBox(
-    val onChunk: (ProtocolResponse) -> Unit,
-) {
-    var error: Throwable? = null
-}
-
-private val nativeStreamCallback =
-    staticCFunction {
-            context: COpaquePointer?,
-            data: CPointer<UByteVar>?,
-            len: ULong,
-        ->
-        val callbackBox = context?.asStableRef<NativeStreamCallbackBox>()?.get() ?: return@staticCFunction -1
-        try {
-            val bytes =
-                if (data == null || len == 0uL) {
-                    ByteArray(0)
-                } else {
-                    data.reinterpret<ByteVar>().readBytes(len.toInt())
-                }
-            callbackBox.onChunk(ProtocolResponse(bytes))
-            0
-        } catch (error: Throwable) {
-            callbackBox.error = error
-            -1
-        }
-    }
-
-private fun nativeDirectCapabilities(flags: ULong): EngineCapabilities = EngineCapabilities(
-    mode = EngineMode.NativeDirect,
-    processIsolated = false,
-    independentSessions = false,
-    maxClientSessions = 1,
-    multipleInstances = flags and OLIPHAUNT_CAP_MULTI_INSTANCE != 0uL,
-    sameInstanceLogicalReopen = flags and OLIPHAUNT_CAP_LOGICAL_REOPEN != 0uL,
-    instanceSwitchable = false,
-    crashRestartable = false,
-    protocolRaw = flags and OLIPHAUNT_CAP_PROTOCOL_RAW != 0uL,
-    protocolStream = flags and OLIPHAUNT_CAP_PROTOCOL_STREAM != 0uL,
-    queryCancel = flags and OLIPHAUNT_CAP_QUERY_CANCEL != 0uL,
-    backupRestore = flags and OLIPHAUNT_CAP_BACKUP_RESTORE != 0uL,
-    backupFormats = listOf(BackupFormat.PhysicalArchive),
-    restoreFormats = listOf(BackupFormat.PhysicalArchive),
-    simpleQuery = flags and OLIPHAUNT_CAP_SIMPLE_QUERY != 0uL,
-    extensions = flags and OLIPHAUNT_CAP_EXTENSIONS != 0uL,
-)
 
 private fun lastError(session: CPointer<OliphauntKotlinSession>?): String = oliphaunt_kotlin_last_error(session)?.toKString()?.takeIf(String::isNotEmpty)
     ?: "unknown liboliphaunt Kotlin runtime error"

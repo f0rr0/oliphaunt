@@ -10,12 +10,12 @@ native Oliphaunt runtime assets and native engines where supported.
 
 <Callout type="info" title="Desktop JavaScript uses native helpers">
 Use this package for Node.js, Bun, and Deno. Tauri apps currently keep the
-database in Rust state behind narrow app-owned commands; direct webview
-integration is planned. React Native apps use the React Native SDK because
+database in Rust state behind narrow app-owned commands. React Native apps use
+the React Native SDK because
 mobile runtime work flows through Swift and Kotlin.
 
 Browser applications use the separate
-[`@oliphaunt/wasix-ts`](/docs/sdk/wasix/browser-typescript) package. This native
+[`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript) package. This native
 package does not fall back to WASIX, and the WASIX package does not fall back to
 native execution.
 </Callout>
@@ -91,16 +91,16 @@ const firstTitle = notes.getText(0, 'title');
 ```
 
 Tauri apps keep the database in Rust state and expose narrow app-owned commands
-to the webview. A direct TypeScript/webview adapter is planned, not supported in
-the first release.
+to the webview.
 
 </Step>
 <Step>
 
 ### Configure
 
-Configure storage, mode, selected exact extensions, durability, startup
-identity, and advanced runtime overrides through the JS configuration object.
+Configure storage, mode, selected exact extensions, startup identity,
+PostgreSQL startup GUCs, and advanced runtime overrides through the JS
+configuration object.
 Omit `storage` for an SDK-owned temporary directory; pass
 `{ kind: 'directory', path }` for persistence.
 
@@ -109,8 +109,8 @@ Omit `storage` for an SDK-owned temporary directory; pass
 
 ### Choose a mode
 
-Omit `engine` for the runtime-detected native direct default. Select broker mode
-when process isolation and crash recovery matter, or server mode when
+Omit `execution` for direct execution. Select `execution: 'broker'` when process
+isolation and crash recovery matter. Use `Oliphaunt.openServer()` when
 PostgreSQL-compatible tools and independent clients are required.
 
 </Step>
@@ -134,12 +134,10 @@ selected extensions and mandatory dependencies.
 
 ### Back up and restore
 
-Use SDK backup and restore helpers for physical archives and supported server
-flows. Keep live PostgreSQL directories behind the SDK data-movement APIs.
-Restores fail when the destination exists by default; use
-`destinationPolicy: 'replaceExisting'` only when replacement is intentional.
-Restore is offline and mode-independent; the SDK uses the detected native
-binding rather than requiring an engine or broker executable.
+Use `backup()` and static restore for the native physical archive. Keep live
+PostgreSQL directories behind these APIs. Restore accepts a new or
+existing-empty destination and rejects nonempty data without mutation. Native
+server applications use normal PostgreSQL tools.
 
 </Step>
 </Steps>
@@ -149,5 +147,5 @@ binding rather than requiring an engine or broker executable.
 ## Troubleshooting
 
 Check runtime asset resolution, helper executable availability, storage ownership,
-mode capability errors, extension selection, and SQLSTATE-bearing PostgreSQL
+unsupported-mode errors, extension selection, and SQLSTATE-bearing PostgreSQL
 errors.

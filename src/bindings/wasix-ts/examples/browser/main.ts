@@ -1,7 +1,6 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, {
   PostgresError,
-  simpleQuery,
   type QueryParam,
   type OliphauntDatabase,
   type WasixExtensionDescriptor,
@@ -81,7 +80,7 @@ try {
       [','],
     );
     if (reopened.getText(0, 'answers') !== '42,43') {
-      throw new Error('browser smoke did not reopen operation-persisted raw PGDATA');
+      throw new Error('browser smoke did not reopen operation-persisted PGDATA');
     }
     if ((await readPgtapVersion(database)) !== pgtapVersion) {
       throw new Error('browser smoke did not reconstruct the selected pgtap carrier on reopen');
@@ -130,6 +129,16 @@ try {
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 } finally {
   directWorkerAudit?.restore();
+}
+
+function simpleQuery(sql: string): Uint8Array {
+  if (sql.includes('\0')) throw new Error('simple query SQL must not contain NUL bytes');
+  const body = new TextEncoder().encode(`${sql}\0`);
+  const message = new Uint8Array(body.length + 5);
+  message[0] = 0x51;
+  new DataView(message.buffer).setUint32(1, body.length + 4);
+  message.set(body, 5);
+  return message;
 }
 
 async function expectLargePostgisWorkerModule(): Promise<string> {
