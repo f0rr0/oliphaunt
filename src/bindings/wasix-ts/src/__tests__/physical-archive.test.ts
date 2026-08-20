@@ -94,6 +94,16 @@ describe('WASIX physical archives', () => {
     expect(() => decodePhysicalArchive(archive)).toThrow('missing or empty pgdata/backup_label');
   });
 
+  it('rejects a missing base directory', () => {
+    const snapshot = completeSnapshot();
+    const archive = encodePhysicalArchive({
+      ...snapshot,
+      directories: snapshot.directories.filter((path) => path !== 'base'),
+    });
+
+    expect(() => decodePhysicalArchive(archive)).toThrow('missing pgdata/base');
+  });
+
   it('rejects unsupported and malformed ustar numeric metadata', () => {
     for (const [offset, width, value] of [
       [100, 8, '0004755\0'],
@@ -322,7 +332,7 @@ function walSnapshot(files: [string, number][]): StoredSnapshot {
 function completeSnapshot(): StoredSnapshot {
   return {
     schema: 'oliphaunt-wasix-directory-snapshot-v1',
-    directories: ['global', 'pg_wal'],
+    directories: ['base', 'global', 'pg_wal'],
     files: [
       { path: 'PG_VERSION', bytes: new TextEncoder().encode('18\n') },
       { path: 'global/pg_control', bytes: Uint8Array.of(1) },

@@ -45,6 +45,14 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./protocol": {
+      "types": "./lib/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/query.d.ts",
+      "default": "./lib/query.js"
+    },
     "./package.json": {
       "default": "./package.json"
     }
@@ -63,11 +71,11 @@
     "!src/__tests__"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.json",
     "docs:api": "typedoc --options typedoc.json",
     "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf lib"
+    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
   },
   "engines": {
     "node": ">=22.13 <25"

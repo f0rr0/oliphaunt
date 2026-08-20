@@ -413,7 +413,7 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         set_error(NULL, "invalid oliphaunt_init module_dir");
         return -1;
     }
-    if (config->reserved_flags != 0) {
+    if ((config->reserved_flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
         set_error(NULL, "invalid oliphaunt_init config flags");
         return -1;
     }
@@ -461,7 +461,8 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         set_error(NULL, message);
         return -1;
     }
-    if (oliphaunt_acquire_root_lock(handle, handle->pgdata) != 0) {
+    if ((config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) == 0 &&
+        oliphaunt_acquire_root_lock(handle, handle->pgdata) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "%s", handle->last_error);
         close_unpublished_handle(handle);

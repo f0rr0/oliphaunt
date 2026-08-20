@@ -1,4 +1,6 @@
-use std::ffi::{CString, c_char};
+use std::ffi::CString;
+#[cfg(feature = "broker-helper")]
+use std::ffi::c_char;
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +12,8 @@ mod root;
 pub(crate) use self::root::{PreparedNativeRoot, configure_native_tool_env, native_root_key};
 
 use self::ffi::{
-    ABI_VERSION, NativeConfig, NativeHandle, NativeResponse, NativeRestoreOptions, NativeSymbols,
-    path_to_cstring,
+    ABI_VERSION, CONFIG_EXTERNAL_ROOT_LOCK, NativeConfig, NativeHandle, NativeResponse,
+    NativeRestoreOptions, NativeSymbols, path_to_cstring,
 };
 use crate::config::{EngineMode, OpenConfig};
 use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
@@ -411,7 +413,7 @@ impl OliphauntSession {
             module_dir: module_dir.as_ptr(),
             username: username.as_ptr(),
             database: database.as_ptr(),
-            reserved_flags: 0,
+            reserved_flags: CONFIG_EXTERNAL_ROOT_LOCK,
             startup_args: startup_arg_ptrs.as_ptr(),
             startup_arg_count: startup_arg_ptrs.len(),
         };
@@ -531,6 +533,7 @@ impl EngineSession for OliphauntSession {
         Ok(self.protocol_response_from_native(response))
     }
 
+    #[cfg(feature = "broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
         let Some(exec_simple_query) = self.symbols.exec_simple_query else {
             return self.exec_protocol_raw(ProtocolRequest::simple_query(sql)?);

@@ -91,6 +91,25 @@ check_static() {
     "Node direct addon must register a Node-API module"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" '#include "oliphaunt.h"' \
     "Node direct addon must compile against the canonical liboliphaunt ABI header"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" 'using BackupFn = decltype(&oliphaunt_backup);' \
+    "Node direct backup loading must derive its function type from the canonical ABI declaration"
+  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" 'OliphauntBackupOptions' \
+    "Node direct must not retain removed backup option types"
+  reject_text "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc" 'OliphauntBackupOptions' \
+    "Node direct fake libraries must match the canonical backup ABI"
+  if command -v c++ >/dev/null 2>&1; then
+    local node_include
+    node_include="$(node -e 'const path = require("node:path"); process.stdout.write(path.resolve(process.execPath, "../../include/node"));')"
+    if [ ! -f "$node_include/node_api.h" ]; then
+      echo "could not locate node_api.h for Node direct ABI syntax check at $node_include" >&2
+      exit 1
+    fi
+    c++ -std=c++17 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+      -I"$node_include" -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
+      "$package_dir/native/node-addon/oliphaunt_node.cc"
+    c++ -std=c++17 -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
+      "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
+  fi
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     "dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)" \
     "Node direct must expose embedded PostgreSQL symbols to extension DSOs"

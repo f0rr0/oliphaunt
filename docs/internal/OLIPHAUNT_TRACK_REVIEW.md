@@ -10,7 +10,7 @@ Use the current normative documents instead:
 - [`docs/maintainers/native-runtime-contract.md`](../maintainers/native-runtime-contract.md)
 - [`docs/maintainers/wasix-usage.md`](../maintainers/wasix-usage.md)
 - [`docs/architecture/database-storage.md`](../architecture/database-storage.md)
-- [`docs/internal/PHYSICAL_ARCHIVE_FORMAT.md`](PHYSICAL_ARCHIVE_FORMAT.md)
+- [`docs/maintainers/physical-archive-format.md`](../maintainers/physical-archive-format.md)
 - [`docs/maintainers/extension-packaging-policy.md`](../maintainers/extension-packaging-policy.md)
 
 Repository source, generated API inventory, package checks, and qualification

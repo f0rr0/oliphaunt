@@ -2,10 +2,14 @@ package dev.oliphaunt
 
 import android.content.Context
 import android.content.res.AssetManager
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.Properties
+import java.util.UUID
 
 internal data class OliphauntAndroidAssetPackage(
     val assetRoot: String,
@@ -172,6 +176,7 @@ internal object OliphauntAndroidRuntimeAssets {
         templatePgdata: OliphauntAndroidAssetPackage?,
     ) {
         if (File(pgdata, "PG_VERSION").isFile) {
+            validateCompleteAndroidPgdata(pgdata)
             return
         }
         if (templatePgdata == null) {
@@ -197,26 +202,95 @@ internal object OliphauntAndroidRuntimeAssets {
             throw OliphauntException("failed to create PGDATA parent at ${parent.absolutePath}")
         }
 
-        val temp = File(parent, ".pgdata-template-${templatePgdata.cacheKey}-${System.nanoTime()}")
+        val temp = File(parent, ".pgdata-template-${templatePgdata.cacheKey}-${UUID.randomUUID()}")
         temp.deleteRecursively()
         try {
             copyPackageTree(assetManager, templatePgdata, temp)
             ensureTemplatePgdataDirectoriesForAndroid(temp)
             normalizeTemplatePgdataForAndroid(temp)
-            if (!File(temp, "PG_VERSION").isFile) {
-                throw OliphauntException(
-                    "packaged liboliphaunt template PGDATA ${templatePgdata.assetRoot} does not contain PG_VERSION",
-                )
-            }
-            if (pgdata.exists() && !pgdata.delete()) {
-                throw OliphauntException("failed to replace empty PGDATA at ${pgdata.absolutePath}")
-            }
-            if (!temp.renameTo(pgdata)) {
-                throw OliphauntException("failed to publish template PGDATA at ${pgdata.absolutePath}")
-            }
+            publishPreparedAndroidPgdata(temp, pgdata)
         } catch (error: Throwable) {
             temp.deleteRecursively()
             throw error
+        }
+    }
+
+    internal fun publishPreparedAndroidPgdata(
+        staging: File,
+        destination: File,
+    ) {
+        validateCompleteAndroidPgdata(staging)
+        if (isCompleteAndroidPgdata(destination)) return
+        syncAndroidPgdataTree(staging)
+
+        if (destination.exists()) {
+            val entries = destination.list()
+            if (!destination.isDirectory || entries == null || entries.isNotEmpty()) {
+                if (isCompleteAndroidPgdata(destination)) return
+                throw OliphauntException(
+                    "PGDATA destination changed before publication: ${destination.absolutePath}",
+                )
+            }
+            if (!destination.delete()) {
+                if (isCompleteAndroidPgdata(destination)) return
+                throw OliphauntException(
+                    "failed to remove empty PGDATA destination at ${destination.absolutePath}",
+                )
+            }
+        }
+
+        if (staging.renameTo(destination)) {
+            syncAndroidDirectory(
+                destination.parentFile
+                    ?: throw OliphauntException("PGDATA has no parent directory: ${destination.absolutePath}"),
+            )
+            validateCompleteAndroidPgdata(destination)
+            return
+        }
+        if (isCompleteAndroidPgdata(destination)) return
+        throw OliphauntException("failed to publish template PGDATA at ${destination.absolutePath}")
+    }
+
+    private fun isCompleteAndroidPgdata(pgdata: File): Boolean = try {
+        validateCompleteAndroidPgdata(pgdata)
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun syncAndroidPgdataTree(root: File) {
+        syncAndroidPgdataEntry(root)
+    }
+
+    private fun syncAndroidPgdataEntry(entry: File) {
+        if (isAndroidSymbolicLink(entry)) {
+            throw OliphauntException("PGDATA staging contains a symbolic link: ${entry.absolutePath}")
+        }
+        when {
+            entry.isFile -> FileInputStream(entry).use { input -> input.fd.sync() }
+
+            entry.isDirectory -> {
+                val children = entry.listFiles()
+                    ?: throw OliphauntException("failed to inspect PGDATA staging directory: ${entry.absolutePath}")
+                children.sortedBy(File::getName).forEach(::syncAndroidPgdataEntry)
+                syncAndroidDirectory(entry)
+            }
+
+            else -> throw OliphauntException("PGDATA staging contains an unsupported entry: ${entry.absolutePath}")
+        }
+    }
+
+    internal fun syncAndroidDirectory(directory: File) {
+        val descriptor =
+            Os.open(
+                directory.absolutePath,
+                OsConstants.O_RDONLY,
+                0,
+            )
+        try {
+            Os.fsync(descriptor)
+        } finally {
+            Os.close(descriptor)
         }
     }
 

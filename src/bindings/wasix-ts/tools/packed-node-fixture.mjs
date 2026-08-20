@@ -261,7 +261,6 @@ export function parseBuildProfile(value) {
     wasmOptPreserveUnoptimized: 'wasm_opt_preserve_unoptimized',
     compilerFlags: 'compiler_flags',
     linkerFlags: 'linker_flags',
-    backendTiming: 'backend_timing',
   })) {
     if (!fields.has(key)) throw new Error(`WASIX build-profile omits ${key}`);
     configuration[field] = fields.get(key);

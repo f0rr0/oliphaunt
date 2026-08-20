@@ -12,7 +12,7 @@ describe('WASIX database recovery state', () => {
     const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input, persistence) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         persistenceModes.push(persistence);
         return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
@@ -48,7 +48,7 @@ describe('WASIX database recovery state', () => {
     const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input, persistence) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         persistenceModes.push(persistence);
         return statement === 'ROLLBACK'
@@ -85,7 +85,7 @@ describe('WASIX database recovery state', () => {
     });
     const session: WasixDatabaseSession = {
       async exec(input, persistence) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(`${statement}:${persistence}`);
         return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
       },
@@ -115,7 +115,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const database = new WasixDatabaseImpl({
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         return statement === 'ROLLBACK'
           ? concatenate(commandComplete('ROLLBACK'), ready())
@@ -146,7 +146,7 @@ describe('WASIX database recovery state', () => {
     let transactionAborted = false;
     const session: WasixDatabaseSession = {
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         if (statement === 'SELECT rejected') {
           transactionAborted = true;
@@ -180,7 +180,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         if (statement === 'SELECT rejected') {
           return concatenate(backendError('XX000', 'savepoint operation failed'), ready());
@@ -223,12 +223,12 @@ describe('WASIX database recovery state', () => {
     let transactionAborted = false;
     const session: WasixDatabaseSession = {
       async exec(input) {
-        if (input[0] !== 'Q'.charCodeAt(0)) {
+        if (input.length === 1) {
           statements.push('RAW');
           transactionAborted = true;
           return concatenate(backendError('XX000', 'raw operation failed'), ready());
         }
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         if (statement === 'COMMIT' && transactionAborted) {
           return concatenate(commandComplete('ROLLBACK'), ready());
@@ -255,7 +255,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const database = new WasixDatabaseImpl({
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         return ready();
       },
@@ -282,7 +282,7 @@ describe('WASIX database recovery state', () => {
     });
     const session: WasixDatabaseSession = {
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         if (statement === 'COMMIT') {
           commitStarted?.();
@@ -319,7 +319,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         return statement === failedStatement
           ? concatenate(backendError('XX000', `${failedStatement} failed`), ready())
@@ -351,7 +351,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
-        const statement = simpleQuerySql(input);
+        const statement = querySql(input);
         statements.push(statement);
         return statement === 'ROLLBACK'
           ? concatenate(backendError('XX000', 'rollback failed'), ready())
@@ -379,7 +379,7 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const database = new WasixDatabaseImpl({
       async exec(input) {
-        statements.push(simpleQuerySql(input));
+        statements.push(querySql(input));
         return ready();
       },
       async sync() {},
@@ -429,6 +429,7 @@ describe('WASIX database recovery state', () => {
     const database = new WasixDatabaseImpl(session);
 
     await database.execute('select 42');
+    expect(executions[0]?.[0]).toBe('P'.charCodeAt(0));
     const raw = Uint8Array.of('Q'.charCodeAt(0), 0, 0, 0, 5, 0);
     await database.execProtocolRaw(raw);
 
@@ -685,9 +686,13 @@ function concatenate(left: Uint8Array, right: Uint8Array): Uint8Array {
   return result;
 }
 
-function simpleQuerySql(input: Uint8Array): string {
-  if (input[0] !== 'Q'.charCodeAt(0) || input.at(-1) !== 0) {
-    throw new Error('test expected a simple-query packet');
+function querySql(input: Uint8Array): string {
+  if (input[0] === 'Q'.charCodeAt(0) && input.at(-1) === 0) {
+    return new TextDecoder().decode(input.subarray(5, -1));
   }
-  return new TextDecoder().decode(input.subarray(5, -1));
+  if (input[0] === 'P'.charCodeAt(0) && input[5] === 0) {
+    const terminator = input.indexOf(0, 6);
+    if (terminator >= 0) return new TextDecoder().decode(input.subarray(6, terminator));
+  }
+  throw new Error('test expected a simple- or extended-query packet');
 }

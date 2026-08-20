@@ -473,8 +473,8 @@ require_text src/sdks/rust/tests/sdk_extensions.rs "public_extension_catalog_mat
   "Rust SDK extension tests must lock public selection to generated metadata"
 require_text src/sdks/rust/tests/sdk_extensions.rs "extension_selection_uses_exact_sql_names_without_aliases" \
   "Rust SDK extension tests must pin exact-name selection without aliases"
-require_text src/sdks/rust/tests/native_smoke.rs "direct_query_transaction_backup_restore_and_root_ownership_when_available" \
-  "Rust SDK native smoke tests must cover direct liboliphaunt runtime selection"
+require_text src/sdks/rust/tests/native_smoke.rs "direct_query_transaction_backup_restore_and_process_ownership_when_available" \
+  "Rust SDK native smoke tests must cover direct liboliphaunt process ownership"
 require_text src/sdks/rust/tests/native_sql_regression.rs "native_postgres_types_errors_and_transaction_recovery_when_available" \
   "Rust SDK regression tests must preserve PostgreSQL type, error, and recovery coverage"
 check_release_asset_fixture

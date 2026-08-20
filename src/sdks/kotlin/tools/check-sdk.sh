@@ -286,6 +286,7 @@ run_without_linked_native_runtime() {
   env \
     -u LIBOLIPHAUNT_PATH \
     -u OLIPHAUNT_INSTALL_DIR \
+    -u OLIPHAUNT_INITDB \
     -u OLIPHAUNT_RUNTIME_DIR \
     -u OLIPHAUNT_KOTLIN_REQUIRE_NATIVE \
     "$@"

@@ -193,6 +193,7 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
       };
       validDescriptors: unknown[];
       invalidDescriptors: { case: string; value: unknown }[];
+      malformedJson: { case: string; value: string }[];
     };
     expect(fixture.descriptor).toBe('.oliphaunt.json');
     expect(fixture.schema).toBe('oliphaunt-database-root-v1');
@@ -205,6 +206,9 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
     }
     for (const invalid of fixture.invalidDescriptors) {
       expect(parseDatabaseRootDescriptor(invalid.value), invalid.case).toBeUndefined();
+    }
+    for (const malformed of fixture.malformedJson) {
+      expect(parseDatabaseRootDescriptorText(malformed.value), malformed.case).toBeUndefined();
     }
 
     const valid = JSON.stringify(fixture.validDescriptors[1], undefined, 2);

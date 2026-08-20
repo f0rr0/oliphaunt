@@ -151,9 +151,7 @@ public extension OliphauntDatabase {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
-        let request = parameters.isEmpty
-            ? try OliphauntProtocol.simpleQuery(sql)
-            : try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await parseOliphauntCommandResponse(execProtocolRaw(request))
     }
 
@@ -161,9 +159,7 @@ public extension OliphauntDatabase {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
-        let request = parameters.isEmpty
-            ? try OliphauntProtocol.simpleQuery(sql)
-            : try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await parseOliphauntQueryResponse(execProtocolRaw(request))
     }
 }
@@ -173,9 +169,7 @@ public extension OliphauntTransaction {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
-        let request = parameters.isEmpty
-            ? try OliphauntProtocol.simpleQuery(sql)
-            : try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await parseOliphauntCommandResponse(execProtocolRaw(request))
     }
 
@@ -183,9 +177,7 @@ public extension OliphauntTransaction {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
-        let request = parameters.isEmpty
-            ? try OliphauntProtocol.simpleQuery(sql)
-            : try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await parseOliphauntQueryResponse(execProtocolRaw(request))
     }
 }

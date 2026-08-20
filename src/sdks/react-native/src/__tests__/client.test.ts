@@ -102,7 +102,7 @@ async function testExecuteReturnsPostgresCommandMetadata(): Promise<void> {
     commandTag: 'INSERT 0 3',
     rowCount: 3,
   });
-  assert.equal(native.execRequests.at(-1)?.[0], 0x51);
+  assert.equal(native.execRequests.at(-1)?.[0], 0x50);
   await db.close();
 }
 
@@ -152,12 +152,14 @@ function testCommandParserRejectsUnknownAndCopyMessages(): void {
 }
 
 async function testQueryReturnsRowsAndCommandMetadata(): Promise<void> {
-  const db = await createOliphauntClient(new MockNative()).open();
+  const native = new MockNative();
+  const db = await createOliphauntClient(native).open();
   const result = await db.query('SELECT $1::text AS value', ['hello']);
 
   assert.equal(result.getText(0, 'value'), 'hello');
   assert.equal(result.commandTag, 'SELECT 1');
   assert.equal(result.rowCount, 1);
+  assert.equal(native.execRequests.at(-1)?.[0], 0x50);
   await db.close();
 }
 

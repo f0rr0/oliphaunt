@@ -61,9 +61,13 @@ impl Oliphaunt {
             .map(ProtocolResponse::into_bytes)
     }
 
-    /// Execute a PostgreSQL command through the simple-query protocol.
+    /// Execute exactly one PostgreSQL command through the extended-query protocol.
     pub async fn execute(&self, sql: &str) -> Result<CommandResult> {
-        parse_command_response(&self.executor.exec_simple_query(sql.to_owned()).await?)
+        let response = self
+            .executor
+            .exec_protocol_raw(extended_query_request(sql, Vec::<QueryParam>::new())?)
+            .await?;
+        parse_command_response(&response)
     }
 
     /// Execute a PostgreSQL command with extended-query parameters.
@@ -80,13 +84,17 @@ impl Oliphaunt {
         parse_command_response(&response)
     }
 
-    /// Execute SQL through PostgreSQL's simple-query protocol and parse one
-    /// result set into rows and fields.
+    /// Execute exactly one SQL statement through PostgreSQL's extended-query
+    /// protocol and parse one result set into rows and fields.
     ///
     /// Use `exec_protocol_raw` for COPY,
     /// multi-result-set protocol handling, or custom frontend protocol flows.
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
-        parse_query_response(&self.executor.exec_simple_query(sql.to_owned()).await?)
+        let response = self
+            .executor
+            .exec_protocol_raw(extended_query_request(sql, Vec::<QueryParam>::new())?)
+            .await?;
+        parse_query_response(&response)
     }
 
     /// Execute SQL with extended-query parameters and parse one result set.
@@ -320,14 +328,14 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    /// Execute SQL through PostgreSQL's simple-query protocol inside the
-    /// transaction.
+    /// Execute exactly one SQL statement through PostgreSQL's extended-query
+    /// protocol inside the transaction.
     pub async fn execute(&self, sql: &str) -> Result<CommandResult> {
         let response = self
             .pin
             .as_ref()
             .expect("transaction pin is present until callback returns")
-            .exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
+            .exec_protocol_raw(extended_query_request(sql, Vec::<QueryParam>::new())?)
             .await?;
         parse_command_response(&response)
     }
@@ -348,14 +356,14 @@ impl Transaction {
         parse_command_response(&response)
     }
 
-    /// Execute SQL through PostgreSQL's simple-query protocol inside the
-    /// transaction and parse one result set.
+    /// Execute exactly one SQL statement through PostgreSQL's extended-query
+    /// protocol inside the transaction and parse one result set.
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
         let response = self
             .pin
             .as_ref()
             .expect("transaction pin is present until commit or rollback")
-            .exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
+            .exec_protocol_raw(extended_query_request(sql, Vec::<QueryParam>::new())?)
             .await?;
         parse_query_response(&response)
     }

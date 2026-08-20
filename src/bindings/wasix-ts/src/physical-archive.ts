@@ -216,6 +216,9 @@ export function decodePhysicalArchive(bytes: Uint8Array): StoredSnapshot {
     if (backupLabel === undefined || backupLabel.bytes.length === 0) {
       throw corruptArchive('has a missing or empty pgdata/backup_label');
     }
+    if (!directories.includes('base')) {
+      throw corruptArchive('is missing pgdata/base');
+    }
     return validateStoredSnapshot(
       { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
       '18',

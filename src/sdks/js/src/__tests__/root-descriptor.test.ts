@@ -16,6 +16,7 @@ import { acquireServerRoot, createServerRuntimeBinding } from '../runtime/server
 const fixture = JSON.parse(readFileSync(sharedStorageFixturePath(), 'utf8')) as {
   validDescriptors: Array<Record<string, unknown>>;
   invalidDescriptors: Array<{ case: string; value: Record<string, unknown> }>;
+  malformedJson: Array<{ case: string; value: string }>;
 };
 
 test('database-root descriptors follow the shared five-field contract', () => {
@@ -25,13 +26,9 @@ test('database-root descriptors follow the shared five-field contract', () => {
   for (const invalid of fixture.invalidDescriptors) {
     assert.throws(() => validateDescriptor(JSON.stringify(invalid.value)), invalid.case);
   }
-  assert.throws(
-    () =>
-      validateDescriptor(
-        '{"schema":"oliphaunt-database-root-v1","schema":"oliphaunt-database-root-v1","engineFamily":"native","pgdata":"pgdata","postgresMajor":18,"physicalFormat":"native-pg18-v1"}',
-      ),
-    /duplicate object key/,
-  );
+  for (const malformed of fixture.malformedJson) {
+    assert.throws(() => validateDescriptor(malformed.value), malformed.case);
+  }
   assert.throws(
     () => validateDescriptor(`\u00a0${JSON.stringify(fixture.validDescriptors[0])}`),
     /not valid JSON/,

@@ -47,13 +47,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
-    return parseCommandResponse(await this.#execOwned(input));
+    return parseCommandResponse(await this.#execOwned(extendedQuery(sql, parameters)));
   }
 
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
-    return parseQueryResponse(await this.#execOwned(input));
+    return parseQueryResponse(await this.#execOwned(extendedQuery(sql, parameters)));
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
@@ -307,13 +305,11 @@ class WasixTransactionImpl implements OliphauntTransaction {
   }
 
   execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
-    return this.#execOwned(input, parseCommandResponse);
+    return this.#execOwned(extendedQuery(sql, parameters), parseCommandResponse);
   }
 
   query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    const input = parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters);
-    return this.#execOwned(input, parseQueryResponse);
+    return this.#execOwned(extendedQuery(sql, parameters), parseQueryResponse);
   }
 
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {

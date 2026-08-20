@@ -88,6 +88,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::register_build_resources!`
 - `oliphaunt::register_build_resources_dir`
 
+## Rust build integration: oliphaunt-build
+
+- none
+
 ## Rust WASIX: oliphaunt-wasix
 
 - `oliphaunt_wasix::CommandResult`
@@ -237,6 +241,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 ### Constants
 
 - `OLIPHAUNT_ABI_VERSION`
+- `OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK`
 - `OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION`
 
 ### Functions
@@ -336,6 +341,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `struct OliphauntStartupGUC`
 - `struct OliphauntTransaction`
 
+## Swift: OliphauntExtensionSupport
+
+- `OliphauntExtensionSupport.register()`
+- `enum OliphauntExtensionSupport`
+
 ## Kotlin: oliphaunt
 
 ### commonMain
@@ -397,7 +407,24 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 - none
 
+## Kotlin Android Gradle plugin
+
+- `OliphauntAndroidExtension.getAndroidAbis()`
+- `OliphauntAndroidExtension.getExtensionVersions()`
+- `OliphauntAndroidExtension.getIcu()`
+- `OliphauntAndroidExtension.getLiboliphauntVersion()`
+- `OliphauntAndroidExtension.getSelectedExtensions()`
+- `class OliphauntAndroidExtension`
+- `plugin dev.oliphaunt.android`
+
 ## React Native: @oliphaunt/react-native
+
+### Package exports
+
+- `. = {"types":"./lib/typescript/index.d.ts","react-native":"./lib/module/index.js","import":"./lib/module/index.js","require":"./lib/commonjs/index.js","default":"./lib/module/index.js"}`
+- `./protocol = {"types":"./lib/typescript/protocol.d.ts","react-native":"./lib/module/protocol.js","import":"./lib/module/protocol.js","require":"./lib/commonjs/protocol.js","default":"./lib/module/protocol.js"}`
+- `./query = {"types":"./lib/typescript/query.d.ts","react-native":"./lib/module/query.js","import":"./lib/module/query.js","require":"./lib/commonjs/query.js","default":"./lib/module/query.js"}`
+- `./package.json = "./package.json"`
 
 ### Types
 
@@ -477,6 +504,13 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.values`
 
 ## TypeScript: @oliphaunt/ts
+
+### Package exports
+
+- `. = {"types":"./lib/index.d.ts","default":"./lib/index.js"}`
+- `./protocol = {"types":"./lib/protocol.d.ts","default":"./lib/protocol.js"}`
+- `./query = {"types":"./lib/query.d.ts","default":"./lib/query.js"}`
+- `./package.json = {"default":"./package.json"}`
 
 ### Types
 
@@ -571,6 +605,18 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.values`
 
 ## WASIX TypeScript: @oliphaunt/wasix-ts
+
+### Package exports
+
+- `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
+- `./protocol = {"types":"./lib/protocol.d.ts","default":"./lib/protocol.js"}`
+- `./query = {"types":"./lib/query.d.ts","default":"./lib/query.js"}`
+- `./storage/indexed-db = {"types":"./lib/storage/indexed-db.d.ts","default":"./lib/storage/indexed-db.js"}`
+- `./storage/opfs = {"types":"./lib/storage/opfs.d.ts","default":"./lib/storage/opfs.js"}`
+- `./storage/node = {"types":"./lib/storage/node.d.ts","node":"./lib/storage/node.js"}`
+- `./storage/bun = {"types":"./lib/storage/bun.d.ts","bun":"./lib/storage/bun.js"}`
+- `./storage/deno = {"types":"./lib/storage/deno.d.ts","deno":"./lib/storage/deno.js"}`
+- `./package.json = {"default":"./package.json"}`
 
 ### Types
 

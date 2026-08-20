@@ -26,8 +26,7 @@ namespace {
 using InitFn = int32_t (*)(const OliphauntConfig *, OliphauntHandle **);
 using ExecProtocolFn = int32_t (*)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *);
 using ExecSimpleQueryFn = int32_t (*)(OliphauntHandle *, const char *, size_t, OliphauntResponse *);
-using BackupFn = int32_t (*)(
-    OliphauntHandle *, const OliphauntBackupOptions *, OliphauntResponse *);
+using BackupFn = decltype(&oliphaunt_backup);
 using RestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 using CancelFn = int32_t (*)(OliphauntHandle *);
 using DetachFn = int32_t (*)(OliphauntHandle *);

@@ -63,16 +63,6 @@ impl EngineExecutor {
                             };
                             reply.send(result);
                         }
-                        Command::SimpleQuery { sql, reply } => {
-                            let result = if active_pin.is_some() {
-                                Err(Error::SessionPinned)
-                            } else {
-                                run_active_work(&owner_active_work, || {
-                                    session.exec_simple_query(&sql)
-                                })
-                            };
-                            reply.send(result);
-                        }
                         Command::PinnedExec {
                             token,
                             request,
@@ -202,12 +192,6 @@ impl EngineExecutor {
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
         self.send(Command::Exec { request, reply })?;
-        receiver.await
-    }
-
-    pub(crate) async fn exec_simple_query(&self, sql: String) -> Result<ProtocolResponse> {
-        let (reply, receiver) = reply::channel();
-        self.send(Command::SimpleQuery { sql, reply })?;
         receiver.await
     }
 
@@ -346,10 +330,6 @@ enum Command {
         request: ProtocolRequest,
         reply: reply::Sender<Result<ProtocolResponse>>,
     },
-    SimpleQuery {
-        sql: String,
-        reply: reply::Sender<Result<ProtocolResponse>>,
-    },
     PinnedExec {
         token: u64,
         request: ProtocolRequest,
@@ -381,19 +361,13 @@ impl Command {
     fn reject_when_closing(&self) -> bool {
         matches!(
             self,
-            Self::Exec { .. }
-                | Self::SimpleQuery { .. }
-                | Self::PinnedExec { .. }
-                | Self::Pin { .. }
-                | Self::Backup { .. }
+            Self::Exec { .. } | Self::PinnedExec { .. } | Self::Pin { .. } | Self::Backup { .. }
         )
     }
 
     fn reply_engine_stopped(self) {
         match self {
-            Self::Exec { reply, .. }
-            | Self::SimpleQuery { reply, .. }
-            | Self::PinnedExec { reply, .. } => {
+            Self::Exec { reply, .. } | Self::PinnedExec { reply, .. } => {
                 reply.send(Err(Error::EngineStopped));
             }
             Self::Pin { reply } => reply.send(Err(Error::EngineStopped)),

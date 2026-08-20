@@ -103,6 +103,13 @@ The server handle deliberately has no SDK backup method. Use standard PostgreSQL
 tools: packaged `pg_basebackup` for physical backups, and `pg_dump`, `pg_restore`,
 or `psql` for logical workflows.
 
+Pass `server.connection_string()` to the standard tool and keep PostgreSQL's
+streamed-WAL behavior explicit:
+
+```sh
+pg_basebackup --dbname "$CONNECTION_STRING" --pgdata ./server-backup --wal-method=stream
+```
+
 ## Storage ownership
 
 A persistent database is a managed root:

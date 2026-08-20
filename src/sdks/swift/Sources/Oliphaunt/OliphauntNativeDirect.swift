@@ -36,23 +36,24 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         let pgdata = storageDirectory.appendingPathComponent("pgdata", isDirectory: true)
         switch try Self.classifyManagedRoot(storageDirectory) {
         case .managed:
-            try Self.validateCompletePgdata(pgdata)
+            try validateOliphauntCompletePgdata(pgdata)
         case .empty:
-            do {
-                let preparedPgdata = try packagedRuntimeResources?.preparePgdata(at: pgdata) ?? false
-                if !preparedPgdata {
-                    try Self.runPackagedInitdb(
-                        pgdata: pgdata,
-                        runtimeDirectory: resolvedRuntime.directory,
-                        username: username
-                    )
-                }
-                try Self.validateCompletePgdata(pgdata)
-                try Self.writeManagedRootDescriptor(storageDirectory)
-            } catch {
-                try? FileManager.default.removeItem(at: pgdata)
-                throw error
+            let preparedPgdata = try packagedRuntimeResources?.preparePgdata(at: pgdata) ?? false
+            if !preparedPgdata {
+                let staging = storageDirectory.appendingPathComponent(
+                    ".pgdata-initdb-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+                defer { try? FileManager.default.removeItem(at: staging) }
+                try Self.runPackagedInitdb(
+                    pgdata: staging,
+                    runtimeDirectory: resolvedRuntime.directory,
+                    username: username
+                )
+                try publishOliphauntPreparedPgdata(staging, to: pgdata)
             }
+            try validateOliphauntCompletePgdata(pgdata)
+            try Self.writeManagedRootDescriptor(storageDirectory)
         }
 
         let startupArgs = configuration.postgresStartupArgs(
@@ -325,9 +326,35 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
 
     private static func writeManagedRootDescriptor(_ directory: URL) throws {
         let descriptor = directory.appendingPathComponent(".oliphaunt.json", isDirectory: false)
+        let staging = directory.appendingPathComponent(
+            ".oliphaunt.json.tmp-\(UUID().uuidString)",
+            isDirectory: false
+        )
         let json =
             "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
-        try Data(json.utf8).write(to: descriptor, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        guard FileManager.default.createFile(
+            atPath: staging.path,
+            contents: Data(json.utf8),
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw OliphauntError.engine(
+                "failed to create database root descriptor staging file at \(staging.path)"
+            )
+        }
+        let handle = try FileHandle(forWritingTo: staging)
+        try handle.synchronize()
+        try handle.close()
+        do {
+            try FileManager.default.moveItem(at: staging, to: descriptor)
+        } catch let publicationError {
+            do {
+                try validateManagedRootDescriptor(descriptor)
+            } catch {
+                throw publicationError
+            }
+        }
+        try syncOliphauntDirectory(directory)
     }
 
     private static func validateManagedRootDescriptor(_ descriptor: URL) throws {
@@ -358,40 +385,6 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
               ["native": "native-pg18-v1", "wasix": "wasix-pg18-v1"][family] == format
         else {
             throw OliphauntError.engine("invalid database root descriptor: \(descriptor.path)")
-        }
-    }
-
-    private static func validateCompletePgdata(_ pgdata: URL) throws {
-        let version = pgdata.appendingPathComponent("PG_VERSION")
-        try requireRealRegularFile(version, label: "PG_VERSION", nonEmpty: true)
-        guard try String(contentsOf: version, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines) == "18"
-        else {
-            throw OliphauntError.engine("PGDATA PostgreSQL major must be 18: \(version.path)")
-        }
-        try requireRealDirectory(pgdata.appendingPathComponent("global", isDirectory: true), label: "global")
-        try requireRealRegularFile(
-            pgdata.appendingPathComponent("global/pg_control"),
-            label: "global/pg_control",
-            nonEmpty: true
-        )
-        try requireRealDirectory(pgdata.appendingPathComponent("pg_wal", isDirectory: true), label: "pg_wal")
-    }
-
-    private static func requireRealDirectory(_ url: URL, label: String) throws {
-        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        guard values.isDirectory == true, values.isSymbolicLink != true else {
-            throw OliphauntError.engine("PGDATA \(label) must be a real directory: \(url.path)")
-        }
-    }
-
-    private static func requireRealRegularFile(_ url: URL, label: String, nonEmpty: Bool) throws {
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              !nonEmpty || (values.fileSize ?? 0) > 0
-        else {
-            throw OliphauntError.engine("PGDATA \(label) must be a nonempty real file: \(url.path)")
         }
     }
 

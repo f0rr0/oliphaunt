@@ -69,6 +69,8 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const expectedExports = [
     '.',
     './package.json',
+    './protocol',
+    './query',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -89,6 +91,16 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     || root?.default !== './lib/index.js'
   ) {
     fail(`${label} must expose exact browser, Node, Bun, and Deno conditional entrypoints`);
+  }
+  for (const name of ['protocol', 'query']) {
+    const entry = manifest.exports?.[`./${name}`];
+    if (
+      JSON.stringify(Object.keys(entry ?? {})) !== JSON.stringify(['types', 'default'])
+      || entry?.types !== `./lib/${name}.d.ts`
+      || entry?.default !== `./lib/${name}.js`
+    ) {
+      fail(`${label} must expose the exact ${name} entrypoint`);
+    }
   }
   const nodeStorage = manifest.exports?.['./storage/node'];
   if (
@@ -188,6 +200,12 @@ export function assertWasixTypescriptNpmArchive(archive) {
     label: path.basename(file),
   });
   const entries = readPortableArchiveEntries(file);
+  for (const removed of [
+    'package/lib/node-lock-identity.js',
+    'package/lib/node-lock-identity.d.ts',
+  ]) {
+    if (entries.has(removed)) fail(`${path.basename(file)} retained deleted output ${removed}`);
+  }
   for (const [name, entry] of entries) {
     if (entry.isSymbolicLink) fail(`${path.basename(file)} contains symbolic link ${name}`);
     if (
@@ -221,6 +239,10 @@ export function assertWasixTypescriptNpmArchive(archive) {
     'lib/index.bun.js',
     'lib/index.deno.js',
     'lib/index.node.js',
+    'lib/protocol.js',
+    'lib/protocol.d.ts',
+    'lib/query.js',
+    'lib/query.d.ts',
     'lib/node-client.js',
     'lib/node-directory-lock.js',
     'lib/node-worker.js',

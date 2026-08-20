@@ -28,6 +28,16 @@
       "physicalFormat": "wasix-pg18-v1"
     }
   ],
+  "malformedJson": [
+    {
+      "case": "truncated-object",
+      "value": "{\"schema\":\"oliphaunt-database-root-v1\""
+    },
+    {
+      "case": "duplicate-field",
+      "value": "{\"schema\":\"oliphaunt-database-root-v1\",\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}"
+    }
+  ],
   "invalidDescriptors": [
     {
       "case": "wrong-schema",

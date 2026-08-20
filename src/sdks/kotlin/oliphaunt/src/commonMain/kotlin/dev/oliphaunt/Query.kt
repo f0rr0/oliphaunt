@@ -165,36 +165,28 @@ public suspend fun OliphauntDatabase.execute(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult = parseCommandResponse(
-    execProtocolRaw(
-        if (parameters.isEmpty()) simpleQueryProtocol(sql) else extendedQueryProtocol(sql, parameters),
-    ),
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
 )
 
 public suspend fun OliphauntDatabase.query(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult = parseQueryResponse(
-    execProtocolRaw(
-        if (parameters.isEmpty()) simpleQueryProtocol(sql) else extendedQueryProtocol(sql, parameters),
-    ),
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
 )
 
 public suspend fun OliphauntTransaction.execute(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult = parseCommandResponse(
-    execProtocolRaw(
-        if (parameters.isEmpty()) simpleQueryProtocol(sql) else extendedQueryProtocol(sql, parameters),
-    ),
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
 )
 
 public suspend fun OliphauntTransaction.query(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult = parseQueryResponse(
-    execProtocolRaw(
-        if (parameters.isEmpty()) simpleQueryProtocol(sql) else extendedQueryProtocol(sql, parameters),
-    ),
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
 )
 
 internal fun extendedQueryProtocol(

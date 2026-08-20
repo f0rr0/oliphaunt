@@ -20,7 +20,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-#include <time.h>
 
 #ifndef O_BINARY
 #define O_BINARY 0
@@ -593,16 +592,16 @@ static int tar_append_file(OliphauntByteBuffer *archive, OliphauntHandle *handle
             '0',
             (size_t)st->st_size,
             0600,
-            st->st_uid,
-            st->st_gid,
-            st->st_mtime,
+            0,
+            0,
+            0,
             NULL) != 0) {
         return -1;
     }
     return tar_append_file_contents(archive, handle, source, (size_t)st->st_size);
 }
 
-static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const struct stat *st) {
+static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path) {
     if (reserve_tar_entry(archive, handle, 0) != 0) {
         return -1;
     }
@@ -613,9 +612,9 @@ static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *h
         '5',
         0,
         0700,
-        st->st_uid,
-        st->st_gid,
-        st->st_mtime,
+        0,
+        0,
+        0,
         NULL);
 }
 
@@ -735,7 +734,7 @@ static int append_pgdata_entry(OliphauntByteBuffer *archive, OliphauntHandle *ha
     }
     int rc = 0;
     if (S_ISDIR(st.st_mode)) {
-        rc = tar_append_directory(archive, handle, archive_path, &st);
+        rc = tar_append_directory(archive, handle, archive_path);
         if (rc == 0) {
             rc = append_children(archive, handle, pgdata, relative, include_wal_contents);
         }
@@ -775,7 +774,7 @@ int oliphaunt_archive_append_pgdata_tree(OliphauntByteBuffer *archive, Oliphaunt
         set_error(handle, message);
         return -1;
     }
-    if (tar_append_directory(archive, handle, "pgdata", &st) != 0) {
+    if (tar_append_directory(archive, handle, "pgdata") != 0) {
         return -1;
     }
     return append_children(archive, handle, pgdata, "", false);
@@ -996,7 +995,7 @@ int oliphaunt_archive_append_bytes(
     if (reserve_tar_entry(archive, handle, len) != 0) {
         return -1;
     }
-    if (tar_append_header(archive, handle, archive_path, '0', len, 0600, 0, 0, time(NULL), NULL) != 0) {
+    if (tar_append_header(archive, handle, archive_path, '0', len, 0600, 0, 0, 0, NULL) != 0) {
         return -1;
     }
     if (buffer_append(archive, contents, len) != 0 ||
@@ -1103,10 +1102,6 @@ static int validate_tar_numeric_metadata(OliphauntHandle *handle, const uint8_t 
         parse_tar_octal_field(handle, header + 116, 8, "gid", 1, &ignored) != 0 ||
         parse_tar_octal_field(handle, header + 124, 12, "size", 0, size) != 0 ||
         parse_tar_octal_field(handle, header + 136, 12, "mtime", 1, &ignored) != 0) {
-        return -1;
-    }
-    if ((*mode & ~0777ull) != 0) {
-        set_error(handle, "physical archive entry mode contains unsupported permission bits");
         return -1;
     }
     return 0;
@@ -1234,7 +1229,10 @@ static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint
     size_t off = 0;
     while (off < len) {
         ssize_t written = write(fd, data + off, len - off);
-        if (written < 0) {
+        if (written <= 0) {
+            if (written == 0) {
+                errno = EIO;
+            }
             char message[1024];
             snprintf(message, sizeof(message), "write restored file %s: %s", path, strerror(errno));
             close(fd);
@@ -1243,8 +1241,21 @@ static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint
         }
         off += (size_t)written;
     }
-    (void)fchmod(fd, 0600);
-    close(fd);
+    if (fchmod(fd, 0600) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "set restored file permissions %s: %s", path, strerror(errno));
+        close(fd);
+        unlink(path);
+        set_error(handle, message);
+        return -1;
+    }
+    if (close(fd) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "close restored file %s: %s", path, strerror(errno));
+        unlink(path);
+        set_error(handle, message);
+        return -1;
+    }
     return 0;
 }
 
@@ -1418,6 +1429,11 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
                     char message[1024];
                     snprintf(message, sizeof(message), "create restored directory %s: %s", dest, strerror(errno));
                     set_error(handle, message);
+                } else if (chmod(dest, 0700) != 0) {
+                    char message[1024];
+                    snprintf(message, sizeof(message), "set restored directory permissions %s: %s", dest, strerror(errno));
+                    set_error(handle, message);
+                    rc = -1;
                 }
             } else {
                 rc = unpack_tar_file(handle, dest, data + off, (size_t)size);

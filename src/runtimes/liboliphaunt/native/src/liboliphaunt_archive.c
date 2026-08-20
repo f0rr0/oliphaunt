@@ -374,9 +374,22 @@ static int32_t oliphaunt_backup_impl(
         char primary_error[sizeof(handle->last_error)];
         snprintf(primary_error, sizeof(primary_error), "%s", handle->last_error);
         OliphauntBackupStopFiles ignored = {0};
-        (void)stop_physical_backup(handle, &ignored);
+        int stop_rc = stop_physical_backup(handle, &ignored);
+        if (stop_rc != 0) {
+            char stop_error[sizeof(handle->last_error)];
+            char combined_error[sizeof(handle->last_error)];
+            snprintf(stop_error, sizeof(stop_error), "%s", handle->last_error);
+            snprintf(
+                combined_error,
+                sizeof(combined_error),
+                "%.470s; additionally failed to leave PostgreSQL backup mode: %.470s",
+                primary_error,
+                stop_error);
+            set_error(handle, combined_error);
+        } else {
+            set_error(handle, primary_error);
+        }
         free_backup_stop_files(&ignored);
-        set_error(handle, primary_error);
     }
     if (rc == 0) {
         phase_started_ns = trace ? oliphaunt_monotonic_ns() : 0;
@@ -502,13 +515,37 @@ static int validate_restored_backup_manifest(OliphauntHandle *handle, const char
 }
 
 static int validate_restored_pgdata(OliphauntHandle *handle, const char *staging_root) {
-    const char *required[] = {
+    const char *required_directories[] = {
+        "pgdata",
+        "pgdata/base",
+        "pgdata/global",
+        "pgdata/pg_wal",
+    };
+    for (size_t i = 0; i < sizeof(required_directories) / sizeof(required_directories[0]); i++) {
+        char *path = oliphaunt_join_path(staging_root, required_directories[i]);
+        if (path == NULL) {
+            set_error(handle, "out of memory validating restored PGDATA directories");
+            return -1;
+        }
+        struct stat st;
+        int ok = oliphaunt_path_is_reparse_point(path) == 0 &&
+                 lstat(path, &st) == 0 &&
+                 S_ISDIR(st.st_mode);
+        free(path);
+        if (!ok) {
+            char message[1024];
+            snprintf(message, sizeof(message), "physical archive is missing required directory %s", required_directories[i]);
+            set_error(handle, message);
+            return -1;
+        }
+    }
+    const char *required_files[] = {
         "pgdata/PG_VERSION",
         "pgdata/global/pg_control",
         "pgdata/backup_label",
     };
-    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
-        char *path = oliphaunt_join_path(staging_root, required[i]);
+    for (size_t i = 0; i < sizeof(required_files) / sizeof(required_files[0]); i++) {
+        char *path = oliphaunt_join_path(staging_root, required_files[i]);
         if (path == NULL) {
             set_error(handle, "out of memory validating restored PGDATA");
             return -1;
@@ -516,30 +553,16 @@ static int validate_restored_pgdata(OliphauntHandle *handle, const char *staging
         struct stat st;
         int reparse = oliphaunt_path_is_reparse_point(path);
         int ok = reparse == 0 && lstat(path, &st) == 0 && S_ISREG(st.st_mode);
-        if (ok && strcmp(required[i], "pgdata/backup_label") == 0 && st.st_size == 0) {
+        if (ok && strcmp(required_files[i], "pgdata/backup_label") == 0 && st.st_size == 0) {
             ok = 0;
         }
         free(path);
         if (!ok) {
             char message[1024];
-            snprintf(message, sizeof(message), "physical archive is missing required file %s", required[i]);
+            snprintf(message, sizeof(message), "physical archive is missing required file %s", required_files[i]);
             set_error(handle, message);
             return -1;
         }
-    }
-    char *pg_wal = oliphaunt_join_path(staging_root, "pgdata/pg_wal");
-    if (pg_wal == NULL) {
-        set_error(handle, "out of memory validating restored pg_wal");
-        return -1;
-    }
-    struct stat pg_wal_st;
-    int pg_wal_ok = oliphaunt_path_is_reparse_point(pg_wal) == 0 &&
-                    lstat(pg_wal, &pg_wal_st) == 0 &&
-                    S_ISDIR(pg_wal_st.st_mode);
-    free(pg_wal);
-    if (!pg_wal_ok) {
-        set_error(handle, "physical archive is missing required directory pgdata/pg_wal");
-        return -1;
     }
     if (validate_restored_backup_manifest(handle, staging_root) != 0) {
         return -1;

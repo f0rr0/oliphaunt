@@ -401,7 +401,16 @@ function runSmoke(paths, smokeBin, rootArg) {
     : fs.mkdtempSync(path.join(smokeRoot, 'smoke.'));
   const keepRoot = Boolean(rootArg);
   const pgdata = path.join(root, 'pgdata');
-  const args = [normalizeForC(pgdata), normalizeForC(paths.installDir)];
+  const archiveManifestFixture = path.join(
+    paths.root,
+    'src/shared/fixtures/storage/physical-archive-native-v1.properties',
+  );
+  requireFile(archiveManifestFixture, 'shared native archive manifest fixture');
+  const args = [
+    normalizeForC(pgdata),
+    normalizeForC(paths.installDir),
+    normalizeForC(archiveManifestFixture),
+  ];
   const env = smokeEnv(paths);
   try {
     prepareSmokeManagedRoot(paths, root, pgdata, env);

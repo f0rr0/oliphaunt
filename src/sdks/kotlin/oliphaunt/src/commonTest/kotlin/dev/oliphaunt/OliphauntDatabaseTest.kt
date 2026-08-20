@@ -20,6 +20,7 @@ class OliphauntDatabaseTest {
         val result = database.execute("UPDATE widgets SET ready = true")
         assertEquals("UPDATE 3", result.commandTag)
         assertEquals(3L, result.rowCount)
+        assertEquals('P'.code.toByte(), session.requests.single().first())
     }
 
     @Test
@@ -90,7 +91,8 @@ class OliphauntDatabaseTest {
             42
         }
         assertEquals(42, value)
-        assertEquals(listOf("BEGIN", "UPDATE widgets SET ready = true", "COMMIT"), session.simpleQueries())
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
+        assertTrue(session.requests.any { it.firstOrNull() == 'P'.code.toByte() })
     }
 
     @Test
@@ -114,7 +116,7 @@ class OliphauntDatabaseTest {
         val error = assertFailsWith<OliphauntException> { database.transaction { 1 } }
         assertTrue(error.message.orEmpty().contains("COMMIT returned unexpected"))
         database.execute("SELECT 1")
-        assertEquals(listOf("BEGIN", "COMMIT", "SELECT 1"), session.simpleQueries())
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
     }
 
     @Test
@@ -293,7 +295,8 @@ class OliphauntDatabaseTest {
         database.checkpoint()
         database.cancel()
         assertEquals(1, session.cancelCount)
-        assertEquals(listOf("CHECKPOINT"), session.simpleQueries())
+        assertTrue(session.simpleQueries().isEmpty())
+        assertEquals('P'.code.toByte(), session.requests.single().first())
     }
 }
 

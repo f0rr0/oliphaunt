@@ -266,8 +266,10 @@ function swiftMemberName(line) {
   return null;
 }
 
-function extractSwiftSurface() {
-  const files = listFiles('src/sdks/swift/Sources/Oliphaunt', '.swift');
+function extractSwiftSurface(
+  sourceDir = 'src/sdks/swift/Sources/Oliphaunt',
+) {
+  const files = listFiles(sourceDir, '.swift');
   const symbols = [];
 
   for (const file of files) {
@@ -433,6 +435,28 @@ function extractKotlinSurface() {
   return sections;
 }
 
+function extractKotlinGradlePluginSurface() {
+  const build = readRelative(
+    'src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts',
+  );
+  const extension = readRelative(
+    'src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/OliphauntAndroidExtension.java',
+  );
+  const symbols = [];
+  const pluginId = build.match(/^\s*id\s*=\s*"([^"]+)"/mu)?.[1];
+  if (pluginId) symbols.push(`plugin ${pluginId}`);
+  const className = extension.match(/public\s+abstract\s+class\s+([A-Za-z_][A-Za-z0-9_]*)/u)?.[1];
+  if (className) {
+    symbols.push(`class ${className}`);
+    for (const match of extension.matchAll(
+      /public\s+abstract\s+[^;()]+\s+(get[A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*;/gu,
+    )) {
+      symbols.push(`${className}.${match[1]}()`);
+    }
+  }
+  return sorted(symbols);
+}
+
 function extractTypeScriptSurface(indexFile, memberFiles) {
   const indexFiles = Array.isArray(indexFile) ? indexFile : [indexFile];
   const text = indexFiles.map(readRelative).join('\n');
@@ -518,6 +542,13 @@ function extractOliphauntWasixTsSurface() {
     'src/bindings/wasix-ts/src/storage.ts',
     'src/bindings/wasix-ts/src/types.ts',
   ]);
+}
+
+function extractPackageExports(manifestFile) {
+  const manifest = JSON.parse(readRelative(manifestFile));
+  return Object.entries(manifest.exports ?? {}).map(([subpath, entry]) =>
+    `${subpath} = ${JSON.stringify(entry)}`,
+  );
 }
 
 function typeScriptMemberName(line) {
@@ -629,6 +660,7 @@ function markdownList(items) {
 function render() {
   const nativeC = extractNativeCSurface();
   const kotlin = extractKotlinSurface();
+  const kotlinGradlePlugin = extractKotlinGradlePluginSurface();
   const rn = extractReactNativeSurface();
   const ts = extractOliphauntTsSurface();
   const wasixTs = extractOliphauntWasixTsSurface();
@@ -661,6 +693,14 @@ function render() {
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
   output += markdownList(extractRustSurface());
+  output += `\n## Rust build integration: oliphaunt-build\n\n`;
+  output += markdownList(
+    extractRustSurface(
+      'src/sdks/rust/crates/oliphaunt-build/src/lib.rs',
+      'src/sdks/rust/crates/oliphaunt-build/src',
+      'oliphaunt_build',
+    ),
+  );
   output += `\n## Rust WASIX: oliphaunt-wasix\n\n`;
   output += markdownList(
     sorted([
@@ -688,13 +728,23 @@ function render() {
   output += markdownList(nativeC.functions);
   output += `\n## Swift: Oliphaunt\n\n`;
   output += markdownList(extractSwiftSurface());
+  output += `\n## Swift: OliphauntExtensionSupport\n\n`;
+  output += markdownList(
+    extractSwiftSurface('src/sdks/swift/Sources/OliphauntExtensionSupport'),
+  );
   output += `\n## Kotlin: oliphaunt\n\n`;
   for (const section of kotlin) {
     output += `### ${section.sourceSet}\n\n`;
     output += markdownList(section.symbols);
     output += `\n`;
   }
+  output += `## Kotlin Android Gradle plugin\n\n`;
+  output += markdownList(kotlinGradlePlugin);
+  output += `\n`;
   output += `## React Native: @oliphaunt/react-native\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/sdks/react-native/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(rn.types);
   output += `\n### Values\n\n`;
@@ -702,6 +752,9 @@ function render() {
   output += `\n### Members\n\n`;
   output += markdownList(rn.members);
   output += `\n## TypeScript: @oliphaunt/ts\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/sdks/js/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(ts.types);
   output += `\n### Values\n\n`;
@@ -709,6 +762,9 @@ function render() {
   output += `\n### Members\n\n`;
   output += markdownList(ts.members);
   output += `\n## WASIX TypeScript: @oliphaunt/wasix-ts\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/bindings/wasix-ts/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(wasixTs.types);
   output += `\n### Values\n\n`;

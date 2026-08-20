@@ -315,6 +315,39 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun pgdataPublicationAdoptsACompleteWinnerWithoutReplacingIt() {
+        val parent = Files.createTempDirectory("liboliphaunt-android-publication").toFile()
+        val staging = parent.resolve("staging")
+        val destination = parent.resolve("pgdata")
+        try {
+            writeCompletePgdata(staging)
+            writeCompletePgdata(destination)
+            destination.resolve("winner").writeText("keep")
+
+            OliphauntAndroidRuntimeAssets.publishPreparedAndroidPgdata(staging, destination)
+
+            assertEquals("keep", destination.resolve("winner").readText())
+            assertTrue(staging.isDirectory)
+        } finally {
+            parent.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun managedRootDescriptorClassifiesACompletePgdata() {
+        val root = Files.createTempDirectory("liboliphaunt-android-descriptor").toFile()
+        try {
+            writeCompletePgdata(root.resolve("pgdata"))
+            root.resolve(".oliphaunt.json").writeText(NATIVE_ROOT_DESCRIPTOR)
+
+            assertEquals(NATIVE_ROOT_DESCRIPTOR, root.resolve(".oliphaunt.json").readText())
+            assertEquals(AndroidManagedRootState.Managed, classifyAndroidManagedRoot(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun rejectsUnsupportedPackageSizeReportHeader() {
         val error =
             assertFailsWith<OliphauntException> {
@@ -782,6 +815,13 @@ private fun validPackageSizeReport(vararg extensionRows: String): String {
             "extensions\tselected\t-\t-\t30",
         ) + extensionRows
     return rows.joinToString("\n")
+}
+
+private fun writeCompletePgdata(pgdata: java.io.File) {
+    pgdata.resolve("global").mkdirs()
+    pgdata.resolve("pg_wal").mkdirs()
+    pgdata.resolve("PG_VERSION").writeText("18\n")
+    pgdata.resolve("global/pg_control").writeText("control")
 }
 
 private fun writeReleaseShapedRuntime(

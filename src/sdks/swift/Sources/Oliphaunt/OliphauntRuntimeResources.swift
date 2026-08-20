@@ -237,8 +237,9 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         if FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
         ) {
+            try validateOliphauntCompletePgdata(pgdata)
             try ensurePgdataDirectoryLayout(at: pgdata)
-            try hardenPgdataPermissions(at: pgdata)
+            try hardenOliphauntPgdataPermissions(at: pgdata)
             return true
         }
         let template = try optionalAssetPackage(kind: .templatePgdata)
@@ -268,19 +269,8 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         try? FileManager.default.removeItem(at: temp)
         do {
             try copyTree(from: template.filesURL, to: temp)
-            guard FileManager.default.fileExists(
-                atPath: temp.appendingPathComponent("PG_VERSION").path
-            ) else {
-                throw OliphauntError.engine(
-                    "packaged liboliphaunt template PGDATA \(template.rootURL.path) does not contain PG_VERSION"
-                )
-            }
-            if FileManager.default.fileExists(atPath: pgdata.path) {
-                try FileManager.default.removeItem(at: pgdata)
-            }
-            try FileManager.default.moveItem(at: temp, to: pgdata)
-            try ensurePgdataDirectoryLayout(at: pgdata)
-            try hardenPgdataPermissions(at: pgdata)
+            try ensurePgdataDirectoryLayout(at: temp)
+            try publishOliphauntPreparedPgdata(temp, to: pgdata)
             return true
         } catch {
             try? FileManager.default.removeItem(at: temp)
@@ -947,27 +937,6 @@ private func copyTree(from source: URL, to destination: URL) throws {
             withIntermediateDirectories: true
         )
         try FileManager.default.copyItem(at: source, to: destination)
-    }
-}
-
-private func hardenPgdataPermissions(at pgdata: URL) throws {
-    let fileManager = FileManager.default
-    try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: pgdata.path)
-    guard let enumerator = fileManager.enumerator(
-        at: pgdata,
-        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-        options: []
-    ) else {
-        return
-    }
-
-    for case let url as URL in enumerator {
-        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        if values.isSymbolicLink == true {
-            continue
-        }
-        let permissions = values.isDirectory == true ? 0o700 : 0o600
-        try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path)
     }
 }
 

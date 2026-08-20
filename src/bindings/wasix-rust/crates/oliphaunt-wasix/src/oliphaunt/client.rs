@@ -15,7 +15,7 @@ use crate::oliphaunt::data_dir::{
 use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::query::{
     CommandResult, QueryParam, QueryResult, extended_query, parse_command_response,
-    parse_query_response, simple_query,
+    parse_query_response,
 };
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
@@ -173,11 +173,7 @@ impl Oliphaunt {
     {
         self.check_ready()?;
         let params = params.into_iter().map(Into::into).collect::<Vec<_>>();
-        let request = if params.is_empty() {
-            simple_query(sql)?
-        } else {
-            extended_query(sql, &params)?
-        };
+        let request = extended_query(sql, &params)?;
         self.backend.send_buffered(&request)
     }
 

@@ -57,6 +57,13 @@ normal PostgreSQL tooling such as `pg_basebackup` or logical `pg_dump` where
 appropriate. Logical dump/restore is also the portable path across PostgreSQL
 versions and between native and WASIX families.
 
+Use the server handle's `connection_string()` in Rust or `connectionString` in
+TypeScript with PostgreSQL's standard streamed-WAL command:
+
+```sh
+pg_basebackup --dbname "$CONNECTION_STRING" --pgdata ./server-backup --wal-method=stream
+```
+
 ## Extensions
 
 Select exact extensions before open and enable them with standard PostgreSQL

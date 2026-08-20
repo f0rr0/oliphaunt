@@ -43,7 +43,6 @@ tasks:
       - "/examples/tools/check-examples.mjs"
       - "/examples/tools/check-examples.sh"
       - "/tools/release/example-cargo-policy.mjs"
-      - "/tools/release/example-cargo-registry.mjs"
       - "/tools/release/publication-catalog.mjs"
       - "/tools/release/release-graph.mjs"
     options:

@@ -44,7 +44,7 @@ pub(crate) struct PreparedNativeRoot {
 
 impl PreparedNativeRoot {
     pub(crate) fn prepare(config: &OpenConfig, extensions: &[Extension]) -> Result<Self> {
-        Self::prepare_inner(config, extensions, false)
+        Self::prepare_inner(config, extensions, true)
     }
 
     pub(crate) fn prepare_for_server(
@@ -65,6 +65,9 @@ impl PreparedNativeRoot {
         };
         let mut temporary_cleanup =
             TemporaryNativeRootCleanup::new(temporary.then(|| root.clone()));
+        let lock = lock_root
+            .then(|| NativeRootLock::acquire(&root, "native root"))
+            .transpose()?;
         if root.exists() || fs::symlink_metadata(&root).is_ok() {
             let metadata = fs::symlink_metadata(&root).map_err(|err| {
                 Error::Engine(format!(
@@ -85,9 +88,6 @@ impl PreparedNativeRoot {
                 root.display()
             ))
         })?;
-        let lock = lock_root
-            .then(|| NativeRootLock::acquire(&root, "native server root"))
-            .transpose()?;
         let initialized = descriptor::validate_root_for_open(&root)?;
         let pgdata = root.join("pgdata");
         let runtime_dir =
@@ -253,6 +253,27 @@ pub(crate) struct NativeRootLock {
 
 impl NativeRootLock {
     pub(crate) fn acquire(root: &Path, label: &str) -> Result<Self> {
+        let absolute = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            env::current_dir()
+                .map_err(|err| {
+                    Error::Engine(format!("resolve native root current directory: {err}"))
+                })?
+                .join(root)
+        };
+        let parent = absolute.parent().ok_or_else(|| {
+            Error::Engine(format!(
+                "native root {} has no parent directory for stable lock",
+                root.display()
+            ))
+        })?;
+        fs::create_dir_all(parent).map_err(|err| {
+            Error::Engine(format!(
+                "create native root parent {} for stable lock: {err}",
+                parent.display()
+            ))
+        })?;
         let key = canonical_root_key(root)?;
         let roots = ACTIVE_ROOTS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
         {
@@ -302,28 +323,21 @@ fn lock_file(path: &Path) -> std::io::Result<File> {
 }
 
 fn stable_root_lock_path(key: &Path) -> Result<PathBuf> {
-    let parent = stable_root_lock_dir(key).ok_or_else(|| {
-        Error::Engine(format!(
-            "native root {} has no parent directory for stable lock",
-            key.display()
-        ))
-    })?;
+    let parent = key
+        .parent()
+        .filter(|parent| parent.is_dir())
+        .ok_or_else(|| {
+            Error::Engine(format!(
+                "native root {} has no immediate parent directory for stable lock",
+                key.display()
+            ))
+        })?;
     let digest = Sha256::digest(path_identity_bytes(key));
     let mut suffix = String::with_capacity(32);
     for byte in &digest[..16] {
         write!(&mut suffix, "{byte:02x}").expect("writing to String cannot fail");
     }
     Ok(parent.join(format!(".oliphaunt-root-{suffix}.lock")))
-}
-
-fn stable_root_lock_dir(key: &Path) -> Option<PathBuf> {
-    let mut cursor = key.parent()?;
-    loop {
-        if cursor.is_dir() {
-            return Some(cursor.to_path_buf());
-        }
-        cursor = cursor.parent()?;
-    }
 }
 
 fn canonical_root_key(root: &Path) -> Result<PathBuf> {
@@ -387,7 +401,14 @@ fn path_identity_bytes(path: &Path) -> Vec<u8> {
 
 #[cfg(not(unix))]
 fn path_identity_bytes(path: &Path) -> Vec<u8> {
-    path.to_string_lossy().as_bytes().to_vec()
+    let mut identity = path.to_string_lossy().replace('/', "\\");
+    if let Some(suffix) = identity.strip_prefix("\\\\?\\UNC\\") {
+        identity = format!("\\\\{suffix}");
+    } else if let Some(suffix) = identity.strip_prefix("\\\\?\\") {
+        identity = suffix.to_owned();
+    }
+    identity.make_ascii_lowercase();
+    identity.into_bytes()
 }
 
 fn release_active_root(key: &Path) {
@@ -506,7 +527,13 @@ fn temporary_file_nonce() -> Result<u128> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader, Write as _};
+    use std::process::{Command, Stdio};
+
     use super::*;
+    use crate::liboliphaunt::ffi::{
+        ABI_VERSION, NativeConfig, NativeHandle, NativeSymbols, path_to_cstring,
+    };
 
     #[test]
     fn temporary_root_cleanup_removes_unclaimed_directories() {
@@ -552,5 +579,170 @@ mod tests {
         drop(first);
         NativeRootLock::acquire(&root, "native root").unwrap();
         let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn native_root_lock_creates_the_immediate_parent_for_a_missing_destination() {
+        let parent = create_temporary_root().unwrap();
+        let root = parent.join("nested/database");
+        let lock = NativeRootLock::acquire(&root, "native root").unwrap();
+        assert!(root.parent().unwrap().is_dir());
+        assert!(!root.exists());
+        drop(lock);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_root_lock_identity_resolves_symlinked_parent_and_unicode_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let parent = create_temporary_root().unwrap();
+        let real_parent = parent.join("real");
+        let linked_parent = parent.join("linked");
+        fs::create_dir(&real_parent).unwrap();
+        symlink(&real_parent, &linked_parent).unwrap();
+        let real = canonical_root_key(&real_parent.join("dátabase")).unwrap();
+        let linked = canonical_root_key(&linked_parent.join("dátabase")).unwrap();
+        assert_eq!(real, linked);
+        assert_eq!(
+            stable_root_lock_path(&real).unwrap(),
+            stable_root_lock_path(&linked).unwrap()
+        );
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn native_c_and_rust_root_locks_are_reciprocal_when_available() {
+        if env::var_os("LIBOLIPHAUNT_PATH").is_none() {
+            return;
+        }
+        let root = create_temporary_root().unwrap();
+        let config = OpenConfig::direct(&root);
+        let mut prepared = PreparedNativeRoot::prepare(&config, &[]).unwrap();
+        let rust_lock = prepared
+            .lock
+            .take()
+            .expect("Rust preparation owns the root lock");
+
+        let busy = run_native_c_lock_probe("expect-busy", &prepared);
+        assert!(busy.status.success(), "C lock probe failed: {busy:?}");
+
+        drop(rust_lock);
+        let mut owner = spawn_native_c_lock_probe("hold", &prepared);
+        let stdout = owner.stdout.take().expect("capture C lock probe stdout");
+        let mut lines = BufReader::new(stdout).lines();
+        let mut ready = false;
+        for line in lines.by_ref() {
+            if line.unwrap().contains("OLIPHAUNT_C_LOCK_READY") {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready, "C lock probe exited before acquiring the root lock");
+        let error = NativeRootLock::acquire(&root, "native root")
+            .expect_err("Rust lock must observe the C-owned lease");
+        assert!(error.to_string().contains("lock native root"), "{error}");
+        owner
+            .stdin
+            .as_mut()
+            .expect("capture C lock probe stdin")
+            .write_all(b"release\n")
+            .unwrap();
+        assert!(owner.wait().unwrap().success());
+
+        NativeRootLock::acquire(&root, "native root")
+            .expect("Rust lock must reopen after the C owner exits");
+        drop(prepared);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_c_root_lock_probe_child() {
+        let Ok(mode) = env::var("OLIPHAUNT_NATIVE_LOCK_PROBE_MODE") else {
+            return;
+        };
+        let root = PathBuf::from(env::var_os("OLIPHAUNT_NATIVE_LOCK_PROBE_ROOT").unwrap());
+        let runtime_dir =
+            PathBuf::from(env::var_os("OLIPHAUNT_NATIVE_LOCK_PROBE_RUNTIME").unwrap());
+        let pgdata = path_to_cstring(&root.join("pgdata"), "probe PGDATA").unwrap();
+        let runtime = path_to_cstring(&runtime_dir, "probe runtime").unwrap();
+        let module = path_to_cstring(&runtime_dir.join("lib/postgresql"), "probe module").unwrap();
+        let username = std::ffi::CString::new("postgres").unwrap();
+        let database = std::ffi::CString::new("postgres").unwrap();
+        let config = NativeConfig {
+            abi_version: ABI_VERSION,
+            pgdata: pgdata.as_ptr(),
+            runtime_dir: runtime.as_ptr(),
+            module_dir: module.as_ptr(),
+            username: username.as_ptr(),
+            database: database.as_ptr(),
+            reserved_flags: 0,
+            startup_args: std::ptr::null(),
+            startup_arg_count: 0,
+        };
+        let symbols = NativeSymbols::load().unwrap();
+        let mut handle: *mut NativeHandle = std::ptr::null_mut();
+        let status = unsafe { (symbols.init)(&config, &mut handle) };
+        if mode == "expect-busy" {
+            assert_ne!(status, 0, "C unexpectedly acquired the Rust-owned root");
+            assert!(handle.is_null());
+            let message = symbols.last_error_text(handle).unwrap_or_default();
+            assert!(message.contains("already locked"), "{message}");
+            return;
+        }
+        assert_eq!(mode, "hold");
+        assert_eq!(
+            status,
+            0,
+            "{}",
+            symbols.last_error_text(handle).unwrap_or_default()
+        );
+        assert!(!handle.is_null());
+        println!("OLIPHAUNT_C_LOCK_READY");
+        std::io::stdout().flush().unwrap();
+        let mut release = String::new();
+        std::io::stdin().read_line(&mut release).unwrap();
+        assert_eq!(unsafe { (symbols.detach)(handle) }, 0);
+    }
+
+    fn spawn_native_c_lock_probe(mode: &str, prepared: &PreparedNativeRoot) -> std::process::Child {
+        let test_name = "liboliphaunt::root::tests::native_c_root_lock_probe_child";
+        Command::new(env::current_exe().unwrap())
+            .args(["--exact", test_name, "--nocapture"])
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_MODE", mode)
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_ROOT", &prepared.root)
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_RUNTIME", &prepared.runtime_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap()
+    }
+
+    fn run_native_c_lock_probe(mode: &str, prepared: &PreparedNativeRoot) -> std::process::Output {
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "liboliphaunt::root::tests::native_c_root_lock_probe_child",
+                "--nocapture",
+            ])
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_MODE", mode)
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_ROOT", &prepared.root)
+            .env("OLIPHAUNT_NATIVE_LOCK_PROBE_RUNTIME", &prepared.runtime_dir);
+        command.output().unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_root_lock_identity_normalizes_prefix_separators_and_ascii_case() {
+        let first = path_identity_bytes(Path::new(r"\\?\C:\Data\Oliphaunt"));
+        let second = path_identity_bytes(Path::new("c:/data/oliphaunt"));
+        assert_eq!(first, second);
+
+        let first_unc = path_identity_bytes(Path::new(r"\\?\UNC\Server\Share\Database"));
+        let second_unc = path_identity_bytes(Path::new(r"\\server\share\database"));
+        assert_eq!(first_unc, second_unc);
     }
 }

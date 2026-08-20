@@ -32,6 +32,14 @@
       "browser": "./lib/index.js",
       "default": "./lib/index.js"
     },
+    "./protocol": {
+      "types": "./lib/protocol.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/query.d.ts",
+      "default": "./lib/query.js"
+    },
     "./storage/indexed-db": {
       "types": "./lib/storage/indexed-db.d.ts",
       "default": "./lib/storage/indexed-db.js"
@@ -68,7 +76,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node tools/clean-lib.mjs && tsc -p tsconfig.build.json",
+    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.json",
     "dev": "pnpm run package:build && vite --config examples/browser/vite.config.ts",
     "host:build": "bash host/build-sdk.sh",
     "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
@@ -82,7 +90,8 @@
     "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
     "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",
     "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
-    "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc -p examples/browser/tsconfig.json",
+    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
   },
   "dependencies": {
     "fzstd": "0.1.1"

@@ -14,6 +14,7 @@ func executeReturnsPostgresCommandMetadata() async throws {
     let result = try await database.execute("UPDATE widgets SET ready = true")
     #expect(result.commandTag == "UPDATE 3")
     #expect(result.rowCount == 3)
+    #expect(await session.requests().first?.first == Character("P").asciiValue)
 }
 
 @Test
@@ -84,7 +85,8 @@ func transactionCommitsAndPinsThePhysicalSession() async throws {
         return 42
     }
     #expect(value == 42)
-    #expect(await session.simpleQueries() == ["BEGIN", "UPDATE widgets SET ready = true", "COMMIT"])
+    #expect(await session.simpleQueries() == ["BEGIN", "COMMIT"])
+    #expect(await session.requests().contains { $0.first == Character("P").asciiValue })
 }
 
 @Test
@@ -103,10 +105,10 @@ func commitRequiresExactCommitTag() async throws {
     let session = TestSession(response: commandResponse("UPDATE 1"), commitTag: "ROLLBACK")
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
     await #expect(throws: OliphauntError.self) {
-        _ = try await database.transaction { 1 }
+        _ = try await database.transaction { _ in 1 }
     }
     _ = try await database.execute("SELECT 1")
-    #expect(await session.simpleQueries() == ["BEGIN", "COMMIT", "SELECT 1"])
+    #expect(await session.simpleQueries() == ["BEGIN", "COMMIT"])
 }
 
 @Test
@@ -114,7 +116,7 @@ func commitTransportFailureDoesNotRollbackAndPoisonsFacade() async throws {
     let session = TestSession(response: commandResponse("UPDATE 1"), failCommit: true)
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
     do {
-        _ = try await database.transaction { 1 }
+        _ = try await database.transaction { _ in 1 }
         Issue.record("transaction should preserve the COMMIT transport error")
     } catch OliphauntError.engine(let message) {
         #expect(message.contains("commit transport failed"))
@@ -289,6 +291,26 @@ func nativeOpenDoesNotRejectAValidWasixRootDescriptor() async throws {
     }
 }
 
+@Test
+func pgdataPublicationAdoptsACompleteWinnerWithoutReplacingIt() throws {
+    let parent = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-publication-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    let staging = parent.appendingPathComponent("staging", isDirectory: true)
+    let destination = parent.appendingPathComponent("pgdata", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    try makeCompletePgdata(at: staging)
+    try makeCompletePgdata(at: destination)
+    let sentinel = destination.appendingPathComponent("winner")
+    try Data("keep".utf8).write(to: sentinel)
+
+    try publishOliphauntPreparedPgdata(staging, to: destination)
+
+    #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
+    #expect(FileManager.default.fileExists(atPath: staging.path))
+}
+
 private final class TestEngine: OliphauntEngine, @unchecked Sendable {
     let session: any OliphauntSession
     var openedConfiguration: OliphauntConfiguration?
@@ -401,16 +423,20 @@ private func makeExistingDatabaseDirectory(descriptor: String = nativeRootDescri
         "liboliphaunt-swift-existing-database-\(UUID().uuidString)",
         isDirectory: true
     )
-    try FileManager.default.createDirectory(
-        at: directory.appendingPathComponent("pgdata/global", isDirectory: true),
-        withIntermediateDirectories: true
-    )
-    try FileManager.default.createDirectory(
-        at: directory.appendingPathComponent("pgdata/pg_wal", isDirectory: true),
-        withIntermediateDirectories: true
-    )
-    try Data("18\n".utf8).write(to: directory.appendingPathComponent("pgdata/PG_VERSION"))
-    try Data("control".utf8).write(to: directory.appendingPathComponent("pgdata/global/pg_control"))
+    try makeCompletePgdata(at: directory.appendingPathComponent("pgdata", isDirectory: true))
     try Data(descriptor.utf8).write(to: directory.appendingPathComponent(".oliphaunt.json"))
     return directory
+}
+
+private func makeCompletePgdata(at pgdata: URL) throws {
+    try FileManager.default.createDirectory(
+        at: pgdata.appendingPathComponent("global", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+        at: pgdata.appendingPathComponent("pg_wal", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    try Data("18\n".utf8).write(to: pgdata.appendingPathComponent("PG_VERSION"))
+    try Data("control".utf8).write(to: pgdata.appendingPathComponent("global/pg_control"))
 }

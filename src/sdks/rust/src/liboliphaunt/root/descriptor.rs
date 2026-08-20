@@ -11,6 +11,12 @@ const ROOT_DESCRIPTOR_FILE: &str = ".oliphaunt.json";
 const ROOT_POSTGRES_MAJOR: &str = "18";
 const NATIVE_ROOT_DESCRIPTOR: &str = "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n";
 
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn MoveFileExW(existing_file_name: *const u16, new_file_name: *const u16, flags: u32) -> i32;
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RootDescriptor {
@@ -110,7 +116,7 @@ pub(super) fn publish_native_root_descriptor(root: &Path) -> Result<()> {
                     staging.display()
                 ))
             })?;
-        fs::rename(&staging, &descriptor_path).map_err(|err| {
+        publish_descriptor(&staging, &descriptor_path).map_err(|err| {
             Error::Engine(format!(
                 "publish root descriptor {}: {err}",
                 descriptor_path.display()
@@ -122,6 +128,41 @@ pub(super) fn publish_native_root_descriptor(root: &Path) -> Result<()> {
         let _ = fs::remove_file(staging);
     }
     result
+}
+
+#[cfg(not(windows))]
+fn publish_descriptor(staging: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(staging, destination)
+}
+
+#[cfg(windows)]
+fn publish_descriptor(staging: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+    let staging = staging
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    if unsafe {
+        MoveFileExW(
+            staging.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_descriptor_file(path: &Path) -> Result<()> {
@@ -260,12 +301,14 @@ mod tests {
                 case["case"]
             );
         }
-        fs::write(
-            &descriptor,
-            r#"{"schema":"oliphaunt-database-root-v1","engineFamily":"native","engineFamily":"native","pgdata":"pgdata","postgresMajor":18,"physicalFormat":"native-pg18-v1"}"#,
-        )
-        .unwrap();
-        assert!(validate_descriptor_file(&descriptor).is_err());
+        for case in fixture["malformedJson"].as_array().unwrap() {
+            fs::write(&descriptor, case["value"].as_str().unwrap()).unwrap();
+            assert!(
+                validate_descriptor_file(&descriptor).is_err(),
+                "accepted malformed descriptor {}",
+                case["case"]
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }

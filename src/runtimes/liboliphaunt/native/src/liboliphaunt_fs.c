@@ -673,6 +673,31 @@ static char *oliphaunt_root_from_pgdata(const char *pgdata) {
     return root;
 }
 
+static char *oliphaunt_stable_root_identity_dup(const char *root_key) {
+    char *identity = strdup(root_key);
+    if (identity == NULL) {
+        return NULL;
+    }
+#ifdef _WIN32
+    if (strncmp(identity, "\\\\?\\UNC\\", 8) == 0) {
+        size_t suffix_len = strlen(identity + 8);
+        memmove(identity + 2, identity + 8, suffix_len + 1);
+        identity[0] = '\\';
+        identity[1] = '\\';
+    } else if (strncmp(identity, "\\\\?\\", 4) == 0) {
+        memmove(identity, identity + 4, strlen(identity + 4) + 1);
+    }
+    for (char *cursor = identity; *cursor != '\0'; cursor++) {
+        if (*cursor == '/') {
+            *cursor = '\\';
+        } else if (*cursor >= 'A' && *cursor <= 'Z') {
+            *cursor = (char)(*cursor - 'A' + 'a');
+        }
+    }
+#endif
+    return identity;
+}
+
 static void oliphaunt_stable_root_lock_suffix(const char *root_key, char out[33]) {
     uint8_t digest[32];
     static const char hex[] = "0123456789abcdef";
@@ -713,7 +738,15 @@ int oliphaunt_acquire_stable_root_lock(OliphauntHandle *handle, const char *root
 
     char suffix[33];
     char leaf[128];
-    oliphaunt_stable_root_lock_suffix(root_key, suffix);
+    char *root_identity = oliphaunt_stable_root_identity_dup(root_key);
+    if (root_identity == NULL) {
+        set_error(handle, "out of memory resolving stable native root lock identity");
+        free(lock_dir);
+        free(root_key);
+        return -1;
+    }
+    oliphaunt_stable_root_lock_suffix(root_identity, suffix);
+    free(root_identity);
     snprintf(leaf, sizeof(leaf), ".oliphaunt-root-%s.lock", suffix);
     char *lock_path = oliphaunt_join_path(lock_dir, leaf);
     free(lock_dir);
@@ -878,6 +911,35 @@ static int oliphaunt_read_small_file(
     return 0;
 }
 
+#ifndef _WIN32
+static int oliphaunt_sync_directory(OliphauntHandle *handle, const char *path) {
+    int flags = O_RDONLY | O_CLOEXEC;
+#ifdef O_DIRECTORY
+    flags |= O_DIRECTORY;
+#endif
+    int fd = open(path, flags);
+    if (fd < 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "open native root directory %s for sync: %s", path, strerror(errno));
+        set_error(handle, message);
+        return -1;
+    }
+    int sync_rc = fsync(fd);
+    int sync_errno = errno;
+    int close_rc = close(fd);
+    if (sync_rc != 0 || close_rc != 0) {
+        if (sync_rc != 0) {
+            errno = sync_errno;
+        }
+        char message[1024];
+        snprintf(message, sizeof(message), "sync native root directory %s: %s", path, strerror(errno));
+        set_error(handle, message);
+        return -1;
+    }
+    return 0;
+}
+#endif
+
 static int oliphaunt_write_native_root_descriptor(
     OliphauntHandle *handle,
     const char *root,
@@ -952,6 +1014,17 @@ static int oliphaunt_write_native_root_descriptor(
         free(staging);
         return -1;
     }
+#ifdef _WIN32
+    if (!MoveFileExA(staging, descriptor_path, MOVEFILE_WRITE_THROUGH)) {
+        DWORD publish_error = GetLastError();
+        char message[1024];
+        snprintf(message, sizeof(message), "publish native root descriptor %s: Windows error %lu", descriptor_path, (unsigned long)publish_error);
+        unlink(staging);
+        set_error(handle, message);
+        free(staging);
+        return -1;
+    }
+#else
     if (rename(staging, descriptor_path) != 0) {
         char message[1024];
         snprintf(message, sizeof(message), "publish native root descriptor %s: %s", descriptor_path, strerror(errno));
@@ -960,6 +1033,11 @@ static int oliphaunt_write_native_root_descriptor(
         free(staging);
         return -1;
     }
+    if (oliphaunt_sync_directory(handle, root) != 0) {
+        free(staging);
+        return -1;
+    }
+#endif
     free(staging);
     return 0;
 }

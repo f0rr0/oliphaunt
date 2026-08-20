@@ -82,8 +82,10 @@ WASIX archives are not physically interchangeable; logical SQL is the bridge.
 
 Provider ownership remains binding-specific implementation:
 
-- native direct/broker and C restore use the C runtime's stable sibling lease;
-- native Rust server uses the same lease contract because it bypasses C;
+- Swift, Kotlin, React Native, desktop TypeScript direct mode, and C restore use
+  the C runtime's stable sibling lease;
+- native Rust direct, broker, and server use the same C-compatible lease during
+  root preparation; direct init explicitly hands that ownership into C;
 - desktop TypeScript native server uses its own sibling owner;
 - Rust WASIX uses its host-directory owner;
 - TypeScript uses Web Locks or a Node/Bun/Deno sibling owner as appropriate.

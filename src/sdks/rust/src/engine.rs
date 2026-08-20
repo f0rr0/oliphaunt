@@ -19,6 +19,7 @@ pub(crate) trait EngineSession: Send + 'static {
 
     fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse>;
 
+    #[cfg(feature = "broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
         self.exec_protocol_raw(ProtocolRequest::simple_query(sql)?)
     }

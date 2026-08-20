@@ -7,6 +7,7 @@ use libloading::Library;
 use crate::error::{Error, Result};
 
 pub(super) const ABI_VERSION: u32 = 8;
+pub(super) const CONFIG_EXTERNAL_ROOT_LOCK: u64 = 1 << 0;
 
 pub(super) const ENV_OLIPHAUNT: &str = "LIBOLIPHAUNT_PATH";
 pub(super) const ENV_INSTALL_DIR: &str = "OLIPHAUNT_INSTALL_DIR";
@@ -45,6 +46,7 @@ pub(super) type NativeHandle = c_void;
 type InitFn = unsafe extern "C" fn(*const NativeConfig, *mut *mut NativeHandle) -> c_int;
 type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
+#[cfg(feature = "broker-helper")]
 type ExecSimpleQueryFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_char, usize, *mut NativeResponse) -> c_int;
 type CloseFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
@@ -60,6 +62,7 @@ pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
     pub(super) init: InitFn,
     pub(super) exec_protocol: ExecProtocolFn,
+    #[cfg(feature = "broker-helper")]
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
     pub(super) cancel: CancelFn,
     pub(super) detach: DetachFn,
@@ -87,6 +90,7 @@ impl NativeSymbols {
         let library = load_native_library(&path)?;
         let init = load_symbol(&library, b"oliphaunt_init\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
+        #[cfg(feature = "broker-helper")]
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
         let cancel = load_symbol(&library, b"oliphaunt_cancel\0")?;
         let detach = load_symbol(&library, b"oliphaunt_detach\0")?;
@@ -106,6 +110,7 @@ impl NativeSymbols {
             _library: ManuallyDrop::new(library),
             init,
             exec_protocol,
+            #[cfg(feature = "broker-helper")]
             exec_simple_query,
             cancel,
             detach,
@@ -183,6 +188,7 @@ fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
     Ok(*symbol)
 }
 
+#[cfg(feature = "broker-helper")]
 fn load_optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
     unsafe { library.get::<T>(name) }.ok().map(|symbol| *symbol)
 }

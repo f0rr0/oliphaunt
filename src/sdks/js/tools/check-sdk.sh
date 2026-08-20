@@ -68,8 +68,10 @@ JSON
   cp pnpm-lock.yaml "$scratch_root/pnpm-lock.yaml"
   cp LICENSE "$scratch_root/LICENSE"
   mkdir -p "$scratch_root/src/shared/fixtures"
+  mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/packages"
   rsync -a --delete \
@@ -140,6 +142,15 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
+for removed in \
+  "$package_dir/lib/runtime/physical-archive.js" \
+  "$package_dir/lib/runtime/physical-archive.d.ts"
+do
+  if [ -e "$removed" ]; then
+    echo "TypeScript SDK fresh build retained deleted output $removed" >&2
+    exit 1
+  fi
+done
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
@@ -316,7 +327,7 @@ const expectedOptional = [
   '@oliphaunt/node-direct-win32-x64-msvc',
 ];
 const optional = Object.keys(pkg.optionalDependencies || {}).sort();
-const expectedExports = ['.', './package.json'];
+const expectedExports = ['.', './package.json', './protocol', './query'];
 const actualExports = Object.keys(pkg.exports || {}).sort();
 if (
   JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies) ||
@@ -325,7 +336,17 @@ if (
   throw new Error('TypeScript SDK installs must declare only platform-selected runtime packages');
 }
 if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports.sort())) {
-  throw new Error('TypeScript SDK must expose only its root entrypoint and package metadata');
+  throw new Error('TypeScript SDK exports do not match its deliberate public surface');
+}
+for (const name of ['protocol', 'query']) {
+  const entry = pkg.exports['./' + name];
+  if (
+    JSON.stringify(Object.keys(entry || {})) !== JSON.stringify(['types', 'default']) ||
+    entry.types !== './lib/' + name + '.d.ts' ||
+    entry.default !== './lib/' + name + '.js'
+  ) {
+    throw new Error('TypeScript SDK ' + name + ' subpath does not match its compiled entrypoint');
+  }
 }
 " "$package_dir/package.json"
 for internal_export in \

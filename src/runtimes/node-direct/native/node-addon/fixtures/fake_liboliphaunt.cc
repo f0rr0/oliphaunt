@@ -119,7 +119,6 @@ OLIPHAUNT_API int32_t oliphaunt_exec_simple_query(
 
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *,
-    const OliphauntBackupOptions *,
     OliphauntResponse *out) {
   return UnsupportedResponse(out);
 }

@@ -155,14 +155,14 @@ public class OliphauntDatabase private constructor(
         try {
             val result =
                 try {
-                    val begin = transaction.execute("BEGIN")
+                    val begin = executeTransactionControl(transaction, "BEGIN")
                     if (begin.commandTag != "BEGIN") {
                         throw OliphauntException("BEGIN returned unexpected command tag ${begin.commandTag ?: "<none>"}")
                     }
                     block(transaction)
                 } catch (error: Throwable) {
                     try {
-                        val rollback = transaction.execute("ROLLBACK")
+                        val rollback = executeTransactionControl(transaction, "ROLLBACK")
                         if (rollback.commandTag != "ROLLBACK") {
                             throw OliphauntException(
                                 "ROLLBACK returned unexpected command tag ${rollback.commandTag ?: "<none>"}",
@@ -177,7 +177,7 @@ public class OliphauntDatabase private constructor(
                 }
             val commit =
                 try {
-                    transaction.execute("COMMIT")
+                    executeTransactionControl(transaction, "COMMIT")
                 } catch (error: Throwable) {
                     stateMutex.withLock {
                         poisonedMessage = "transaction COMMIT outcome is unknown; close and reopen the database: $error"
@@ -239,6 +239,13 @@ public class OliphauntDatabase private constructor(
         poisonedMessage?.let { throw OliphauntException(it) }
     }
 
+    private suspend fun executeTransactionControl(
+        transaction: OliphauntTransaction,
+        sql: String,
+    ): CommandResult = parseCommandResponse(
+        transaction.execProtocolRaw(simpleQueryProtocol(sql)),
+    )
+
     private suspend fun ensureTransactionAccess(token: Long?) {
         stateMutex.withLock {
             if (token != null) {
@@ -290,5 +297,4 @@ public class OliphauntTransaction internal constructor(
     private val token: Long,
 ) {
     public suspend fun execProtocolRaw(request: ByteArray): ByteArray = database.execProtocolRaw(request, transactionToken = token)
-
 }

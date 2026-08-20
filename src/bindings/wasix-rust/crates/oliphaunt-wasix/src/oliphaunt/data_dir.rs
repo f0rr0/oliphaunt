@@ -496,6 +496,7 @@ fn validate_pgdata_archive(bytes: &[u8]) -> Result<Vec<ArchiveEntryPlan>> {
     let mut has_pg_version = false;
     let mut has_pg_control = false;
     let mut has_backup_label = false;
+    let mut has_base = false;
     let mut has_pg_wal = false;
 
     for entry in entries {
@@ -570,6 +571,8 @@ fn validate_pgdata_archive(bytes: &[u8]) -> Result<Vec<ArchiveEntryPlan>> {
                 );
                 has_backup_label = true;
             }
+            has_base |=
+                plan.relative == Path::new("base") && plan.kind == ArchiveEntryKind::Directory;
             has_pg_wal |=
                 plan.relative == Path::new("pg_wal") && plan.kind == ArchiveEntryKind::Directory;
             io::copy(&mut entry, &mut io::sink()).with_context(|| {
@@ -597,6 +600,7 @@ fn validate_pgdata_archive(bytes: &[u8]) -> Result<Vec<ArchiveEntryPlan>> {
         has_pg_control,
         "WASIX physical archive is missing pgdata/global/pg_control"
     );
+    ensure!(has_base, "WASIX physical archive is missing pgdata/base");
     ensure!(
         has_pg_wal,
         "WASIX physical archive is missing pgdata/pg_wal"
@@ -1843,6 +1847,14 @@ mod tests {
                 vec![("backup_label", ArchiveEntryKind::File, b"".as_slice())],
                 "backup_label must be a non-empty regular file",
             ),
+            (
+                vec![(
+                    "base",
+                    ArchiveEntryKind::File,
+                    b"not-a-directory".as_slice(),
+                )],
+                "missing pgdata/base",
+            ),
         ] {
             let archive = test_archive(&entries)?;
             assert_invalid_restore_preserves_destinations(&archive, expected)?;
@@ -1960,6 +1972,7 @@ mod tests {
             let mut builder = Builder::new(&mut bytes);
             for (path, kind, contents) in [
                 ("PG_VERSION", ArchiveEntryKind::File, b"18\n".as_slice()),
+                ("base", ArchiveEntryKind::Directory, b"".as_slice()),
                 (
                     "global/pg_control",
                     ArchiveEntryKind::File,

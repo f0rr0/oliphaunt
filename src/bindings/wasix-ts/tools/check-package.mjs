@@ -52,6 +52,10 @@ try {
     'lib/index.bun.js',
     'lib/index.deno.js',
     'lib/index.node.js',
+    'lib/protocol.js',
+    'lib/protocol.d.ts',
+    'lib/query.js',
+    'lib/query.d.ts',
     'lib/node-client.js',
     'lib/node-direct.js',
     'lib/node-directory-lock.js',
@@ -87,6 +91,11 @@ try {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
     }
   }
+  for (const removed of ['lib/node-lock-identity.js', 'lib/node-lock-identity.d.ts']) {
+    if (paths.has(removed)) {
+      throw new Error(`WASIX TypeScript package dry-run retained deleted output ${removed}`);
+    }
+  }
 
   // New products intentionally remain at 0.0.0 until Release Please creates
   // the first release candidate; publication still requires that transition.
@@ -109,6 +118,8 @@ try {
   const expectedExports = [
     '.',
     './package.json',
+    './protocol',
+    './query',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -120,6 +131,16 @@ try {
   }
   if (exports['./storage/indexed-db'] === undefined) {
     throw new Error('WASIX TypeScript package omitted the selective IndexedDB entrypoint');
+  }
+  for (const name of ['protocol', 'query']) {
+    const entry = exports[`./${name}`];
+    if (
+      JSON.stringify(Object.keys(entry ?? {})) !== JSON.stringify(['types', 'default']) ||
+      entry?.types !== `./lib/${name}.d.ts` ||
+      entry?.default !== `./lib/${name}.js`
+    ) {
+      throw new Error(`WASIX TypeScript package ${name} subpath is not exact`);
+    }
   }
   if (
     exports['./storage/node']?.types !== './lib/storage/node.d.ts' ||

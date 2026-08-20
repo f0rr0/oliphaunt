@@ -170,9 +170,12 @@ those three claimed slices.
 ## Root Ownership
 
 Direct init and restore each take one non-blocking sibling lease for the target
-root. The lease is an implementation detail that prevents duplicate ownership
-inside the native runtime; SDK adapters do not add a second lease around the C
-call.
+root by default. The Rust SDK acquires the byte-identical sibling lease while
+preparing direct, broker, and server roots, then passes
+`OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK` for direct init so the C runtime does not
+try to acquire the same lease twice. Other C ABI consumers leave the flag clear
+and rely on the C runtime. The flag is only an ownership handoff; callers must
+already hold the stable lease for the full native handle lifetime.
 
 `oliphaunt_init` only validates an existing managed root. It requires the exact
 five-field `<root>/.oliphaunt.json`, a real `<root>/pgdata` directory,

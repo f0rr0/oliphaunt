@@ -393,8 +393,8 @@ function sdkRows(sdkManifest) {
 
 function generateSdkMatrix(sdkManifest) {
   const rows = sdkRows(sdkManifest).map(([id, sdk]) => {
-    const modes = (sdk.available_modes ?? []).join(', ');
-    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown((sdk.supported_consumer_targets ?? []).join(', '))} | ${escapeMarkdown(sdk.runtime_boundary)} | ${escapeMarkdown(modes)} |`;
+    const modes = (sdk.execution_modes ?? []).join(', ');
+    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown((sdk.consumer_targets ?? []).join(', '))} | ${escapeMarkdown(sdk.runtime_boundary)} | ${escapeMarkdown(modes)} |`;
   });
   return `---
 title: SDK Matrix
@@ -413,7 +413,7 @@ ${rows.join('\n')}
 
 function generatePlatformMatrix(sdkManifest) {
   const rows = sdkRows(sdkManifest).flatMap(([id, sdk]) =>
-    (sdk.supported_consumer_targets ?? []).map(
+    (sdk.consumer_targets ?? []).map(
       (target) =>
         `| ${escapeMarkdown(target)} | ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} |`,
     ),

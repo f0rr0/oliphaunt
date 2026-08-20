@@ -82,6 +82,12 @@ fn read_validated_directory(root: &Path) -> Result<DatabaseRootDescriptor> {
         root.display()
     );
     let descriptor = read_descriptor(root)?;
+    validate_descriptor(root, &descriptor)?;
+    validate_complete_pgdata(root, &pgdata)?;
+    Ok(descriptor)
+}
+
+fn validate_descriptor(root: &Path, descriptor: &DatabaseRootDescriptor) -> Result<()> {
     ensure!(
         descriptor.schema == DESCRIPTOR_SCHEMA
             && descriptor.pgdata == PGDATA_DIRECTORY
@@ -96,8 +102,7 @@ fn read_validated_directory(root: &Path) -> Result<DatabaseRootDescriptor> {
         "database root {} has an unsupported database-root descriptor",
         root.display()
     );
-    validate_complete_pgdata(root, &pgdata)?;
-    Ok(descriptor)
+    Ok(())
 }
 
 fn validate_complete_pgdata(root: &Path, pgdata: &Path) -> Result<()> {
@@ -279,6 +284,33 @@ mod tests {
             fixture["families"]["wasix"]["physicalFormat"],
             PHYSICAL_FORMAT
         );
+        Ok(())
+    }
+
+    #[test]
+    fn shared_invalid_and_malformed_descriptors_are_rejected() -> Result<()> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/database-root.json"))?;
+        let root = TempDir::new()?;
+        let descriptor = root.path().join(DESCRIPTOR_FILE);
+        for case in fixture["invalidDescriptors"].as_array().unwrap() {
+            fs::write(&descriptor, serde_json::to_vec(&case["value"])?)?;
+            let result = read_descriptor(root.path())
+                .and_then(|parsed| validate_descriptor(root.path(), &parsed));
+            assert!(
+                result.is_err(),
+                "accepted invalid descriptor {}",
+                case["case"]
+            );
+        }
+        for case in fixture["malformedJson"].as_array().unwrap() {
+            fs::write(&descriptor, case["value"].as_str().unwrap())?;
+            assert!(
+                read_descriptor(root.path()).is_err(),
+                "accepted malformed descriptor {}",
+                case["case"]
+            );
+        }
         Ok(())
     }
 

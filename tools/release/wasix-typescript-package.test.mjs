@@ -22,6 +22,14 @@ function manifest() {
         browser: './lib/index.js',
         default: './lib/index.js',
       },
+      './protocol': {
+        types: './lib/protocol.d.ts',
+        default: './lib/protocol.js',
+      },
+      './query': {
+        types: './lib/query.d.ts',
+        default: './lib/query.js',
+      },
       './storage/node': {
         types: './lib/storage/node.d.ts',
         node: './lib/storage/node.js',
@@ -83,6 +91,14 @@ describe('WASIX TypeScript release dependency closure', () => {
     candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
       'must expose Deno directory storage only under the Deno condition',
+    );
+  });
+
+  test('rejects an incomplete query entrypoint', () => {
+    const candidate = manifest();
+    delete candidate.exports['./query'].types;
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose the exact query entrypoint',
     );
   });
 

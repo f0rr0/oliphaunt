@@ -96,14 +96,19 @@ current public mode. Restore destination paths must not be empty or contain NUL
 bytes. Archives containing `pgdata/postmaster.pid` or
 `pgdata/postmaster.opts` are rejected as stale process state before extraction.
 
+The required restored directories are real directories, not symbolic links,
+junctions, or reparse points:
+
+- `pgdata`;
+- `pgdata/base`;
+- `pgdata/global`;
+- `pgdata/pg_wal`.
+
 The required restored files are:
 
 - `pgdata/PG_VERSION`;
 - `pgdata/global/pg_control`;
 - `pgdata/backup_label`.
-
-`pgdata/pg_wal` is also required and must be a real directory, not a file,
-symbolic link, junction, or reparse point.
 
 ## Verification
 

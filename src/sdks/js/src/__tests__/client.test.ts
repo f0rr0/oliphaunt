@@ -36,7 +36,9 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
       commandTag: 'UPDATE 3',
       rowCount: 3,
     });
+    assert.equal(binding.requestTags.at(-1), 'P');
     const result = await db.query('SELECT value FROM things');
+    assert.equal(binding.requestTags.at(-1), 'P');
     assert.equal(result.commandTag, 'SELECT 1');
     assert.equal(result.rowCount, 1);
     assert.equal(result.rows[0]?.text(0), 'ok');
@@ -121,6 +123,7 @@ class FakeBinding implements NativeBinding {
   readonly openCalls: NativeOpenConfig[] = [];
   readonly restoreCalls: NativeRestoreOptions[] = [];
   readonly sqlCalls: string[] = [];
+  readonly requestTags: string[] = [];
   cancelCalls = 0;
   detachCalls = 0;
   failSql?: string;
@@ -132,7 +135,10 @@ class FakeBinding implements NativeBinding {
   }
 
   execProtocolRaw(_handle: NativeHandle, request: Uint8Array): Uint8Array {
-    return this.respond(decodeSimpleQuery(request) ?? 'SELECT value FROM things');
+    this.requestTags.push(String.fromCharCode(request[0] ?? 0));
+    return this.respond(
+      decodeSimpleQuery(request) ?? decodeExtendedQuery(request) ?? 'SELECT value FROM things',
+    );
   }
 
   execSimpleQuery(_handle: NativeHandle, sql: string): Uint8Array {
@@ -211,4 +217,12 @@ function decodeSimpleQuery(request: Uint8Array): string | undefined {
   return request[0] === 0x51
     ? new TextDecoder().decode(request.subarray(5, request.length - 1))
     : undefined;
+}
+
+function decodeExtendedQuery(request: Uint8Array): string | undefined {
+  if (request[0] !== 0x50 || request[5] !== 0) return undefined;
+  const terminator = request.indexOf(0, 6);
+  return terminator < 0
+    ? undefined
+    : new TextDecoder().decode(request.subarray(6, terminator));
 }

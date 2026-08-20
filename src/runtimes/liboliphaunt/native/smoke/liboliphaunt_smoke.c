@@ -15,6 +15,7 @@
 #include "liboliphaunt_platform.h"
 
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -365,8 +366,14 @@ static int contains_bytes(const OliphauntResponse *response, const char *needle)
 
 static size_t tar_entry_count(const OliphauntResponse *archive, const char *expected_name);
 
+static const char *native_archive_manifest_fixture_path = NULL;
+
 static int load_native_archive_manifest_fixture(char *out, size_t capacity) {
-    const char *path = "src/shared/fixtures/storage/physical-archive-native-v1.properties";
+    const char *path = native_archive_manifest_fixture_path;
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "native archive manifest fixture path was not provided\n");
+        return -1;
+    }
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
         fprintf(stderr, "failed to open shared native archive manifest fixture %s\n", path);
@@ -1113,6 +1120,27 @@ static int parent_path(const char *path, char *out, size_t out_len) {
     return 0;
 }
 
+static int root_sibling_path(
+    char *out,
+    size_t out_len,
+    const char *pgdata,
+    const char *suffix_format,
+    ...) {
+    char root[4096];
+    if (parent_path(pgdata, root, sizeof(root)) != 0) {
+        return -1;
+    }
+    int prefix_len = snprintf(out, out_len, "%s", root);
+    if (prefix_len < 0 || (size_t)prefix_len >= out_len) {
+        return -1;
+    }
+    va_list args;
+    va_start(args, suffix_format);
+    int suffix_len = vsnprintf(out + prefix_len, out_len - (size_t)prefix_len, suffix_format, args);
+    va_end(args);
+    return suffix_len < 0 || (size_t)suffix_len >= out_len - (size_t)prefix_len ? -1 : 0;
+}
+
 static int verify_no_in_root_lock_file(const char *pgdata) {
     char root[4096];
     char lock_path[4096];
@@ -1295,6 +1323,35 @@ static int verify_tar_entry_mode(
     return 1;
 }
 
+static int verify_tar_identity_metadata_is_normalized(const OliphauntResponse *archive) {
+    size_t offset = 0;
+    while (offset + 512 <= archive->len) {
+        const unsigned char *header = archive->data + offset;
+        if (header[0] == 0) {
+            return 0;
+        }
+        unsigned long long uid = test_tar_read_octal(header + 108, 8);
+        unsigned long long gid = test_tar_read_octal(header + 116, 8);
+        unsigned long long mtime = test_tar_read_octal(header + 136, 12);
+        if (uid != 0 || gid != 0 || mtime != 0) {
+            fprintf(stderr,
+                    "physical archive entry has uid=%llu gid=%llu mtime=%llu; expected zeroed identity metadata\n",
+                    uid,
+                    gid,
+                    mtime);
+            return 1;
+        }
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        size_t padded = ((size_t)size + 511) & ~(size_t)511;
+        if (padded > archive->len - offset - 512) {
+            break;
+        }
+        offset += 512 + padded;
+    }
+    fprintf(stderr, "physical archive ended before normalized metadata could be verified\n");
+    return 1;
+}
+
 static int verify_pg_control_archive_order(const OliphauntResponse *archive) {
     size_t offset = 0;
     size_t pg_version_offset = SIZE_MAX;
@@ -1434,6 +1491,7 @@ static int append_required_pgdata_files(TestTarArchive *archive) {
 
 static int append_required_pgdata_entries(TestTarArchive *archive) {
     return append_required_pgdata_files(archive) != 0 ||
+            test_tar_append_header(archive, "pgdata/base", '5', 0, NULL) != 0 ||
             test_tar_append_header(archive, "pgdata/pg_wal", '5', 0, NULL) != 0
         ? -1
         : 0;
@@ -1464,7 +1522,7 @@ static int verify_restore_rejects_inexact_manifest(const char *pgdata, const cha
         return 1;
     }
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-manifest-%s.%ld", pgdata, case_name, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-manifest-%s.%ld", case_name, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1488,6 +1546,7 @@ static int verify_restore_rejects_invalid_pg_wal(const char *pgdata, const char 
     TestTarArchive archive;
     memset(&archive, 0, sizeof(archive));
     if (append_required_pgdata_files(&archive) != 0 ||
+        test_tar_append_header(&archive, "pgdata/base", '5', 0, NULL) != 0 ||
         (typeflag == '0' && test_tar_append_file(&archive, "pgdata/pg_wal", "not-a-directory") != 0) ||
         (typeflag == '2' && test_tar_append_header(&archive, "pgdata/pg_wal", '2', 0, "pgdata") != 0) ||
         test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
@@ -1497,7 +1556,7 @@ static int verify_restore_rejects_invalid_pg_wal(const char *pgdata, const char 
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-pg-wal-%s.%ld", pgdata, case_name, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-pg-wal-%s.%ld", case_name, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1510,6 +1569,38 @@ static int verify_restore_rejects_invalid_pg_wal(const char *pgdata, const char 
     }
     const char *expected = typeflag == '2' ? "unsupported tar entry type" : "required directory pgdata/pg_wal";
     return expect_error_contains(NULL, "oliphaunt_restore invalid pg_wal", expected);
+}
+
+static int verify_restore_rejects_missing_base(const char *pgdata) {
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (append_required_pgdata_files(&archive) != 0 ||
+        test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
+        test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build missing base physical archive fixture\n");
+        return 1;
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-missing-base.%ld", (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0 || file_exists(restore_root)) {
+        fprintf(stderr, "oliphaunt_restore accepted or published PGDATA without base\n");
+        return 1;
+    }
+    return expect_error_contains(NULL, "oliphaunt_restore missing base", "required directory pgdata/base");
 }
 
 static int verify_restore_rejects_invalid_pgdata_markers(
@@ -1530,6 +1621,7 @@ static int verify_restore_rejects_invalid_pgdata_markers(
     if (test_tar_append_file(&archive, "pgdata/PG_VERSION", version) != 0 ||
         test_tar_append_file(&archive, "pgdata/global/pg_control", control) != 0 ||
         test_tar_append_file(&archive, "pgdata/backup_label", backup_label) != 0 ||
+        test_tar_append_header(&archive, "pgdata/base", '5', 0, NULL) != 0 ||
         test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
         test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
         test_tar_finish(&archive) != 0) {
@@ -1538,7 +1630,7 @@ static int verify_restore_rejects_invalid_pgdata_markers(
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-markers-%s.%ld", pgdata, case_name, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-markers-%s.%ld", case_name, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1565,7 +1657,7 @@ static int verify_restore_rejects_process_state_file(const char *pgdata, const c
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%s.%ld", pgdata, name, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s.%ld", name, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1598,7 +1690,7 @@ static int verify_restore_rejects_special_archive_entry(const char *pgdata, char
         return 1;
     }
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%c.%ld", pgdata, typeflag, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%c.%ld", typeflag, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1623,7 +1715,7 @@ static int verify_restore_rejects_directory_entry_with_payload(const char *pgdat
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-nonzero-dir.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-nonzero-dir.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1648,7 +1740,7 @@ static int verify_restore_rejects_bad_tar_checksum(const char *pgdata) {
     archive.data[148] = archive.data[148] == '0' ? '1' : '0';
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-checksum.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1673,7 +1765,7 @@ static int verify_restore_rejects_bad_tar_checksum_field(const char *pgdata) {
     archive.data[148] = 'x';
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum-field.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-checksum-field.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1699,7 +1791,7 @@ static int verify_restore_rejects_bad_tar_magic(const char *pgdata) {
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-magic.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-magic.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1725,7 +1817,7 @@ static int verify_restore_rejects_bad_tar_numeric_field(const char *pgdata, size
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s-field.%ld", label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1741,31 +1833,7 @@ static int verify_restore_rejects_bad_tar_numeric_field(const char *pgdata, size
     return expect_error_contains(NULL, "oliphaunt_restore invalid tar numeric field", expected);
 }
 
-static int verify_restore_rejects_unsafe_tar_mode(const char *pgdata) {
-    TestTarArchive archive;
-    memset(&archive, 0, sizeof(archive));
-    if (append_required_restore_entries(&archive) != 0 || test_tar_finish(&archive) != 0) {
-        fprintf(stderr, "failed to build unsafe-mode physical archive fixture\n");
-        return 1;
-    }
-    test_tar_write_octal(archive.data + 100, 8, 04755);
-    test_tar_rewrite_checksum(archive.data);
-    char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-unsafe-mode.%ld", pgdata, (long)getpid());
-    OliphauntRestoreOptions options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .destination = restore_root,
-        .data = archive.data,
-        .len = archive.len,
-    };
-    if (oliphaunt_restore(&options) == 0) {
-        fprintf(stderr, "oliphaunt_restore accepted unsafe tar permission bits\n");
-        return 1;
-    }
-    return expect_error_contains(NULL, "oliphaunt_restore unsafe tar mode", "unsupported permission bits");
-}
-
-static int verify_restore_normalizes_safe_tar_modes(const char *pgdata) {
+static int verify_restore_masks_tar_modes(const char *pgdata) {
     TestTarArchive archive;
     memset(&archive, 0, sizeof(archive));
     if (append_required_restore_entries(&archive) != 0 || test_tar_finish(&archive) != 0) {
@@ -1776,13 +1844,13 @@ static int verify_restore_normalizes_safe_tar_modes(const char *pgdata) {
     while (offset + 512 <= archive.len && archive.data[offset] != 0) {
         unsigned char *header = archive.data + offset;
         unsigned long long size = test_tar_read_octal(header + 124, 12);
-        test_tar_write_octal(header + 100, 8, header[156] == '5' ? 0777 : 0666);
+        test_tar_write_octal(header + 100, 8, header[156] == '5' ? 01777 : 06755);
         test_tar_rewrite_checksum(header);
         offset += 512 + (((size_t)size + 511) & ~(size_t)511);
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.restore-safe-mode.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore-safe-mode.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1790,7 +1858,7 @@ static int verify_restore_normalizes_safe_tar_modes(const char *pgdata) {
         .len = archive.len,
     };
     if (oliphaunt_restore(&options) != 0) {
-        fprintf(stderr, "oliphaunt_restore rejected safe archive modes: %s\n", oliphaunt_last_error(NULL));
+        fprintf(stderr, "oliphaunt_restore rejected masked archive modes: %s\n", oliphaunt_last_error(NULL));
         return 1;
     }
 
@@ -1801,7 +1869,7 @@ static int verify_restore_normalizes_safe_tar_modes(const char *pgdata) {
     snprintf(restored_version, sizeof(restored_version), "%s/pgdata/PG_VERSION", restore_root);
     snprintf(restored_descriptor, sizeof(restored_descriptor), "%s/.oliphaunt.json", restore_root);
     if (!file_exists(restored_version) || !file_exists(restored_descriptor)) {
-        fprintf(stderr, "safe-mode restore omitted managed-root files\n");
+        fprintf(stderr, "masked-mode restore omitted managed-root files\n");
         return 1;
     }
 #ifndef _WIN32
@@ -1833,7 +1901,7 @@ static int verify_restore_rejects_bad_tar_string_field(const char *pgdata, size_
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s-field.%ld", label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1859,7 +1927,7 @@ static int verify_restore_rejects_truncated_tar_terminator(const char *pgdata) {
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-short-terminator.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-short-terminator.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1885,7 +1953,7 @@ static int verify_restore_rejects_trailing_tar_data(const char *pgdata) {
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-trailing.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-trailing.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1910,7 +1978,7 @@ static int verify_restore_rejects_duplicate_tar_entry(const char *pgdata, const 
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-duplicate.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-duplicate.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1929,14 +1997,14 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
     memset(&archive, 0, sizeof(archive));
     int rc = append_required_restore_entries(&archive);
     if (rc == 0 && parent_first) {
-        rc = test_tar_append_file(&archive, "pgdata/base", "parent-file");
+        rc = test_tar_append_file(&archive, "pgdata/collision", "parent-file");
         if (rc == 0) {
-            rc = test_tar_append_file(&archive, "pgdata/base/child", "child-file");
+            rc = test_tar_append_file(&archive, "pgdata/collision/child", "child-file");
         }
     } else if (rc == 0) {
-        rc = test_tar_append_file(&archive, "pgdata/base/child", "child-file");
+        rc = test_tar_append_file(&archive, "pgdata/collision/child", "child-file");
         if (rc == 0) {
-            rc = test_tar_append_file(&archive, "pgdata/base", "parent-file");
+            rc = test_tar_append_file(&archive, "pgdata/collision", "parent-file");
         }
     }
     if (rc != 0 || test_tar_finish(&archive) != 0) {
@@ -1945,7 +2013,7 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-file-tree.%ld.%d", pgdata, (long)getpid(), parent_first);
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-file-tree.%ld.%d", (long)getpid(), parent_first);
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -1957,8 +2025,8 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
         return 1;
     }
     const char *expected = parent_first
-        ? "entry pgdata/base/child is nested under file entry pgdata/base"
-        : "file entry pgdata/base conflicts with existing child entries";
+        ? "entry pgdata/collision/child is nested under file entry pgdata/collision"
+        : "file entry pgdata/collision conflicts with existing child entries";
     return expect_error_contains(NULL, "oliphaunt_restore file/tree archive collision", expected);
 }
 
@@ -1978,7 +2046,7 @@ static int verify_restore_rejects_regular_tar_link_metadata(const char *pgdata) 
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-link-metadata.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-link-metadata.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -2002,6 +2070,7 @@ static int verify_restore_accepts_canonicalized_tar_paths(const char *pgdata) {
         "physicalFormat=native-pg18-v1\n"
         "postgresMajor=18\n";
     if (test_tar_append_file(&archive, "pgdata/PG_VERSION", "18\n") != 0 ||
+        test_tar_append_header(&archive, "pgdata/./base", '5', 0, NULL) != 0 ||
         test_tar_append_file(&archive, "pgdata/./global/pg_control", "control") != 0 ||
         test_tar_append_file(&archive, "pgdata/backup_label", "label") != 0 ||
         test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
@@ -2012,7 +2081,7 @@ static int verify_restore_accepts_canonicalized_tar_paths(const char *pgdata) {
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.restore-canonical.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore-canonical.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
@@ -2077,8 +2146,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
         verify_restore_rejects_bad_tar_magic(pgdata) != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 124, "size") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 100, "mode") != 0 ||
-        verify_restore_rejects_unsafe_tar_mode(pgdata) != 0 ||
-        verify_restore_normalizes_safe_tar_modes(pgdata) != 0 ||
+        verify_restore_masks_tar_modes(pgdata) != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 108, "uid") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 116, "gid") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 136, "mtime") != 0 ||
@@ -2105,6 +2173,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
         verify_restore_rejects_invalid_pg_wal(pgdata, "missing", '\0') != 0 ||
         verify_restore_rejects_invalid_pg_wal(pgdata, "file", '0') != 0 ||
         verify_restore_rejects_invalid_pg_wal(pgdata, "symlink", '2') != 0 ||
+        verify_restore_rejects_missing_base(pgdata) != 0 ||
         verify_restore_rejects_invalid_pgdata_markers(
             pgdata, "wrong-version", "17\n", "control", "label", "PostgreSQL 17 PGDATA") != 0 ||
         verify_restore_rejects_invalid_pgdata_markers(
@@ -2203,6 +2272,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     if (verify_tar_entry_mode(&archive, "pgdata/", '5', 0700) != 0 ||
         verify_tar_entry_mode(&archive, "pgdata/PG_VERSION", '0', 0600) != 0 ||
         verify_tar_entry_mode(&archive, ".oliphaunt/backup-manifest.properties", '0', 0600) != 0 ||
+        verify_tar_identity_metadata_is_normalized(&archive) != 0 ||
         verify_pg_control_archive_order(&archive) != 0 ||
         tar_entry_count(&archive, "pgdata/backup_manifest") != 0 ||
         tar_entry_count(&archive, "pgdata/base/.DS_Store") != 0 ||
@@ -2232,9 +2302,9 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.restore.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore.%ld", (long)getpid());
     char empty_restore_root[4096];
-    snprintf(empty_restore_root, sizeof(empty_restore_root), "%s.restore-empty.%ld", pgdata, (long)getpid());
+    root_sibling_path(empty_restore_root, sizeof(empty_restore_root), pgdata, ".restore-empty.%ld", (long)getpid());
 #ifdef _WIN32
     int create_empty_restore_root = _mkdir(empty_restore_root);
 #else
@@ -2575,10 +2645,11 @@ static int expect_terminal_shutdown_reopen_rejected(const char *pgdata, const ch
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <pgdata> <runtime-dir>\n", argv[0]);
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s <pgdata> <runtime-dir> <archive-manifest-fixture>\n", argv[0]);
         return 2;
     }
+    native_archive_manifest_fixture_path = argv[3];
 
     fprintf(stderr, "liboliphaunt version: %s\n", oliphaunt_version());
     if (verify_global_contract() != 0 ||

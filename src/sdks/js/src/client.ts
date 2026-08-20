@@ -55,10 +55,7 @@ class OliphauntDatabaseBase {
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
     return this.withLifecycleOperation(async () => {
       this.assertNoActiveTransaction();
-      const response =
-        parameters.length === 0
-          ? await this.#executeSimpleUnlocked(sql)
-          : await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters));
+      const response = await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters));
       return parseCommandResponse(response);
     });
   }
@@ -66,13 +63,7 @@ class OliphauntDatabaseBase {
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
     return this.withLifecycleOperation(async () => {
       this.assertNoActiveTransaction();
-      if (parameters.length === 0) {
-        const response = await this.#executeSimpleUnlocked(sql);
-        return parseQueryResponse(response);
-      }
-      return parseQueryResponse(
-        await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)),
-      );
+      return parseQueryResponse(await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)));
     });
   }
 
@@ -285,16 +276,11 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    const response = await this.execProtocolRaw(
-      parameters.length === 0 ? simpleQuery(sql) : extendedQuery(sql, parameters),
-    );
+    const response = await this.execProtocolRaw(extendedQuery(sql, parameters));
     return parseCommandResponse(response);
   }
 
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    if (parameters.length === 0) {
-      return parseQueryResponse(await this.execProtocolRaw(simpleQuery(sql)));
-    }
     return parseQueryResponse(await this.execProtocolRaw(extendedQuery(sql, parameters)));
   }
 

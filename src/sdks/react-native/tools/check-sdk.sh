@@ -159,6 +159,9 @@ JSON
     "$root/tools/dev/capture-command-output.mjs" \
     "$scratch_root/tools/dev/capture-command-output.mjs"
   cp \
+    "$root/tools/dev/clean-package-lib.mjs" \
+    "$scratch_root/tools/dev/clean-package-lib.mjs"
+  cp \
     "$root/tools/policy/source-fetch-core.mjs" \
     "$scratch_root/tools/policy/source-fetch-core.mjs"
   cp \
@@ -365,11 +368,47 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
+for removed in \
+  "$package_dir/lib/commonjs/benchmark.js" \
+  "$package_dir/lib/commonjs/mobileExtensionProof.js" \
+  "$package_dir/lib/commonjs/smoke.js" \
+  "$package_dir/lib/module/benchmark.js" \
+  "$package_dir/lib/module/mobileExtensionProof.js" \
+  "$package_dir/lib/module/smoke.js" \
+  "$package_dir/lib/typescript/benchmark.d.ts" \
+  "$package_dir/lib/typescript/mobileExtensionProof.d.ts" \
+  "$package_dir/lib/typescript/smoke.d.ts"
+do
+  if [ -e "$removed" ]; then
+    echo "React Native SDK fresh build retained deleted output $removed" >&2
+    exit 1
+  fi
+done
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
 require_source_text "$package_dir/package.json" '"react-native": "lib/module/index.js"' \
   "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
+node -e "
+const pkg = require(process.argv[1]);
+const expectedExports = ['.', './package.json', './protocol', './query'].sort();
+if (JSON.stringify(Object.keys(pkg.exports || {}).sort()) !== JSON.stringify(expectedExports)) {
+  throw new Error('React Native SDK exports do not match its deliberate public surface');
+}
+for (const name of ['protocol', 'query']) {
+  const entry = pkg.exports['./' + name];
+  const expected = {
+    types: './lib/typescript/' + name + '.d.ts',
+    'react-native': './lib/module/' + name + '.js',
+    import: './lib/module/' + name + '.js',
+    require: './lib/commonjs/' + name + '.js',
+    default: './lib/module/' + name + '.js',
+  };
+  if (JSON.stringify(entry) !== JSON.stringify(expected)) {
+    throw new Error('React Native SDK ' + name + ' subpath is not exact');
+  }
+}
+" "$package_dir/package.json"
 require_source_text "$package_dir/OliphauntReactNative.podspec" 's.dependency "Oliphaunt", native_sdk_version' \
   "React Native iOS package must consume the published Swift SDK pod instead of vendoring Swift sources"
 require_source_text "$package_dir/package.json" '"tools/verify-ios-package.mjs"' \
@@ -538,10 +577,14 @@ for required in \
   "tools/verify-ios-package.mjs" \
   "lib/commonjs/index.js" \
   "lib/commonjs/protocol.js" \
+  "lib/commonjs/query.js" \
   "lib/module/index.js" \
   "lib/module/protocol.js" \
+  "lib/module/query.js" \
   "lib/typescript/index.d.ts" \
   "lib/typescript/client.d.ts" \
+  "lib/typescript/protocol.d.ts" \
+  "lib/typescript/query.d.ts" \
   "src/generated/extensions.ts" \
   "lib/typescript/specs/NativeOliphaunt.d.ts"
 do

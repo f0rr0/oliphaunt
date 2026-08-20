@@ -10,6 +10,8 @@ extern "C" {
 
 #define OLIPHAUNT_ABI_VERSION 8u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
+/* The caller already owns liboliphaunt's stable sibling root lease. */
+#define OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK (1ull << 0)
 
 #if defined(_WIN32) && defined(OLIPHAUNT_BUILDING_DLL)
 #define OLIPHAUNT_API __declspec(dllexport)
@@ -69,6 +71,7 @@ typedef struct OliphauntConfig {
     const char *module_dir;
     const char *username;
     const char *database;
+    /* OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK or zero. */
     uint64_t reserved_flags;
     const char *const *startup_args;
     size_t startup_arg_count;

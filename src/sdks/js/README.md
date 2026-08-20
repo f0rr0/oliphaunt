@@ -80,6 +80,12 @@ ordinary PostgreSQL tools available in the application environment:
 logical workflows. `@oliphaunt/ts` neither installs nor locates these client
 tools.
 
+Pass the server's `connectionString` to the standard PostgreSQL tool:
+
+```sh
+pg_basebackup --dbname "$CONNECTION_STRING" --pgdata ./server-backup --wal-method=stream
+```
+
 ## Storage contract
 
 A persistent managed root contains:
