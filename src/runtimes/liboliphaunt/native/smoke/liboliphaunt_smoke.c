@@ -8,11 +8,10 @@
 #include "fmgr.h"
 
 #include "../include/oliphaunt.h"
-#include "../src/liboliphaunt_internal.h"
 #ifdef _WIN32
 #define OLIPHAUNT_PLATFORM_EXTERNAL_POSIX_SHIMS 1
 #endif
-#include "liboliphaunt_platform.h"
+#include "../src/liboliphaunt_internal.h"
 
 #include <stdint.h>
 #include <stdarg.h>

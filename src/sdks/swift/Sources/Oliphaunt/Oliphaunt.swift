@@ -246,14 +246,14 @@ public actor OliphauntDatabase {
 
         let result: T
         do {
-            let begin = try await transaction.execute("BEGIN")
+            let begin = try await executeTransactionControl("BEGIN", token: token)
             guard begin.commandTag == "BEGIN" else {
                 throw OliphauntError.engine("BEGIN returned unexpected command tag \(begin.commandTag ?? "<none>")")
             }
             result = try await body(transaction)
         } catch {
             do {
-                let rollback = try await transaction.execute("ROLLBACK")
+                let rollback = try await executeTransactionControl("ROLLBACK", token: token)
                 guard rollback.commandTag == "ROLLBACK" else {
                     throw OliphauntError.engine(
                         "ROLLBACK returned unexpected command tag \(rollback.commandTag ?? "<none>")"
@@ -268,7 +268,7 @@ public actor OliphauntDatabase {
 
         let commit: OliphauntCommandResult
         do {
-            commit = try await transaction.execute("COMMIT")
+            commit = try await executeTransactionControl("COMMIT", token: token)
         } catch {
             poisonedMessage = "transaction COMMIT outcome is unknown; close and reopen the database: \(error)"
             activeTransactionToken = nil
@@ -331,6 +331,16 @@ public actor OliphauntDatabase {
         return try await runSessionOperation(transactionToken: transactionToken) {
             try await $0.execProtocolRaw(bytes)
         }
+    }
+
+    private func executeTransactionControl(
+        _ sql: String,
+        token: UInt64
+    ) async throws -> OliphauntCommandResult {
+        let request = try OliphauntProtocol.simpleQuery(sql)
+        return try await parseOliphauntCommandResponse(
+            execProtocolRaw(request, transactionToken: token)
+        )
     }
 
     private func runSessionOperation<T: Sendable>(

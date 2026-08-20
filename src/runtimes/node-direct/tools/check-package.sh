@@ -121,7 +121,8 @@ try {
     else
       echo "Node direct addon syntax check deferred to the product build with pinned headers"
     fi
-    c++ -std=c++17 -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
+    c++ -std=c++17 -DOLIPHAUNT_BUILDING_DLL \
+      -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
       "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   fi
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \

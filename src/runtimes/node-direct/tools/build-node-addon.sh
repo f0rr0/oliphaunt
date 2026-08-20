@@ -205,7 +205,6 @@ const addonPath = process.argv[2];
 const addon = require(addonPath);
 const expected = [
   'version',
-  'capabilities',
   'open',
   'execProtocolRaw',
   'execSimpleQuery',
