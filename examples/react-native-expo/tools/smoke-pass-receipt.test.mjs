@@ -5,11 +5,11 @@ import {
   EXPO_SMOKE_PASS_EVENT_MAX_BYTES,
   EXPO_SMOKE_PASS_TAG,
   serializeExpoSmokePassReceipt,
-} from "../react-native-expo/src/smoke-pass-receipt.ts";
+} from "../src/smoke-pass-receipt.ts";
 import {
   GENERATED_EXTENSION_METADATA,
   GENERATED_EXTENSION_METADATA_SHA256,
-} from "../../src/sdks/react-native/src/generated/extensions.ts";
+} from "../../../src/sdks/react-native/src/generated/extensions.ts";
 
 function platformExtensions() {
   return GENERATED_EXTENSION_METADATA

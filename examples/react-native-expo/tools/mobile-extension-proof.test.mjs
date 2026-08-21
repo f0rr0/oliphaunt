@@ -11,10 +11,10 @@ mock.module("@oliphaunt/react-native", () => ({
 }));
 
 const { runMobileReleaseExtensionProof } = await import(
-  "../react-native-expo/src/mobile-smoke.ts"
+  "../src/mobile-smoke.ts"
 );
 const { serializeExpoSmokePassReceipt } = await import(
-  "../react-native-expo/src/smoke-pass-receipt.ts"
+  "../src/smoke-pass-receipt.ts"
 );
 
 function queryResult(values) {

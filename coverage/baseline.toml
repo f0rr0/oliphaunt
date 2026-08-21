@@ -114,7 +114,7 @@ owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-kotlin.waivers]]
-path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/Oliphaunt.kt"
+path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt"
 reason = "Android app-facing facade binds packaged resources and is covered by Android resource/package tests"
 evidence = "OliphauntAndroidRuntimeAssetsTest and package-shape checks"
 owner = "@oliphaunt/core"
@@ -269,6 +269,7 @@ exclude_globs = [
 per_file_line_threshold = 50.0
 branch_coverage = "advisory"
 function_coverage = "advisory"
+waivers = []
 
 [products.oliphaunt-wasix-ts]
 tool = "vitest-v8"

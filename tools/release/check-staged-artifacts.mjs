@@ -422,26 +422,11 @@ const CARGO_VIRTUAL_PACKAGE_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml.orig",
 ]);
-export const CARGO_SDK_GENERATED_LEGAL_MEMBERS = Object.freeze([
-  "LICENSE",
-  "THIRD_PARTY_NOTICES.md",
-]);
-
-export function cargoPackageMemberContractViolation(
-  actual,
-  listed,
-  { generatedMembers = [] } = {},
-) {
+export function cargoPackageMemberContractViolation(actual, listed) {
   if (new Set(listed).size !== listed.length) {
     return { kind: "listing-duplicate" };
   }
-  const expected = [
-    ...listed.filter((entry) => !CARGO_VIRTUAL_PACKAGE_FILES.has(entry)),
-    ...generatedMembers,
-  ];
-  if (new Set(expected).size !== expected.length) {
-    return { kind: "generated-duplicate" };
-  }
+  const expected = listed.filter((entry) => !CARGO_VIRTUAL_PACKAGE_FILES.has(entry));
   const actualSorted = [...actual].sort(compareText);
   const expectedSorted = [...expected].sort(compareText);
   if (JSON.stringify(actualSorted) !== JSON.stringify(expectedSorted)) {
@@ -455,7 +440,6 @@ function requireCrateMatchesCargoListing(
   listing,
   packageName,
   packageVersion,
-  { generatedMembers = [] } = {},
 ) {
   if (!isFile(listing)) {
     fail(`missing Cargo package listing: ${rel(listing)}`);
@@ -471,12 +455,9 @@ function requireCrateMatchesCargoListing(
     }
     return entry.slice(prefix.length);
   });
-  const violation = cargoPackageMemberContractViolation(actual, listed, { generatedMembers });
+  const violation = cargoPackageMemberContractViolation(actual, listed);
   if (violation?.kind === "listing-duplicate") {
     fail(`${rel(listing)} repeats a Cargo package entry`);
-  }
-  if (violation?.kind === "generated-duplicate") {
-    fail(`${rel(listing)} and its generated-member contract repeat a Cargo package entry`);
   }
   if (violation?.kind === "mismatch") {
     fail(
@@ -1272,7 +1253,6 @@ async function checkSdkProduct(product, { require }) {
         path.join(root, "cargo-package-files.txt"),
         "oliphaunt",
         version,
-        { generatedMembers: CARGO_SDK_GENERATED_LEGAL_MEMBERS },
       );
     }
   } else if (product === "oliphaunt-wasix-rust") {
@@ -1289,7 +1269,6 @@ async function checkSdkProduct(product, { require }) {
         path.join(root, "cargo-package-files.txt"),
         "oliphaunt-wasix",
         version,
-        { generatedMembers: CARGO_SDK_GENERATED_LEGAL_MEMBERS },
       );
       checked = true;
     }

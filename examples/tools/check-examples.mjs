@@ -117,11 +117,11 @@ run("bash", ["examples/tools/check-lockfiles.sh", "--check"]);
 run("bash", ["examples/tools/stage-tauri-webdriver-app.test.sh"]);
 run("tools/dev/bun.sh", [
   "test",
-  "examples/tools/react-native-expo-smoke-pass-receipt.test.mjs",
+  "examples/react-native-expo/tools/smoke-pass-receipt.test.mjs",
 ]);
 run("tools/dev/bun.sh", [
   "test",
-  "examples/tools/react-native-expo-mobile-extension-proof.test.mjs",
+  "examples/react-native-expo/tools/mobile-extension-proof.test.mjs",
 ]);
 
 const allowedRootExamples =
@@ -150,8 +150,8 @@ requireFile("examples/tools/tauri-webdriver-smoke.mjs");
 requireFile("examples/tools/run-electron-driver-smoke.sh");
 requireFile("examples/tools/electron-driver-smoke.mjs");
 requireFile("examples/tools/electron-test-driver.mjs");
-requireFile("examples/tools/react-native-expo-smoke-pass-receipt.test.mjs");
-requireFile("examples/tools/react-native-expo-mobile-extension-proof.test.mjs");
+requireFile("examples/react-native-expo/tools/smoke-pass-receipt.test.mjs");
+requireFile("examples/react-native-expo/tools/mobile-extension-proof.test.mjs");
 requireText("examples/tools/run-tauri-webdriver-smoke.sh", String.raw`cargo install tauri-driver --locked --version 2\.0\.6`);
 requireText(
   "examples/tools/run-tauri-webdriver-smoke.sh",
