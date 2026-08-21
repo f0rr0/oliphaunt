@@ -92,7 +92,7 @@ require_jar_entry() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if ! jar tf "$jar_file" | grep -Fxq "$entry"; then
+  if ! jar tf "$jar_file" | grep -Fx "$entry" >/dev/null; then
     echo "$message" >&2
     echo "expected $entry in $jar_file" >&2
     exit 1
@@ -107,7 +107,7 @@ require_jar_entry_pattern() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if ! jar tf "$jar_file" | grep -Eq "$pattern"; then
+  if ! jar tf "$jar_file" | grep -E "$pattern" >/dev/null; then
     echo "$message" >&2
     echo "expected pattern $pattern in $jar_file" >&2
     exit 1
@@ -131,7 +131,7 @@ reject_jar_entry_pattern() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if jar tf "$jar_file" | grep -Eq "$pattern"; then
+  if jar tf "$jar_file" | grep -E "$pattern" >/dev/null; then
     echo "$message" >&2
     echo "unexpected pattern $pattern in $jar_file" >&2
     exit 1
@@ -466,7 +466,7 @@ REPORT
   static_asset_aar="$kotlin_build_dir/outputs/aar/oliphaunt-debug.aar"
   require_jar_entry "$static_asset_aar" "jni/$android_smoke_abi/liboliphaunt.so" \
     "Kotlin Android smoke AAR must include the explicitly supplied liboliphaunt runtime for $android_smoke_abi"
-  if jar tf "$static_asset_aar" | grep -Fq "assets/oliphaunt/static-registry/archives/"; then
+  if jar tf "$static_asset_aar" | grep -F "assets/oliphaunt/static-registry/archives/" >/dev/null; then
     echo "Kotlin Android AAR included build-only static extension archives" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1

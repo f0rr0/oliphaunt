@@ -5,6 +5,7 @@ pub(crate) fn fixture_text(source_relative: &str, packaged_relative: &str) -> St
     let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
         package_root.join("../..").join(source_relative),
+        package_root.join("../..").join("src").join(source_relative),
         package_root.join(packaged_relative),
     ];
     for candidate in &candidates {
@@ -20,4 +21,13 @@ pub(crate) fn fixture_text(source_relative: &str, packaged_relative: &str) -> St
             .collect::<Vec<_>>()
             .join(", ")
     );
+}
+
+#[test]
+fn resolves_the_canonical_postgis_fixture_from_every_test_harness() {
+    let fixture = fixture_text(
+        "extensions/external/postgis/tests/smoke.sql",
+        "tests/fixtures/postgis-smoke.sql",
+    );
+    assert!(fixture.contains("CREATE TEMP TABLE liboliphaunt_postgis_points"));
 }

@@ -30,6 +30,19 @@ unset WASMER_BIN
 
 source "$project_root/lib/common.sh"
 
+original_work_root="$FRESH_WORK_ROOT"
+original_baseline_dir="$BASELINE_DIR"
+mkdir -p "$(fresh_managed_generated_root)"
+FRESH_WORK_ROOT="$(mktemp -d "$(fresh_managed_generated_root)/common-lock.XXXXXX")"
+BASELINE_DIR="$FRESH_WORK_ROOT/sources/postgresql-$POSTGRES_VERSION"
+fresh_lock_postgres_baseline exclusive
+[ -f "$FRESH_WORK_ROOT/baseline-locks/postgres-baseline.lock" ]
+fresh_unlock_postgres_baseline
+[ -z "${FRESH_POSTGRES_BASELINE_LOCK_FD:-}" ]
+rm -rf -- "$FRESH_WORK_ROOT"
+FRESH_WORK_ROOT="$original_work_root"
+BASELINE_DIR="$original_baseline_dir"
+
 [ "$(fresh_release_target_for_host_arch linux-arm64)" = "linux-arm64-gnu" ]
 [ "$(fresh_release_target_for_host_arch linux-amd64)" = "linux-x64-gnu" ]
 [ "$(fresh_release_target_for_host_arch darwin-arm64)" = "macos-arm64" ]

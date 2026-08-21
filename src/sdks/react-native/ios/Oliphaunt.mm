@@ -540,7 +540,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
       }
       resolve(handle);
     }];
-  }];
+  });
 }
 
 - (void)execProtocolRawDataForJsi:(double)handle

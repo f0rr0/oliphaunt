@@ -1147,7 +1147,7 @@ REPORT
   kotlin_aar="$kotlin_build_dir/outputs/aar/oliphaunt-debug.aar"
   asset_aar="$aar"
   if [ -f "$kotlin_aar" ] &&
-    jar tf "$kotlin_aar" | grep -Fxq "assets/oliphaunt/runtime/manifest.properties"; then
+    jar tf "$kotlin_aar" | grep -Fx "assets/oliphaunt/runtime/manifest.properties" >/dev/null; then
     asset_aar="$kotlin_aar"
   fi
   for required_asset in \
@@ -1161,23 +1161,23 @@ REPORT
     "assets/oliphaunt/template-pgdata/manifest.properties" \
     "assets/oliphaunt/template-pgdata/files/PG_VERSION"
   do
-    if ! jar tf "$asset_aar" | grep -Fxq "$required_asset"; then
+    if ! jar tf "$asset_aar" | grep -Fx "$required_asset" >/dev/null; then
       echo "Android AAR did not include generated asset $required_asset" >&2
       rm -rf "$tmp_assets" "$tmp_static_jni"
       exit 1
     fi
   done
-  if jar tf "$asset_aar" | grep -Fxq "assets/oliphaunt/runtime/files/share/postgresql/extension/hstore.control"; then
+  if jar tf "$asset_aar" | grep -Fx "assets/oliphaunt/runtime/files/share/postgresql/extension/hstore.control" >/dev/null; then
     echo "Android AAR included unselected hstore extension control file" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if jar tf "$asset_aar" | grep -Eq 'assets/oliphaunt/runtime/files/(lib/postgresql/auto_explain[.]so|share/postgresql/extension/auto_explain[.](control|sql))'; then
+  if jar tf "$asset_aar" | grep -E 'assets/oliphaunt/runtime/files/(lib/postgresql/auto_explain[.]so|share/postgresql/extension/auto_explain[.](control|sql))' >/dev/null; then
     echo "Android AAR incorrectly included dynamic or CREATE EXTENSION files for module-only auto_explain" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if jar tf "$asset_aar" | grep -Fq "assets/oliphaunt/static-registry/archives/"; then
+  if jar tf "$asset_aar" | grep -F "assets/oliphaunt/static-registry/archives/" >/dev/null; then
     echo "Android AAR included build-only static extension archives" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
