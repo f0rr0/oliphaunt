@@ -14,11 +14,8 @@ pub enum Error {
     Engine(String),
     /// PostgreSQL returned an ErrorResponse.
     Postgres(Box<PostgresError>),
-    /// A session pin is already active, so unpinned work would violate session
-    /// isolation.
-    SessionPinned,
-    /// A session pin token no longer owns the physical session.
-    InvalidSessionPin,
+    /// A transaction is active, so work must use its transaction handle.
+    TransactionActive,
     /// A configuration value was invalid.
     InvalidConfig(String),
 }
@@ -29,11 +26,8 @@ impl fmt::Display for Error {
             Self::EngineStopped => f.write_str("native engine executor has stopped"),
             Self::Engine(message) => f.write_str(message),
             Self::Postgres(error) => error.fmt(f),
-            Self::SessionPinned => {
-                f.write_str("physical session is pinned; use the active SessionPin")
-            }
-            Self::InvalidSessionPin => {
-                f.write_str("session pin is not active for this physical session")
+            Self::TransactionActive => {
+                f.write_str("a transaction is active; use the active transaction handle")
             }
             Self::InvalidConfig(message) => f.write_str(message),
         }

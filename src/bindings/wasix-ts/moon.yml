@@ -34,6 +34,7 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/shared/js-core/**/*"
       - "/src/bindings/wasix-ts/**/*"
+      - "/examples/browser-wasix/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -47,6 +48,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/shared/js-core/**/*"
+      - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
@@ -80,6 +82,8 @@ tasks:
       - "oliphaunt-wasix-ts:check"
       - "oliphaunt-wasix-ts:test"
     inputs:
+      - "/LICENSE"
+      - "/THIRD_PARTY_NOTICES.md"
       - "/package.json"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
@@ -88,6 +92,8 @@ tasks:
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
+    outputs:
+      - "/src/bindings/wasix-ts/lib/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -17,7 +17,7 @@ cd "$root"
 . "$root/src/sdks/react-native/tools/expo-runner-ios-device.sh"
 . "$root/src/sdks/react-native/tools/expo-runner-ios-installed-app.sh"
 
-source_example_dir="$root/src/sdks/react-native/examples/expo"
+source_example_dir="$root/examples/react-native-expo"
 rn_dir="$root/src/sdks/react-native"
 mobile_platform="ios"
 scratch_workspace_name="oliphaunt-react-native-expo-ios-workspace"
@@ -40,7 +40,7 @@ elif [ "$runner" = "crash" ]; then
   failure_tag="OLIPHAUNT_EXPO_CRASH_RECOVERY_FAIL"
 fi
 scratch_root="${OLIPHAUNT_EXPO_IOS_SCRATCH:-$root/target/oliphaunt-expo-ios-$runner}"
-example_dir="${OLIPHAUNT_EXPO_IOS_EXAMPLE_DIR:-$scratch_root/src/sdks/react-native/examples/expo}"
+example_dir="${OLIPHAUNT_EXPO_IOS_EXAMPLE_DIR:-$scratch_root/examples/react-native-expo}"
 crash_storage_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
 [ -n "$crash_storage_suffix" ] || crash_storage_suffix="run"
 package_work="$scratch_root/src/sdks/react-native"

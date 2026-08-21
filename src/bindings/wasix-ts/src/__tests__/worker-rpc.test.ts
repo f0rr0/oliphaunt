@@ -26,7 +26,11 @@ describe('WASIX worker RPC', () => {
   it('rejects every pending and later request with one fatal worker error', async () => {
     const port = new FakeWorkerPort();
     const rpc = new WorkerRpc(port);
-    const first = rpc.request({ method: 'exec', input: Uint8Array.of(1), persistence: 'sync' });
+    const first = rpc.request({
+      method: 'exec',
+      input: Uint8Array.of(1),
+      persistence: 'sync',
+    });
     const second = rpc.request({ method: 'sync', boundary: 'checkpoint' });
     const failure = new Error('worker exited unexpectedly');
     const firstRejection = expect(first).rejects.toBe(failure);
@@ -59,7 +63,12 @@ describe('WASIX worker RPC', () => {
     );
 
     await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
-    await dispatch({ id: 2, method: 'exec', input: Uint8Array.of(0), persistence: 'defer' });
+    await dispatch({
+      id: 2,
+      method: 'exec',
+      input: Uint8Array.of(0),
+      persistence: 'defer',
+    });
     await dispatch({ id: 3, method: 'sync', boundary: 'operation' });
 
     expect(events).toEqual(['exec:defer', 'sync:operation']);
@@ -86,7 +95,12 @@ describe('WASIX worker RPC', () => {
       (response) => responses.push(response),
     );
 
-    await dispatch({ id: 1, method: 'exec', input: Uint8Array.of(1), persistence: 'sync' });
+    await dispatch({
+      id: 1,
+      method: 'exec',
+      input: Uint8Array.of(1),
+      persistence: 'sync',
+    });
     await dispatch({ id: 2, method: 'open', options: workerOpenOptions() });
     await dispatch({ id: 3, method: 'open', options: workerOpenOptions() });
     await dispatch({ id: 4, method: 'backup' });
@@ -142,7 +156,11 @@ describe('WASIX worker RPC', () => {
     });
 
     await expect(
-      rpc.request({ method: 'exec', input: Uint8Array.of(1), persistence: 'sync' }),
+      rpc.request({
+        method: 'exec',
+        input: Uint8Array.of(1),
+        persistence: 'sync',
+      }),
     ).rejects.toThrow('post failed');
     await expect(rpc.terminate()).rejects.toThrow('termination failed');
     listeners.fatal?.(new Error('late fatal event'));
@@ -174,7 +192,11 @@ describe('WASIX worker RPC', () => {
     const backup = database.backup();
     const backupRequest = await postedRequest(port, 2);
     expect(backupRequest.method).toBe('backup');
-    port.respond({ id: backupRequest.id, ok: true, value: Uint8Array.of(5, 6) });
+    port.respond({
+      id: backupRequest.id,
+      ok: true,
+      value: Uint8Array.of(5, 6),
+    });
     const sync = await postedRequest(port, 3);
     expect(sync).toMatchObject({ method: 'sync', boundary: 'operation' });
     port.respond({ id: sync.id, ok: true });

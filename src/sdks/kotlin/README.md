@@ -1,8 +1,8 @@
 # Oliphaunt Kotlin SDK
 
 Oliphaunt embeds PostgreSQL 18 behind a small coroutine-native Android API. The
-Kotlin Multiplatform internals also compile on JVM and selected native hosts for
-shared contract qualification, but Android is the published application facade.
+common implementation is also compiled and tested on the JVM, but Android is
+the only supported and published application facade.
 
 ## Android setup
 
@@ -59,8 +59,9 @@ PostgreSQL. Parameters are explicit `QueryParam` values. SQL failures expose
 structured `PostgresError` through `PostgresException`.
 
 The database also provides callback `transaction`, `checkpoint`, out-of-band
-`cancel`, buffered `execProtocolRaw`, byte `backup`, and idempotent `close`.
-There is no generic stream or public protocol parser.
+`cancel`, buffered `execProtocolRaw`, callback `execProtocolStream`, byte
+`backup`, and idempotent `close`. The stream contains raw PostgreSQL backend
+frames; there is no separate public protocol parser.
 
 Transactions pin the single physical session. Callback failure rolls back; a
 failed rollback poisons the handle. COMMIT uncertainty is never followed by a
@@ -91,6 +92,5 @@ size reports remain internal build concerns.
 ## Local checks
 
 Run `./gradlew :oliphaunt:jvmTest :oliphaunt:testDebugUnitTest` with
-`ANDROID_HOME` configured. On supported hosts the SDK check also compiles and
-tests its Kotlin/Native adapter. Native integration tests use an explicitly
-built `LIBOLIPHAUNT_PATH` and `OLIPHAUNT_INSTALL_DIR`.
+`ANDROID_HOME` configured. Android runtime smoke tests use explicitly packaged
+runtime resources and JNI libraries.

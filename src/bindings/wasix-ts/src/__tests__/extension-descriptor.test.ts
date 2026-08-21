@@ -31,8 +31,12 @@ describe('WASIX extension descriptors', () => {
   });
 
   it('deduplicates immutable carrier identities shared by imported roots', () => {
-    const sharedFromFirst = carrier('shared', { source: '/first/shared.tar.zst' });
-    const sharedFromSecond = carrier('shared', { source: '/second/shared.tar.zst' });
+    const sharedFromFirst = carrier('shared', {
+      source: '/first/shared.tar.zst',
+    });
+    const sharedFromSecond = carrier('shared', {
+      source: '/second/shared.tar.zst',
+    });
     const first = extension('first', [
       carrier('first', { install: install('first', ['shared']) }),
       sharedFromFirst,
@@ -73,13 +77,19 @@ describe('WASIX extension descriptors', () => {
   it('rejects malformed or non-WASIX descriptors at the runtime boundary', () => {
     expect(() =>
       serializeWasixExtensionDescriptors([
-        { ...descriptorInput('pgtap'), runtime: 'native' } as unknown as WasixExtensionDescriptor,
+        {
+          ...descriptorInput('pgtap'),
+          runtime: 'native',
+        } as unknown as WasixExtensionDescriptor,
       ]),
     ).toThrow("must target runtime 'wasix'");
 
     expect(() =>
       serializeWasixExtensionDescriptors([
-        { ...descriptorInput('pgtap'), surprise: true } as unknown as WasixExtensionDescriptor,
+        {
+          ...descriptorInput('pgtap'),
+          surprise: true,
+        } as unknown as WasixExtensionDescriptor,
       ]),
     ).toThrow('fields must be exactly');
 
@@ -100,7 +110,12 @@ describe('WASIX extension descriptors', () => {
     expect(() =>
       defineWasixExtension({
         ...descriptorInput('pgtap'),
-        carriers: [carrier('pgtap', { size: 101, source: Uint8Array.from({ length: 100 }) })],
+        carriers: [
+          carrier('pgtap', {
+            size: 101,
+            source: Uint8Array.from({ length: 100 }),
+          }),
+        ],
       }),
     ).toThrow('byte length must match declared carrier size 101');
 
@@ -133,7 +148,9 @@ describe('WASIX extension descriptors', () => {
       defineWasixExtension({
         ...descriptorInput('pgtap'),
         carriers: [
-          carrier('pgtap', { install: missingCreateSchema as unknown as WasixExtensionInstall }),
+          carrier('pgtap', {
+            install: missingCreateSchema as unknown as WasixExtensionInstall,
+          }),
         ],
       }),
     ).toThrow('lifecycle fields must be exactly');

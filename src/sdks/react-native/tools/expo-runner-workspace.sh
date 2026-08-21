@@ -242,14 +242,14 @@ JSON
     --source "$root/pnpm-workspace.yaml" \
     --output "$scratch_root/pnpm-workspace.yaml" \
     --package "src/sdks/react-native" \
-    --package "src/sdks/react-native/examples/expo"
+    --package "examples/react-native-expo"
   if [ "$scratch_root/pnpm-lock.yaml" != "$root/pnpm-lock.yaml" ]; then
     cp "$root/pnpm-lock.yaml" "$scratch_root/pnpm-lock.yaml"
   fi
 }
 
 install_expo_example_dependencies() {
-  if [ "$example_dir" = "$scratch_root/src/sdks/react-native/examples/expo" ]; then
+  if [ "$example_dir" = "$scratch_root/examples/react-native-expo" ]; then
     run pnpm --dir "$scratch_root" install --no-frozen-lockfile --prefer-offline --filter react-native-oliphaunt-expo
   else
     run pnpm --dir "$example_dir" install --no-frozen-lockfile --prefer-offline

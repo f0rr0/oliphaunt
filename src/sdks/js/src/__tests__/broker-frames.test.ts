@@ -29,14 +29,24 @@ async function requestFramesRoundTrip(): Promise<void> {
     kind: 'execProtocol',
     bytes: new Uint8Array([1, 2]),
   });
+  assert.deepEqual(decodeBrokerRequest(4, new Uint8Array([3, 4])), {
+    kind: 'execProtocolStream',
+    bytes: new Uint8Array([3, 4]),
+  });
   assert.deepEqual(decodeBrokerRequest(8, new TextEncoder().encode('SELECT 1')), {
     kind: 'execSimpleQuery',
     sql: 'SELECT 1',
   });
-  assert.deepEqual(decodeBrokerRequest(2, new Uint8Array()), { kind: 'checkpoint' });
+  assert.deepEqual(decodeBrokerRequest(2, new Uint8Array()), {
+    kind: 'checkpoint',
+  });
   assert.deepEqual(decodeBrokerRequest(3, new Uint8Array()), { kind: 'close' });
-  assert.deepEqual(decodeBrokerRequest(5, new Uint8Array()), { kind: 'backup' });
-  assert.deepEqual(decodeBrokerRequest(7, new Uint8Array()), { kind: 'cancel' });
+  assert.deepEqual(decodeBrokerRequest(5, new Uint8Array()), {
+    kind: 'backup',
+  });
+  assert.deepEqual(decodeBrokerRequest(7, new Uint8Array()), {
+    kind: 'cancel',
+  });
 }
 
 async function responseFramesRoundTrip(): Promise<void> {
@@ -50,6 +60,12 @@ async function responseFramesRoundTrip(): Promise<void> {
   assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream([error])), {
     kind: 'error',
     message: 'boom',
+  });
+
+  const chunk = encodeBrokerResponse({ kind: 'chunk', bytes: new Uint8Array([7, 8]) });
+  assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream([chunk])), {
+    kind: 'chunk',
+    bytes: new Uint8Array([7, 8]),
   });
 }
 
@@ -71,8 +87,21 @@ async function streamHelpersUseBinaryFrames(): Promise<void> {
     bytes: new Uint8Array([0x51, 0, 0, 0, 4]),
   });
 
+  const streamingRequest = new MemoryDuplexStream();
+  await writeBrokerRequest(streamingRequest, {
+    kind: 'execProtocolStream',
+    bytes: new Uint8Array([0x51]),
+  });
+  assert.deepEqual(await readBrokerRequest(new MemoryDuplexStream(streamingRequest.output)), {
+    kind: 'execProtocolStream',
+    bytes: new Uint8Array([0x51]),
+  });
+
   const responseStream = new MemoryDuplexStream();
-  await writeBrokerResponse(responseStream, { kind: 'ok', bytes: new Uint8Array([0x5a]) });
+  await writeBrokerResponse(responseStream, {
+    kind: 'ok',
+    bytes: new Uint8Array([0x5a]),
+  });
   assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream(responseStream.output)), {
     kind: 'ok',
     bytes: new Uint8Array([0x5a]),

@@ -1601,7 +1601,7 @@ each app to invent its own native-boundary test:
 React Native now has a repeatable real-app Android validation path instead of
 only package-level checks:
 
-- `src/sdks/react-native/examples/expo` is an Expo SDK 56 development-build
+- `examples/react-native-expo` is an Expo SDK 56 development-build
   app pinned to React Native 0.85 and the local packed
   `@oliphaunt/react-native` SDK, and its app smoke now calls the installed
   package runner directly before attaching the example's CRUD/perf workload via
@@ -1615,7 +1615,7 @@ only package-level checks:
 - the smoke generates the ignored Expo `android/` project on demand, so a clean
   checkout does not need committed native project output before app-level
   validation can run;
-- `pnpm --dir src/sdks/react-native/examples/expo run smoke:android` exposes the same
+- `pnpm --dir examples/react-native-expo run smoke:android` exposes the same
   installed-app gate as a named validation lane, and SDK parity checks require
   the harness, docs, example command, and machine-readable pass signal to stay
   present;
@@ -1644,7 +1644,7 @@ Expo MCP tool path:
   packaged resource root or app frameworks when `libraryPath` is not supplied,
   so app developers do not need host-environment library overrides for normal
   packaged builds;
-- `src/sdks/react-native/examples/expo` installs `expo-mcp` and exposes
+- `examples/react-native-expo` installs `expo-mcp` and exposes
   `npm run mcp:start`, which runs
   `EXPO_UNSTABLE_MCP_SERVER=1 expo start --dev-client` for Codex/MCP-driven
   local logs, DevTools, screenshots, and automation.

@@ -24,12 +24,18 @@ describe('WASIX runtime descriptors', () => {
       'fields must be exactly',
     );
     expect(() =>
-      serializeWasixRuntimeDescriptor({ ...descriptor(), product: 'another-runtime' }),
+      serializeWasixRuntimeDescriptor({
+        ...descriptor(),
+        product: 'another-runtime',
+      }),
     ).toThrow("product must be 'liboliphaunt-wasix'");
     expect(() =>
       serializeWasixRuntimeDescriptor({
         ...descriptor(),
-        runtimeArchive: { ...descriptor().runtimeArchive, archive: '../runtime.tar.zst' },
+        runtimeArchive: {
+          ...descriptor().runtimeArchive,
+          archive: '../runtime.tar.zst',
+        },
       }),
     ).toThrow('must be a safe relative asset path');
     expect(() =>

@@ -91,16 +91,16 @@ test("staged iOS evidence and the Expo runner share the Payload CocoaPods file-l
   assert.deepEqual(contract, {
     inputFile: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-input-files.xcfilelist",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-input-files.xcfilelist",
     ),
     outputFile: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-output-files.xcfilelist",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-output-files.xcfilelist",
     ),
     podName: "OliphauntReactNativePayload",
     supportRoot: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload",
     ),
   });
 

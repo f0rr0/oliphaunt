@@ -9,6 +9,7 @@ use fs2::FileExt;
 
 use super::files::{
     copy_directory_tree, directory_is_empty, pgdata_template_copy_mode, remove_file_if_exists,
+    sync_directory, sync_directory_tree,
 };
 use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
@@ -69,7 +70,6 @@ fn initdb_args(runtime_dir: &Path, pgdata: &Path, username: &str) -> Vec<OsStrin
         "-U".into(),
         username.into(),
         "--auth=trust".into(),
-        "--no-sync".into(),
         "--locale-provider=libc".into(),
         "--locale=C".into(),
         "--encoding=UTF8".into(),
@@ -163,7 +163,8 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
                         build_dir.display()
                     ))
                 })
-            });
+            })
+            .and_then(|()| sync_directory_tree(&build_dir));
 
         if let Err(error) = build_result {
             let _ = fs::remove_dir_all(&build_dir);
@@ -184,6 +185,7 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
                 template_dir.display()
             ))
         })?;
+        sync_directory(&cache_root)?;
     }
 
     lock.unlock().map_err(|err| {
@@ -415,7 +417,7 @@ mod tests {
         assert_eq!(args[2], OsStr::new("-U"));
         assert_eq!(args[3], OsStr::new("app_user"));
         assert!(args.iter().any(|arg| arg == OsStr::new("--auth=trust")));
-        assert!(args.iter().any(|arg| arg == OsStr::new("--no-sync")));
+        assert!(!args.iter().any(|arg| arg == OsStr::new("--no-sync")));
         assert!(
             args.iter()
                 .any(|arg| arg == OsStr::new("/runtime/share/postgresql"))

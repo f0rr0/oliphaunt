@@ -18,6 +18,8 @@ pub(crate) mod server;
 pub(crate) mod sql;
 pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 pub(crate) mod transport;
 pub(crate) mod wire;
 

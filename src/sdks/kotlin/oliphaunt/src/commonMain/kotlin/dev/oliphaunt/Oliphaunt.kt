@@ -8,14 +8,14 @@ public data class PostgresStartupGuc(
     val value: String,
 )
 
-public sealed interface DatabaseStorage {
-    public data object TemporaryDirectory : DatabaseStorage
+internal sealed interface EngineStorage {
+    data object TemporaryDirectory : EngineStorage
 
-    public data class Directory(val path: String) : DatabaseStorage
+    data class Directory(val path: String) : EngineStorage
 }
 
-public data class OliphauntConfig(
-    val storage: DatabaseStorage = DatabaseStorage.TemporaryDirectory,
+internal data class EngineConfig(
+    val storage: EngineStorage = EngineStorage.TemporaryDirectory,
     val startupGucs: List<PostgresStartupGuc> = emptyList(),
     val username: String? = null,
     val database: String? = null,
@@ -64,15 +64,15 @@ internal fun validateGeneratedExtensionIds(
         }
     }
 
-internal fun OliphauntConfig.postgresStartupArgs(
+internal fun EngineConfig.postgresStartupArgs(
     sharedPreloadLibraries: Collection<String> = emptyList(),
 ): List<String> = startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
     sharedPreloadLibraries.distinct().sorted().takeIf(List<String>::isNotEmpty)
         ?.let { libraries -> listOf("-c", "shared_preload_libraries=${libraries.joinToString(",")}") }
         .orEmpty()
 
-internal fun validateDatabaseStorage(storage: DatabaseStorage) {
-    if (storage is DatabaseStorage.Directory) {
+internal fun validateDatabaseStorage(storage: EngineStorage) {
+    if (storage is EngineStorage.Directory) {
         validateDirectoryPath(storage.path, "database storage directory")
     }
 }
@@ -98,12 +98,13 @@ internal fun simpleQueryProtocol(sql: String): ByteArray {
 }
 
 internal interface OliphauntEngine {
-    suspend fun open(config: OliphauntConfig): OliphauntSession
+    suspend fun open(config: EngineConfig): OliphauntSession
     suspend fun restore(destination: String, bytes: ByteArray)
 }
 
 internal interface OliphauntSession {
     suspend fun execProtocolRaw(request: ByteArray): ByteArray
+    suspend fun execProtocolStream(request: ByteArray, onChunk: (ByteArray) -> Unit)
     suspend fun backup(): ByteArray
     suspend fun cancel()
     suspend fun close()
@@ -130,6 +131,17 @@ public class OliphauntDatabase private constructor(
         ensureOpen()
         ensureTransactionAccess(null)
         session.execProtocolRaw(request)
+    }
+
+    public suspend fun execProtocolStream(
+        request: ByteArray,
+        onChunk: (ByteArray) -> Unit,
+    ) {
+        executionMutex.withLock {
+            ensureOpen()
+            ensureTransactionAccess(null)
+            session.execProtocolStream(request, onChunk)
+        }
     }
 
     public suspend fun backup(): ByteArray = executionMutex.withLock {
@@ -265,9 +277,21 @@ public class OliphauntDatabase private constructor(
         session.execProtocolRaw(request)
     }
 
+    internal suspend fun execProtocolStream(
+        request: ByteArray,
+        transactionToken: Long,
+        onChunk: (ByteArray) -> Unit,
+    ) {
+        executionMutex.withLock {
+            ensureOpen()
+            ensureTransactionAccess(transactionToken)
+            session.execProtocolStream(request, onChunk)
+        }
+    }
+
     public companion object {
         internal suspend fun open(
-            config: OliphauntConfig,
+            config: EngineConfig,
             engine: OliphauntEngine,
         ): OliphauntDatabase {
             validateDatabaseStorage(config.storage)
@@ -297,4 +321,11 @@ public class OliphauntTransaction internal constructor(
     private val token: Long,
 ) {
     public suspend fun execProtocolRaw(request: ByteArray): ByteArray = database.execProtocolRaw(request, transactionToken = token)
+
+    public suspend fun execProtocolStream(
+        request: ByteArray,
+        onChunk: (ByteArray) -> Unit,
+    ) {
+        database.execProtocolStream(request, transactionToken = token, onChunk = onChunk)
+    }
 }

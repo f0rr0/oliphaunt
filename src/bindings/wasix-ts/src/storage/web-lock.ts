@@ -13,8 +13,11 @@ export async function acquireExclusiveWebLock(
   lockName: string,
   label: string,
 ): Promise<ExclusiveStorageLock> {
-  const locks = (globalThis.navigator as typeof globalThis.navigator & { locks?: WebLockManager })
-    .locks;
+  const locks = (
+    globalThis.navigator as typeof globalThis.navigator & {
+      locks?: WebLockManager;
+    }
+  ).locks;
   if (locks === undefined) {
     throw new WasixStorageError(`${label} requires the browser Web Locks API`, {
       code: 'unavailable',

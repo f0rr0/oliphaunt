@@ -154,7 +154,11 @@ function setRuntimeEnvironment(name: string, value: string): void {
     processEnv[name] = value;
     return;
   }
-  const deno = (globalThis as { Deno?: { env?: { set(name: string, value: string): void } } }).Deno;
+  const deno = (
+    globalThis as {
+      Deno?: { env?: { set(name: string, value: string): void } };
+    }
+  ).Deno;
   if (deno?.env?.set === undefined) {
     throw new Error(
       `cannot set ${name}; this JavaScript runtime does not expose process.env or Deno.env`,

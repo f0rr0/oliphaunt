@@ -38,9 +38,9 @@ directory.
 ## Concurrency and transport
 
 Swift actors and the SDK executor keep database work off the main actor and
-serialize access to the physical session. Typed queries and buffered raw
-protocol calls are public. The low-level C callback stream remains an adapter
-boundary, not a Swift streaming API.
+serialize access to the physical session. Typed queries, buffered raw protocol,
+and callback-streamed raw protocol are public. Swift forwards the native C
+stream callback without inventing a second protocol or COPY parser.
 
 ## Extensions
 

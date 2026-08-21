@@ -5,33 +5,20 @@ import type { SerializedWasixStorage } from './storage.js';
 import type { StoredSnapshot } from './storage-snapshot.js';
 import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './storage.js';
 
-export type WasixStorageCompatibility = Readonly<{
-  schema: 'oliphaunt-wasix-pgdata-compatibility-v1';
-  runtime: Readonly<{
-    product: 'liboliphaunt-wasix';
-    version: string;
-    manifestSha256: string;
-    runtimeArchiveSha256: string;
-    pgdataTemplateSha256: string;
-    moduleSha256: string;
-    postgresVersion: string;
-  }>;
-  extensions: readonly Readonly<{
-    sqlName: string;
-    product: string;
-    version: string;
-    archiveSha256: string;
-    installContract: string;
-  }>[];
-}>;
-
 /** Stable fields that determine whether a WASIX runtime may open stored PGDATA. */
-export type WasixStorageCompatibilityKey = Readonly<{
+export type WasixPhysicalIdentity = Readonly<{
   schema: 'oliphaunt-physical-format-v1';
   engineFamily: 'wasix';
   postgresMajor: number;
   physicalFormat: string;
 }>;
+
+export const WASIX_PHYSICAL_IDENTITY: WasixPhysicalIdentity = Object.freeze({
+  schema: 'oliphaunt-physical-format-v1',
+  engineFamily: 'wasix',
+  postgresMajor: DATABASE_ROOT_POSTGRES_MAJOR,
+  physicalFormat: WASIX_PHYSICAL_FORMAT,
+});
 
 export type StorageDirectoryEntry = Readonly<{
   type: 'dir' | 'file' | 'unknown';
@@ -63,14 +50,14 @@ export type WasixStorageLease = {
 export type NodeDirectoryStorageAcquirer = (
   path: string,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   ownerToken?: string,
 ) => Promise<WasixStorageLease>;
 
 export type NodeDirectoryStorageRestorer = (
   path: string,
   snapshot: StoredSnapshot,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ) => Promise<void>;
 
 let acquireNodeDirectory: NodeDirectoryStorageAcquirer | undefined;
@@ -90,7 +77,7 @@ export function installNodeDirectoryStorageRestorer(restore: NodeDirectoryStorag
 export async function restoreWasixStorage(
   storage: SerializedWasixStorage,
   snapshot: StoredSnapshot,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<void> {
   switch (storage.kind) {
     case 'memory':
@@ -101,12 +88,12 @@ export async function restoreWasixStorage(
     case 'indexed-db': {
       validateIndexedDbDatabaseName(storage.name);
       const { restoreIndexedDbStorage } = await import('./storage/indexed-db-provider.js');
-      return restoreIndexedDbStorage(storage.name, snapshot, compatibility);
+      return restoreIndexedDbStorage(storage.name, snapshot, identity);
     }
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
       const { restoreOpfsStorage } = await import('./storage/opfs-provider.js');
-      return restoreOpfsStorage(storage.name, snapshot, compatibility);
+      return restoreOpfsStorage(storage.name, snapshot, identity);
     }
     case 'directory':
       if (restoreNodeDirectory === undefined) {
@@ -115,14 +102,14 @@ export async function restoreWasixStorage(
           { code: 'unavailable', commitState: 'unchanged' },
         );
       }
-      return restoreNodeDirectory(storage.path, snapshot, compatibility);
+      return restoreNodeDirectory(storage.path, snapshot, identity);
   }
 }
 
 export async function acquireWasixStorage(
   storage: SerializedWasixStorage,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
   if (storage.schema !== 'oliphaunt-wasix-storage-v1') {
     throw new WasixStorageError('WASIX storage descriptor has an unsupported schema', {
@@ -136,12 +123,12 @@ export async function acquireWasixStorage(
     case 'indexed-db': {
       validateIndexedDbDatabaseName(storage.name);
       const { acquireIndexedDbStorage } = await import('./storage/indexed-db-provider.js');
-      return acquireIndexedDbStorage(storage.name, template, compatibility);
+      return acquireIndexedDbStorage(storage.name, template, identity);
     }
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
       const { acquireOpfsStorage } = await import('./storage/opfs-provider.js');
-      return acquireOpfsStorage(storage.name, template, compatibility);
+      return acquireOpfsStorage(storage.name, template, identity);
     }
     case 'directory':
       if (acquireNodeDirectory === undefined) {
@@ -153,37 +140,30 @@ export async function acquireWasixStorage(
           },
         );
       }
-      return acquireNodeDirectory(storage.path, template, compatibility, storage.ownerToken);
+      return acquireNodeDirectory(storage.path, template, identity, storage.ownerToken);
   }
 }
 
-export function storageCompatibilityKey(
-  compatibility: WasixStorageCompatibility,
-): WasixStorageCompatibilityKey {
+export function assertWasixPhysicalIdentity(
+  identity: WasixPhysicalIdentity,
+): WasixPhysicalIdentity {
   if (
-    compatibility.schema !== 'oliphaunt-wasix-pgdata-compatibility-v1' ||
-    compatibility.runtime.product !== 'liboliphaunt-wasix'
+    identity.schema !== WASIX_PHYSICAL_IDENTITY.schema ||
+    identity.engineFamily !== WASIX_PHYSICAL_IDENTITY.engineFamily ||
+    identity.postgresMajor !== WASIX_PHYSICAL_IDENTITY.postgresMajor ||
+    identity.physicalFormat !== WASIX_PHYSICAL_IDENTITY.physicalFormat
   ) {
-    throw new TypeError('WASIX storage compatibility has an unsupported runtime identity');
+    throw new TypeError('WASIX storage has an unsupported physical identity');
   }
-  const postgresMajor = Number(compatibility.runtime.postgresVersion.split('.')[0] ?? '');
-  if (postgresMajor !== DATABASE_ROOT_POSTGRES_MAJOR) {
-    throw new TypeError('WASIX storage compatibility requires PostgreSQL 18');
-  }
-  return {
-    schema: 'oliphaunt-physical-format-v1',
-    engineFamily: 'wasix',
-    postgresMajor,
-    physicalFormat: WASIX_PHYSICAL_FORMAT,
-  };
+  return identity;
 }
 
-export function storageIsCompatible(stored: unknown, selected: WasixStorageCompatibility): boolean {
-  const storedKey = parseStorageCompatibilityKey(stored);
+export function physicalIdentityMatches(stored: unknown, selected: WasixPhysicalIdentity): boolean {
+  const storedKey = parseWasixPhysicalIdentity(stored);
   if (storedKey === undefined) {
-    throw new TypeError('WASIX storage has malformed physical compatibility metadata');
+    throw new TypeError('WASIX storage has malformed physical identity metadata');
   }
-  const selectedKey = storageCompatibilityKey(selected);
+  const selectedKey = assertWasixPhysicalIdentity(selected);
   return (
     storedKey.schema === selectedKey.schema &&
     storedKey.engineFamily === selectedKey.engineFamily &&
@@ -192,7 +172,7 @@ export function storageIsCompatible(stored: unknown, selected: WasixStorageCompa
   );
 }
 
-function parseStorageCompatibilityKey(value: unknown): WasixStorageCompatibilityKey | undefined {
+function parseWasixPhysicalIdentity(value: unknown): WasixPhysicalIdentity | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const key = value as Record<string, unknown>;
   const keys = Object.keys(key).sort();
@@ -211,11 +191,11 @@ function parseStorageCompatibilityKey(value: unknown): WasixStorageCompatibility
   ) {
     return undefined;
   }
-  return key as WasixStorageCompatibilityKey;
+  return key as WasixPhysicalIdentity;
 }
 
 /** Stable JSON for hashing or comparing JSON-compatible runtime identities. */
-export function canonicalStorageContract(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   const active = new Set<object>();
   const canonicalize = (candidate: unknown): unknown => {
     if (candidate === null || typeof candidate === 'string' || typeof candidate === 'boolean') {
@@ -223,15 +203,15 @@ export function canonicalStorageContract(value: unknown): string {
     }
     if (typeof candidate === 'number') {
       if (!Number.isFinite(candidate)) {
-        throw new TypeError('storage compatibility metadata contains a non-finite number');
+        throw new TypeError('JSON identity contains a non-finite number');
       }
       return candidate;
     }
     if (typeof candidate !== 'object') {
-      throw new TypeError('storage compatibility metadata is not JSON-compatible');
+      throw new TypeError('identity is not JSON-compatible');
     }
     if (active.has(candidate)) {
-      throw new TypeError('storage compatibility metadata contains a cycle');
+      throw new TypeError('identity contains a cycle');
     }
     active.add(candidate);
     try {

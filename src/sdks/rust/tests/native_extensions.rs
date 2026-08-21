@@ -10,6 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oliphaunt::{Extension, Oliphaunt, OliphauntServer, Result};
 
+mod support;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TestMode {
     Direct,
@@ -639,14 +641,20 @@ END $$;
 "#,
         )
         .map(|_| ()),
-        Extension::Postgis => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional postgis coverage",
-            include_str!("fixtures/postgis-smoke.sql"),
-        )
-        .map(|_| ()),
+        Extension::Postgis => {
+            let sql = support::fixture_text(
+                "extensions/external/postgis/tests/smoke.sql",
+                "tests/fixtures/postgis-smoke.sql",
+            );
+            exec_extension_sql(
+                db,
+                mode,
+                extension,
+                "functional postgis coverage",
+                &sql,
+            )
+            .map(|_| ())
+        }
         Extension::UuidOssp => exec_extension_sql(
             db,
             mode,

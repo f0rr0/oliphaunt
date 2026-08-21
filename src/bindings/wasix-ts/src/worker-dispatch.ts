@@ -63,7 +63,11 @@ export function createWorkerSessionDispatcher(
           return;
       }
     } catch (error) {
-      respond({ id: request.id, ok: false, error: serializeWorkerError(error) });
+      respond({
+        id: request.id,
+        ok: false,
+        error: serializeWorkerError(error),
+      });
     }
   };
 }

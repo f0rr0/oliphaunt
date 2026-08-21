@@ -101,7 +101,7 @@ try {
       'exec',
       'vite',
       '--config',
-      'examples/browser/vite.config.ts',
+      resolve(repositoryRoot, 'examples/browser-wasix/vite.config.ts'),
       '--host',
       '127.0.0.1',
       '--port',
@@ -354,10 +354,10 @@ async function toolProvenance(plan) {
     resolve(repositoryRoot, 'tools/perf/wasix-node/plan.mjs'),
     resolve(bindingRoot, 'tools/smoke-browser.mjs'),
     resolve(bindingRoot, 'tools/packed-node-fixture.mjs'),
-    resolve(bindingRoot, 'examples/browser/benchmark.html'),
-    resolve(bindingRoot, 'examples/browser/benchmark.ts'),
-    resolve(bindingRoot, 'examples/browser/pglite-worker.ts'),
-    resolve(bindingRoot, 'examples/browser/vite.config.ts'),
+    resolve(repositoryRoot, 'examples/browser-wasix/benchmark.html'),
+    resolve(repositoryRoot, 'examples/browser-wasix/benchmark.ts'),
+    resolve(repositoryRoot, 'examples/browser-wasix/pglite-worker.ts'),
+    resolve(repositoryRoot, 'examples/browser-wasix/vite.config.ts'),
   ]);
 }
 

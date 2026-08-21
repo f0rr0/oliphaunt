@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { applyOpfsDelta, readOpfsDatabase, restoreOpfsStorage } from '../storage/opfs-provider.js';
-import type { WasixStorageCompatibility } from '../storage-provider.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from '../storage-provider.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -52,18 +52,11 @@ describe('WASIX OPFS storage', () => {
       ],
       deleted: [],
     });
-    await expect(
-      readOpfsDatabase(root.asHandle(), 'todos', {
-        ...compatible(),
-        runtime: { ...compatible().runtime, moduleSha256: '9'.repeat(64) },
-      }),
-    ).resolves.toBeDefined();
-
     const metadataHandle = await root.getFileHandle('.oliphaunt-storage.json');
     const metadata = JSON.parse(await (await metadataHandle.getFile()).text()) as {
-      physicalCompatibility: { physicalFormat: string };
+      physicalIdentity: { physicalFormat: string };
     };
-    metadata.physicalCompatibility.physicalFormat = 'wasix-pg18-v2';
+    metadata.physicalIdentity.physicalFormat = 'wasix-pg18-v2';
     const writable = await metadataHandle.createWritable();
     await writable.write(
       new TextEncoder().encode(JSON.stringify(metadata)) as Uint8Array<ArrayBuffer>,
@@ -75,16 +68,18 @@ describe('WASIX OPFS storage', () => {
     });
   });
 
-  it('classifies malformed compatibility metadata as corrupt', async () => {
+  it('classifies malformed physical identity metadata as corrupt', async () => {
     const root = new FakeDirectory('', []);
-    const metadata = await root.getFileHandle('.oliphaunt-storage.json', { create: true });
+    const metadata = await root.getFileHandle('.oliphaunt-storage.json', {
+      create: true,
+    });
     const writable = await metadata.createWritable();
     await writable.write(
       new TextEncoder().encode(
         JSON.stringify({
           schema: 'oliphaunt-wasix-opfs-v1',
           name: 'todos',
-          physicalCompatibility: 'not-an-object',
+          physicalIdentity: 'not-an-object',
         }),
       ) as Uint8Array<ArrayBuffer>,
     );
@@ -96,9 +91,9 @@ describe('WASIX OPFS storage', () => {
     });
 
     for (const text of [
-      '{"schema":"oliphaunt-wasix-opfs-v1","schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{}}',
-      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{},"unexpected":true}',
-      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalCompatibility":{"schema":"oliphaunt-physical-format-v1","engineFamily":"wasix","postgresMajor":18,"physicalFormat":"wasix-pg18-v1","physicalFormat":"wasix-pg18-v1"}}',
+      '{"schema":"oliphaunt-wasix-opfs-v1","schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalIdentity":{}}',
+      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalIdentity":{},"unexpected":true}',
+      '{"schema":"oliphaunt-wasix-opfs-v1","name":"todos","physicalIdentity":{"schema":"oliphaunt-physical-format-v1","engineFamily":"wasix","postgresMajor":18,"physicalFormat":"wasix-pg18-v1","physicalFormat":"wasix-pg18-v1"}}',
     ]) {
       const replacement = await metadata.createWritable();
       await replacement.write(new TextEncoder().encode(text) as Uint8Array<ArrayBuffer>);
@@ -275,27 +270,18 @@ async function collectFakeKeys(directory: FakeDirectory): Promise<string[]> {
 function webLocks(releaseFailure?: Error): LockManager {
   return {
     async request(_name: string, _options: LockOptions, callback: (lock: Lock | null) => unknown) {
-      const result = await callback({ name: 'test', mode: 'exclusive' } as Lock);
+      const result = await callback({
+        name: 'test',
+        mode: 'exclusive',
+      } as Lock);
       if (releaseFailure !== undefined) throw releaseFailure;
       return result;
     },
   } as LockManager;
 }
 
-function compatible(): WasixStorageCompatibility {
-  return {
-    schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-    runtime: {
-      product: 'liboliphaunt-wasix',
-      version: '0.1.1',
-      manifestSha256: '1'.repeat(64),
-      runtimeArchiveSha256: '2'.repeat(64),
-      pgdataTemplateSha256: '3'.repeat(64),
-      moduleSha256: '4'.repeat(64),
-      postgresVersion: '18.4',
-    },
-    extensions: [],
-  };
+function compatible(): WasixPhysicalIdentity {
+  return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
 function notFound(): DOMException {

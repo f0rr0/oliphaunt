@@ -1,6 +1,16 @@
 import Foundation
 import Oliphaunt
 
+private struct SendableData: @unchecked Sendable {
+    let value: Data
+}
+
+private extension OliphauntDatabase {
+    func reactNativeBackup() async throws -> SendableData {
+        SendableData(value: try await backup())
+    }
+}
+
 @objc(OliphauntAdapterDatabase)
 public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     private static let errorDomain = "dev.oliphaunt.reactnative.ios"
@@ -106,6 +116,26 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         }
     }
 
+    @objc(execProtocolStreamData:onChunk:completion:)
+    public func execProtocolStreamData(
+        _ request: Data,
+        onChunk: @escaping (NSData) -> Void,
+        completion: @escaping (NSError?) -> Void
+    ) {
+        let completionBox = CompletionBox(completion)
+        let chunkBox = CompletionBox(onChunk)
+        Task.detached(priority: .userInitiated) { [database] in
+            do {
+                try await database.execProtocolStream(request) { chunk in
+                    chunkBox.value(chunk as NSData)
+                }
+                completionBox.value(nil)
+            } catch {
+                completionBox.value(Self.nsError(error))
+            }
+        }
+    }
+
     @objc(backupDataWithCompletion:)
     public func backupData(
         completion: @escaping (NSData?, NSError?) -> Void
@@ -113,7 +143,8 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         let completionBox = CompletionBox(completion)
         Task.detached(priority: .userInitiated) { [database] in
             do {
-                completionBox.value(try await database.backup() as NSData, nil)
+                let backup = try await database.reactNativeBackup()
+                completionBox.value(backup.value as NSData, nil)
             } catch {
                 completionBox.value(nil, Self.nsError(error))
             }

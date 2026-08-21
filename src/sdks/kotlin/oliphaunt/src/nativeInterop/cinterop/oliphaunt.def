@@ -1,3 +1,0 @@
-headers = oliphaunt_kotlin_bridge.h
-headerFilter = oliphaunt.h oliphaunt_kotlin_bridge.h
-package = dev.oliphaunt.native.c

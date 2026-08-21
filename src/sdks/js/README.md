@@ -31,6 +31,8 @@ The deliberate public vocabulary is:
   `close`.
 - `execProtocolRaw` as the buffered escape hatch for protocol flows the typed
   helpers cannot represent.
+- `execProtocolStream` for callback delivery of raw backend protocol chunks,
+  including COPY responses, without buffering the complete response.
 - `backup()` returning the one physical backup format as `Uint8Array`.
 - `Oliphaunt.restore(destination, bytes)` for an absent or empty destination.
 - `Oliphaunt.openServer(config)` for the distinct local-server handle.

@@ -7,7 +7,7 @@ if repo_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; th
 else
   repo_root="$(cd "$script_dir/../../.." && pwd)"
 fi
-example_dir="$repo_root/src/sdks/react-native/examples/expo"
+example_dir="$repo_root/examples/react-native-expo"
 
 platform="both"
 plan_only=0

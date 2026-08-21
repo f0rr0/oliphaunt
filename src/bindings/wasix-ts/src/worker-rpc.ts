@@ -26,7 +26,10 @@ export class WorkerRpc {
   readonly #worker: WasixWorkerPort;
   readonly #pending = new Map<
     number,
-    { resolve: (value: Uint8Array | undefined) => void; reject: (error: Error) => void }
+    {
+      resolve: (value: Uint8Array | undefined) => void;
+      reject: (error: Error) => void;
+    }
   >();
   #nextId = 1;
   #fatal: Error | undefined;

@@ -7,10 +7,10 @@ third mobile runtime.
 
 ## Public lifecycle
 
-The public operations are open, query/execute, buffered raw protocol,
-transaction, checkpoint, cancellation, backup, static restore, and close.
-Applications decide how those operations map to foreground/background events.
-There is no background-preparation mode or generic protocol-stream API.
+The public operations are open, query/execute, buffered or callback-streamed raw
+protocol, transaction, checkpoint, cancellation, backup, static restore, and
+close. Applications decide how those operations map to foreground/background
+events. There is no background-preparation mode or SDK-specific COPY object.
 
 Direct close may logically detach the SDK handle while the backend remains
 resident. Generation-guarded native cleanup prevents stale actor, coroutine, or
@@ -33,8 +33,8 @@ PostgreSQL SQL or logical dump/restore, not raw directory copies.
 
 React Native uses TurboModule for typed configuration and handle lifecycle and
 JSI `ArrayBuffer` for raw protocol and archive bytes. The boundary preserves
-typed-array offsets and avoids base64/JSON payload conversion. App-facing raw
-protocol calls are buffered until a dedicated COPY stream design is justified.
+typed-array offsets and avoids base64/JSON payload conversion. Raw protocol can
+return one owned response or deliver response chunks through a callback.
 
 ## Extensions and packaging
 

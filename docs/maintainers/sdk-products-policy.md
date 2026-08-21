@@ -32,11 +32,9 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
   packaged runtime/template resources for iOS and macOS apps.
-- `src/sdks/kotlin/`: Kotlin Multiplatform source/build project with a
-  suspend-first common API, host-native conformance targets, and the Android
-  native-direct JNI engine. The host-native compilations are development and
-  parity evidence only; Maven publication is deliberately limited to the
-  Android consumer surface.
+- `src/sdks/kotlin/`: Android SDK with a suspend-first common implementation,
+  JVM contract tests, and the Android native-direct JNI engine. Maven
+  publication is deliberately limited to the Android consumer surface.
 - `src/sdks/react-native/`: React Native New Architecture package. Its product contract
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.

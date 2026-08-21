@@ -206,6 +206,10 @@ module.exports = {
       globalThis.__oliphauntNodeAddonCalls.push(['execProtocolRaw', handle, Array.from(request)]);
       return request.buffer.slice(request.byteOffset, request.byteOffset + request.byteLength);
     },
+    execProtocolStream(handle, request, onChunk) {
+      globalThis.__oliphauntNodeAddonCalls.push(['execProtocolStream', handle, Array.from(request)]);
+      onChunk(request.slice());
+    },
     execSimpleQuery(handle, sql) {
       globalThis.__oliphauntNodeAddonCalls.push(['execSimpleQuery', handle, sql]);
       return new Uint8Array([90, 0, 0, 0, 5, 73]);
@@ -255,6 +259,14 @@ module.exports = {
     assert.equal(openConfig?.moduleDirectory, moduleDirectory);
     assert.equal(process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR, callerModuleDirectory);
     assert.deepEqual([...(await binding.execProtocolRaw(handle, new Uint8Array([7, 8])))], [7, 8]);
+    const chunks: Uint8Array[] = [];
+    await binding.execProtocolStream(handle, new Uint8Array([9, 10]), (chunk) =>
+      chunks.push(chunk),
+    );
+    assert.deepEqual(
+      chunks.map((chunk) => [...chunk]),
+      [[9, 10]],
+    );
     const execSimpleQuery = binding.execSimpleQuery;
     assert.ok(execSimpleQuery !== undefined);
     assert.deepEqual([...(await execSimpleQuery(handle, 'SELECT 1'))], [90, 0, 0, 0, 5, 73]);
@@ -267,7 +279,16 @@ module.exports = {
     binding.detach(handle);
     assert.deepEqual(
       calls.map((entry) => entry[0]),
-      ['open', 'execProtocolRaw', 'execSimpleQuery', 'backup', 'restore', 'cancel', 'detach'],
+      [
+        'open',
+        'execProtocolRaw',
+        'execProtocolStream',
+        'execSimpleQuery',
+        'backup',
+        'restore',
+        'cancel',
+        'detach',
+      ],
     );
   } finally {
     if (previousRuntime === undefined) {
@@ -463,7 +484,9 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     await writeFile(join(databaseRoot, 'pgdata', 'PG_VERSION'), '18\n');
     await writeFile(join(databaseRoot, 'pgdata', 'global', 'pg_control'), 'control');
     await publishNativeDescriptor(databaseRoot);
-    await fsMkdir(join(runtime, 'share/postgresql/extension'), { recursive: true });
+    await fsMkdir(join(runtime, 'share/postgresql/extension'), {
+      recursive: true,
+    });
     await fsMkdir(join(runtime, 'lib/postgresql'), { recursive: true });
     await fsMkdir(embeddedModules, { recursive: true });
     await writeFile(join(runtime, 'share/postgresql/extension/hstore.control'), 'extension');
@@ -538,7 +561,9 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
       UnsafePointerView: class {},
     };
 
-    const binding = await createDenoNativeBinding({ libraryPath: join(root, 'liboliphaunt.so') });
+    const binding = await createDenoNativeBinding({
+      libraryPath: join(root, 'liboliphaunt.so'),
+    });
     const handle = await binding.open({
       pgdata: join(databaseRoot, 'pgdata'),
       runtimeDirectory: runtime,
@@ -614,7 +639,9 @@ function fsBackedDenoRuntime(tempRoot: string): unknown {
       return readFile(fsPath(path), 'utf8');
     },
     async *readDir(path: string | URL) {
-      for (const entry of await readdir(fsPath(path), { withFileTypes: true })) {
+      for (const entry of await readdir(fsPath(path), {
+        withFileTypes: true,
+      })) {
         yield {
           name: entry.name,
           isFile: entry.isFile(),

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -6,7 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -42,24 +41,19 @@ impl<T> BrokerTransport for T where T: Read + Write + Send {}
 #[derive(Debug, Clone)]
 pub(crate) struct NativeBrokerRuntime {
     executable: Option<PathBuf>,
-    supervisor: Arc<BrokerSupervisor>,
 }
 
 impl NativeBrokerRuntime {
     /// Create a broker runtime that resolves the broker executable from package
     /// assets.
     pub(crate) fn from_package() -> Self {
-        Self {
-            executable: None,
-            supervisor: Arc::new(BrokerSupervisor::new()),
-        }
+        Self { executable: None }
     }
 
     /// Create a broker runtime from builder/broker configuration.
     pub(crate) fn from_config(config: &NativeBrokerConfig) -> Self {
         Self {
             executable: config.executable.clone(),
-            supervisor: Arc::new(BrokerSupervisor::new()),
         }
     }
 }
@@ -85,9 +79,7 @@ impl NativeRuntime for NativeBrokerRuntime {
             child: None,
             temporary_root,
             ipc_cleanup: None,
-            root_lease: None,
         };
-        open_guard.root_lease = Some(self.supervisor.acquire_root(&root_path)?);
         let endpoint = BrokerEndpoint::allocate()?;
         open_guard.ipc_cleanup = endpoint.cleanup_path();
         let extensions = config.resolved_extensions()?;
@@ -106,7 +98,7 @@ impl NativeRuntime for NativeBrokerRuntime {
             launch.cancel_endpoint,
             launch_plan.auth_token.as_str().to_owned(),
         ));
-        let (child, temporary_root, ipc_cleanup, root_lease) = open_guard.into_session_parts();
+        let (child, temporary_root, ipc_cleanup) = open_guard.into_session_parts();
 
         Ok(Box::new(NativeBrokerSession {
             child: Some(child),
@@ -115,7 +107,6 @@ impl NativeRuntime for NativeBrokerRuntime {
             launch_plan,
             temporary_root,
             ipc_cleanup,
-            root_lease: Some(root_lease),
             closed: false,
         }))
     }
@@ -128,7 +119,6 @@ struct NativeBrokerSession {
     launch_plan: BrokerLaunchPlan,
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
-    root_lease: Option<BrokerRootLease>,
     closed: bool,
 }
 
@@ -150,6 +140,47 @@ impl EngineSession for NativeBrokerSession {
         match self.read_response_or_mark_failed(response)? {
             ResponseFrame::Ok(bytes) => Ok(ProtocolResponse::new(bytes)),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
+            ResponseFrame::Chunk(_) => Err(Error::Engine(
+                "broker returned a stream chunk for buffered protocol execution".to_owned(),
+            )),
+        }
+    }
+
+    fn exec_protocol_stream(
+        &mut self,
+        request: ProtocolRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        {
+            let transport = self.ensure_transport()?;
+            if let Err(error) = write_request(
+                transport,
+                RequestFrame::ExecProtocolStream(request.as_bytes().to_vec()),
+            ) {
+                self.mark_broker_failed();
+                return Err(error);
+            }
+        }
+
+        let mut callback_error = None;
+        loop {
+            let response = {
+                let transport = self.ensure_transport()?;
+                read_response(transport)
+            };
+            match self.read_response_or_mark_failed(response)? {
+                ResponseFrame::Chunk(bytes) => {
+                    if callback_error.is_none()
+                        && let Err(error) = on_chunk(&bytes)
+                    {
+                        callback_error = Some(error);
+                    }
+                }
+                ResponseFrame::Ok(_) => return callback_error.map_or(Ok(()), Err),
+                ResponseFrame::Error(message) => {
+                    return callback_error.map_or(Err(Error::Engine(message)), Err);
+                }
+            }
         }
     }
 
@@ -163,6 +194,9 @@ impl EngineSession for NativeBrokerSession {
         match self.read_response_or_mark_failed(response)? {
             ResponseFrame::Ok(bytes) => Ok(ProtocolResponse::new(bytes)),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
+            ResponseFrame::Chunk(_) => Err(Error::Engine(
+                "broker returned a stream chunk for simple-query execution".to_owned(),
+            )),
         }
     }
 
@@ -174,6 +208,9 @@ impl EngineSession for NativeBrokerSession {
         match self.read_response_or_mark_failed(response)? {
             ResponseFrame::Ok(bytes) => Ok(bytes),
             ResponseFrame::Error(message) => Err(Error::Engine(message)),
+            ResponseFrame::Chunk(_) => Err(Error::Engine(
+                "broker returned a stream chunk for backup".to_owned(),
+            )),
         }
     }
 
@@ -286,6 +323,9 @@ impl EngineCancel for BrokerCancel {
             ResponseFrame::Error(message) => Err(Error::Engine(format!(
                 "native broker cancel failed: {message}"
             ))),
+            ResponseFrame::Chunk(_) => Err(Error::Engine(
+                "native broker cancel endpoint returned a stream chunk".to_owned(),
+            )),
         }
     }
 }
@@ -381,7 +421,6 @@ impl NativeBrokerSession {
         if let Some(path) = self.ipc_cleanup.take() {
             let _ = fs::remove_dir_all(path);
         }
-        drop(self.root_lease.take());
         Ok(())
     }
 }
@@ -396,20 +435,16 @@ struct BrokerOpenGuard {
     child: Option<Child>,
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
-    root_lease: Option<BrokerRootLease>,
 }
 
 impl BrokerOpenGuard {
-    fn into_session_parts(mut self) -> (Child, Option<PathBuf>, Option<PathBuf>, BrokerRootLease) {
+    fn into_session_parts(mut self) -> (Child, Option<PathBuf>, Option<PathBuf>) {
         (
             self.child
                 .take()
                 .expect("broker child exists after successful startup"),
             self.temporary_root.take(),
             self.ipc_cleanup.take(),
-            self.root_lease
-                .take()
-                .expect("broker root lease exists after successful startup"),
         )
     }
 }
@@ -426,7 +461,6 @@ impl Drop for BrokerOpenGuard {
         if let Some(path) = self.ipc_cleanup.take() {
             let _ = fs::remove_dir_all(path);
         }
-        drop(self.root_lease.take());
     }
 }
 
@@ -479,106 +513,6 @@ fn create_temporary_root() -> Result<PathBuf> {
     Err(Error::Engine(
         "failed to allocate a unique temporary broker root".to_owned(),
     ))
-}
-
-#[derive(Debug)]
-struct BrokerSupervisor {
-    roots: Mutex<HashSet<PathBuf>>,
-}
-
-impl BrokerSupervisor {
-    fn new() -> Self {
-        Self {
-            roots: Mutex::new(HashSet::new()),
-        }
-    }
-
-    fn acquire_root(self: &Arc<Self>, root: &Path) -> Result<BrokerRootLease> {
-        let key = broker_root_key(root)?;
-        let mut roots = self
-            .roots
-            .lock()
-            .map_err(|_| Error::Engine("native broker root registry was poisoned".to_owned()))?;
-        if roots.contains(&key) {
-            return Err(Error::Engine(format!(
-                "native broker root {} is already open in this broker runtime",
-                key.display()
-            )));
-        }
-        roots.insert(key.clone());
-        Ok(BrokerRootLease {
-            supervisor: Arc::clone(self),
-            key: Some(key),
-        })
-    }
-
-    fn release_root(&self, key: &Path) {
-        if let Ok(mut roots) = self.roots.lock() {
-            roots.remove(key);
-        }
-    }
-}
-
-#[derive(Debug)]
-struct BrokerRootLease {
-    supervisor: Arc<BrokerSupervisor>,
-    key: Option<PathBuf>,
-}
-
-impl Drop for BrokerRootLease {
-    fn drop(&mut self) {
-        if let Some(key) = self.key.take() {
-            self.supervisor.release_root(&key);
-        }
-    }
-}
-
-fn broker_root_key(path: &Path) -> Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        env::current_dir()
-            .map_err(|err| Error::Engine(format!("resolve broker root current directory: {err}")))?
-            .join(path)
-    };
-    if let Ok(canonical) = absolute.canonicalize() {
-        return Ok(canonical);
-    }
-
-    let mut cursor = absolute.as_path();
-    let mut missing = Vec::<OsString>::new();
-    while let Some(name) = cursor.file_name() {
-        missing.push(name.to_os_string());
-        let Some(parent) = cursor.parent() else {
-            break;
-        };
-        if let Ok(canonical_parent) = parent.canonicalize() {
-            let mut key = canonical_parent;
-            for component in missing.iter().rev() {
-                key.push(component);
-            }
-            return Ok(normalize_path(&key));
-        }
-        cursor = parent;
-    }
-
-    Ok(normalize_path(&absolute))
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    normalized
 }
 
 fn spawn_broker(
@@ -640,6 +574,9 @@ fn authenticate_broker(
         ResponseFrame::Error(message) => Err(Error::Engine(format!(
             "native broker authentication failed: {message}"
         ))),
+        ResponseFrame::Chunk(_) => Err(Error::Engine(
+            "native broker authentication returned a stream chunk".to_owned(),
+        )),
     }
 }
 
@@ -1048,48 +985,7 @@ fn create_temporary_ipc_dir() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
-
-    #[test]
-    fn supervisor_admits_distinct_roots_without_an_artificial_capacity() {
-        let supervisor = Arc::new(BrokerSupervisor::new());
-        let first = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root-a"))
-            .unwrap();
-        let second = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root-b"))
-            .unwrap();
-
-        let third = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root-c"))
-            .unwrap();
-
-        drop(first);
-        let reopened = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-root-a"))
-            .unwrap();
-        drop(reopened);
-        drop(third);
-        drop(second);
-    }
-
-    #[test]
-    fn supervisor_rejects_duplicate_open_roots() {
-        let supervisor = Arc::new(BrokerSupervisor::new());
-        let root =
-            Path::new("target/liboliphaunt-broker-duplicate/../liboliphaunt-broker-duplicate");
-        let _lease = supervisor.acquire_root(root).unwrap();
-
-        let error = supervisor
-            .acquire_root(Path::new("target/liboliphaunt-broker-duplicate"))
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("already open"),
-            "unexpected duplicate-root error: {error}"
-        );
-    }
 
     #[test]
     fn broker_spawn_args_forward_preload_required_extensions_to_helper_before_startup() {

@@ -195,8 +195,9 @@ callback-scoped transactions, `checkpoint`, `cancel`, physical `backup` and
 preserve PostgreSQL command tags; their nullable `rowCount` is derived from the
 `CommandComplete` tag. SQL errors preserve SQLSTATE and PostgreSQL error fields.
 Raw protocol execution remains available for PostgreSQL features without a
-typed API. Streaming stays internal until the SDK has a real COPY API with
-backpressure.
+typed API. `execProtocolRaw` returns one owned response, while
+`execProtocolStream` delivers raw backend protocol chunks to a callback without
+buffering the complete response. Neither API adds a second protocol parser.
 
 Transactions use one physical session and require PostgreSQL's exact `BEGIN`,
 `COMMIT`, and `ROLLBACK` completion tags. A failed rollback poisons the facade:

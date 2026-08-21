@@ -70,6 +70,7 @@ oliphaunt_wasix_cargo_test \
   --test proxy_smoke \
   --test cli_smoke \
   --test extensions_smoke \
+  --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
   # These library tests iterate every catalogued extension through direct,

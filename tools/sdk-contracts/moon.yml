@@ -22,19 +22,30 @@ tasks:
     command: "node tools/policy/generate-sdk-api-surface.mjs --check"
     deps:
       - "sdk-contracts:doc-examples"
+      - "sdk-contracts:fixtures"
       - "sdk-contracts:headers"
       - "sdk-contracts:manifest"
       - "sdk-contracts:native-boundaries"
     inputs:
       - "/docs/maintainers/sdk-api-surface.md"
       - "/src/sdks/js/src/**/*.ts"
-      - "/src/sdks/kotlin/oliphaunt/src/{androidMain,commonMain,jvmMain,nativeMain}/**/*.kt"
+      - "/src/sdks/kotlin/oliphaunt/src/{androidMain,commonMain,jvmMain}/**/*.kt"
       - "/src/sdks/react-native/src/**/*.ts"
       - "/src/sdks/rust/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*.rs"
       - "/src/bindings/wasix-ts/src/**/*.ts"
       - "/tools/policy/generate-sdk-api-surface.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  fixtures:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/check-shared-fixtures.mjs"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/**/*.{json,properties}"
+      - "/tools/policy/check-shared-fixtures.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

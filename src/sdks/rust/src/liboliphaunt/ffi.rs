@@ -46,6 +46,15 @@ pub(super) type NativeHandle = c_void;
 type InitFn = unsafe extern "C" fn(*const NativeConfig, *mut *mut NativeHandle) -> c_int;
 type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
+pub(super) type StreamCallbackFn =
+    unsafe extern "C" fn(*mut c_void, *const c_uchar, usize) -> c_int;
+type ExecProtocolStreamFn = unsafe extern "C" fn(
+    *mut NativeHandle,
+    *const c_uchar,
+    usize,
+    StreamCallbackFn,
+    *mut c_void,
+) -> c_int;
 #[cfg(feature = "broker-helper")]
 type ExecSimpleQueryFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_char, usize, *mut NativeResponse) -> c_int;
@@ -62,6 +71,7 @@ pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
     pub(super) init: InitFn,
     pub(super) exec_protocol: ExecProtocolFn,
+    pub(super) exec_protocol_stream: ExecProtocolStreamFn,
     #[cfg(feature = "broker-helper")]
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
     pub(super) cancel: CancelFn,
@@ -90,6 +100,7 @@ impl NativeSymbols {
         let library = load_native_library(&path)?;
         let init = load_symbol(&library, b"oliphaunt_init\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
+        let exec_protocol_stream = load_symbol(&library, b"oliphaunt_exec_protocol_stream\0")?;
         #[cfg(feature = "broker-helper")]
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
         let cancel = load_symbol(&library, b"oliphaunt_cancel\0")?;
@@ -110,6 +121,7 @@ impl NativeSymbols {
             _library: ManuallyDrop::new(library),
             init,
             exec_protocol,
+            exec_protocol_stream,
             #[cfg(feature = "broker-helper")]
             exec_simple_query,
             cancel,
@@ -194,9 +206,21 @@ fn load_optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
 }
 
 pub(super) fn path_to_cstring(path: &Path, label: &str) -> Result<CString> {
-    let text = path.to_string_lossy();
-    CString::new(text.as_bytes())
-        .map_err(|_| Error::InvalidConfig(format!("{label} contains an interior NUL")))
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| Error::InvalidConfig(format!("{label} contains an interior NUL")))
+    }
+    #[cfg(not(unix))]
+    {
+        let text = path.to_str().ok_or_else(|| {
+            Error::InvalidConfig(format!("{label} is not representable as UTF-8"))
+        })?;
+        CString::new(text)
+            .map_err(|_| Error::InvalidConfig(format!("{label} contains an interior NUL")))
+    }
 }
 
 fn c_string_lossy(ptr: *const c_char) -> Option<String> {

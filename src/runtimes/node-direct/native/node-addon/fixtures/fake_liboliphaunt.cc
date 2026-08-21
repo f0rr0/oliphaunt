@@ -117,6 +117,16 @@ OLIPHAUNT_API int32_t oliphaunt_exec_simple_query(
   return UnsupportedResponse(out);
 }
 
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
+    OliphauntHandle *,
+    const uint8_t *,
+    size_t,
+    OliphauntStreamCallback,
+    void *) {
+  SetError("fake cleanup fixture does not implement protocol streaming");
+  return -1;
+}
+
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *,
     OliphauntResponse *out) {

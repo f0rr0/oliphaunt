@@ -124,10 +124,9 @@ synthetic root:
   `target/oliphaunt-wasix/wasix-build`.
 - `src/sdks/swift` is a normal Swift package for iOS and macOS apps. It owns
   `Oliphaunt`, a C header target, and Swift tests.
-- `src/sdks/kotlin` is a Gradle multi-project Kotlin Multiplatform development
-  build for the Android SDK. It owns the common suspend API, host-native
-  conformance targets, Android wrapper, and Kotlin tests; only its Android
-  AAR/plugin/ABI surfaces are published.
+- `src/sdks/kotlin` is a Gradle multi-project build for the Android SDK. It owns
+  the common suspend implementation, JVM contract tests, Android wrapper, and
+  Android runtime tests; only its Android AAR/plugin/ABI surfaces are published.
 - `src/sdks/react-native` is a React Native New Architecture package. It owns the
   TypeScript DX layer and TurboModule Codegen spec. Platform runtime behavior
   belongs to the Swift and Kotlin SDKs; React Native native code should be

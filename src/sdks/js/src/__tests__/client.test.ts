@@ -7,6 +7,7 @@ import { test } from 'vitest';
 import { createOliphauntClient } from '../client.js';
 import type {
   NativeBinding,
+  NativeBindingOptions,
   NativeHandle,
   NativeOpenConfig,
   NativeRestoreOptions,
@@ -16,7 +17,11 @@ import type {
 test('exposes the minimal database lifecycle and byte backup contract', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-client-'));
   const binding = new FakeBinding();
-  const client = createOliphauntClient(() => binding);
+  const bindingOptions: NativeBindingOptions[] = [];
+  const client = createOliphauntClient((options = {}) => {
+    bindingOptions.push(options);
+    return binding;
+  });
   try {
     const db = await client.open({
       storage: { kind: 'directory', path: root },
@@ -42,6 +47,9 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
     assert.equal(result.commandTag, 'SELECT 1');
     assert.equal(result.rowCount, 1);
     assert.equal(result.rows[0]?.text(0), 'ok');
+    const streamed: Uint8Array[] = [];
+    await db.execProtocolStream(new Uint8Array([0x51]), (chunk) => streamed.push(chunk));
+    assert.equal(streamed.length, 1);
     assert.deepEqual(await db.backup(), new Uint8Array([1, 2, 3]));
     await db.checkpoint();
     await db.cancel();
@@ -50,9 +58,15 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
     assert.equal(binding.detachCalls, 1);
     await assert.rejects(() => db.execute('SELECT 1'), /closed/);
 
-    await client.restore(join(root, 'restored'), new Uint8Array([7, 8]));
+    await client.restore(join(root, 'restored'), new Uint8Array([7, 8]), {
+      libraryPath: '/opt/oliphaunt/liboliphaunt.so',
+    });
     assert.deepEqual(binding.restoreCalls, [
       { destination: join(root, 'restored'), bytes: new Uint8Array([7, 8]) },
+    ]);
+    assert.deepEqual(bindingOptions, [
+      { libraryPath: undefined },
+      { libraryPath: '/opt/oliphaunt/liboliphaunt.so' },
     ]);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -141,6 +155,14 @@ class FakeBinding implements NativeBinding {
     );
   }
 
+  execProtocolStream(
+    handle: NativeHandle,
+    request: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): void {
+    onChunk(this.execProtocolRaw(handle, request));
+  }
+
   execSimpleQuery(_handle: NativeHandle, sql: string): Uint8Array {
     return this.respond(sql);
   }
@@ -222,7 +244,5 @@ function decodeSimpleQuery(request: Uint8Array): string | undefined {
 function decodeExtendedQuery(request: Uint8Array): string | undefined {
   if (request[0] !== 0x50 || request[5] !== 0) return undefined;
   const terminator = request.indexOf(0, 6);
-  return terminator < 0
-    ? undefined
-    : new TextDecoder().decode(request.subarray(6, terminator));
+  return terminator < 0 ? undefined : new TextDecoder().decode(request.subarray(6, terminator));
 }

@@ -26,7 +26,7 @@ internal class AndroidNativeDirectEngine(
 ) : OliphauntEngine {
     private val appContext = context.applicationContext
 
-    override suspend fun open(config: OliphauntConfig): OliphauntSession {
+    override suspend fun open(config: EngineConfig): OliphauntSession {
         validateDatabaseStorage(config.storage)
         validateStartupIdentity(config.username, "username")
         validateStartupIdentity(config.database, "database")
@@ -42,8 +42,8 @@ internal class AndroidNativeDirectEngine(
                 resourceRoot = resourceRoot,
             )
         val storageDirectory = when (val storage = config.storage) {
-            DatabaseStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
-            is DatabaseStorage.Directory -> File(storage.path)
+            EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
+            is EngineStorage.Directory -> File(storage.path)
         }
         if (isAndroidSymbolicLink(storageDirectory)) {
             throw OliphauntException("database storage directory must be a real directory: ${storageDirectory.absolutePath}")
@@ -105,7 +105,7 @@ internal class AndroidNativeDirectEngine(
             // Preparation failures are safe to clean. Once control reaches the
             // process-resident runtime, a rejected logical reopen may leave it
             // owning the same directory.
-            if (config.storage == DatabaseStorage.TemporaryDirectory && !nativeOpenAttempted) {
+            if (config.storage == EngineStorage.TemporaryDirectory && !nativeOpenAttempted) {
                 storageDirectory.deleteRecursively()
             }
             throw error
@@ -386,6 +386,27 @@ private class AndroidNativeDirectSession(
             OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
         } finally {
             endCall()
+        }
+    }
+
+    override suspend fun execProtocolStream(
+        request: ByteArray,
+        onChunk: (ByteArray) -> Unit,
+    ) {
+        withContext(executionDispatcher) {
+            val current = beginCall()
+            try {
+                OliphauntAndroidNativeBridge.execProtocolStreamNative(
+                    current,
+                    request,
+                    OliphauntAndroidProtocolStreamSink { chunk ->
+                        onChunk(chunk)
+                        0
+                    },
+                )
+            } finally {
+                endCall()
+            }
         }
     }
 

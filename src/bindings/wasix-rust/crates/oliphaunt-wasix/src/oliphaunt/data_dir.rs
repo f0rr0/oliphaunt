@@ -1287,7 +1287,10 @@ mod tests {
 
     #[test]
     fn wal_range_matches_shared_vectors() -> Result<()> {
-        let fixture = include_str!("../testdata/physical-backup-wal-range-v1.properties");
+        let fixture = crate::oliphaunt::test_fixtures::text(
+            "storage/physical-backup-wal-range-v1.properties",
+            "physical-backup-wal-range-v1.properties",
+        );
         let values = fixture
             .lines()
             .filter_map(|line| line.split_once('='))
@@ -1959,10 +1962,11 @@ mod tests {
 
     #[test]
     fn physical_archive_manifest_matches_shared_fixture_exactly() {
-        assert_eq!(
-            physical_archive_manifest_text(),
-            include_str!("../testdata/physical-archive-wasix-v1.properties")
+        let fixture = crate::oliphaunt::test_fixtures::text(
+            "storage/physical-archive-wasix-v1.properties",
+            "physical-archive-wasix-v1.properties",
         );
+        assert_eq!(physical_archive_manifest_text(), fixture);
     }
 
     fn test_archive(entries: &[(&str, ArchiveEntryKind, &[u8])]) -> Result<Vec<u8>> {

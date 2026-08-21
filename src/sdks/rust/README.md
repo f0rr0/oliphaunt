@@ -61,8 +61,10 @@ ROLLBACK and the handle must be closed. PostgreSQL's known `COMMIT` → `ROLLBAC
 response remains a recoverable, idle-session error.
 
 For COPY, multi-result responses, or another protocol flow that the typed
-helpers cannot represent, use the buffered `exec_protocol_raw` escape hatch.
-The SDK deliberately does not publish a second parser or streaming abstraction.
+helpers cannot represent, use `exec_protocol_raw` for one owned response or
+`exec_protocol_raw_stream` to consume backend protocol chunks as they arrive.
+The stream is the raw PostgreSQL protocol; the SDK does not publish a second
+parser or a separate COPY-specific abstraction.
 
 ## Physical backup and restore
 

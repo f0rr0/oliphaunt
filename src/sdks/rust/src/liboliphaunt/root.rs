@@ -21,6 +21,7 @@ use crate::config::{EngineMode, OpenConfig};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::storage::DatabaseStorage;
+use files::{sync_directory, sync_directory_tree};
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
@@ -94,15 +95,33 @@ impl PreparedNativeRoot {
             runtime::materialize_runtime(NativeRuntimeProfile::for_mode(config.mode), extensions)?;
         let mut pgdata_cleanup = CreatedPgdataCleanup::new();
         if !initialized {
-            fs::create_dir(&pgdata).map_err(|err| {
-                Error::Engine(format!("create native PGDATA {}: {err}", pgdata.display()))
+            let staging_pgdata = root.join(format!(
+                ".pgdata.tmp-{}-{}",
+                std::process::id(),
+                temporary_file_nonce()?
+            ));
+            fs::create_dir(&staging_pgdata).map_err(|err| {
+                Error::Engine(format!(
+                    "create staged native PGDATA {}: {err}",
+                    staging_pgdata.display()
+                ))
             })?;
-            pgdata_cleanup.arm(pgdata.clone());
+            pgdata_cleanup.arm(staging_pgdata.clone());
             template::bootstrap_pgdata_if_needed(
                 NativeRuntimeProfile::for_mode(config.mode),
                 &runtime_dir,
-                &pgdata,
+                &staging_pgdata,
             )?;
+            sync_directory_tree(&staging_pgdata)?;
+            fs::rename(&staging_pgdata, &pgdata).map_err(|err| {
+                Error::Engine(format!(
+                    "publish native PGDATA {} -> {}: {err}",
+                    staging_pgdata.display(),
+                    pgdata.display()
+                ))
+            })?;
+            pgdata_cleanup.arm(pgdata.clone());
+            sync_directory(&root)?;
             descriptor::publish_native_root_descriptor(&root)?;
         }
 

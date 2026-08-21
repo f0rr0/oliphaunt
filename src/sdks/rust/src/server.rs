@@ -25,6 +25,7 @@ use crate::protocol::{ProtocolRequest, ProtocolResponse};
 const SERVER_HOST: &str = "127.0.0.1";
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 const AUTO_PORT_START_ATTEMPTS: usize = 16;
 
@@ -150,6 +151,17 @@ impl EngineSession for NativeServerSession {
             .exec_protocol_raw(request)
     }
 
+    fn exec_protocol_stream(
+        &mut self,
+        request: ProtocolRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        self.connection
+            .as_mut()
+            .ok_or(Error::EngineStopped)?
+            .exec_protocol_stream(request, on_chunk)
+    }
+
     fn close(&mut self) -> Result<()> {
         self.close_server()
     }
@@ -183,7 +195,7 @@ impl NativeServerSession {
         if pg_ctl.is_file() {
             let mut command = Command::new(&pg_ctl);
             configure_native_tool_env(&mut command, &self.root.runtime_dir);
-            let status = command
+            let stop = command
                 .arg("-D")
                 .arg(&self.root.pgdata)
                 .arg("-m")
@@ -192,35 +204,88 @@ impl NativeServerSession {
                 .arg("stop")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
-            match status {
-                Ok(status) if status.success() => {}
-                Ok(status) => stop_error = Some(format!("pg_ctl stop exited with {status}")),
+                .spawn();
+            match stop {
+                Ok(mut child) => match wait_for_child_exit(&mut child, SHUTDOWN_TIMEOUT) {
+                    Ok(Some(status)) if status.success() => {}
+                    Ok(Some(status)) => {
+                        stop_error = Some(format!("pg_ctl stop exited with {status}"));
+                    }
+                    Ok(None) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        stop_error = Some(format!(
+                            "pg_ctl stop did not finish within {} seconds",
+                            SHUTDOWN_TIMEOUT.as_secs()
+                        ));
+                    }
+                    Err(err) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        stop_error = Some(format!("wait for pg_ctl stop: {err}"));
+                    }
+                },
                 Err(err) => stop_error = Some(format!("run pg_ctl stop: {err}")),
             }
+        } else {
+            stop_error = Some(format!(
+                "native server shutdown requires pg_ctl at {}",
+                pg_ctl.display()
+            ));
         }
 
         if let Some(mut child) = self.child.take() {
-            match child.try_wait() {
+            match wait_for_child_exit(&mut child, SHUTDOWN_TIMEOUT) {
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    if stop_error.is_some() {
-                        let _ = child.kill();
+                    if child.kill().is_err() && stop_error.is_none() {
+                        stop_error =
+                            Some("terminate native server process after timeout".to_owned());
                     }
-                    let _ = child.wait();
+                    if let Err(err) = child.wait()
+                        && stop_error.is_none()
+                    {
+                        stop_error = Some(format!("reap native server process: {err}"));
+                    }
+                    if stop_error.is_none() {
+                        stop_error = Some(format!(
+                            "native server did not stop within {} seconds",
+                            SHUTDOWN_TIMEOUT.as_secs()
+                        ));
+                    }
                 }
                 Err(err) => {
-                    stop_error = Some(format!("wait for native server process: {err}"));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if stop_error.is_none() {
+                        stop_error = Some(format!("wait for native server process: {err}"));
+                    }
                 }
             }
         }
 
+        cleanup_socket_dir(self.socket_dir.as_deref());
+        self.socket_dir = None;
         if let Some(error) = stop_error {
             return Err(Error::Engine(error));
         }
-        cleanup_socket_dir(self.socket_dir.as_deref());
-        self.socket_dir = None;
         Ok(())
+    }
+}
+
+fn wait_for_child_exit(
+    child: &mut Child,
+    timeout: Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }
 

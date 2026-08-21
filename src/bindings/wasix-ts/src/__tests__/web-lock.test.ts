@@ -50,7 +50,10 @@ describe('WASIX Web Lock ownership', () => {
           callback: (lock: Lock | null) => unknown,
         ) {
           expect(name).toBe('database');
-          expect(options).toMatchObject({ mode: 'exclusive', ifAvailable: true });
+          expect(options).toMatchObject({
+            mode: 'exclusive',
+            ifAvailable: true,
+          });
           const result = await callback({ name, mode: 'exclusive' } as Lock);
           releases += 1;
           return result;

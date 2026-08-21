@@ -259,20 +259,31 @@ export async function materializeNodeExtensionInstall(
   await publishRuntimeCache(root, manifest, async (stageRoot) => {
     const stageRuntimeDirectory = join(stageRoot, 'runtime');
     const stageModuleDirectory = join(stageRoot, 'modules');
-    await cp(installRuntimeDirectory, stageRuntimeDirectory, { recursive: true });
+    await cp(installRuntimeDirectory, stageRuntimeDirectory, {
+      recursive: true,
+    });
     await mkdir(stageModuleDirectory, { recursive: true });
     for (const source of nativeModuleDirectoryCandidates(install.libraryPath)) {
       if (await isDirectory(source)) {
-        await cp(source, stageModuleDirectory, { force: true, recursive: true });
+        await cp(source, stageModuleDirectory, {
+          force: true,
+          recursive: true,
+        });
       }
     }
     for (const entry of packages) {
       for (const source of entry.runtimeDirectories) {
-        await cp(source, stageRuntimeDirectory, { force: true, recursive: true });
+        await cp(source, stageRuntimeDirectory, {
+          force: true,
+          recursive: true,
+        });
       }
       for (const source of entry.moduleDirectories) {
         if (await isDirectory(source)) {
-          await cp(source, stageModuleDirectory, { force: true, recursive: true });
+          await cp(source, stageModuleDirectory, {
+            force: true,
+            recursive: true,
+          });
         }
       }
     }
@@ -795,7 +806,9 @@ async function resolveExtensionBundleMember(config: {
   try {
     parsedManifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
   } catch (error) {
-    throw new Error(`${config.packageName} bundle manifest is not valid JSON`, { cause: error });
+    throw new Error(`${config.packageName} bundle manifest is not valid JSON`, {
+      cause: error,
+    });
   }
   if (
     parsedManifest === null ||
@@ -1423,7 +1436,10 @@ async function resolveExtensionTargetPackageJson(
     if (typeof targetMetadata.version !== 'string' || targetMetadata.version.length === 0) {
       throw new Error(`${targetPackageName} package metadata is missing version`);
     }
-    return { packageJsonPath: targetPath, ownerVersion: targetMetadata.version };
+    return {
+      packageJsonPath: targetPath,
+      ownerVersion: targetMetadata.version,
+    };
   }
 
   const packageJson = JSON.parse(

@@ -26,6 +26,8 @@ namespace {
 using InitFn = int32_t (*)(const OliphauntConfig *, OliphauntHandle **);
 using ExecProtocolFn = int32_t (*)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *);
 using ExecSimpleQueryFn = int32_t (*)(OliphauntHandle *, const char *, size_t, OliphauntResponse *);
+using ExecProtocolStreamFn = int32_t (*)(
+    OliphauntHandle *, const uint8_t *, size_t, OliphauntStreamCallback, void *);
 using BackupFn = decltype(&oliphaunt_backup);
 using RestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 using CancelFn = int32_t (*)(OliphauntHandle *);
@@ -49,6 +51,7 @@ struct NativeLibrary {
   InitFn init = nullptr;
   ExecProtocolFn exec_protocol = nullptr;
   ExecSimpleQueryFn exec_simple_query = nullptr;
+  ExecProtocolStreamFn exec_protocol_stream = nullptr;
   BackupFn backup = nullptr;
   RestoreFn restore = nullptr;
   CancelFn cancel = nullptr;
@@ -219,6 +222,8 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
       reinterpret_cast<ExecProtocolFn>(LoadSymbol(env, dynamic, "oliphaunt_exec_protocol"));
   library->exec_simple_query =
       reinterpret_cast<ExecSimpleQueryFn>(LoadSymbol(env, dynamic, "oliphaunt_exec_simple_query"));
+  library->exec_protocol_stream = reinterpret_cast<ExecProtocolStreamFn>(
+      LoadSymbol(env, dynamic, "oliphaunt_exec_protocol_stream"));
   library->backup = reinterpret_cast<BackupFn>(LoadSymbol(env, dynamic, "oliphaunt_backup"));
   library->restore = reinterpret_cast<RestoreFn>(LoadSymbol(env, dynamic, "oliphaunt_restore"));
   library->cancel = reinterpret_cast<CancelFn>(LoadSymbol(env, dynamic, "oliphaunt_cancel"));
@@ -718,6 +723,63 @@ napi_value ExecSimpleQuery(napi_env env, napi_callback_info info) {
       env, args[0], box, AsyncQueryKind::Simple, std::vector<uint8_t>(), std::move(sql));
 }
 
+struct StreamContext {
+  napi_env env;
+  napi_ref callback;
+  std::string error;
+};
+
+int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
+  auto *context = static_cast<StreamContext *>(data);
+  napi_handle_scope scope = nullptr;
+  if (napi_open_handle_scope(context->env, &scope) != napi_ok) {
+    context->error = "open stream callback scope failed";
+    return 1;
+  }
+  napi_value callback = nullptr;
+  napi_get_reference_value(context->env, context->callback, &callback);
+  napi_value global = nullptr;
+  napi_get_global(context->env, &global);
+  napi_value chunk = MakeBytes(context->env, bytes, length);
+  napi_value result = nullptr;
+  napi_status status = napi_call_function(context->env, global, callback, 1, &chunk, &result);
+  napi_close_handle_scope(context->env, scope);
+  if (status != napi_ok) {
+    context->error = "stream callback failed";
+    return 1;
+  }
+  return 0;
+}
+
+napi_value ExecProtocolStream(napi_env env, napi_callback_info info) {
+  auto args = Args(env, info, 3);
+  if (args.empty()) return nullptr;
+  NativeHandleBox *box = GetHandleBox(env, args[0]);
+  if (box == nullptr) return nullptr;
+  std::vector<uint8_t> request = GetBytes(env, args[1]);
+  if (ExceptionPending(env)) return nullptr;
+  StreamContext context = {env, nullptr, {}};
+  if (!Check(env, napi_create_reference(env, args[2], 1, &context.callback),
+             "create stream callback reference")) {
+    return nullptr;
+  }
+  int32_t rc = box->library->exec_protocol_stream(
+      box->handle, request.data(), request.size(), StreamChunk, &context);
+  napi_delete_reference(env, context.callback);
+  if (!context.error.empty()) {
+    Throw(env, context.error);
+    return nullptr;
+  }
+  if (rc != 0) {
+    Throw(env, "native liboliphaunt protocol streaming failed: " +
+                   LastError(box->library.get(), box->handle));
+    return nullptr;
+  }
+  napi_value out = nullptr;
+  Check(env, napi_get_undefined(env, &out), "create undefined");
+  return out;
+}
+
 napi_value Backup(napi_env env, napi_callback_info info) {
   auto args = Args(env, info, 1);
   if (args.empty()) return nullptr;
@@ -811,6 +873,7 @@ napi_value Init(napi_env env, napi_value exports) {
       {"open", nullptr, Open, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"execProtocolRaw", nullptr, ExecProtocolRaw, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"execSimpleQuery", nullptr, ExecSimpleQuery, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"execProtocolStream", nullptr, ExecProtocolStream, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"backup", nullptr, Backup, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"restore", nullptr, Restore, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"cancel", nullptr, Cancel, nullptr, nullptr, nullptr, napi_default, nullptr},

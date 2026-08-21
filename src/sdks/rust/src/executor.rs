@@ -55,7 +55,7 @@ impl EngineExecutor {
                     match command {
                         Command::Exec { request, reply } => {
                             let result = if active_pin.is_some() {
-                                Err(Error::SessionPinned)
+                                Err(Error::TransactionActive)
                             } else {
                                 run_active_work(&owner_active_work, || {
                                     session.exec_protocol_raw(request)
@@ -73,13 +73,42 @@ impl EngineExecutor {
                                     session.exec_protocol_raw(request)
                                 })
                             } else {
-                                Err(Error::InvalidSessionPin)
+                                Err(inactive_transaction_error())
+                            };
+                            reply.send(result);
+                        }
+                        Command::Stream {
+                            request,
+                            mut on_chunk,
+                            reply,
+                        } => {
+                            let result = if active_pin.is_some() {
+                                Err(Error::TransactionActive)
+                            } else {
+                                run_active_work(&owner_active_work, || {
+                                    session.exec_protocol_stream(request, &mut on_chunk)
+                                })
+                            };
+                            reply.send(result);
+                        }
+                        Command::PinnedStream {
+                            token,
+                            request,
+                            mut on_chunk,
+                            reply,
+                        } => {
+                            let result = if active_pin == Some(token) {
+                                run_active_work(&owner_active_work, || {
+                                    session.exec_protocol_stream(request, &mut on_chunk)
+                                })
+                            } else {
+                                Err(inactive_transaction_error())
                             };
                             reply.send(result);
                         }
                         Command::Pin { reply } => {
                             if active_pin.is_some() {
-                                reply.send(Err(Error::SessionPinned));
+                                reply.send(Err(Error::TransactionActive));
                             } else {
                                 let token = next_pin;
                                 next_pin = next_pin.saturating_add(1);
@@ -94,7 +123,7 @@ impl EngineExecutor {
                                 owner_session_pinned.store(false, Ordering::SeqCst);
                                 Ok(())
                             } else {
-                                Err(Error::InvalidSessionPin)
+                                Err(inactive_transaction_error())
                             };
                             if let Some(reply) = reply {
                                 reply.send(result);
@@ -112,7 +141,7 @@ impl EngineExecutor {
                         }
                         Command::Backup { reply } => {
                             let result = if active_pin.is_some() {
-                                Err(Error::SessionPinned)
+                                Err(Error::TransactionActive)
                             } else {
                                 run_active_work(&owner_active_work, || session.backup())
                             };
@@ -122,7 +151,7 @@ impl EngineExecutor {
                             if active_pin.is_some() {
                                 owner_closing.store(false, Ordering::SeqCst);
                                 if let Some(reply) = reply {
-                                    reply.send(Err(Error::SessionPinned));
+                                    reply.send(Err(Error::TransactionActive));
                                 }
                                 continue;
                             }
@@ -209,6 +238,42 @@ impl EngineExecutor {
         receiver.await
     }
 
+    pub(crate) async fn exec_protocol_stream<F>(
+        &self,
+        request: ProtocolRequest,
+        on_chunk: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        let (reply, receiver) = reply::channel();
+        self.send(Command::Stream {
+            request,
+            on_chunk: Box::new(on_chunk),
+            reply,
+        })?;
+        receiver.await
+    }
+
+    pub(crate) async fn pinned_exec_protocol_stream<F>(
+        &self,
+        token: u64,
+        request: ProtocolRequest,
+        on_chunk: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        let (reply, receiver) = reply::channel();
+        self.send(Command::PinnedStream {
+            token,
+            request,
+            on_chunk: Box::new(on_chunk),
+            reply,
+        })?;
+        receiver.await
+    }
+
     pub(crate) async fn pin_session(&self) -> Result<u64> {
         let (reply, receiver) = reply::channel();
         self.send(Command::Pin { reply })?;
@@ -255,7 +320,7 @@ impl EngineExecutor {
                 return Ok(());
             }
             if self.session_pinned.load(Ordering::SeqCst) {
-                return Err(Error::SessionPinned);
+                return Err(Error::TransactionActive);
             }
             self.closing
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -335,6 +400,17 @@ enum Command {
         request: ProtocolRequest,
         reply: reply::Sender<Result<ProtocolResponse>>,
     },
+    Stream {
+        request: ProtocolRequest,
+        on_chunk: Box<dyn FnMut(&[u8]) -> Result<()> + Send>,
+        reply: reply::Sender<Result<()>>,
+    },
+    PinnedStream {
+        token: u64,
+        request: ProtocolRequest,
+        on_chunk: Box<dyn FnMut(&[u8]) -> Result<()> + Send>,
+        reply: reply::Sender<Result<()>>,
+    },
     Pin {
         reply: reply::Sender<Result<u64>>,
     },
@@ -361,13 +437,21 @@ impl Command {
     fn reject_when_closing(&self) -> bool {
         matches!(
             self,
-            Self::Exec { .. } | Self::PinnedExec { .. } | Self::Pin { .. } | Self::Backup { .. }
+            Self::Exec { .. }
+                | Self::PinnedExec { .. }
+                | Self::Stream { .. }
+                | Self::PinnedStream { .. }
+                | Self::Pin { .. }
+                | Self::Backup { .. }
         )
     }
 
     fn reply_engine_stopped(self) {
         match self {
             Self::Exec { reply, .. } | Self::PinnedExec { reply, .. } => {
+                reply.send(Err(Error::EngineStopped));
+            }
+            Self::Stream { reply, .. } | Self::PinnedStream { reply, .. } => {
                 reply.send(Err(Error::EngineStopped));
             }
             Self::Pin { reply } => reply.send(Err(Error::EngineStopped)),
@@ -385,6 +469,10 @@ impl Command {
 fn run_active_work<T>(active_work: &AtomicBool, work: impl FnOnce() -> T) -> T {
     let _guard = ActiveWorkGuard::new(active_work);
     work()
+}
+
+fn inactive_transaction_error() -> Error {
+    Error::Engine("transaction is no longer active".to_owned())
 }
 
 struct ActiveWorkGuard<'a> {

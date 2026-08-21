@@ -21,6 +21,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 const PACKAGE_FIXTURES = Object.freeze([
+  ['src/testdata/postgis-smoke.sql', 'src/extensions/external/postgis/tests/smoke.sql'],
   ['src/testdata/database-root.json', 'src/shared/fixtures/storage/database-root.json'],
   [
     'src/testdata/physical-archive-wasix-v1.properties',
@@ -179,13 +180,22 @@ async function validatePackageFixtures(sourceDir) {
   }
 }
 
+async function stagePackageFixtures(stageDir) {
+  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+    const destination = path.join(stageDir, packageFixture);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(path.join(root, canonicalFixture), destination);
+  }
+}
+
 export async function prepareOliphauntWasixReleaseSource(version) {
   const runtimeVersion = await currentLiboliphauntWasixVersion();
   const registryPackages = await wasixCargoRegistryPackages();
   const sourceDir = path.join(root, 'src/bindings/wasix-rust/crates/oliphaunt-wasix');
   const stageDir = path.join(root, 'target/release/cargo-package-sources/oliphaunt-wasix');
-  await validatePackageFixtures(sourceDir);
   await copySourceTree(sourceDir, stageDir, new Set(['target']));
+  await stagePackageFixtures(stageDir);
+  await validatePackageFixtures(stageDir);
   const cargoToml = path.join(stageDir, 'Cargo.toml');
   const rendered = renderOliphauntWasixReleaseCargoToml(
     await fs.readFile(cargoToml, 'utf8'),

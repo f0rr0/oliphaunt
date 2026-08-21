@@ -60,6 +60,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | 37 | `0037-oliphaunt-wasix-buffer-strong-random.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: buffer strong random |
 | 38 | `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: disable unsupported writeback hints |
 | 39 | `0039-oliphaunt-wasix-inline-sigsetjmp.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: inline sigsetjmp |
+| 40 | `0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: set libpq sockets nonblocking |
 
 ## Changed Upstream Files
 
@@ -107,6 +108,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/include/port/wasix-dl/sys/ipc.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV IPC shim surface. |
 | `src/include/port/wasix-dl/sys/shm.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV shared-memory shim surface. |
 | `src/include/storage/s_lock.h` | `0035-oliphaunt-wasix-use-single-backend-spinlocks.patch` | Specializes spinlocks only for the enforced single-backend WASIX runtime. |
+| `src/interfaces/libpq/fe-connect.c` | `0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch` | Makes libpq socket nonblocking state explicit where WASIX socket creation ignores type flags. |
 | `src/makefiles/Makefile.wasix-dl` | `0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch` | Builds side modules and PGXS artifacts for WASIX dynamic linking. |
 | `src/makefiles/pgxs.mk` | `0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch`, `0039-oliphaunt-wasix-inline-sigsetjmp.patch` | Installs PGXS extension artifacts for WASIX packaging. |
 | `src/port/pg_strong_random.c` | `0037-oliphaunt-wasix-buffer-strong-random.patch` | Batches checked WASI entropy reads for the single-backend runtime. |
@@ -132,6 +134,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | Single-backend strong randomness remains checked and non-repeating | `0037-oliphaunt-wasix-buffer-strong-random.patch` | `defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)`, `getrandom(wasix_strong_random_pool + filled`, `if (errno == EINTR)`, `wasix_strong_random_used += copy_len` | The embedded backend amortizes host entropy calls without changing failure handling or any concurrent PostgreSQL build. |
 | Unsupported writeback hints stay separate from real durability | `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | `#if defined(OLIPHAUNT_WASM_SINGLE_USER)`, `Actual fsync/fdatasync durability remains enabled.`, `#elif defined(HAVE_SYNC_FILE_RANGE)` | The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active. |
 | PostgreSQL side modules own their SJLJ catch frames | `0039-oliphaunt-wasix-inline-sigsetjmp.patch` | `-DOLIPHAUNT_WASM_SIDE_MODULE`, `WebAssembly SJLJ requires setjmp to be visible at the protected call site.`, `defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)`, `#undef sigsetjmp`, `#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))` | PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler. |
+| Standalone WASIX libpq sockets are actually nonblocking | `0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch` | `defined(SOCK_NONBLOCK) && !defined(__wasi__)`, `!defined(SOCK_NONBLOCK) || defined(__wasi__)`, `pg_set_noblock(conn->sock)` | WASIX uses PostgreSQL's existing fcntl fallback because Wasmer ignores socket type flags; native platforms retain upstream atomic socket creation. |
 
 ## PostgreSQL Patch Symbols
 

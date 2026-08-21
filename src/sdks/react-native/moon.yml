@@ -163,7 +163,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    command: "pnpm --dir examples/react-native-expo run smoke"
     deps:
       - "oliphaunt-swift:smoke"
       - "oliphaunt-kotlin:smoke"
@@ -197,7 +197,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-android:
     tags: ["runtime", "smoke", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:android"
+    command: "pnpm --dir examples/react-native-expo run smoke:android"
     deps:
       - "oliphaunt-kotlin:smoke"
     inputs:
@@ -226,7 +226,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-ios:
     tags: ["runtime", "smoke", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:ios"
+    command: "pnpm --dir examples/react-native-expo run smoke:ios"
     deps:
       - "oliphaunt-swift:smoke"
     inputs:
@@ -256,7 +256,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-mobile:
     tags: ["runtime", "smoke", "mobile"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    command: "pnpm --dir examples/react-native-expo run smoke"
     deps:
       - "oliphaunt-swift:smoke"
       - "oliphaunt-kotlin:smoke"
@@ -328,7 +328,7 @@ tasks:
       runInCI: false
   mobile-build-android:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-build:android"
     deps:
       - "oliphaunt-kotlin:package-artifacts"
       - "oliphaunt-react-native:package-artifacts"
@@ -387,14 +387,14 @@ tasks:
       runFromWorkspaceRoot: true
   mobile-e2e-android:
     tags: ["mobile", "e2e", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:android"
     deps:
       - target: "oliphaunt-react-native:mobile-build-android"
         cacheStrategy: "outputs"
     inputs:
-      - "/src/sdks/react-native/examples/expo/src/**/*"
-      - "/src/sdks/react-native/examples/expo/maestro/**/*"
-      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/examples/react-native-expo/src/**/*"
+      - "/examples/react-native-expo/maestro/**/*"
+      - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-runner-common.sh"
       - "/src/sdks/react-native/tools/expo-runner-metro.sh"
@@ -417,7 +417,7 @@ tasks:
       runInCI: skip
   mobile-drill-android:
     tags: ["mobile", "drill", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:android"
     deps:
       - "oliphaunt-kotlin:smoke"
     inputs:
@@ -450,7 +450,7 @@ tasks:
       runInCI: false
   mobile-build-ios:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-build:ios"
     deps:
       - "oliphaunt-swift:package-artifacts"
       - "oliphaunt-react-native:package-artifacts"
@@ -505,14 +505,14 @@ tasks:
       runFromWorkspaceRoot: true
   mobile-e2e-ios:
     tags: ["mobile", "e2e", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:ios"
     deps:
       - target: "oliphaunt-react-native:mobile-build-ios"
         cacheStrategy: "outputs"
     inputs:
-      - "/src/sdks/react-native/examples/expo/src/**/*"
-      - "/src/sdks/react-native/examples/expo/maestro/**/*"
-      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/examples/react-native-expo/src/**/*"
+      - "/examples/react-native-expo/maestro/**/*"
+      - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-runner-common.sh"
       - "/src/sdks/react-native/tools/expo-runner-metro.sh"
@@ -534,7 +534,7 @@ tasks:
       runInCI: skip
   mobile-drill-ios:
     tags: ["mobile", "drill", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:ios"
     deps:
       - "oliphaunt-swift:smoke"
     inputs:

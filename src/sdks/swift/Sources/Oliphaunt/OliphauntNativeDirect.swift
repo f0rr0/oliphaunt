@@ -553,6 +553,13 @@ private actor NativeDirectSession: OliphauntSession {
         try box.execProtocolRaw(bytes)
     }
 
+    func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try box.execProtocolStream(bytes, onChunk: onChunk)
+    }
+
     func backup() async throws -> Data {
         try box.backup()
     }
@@ -602,6 +609,53 @@ private final class NativeSessionBox: @unchecked Sendable {
             return Data()
         }
         return Data(bytes: data, count: response.len)
+    }
+
+    func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) throws {
+        let pointer = try beginCall()
+        defer {
+            endCall()
+        }
+
+        let callbackBox = NativeStreamCallbackBox(onChunk: onChunk)
+        let context = Unmanaged.passUnretained(callbackBox).toOpaque()
+        let rc = bytes.withUnsafeBytes { rawBuffer in
+            let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            return oliphaunt_swift_exec_protocol_stream(
+                pointer,
+                base,
+                bytes.count,
+                { context, data, len in
+                    guard let context else {
+                        return -1
+                    }
+                    let callbackBox = Unmanaged<NativeStreamCallbackBox>
+                        .fromOpaque(context)
+                        .takeUnretainedValue()
+                    do {
+                        if let data, len > 0 {
+                            try callbackBox.onChunk(Data(bytes: data, count: len))
+                        } else {
+                            try callbackBox.onChunk(Data())
+                        }
+                        return 0
+                    } catch {
+                        callbackBox.error = error
+                        return -1
+                    }
+                },
+                context
+            )
+        }
+        if let error = callbackBox.error {
+            throw error
+        }
+        guard rc == 0 else {
+            throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
+        }
     }
 
     func backup() throws -> Data {
@@ -724,6 +778,15 @@ private final class NativeSessionBox: @unchecked Sendable {
         condition.unlock()
     }
 
+}
+
+private final class NativeStreamCallbackBox: @unchecked Sendable {
+    let onChunk: @Sendable (Data) throws -> Void
+    var error: Error?
+
+    init(onChunk: @escaping @Sendable (Data) throws -> Void) {
+        self.onChunk = onChunk
+    }
 }
 
 

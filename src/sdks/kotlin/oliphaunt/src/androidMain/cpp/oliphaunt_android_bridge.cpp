@@ -17,6 +17,12 @@ using OliphauntExecProtocolFn = int32_t (*)(
     const uint8_t *,
     size_t,
     OliphauntResponse *);
+using OliphauntExecProtocolStreamFn = int32_t (*)(
+    OliphauntHandle *,
+    const uint8_t *,
+    size_t,
+    OliphauntStreamCallback,
+    void *);
 using OliphauntCancelFn = int32_t (*)(OliphauntHandle *);
 using OliphauntDetachFn = int32_t (*)(OliphauntHandle *);
 using OliphauntCloseFn = int32_t (*)(OliphauntHandle *);
@@ -32,6 +38,7 @@ struct Symbols {
   bool ownsLibrary = false;
   OliphauntInitFn init = nullptr;
   OliphauntExecProtocolFn execProtocol = nullptr;
+  OliphauntExecProtocolStreamFn execProtocolStream = nullptr;
   OliphauntCancelFn cancel = nullptr;
   OliphauntDetachFn detach = nullptr;
   OliphauntCloseFn close = nullptr;
@@ -46,6 +53,14 @@ struct Session {
   Symbols symbols;
   OliphauntHandle *handle = nullptr;
   char lastError[1024] = {0};
+};
+
+struct StreamContext {
+  JNIEnv *env = nullptr;
+  jobject sink = nullptr;
+  jmethodID onChunk = nullptr;
+  bool failed = false;
+  std::string error;
 };
 
 std::string jniString(JNIEnv *env, jstring value) {
@@ -156,6 +171,7 @@ bool loadSymbols(const std::string &configuredLibraryPath, Symbols *symbols, std
 
   if (!loadSymbol(symbols, "oliphaunt_init", reinterpret_cast<void **>(&symbols->init), error) ||
       !loadSymbol(symbols, "oliphaunt_exec_protocol", reinterpret_cast<void **>(&symbols->execProtocol), error) ||
+      !loadSymbol(symbols, "oliphaunt_exec_protocol_stream", reinterpret_cast<void **>(&symbols->execProtocolStream), error) ||
       !loadSymbol(symbols, "oliphaunt_cancel", reinterpret_cast<void **>(&symbols->cancel), error) ||
       !loadSymbol(symbols, "oliphaunt_detach", reinterpret_cast<void **>(&symbols->detach), error) ||
       !loadSymbol(symbols, "oliphaunt_close", reinterpret_cast<void **>(&symbols->close), error) ||
@@ -226,6 +242,43 @@ bool registerSelectedStaticExtensions(Symbols *symbols, std::string *error) {
 
 Session *sessionFromHandle(jlong handle) {
   return reinterpret_cast<Session *>(static_cast<intptr_t>(handle));
+}
+
+int32_t streamCallback(void *context, const uint8_t *data, size_t len) {
+  auto *stream = static_cast<StreamContext *>(context);
+  if (stream == nullptr || stream->env == nullptr || stream->sink == nullptr || stream->onChunk == nullptr) {
+    return -1;
+  }
+  jbyteArray chunk = stream->env->NewByteArray(static_cast<jsize>(len));
+  if (chunk == nullptr) {
+    stream->failed = true;
+    stream->error = "failed to allocate protocol stream chunk";
+    return -1;
+  }
+  if (len > 0 && data != nullptr) {
+    stream->env->SetByteArrayRegion(
+        chunk,
+        0,
+        static_cast<jsize>(len),
+        reinterpret_cast<const jbyte *>(data));
+    if (stream->env->ExceptionCheck()) {
+      stream->failed = true;
+      stream->env->DeleteLocalRef(chunk);
+      return -1;
+    }
+  }
+  jint rc = stream->env->CallIntMethod(stream->sink, stream->onChunk, chunk);
+  stream->env->DeleteLocalRef(chunk);
+  if (stream->env->ExceptionCheck()) {
+    stream->failed = true;
+    return -1;
+  }
+  if (rc != 0) {
+    stream->failed = true;
+    stream->error = "protocol stream callback failed";
+    return -1;
+  }
+  return 0;
 }
 
 std::string lastError(Session *session) {
@@ -358,6 +411,69 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawNative(
   }
   session->symbols.freeResponse(&response);
   return out;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolStreamNative(
+    JNIEnv *env,
+    jobject,
+    jlong handle,
+    jbyteArray request,
+    jobject sink) {
+  Session *session = sessionFromHandle(handle);
+  if (session == nullptr || session->handle == nullptr) {
+    throwIllegalState(env, "Oliphaunt database is closed");
+    return;
+  }
+  if (request == nullptr) {
+    throwRuntime(env, "request must not be null");
+    return;
+  }
+  if (sink == nullptr) {
+    throwRuntime(env, "stream sink must not be null");
+    return;
+  }
+
+  const jsize requestLength = env->GetArrayLength(request);
+  std::vector<uint8_t> requestBytes(static_cast<size_t>(requestLength));
+  if (requestLength > 0) {
+    env->GetByteArrayRegion(
+        request,
+        0,
+        requestLength,
+        reinterpret_cast<jbyte *>(requestBytes.data()));
+    if (env->ExceptionCheck()) {
+      return;
+    }
+  }
+
+  jclass sinkClass = env->GetObjectClass(sink);
+  if (sinkClass == nullptr) {
+    return;
+  }
+  jmethodID onChunk = env->GetMethodID(sinkClass, "onChunk", "([B)I");
+  env->DeleteLocalRef(sinkClass);
+  if (onChunk == nullptr) {
+    throwRuntime(env, "stream sink is missing onChunk(byte[])");
+    return;
+  }
+
+  StreamContext stream;
+  stream.env = env;
+  stream.sink = sink;
+  stream.onChunk = onChunk;
+  int32_t rc = session->symbols.execProtocolStream(
+      session->handle,
+      requestBytes.empty() ? nullptr : requestBytes.data(),
+      requestBytes.size(),
+      streamCallback,
+      &stream);
+  if (rc != 0) {
+    if (stream.failed && env->ExceptionCheck()) {
+      return;
+    }
+    throwRuntime(env, stream.error.empty() ? lastError(session) : stream.error);
+  }
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

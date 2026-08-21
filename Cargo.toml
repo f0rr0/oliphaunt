@@ -21,7 +21,6 @@ members = [
   "tools/native-packaging",
   "tools/xtask",
 ]
-exclude = ["src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri"]
 resolver = "3"
 
 [workspace.package]

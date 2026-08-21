@@ -9,7 +9,11 @@ import {
   acquireNodeDirectoryStorage,
   restoreNodeDirectoryStorage,
 } from '../storage/node-directory-provider.js';
-import type { StorageDirectory, WasixStorageCompatibility } from '../storage-provider.js';
+import {
+  WASIX_PHYSICAL_IDENTITY,
+  type StorageDirectory,
+  type WasixPhysicalIdentity,
+} from '../storage-provider.js';
 
 const scratch: string[] = [];
 
@@ -64,22 +68,10 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
     expect(await readFile(join(root, '.oliphaunt.json'))).toEqual(descriptor);
   });
 
-  it('uses the stable physical format rather than runtime provenance', async () => {
+  it('rejects physical format mismatches and symbolic links', async () => {
     const root = await temporaryRoot('fail-closed');
     const first = await acquireNodeDirectoryStorage(root, template(), compatible());
     await first.close(pgdataDirectory('complete'), 'clean');
-
-    const provenanceChange = await acquireNodeDirectoryStorage(root, template(), {
-      ...compatible(),
-      runtime: { ...compatible().runtime, runtimeArchiveSha256: '9'.repeat(64) },
-    });
-    await provenanceChange.close(undefined, 'failed');
-
-    const moduleChange = await acquireNodeDirectoryStorage(root, template(), {
-      ...compatible(),
-      runtime: { ...compatible().runtime, moduleSha256: '8'.repeat(64) },
-    });
-    await moduleChange.close(undefined, 'failed');
 
     const descriptorPath = join(root, '.oliphaunt.json');
     const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Record<
@@ -301,20 +293,8 @@ async function temporaryRoot(suffix: string): Promise<string> {
   return join(parent, suffix);
 }
 
-function compatible(): WasixStorageCompatibility {
-  return {
-    schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-    runtime: {
-      product: 'liboliphaunt-wasix',
-      version: '0.1.1',
-      manifestSha256: '1'.repeat(64),
-      runtimeArchiveSha256: '2'.repeat(64),
-      pgdataTemplateSha256: '3'.repeat(64),
-      moduleSha256: '4'.repeat(64),
-      postgresVersion: '18.4',
-    },
-    extensions: [],
-  };
+function compatible(): WasixPhysicalIdentity {
+  return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
 function template() {

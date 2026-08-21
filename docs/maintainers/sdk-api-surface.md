@@ -26,6 +26,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::Oliphaunt.checkpoint()`
 - `oliphaunt::Oliphaunt.close()`
 - `oliphaunt::Oliphaunt.exec_protocol_raw()`
+- `oliphaunt::Oliphaunt.exec_protocol_raw_stream()`
 - `oliphaunt::Oliphaunt.execute()`
 - `oliphaunt::Oliphaunt.execute_with_params()`
 - `oliphaunt::Oliphaunt.query()`
@@ -56,6 +57,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntServer.close()`
 - `oliphaunt::OliphauntServer.connection_string()`
 - `oliphaunt::OliphauntServer.exec_protocol_raw()`
+- `oliphaunt::OliphauntServer.exec_protocol_raw_stream()`
 - `oliphaunt::OliphauntServer.execute()`
 - `oliphaunt::OliphauntServer.execute_with_params()`
 - `oliphaunt::OliphauntServer.query()`
@@ -81,6 +83,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::Result`
 - `oliphaunt::Transaction`
 - `oliphaunt::Transaction.exec_protocol_raw()`
+- `oliphaunt::Transaction.exec_protocol_raw_stream()`
 - `oliphaunt::Transaction.execute()`
 - `oliphaunt::Transaction.execute_with_params()`
 - `oliphaunt::Transaction.query()`
@@ -90,7 +93,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ## Rust build integration: oliphaunt-build
 
-- none
+- `oliphaunt_build::BuildOutput`
+- `oliphaunt_build::Error`
+- `oliphaunt_build::configure()`
+- `oliphaunt_build::try_configure()`
 
 ## Rust WASIX: oliphaunt-wasix
 
@@ -278,6 +284,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.checkpoint()`
 - `OliphauntDatabase.close()`
 - `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
 - `OliphauntDatabase.open()`
 - `OliphauntDatabase.query()`
@@ -322,6 +329,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntStartupGUC.name`
 - `OliphauntStartupGUC.value`
 - `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `actor OliphauntDatabase`
@@ -355,10 +363,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.checkpoint()`
 - `OliphauntDatabase.close()`
 - `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `PostgresException.postgresError`
@@ -370,8 +380,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.text()`
 - `QueryRow.values`
 - `class CommandResult`
-- `class DatabaseStorage.Directory`
-- `class OliphauntConfig`
 - `class OliphauntDatabase`
 - `class OliphauntException`
 - `class OliphauntTransaction`
@@ -387,8 +395,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `class QueryParam.Text`
 - `class QueryResult`
 - `class QueryRow`
-- `interface DatabaseStorage`
-- `object DatabaseStorage.TemporaryDirectory`
 - `object QueryFormat.Binary`
 - `object QueryFormat.Text`
 - `object QueryParam.Null`
@@ -397,13 +403,13 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 - `Oliphaunt.open()`
 - `Oliphaunt.restore()`
+- `class DatabaseStorage.Directory`
+- `class OliphauntConfig`
+- `interface DatabaseStorage`
+- `object DatabaseStorage.TemporaryDirectory`
 - `object Oliphaunt`
 
 ### jvmMain
-
-- none
-
-### nativeMain
 
 - none
 
@@ -460,10 +466,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.checkpoint()`
 - `OliphauntDatabase.close()`
 - `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `OpenConfig.database`
@@ -548,6 +556,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.checkpoint()`
 - `OliphauntDatabase.close()`
 - `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.transaction()`
@@ -557,10 +566,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntServer.close()`
 - `OliphauntServer.connectionString`
 - `OliphauntServer.execProtocolRaw()`
+- `OliphauntServer.execProtocolStream()`
 - `OliphauntServer.execute()`
 - `OliphauntServer.query()`
 - `OliphauntServer.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `OpenConfig.brokerExecutable`
@@ -636,7 +647,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow`
 - `WasixAssetSource`
 - `WasixExtensionDescriptor`
-- `WasixRuntimeDescriptor`
 - `WasixStorage`
 - `WasixStorageCommitState`
 - `WasixStorageErrorCode`
@@ -665,7 +675,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntTransaction.execProtocolRaw()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
-- `OpenConfig.advanced`
 - `OpenConfig.database`
 - `OpenConfig.execution`
 - `OpenConfig.extensions`
@@ -703,13 +712,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryResult.rows`
 - `QueryRow.text()`
 - `QueryRow.values`
-- `WasixRuntimeDescriptor.manifest`
-- `WasixRuntimeDescriptor.pgdataArchive`
-- `WasixRuntimeDescriptor.product`
-- `WasixRuntimeDescriptor.runtime`
-- `WasixRuntimeDescriptor.runtimeArchive`
-- `WasixRuntimeDescriptor.schema`
-- `WasixRuntimeDescriptor.version`
 - `WasixStorageError.code`
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   allArtifactTargets,
@@ -31,6 +31,7 @@ const RUST_SDK_TESTDATA = Object.freeze([
   ["testdata/query-response-cases.json", "src/shared/fixtures/protocol/query-response-cases.json"],
   ["testdata/database-root.json", "src/shared/fixtures/storage/database-root.json"],
   ["testdata/behavior-contract.json", "src/shared/fixtures/postgres/behavior-contract.json"],
+  ["tests/fixtures/postgis-smoke.sql", "src/extensions/external/postgis/tests/smoke.sql"],
 ]);
 
 function fail(message) {
@@ -186,18 +187,15 @@ function releaseStageDir(stageDir) {
   return resolved;
 }
 
-export function assertRustSdkTestdataCopies() {
+function stageRustSdkTestdata(outputDir) {
   for (const [packageRelative, canonicalRelative] of RUST_SDK_TESTDATA) {
-    const packageBytes = readFileSync(path.join(ROOT, "src/sdks/rust", packageRelative));
-    const canonicalBytes = readFileSync(path.join(ROOT, canonicalRelative));
-    if (!packageBytes.equals(canonicalBytes)) {
-      fail(`Rust SDK package fixture ${packageRelative} must exactly match ${canonicalRelative}`);
-    }
+    const destination = path.join(outputDir, packageRelative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(path.join(ROOT, canonicalRelative), destination);
   }
 }
 
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
-  assertRustSdkTestdataCopies();
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
   const nativeVersion = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   const brokerVersion = currentProductVersionSync(BROKER_PRODUCT, TOOL);
@@ -209,6 +207,7 @@ export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = t
     recursive: true,
     filter: (source) => path.basename(source) !== "target",
   });
+  stageRustSdkTestdata(outputDir);
   rmSync(path.join(outputDir, "crates/oliphaunt-build"), { recursive: true, force: true });
 
   const cargoToml = path.join(outputDir, "Cargo.toml");

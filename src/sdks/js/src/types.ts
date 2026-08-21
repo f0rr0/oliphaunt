@@ -3,6 +3,7 @@ export type DatabaseStorage =
   | { readonly kind: 'directory'; readonly path: string };
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
+export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
 
 export type OpenConfig = {
   execution?: 'direct' | 'broker';
@@ -34,6 +35,7 @@ export type OliphauntTransaction = {
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
   ): Promise<import('./query.js').QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntDatabase = {
@@ -46,6 +48,7 @@ export type OliphauntDatabase = {
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
   ): Promise<import('./query.js').QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
   checkpoint(): Promise<void>;
   cancel(): Promise<void>;
@@ -64,6 +67,7 @@ export type OliphauntServer = {
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
   ): Promise<import('./query.js').QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   checkpoint(): Promise<void>;
   cancel(): Promise<void>;
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
@@ -72,8 +76,12 @@ export type OliphauntServer = {
   readonly connectionString: string;
 };
 
+export type RestoreOptions = {
+  libraryPath?: string;
+};
+
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
   openServer(config?: ServerOpenConfig): Promise<OliphauntServer>;
-  restore(destination: string, backup: BinaryInput): Promise<void>;
+  restore(destination: string, backup: BinaryInput, options?: RestoreOptions): Promise<void>;
 };

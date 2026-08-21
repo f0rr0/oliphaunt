@@ -81,29 +81,6 @@ reject_cargo_package_entry_pattern() {
   fi
 }
 
-require_exact_package_fixture() {
-  package_fixture="$1"
-  canonical_fixture="$2"
-  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
-    echo "Rust SDK package fixture must exactly match its canonical repository source:" >&2
-    echo "  package:   $package_fixture" >&2
-    echo "  canonical: $canonical_fixture" >&2
-    exit 1
-  fi
-}
-
-check_packaged_testdata() {
-  require_exact_package_fixture \
-    src/sdks/rust/testdata/query-response-cases.json \
-    src/shared/fixtures/protocol/query-response-cases.json
-  require_exact_package_fixture \
-    src/sdks/rust/testdata/database-root.json \
-    src/shared/fixtures/storage/database-root.json
-  require_exact_package_fixture \
-    src/sdks/rust/testdata/behavior-contract.json \
-    src/shared/fixtures/postgres/behavior-contract.json
-}
-
 check_release_asset_fixture() {
   liboliphaunt_version="$(cat src/runtimes/liboliphaunt/native/VERSION)"
   fixture_assets="$(prepare_scratch_dir liboliphaunt-release-assets)"
@@ -345,8 +322,6 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
-check_packaged_testdata
-
 if [ "$mode" = "coverage" ]; then
   exec tools/coverage/run-product oliphaunt-rust
 fi
@@ -416,9 +391,6 @@ if [ "$mode" = "test-unit" ]; then
   exit 0
 fi
 
-require_exact_package_fixture \
-  src/sdks/rust/tests/fixtures/postgis-smoke.sql \
-  src/extensions/external/postgis/tests/smoke.sql
 require_text src/sdks/rust/Cargo.toml 'license = "MIT"' \
   "Rust SDK source-only Cargo package must declare its MIT license truthfully"
 require_text src/sdks/rust/crates/oliphaunt-build/Cargo.toml 'license = "MIT"' \
@@ -426,8 +398,10 @@ require_text src/sdks/rust/crates/oliphaunt-build/Cargo.toml 'license = "MIT"' \
 
 package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
 mkdir -p "$(dirname "$package_listing")"
-printf '\n==> cargo package -p oliphaunt --locked --allow-dirty --list\n'
-cargo package -p oliphaunt --locked --allow-dirty --list >"$package_listing"
+run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
+release_manifest="$root/target/release/cargo-package-sources/oliphaunt/Cargo.toml"
+printf '\n==> cargo package --manifest-path %s --allow-dirty --list\n' "$release_manifest"
+cargo package --manifest-path "$release_manifest" --allow-dirty --list >"$package_listing"
 cat "$package_listing"
 for required in \
   Cargo.toml \

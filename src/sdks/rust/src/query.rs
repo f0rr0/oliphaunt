@@ -286,7 +286,7 @@ pub fn parse_command_response(response: &ProtocolResponse) -> Result<CommandResu
             }
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(Error::Engine(
-                    "execute() does not support COPY protocol responses; use exec_protocol_raw for COPY traffic"
+                    "execute() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream for COPY traffic"
                         .to_owned(),
                 ));
             }
@@ -378,7 +378,7 @@ pub(crate) fn parse_query_response_bytes(bytes: &[u8]) -> Result<QueryResult> {
             }
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(Error::Engine(
-                    "query() does not support COPY protocol responses; use exec_protocol_raw"
+                    "query() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream"
                         .to_owned(),
                 ));
             }
@@ -715,9 +715,12 @@ mod tests {
 
     #[test]
     fn consumes_shared_query_response_contract() {
+        let source = crate::test_fixtures::text(
+            "protocol/query-response-cases.json",
+            "testdata/query-response-cases.json",
+        );
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/query-response-cases.json"))
-                .expect("shared query response fixture is valid JSON");
+            serde_json::from_str(&source).expect("shared query response fixture is valid JSON");
         assert_eq!(fixture["schemaVersion"], 1);
         for case in fixture["cases"].as_array().expect("fixture cases") {
             let name = case["name"].as_str().expect("case name");

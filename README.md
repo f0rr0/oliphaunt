@@ -85,8 +85,8 @@ The declared public entry points are:
 | Browser, Node.js, Bun, and Deno WASIX | `@oliphaunt/wasix-ts` | npm |
 | Native bindings | `liboliphaunt` C ABI | declared native runtime carriers |
 
-Kotlin host-native and JVM compilations are development/parity evidence, not
-public Kotlin Multiplatform or JVM artifacts. The first Swift release starts at
+Kotlin common sources are compiled and tested on the JVM as development
+evidence, but only the Android facade is supported and published. The first Swift release starts at
 `0.6.0` because legacy unscoped SwiftPM tags already occupy `0.1.0` through
 `0.5.1`; other new products start at `0.1.0`.
 

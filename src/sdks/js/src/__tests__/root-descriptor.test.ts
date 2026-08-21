@@ -11,7 +11,7 @@ import {
   validateManagedRoot,
 } from '../root-descriptor.js';
 import { normalizeOpenConfig } from '../config.js';
-import { acquireServerRoot, createServerRuntimeBinding } from '../runtime/server.js';
+import { createServerRuntimeBinding } from '../runtime/server.js';
 
 const fixture = JSON.parse(readFileSync(sharedStorageFixturePath(), 'utf8')) as {
   validDescriptors: Array<Record<string, unknown>>;
@@ -57,44 +57,14 @@ test('descriptor publication removes staging debris after failure', async () => 
   }
 });
 
-test('native server ownership rejects contention and permits reopen', async () => {
-  const parent = await mkdtemp(join(tmpdir(), 'oliphaunt-server-lock-'));
-  const root = join(parent, 'database');
-  const owner = join(parent, '.database.oliphaunt-server');
-  const release = await acquireServerRoot(root);
-  await assert.rejects(
-    () => acquireServerRoot(root),
-    (error: Error) => error.message.includes(owner) && error.message.includes(root),
-  );
-  await release();
-  const releaseAgain = await acquireServerRoot(root);
-  await releaseAgain();
-  await rm(parent, { recursive: true, force: true });
-});
-
-test('native server preflight failure releases persistent and temporary ownership', async () => {
+test('native server preflight failure removes temporary storage', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'oliphaunt-server-preflight-'));
-  const persistent = join(parent, 'persistent');
   const temporary = join(parent, 'temporary');
-  await mkdir(persistent);
   await mkdir(temporary);
   const previousTimeout = process.env.OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS;
   process.env.OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS = 'invalid';
   try {
     const runtime = createServerRuntimeBinding();
-    await assert.rejects(
-      async () =>
-        await runtime.open(
-          normalizeOpenConfig(
-            { execution: 'server' },
-            { instanceDirectory: persistent, temporaryDirectory: false },
-          ),
-        ),
-      /must be a positive integer/,
-    );
-    const release = await acquireServerRoot(persistent);
-    await release();
-
     await assert.rejects(
       async () =>
         await runtime.open(
@@ -106,9 +76,6 @@ test('native server preflight failure releases persistent and temporary ownershi
       /must be a positive integer/,
     );
     await assert.rejects(() => access(temporary), { code: 'ENOENT' });
-    await assert.rejects(() => access(join(parent, '.temporary.oliphaunt-server')), {
-      code: 'ENOENT',
-    });
   } finally {
     if (previousTimeout === undefined) {
       delete process.env.OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS;

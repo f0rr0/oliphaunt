@@ -38,7 +38,11 @@ test('normalizes only the public database and server configuration', () => {
   assert.deepEqual(broker.startupArgs.slice(0, 2), ['-c', 'work_mem=16MB']);
 
   const server = normalizeOpenConfig(
-    { execution: 'server', serverExecutable: '/opt/postgres', serverPort: 15432 },
+    {
+      execution: 'server',
+      serverExecutable: '/opt/postgres',
+      serverPort: 15432,
+    },
     { instanceDirectory: '/server/root', temporaryDirectory: true },
   );
   assert.equal(server.execution, 'server');

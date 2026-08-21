@@ -11,7 +11,9 @@ out_dir="target/oliphaunt-wasix-rust/package"
 listing="$out_dir/oliphaunt-wasix.package-files.txt"
 mkdir -p "$out_dir"
 
-cargo package --list -p oliphaunt-wasix --locked --allow-dirty >"$listing"
+crate_dir="$out_dir/crate"
+crate_path="$(tools/dev/bun.sh tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$crate_dir")"
+tar -tzf "$crate_path" | sed 's|^[^/]*/||' | sed '/^$/d' >"$listing"
 
 require_entry() {
   local entry="$1"
@@ -36,17 +38,6 @@ require_source_text() {
   local message="$3"
   if ! grep -Fq "$text" "$file"; then
     echo "$message" >&2
-    exit 1
-  fi
-}
-
-require_exact_package_fixture() {
-  local package_fixture="$1"
-  local canonical_fixture="$2"
-  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
-    echo "oliphaunt-wasix package fixture must exactly match its canonical repository source:" >&2
-    echo "  package:   $package_fixture" >&2
-    echo "  canonical: $canonical_fixture" >&2
     exit 1
   fi
 }
@@ -88,27 +79,12 @@ require_entry "src/testdata/protocol-query-response-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
 require_entry "tests/public_api.rs"
 
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/database-root.json \
-  src/shared/fixtures/storage/database-root.json
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/physical-archive-wasix-v1.properties \
-  src/shared/fixtures/storage/physical-archive-wasix-v1.properties
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/physical-backup-wal-range-v1.properties \
-  src/shared/fixtures/storage/physical-backup-wal-range-v1.properties
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgis-smoke.sql \
-  src/extensions/external/postgis/tests/smoke.sql
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgres-behavior-contract.json \
-  src/shared/fixtures/postgres/behavior-contract.json
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/protocol-query-response-cases.json \
-  src/shared/fixtures/protocol/query-response-cases.json
-require_exact_package_fixture \
+cmp -s \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
-  src/sources/toolchains/wasix.toml
+  src/sources/toolchains/wasix.toml || {
+  echo "oliphaunt-wasix packaged toolchain fixture must match src/sources/toolchains/wasix.toml" >&2
+  exit 1
+}
 
 reject_pattern '(^|/)(payload|artifacts|target)(/|$)'
 reject_pattern '(^|/)assets/generated(/|$)'

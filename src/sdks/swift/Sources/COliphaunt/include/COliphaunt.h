@@ -14,6 +14,12 @@ int32_t oliphaunt_swift_exec_protocol(
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out);
+int32_t oliphaunt_swift_exec_protocol_stream(
+    OliphauntSession *session,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntStreamCallback callback,
+    void *callback_context);
 int32_t oliphaunt_swift_backup(OliphauntSession *session, OliphauntResponse *out);
 int32_t oliphaunt_swift_restore(const char *library_path, const OliphauntRestoreOptions *options);
 int32_t oliphaunt_swift_cancel(OliphauntSession *session);

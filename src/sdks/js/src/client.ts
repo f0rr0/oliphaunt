@@ -28,6 +28,8 @@ import type {
   OliphauntServer,
   OpenConfig,
   ServerOpenConfig,
+  ProtocolChunkCallback,
+  RestoreOptions,
 } from './types.js';
 
 export type NativeBindingFactory = (
@@ -63,7 +65,9 @@ class OliphauntDatabaseBase {
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
     return this.withLifecycleOperation(async () => {
       this.assertNoActiveTransaction();
-      return parseQueryResponse(await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)));
+      return parseQueryResponse(
+        await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)),
+      );
     });
   }
 
@@ -71,6 +75,13 @@ class OliphauntDatabaseBase {
     return this.withLifecycleOperation(() => {
       this.assertNoActiveTransaction();
       return this.#execProtocolRawUnlocked(input);
+    });
+  }
+
+  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    await this.withLifecycleOperation(async () => {
+      this.assertNoActiveTransaction();
+      await this.#execProtocolStreamUnlocked(input, onChunk);
     });
   }
 
@@ -94,14 +105,19 @@ class OliphauntDatabaseBase {
       }
 
       this.#activeTransaction = true;
-      const transaction = new OliphauntTransactionHandle((input) =>
-        this.#execProtocolRawUnlocked(input),
+      const transaction = new OliphauntTransactionHandle(
+        (input) => this.#execProtocolRawUnlocked(input),
+        (input, onChunk) => this.#execProtocolStreamUnlocked(input, onChunk),
       );
       try {
         try {
           requireTransactionTag(await transaction.execute('BEGIN'), 'BEGIN');
         } catch (error) {
-          this.#transactionPoisoned = true;
+          try {
+            requireTransactionTag(await transaction.execute('ROLLBACK'), 'ROLLBACK');
+          } catch {
+            this.#transactionPoisoned = true;
+          }
           throw error;
         }
 
@@ -188,6 +204,17 @@ class OliphauntDatabaseBase {
     return this.runNativeOperation(() => this.binding.execProtocolRaw(this.handle, requestBytes));
   }
 
+  async #execProtocolStreamUnlocked(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
+    if (typeof onChunk !== 'function') {
+      throw new TypeError('protocol stream callback must be a function');
+    }
+    const requestBytes = toUint8Array(input);
+    await this.binding.execProtocolStream(this.handle, requestBytes, onChunk);
+  }
+
   #assertOpen(): void {
     if (this.#closed) {
       throw new Error('Oliphaunt database is closed');
@@ -269,10 +296,15 @@ class OliphauntServerImpl extends OliphauntDatabaseBase implements OliphauntServ
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
+  readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
   #active = true;
 
-  constructor(execRaw: (input: BinaryInput) => Promise<Uint8Array>) {
+  constructor(
+    execRaw: (input: BinaryInput) => Promise<Uint8Array>,
+    execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>,
+  ) {
     this.#execRaw = execRaw;
+    this.#execStream = execStream;
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
@@ -287,6 +319,11 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     this.#assertActive();
     return this.#execRaw(input);
+  }
+
+  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    this.#assertActive();
+    await this.#execStream(input, onChunk);
   }
 
   deactivate(): void {
@@ -451,9 +488,13 @@ export function createOliphauntClient(
       return database;
     },
 
-    async restore(destination: string, backup: BinaryInput): Promise<void> {
+    async restore(
+      destination: string,
+      backup: BinaryInput,
+      options: RestoreOptions = {},
+    ): Promise<void> {
       validateDirectoryPath(destination, 'restore destination');
-      const binding = await bindingFor();
+      const binding = await bindingFor({ libraryPath: options.libraryPath });
       await binding.restore({
         destination,
         bytes: toUint8Array(backup),

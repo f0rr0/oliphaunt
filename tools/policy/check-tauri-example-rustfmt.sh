@@ -7,8 +7,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-tauri_dir="src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri"
-mapfile -t rust_files < <(git ls-files -- "$tauri_dir" | awk '/\.rs$/ { print }' | sort)
+mapfile -t rust_files < <(git ls-files -- examples/tauri/src-tauri examples/tauri-wasix/src-tauri | awk '/\.rs$/ { print }' | sort)
 [ "${#rust_files[@]}" -gt 0 ] || exit 0
 
 rustfmt --edition 2021 --check "${rust_files[@]}"

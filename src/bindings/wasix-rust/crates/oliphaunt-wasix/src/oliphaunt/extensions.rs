@@ -634,7 +634,15 @@ mod extension_tests {
         files
     }
 
-    const POSTGIS_SMOKE_SQL: &str = include_str!("../testdata/postgis-smoke.sql");
+    fn postgis_smoke_sql() -> &'static str {
+        static SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        SQL.get_or_init(|| {
+            crate::oliphaunt::test_fixtures::source_text(
+                "extensions/external/postgis/tests/smoke.sql",
+                "postgis-smoke.sql",
+            )
+        })
+    }
 
     enum SmokeSql {
         Inline(&'static [&'static str]),
@@ -656,7 +664,7 @@ mod extension_tests {
 
     fn smoke_sql(sql_name: &str) -> SmokeSql {
         if sql_name == "postgis" {
-            return SmokeSql::Recipe(POSTGIS_SMOKE_SQL);
+            return SmokeSql::Recipe(postgis_smoke_sql());
         }
         SmokeSql::Inline(inline_smoke_sql(sql_name))
     }

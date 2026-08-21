@@ -17,7 +17,7 @@ cd "$root"
 . "$root/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
 . "$root/src/sdks/react-native/tools/expo-runner-android-device.sh"
 
-source_example_dir="$root/src/sdks/react-native/examples/expo"
+source_example_dir="$root/examples/react-native-expo"
 rn_dir="$root/src/sdks/react-native"
 mobile_platform="android"
 scratch_workspace_name="oliphaunt-react-native-expo-android-workspace"
@@ -40,7 +40,7 @@ elif [ "$runner" = "crash" ]; then
   failure_tag="OLIPHAUNT_EXPO_CRASH_RECOVERY_FAIL"
 fi
 scratch_root="${OLIPHAUNT_EXPO_ANDROID_SCRATCH:-$root/target/oliphaunt-expo-android-$runner}"
-example_dir="${OLIPHAUNT_EXPO_ANDROID_EXAMPLE_DIR:-$scratch_root/src/sdks/react-native/examples/expo}"
+example_dir="${OLIPHAUNT_EXPO_ANDROID_EXAMPLE_DIR:-$scratch_root/examples/react-native-expo}"
 package_work="$scratch_root/src/sdks/react-native"
 crash_storage_suffix="$(printf '%s' "$(basename "$scratch_root")" | LC_ALL=C tr -c 'A-Za-z0-9_.-' '-')"
 [ -n "$crash_storage_suffix" ] || crash_storage_suffix="run"
@@ -334,8 +334,15 @@ ensure_android_local_kotlin_sdk_repository() {
 // liboliphaunt local Kotlin SDK smoke include
 dependencyResolutionManagement {
   repositories {
-    maven {
-      url = uri('$local_maven_repo')
+    exclusiveContent {
+      forRepository {
+        maven {
+          url = uri('$local_maven_repo')
+        }
+      }
+      filter {
+        includeModule('dev.oliphaunt', 'oliphaunt-android')
+      }
     }
   }
 }

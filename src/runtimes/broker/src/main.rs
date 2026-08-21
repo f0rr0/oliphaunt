@@ -58,6 +58,17 @@ fn run() -> oliphaunt::Result<()> {
             oliphaunt::BrokerIpcRequest::ExecProtocol(bytes) => {
                 write_broker_response(&mut stream, session.exec_protocol(bytes))?;
             }
+            oliphaunt::BrokerIpcRequest::ExecProtocolStream(bytes) => {
+                let result = session.exec_protocol_stream(bytes, &mut |chunk| {
+                    oliphaunt::broker_ipc_write_chunk(&mut stream, chunk)
+                });
+                match result {
+                    Ok(()) => oliphaunt::broker_ipc_write_ok(&mut stream, Vec::new())?,
+                    Err(error) => {
+                        oliphaunt::broker_ipc_write_error(&mut stream, error.to_string())?
+                    }
+                }
+            }
             oliphaunt::BrokerIpcRequest::ExecSimpleQuery(sql) => {
                 write_broker_response(&mut stream, session.execute(&sql))?;
             }

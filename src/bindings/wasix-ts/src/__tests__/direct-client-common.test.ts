@@ -11,13 +11,17 @@ import type { PreparedWasixRuntime } from '../extensions.js';
 import type { OliphauntDirectInstance } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
-import type { WasixStorageLease } from '../storage-provider.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
 import { wasixPostgresArgs } from '../wasix-runtime.js';
 
 describe('direct WASIX session lifecycle', () => {
   it('uses PostgreSQL startup GUC name and value grammar', () => {
     const valid = openOptions();
-    valid.startupGUCs = { _name: '', 'ext.name$1': 'value', '  trimmed_name  ': '  ' };
+    valid.startupGUCs = {
+      _name: '',
+      'ext.name$1': 'value',
+      '  trimmed_name  ': '  ',
+    };
     expect(wasixPostgresArgs(valid)).toEqual(
       expect.arrayContaining(['-c', '_name=', '-c', 'trimmed_name=  ']),
     );
@@ -91,7 +95,10 @@ describe('direct WASIX session lifecycle', () => {
     );
 
     expect(failure).toBeInstanceOf(PostgresError);
-    expect(failure).toMatchObject({ sqlstate: '22012', postgresMessage: 'division by zero' });
+    expect(failure).toMatchObject({
+      sqlstate: '22012',
+      postgresMessage: 'division by zero',
+    });
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
@@ -201,7 +208,10 @@ describe('direct WASIX session lifecycle', () => {
     const failure = await rejection(session.close());
 
     expect(failure).toBe(closeFailure);
-    expect(failure).toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+    expect(failure).toMatchObject({
+      code: 'corrupt',
+      commitState: 'unchanged',
+    });
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
@@ -455,21 +465,10 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
       module: Uint8Array.of(0),
       mounts: { '/base': pgdataMount() },
     },
+    moduleSha256: '4'.repeat(64),
     startupGUCs: {},
     setupSql,
-    storageCompatibility: {
-      schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-      runtime: {
-        product: 'liboliphaunt-wasix',
-        version: '0.1.1',
-        manifestSha256: '1'.repeat(64),
-        runtimeArchiveSha256: '2'.repeat(64),
-        pgdataTemplateSha256: '3'.repeat(64),
-        moduleSha256: '4'.repeat(64),
-        postgresVersion: '18.4',
-      },
-      extensions: [],
-    },
+    physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
 }
 

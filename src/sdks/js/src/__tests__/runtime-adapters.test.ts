@@ -49,7 +49,10 @@ test('server wire uses PostgreSQL v3 startup and cancel packets', () => {
   const cancel = encodeCancelRequest({ processId: 7, secretKey: 11 });
   assert.equal(cancel.length, 16);
   assert.equal(readI32(cancel, 4), 80_877_102);
-  assert.deepEqual(parseBackendKeyData(cancel.subarray(8)), { processId: 7, secretKey: 11 });
+  assert.deepEqual(parseBackendKeyData(cancel.subarray(8)), {
+    processId: 7,
+    secretKey: 11,
+  });
   assert.throws(() => parseBackendKeyData(new Uint8Array([1, 2])), /BackendKeyData/);
 });
 

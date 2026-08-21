@@ -1,10 +1,9 @@
 import type { WasixDirectoryMount } from '../archive.js';
 import { WasixStorageError } from '../errors.js';
 import {
-  storageCompatibilityKey,
-  storageIsCompatible,
-  type WasixStorageCompatibility,
-  type WasixStorageCompatibilityKey,
+  assertWasixPhysicalIdentity,
+  physicalIdentityMatches,
+  type WasixPhysicalIdentity,
   type WasixStorageLease,
 } from '../storage-provider.js';
 import {
@@ -26,7 +25,7 @@ const METADATA_KEY = 'database';
 type StoredMetadata = {
   schema: 'oliphaunt-wasix-indexed-db-v1';
   name: string;
-  physicalCompatibility: WasixStorageCompatibilityKey;
+  physicalIdentity: WasixPhysicalIdentity;
 };
 
 type StoredEntry =
@@ -38,7 +37,7 @@ export type HeldLock = ExclusiveStorageLock;
 
 export type StoredDatabaseStore = {
   read(): Promise<unknown | undefined>;
-  apply(compatibility: WasixStorageCompatibility, delta: StorageDelta): Promise<void>;
+  apply(identity: WasixPhysicalIdentity, delta: StorageDelta): Promise<void>;
   close(): void;
 };
 
@@ -50,15 +49,15 @@ export type IndexedDbStorageBackend = {
 export async function acquireIndexedDbStorage(
   name: string,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
-  return acquireIndexedDbStorageWithBackend(name, template, compatibility, browserBackend());
+  return acquireIndexedDbStorageWithBackend(name, template, identity, browserBackend());
 }
 
 export async function restoreIndexedDbStorage(
   name: string,
   snapshot: StoredSnapshot,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<void> {
   const lock = await acquireExclusiveWebLock(
     `@oliphaunt/wasix-ts:indexed-db:${name}`,
@@ -82,7 +81,7 @@ export async function restoreIndexedDbStorage(
         commitState: 'unchanged',
       });
     }
-    await applyStoredDatabaseDelta(database, name, compatibility, {
+    await applyStoredDatabaseDelta(database, name, identity, {
       directories: snapshot.directories,
       files: snapshot.files,
       deleted: [],
@@ -106,7 +105,7 @@ export async function restoreIndexedDbStorage(
 export async function acquireIndexedDbStorageWithBackend(
   name: string,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   backend: IndexedDbStorageBackend,
 ): Promise<WasixStorageLease> {
   return acquireIncrementalStorage(`IndexedDB storage ${JSON.stringify(name)}`, template, {
@@ -116,11 +115,9 @@ export async function acquireIndexedDbStorageWithBackend(
       return {
         async read() {
           const stored = await database.read();
-          return stored === undefined
-            ? undefined
-            : validateStoredDatabase(stored, name, compatibility);
+          return stored === undefined ? undefined : validateStoredDatabase(stored, name, identity);
         },
-        apply: (delta) => database.apply(compatibility, delta),
+        apply: (delta) => database.apply(identity, delta),
         close: () => database.close(),
       };
     },
@@ -145,8 +142,7 @@ function browserBackend(): IndexedDbStorageBackend {
       const database = await openStorageDatabase(factory, name);
       return {
         read: () => readStoredDatabase(database, name),
-        apply: (compatibility, delta) =>
-          applyStoredDatabaseDelta(database, name, compatibility, delta),
+        apply: (identity, delta) => applyStoredDatabaseDelta(database, name, identity, delta),
         close: () => database.close(),
       };
     },
@@ -157,7 +153,7 @@ function browserBackend(): IndexedDbStorageBackend {
 export function validateStoredDatabase(
   value: unknown,
   name: string,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): StoredSnapshot {
   let stored: Record<string, unknown>;
   try {
@@ -168,11 +164,11 @@ export function validateStoredDatabase(
   if (stored.schema !== 'oliphaunt-wasix-indexed-db-v1' || stored.name !== name) {
     throw corrupt(name, 'has an unsupported or mismatched database record');
   }
-  if (!hasExactKeys(stored, ['entries', 'name', 'physicalCompatibility', 'schema'])) {
+  if (!hasExactKeys(stored, ['entries', 'name', 'physicalIdentity', 'schema'])) {
     throw corrupt(name, 'has an unsupported or mismatched database record');
   }
   try {
-    if (!storageIsCompatible(stored.physicalCompatibility, compatibility)) {
+    if (!physicalIdentityMatches(stored.physicalIdentity, identity)) {
       throw new WasixStorageError(
         `IndexedDB storage ${JSON.stringify(name)} is incompatible with the selected WASIX runtime`,
         { code: 'incompatible', commitState: 'unchanged' },
@@ -180,7 +176,7 @@ export function validateStoredDatabase(
     }
   } catch (error) {
     if (error instanceof WasixStorageError) throw error;
-    throw corrupt(name, `has malformed compatibility metadata: ${describeError(error)}`, error);
+    throw corrupt(name, `has malformed identity metadata: ${describeError(error)}`, error);
   }
   if (!Array.isArray(stored.entries)) throw corrupt(name, 'has malformed entry rows');
   const directories: string[] = [];
@@ -209,7 +205,7 @@ export function validateStoredDatabase(
   }
   return validateStoredSnapshot(
     { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
-    compatibility.runtime.postgresVersion.split('.')[0] ?? '',
+    String(identity.postgresMajor),
     {
       label: `IndexedDB storage ${JSON.stringify(name)}`,
       corrupt: (detail, cause) => corrupt(name, detail, cause),
@@ -285,7 +281,7 @@ export async function readStoredDatabase(
     throw error;
   }
   if (metadata === undefined) {
-    if (entries.length > 0) throw corrupt(name, 'contains entries without compatibility metadata');
+    if (entries.length > 0) throw corrupt(name, 'contains entries without identity metadata');
     return undefined;
   }
   return { ...(metadata as StoredMetadata), entries: entries as StoredEntry[] };
@@ -294,7 +290,7 @@ export async function readStoredDatabase(
 export async function applyStoredDatabaseDelta(
   database: IDBDatabase,
   name: string,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   delta: StorageDelta,
 ): Promise<void> {
   const transaction = database.transaction([METADATA_STORE, ENTRY_STORE], 'readwrite');
@@ -302,7 +298,7 @@ export async function applyStoredDatabaseDelta(
     {
       schema: 'oliphaunt-wasix-indexed-db-v1',
       name,
-      physicalCompatibility: storageCompatibilityKey(compatibility),
+      physicalIdentity: assertWasixPhysicalIdentity(identity),
     } satisfies StoredMetadata,
     METADATA_KEY,
   );

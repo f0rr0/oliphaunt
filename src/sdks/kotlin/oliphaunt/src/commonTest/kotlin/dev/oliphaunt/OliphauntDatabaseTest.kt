@@ -16,7 +16,7 @@ class OliphauntDatabaseTest {
     @Test
     fun executeReturnsPostgresCommandMetadata() = runTest {
         val session = TestSession(commandResponse("UPDATE 3"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         val result = database.execute("UPDATE widgets SET ready = true")
         assertEquals("UPDATE 3", result.commandTag)
         assertEquals(3L, result.rowCount)
@@ -26,7 +26,7 @@ class OliphauntDatabaseTest {
     @Test
     fun executeUsesExtendedProtocolForParameters() = runTest {
         val session = TestSession(commandResponse("INSERT 0 1"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         val result = database.execute(
             "INSERT INTO widgets(value) VALUES ($1)",
             listOf(QueryParam.Text("hello")),
@@ -73,7 +73,7 @@ class OliphauntDatabaseTest {
     fun backupAndRestoreUsePhysicalBytesDirectly() = runTest {
         val session = TestSession(commandResponse("OK"), byteArrayOf(1, 2, 3))
         val engine = TestEngine(session)
-        val database = OliphauntDatabase.open(OliphauntConfig(), engine)
+        val database = OliphauntDatabase.open(EngineConfig(), engine)
         assertContentEquals(byteArrayOf(1, 2, 3), database.backup())
         OliphauntDatabase.restore("/tmp/restored", byteArrayOf(4, 5), engine)
         assertEquals("/tmp/restored", engine.restoredDestination)
@@ -81,9 +81,21 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun rawProtocolStreamingForwardsOwnedChunks() = runTest {
+        val response = commandResponse("SELECT 1")
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(TestSession(response)))
+        val chunks = mutableListOf<ByteArray>()
+        database.execProtocolStream(byteArrayOf('Q'.code.toByte(), 0, 0, 0, 5, 0)) {
+            chunks += it
+        }
+        assertEquals(1, chunks.size)
+        assertContentEquals(response, chunks.single())
+    }
+
+    @Test
     fun transactionCommitsAndPinsPhysicalSession() = runTest {
         val session = TestSession(commandResponse("OK"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         val value = database.transaction { transaction ->
             assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
             transaction.execute("UPDATE widgets SET ready = true")
@@ -99,7 +111,7 @@ class OliphauntDatabaseTest {
     fun transactionRollsBackOriginalFailure() = runTest {
         class Expected : RuntimeException()
         val session = TestSession(commandResponse("OK"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         assertFailsWith<Expected> {
             database.transaction<Unit> { throw Expected() }
         }
@@ -110,7 +122,7 @@ class OliphauntDatabaseTest {
     fun commitRequiresExactCommitTag() = runTest {
         val session = TestSession(commandResponse("UPDATE 1"), commitTag = "ROLLBACK")
         val database = OliphauntDatabase.open(
-            OliphauntConfig(),
+            EngineConfig(),
             TestEngine(session),
         )
         val error = assertFailsWith<OliphauntException> { database.transaction { 1 } }
@@ -122,7 +134,7 @@ class OliphauntDatabaseTest {
     @Test
     fun commitTransportFailureDoesNotRollbackAndPoisonsFacade() = runTest {
         val session = TestSession(commandResponse("UPDATE 1"), failCommit = true)
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         val primary = assertFailsWith<OliphauntException> { database.transaction { 1 } }
         assertTrue(primary.message.orEmpty().contains("commit transport failed"))
         assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
@@ -135,7 +147,7 @@ class OliphauntDatabaseTest {
     fun rollbackFailurePoisonsFacadeUntilClose() = runTest {
         class Expected : RuntimeException()
         val session = TestSession(commandResponse("UPDATE 1"), failRollback = true)
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         assertFailsWith<Expected> { database.transaction<Unit> { throw Expected() } }
         val poison = assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
         assertTrue(poison.message.orEmpty().contains("rollback failed"))
@@ -145,7 +157,7 @@ class OliphauntDatabaseTest {
     @Test
     fun closeIsIdempotentAndRejectsFurtherWork() = runTest {
         val session = TestSession(commandResponse("OK"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         database.close()
         database.close()
         assertEquals(1, session.closeCount)
@@ -156,7 +168,7 @@ class OliphauntDatabaseTest {
     fun configurationForwardsOnlyExplicitPostgresSettings() = runTest {
         val engine = TestEngine(TestSession(commandResponse("OK")))
         OliphauntDatabase.open(
-            OliphauntConfig(
+            EngineConfig(
                 startupGucs = listOf(PostgresStartupGuc("shared_buffers", "16MB")),
                 username = "alice",
                 database = "app",
@@ -259,26 +271,26 @@ class OliphauntDatabaseTest {
     fun configurationValidationRejectsInvalidValuesBeforeOpen() = runTest {
         val engine = TestEngine(TestSession(commandResponse("OK")))
         val invalid = listOf(
-            OliphauntConfig(username = " "),
-            OliphauntConfig(database = "bad\u0000name"),
-            OliphauntConfig(storage = DatabaseStorage.Directory("")),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("bad-name", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("1name", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc(".foo", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("a..b", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("a.1b", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("ext.\$name", "1"))),
-            OliphauntConfig(startupGucs = listOf(PostgresStartupGuc("good", "bad\u0000value"))),
-            OliphauntConfig(extensions = listOf("bad/name")),
-            OliphauntConfig(extensions = listOf("not_in_generated_catalog")),
+            EngineConfig(username = " "),
+            EngineConfig(database = "bad\u0000name"),
+            EngineConfig(storage = EngineStorage.Directory("")),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("bad-name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("1name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc(".foo", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("a..b", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("a.1b", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("ext.\$name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("good", "bad\u0000value"))),
+            EngineConfig(extensions = listOf("bad/name")),
+            EngineConfig(extensions = listOf("not_in_generated_catalog")),
         )
         invalid.forEach { config ->
             assertFailsWith<OliphauntException> { OliphauntDatabase.open(config, engine) }
         }
         assertEquals(
             listOf("-c", "_name=", "-c", "ext.name\$1=on", "-c", "shared_preload_libraries=a,z"),
-            OliphauntConfig(
+            EngineConfig(
                 startupGucs = listOf(
                     PostgresStartupGuc(" _name ", ""),
                     PostgresStartupGuc("ext.name\$1", "on"),
@@ -291,7 +303,7 @@ class OliphauntDatabaseTest {
     @Test
     fun checkpointAndCancelDelegateToSession() = runTest {
         val session = TestSession(commandResponse("CHECKPOINT"))
-        val database = OliphauntDatabase.open(OliphauntConfig(), TestEngine(session))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         database.checkpoint()
         database.cancel()
         assertEquals(1, session.cancelCount)
@@ -303,11 +315,11 @@ class OliphauntDatabaseTest {
 private class TestEngine(
     private val session: OliphauntSession,
 ) : OliphauntEngine {
-    var openedConfig: OliphauntConfig? = null
+    var openedConfig: EngineConfig? = null
     var restoredDestination: String? = null
     var restoredBytes: ByteArray? = null
 
-    override suspend fun open(config: OliphauntConfig): OliphauntSession {
+    override suspend fun open(config: EngineConfig): OliphauntSession {
         openedConfig = config
         return session
     }
@@ -340,6 +352,10 @@ private class TestSession(
             return commandResponse(if (sql == "COMMIT") commitTag else requireNotNull(sql))
         }
         return response
+    }
+
+    override suspend fun execProtocolStream(request: ByteArray, onChunk: (ByteArray) -> Unit) {
+        onChunk(execProtocolRaw(request))
     }
 
     override suspend fun backup(): ByteArray = backupBytes

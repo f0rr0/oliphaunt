@@ -1,6 +1,7 @@
 import {
   backupJsi,
   execProtocolRawJsi,
+  execProtocolStreamJsi,
   requireJsiRawProtocolTransport,
   restoreJsi,
   type JsiRawProtocolTransport,
@@ -19,6 +20,7 @@ import { generatedExtensionBySqlName } from './generated/extensions';
 import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
+export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
 
 export type DatabaseStorage =
   | { readonly kind: 'temporaryDirectory' }
@@ -44,12 +46,14 @@ export type OliphauntTransaction = {
   execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntDatabase = {
   execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
   checkpoint(): Promise<void>;
   cancel(): Promise<void>;
@@ -91,7 +95,9 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
     return this.#withLifecycleOperation(async () => {
       this.#assertNoActiveTransaction();
-      return parseQueryResponse(await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)));
+      return parseQueryResponse(
+        await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)),
+      );
     });
   }
 
@@ -102,11 +108,28 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     });
   }
 
+  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    await this.#withLifecycleOperation(async () => {
+      this.#assertNoActiveTransaction();
+      await this.#execProtocolStreamUnlocked(input, onChunk);
+    });
+  }
+
   async #execProtocolRawUnlocked(input: BinaryInput): Promise<Uint8Array> {
     const requestBytes = toUint8Array(input);
     return this.#runNativeOperation(() =>
       execProtocolRawJsi(this.#jsiTransport, this.#handle, requestBytes),
     );
+  }
+
+  async #execProtocolStreamUnlocked(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
+    if (typeof onChunk !== 'function') {
+      throw new TypeError('protocol stream callback must be a function');
+    }
+    await execProtocolStreamJsi(this.#jsiTransport, this.#handle, toUint8Array(input), onChunk);
   }
 
   async backup(): Promise<Uint8Array> {
@@ -133,14 +156,19 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         throw new Error(transactionPinnedMessage);
       }
       this.#activeTransaction = true;
-      const transaction = new OliphauntTransactionHandle((input) =>
-        this.#execProtocolRawUnlocked(input),
+      const transaction = new OliphauntTransactionHandle(
+        (input) => this.#execProtocolRawUnlocked(input),
+        (input, onChunk) => this.#execProtocolStreamUnlocked(input, onChunk),
       );
       try {
         try {
           requireTransactionTag(await transaction.execute('BEGIN'), 'BEGIN');
         } catch (error) {
-          this.#transactionPoisoned = true;
+          try {
+            requireTransactionTag(await transaction.execute('ROLLBACK'), 'ROLLBACK');
+          } catch {
+            this.#transactionPoisoned = true;
+          }
           throw error;
         }
 
@@ -260,10 +288,15 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
+  readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
   #active = true;
 
-  constructor(execRaw: (input: BinaryInput) => Promise<Uint8Array>) {
+  constructor(
+    execRaw: (input: BinaryInput) => Promise<Uint8Array>,
+    execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>,
+  ) {
     this.#execRaw = execRaw;
+    this.#execStream = execStream;
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
@@ -278,6 +311,11 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     this.#assertActive();
     return this.#execRaw(input);
+  }
+
+  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    this.#assertActive();
+    await this.#execStream(input, onChunk);
   }
 
   deactivate(): void {

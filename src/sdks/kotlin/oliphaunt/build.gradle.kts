@@ -14,7 +14,6 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.jetbrains.dokka.gradle.engine.parameters.VisibilityModifier
-import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -55,7 +54,7 @@ abstract class CheckMavenPublicationContractTask : DefaultTask() {
             "Android AAR publication artifact must be ${expectedArtifactId.get()}; got ${actualArtifactId.get()}"
         }
         require(executableUnsupportedTasks.get().isEmpty()) {
-            "unsupported Kotlin/JVM/host-native publication tasks are enabled: ${executableUnsupportedTasks.get()}"
+            "unsupported non-Android publication tasks are enabled: ${executableUnsupportedTasks.get()}"
         }
     }
 }
@@ -162,7 +161,7 @@ mavenPublishing {
     }
     pom {
         name.set("Oliphaunt Kotlin SDK")
-        description.set("Kotlin and Android SDK for native embedded PostgreSQL through liboliphaunt.")
+        description.set("Android SDK for native embedded PostgreSQL through liboliphaunt.")
         inceptionYear.set("2026")
         url.set("https://github.com/f0rr0/oliphaunt")
         licenses {
@@ -187,10 +186,6 @@ mavenPublishing {
     }
 }
 
-val bridgeSource = layout.projectDirectory.file("src/nativeInterop/cinterop/oliphaunt_kotlin_bridge.c")
-val bridgeHeader = layout.projectDirectory.file("src/nativeInterop/cinterop/oliphaunt_kotlin_bridge.h")
-val bridgeOutputDir = layout.buildDirectory.dir("nativeBridge")
-val bridgeArchive = bridgeOutputDir.map { it.file("liboliphaunt_kotlin_bridge.a") }
 val generatedAndroidAssetsDir = layout.buildDirectory.dir("generated/oliphaunt-android-assets")
 val generatedAndroidJniLibsDir = layout.buildDirectory.dir("generated/oliphaunt-android-jniLibs")
 val configuredCxxBuildRoot =
@@ -741,31 +736,6 @@ val prepareOliphauntAndroidJniLibs by tasks.registering(PrepareOliphauntAndroidJ
     outputDir.set(generatedAndroidJniLibsDir)
 }
 
-val buildNativeBridge by tasks.registering(Exec::class) {
-    inputs.files(
-        bridgeSource,
-        bridgeHeader,
-        layout.projectDirectory.file("../../../runtimes/liboliphaunt/native/include/oliphaunt.h"),
-    )
-    outputs.file(bridgeArchive)
-    commandLine(
-        "sh",
-        "-c",
-        """
-        set -eu
-        mkdir -p "${bridgeOutputDir.get().asFile.absolutePath}"
-        cc -std=c11 -fPIC -I"${project.layout.projectDirectory.dir(
-            "src/nativeInterop/cinterop",
-        ).asFile.absolutePath}" -I"${project.layout.projectDirectory.dir(
-            "../../../runtimes/liboliphaunt/native/include",
-        ).asFile.absolutePath}" -c "${bridgeSource.asFile.absolutePath}" -o "${bridgeOutputDir.get().file(
-            "oliphaunt_kotlin_bridge.o",
-        ).asFile.absolutePath}"
-        ar rcs "${bridgeArchive.get().asFile.absolutePath}" "${bridgeOutputDir.get().file("oliphaunt_kotlin_bridge.o").asFile.absolutePath}"
-        """.trimIndent(),
-    )
-}
-
 val oliphauntJvmToolchainVersion =
     providers
         .gradleProperty("oliphauntJvmToolchain")
@@ -776,44 +746,12 @@ kotlin {
     jvmToolchain(oliphauntJvmToolchainVersion.get())
 
     androidTarget {
-        // The JVM and host-native targets below exist to exercise the shared API
-        // during development. Android is the only supported Maven consumer
-        // surface, so only its release variant may become a publication.
+        // Android is the only supported consumer surface.
         publishLibraryVariants("release")
     }
     jvm()
-    when {
-        System.getProperty("os.name").startsWith("Mac") -> macosArm64()
-        System.getProperty("os.arch") == "aarch64" -> linuxArm64()
-        else -> linuxX64()
-    }
-
-    targets.withType<KotlinNativeTarget>().configureEach {
-        compilations["main"].cinterops.create("oliphaunt") {
-            definitionFile.set(project.file("src/nativeInterop/cinterop/oliphaunt.def"))
-            includeDirs(project.layout.projectDirectory.dir("../../../runtimes/liboliphaunt/native/include"))
-            includeDirs(project.layout.projectDirectory.dir("src/nativeInterop/cinterop"))
-            extraOpts(
-                "-libraryPath",
-                bridgeOutputDir.get().asFile.absolutePath,
-                "-staticLibrary",
-                bridgeArchive.get().asFile.name,
-            )
-        }
-    }
 
     sourceSets {
-        val nativeMain by creating {
-            dependsOn(commonMain.get())
-        }
-        val nativeTest by creating {
-            dependsOn(commonTest.get())
-        }
-        targets.withType<KotlinNativeTarget>().configureEach {
-            compilations["main"].defaultSourceSet.dependsOn(nativeMain)
-            compilations["test"].defaultSourceSet.dependsOn(nativeTest)
-        }
-
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
@@ -950,13 +888,6 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
             .asFile.absolutePath,
     )
 }
-
-tasks
-    .matching {
-        it.name.startsWith("cinteropOliphaunt") || it.name.startsWith("cinteropLiboliphaunt")
-    }.configureEach {
-        dependsOn(buildNativeBridge)
-    }
 
 android {
     namespace = "dev.oliphaunt"

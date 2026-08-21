@@ -45,8 +45,9 @@ use the language-native TypeScript union and SQL errors are structured
 `PostgresError` instances.
 
 The database also exposes callback `transaction`, `checkpoint`, out-of-band
-`cancel`, buffered `execProtocolRaw`, byte `backup`, idempotent `close`, and
-`Symbol.asyncDispose`. There is no generic stream, public protocol parser,
+`cancel`, buffered `execProtocolRaw`, callback `execProtocolStream`, byte
+`backup`, idempotent `close`, and `Symbol.asyncDispose`. The stream contains raw
+PostgreSQL backend frames; there is no separate public protocol parser,
 capability object, supported-mode list, package-size report, or runtime profile.
 
 Transactions pin the one physical session. Callback failure rolls back and a

@@ -235,7 +235,7 @@ internal fun parseCommandResponse(bytes: ByteArray): CommandResult {
             )
 
             0x47, 0x48, 0x57, 0x64, 0x63 -> throw OliphauntException(
-                "execute() does not support COPY protocol responses; use execProtocolRaw for COPY traffic",
+                "execute() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic",
             )
 
             0x5a -> {
@@ -317,7 +317,7 @@ internal fun parseQueryResponse(bytes: ByteArray): QueryResult {
 
             0x47, 0x48, 0x57, 0x64, 0x63 -> {
                 throw OliphauntException(
-                    "query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic",
+                    "query() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic",
                 )
             }
 

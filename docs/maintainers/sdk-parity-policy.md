@@ -34,7 +34,7 @@ and lifecycle; typed queries and callback transactions belong in language SDKs.
 | Listening server | Rust and desktop TypeScript | yes | no |
 | PostgreSQL tools | separate desktop products; desktop TypeScript has no SDK tools API or dependency | `tools` feature: `pg_dump` and `psql` | no |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
-| Protocol/COPY streaming | SDK calls are buffered; the low-level C callback boundary remains private to adapters | buffered raw protocol | buffered raw protocol |
+| Protocol/COPY response streaming | callback streaming in every native SDK, backed by the native C callback ABI | buffered raw protocol | buffered raw protocol |
 
 These are language-native deltas, not parity failures:
 
@@ -82,11 +82,10 @@ WASIX archives are not physically interchangeable; logical SQL is the bridge.
 
 Provider ownership remains binding-specific implementation:
 
-- Swift, Kotlin, React Native, desktop TypeScript direct mode, and C restore use
-  the C runtime's stable sibling lease;
-- native Rust direct, broker, and server use the same C-compatible lease during
-  root preparation; direct init explicitly hands that ownership into C;
-- desktop TypeScript native server uses its own sibling owner;
+- Swift, Kotlin, React Native, desktop TypeScript direct mode, native Rust
+  direct/broker mode, and C restore use the C runtime's stable sibling lease;
+- native server modes rely on PostgreSQL's own live-cluster ownership after
+  bounded, atomic root initialization;
 - Rust WASIX uses its host-directory owner;
 - TypeScript uses Web Locks or a Node/Bun/Deno sibling owner as appropriate.
 
@@ -126,8 +125,8 @@ not hidden modes or partly supported capabilities.
 A public SDK change is complete when all affected language surfaces, C/header
 copies, generated API inventory, docs route, package shape, and behavioral tests
 agree. A deliberate delta must appear above with current behavior; a future idea
-must use one of the six exact deferred IDs or be rejected until a concrete need
-exists.
+must use one of the exact deferred IDs above or be rejected until a concrete
+need exists.
 
 The lightweight contract checks are:
 

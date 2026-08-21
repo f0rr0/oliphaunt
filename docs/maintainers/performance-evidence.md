@@ -322,8 +322,8 @@ PostgreSQL recovery. The app accepts crash evidence only after observing
 PostgreSQL `fsync=on`, `full_page_writes=on`, and `synchronous_commit=on`:
 
 ```sh
-pnpm --dir src/sdks/react-native/examples/expo run crash:android
-pnpm --dir src/sdks/react-native/examples/expo run crash:ios
+pnpm --dir examples/react-native-expo run crash:android
+pnpm --dir examples/react-native-expo run crash:ios
 ```
 
 Use the default script invocation for release evidence. Native release gates are
@@ -470,11 +470,16 @@ That command covers:
 3. SQLite embedded control runs for the speed suite;
 4. p50/p90/p95 latency, throughput, RSS, CPU, and footprint report generation.
 
-The WASIX product lane has its own perf smoke target:
+The WASIX TypeScript binding owns the shared WASIX browser and Node benchmark
+plans:
 
 ```sh
-moon run oliphaunt-wasix:bench
+moon run oliphaunt-wasix-ts:bench
 ```
+
+Run measured Node or browser evidence explicitly with
+`moon run oliphaunt-wasix-ts:bench-run` or
+`moon run oliphaunt-wasix-ts:bench-browser`.
 
 Outputs land under `target/perf/`:
 

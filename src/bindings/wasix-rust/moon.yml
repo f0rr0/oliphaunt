@@ -173,29 +173,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  example-check:
-    tags: ["examples", "quality", "ci-wasm-regression"]
-    command: "bash src/bindings/wasix-rust/tools/check-examples.sh"
-    deps:
-      - "liboliphaunt-wasix:check"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/rust-toolchain.toml"
-      - "/src/bindings/wasix-rust/crates/**/*"
-      - "/src/bindings/wasix-rust/examples/**/*"
-      - "!/src/bindings/wasix-rust/examples/**/node_modules"
-      - "!/src/bindings/wasix-rust/examples/**/node_modules/**"
-      - "/src/bindings/wasix-rust/tools/check-examples.sh"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-
   coverage:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-wasix-rust"

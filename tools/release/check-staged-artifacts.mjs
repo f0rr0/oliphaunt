@@ -2362,7 +2362,7 @@ export function iosPayloadCocoaPodsFileListPaths(scratchPath) {
   const podName = "OliphauntReactNativePayload";
   const supportRoot = path.join(
     scratchPath,
-    "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files",
+    "examples/react-native-expo/ios/Pods/Target Support Files",
     podName,
   );
   return {

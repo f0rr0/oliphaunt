@@ -7,6 +7,7 @@ const MAX_FRAME_LEN = 128 * 1024 * 1024;
 export type BrokerRequestFrame =
   | { kind: 'authenticate'; token: string }
   | { kind: 'execProtocol'; bytes: Uint8Array }
+  | { kind: 'execProtocolStream'; bytes: Uint8Array }
   | { kind: 'execSimpleQuery'; sql: string }
   | { kind: 'checkpoint' }
   | { kind: 'close' }
@@ -15,6 +16,7 @@ export type BrokerRequestFrame =
 
 export type BrokerResponseFrame =
   | { kind: 'ok'; bytes: Uint8Array }
+  | { kind: 'chunk'; bytes: Uint8Array }
   | { kind: 'error'; message: string };
 
 export async function writeBrokerRequest(
@@ -47,6 +49,8 @@ export function encodeBrokerRequest(frame: BrokerRequestFrame): Uint8Array {
       return encodeFrame(6, encodeUtf8(frame.token));
     case 'execProtocol':
       return encodeFrame(1, frame.bytes);
+    case 'execProtocolStream':
+      return encodeFrame(4, frame.bytes);
     case 'execSimpleQuery':
       return encodeFrame(8, encodeUtf8(frame.sql));
     case 'checkpoint':
@@ -64,6 +68,8 @@ export function encodeBrokerResponse(frame: BrokerResponseFrame): Uint8Array {
   switch (frame.kind) {
     case 'ok':
       return encodeFrame(101, frame.bytes);
+    case 'chunk':
+      return encodeFrame(103, frame.bytes);
     case 'error':
       return encodeFrame(102, encodeUtf8(frame.message));
   }
@@ -72,11 +78,19 @@ export function encodeBrokerResponse(frame: BrokerResponseFrame): Uint8Array {
 export function decodeBrokerRequest(kind: number, payload: Uint8Array): BrokerRequestFrame {
   switch (kind) {
     case 6:
-      return { kind: 'authenticate', token: decodeUtf8(payload, 'broker auth frame') };
+      return {
+        kind: 'authenticate',
+        token: decodeUtf8(payload, 'broker auth frame'),
+      };
     case 1:
       return { kind: 'execProtocol', bytes: payload };
+    case 4:
+      return { kind: 'execProtocolStream', bytes: payload };
     case 8:
-      return { kind: 'execSimpleQuery', sql: decodeUtf8(payload, 'broker simple-query frame') };
+      return {
+        kind: 'execSimpleQuery',
+        sql: decodeUtf8(payload, 'broker simple-query frame'),
+      };
     case 2:
       assertEmptyPayload(payload);
       return { kind: 'checkpoint' };
@@ -99,7 +113,12 @@ export function decodeBrokerResponse(kind: number, payload: Uint8Array): BrokerR
     case 101:
       return { kind: 'ok', bytes: payload };
     case 102:
-      return { kind: 'error', message: decodeUtf8(payload, 'broker error frame') };
+      return {
+        kind: 'error',
+        message: decodeUtf8(payload, 'broker error frame'),
+      };
+    case 103:
+      return { kind: 'chunk', bytes: payload };
     default:
       throw new Error(`unknown broker response frame ${kind}`);
   }

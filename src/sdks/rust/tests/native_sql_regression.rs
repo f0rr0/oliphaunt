@@ -1,11 +1,13 @@
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oliphaunt::{Error, Oliphaunt, OliphauntBuilder, QueryParam, Result};
 use serde::Deserialize;
+
+mod support;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +62,16 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
                 .get_text(0, "version")?
                 .is_some_and(|value| value.starts_with("18"))
         );
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let captured = Arc::clone(&chunks);
+        block_on(server.exec_protocol_raw_stream(
+            simple_query_request("COPY (SELECT 'server-stream') TO STDOUT"),
+            move |chunk| {
+                captured.lock().unwrap().push(chunk.to_vec());
+                Ok(())
+            },
+        ))?;
+        assert_streamed_copy_response(&chunks);
         block_on(server.close())
     })();
     let _ = std::fs::remove_dir_all(server_root);
@@ -68,9 +80,12 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
 
 fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     let db = block_on(builder.open())?;
+    let source = support::fixture_text(
+        "shared/fixtures/postgres/behavior-contract.json",
+        "testdata/behavior-contract.json",
+    );
     let contract: BehaviorContract =
-        serde_json::from_str(include_str!("../testdata/behavior-contract.json"))
-            .expect("shared PostgreSQL behavior contract is valid JSON");
+        serde_json::from_str(&source).expect("shared PostgreSQL behavior contract is valid JSON");
     assert_eq!(contract.schema_version, 1);
     assert_eq!(contract.id, "postgres-18-core-behavior");
     for statement in &contract.statements {
@@ -113,6 +128,15 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         transaction
             .execute("INSERT INTO oliphaunt_contract.projects(slug, budget, labels, metadata, created_at) VALUES ('saved', 1, ARRAY[]::text[], '{}', CURRENT_TIMESTAMP)")
             .await?;
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let captured = Arc::clone(&chunks);
+        transaction
+            .exec_protocol_raw_stream(simple_query_request("SELECT 'transaction-stream'"), move |chunk| {
+                captured.lock().unwrap().push(chunk.to_vec());
+                Ok(())
+            })
+            .await?;
+        assert!(!chunks.lock().unwrap().is_empty());
         Ok(())
     }))?;
 
@@ -145,12 +169,34 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     let copied =
         block_on(db.query("SELECT string_agg(value, ',' ORDER BY id) AS values FROM copy_probe"))?;
     assert_eq!(copied.get_text(0, "values")?, Some("one,two"));
+    let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let captured = Arc::clone(&chunks);
+    block_on(db.exec_protocol_raw_stream(
+        simple_query_request("COPY (SELECT value FROM copy_probe ORDER BY id) TO STDOUT"),
+        move |chunk| {
+            captured.lock().unwrap().push(chunk.to_vec());
+            Ok(())
+        },
+    ))?;
+    assert_streamed_copy_response(&chunks);
     let reused = block_on(db.query("SELECT 'ready'::text AS value"))?;
     assert_eq!(reused.get_text(0, "value")?, Some("ready"));
     for statement in &contract.cleanup_statements {
         block_on(db.execute(statement))?;
     }
     block_on(db.close())
+}
+
+fn assert_streamed_copy_response(chunks: &Arc<Mutex<Vec<Vec<u8>>>>) {
+    let response = chunks.lock().unwrap().concat();
+    assert!(response.contains(&b'H'), "stream omitted CopyOutResponse");
+    assert!(response.contains(&b'd'), "stream omitted CopyData");
+    assert!(response.contains(&b'C'), "stream omitted CommandComplete");
+    assert!(response.contains(&b'Z'), "stream omitted ReadyForQuery");
+}
+
+fn simple_query_request(sql: &str) -> Vec<u8> {
+    frontend_message(b'Q', &[sql.as_bytes(), &[0]].concat())
 }
 
 fn copy_in_request(sql: &str, data: &[u8]) -> Vec<u8> {

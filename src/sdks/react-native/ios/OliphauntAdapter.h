@@ -6,6 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^OliphauntOpenCompletion)(OliphauntAdapterDatabase *_Nullable database, NSError *_Nullable error);
 typedef void (^OliphauntDataCompletion)(NSData *_Nullable value, NSError *_Nullable error);
+typedef void (^OliphauntStreamChunk)(NSData *value);
 typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
 
 @interface OliphauntAdapterDatabase : NSObject
@@ -18,6 +19,9 @@ typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
                      completion:(OliphauntVoidCompletion)completion;
 
 - (void)execProtocolData:(NSData *)request completion:(OliphauntDataCompletion)completion;
+- (void)execProtocolStreamData:(NSData *)request
+                       onChunk:(OliphauntStreamChunk)onChunk
+                    completion:(OliphauntVoidCompletion)completion;
 - (void)backupDataWithCompletion:(OliphauntDataCompletion)completion;
 - (void)cancelWithCompletion:(OliphauntVoidCompletion)completion;
 - (void)closeWithCompletion:(OliphauntVoidCompletion)completion;

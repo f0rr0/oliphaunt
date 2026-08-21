@@ -28,7 +28,11 @@ export class PostgresWireClient {
     const stream = await connectEndpoint(endpoint);
     await stream.writeAll(encodeStartupMessage(username, database));
     const backendKey = { current: undefined as BackendKeyData | undefined };
-    await readUntilReady(stream, { includeMessages: false, errorIsFatal: true, backendKey });
+    await readUntilReady(stream, {
+      includeMessages: false,
+      errorIsFatal: true,
+      backendKey,
+    });
     if (backendKey.current === undefined) {
       throw new Error('native server did not return BackendKeyData during startup');
     }
@@ -37,7 +41,22 @@ export class PostgresWireClient {
 
   async execProtocolRaw(request: Uint8Array): Promise<Uint8Array> {
     await this.#stream.writeAll(request);
-    return readUntilReady(this.#stream, { includeMessages: true, errorIsFatal: false });
+    return readUntilReady(this.#stream, {
+      includeMessages: true,
+      errorIsFatal: false,
+    });
+  }
+
+  async execProtocolStream(
+    request: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): Promise<void> {
+    await this.#stream.writeAll(request);
+    await readUntilReady(this.#stream, {
+      includeMessages: false,
+      errorIsFatal: false,
+      onChunk,
+    });
   }
 
   async terminate(): Promise<void> {
@@ -96,9 +115,11 @@ async function readUntilReady(
     includeMessages: boolean;
     errorIsFatal: boolean;
     backendKey?: { current: BackendKeyData | undefined };
+    onChunk?: (chunk: Uint8Array) => void;
   },
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
+  let callbackError: unknown;
   for (;;) {
     const header = await stream.readExactly(5);
     const tag = header[0];
@@ -116,6 +137,13 @@ async function readUntilReady(
     if (options.includeMessages) {
       chunks.push(frame);
     }
+    if (options.onChunk !== undefined && callbackError === undefined) {
+      try {
+        options.onChunk(frame);
+      } catch (error) {
+        callbackError = error;
+      }
+    }
     switch (tag) {
       case 0x52:
         handleAuthentication(body);
@@ -131,6 +159,7 @@ async function readUntilReady(
         }
         break;
       case 0x5a:
+        if (callbackError !== undefined) throw callbackError;
         return concat(chunks);
       default:
         break;

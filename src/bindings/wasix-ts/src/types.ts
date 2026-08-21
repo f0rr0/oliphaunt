@@ -160,8 +160,6 @@ export type ExecutionMode = 'direct' | 'worker';
 export type OpenConfig = {
   /** Worker-isolated by default; direct opens in and then blocks the caller's realm. */
   execution?: ExecutionMode;
-  /** Low-level, indivisible runtime-carrier override; ordinary consumers should omit this. */
-  advanced?: Readonly<{ runtime?: WasixRuntimeDescriptor }>;
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;

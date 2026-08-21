@@ -13,13 +13,14 @@ import {
 } from '../storage/indexed-db-provider.js';
 import {
   acquireWasixStorage,
-  canonicalStorageContract,
+  canonicalJson,
   installNodeDirectoryStorageProvider,
   installNodeDirectoryStorageRestorer,
   restoreWasixStorage,
-  storageCompatibilityKey,
+  assertWasixPhysicalIdentity,
+  WASIX_PHYSICAL_IDENTITY,
   type StorageDirectory,
-  type WasixStorageCompatibility,
+  type WasixPhysicalIdentity,
 } from '../storage-provider.js';
 import { snapshotStorageDelta, snapshotStorageDirectory } from '../storage-snapshot.js';
 
@@ -141,39 +142,18 @@ describe('WASIX incremental PGDATA storage', () => {
     ).rejects.toThrow('unknown type');
   });
 
-  it('uses the stable physical format rather than runtime provenance', () => {
+  it('uses the exact stable physical identity', () => {
     const compatibility = compatible();
     const stored = storedDatabase('todos', compatibility);
 
     expect(validateStoredDatabase(stored, 'todos', compatibility).files).toHaveLength(2);
 
-    const changed: WasixStorageCompatibility = {
-      ...compatibility,
-      extensions: [
-        ...compatibility.extensions,
-        {
-          sqlName: 'vector',
-          product: 'oliphaunt-extension-vector',
-          version: '0.1.1',
-          archiveSha256: '8'.repeat(64),
-          installContract: '{}',
-        },
-      ],
-    };
-    expect(validateStoredDatabase(stored, 'todos', changed).files).toHaveLength(2);
-
-    const moduleChange: WasixStorageCompatibility = {
-      ...compatibility,
-      runtime: { ...compatibility.runtime, moduleSha256: '9'.repeat(64) },
-    };
-    expect(validateStoredDatabase(stored, 'todos', moduleChange).files).toHaveLength(2);
-
     expect(() =>
       validateStoredDatabase(
         {
           ...stored,
-          physicalCompatibility: {
-            ...stored.physicalCompatibility,
+          physicalIdentity: {
+            ...stored.physicalIdentity,
             physicalFormat: 'wasix-pg18-v2',
           },
         },
@@ -182,14 +162,14 @@ describe('WASIX incremental PGDATA storage', () => {
       ),
     ).toThrowError(expect.objectContaining({ code: 'incompatible' }));
 
-    for (const physicalCompatibility of [
+    for (const physicalIdentity of [
       'not-an-object',
-      { ...stored.physicalCompatibility, unexpected: true },
-      { ...stored.physicalCompatibility, postgresMajor: '18' },
-      { ...stored.physicalCompatibility, physicalFormat: 18 },
+      { ...stored.physicalIdentity, unexpected: true },
+      { ...stored.physicalIdentity, postgresMajor: '18' },
+      { ...stored.physicalIdentity, physicalFormat: 18 },
     ]) {
       expect(() =>
-        validateStoredDatabase({ ...stored, physicalCompatibility }, 'todos', compatibility),
+        validateStoredDatabase({ ...stored, physicalIdentity }, 'todos', compatibility),
       ).toThrowError(expect.objectContaining({ code: 'corrupt' }));
     }
 
@@ -197,7 +177,7 @@ describe('WASIX incremental PGDATA storage', () => {
       validateStoredDatabase(
         {
           ...stored,
-          physicalCompatibility: { ...stored.physicalCompatibility, postgresMajor: 19 },
+          physicalIdentity: { ...stored.physicalIdentity, postgresMajor: 19 },
         },
         'todos',
         compatibility,
@@ -244,7 +224,7 @@ describe('WASIX incremental PGDATA storage', () => {
 
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;
-    expect(() => canonicalStorageContract(cyclic)).toThrow('contains a cycle');
+    expect(() => canonicalJson(cyclic)).toThrow('contains a cycle');
   });
 
   it('releases ownership after provider open failure and permits reacquisition', async () => {
@@ -509,7 +489,11 @@ describe('WASIX incremental PGDATA storage', () => {
     );
     await directory.close(undefined, 'failed');
     await restoreWasixStorage(
-      { schema: 'oliphaunt-wasix-storage-v1', kind: 'directory', path: '/tmp/restored' },
+      {
+        schema: 'oliphaunt-wasix-storage-v1',
+        kind: 'directory',
+        path: '/tmp/restored',
+      },
       completeSnapshot(),
       compatible(),
     );
@@ -531,47 +515,27 @@ describe('WASIX incremental PGDATA storage', () => {
     ).rejects.toMatchObject({ code: 'unavailable', commitState: 'unchanged' });
   });
 
-  it('rejects unsupported compatibility identities and non-JSON metadata', () => {
+  it('rejects unsupported physical identities and non-JSON metadata', () => {
     expect(() =>
-      storageCompatibilityKey({
+      assertWasixPhysicalIdentity({
         ...compatible(),
         schema: 'unsupported' as never,
       }),
-    ).toThrow('unsupported runtime identity');
+    ).toThrow('unsupported physical identity');
     expect(() =>
-      storageCompatibilityKey({
+      assertWasixPhysicalIdentity({
         ...compatible(),
-        runtime: { ...compatible().runtime, postgresVersion: '19.0' },
+        postgresMajor: 19,
       }),
-    ).toThrow('requires PostgreSQL 18');
+    ).toThrow('unsupported physical identity');
     for (const value of [Number.NaN, Number.POSITIVE_INFINITY, undefined, () => undefined]) {
-      expect(() => canonicalStorageContract(value)).toThrow();
+      expect(() => canonicalJson(value)).toThrow();
     }
   });
 });
 
-function compatible(): WasixStorageCompatibility {
-  return {
-    schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-    runtime: {
-      product: 'liboliphaunt-wasix',
-      version: '0.1.1',
-      manifestSha256: '1'.repeat(64),
-      runtimeArchiveSha256: '2'.repeat(64),
-      pgdataTemplateSha256: '3'.repeat(64),
-      moduleSha256: '4'.repeat(64),
-      postgresVersion: '18.4',
-    },
-    extensions: [
-      {
-        sqlName: 'pgtap',
-        product: 'oliphaunt-extension-pgtap',
-        version: '0.1.1',
-        archiveSha256: '5'.repeat(64),
-        installContract: '{"schema":"v1"}',
-      },
-    ],
-  };
+function compatible(): WasixPhysicalIdentity {
+  return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
 function fakeDirectory(
@@ -632,7 +596,9 @@ class FakeIndexedDbFactory {
   readonly #databases = new Map<string, FakeIndexedDbState>();
 
   asFactory(): IDBFactory {
-    return { open: (name: string) => this.#open(name) } as unknown as IDBFactory;
+    return {
+      open: (name: string) => this.#open(name),
+    } as unknown as IDBFactory;
   }
 
   #open(name: string): IDBOpenDBRequest {
@@ -657,7 +623,9 @@ class FakeIndexedDbDatabase {
 
   asDatabase(): IDBDatabase {
     return {
-      objectStoreNames: { contains: (name: string) => this.state.stores.has(name) },
+      objectStoreNames: {
+        contains: (name: string) => this.state.stores.has(name),
+      },
       createObjectStore: (name: string) => {
         this.state.stores.add(name);
         return {} as IDBObjectStore;
@@ -726,7 +694,10 @@ function fakeRequest<T>(read: () => T): IDBRequest<T> {
       setRequestResult(request, read());
       request.onsuccess?.(new Event('success'));
     } catch (error) {
-      Object.defineProperty(request, 'error', { configurable: true, value: error });
+      Object.defineProperty(request, 'error', {
+        configurable: true,
+        value: error,
+      });
       request.onerror?.(new Event('error'));
     }
   });
@@ -734,7 +705,10 @@ function fakeRequest<T>(read: () => T): IDBRequest<T> {
 }
 
 function setRequestResult<T>(request: IDBRequest<T>, result: T): void {
-  Object.defineProperty(request, 'result', { configurable: true, value: result });
+  Object.defineProperty(request, 'result', {
+    configurable: true,
+    value: result,
+  });
 }
 
 function pgdataDirectory(tracked = false): StorageDirectory {
@@ -775,11 +749,11 @@ function pgdataDirectory(tracked = false): StorageDirectory {
   };
 }
 
-function storedDatabase(name: string, compatibility: WasixStorageCompatibility): StoredDatabase {
+function storedDatabase(name: string, compatibility: WasixPhysicalIdentity): StoredDatabase {
   return {
     schema: 'oliphaunt-wasix-indexed-db-v1',
     name,
-    physicalCompatibility: storageCompatibilityKey(compatibility),
+    physicalIdentity: assertWasixPhysicalIdentity(compatibility),
     entries: [
       { path: 'global', type: 'dir' },
       { path: 'pg_wal', type: 'dir' },
@@ -856,7 +830,7 @@ function providerHarness(): {
           records.set(name, {
             schema: 'oliphaunt-wasix-indexed-db-v1',
             name,
-            physicalCompatibility: storageCompatibilityKey(compatibility),
+            physicalIdentity: assertWasixPhysicalIdentity(compatibility),
             entries: [...rows.values()] as StoredDatabase['entries'],
           });
           applies += 1;

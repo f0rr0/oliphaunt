@@ -58,7 +58,7 @@ export async function publishNativeDescriptor(root: string): Promise<void> {
   }
 }
 
-async function validateCompletePgdata(pgdata: string): Promise<void> {
+export async function validateCompletePgdata(pgdata: string): Promise<void> {
   const versionPath = join(pgdata, 'PG_VERSION');
   const versionMetadata = await lstat(versionPath);
   if (!versionMetadata.isFile() || versionMetadata.isSymbolicLink()) {

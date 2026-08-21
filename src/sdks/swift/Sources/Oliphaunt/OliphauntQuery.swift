@@ -337,7 +337,7 @@ func parseOliphauntCommandResponse(_ data: Data) throws -> OliphauntCommandResul
             )
         case 0x47, 0x48, 0x57, 0x64, 0x63:
             throw OliphauntError.engine(
-                "execute() does not support COPY protocol responses; use execProtocolRaw for COPY traffic"
+                "execute() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic"
             )
         case 0x5a:
             try validateReadyForQuery(body)
@@ -415,7 +415,7 @@ func parseOliphauntQueryResponse(_ data: Data) throws -> OliphauntQueryResult {
             throw OliphauntError.postgres(parseErrorResponse(&bodyCursor))
         case 0x47, 0x48, 0x57, 0x64, 0x63:
             throw OliphauntError.engine(
-                "query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic"
+                "query() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic"
             )
         case 0x5a:
             try validateReadyForQuery(body)

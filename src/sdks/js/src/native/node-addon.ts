@@ -10,6 +10,11 @@ import { envVar } from './common.js';
 export type NodeDirectAddon = {
   open(config: NodeDirectOpenConfig): NativeHandle;
   execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array | ArrayBuffer>;
+  execProtocolStream(
+    handle: NativeHandle,
+    request: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): void;
   execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
   backup(handle: NativeHandle): Uint8Array | ArrayBuffer;
   restore(options: NodeDirectRestoreOptions): void;
@@ -200,6 +205,7 @@ function validateAddon(addon: NodeDirectAddon, addonPath: string): void {
   for (const name of [
     'open',
     'execProtocolRaw',
+    'execProtocolStream',
     'execSimpleQuery',
     'backup',
     'restore',

@@ -208,6 +208,7 @@ const expected = [
   'open',
   'execProtocolRaw',
   'execSimpleQuery',
+  'execProtocolStream',
   'backup',
   'restore',
   'cancel',

@@ -15,8 +15,8 @@ import { WasixStorageError } from '../errors.js';
 import { acquireNodeDirectoryLock } from '../node-directory-lock.js';
 import { isNodeError, syncNodeDirectory } from '../node-fs-commit-state.js';
 import {
-  storageCompatibilityKey,
-  type WasixStorageCompatibility,
+  assertWasixPhysicalIdentity,
+  type WasixPhysicalIdentity,
   type WasixStorageLease,
 } from '../storage-provider.js';
 import {
@@ -36,7 +36,7 @@ const WRITE_TEMP_MARKER = '.oliphaunt-write-';
 export async function acquireNodeDirectoryStorage(
   path: string,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   ownerToken = randomBytes(16).toString('hex'),
 ): Promise<WasixStorageLease> {
   const root = await prepareRoot(path);
@@ -49,12 +49,12 @@ export async function acquireNodeDirectoryStorage(
       let descriptorExists = false;
       return {
         async read() {
-          const snapshot = await readHostPgData(root, pgdata, compatibility);
+          const snapshot = await readHostPgData(root, pgdata, identity);
           descriptorExists = snapshot !== undefined;
           return snapshot;
         },
         async apply(delta) {
-          await publishHostDelta(root, pgdata, delta, compatibility, !descriptorExists);
+          await publishHostDelta(root, pgdata, delta, identity, !descriptorExists);
           descriptorExists = true;
         },
         close() {},
@@ -66,7 +66,7 @@ export async function acquireNodeDirectoryStorage(
 export async function restoreNodeDirectoryStorage(
   path: string,
   snapshot: StoredSnapshot,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<void> {
   const requested = path.startsWith('file:') ? fileURLToPath(path) : path;
   const target = isAbsolute(requested) ? requested : resolve(requested);
@@ -96,7 +96,7 @@ export async function restoreNodeDirectoryStorage(
       staging,
       join(staging, PGDATA_DIRECTORY),
       { directories: snapshot.directories, files: snapshot.files, deleted: [] },
-      compatibility,
+      identity,
       true,
     );
     if (targetWasEmpty) {
@@ -159,7 +159,7 @@ async function prepareRoot(input: string): Promise<string> {
 async function readHostPgData(
   root: string,
   pgdata: string,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<StoredSnapshot | undefined> {
   const top = await readdir(root, { withFileTypes: true });
   const hasDescriptor = top.some((entry) => entry.name === DESCRIPTOR_FILE);
@@ -195,12 +195,12 @@ async function readHostPgData(
   if (!hasDescriptor) throw incomplete(root, `contains PGDATA without ${DESCRIPTOR_FILE}`);
 
   const descriptor = await readDescriptor(root);
-  const selectedCompatibility = storageCompatibilityKey(compatibility);
+  const selectedIdentity = assertWasixPhysicalIdentity(identity);
   if (
     descriptor.engineFamily === 'wasix' &&
     (descriptor.pgdata !== PGDATA_DIRECTORY ||
-      descriptor.postgresMajor !== selectedCompatibility.postgresMajor ||
-      descriptor.physicalFormat !== selectedCompatibility.physicalFormat)
+      descriptor.postgresMajor !== selectedIdentity.postgresMajor ||
+      descriptor.physicalFormat !== selectedIdentity.physicalFormat)
   ) {
     throw new WasixStorageError(
       `directory storage ${JSON.stringify(root)} is incompatible with the selected WASIX runtime`,
@@ -227,7 +227,10 @@ async function readHostPgData(
         directories.push(path);
         await walk(path);
       } else if (entry.isFile()) {
-        files.push({ path, bytes: new Uint8Array(await readRealFile(hostPath, path)) });
+        files.push({
+          path,
+          bytes: new Uint8Array(await readRealFile(hostPath, path)),
+        });
       } else {
         throw corrupt(root, `contains unsupported PGDATA entry ${JSON.stringify(path)}`);
       }
@@ -236,7 +239,7 @@ async function readHostPgData(
   await walk('');
   return validateStoredSnapshot(
     { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
-    compatibility.runtime.postgresVersion.split('.')[0] ?? '',
+    String(identity.postgresMajor),
     {
       label: `directory storage ${JSON.stringify(root)}`,
       corrupt: (detail, cause) => corrupt(root, detail, cause),
@@ -263,7 +266,7 @@ async function publishHostDelta(
   root: string,
   pgdata: string,
   delta: StorageDelta,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   writeDescriptorFile: boolean,
 ): Promise<void> {
   await ensureContainedDirectory(root, PGDATA_DIRECTORY);
@@ -304,7 +307,7 @@ async function publishHostDelta(
   }
 
   if (writeDescriptorFile) {
-    storageCompatibilityKey(compatibility);
+    assertWasixPhysicalIdentity(identity);
     await writeDescriptor(root, wasixDatabaseRootDescriptor());
   }
   for (const parent of [...syncedParents].sort(comparePathDepthDescending)) {

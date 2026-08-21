@@ -4,6 +4,11 @@ export type JsiRawProtocolTransport = {
     handle: number,
     request: Uint8Array,
   ) => Promise<ArrayBuffer | ArrayBufferView>;
+  readonly execProtocolStream: (
+    handle: number,
+    request: Uint8Array,
+    onChunk: (chunk: ArrayBuffer | ArrayBufferView) => void,
+  ) => Promise<void>;
   readonly backup: (handle: number) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
     destination: {
@@ -24,6 +29,7 @@ export function resolveJsiRawProtocolTransport(): JsiRawProtocolTransport | null
   if (
     candidate?.version === 1 &&
     typeof candidate.execProtocolRaw === 'function' &&
+    typeof candidate.execProtocolStream === 'function' &&
     typeof candidate.backup === 'function' &&
     typeof candidate.restore === 'function'
   ) {
@@ -48,6 +54,17 @@ export async function execProtocolRawJsi(
   request: Uint8Array,
 ): Promise<Uint8Array> {
   return binaryResponseToUint8Array(await transport.execProtocolRaw(handle, request));
+}
+
+export async function execProtocolStreamJsi(
+  transport: JsiRawProtocolTransport,
+  handle: number,
+  request: Uint8Array,
+  onChunk: (chunk: Uint8Array) => void,
+): Promise<void> {
+  await transport.execProtocolStream(handle, request, (chunk) => {
+    onChunk(binaryResponseToUint8Array(chunk));
+  });
 }
 
 export async function backupJsi(

@@ -142,7 +142,8 @@ JSON
   # Generate a package-scoped scratch lockfile. The root lockfile includes
   # unrelated example importers that should not be fetched by the SDK check.
   rm -f "$scratch_root/pnpm-lock.yaml"
-  mkdir -p "$scratch_root/fixtures"
+  mkdir -p "$scratch_root/src/shared/fixtures"
+  mkdir -p "$scratch_root/src/shared/js-core/test"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/policy"
   mkdir -p "$scratch_root/tools/release"
@@ -150,7 +151,10 @@ JSON
   mkdir -p "$scratch_root/src/postgres/versions/18"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/licenses"
   mkdir -p "$scratch_root/src/sources/third-party/shared"
-  rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
+  rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  cp src/shared/js-core/test/protocol-fixtures.mjs \
+    src/shared/js-core/test/protocol-fixtures.d.mts \
+    "$scratch_root/src/shared/js-core/test/"
   # The copied SDK tests retain repository-relative imports and their legal
   # helpers resolve canonical data from that same repository root. Materialize
   # the exact module and data closure so a dirty prior scratch tree cannot make
@@ -252,7 +256,7 @@ if [ "$mode" = "coverage" ]; then
 fi
 
 if [ "$mode" = "smoke-runtime" ]; then
-  exec pnpm --dir src/sdks/react-native/examples/expo run smoke
+  exec pnpm --dir examples/react-native-expo run smoke
 fi
 
 case "${OLIPHAUNT_GRADLE_CONFIGURATION_CACHE:-1}" in
@@ -359,8 +363,6 @@ if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/expo-runner-android-device.test.sh"
   run bash "$package_dir/tools/verify-android-apk.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
-  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
-  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-mobile-extension-proof.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
@@ -437,6 +439,8 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
   "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/tools/expo-android-runner.sh" "includeModule('dev.oliphaunt', 'oliphaunt-android')" \
+  "React Native Android mobile runner must resolve the staged Kotlin SDK artifact ahead of public repositories"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
   "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
@@ -471,6 +475,8 @@ if grep -Fq "dev.oliphaunt:oliphaunt-android:0.1.0" "$package_dir/tools/expo-and
   echo "React Native Android mobile runner must not hardcode the Kotlin SDK version" >&2
   exit 1
 fi
+require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "assertSharedProtocolFixtures" \
+  "React Native tests must consume the shared protocol fixture corpus"
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
   run pnpm --dir "$package_dir" test --if-present
 fi
@@ -653,7 +659,7 @@ case "$mode" in
     run node "$package_dir/tools/ios-icu-autolinking.test.mjs" \
       --react-native-tarball "$ios_fixture_tarball" \
       --icu-source "$root/src/runtimes/liboliphaunt/native/icu-npm" \
-      --expo-project "$root/src/sdks/react-native/examples/expo"
+      --expo-project "$root/examples/react-native-expo"
     if tar -tzf "$ios_fixture_tarball" | grep -Eq \
       '^package/ios/(resources|frameworks|extension-frameworks|generated)/'; then
       echo "selection-neutral React Native npm tarball contains app-specific iOS payload" >&2

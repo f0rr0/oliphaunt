@@ -199,7 +199,7 @@ export function parseQueryResponse(bytes: Uint8Array): QueryResult {
       case 0x64:
       case 0x63:
         throw new Error(
-          'query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic',
+          'query() does not support COPY protocol responses; use a raw protocol API for COPY traffic',
         );
       case 0x5a:
         validateReadyForQuery(body);
@@ -325,7 +325,7 @@ export function parseCommandResponse(bytes: Uint8Array): CommandResult {
       case 0x64:
       case 0x63:
         throw new Error(
-          'execute() does not support COPY protocol responses; use execProtocolRaw for COPY traffic',
+          'execute() does not support COPY protocol responses; use a raw protocol API for COPY traffic',
         );
       default:
         throw new Error(`execute() received unexpected backend message tag ${hexBackendTag(tag)}`);

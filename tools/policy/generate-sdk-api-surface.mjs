@@ -361,7 +361,7 @@ function kotlinMemberName(line) {
 }
 
 function extractKotlinSurface() {
-  const sourceSets = ['commonMain', 'androidMain', 'jvmMain', 'nativeMain'];
+  const sourceSets = ['commonMain', 'androidMain', 'jvmMain'];
   const sections = [];
 
   for (const sourceSet of sourceSets) {
@@ -695,8 +695,8 @@ function render() {
   output += markdownList(extractRustSurface());
   output += `\n## Rust build integration: oliphaunt-build\n\n`;
   output += markdownList(
-    extractRustSurface(
-      'src/sdks/rust/crates/oliphaunt-build/src/lib.rs',
+    extractRustModuleSurface(
+      ['src/sdks/rust/crates/oliphaunt-build/src/lib.rs'],
       'src/sdks/rust/crates/oliphaunt-build/src',
       'oliphaunt_build',
     ),

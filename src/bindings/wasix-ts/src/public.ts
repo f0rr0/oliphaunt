@@ -13,7 +13,11 @@ export {
   type QueryResult,
   type QueryRow,
 } from './query.js';
-export { memory, type PersistentWasixStorage, type WasixStorage } from './storage.js';
+export {
+  memory,
+  type PersistentWasixStorage,
+  type WasixStorage,
+} from './storage.js';
 export type {
   BinaryInput,
   ExecutionMode,
@@ -23,5 +27,4 @@ export type {
   OpenConfig,
   WasixAssetSource,
   WasixExtensionDescriptor,
-  WasixRuntimeDescriptor,
 } from './types.js';

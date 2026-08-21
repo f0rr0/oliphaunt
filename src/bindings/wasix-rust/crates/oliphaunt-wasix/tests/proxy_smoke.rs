@@ -4,6 +4,11 @@ use anyhow::{Result, bail, ensure};
 use oliphaunt_wasix::OliphauntServer;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::path::Path;
+use std::thread;
 use std::time::Duration;
 
 const SSL_REQUEST_CODE: i32 = 80_877_103;
@@ -22,6 +27,40 @@ fn tcp_proxy_handles_psql_style_connections() -> Result<()> {
     let second = query_proxy(addr, true, "SELECT 2 AS two")?;
     assert_eq!(second, vec!["2"]);
 
+    server.close()?;
+    Ok(())
+}
+
+#[test]
+fn tcp_proxy_survives_a_malformed_client() -> Result<()> {
+    let probe = TcpListener::bind(("127.0.0.1", 0))?;
+    let addr = probe.local_addr()?;
+    drop(probe);
+    let server = OliphauntServer::builder().tcp(addr).start()?;
+
+    let mut malformed = TcpStream::connect(addr)?;
+    malformed.write_all(&3_i32.to_be_bytes())?;
+    drop(malformed);
+    thread::sleep(Duration::from_millis(25));
+
+    assert_eq!(query_proxy(addr, false, "SELECT 3 AS three")?, vec!["3"]);
+    server.close()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_proxy_survives_a_malformed_client() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let socket = directory.path().join(".s.PGSQL.5432");
+    let server = OliphauntServer::builder().unix(&socket).start()?;
+
+    let mut malformed = UnixStream::connect(&socket)?;
+    malformed.write_all(&3_i32.to_be_bytes())?;
+    drop(malformed);
+    thread::sleep(Duration::from_millis(25));
+
+    assert_eq!(query_unix_proxy(&socket, "SELECT 4 AS four")?, vec!["4"]);
     server.close()?;
     Ok(())
 }
@@ -48,7 +87,20 @@ fn query_proxy(addr: SocketAddr, request_ssl: bool, sql: &str) -> Result<Vec<Str
     Ok(values)
 }
 
-fn read_until_ready(stream: &mut TcpStream) -> Result<()> {
+#[cfg(unix)]
+fn query_unix_proxy(path: &Path, sql: &str) -> Result<Vec<String>> {
+    let mut stream = UnixStream::connect(path)?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    stream.write_all(&startup_message())?;
+    read_until_ready(&mut stream)?;
+    stream.write_all(&simple_query_message(sql))?;
+    let values = read_query_values(&mut stream)?;
+    stream.write_all(&terminate_message())?;
+    Ok(values)
+}
+
+fn read_until_ready(stream: &mut impl Read) -> Result<()> {
     loop {
         let (tag, body) = read_backend_message(stream)?;
         match tag {
@@ -64,7 +116,7 @@ fn read_until_ready(stream: &mut TcpStream) -> Result<()> {
     }
 }
 
-fn read_query_values(stream: &mut TcpStream) -> Result<Vec<String>> {
+fn read_query_values(stream: &mut impl Read) -> Result<Vec<String>> {
     let mut values = Vec::new();
     loop {
         let (tag, body) = read_backend_message(stream)?;
@@ -77,7 +129,7 @@ fn read_query_values(stream: &mut TcpStream) -> Result<Vec<String>> {
     }
 }
 
-fn read_backend_message(stream: &mut TcpStream) -> Result<(u8, Vec<u8>)> {
+fn read_backend_message(stream: &mut impl Read) -> Result<(u8, Vec<u8>)> {
     let mut header = [0u8; 5];
     stream.read_exact(&mut header)?;
     let len = i32::from_be_bytes(header[1..5].try_into().unwrap());

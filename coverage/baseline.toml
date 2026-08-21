@@ -127,13 +127,6 @@ evidence = "Android CMake compile, JNI smoke, and liboliphaunt C ABI tests"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
-[[products.oliphaunt-kotlin.waivers]]
-path = "src/sdks/kotlin/oliphaunt/src/nativeMain/kotlin/dev/oliphaunt/NativeDirectEngine.kt"
-reason = "Kotlin/Native C interop and owner-dispatcher behavior requires native runtime evidence outside Kover"
-evidence = "Kotlin native smoke/regression lanes and liboliphaunt C ABI tests"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
 [products.oliphaunt-js]
 tool = "vitest-v8"
 line_threshold = 80.0
@@ -254,12 +247,18 @@ expires = "before-0.2.0"
 [products.oliphaunt-wasix-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 99.03
+measured_line_coverage = 89.72
 summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
 reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
 source_globs = [
-  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query*.rs",
-  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod*.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/error.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/assets.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/builder.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/config.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/data_dir.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/database_root_descriptor.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/storage.rs",
 ]
 exclude_globs = [
   "src/runtimes/liboliphaunt/wasix/assets/generated/**",
@@ -270,13 +269,6 @@ exclude_globs = [
 per_file_line_threshold = 50.0
 branch_coverage = "advisory"
 function_coverage = "advisory"
-
-[[products.oliphaunt-wasix-rust.waivers]]
-path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs"
-reason = "oliphaunt module root is an export shim; behavior lives in the measured query module"
-evidence = "oliphaunt-wasix protocol nextest and doctest coverage"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
 
 [products.oliphaunt-wasix-ts]
 tool = "vitest-v8"

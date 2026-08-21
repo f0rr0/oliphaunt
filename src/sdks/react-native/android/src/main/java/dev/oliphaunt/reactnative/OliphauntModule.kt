@@ -167,6 +167,35 @@ class OliphauntModule(
   }
 
   @DoNotStrip
+  fun execProtocolStreamBytes(
+    handle: Long,
+    request: ByteArray,
+    callback: OliphauntJsiStreamCallback,
+  ) {
+    val key = try {
+      requireReactNativeHandle(handle)
+    } catch (error: IllegalArgumentException) {
+      callback.reject("liboliphaunt_invalid_handle", error.message)
+      return
+    }
+    val session = sessions[key]
+    if (session == null) {
+      callback.reject("liboliphaunt_unknown_handle", "unknown Oliphaunt handle")
+      return
+    }
+    scope.launch {
+      runCatching {
+        session.execProtocolStream(request) { chunk ->
+          callback.emitChunk(chunk)
+        }
+      }.fold(
+        onSuccess = { callback.resolveUnit() },
+        onFailure = { error -> callback.reject("liboliphaunt_stream_failed", error.message) },
+      )
+    }
+  }
+
+  @DoNotStrip
   fun backupBytes(
     handle: Long,
     callback: OliphauntJsiPromiseCallback,

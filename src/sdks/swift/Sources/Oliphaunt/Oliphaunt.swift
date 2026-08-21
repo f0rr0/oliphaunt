@@ -130,6 +130,10 @@ protocol OliphauntEngine: Sendable {
 
 protocol OliphauntSession: Sendable {
     func execProtocolRaw(_ bytes: Data) async throws -> Data
+    func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws
     func backup() async throws -> Data
     func cancel() async throws
     func close() async throws
@@ -220,6 +224,13 @@ public actor OliphauntDatabase {
 
     public func execProtocolRaw(_ bytes: Data) async throws -> Data {
         try await execProtocolRaw(bytes, transactionToken: nil)
+    }
+
+    public func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try await execProtocolStream(bytes, transactionToken: nil, onChunk: onChunk)
     }
 
     public func backup() async throws -> sending Data {
@@ -333,6 +344,17 @@ public actor OliphauntDatabase {
         }
     }
 
+    fileprivate func execProtocolStream(
+        _ bytes: Data,
+        transactionToken: UInt64?,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try validateTransactionAccess(token: transactionToken)
+        try await runSessionOperation(transactionToken: transactionToken) {
+            try await $0.execProtocolStream(bytes, onChunk: onChunk)
+        }
+    }
+
     private func executeTransactionControl(
         _ sql: String,
         token: UInt64
@@ -383,6 +405,13 @@ public struct OliphauntTransaction: Sendable {
 
     public func execProtocolRaw(_ bytes: Data) async throws -> Data {
         try await database.execProtocolRaw(bytes, transactionToken: token)
+    }
+
+    public func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try await database.execProtocolStream(bytes, transactionToken: token, onChunk: onChunk)
     }
 
 }

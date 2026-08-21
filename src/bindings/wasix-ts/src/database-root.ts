@@ -1,8 +1,13 @@
+import {
+  PHYSICAL_FORMAT as CARRIER_PHYSICAL_FORMAT,
+  POSTGRES_MAJOR as CARRIER_POSTGRES_MAJOR,
+} from '@oliphaunt/liboliphaunt-wasix';
+
 export const DATABASE_ROOT_DESCRIPTOR = '.oliphaunt.json';
 export const DATABASE_ROOT_SCHEMA = 'oliphaunt-database-root-v1';
 export const DATABASE_ROOT_PGDATA = 'pgdata';
-export const DATABASE_ROOT_POSTGRES_MAJOR = 18;
-export const WASIX_PHYSICAL_FORMAT = 'wasix-pg18-v1';
+export const DATABASE_ROOT_POSTGRES_MAJOR = CARRIER_POSTGRES_MAJOR;
+export const WASIX_PHYSICAL_FORMAT = CARRIER_PHYSICAL_FORMAT;
 export const NATIVE_PHYSICAL_FORMAT = 'native-pg18-v1';
 
 export type DatabaseRootDescriptor = Readonly<{

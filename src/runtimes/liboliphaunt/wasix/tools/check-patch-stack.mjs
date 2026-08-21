@@ -69,6 +69,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
   ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
+  ['src/interfaces/libpq/fe-connect.c', 'Makes libpq socket nonblocking state explicit where WASIX socket creation ignores type flags.'],
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
   ['src/template/wasix-dl', 'Keeps the WASIX template and atomics invariants source-controlled.'],
@@ -217,6 +218,16 @@ const REQUIRED_AUDIT_CHECKS = [
       '#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))',
     ],
     posture: 'PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler.',
+  },
+  {
+    requirement: 'Standalone WASIX libpq sockets are actually nonblocking',
+    patches: ['0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch'],
+    evidence: [
+      'defined(SOCK_NONBLOCK) && !defined(__wasi__)',
+      '!defined(SOCK_NONBLOCK) || defined(__wasi__)',
+      'pg_set_noblock(conn->sock)',
+    ],
+    posture: 'WASIX uses PostgreSQL\'s existing fcntl fallback because Wasmer ignores socket type flags; native platforms retain upstream atomic socket creation.',
   },
 ];
 

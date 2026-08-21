@@ -60,7 +60,17 @@ export function createBrokerRuntimeBinding(
       return handle;
     },
     execProtocolRaw(handle: RuntimeHandle, request: Uint8Array): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'execProtocol', bytes: request });
+      return asBrokerHandle(handle).requestOk({
+        kind: 'execProtocol',
+        bytes: request,
+      });
+    },
+    execProtocolStream(
+      handle: RuntimeHandle,
+      request: Uint8Array,
+      onChunk: (chunk: Uint8Array) => void,
+    ): Promise<void> {
+      return asBrokerHandle(handle).execProtocolStream(request, onChunk);
     },
     execSimpleQuery(handle: RuntimeHandle, sql: string): Promise<Uint8Array> {
       return asBrokerHandle(handle).requestOk({ kind: 'execSimpleQuery', sql });
@@ -110,6 +120,51 @@ class BrokerHandle {
         return response.bytes;
       case 'error':
         throw new Error(response.message);
+      case 'chunk':
+        throw new Error('native broker returned a stream chunk for a buffered request');
+    }
+  }
+
+  async execProtocolStream(
+    request: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): Promise<void> {
+    const stream = await this.ensureStream();
+    let callbackError: unknown;
+    try {
+      await writeBrokerRequest(stream, {
+        kind: 'execProtocolStream',
+        bytes: request,
+      });
+    } catch (error) {
+      await this.markFailed();
+      throw error;
+    }
+    for (;;) {
+      let response: BrokerResponseFrame;
+      try {
+        response = await readBrokerResponse(stream);
+      } catch (error) {
+        await this.markFailed();
+        throw error;
+      }
+      switch (response.kind) {
+        case 'chunk':
+          if (callbackError === undefined) {
+            try {
+              onChunk(response.bytes);
+            } catch (error) {
+              callbackError = error;
+            }
+          }
+          break;
+        case 'ok':
+          if (callbackError !== undefined) throw callbackError;
+          return;
+        case 'error':
+          if (callbackError !== undefined) throw callbackError;
+          throw new Error(response.message);
+      }
     }
   }
 
@@ -129,6 +184,9 @@ class BrokerHandle {
       const response = await readBrokerResponse(stream);
       if (response.kind === 'error') {
         throw new Error(`native broker cancel failed: ${response.message}`);
+      }
+      if (response.kind === 'chunk') {
+        throw new Error('native broker cancel endpoint returned a stream chunk');
       }
     } finally {
       await stream.close();
@@ -231,7 +289,12 @@ async function launchBroker(
     const ready = parseBrokerReadyLine(line);
     const stream = await connectEndpoint(parseReadyEndpoint(ready.primary));
     await authenticateBroker(stream, authToken);
-    return { child, stream, cancelEndpoint: ready.cancel, ipcDir: endpoint.ipcDir };
+    return {
+      child,
+      stream,
+      cancelEndpoint: ready.cancel,
+      ipcDir: endpoint.ipcDir,
+    };
   } catch (error) {
     child.kill('SIGKILL');
     await child.wait();
@@ -402,7 +465,10 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
   return args;
 }
 
-function parseBrokerReadyLine(line: string): { primary: string; cancel: string } {
+function parseBrokerReadyLine(line: string): {
+  primary: string;
+  cancel: string;
+} {
   if (line.startsWith(ERROR_PREFIX)) {
     throw new Error(`native broker failed to start: ${line.slice(ERROR_PREFIX.length)}`);
   }

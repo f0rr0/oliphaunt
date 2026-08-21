@@ -1,3 +1,8 @@
+import {
+  PHYSICAL_FORMAT as WASIX_PHYSICAL_FORMAT,
+  POSTGRES_MAJOR as WASIX_POSTGRES_MAJOR,
+} from '@oliphaunt/liboliphaunt-wasix';
+
 import { extractTar } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import { simpleQuery } from './protocol.js';
@@ -15,8 +20,8 @@ const ARCHIVE_MANIFEST =
   'archiveLayout=oliphaunt-physical-archive-v1\n' +
   'product=oliphaunt\n' +
   'engineFamily=wasix\n' +
-  'physicalFormat=wasix-pg18-v1\n' +
-  'postgresMajor=18\n';
+  `physicalFormat=${WASIX_PHYSICAL_FORMAT}\n` +
+  `postgresMajor=${WASIX_POSTGRES_MAJOR}\n`;
 const encoder = new TextEncoder();
 
 type ExecProtocol = (input: Uint8Array, persistence?: 'sync' | 'defer') => Promise<Uint8Array>;

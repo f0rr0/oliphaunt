@@ -77,6 +77,15 @@ impl BrokerSession {
             .map(|response| response.into_bytes())
     }
 
+    /// Execute raw PostgreSQL protocol bytes and forward native response chunks.
+    pub fn exec_protocol_stream(
+        &mut self,
+        bytes: Vec<u8>,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        self.session.exec_protocol_stream(bytes.into(), on_chunk)
+    }
+
     /// Execute a PostgreSQL simple query.
     pub fn execute(&mut self, sql: &str) -> Result<Vec<u8>> {
         self.session

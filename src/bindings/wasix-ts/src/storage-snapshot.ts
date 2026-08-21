@@ -117,7 +117,10 @@ export async function snapshotStorageDelta(
     }
     if (path.length > 0) current.set(path, type);
     if (type === 'file') {
-      files.set(path, { path, bytes: (await directory.readFile(path)).slice() });
+      files.set(path, {
+        path,
+        bytes: (await directory.readFile(path)).slice(),
+      });
       return;
     }
     if (path.length > 0) directories.set(path, path);

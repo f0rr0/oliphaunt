@@ -5,7 +5,7 @@ import {
 } from './common.js';
 import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
 import { dirname, join } from 'node:path';
-import { publishNativeDescriptor, validateManagedRoot } from '../root-descriptor.js';
+import { initializeNativePgdata } from './initialize.js';
 import {
   packConfigPointers,
   packRestoreOptionsPointers,
@@ -25,6 +25,7 @@ type DenoPointer = object | null;
 type DenoSymbols = {
   oliphaunt_init: (config: Uint8Array, out: Uint8Array) => number;
   oliphaunt_exec_protocol: (...args: unknown[]) => Promise<number>;
+  oliphaunt_exec_protocol_stream: (...args: unknown[]) => number;
   oliphaunt_exec_simple_query: (...args: unknown[]) => Promise<number>;
   oliphaunt_backup: (...args: unknown[]) => unknown;
   oliphaunt_restore: (...args: unknown[]) => unknown;
@@ -47,6 +48,10 @@ export async function createDenoNativeBinding(
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
       result: 'i32',
       nonblocking: true,
+    },
+    oliphaunt_exec_protocol_stream: {
+      parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
+      result: 'i32',
     },
     oliphaunt_exec_simple_query: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
@@ -85,7 +90,10 @@ export async function createDenoNativeBinding(
           extensions: openConfig.extensions,
           source: 'Deno direct explicit runtimeDirectory',
         });
-        openConfig = { ...openConfig, runtimeDirectory: validated.runtimeDirectory };
+        openConfig = {
+          ...openConfig,
+          runtimeDirectory: validated.runtimeDirectory,
+        };
         // Keep canonical lib/postgresql subprocess-owned during initdb. The
         // separate lib/modules $libdir is carried in the ABI 7 config.
         moduleDirectory = validated.moduleDirectory;
@@ -129,6 +137,56 @@ export async function createDenoNativeBinding(
         );
       }
       return copyResponse(deno, symbols, response);
+    },
+    execProtocolStream(
+      handle: NativeHandle,
+      request: Uint8Array,
+      onChunk: (chunk: Uint8Array) => void,
+    ): void {
+      let callbackError: unknown;
+      const callback = new deno.UnsafeCallback(
+        { parameters: ['pointer', 'pointer', 'usize'], result: 'i32' },
+        (_data: DenoPointer, bytes: DenoPointer, length: bigint) => {
+          try {
+            if (bytes === null && length !== 0n) {
+              throw new Error('native liboliphaunt stream returned null bytes');
+            }
+            const view =
+              length === 0n
+                ? new Uint8Array()
+                : new Uint8Array(
+                    new deno.UnsafePointerView(bytes).getArrayBuffer(Number(length)),
+                  ).slice();
+            onChunk(view);
+            return 0;
+          } catch (error) {
+            callbackError = error;
+            return 1;
+          }
+        },
+      );
+      let rc: number;
+      try {
+        rc = symbols.oliphaunt_exec_protocol_stream(
+          handle,
+          request,
+          BigInt(request.byteLength),
+          callback.pointer,
+          null,
+        );
+      } finally {
+        callback.close();
+      }
+      if (callbackError !== undefined) {
+        throw callbackError;
+      }
+      if (rc !== 0) {
+        throw errorMessage(
+          'native liboliphaunt protocol streaming failed',
+          rc,
+          lastError(deno, symbols, handle),
+        );
+      }
     },
     async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
       if (sql.includes('\0')) {
@@ -206,43 +264,39 @@ async function prepareDenoPgdata(
   username: string,
   runtimeDirectory?: string,
 ): Promise<void> {
-  const root = dirname(pgdata);
-  if (await validateManagedRoot(root)) return;
-  if (runtimeDirectory === undefined || typeof deno.Command !== 'function') {
-    throw new Error(
-      'initializing a Deno native database requires runtimeDirectory and Deno.Command',
-    );
-  }
-  await deno.mkdir(pgdata);
-  try {
-    const executable = join(
-      runtimeDirectory,
-      'bin',
-      deno.build?.os === 'windows' ? 'initdb.exe' : 'initdb',
-    );
-    const output = await new deno.Command(executable, {
-      args: [
-        '-D',
-        pgdata,
-        '-U',
-        username,
-        '--auth=trust',
-        '--no-sync',
-        '--locale-provider=libc',
-        '--locale=C',
-        '--encoding=UTF8',
-      ],
-      stdout: 'null',
-      stderr: 'piped',
-    }).output();
-    if (!output.success) {
-      throw new Error(`initdb failed: ${new TextDecoder().decode(output.stderr).trim()}`);
-    }
-    await publishNativeDescriptor(root);
-  } catch (error) {
-    await deno.remove(pgdata, { recursive: true }).catch(() => {});
-    throw error;
-  }
+  await initializeNativePgdata({
+    root: dirname(pgdata),
+    pgdata,
+    runInitdb: async (staging) => {
+      if (runtimeDirectory === undefined || typeof deno.Command !== 'function') {
+        throw new Error(
+          'initializing a Deno native database requires runtimeDirectory and Deno.Command',
+        );
+      }
+      const executable = join(
+        runtimeDirectory,
+        'bin',
+        deno.build?.os === 'windows' ? 'initdb.exe' : 'initdb',
+      );
+      const output = await new deno.Command(executable, {
+        args: [
+          '-D',
+          staging,
+          '-U',
+          username,
+          '--auth=trust',
+          '--locale-provider=libc',
+          '--locale=C',
+          '--encoding=UTF8',
+        ],
+        stdout: 'null',
+        stderr: 'piped',
+      }).output();
+      if (!output.success) {
+        throw new Error(`initdb failed: ${new TextDecoder().decode(output.stderr).trim()}`);
+      }
+    },
+  });
 }
 
 function denoGlobal(): any {

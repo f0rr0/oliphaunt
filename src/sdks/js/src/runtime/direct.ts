@@ -21,6 +21,13 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
     execProtocolRaw(handle: RuntimeHandle, request: Uint8Array): Promise<Uint8Array> {
       return Promise.resolve(binding.execProtocolRaw(handle, request));
     },
+    execProtocolStream(
+      handle: RuntimeHandle,
+      request: Uint8Array,
+      onChunk: (chunk: Uint8Array) => void,
+    ): Promise<void> {
+      return Promise.resolve(binding.execProtocolStream(handle, request, onChunk));
+    },
     backup(handle: RuntimeHandle): Promise<Uint8Array> {
       return Promise.resolve(binding.backup(handle));
     },

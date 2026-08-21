@@ -39,12 +39,18 @@ async function testStartupGUCValidation(): Promise<void> {
 
   for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name']) {
     await assert.rejects(
-      () => createOliphauntClient(new MockNative()).open({ startupGUCs: { [name]: '1' } }),
+      () =>
+        createOliphauntClient(new MockNative()).open({
+          startupGUCs: { [name]: '1' },
+        }),
       /each dot-separated component/,
     );
   }
   await assert.rejects(
-    () => createOliphauntClient(new MockNative()).open({ startupGUCs: { good: 'bad\0value' } }),
+    () =>
+      createOliphauntClient(new MockNative()).open({
+        startupGUCs: { good: 'bad\0value' },
+      }),
     /must not contain NUL/,
   );
 }
@@ -168,6 +174,12 @@ async function testRawProtocolCheckpointAndCancel(): Promise<void> {
   const db = await createOliphauntClient(native).open();
 
   assert.deepEqual(Array.from(await db.execProtocolRaw(Uint8Array.from([0xaa]))), [1, 0xaa]);
+  const chunks: Uint8Array[] = [];
+  await db.execProtocolStream(Uint8Array.from([0xbb]), (chunk) => chunks.push(chunk));
+  assert.deepEqual(
+    chunks.map((chunk) => Array.from(chunk)),
+    [[1, 0xbb]],
+  );
   await db.checkpoint();
   assert.match(native.requestTexts().at(-1) ?? '', /CHECKPOINT/);
   await db.cancel();
@@ -261,6 +273,9 @@ class MockNative implements Spec {
       execProtocolRaw(handle, request) {
         return native.execProtocolRawJsi(handle, request);
       },
+      async execProtocolStream(handle, request, onChunk) {
+        onChunk(await native.execProtocolRawJsi(handle, request));
+      },
       backup(handle) {
         return native.backupJsi(handle);
       },
@@ -341,6 +356,11 @@ type GlobalWithJsi = typeof globalThis & {
   __oliphauntReactNativeJsi?: {
     version: 1;
     execProtocolRaw(handle: number, request: Uint8Array): Promise<ArrayBuffer | ArrayBufferView>;
+    execProtocolStream(
+      handle: number,
+      request: Uint8Array,
+      onChunk: (chunk: ArrayBuffer | ArrayBufferView) => void,
+    ): Promise<void>;
     backup(handle: number): Promise<ArrayBuffer | ArrayBufferView>;
     restore(
       destination: {

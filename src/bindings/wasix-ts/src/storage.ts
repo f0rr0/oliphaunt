@@ -11,7 +11,9 @@ export type WasixStorage = Readonly<{
 
 /** Opaque persistent storage accepted by static physical restore. */
 export type PersistentWasixStorage = WasixStorage &
-  Readonly<{ [persistentStorageDescriptorBrand]: 'oliphaunt-wasix-persistent-storage' }>;
+  Readonly<{
+    [persistentStorageDescriptorBrand]: 'oliphaunt-wasix-persistent-storage';
+  }>;
 
 export type SerializedWasixStorage =
   | Readonly<{
@@ -43,7 +45,10 @@ const descriptorValues = new WeakMap<object, SerializedWasixStorage>();
  * `storage` is omitted. Reusing the descriptor does not preserve data.
  */
 export function memory(): WasixStorage {
-  return defineStorage({ schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' });
+  return defineStorage({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'memory',
+  });
 }
 
 /** @internal Used by the selectively imported IndexedDB adapter. */

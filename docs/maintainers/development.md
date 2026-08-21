@@ -154,9 +154,9 @@ The validation entrypoint is split by maintainer workflow:
   `liboliphaunt.xcframework`;
 - `moon run oliphaunt-kotlin:smoke`: builds and freshness-checks the selected
   Android ABI's `liboliphaunt.so` artifact, then runs the Android SDK smoke;
-- `moon run oliphaunt-kotlin:check`: Kotlin Multiplatform formatting, lint,
-  compilation, and Android-only Maven publication-shape checks. Unit and
-  host-native tests remain in `oliphaunt-kotlin:test`;
+- `moon run oliphaunt-kotlin:check`: Kotlin formatting, lint, common/JVM and
+  Android compilation, and Android-only Maven publication-shape checks. Unit
+  tests remain in `oliphaunt-kotlin:test`;
 - `moon run oliphaunt-react-native:smoke-android`: Android React Native
   installed-app harness over the Expo development-client sample;
 - `moon run oliphaunt-react-native:smoke-ios`: iOS React Native
@@ -167,13 +167,13 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run oliphaunt-react-native:smoke-mobile`: aggregate local Expo
   development-client installed-app lane. It runs both platform-specific smokes
   against the packed SDK and real native artifacts;
-- `pnpm --dir src/sdks/react-native/examples/expo run smoke:android`: real Android Expo
+- `pnpm --dir examples/react-native-expo run smoke:android`: real Android Expo
   development-client smoke for the installed React Native package. It reuses
   current native artifacts, generates the ignored Expo `android/` project only
   when missing, packages `liboliphaunt.so` plus runtime/template resources, starts
   Metro when needed, installs the app, and waits for
   `OLIPHAUNT_EXPO_SMOKE_PASS`;
-- `pnpm --dir src/sdks/react-native/examples/expo run smoke:ios`: real iOS Expo
+- `pnpm --dir examples/react-native-expo run smoke:ios`: real iOS Expo
   development-client build/smoke harness for the installed React Native package.
   For simulator builds it produces or reuses the current iOS simulator
   `liboliphaunt.dylib` automatically when no explicit artifact override is set,

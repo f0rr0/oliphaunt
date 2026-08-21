@@ -26,6 +26,8 @@ mod query;
 mod reply;
 mod server;
 mod storage;
+#[cfg(test)]
+mod test_fixtures;
 
 pub use build_resources::register_build_resources_dir;
 pub use builder::OliphauntBuilder;
@@ -34,7 +36,8 @@ pub use error::{Error, PostgresError, PostgresErrorField, Result};
 pub use extension::Extension;
 #[doc(hidden)]
 pub use ipc::{
-    BrokerIpcRequest, broker_ipc_read_request, broker_ipc_write_error, broker_ipc_write_ok,
+    BrokerIpcRequest, broker_ipc_read_request, broker_ipc_write_chunk, broker_ipc_write_error,
+    broker_ipc_write_ok,
 };
 #[cfg(feature = "internal-native-packaging")]
 #[doc(hidden)]

@@ -466,12 +466,12 @@ single-backend runtime has not qualified that capability.
 
 The binding does not commit or package PostgreSQL binaries. Its ordinary open
 path imports `@oliphaunt/liboliphaunt-wasix`, whose generated descriptor points
-at package-owned runtime, PGDATA, and manifest assets. `advanced.runtime` is the
-only raw-source escape hatch and still requires the complete integrity metadata
-for all three assets. Development reads `target/oliphaunt-wasix/assets`, produced
-by `liboliphaunt-wasix:runtime-portable`, through a checked-in Vite plugin that
-models that generated carrier. Optional extensions remain exact, separately
-imported `-wasix` carriers; they do not become an implicit browser SDK bundle.
+at package-owned runtime, PGDATA, and manifest assets. There is no public raw
+runtime-source override. Development reads `target/oliphaunt-wasix/assets`,
+produced by `liboliphaunt-wasix:runtime-portable`, through the root browser
+example's Vite plugin, which models that generated carrier. Optional extensions
+remain exact, separately imported `-wasix` carriers; they do not become an
+implicit browser SDK bundle.
 Their package versions follow the owning extension product's existing release
 and changelog stream, so WASIX is another carrier rather than an independently
 versioned product.

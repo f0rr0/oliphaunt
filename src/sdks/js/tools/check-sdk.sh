@@ -68,9 +68,13 @@ JSON
   cp pnpm-lock.yaml "$scratch_root/pnpm-lock.yaml"
   cp LICENSE "$scratch_root/LICENSE"
   mkdir -p "$scratch_root/src/shared/fixtures"
+  mkdir -p "$scratch_root/src/shared/js-core/test"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  cp src/shared/js-core/test/protocol-fixtures.mjs \
+    src/shared/js-core/test/protocol-fixtures.d.mts \
+    "$scratch_root/src/shared/js-core/test/"
   cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/packages"
@@ -434,7 +438,7 @@ reject_source_text "$package_dir/src/types.ts" "root?: string" \
   "TypeScript SDK must not expose the internal database root"
 reject_source_text "$package_dir/src/types.ts" "temporary?: boolean" \
   "TypeScript SDK must not expose ambiguous boolean temporary storage"
-require_source_text "$package_dir/src/types.ts" "restore(destination: string, backup: BinaryInput): Promise<void>" \
+require_source_text "$package_dir/src/types.ts" "restore(destination: string, backup: BinaryInput, options?: RestoreOptions): Promise<void>" \
   "TypeScript SDK restore must use destination plus physical backup bytes"
 require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedStorage.instanceDirectory, 'pgdata')" \
   "TypeScript SDK must derive the internal PGDATA layout from resolved storage"
@@ -450,7 +454,7 @@ reject_source_text "$package_dir/src/types.ts" "Capabilities" \
   "TypeScript SDK must not expose a speculative capability matrix"
 require_source_text "$package_dir/src/query.ts" "function validateUtf8(bytes: Uint8Array, label: string): void" \
   "TypeScript SDK query parser must reject malformed backend UTF-8"
-require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "query-response-cases.json" \
+require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "assertSharedProtocolFixtures" \
   "TypeScript SDK tests must consume the shared protocol fixture corpus"
 require_source_text "$package_dir/src/__tests__/broker-frames.test.ts" "encodeBrokerRequest" \
   "TypeScript SDK tests must cover the native broker frame codec"

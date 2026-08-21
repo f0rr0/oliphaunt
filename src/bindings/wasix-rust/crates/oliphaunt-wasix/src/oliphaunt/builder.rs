@@ -168,6 +168,36 @@ mod storage_tests {
         let builder = OliphauntBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
     }
+
+    #[test]
+    fn fluent_configuration_preserves_postgres_vocabulary() {
+        let directory = std::path::PathBuf::from("database-root");
+        let builder = OliphauntBuilder::new()
+            .storage(DatabaseStorage::Directory(directory.clone()))
+            .startup_guc("work_mem", "16MB")
+            .startup_gucs([("application_name", "builder-test")])
+            .username("app_user")
+            .database("app_database");
+
+        assert_eq!(builder.storage, DatabaseStorage::Directory(directory));
+        assert_eq!(
+            builder.postgres_config.iter().collect::<Vec<_>>(),
+            vec![("application_name", "builder-test"), ("work_mem", "16MB")]
+        );
+        assert_eq!(builder.startup_config.username, "app_user");
+        assert_eq!(builder.startup_config.database, "app_database");
+    }
+
+    #[test]
+    fn open_rejects_invalid_startup_configuration_before_runtime_work() {
+        let error = OliphauntBuilder::new()
+            .startup_guc("bad=name", "value")
+            .open()
+            .err()
+            .expect("invalid GUCs must fail before preparing a database");
+
+        assert!(error.to_string().contains("must not contain"));
+    }
 }
 
 #[cfg(all(test, feature = "extensions"))]

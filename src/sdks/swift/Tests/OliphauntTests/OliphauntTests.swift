@@ -74,6 +74,18 @@ func backupAndRestoreUsePhysicalBytesDirectly() async throws {
 }
 
 @Test
+func rawProtocolStreamingForwardsOwnedChunks() async throws {
+    let response = commandResponse("SELECT 1")
+    let session = TestSession(response: response)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let chunks = ChunkBox()
+    try await database.execProtocolStream(Data([Character("Q").asciiValue!, 0, 0, 0, 5, 0])) {
+        chunks.append($0)
+    }
+    #expect(chunks.snapshot() == [response])
+}
+
+@Test
 func transactionCommitsAndPinsThePhysicalSession() async throws {
     let session = TestSession(response: commandResponse("OK"))
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
@@ -332,6 +344,23 @@ private final class TestEngine: OliphauntEngine, @unchecked Sendable {
     }
 }
 
+private final class ChunkBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [Data] = []
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        chunks.append(chunk)
+        lock.unlock()
+    }
+
+    func snapshot() -> [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        return chunks
+    }
+}
+
 private actor TestSession: OliphauntSession {
     private let response: Data
     private let backupBytes: Data
@@ -370,6 +399,13 @@ private actor TestSession: OliphauntSession {
             return commandResponse(sql == "COMMIT" ? commitTag : sql)
         }
         return response
+    }
+
+    func execProtocolStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try onChunk(try await execProtocolRaw(bytes))
     }
 
     func backup() async throws -> Data { backupBytes }

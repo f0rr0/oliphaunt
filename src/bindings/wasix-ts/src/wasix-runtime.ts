@@ -189,7 +189,10 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
   if (primary instanceof PostgresError) {
     const composed = new PostgresError(primary.fields.map((field) => ({ ...field })));
     composed.message = message;
-    Object.defineProperty(composed, 'cause', { configurable: true, value: cause });
+    Object.defineProperty(composed, 'cause', {
+      configurable: true,
+      value: cause,
+    });
     return composed;
   }
   if (primary instanceof WasixStorageError) {

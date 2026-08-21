@@ -1095,7 +1095,7 @@ require_text "'Android PSS MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh
   "mobile footprint matrix summary must expose Android PSS columns"
 require_text "'SQLite durability'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix must label durability as SQLite-specific"
-require_text 'assertSafeCrashSettings(postgresSettings)' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
+require_text 'assertSafeCrashSettings(postgresSettings)' examples/react-native-expo/src/SmokeDashboard.tsx \
   "Expo crash evidence must verify effective safe PostgreSQL settings"
 reject_text 'processMemoryReport' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint summary must use platform harness memory evidence"
@@ -1115,9 +1115,9 @@ require_text 'benchmark-process.tsv' tools/perf/matrix/run_mobile_footprint_matr
   "mobile footprint summary must read iOS harness process evidence"
 require_text 'benchmark-package-sizes.json' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint summary must read built artifact sizes"
-reject_text 'processMemoryReport' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
+reject_text 'processMemoryReport' examples/react-native-expo/src/SmokeDashboard.tsx \
   "Expo app report must not expose stale process-memory metadata"
-reject_text 'packageSizeReport' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
+reject_text 'packageSizeReport' examples/react-native-expo/src/SmokeDashboard.tsx \
   "Expo app report must not expose stale package-size metadata"
 reject_text 'EXPO_PUBLIC_OLIPHAUNT_DURABILITY' src/sdks/react-native/tools/expo-android-runner.sh \
   "Android Expo runner must not publish a dead durability profile"
@@ -1173,7 +1173,7 @@ require_text 'oliphaunt-crash-recovery-storage-$crash_storage_suffix' src/sdks/r
   "Android crash recovery must avoid stale persistent storage across benchmark runs"
 require_text 'rm -rf "$crash_storage"' src/sdks/react-native/tools/expo-runner-android-device.sh \
   "Android crash recovery must clear the per-run storage before the write phase"
-require_text 'benchmarkOptionsForPreset' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
+require_text 'benchmarkOptionsForPreset' examples/react-native-expo/src/SmokeDashboard.tsx \
   "Expo benchmark app must size benchmark workloads from a named preset"
 require_text 'refreshing native extension artifacts through fingerprinted build script' src/runtimes/liboliphaunt/native/tools/check-track.sh \
   "native extension/full validation must refresh extension artifacts through the fingerprinted build script"

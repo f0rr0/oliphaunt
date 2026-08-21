@@ -22,9 +22,11 @@ struct BehaviorAssertion {
 
 #[test]
 fn shared_postgres_behavior_contract() -> Result<()> {
-    let contract: BehaviorContract = serde_json::from_str(include_str!(
-        "../src/testdata/postgres-behavior-contract.json"
-    ))?;
+    let fixture = shared_fixture(
+        "postgres/behavior-contract.json",
+        "postgres-behavior-contract.json",
+    )?;
+    let contract: BehaviorContract = serde_json::from_str(&fixture)?;
     ensure!(
         contract.schema_version == 1,
         "unsupported behavior fixture schema"
@@ -57,6 +59,23 @@ fn shared_postgres_behavior_contract() -> Result<()> {
     }
     database.close()?;
     Ok(())
+}
+
+fn shared_fixture(shared_relative: &str, packaged_name: &str) -> Result<String> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let shared = manifest_dir
+        .join("../../../../shared/fixtures")
+        .join(shared_relative);
+    let packaged = manifest_dir.join("src/testdata").join(packaged_name);
+    std::fs::read_to_string(&shared)
+        .or_else(|_| std::fs::read_to_string(&packaged))
+        .with_context(|| {
+            format!(
+                "read shared fixture {} or packaged fixture {}",
+                shared.display(),
+                packaged.display()
+            )
+        })
 }
 
 #[test]

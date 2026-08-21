@@ -319,7 +319,9 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
 }
 
 async function nodeExtensionMaterializationValidatesSelections(): Promise<void> {
-  const install: ResolvedNativeInstall = { libraryPath: '/tmp/liboliphaunt-test.so' };
+  const install: ResolvedNativeInstall = {
+    libraryPath: '/tmp/liboliphaunt-test.so',
+  };
   assert.equal(await materializeNodeExtensionInstall(install, []), install);
   await assert.rejects(
     () => materializeNodeExtensionInstall(install, ['not_a_real_extension']),
@@ -440,7 +442,9 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
   try {
     await writePreparedHstoreRuntime(directRuntime, target.id);
     await writePreparedHstoreRuntime(releaseRuntime, target.id);
-    await mkdir(join(invalidRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(invalidRuntime, 'share/postgresql/extension'), {
+      recursive: true,
+    });
     await mkdir(join(invalidRuntime, 'lib/postgresql'), { recursive: true });
 
     const direct = await validatePreparedNodeRuntimeExtensions(
@@ -958,7 +962,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
 
     await writeFile(
       join(targetRoot, 'bundle-manifest.json'),
-      JSON.stringify({ ...bundleManifest, schema: 'oliphaunt-extension-bundle-v1' }),
+      JSON.stringify({
+        ...bundleManifest,
+        schema: 'oliphaunt-extension-bundle-v1',
+      }),
     );
     await assert.rejects(
       () =>
@@ -1167,7 +1174,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     );
   } finally {
     if (firstInstall?.runtimeDirectory !== undefined) {
-      await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
+      await rm(dirname(firstInstall.runtimeDirectory), {
+        recursive: true,
+        force: true,
+      });
     }
     await rm(root, { recursive: true, force: true });
     for (const packageRoot of createdPackageRoots.reverse()) {
@@ -1181,7 +1191,9 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
 
 async function writePreparedHstoreRuntime(runtimeDirectory: string, target: string): Promise<void> {
   const moduleSuffix = nativeModuleSuffixForTarget(target);
-  await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), { recursive: true });
+  await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), {
+    recursive: true,
+  });
   await mkdir(join(runtimeDirectory, 'lib/postgresql'), { recursive: true });
   await mkdir(join(runtimeDirectory, 'lib/modules'), { recursive: true });
   await writeFile(join(runtimeDirectory, 'share/postgresql/extension/hstore.control'), 'extension');
@@ -1274,8 +1286,12 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       join(targetRoot, 'extension-contract.json'),
       JSON.stringify(vectorContractManifest),
     );
-    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
-    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
+    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), {
+      recursive: true,
+    });
+    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), {
+      recursive: true,
+    });
     await writeFile(
       join(payloadRoot, 'runtime/share/postgresql/extension/vector.control'),
       'extension',
@@ -1299,7 +1315,9 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     );
 
     const redirectedRuntime = join(targetRoot, 'redirected-runtime');
-    await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), {
+      recursive: true,
+    });
     await mkdir(join(redirectedRuntime, 'lib/postgresql'), { recursive: true });
     await mkdir(join(redirectedRuntime, 'lib/modules'), { recursive: true });
     await writeFile(
@@ -1553,7 +1571,10 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
         join(targetRoot, 'extension-contract.json'),
         JSON.stringify(
           fixtureExtensionContractManifest(product, extensionVersion, target.id, [
-            { ...independentlyVersionedContract, licenseFiles: [...licenseFiles] },
+            {
+              ...independentlyVersionedContract,
+              licenseFiles: [...licenseFiles],
+            },
           ]),
         ),
       );

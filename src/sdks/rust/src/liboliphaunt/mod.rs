@@ -533,6 +533,79 @@ impl EngineSession for OliphauntSession {
         Ok(self.protocol_response_from_native(response))
     }
 
+    fn exec_protocol_stream(
+        &mut self,
+        request: ProtocolRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let guard =
+            self.handle.handle.read().map_err(|_| {
+                Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
+            })?;
+        let handle = *guard;
+        if handle.is_null() {
+            return Err(Error::EngineStopped);
+        }
+
+        struct StreamContext<'a> {
+            on_chunk: &'a mut dyn FnMut(&[u8]) -> Result<()>,
+            error: Option<Error>,
+        }
+
+        unsafe extern "C" fn stream_callback(
+            context: *mut std::ffi::c_void,
+            data: *const std::ffi::c_uchar,
+            len: usize,
+        ) -> std::ffi::c_int {
+            let context = unsafe { &mut *(context.cast::<StreamContext<'_>>()) };
+            if data.is_null() && len > 0 {
+                context.error = Some(Error::Engine(
+                    "native liboliphaunt stream callback received null data".to_owned(),
+                ));
+                return -1;
+            }
+            let bytes = if len == 0 {
+                &[]
+            } else {
+                unsafe { std::slice::from_raw_parts(data, len) }
+            };
+            match (context.on_chunk)(bytes) {
+                Ok(()) => 0,
+                Err(error) => {
+                    context.error = Some(error);
+                    -1
+                }
+            }
+        }
+
+        let bytes = request.as_bytes();
+        let mut context = StreamContext {
+            on_chunk,
+            error: None,
+        };
+        let rc = unsafe {
+            (self.symbols.exec_protocol_stream)(
+                handle,
+                bytes.as_ptr(),
+                bytes.len(),
+                stream_callback,
+                (&mut context as *mut StreamContext<'_>).cast(),
+            )
+        };
+        if rc != 0 {
+            if let Some(error) = context.error {
+                return Err(error);
+            }
+            let message = self.symbols.last_error_text(handle).unwrap_or_else(|| {
+                format!("oliphaunt_exec_protocol_stream failed with status {rc}")
+            });
+            return Err(Error::Engine(format!(
+                "native liboliphaunt protocol stream failed: {message}"
+            )));
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
         let Some(exec_simple_query) = self.symbols.exec_simple_query else {

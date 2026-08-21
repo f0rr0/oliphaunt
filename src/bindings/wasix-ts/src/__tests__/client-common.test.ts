@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@oliphaunt/liboliphaunt-wasix', () => ({
+  POSTGRES_MAJOR: 18,
+  PHYSICAL_FORMAT: 'wasix-pg18-v1',
   default: {
     schema: 'oliphaunt-wasix-runtime-v1',
     runtime: 'wasix',
@@ -33,12 +35,14 @@ import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 describe('WASIX shared client orchestration', () => {
   it('serializes caller configuration without retaining mutable asset buffers', () => {
     const runtimeBytes = new Uint8Array(4).fill(1);
-    const options = serializeOpenConfig({
-      advanced: { runtime: runtimeDescriptor(runtimeBytes) },
-      username: 'app',
-      database: 'todos',
-      startupGUCs: { search_path: 'app, public' },
-    });
+    const options = serializeOpenConfig(
+      {
+        username: 'app',
+        database: 'todos',
+        startupGUCs: { search_path: 'app, public' },
+      },
+      runtimeDescriptor(runtimeBytes),
+    );
 
     runtimeBytes[0] = 9;
     expect(options).toMatchObject({

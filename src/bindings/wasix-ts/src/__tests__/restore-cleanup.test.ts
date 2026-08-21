@@ -12,7 +12,10 @@ describe('WASIX restore ownership cleanup', () => {
       undefined,
     );
 
-    expect(failure).toMatchObject({ code: 'unavailable', commitState: 'persisted' });
+    expect(failure).toMatchObject({
+      code: 'unavailable',
+      commitState: 'persisted',
+    });
   });
 
   it('preserves a primary storage classification when release also fails', async () => {
@@ -27,7 +30,10 @@ describe('WASIX restore ownership cleanup', () => {
       primary,
     );
 
-    expect(failure).toMatchObject({ code: 'incomplete', commitState: 'unchanged' });
+    expect(failure).toMatchObject({
+      code: 'incomplete',
+      commitState: 'unchanged',
+    });
     expect(failure).toHaveProperty(
       'message',
       expect.stringContaining('ownership release also failed'),

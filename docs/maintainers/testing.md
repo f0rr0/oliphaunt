@@ -9,11 +9,10 @@ Each SDK is validated with the same tools its consumers use:
 - Rust WASIX binding: `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`
 - Swift SDK: `src/sdks/swift/Tests/`
 - Kotlin SDK: `src/sdks/kotlin/oliphaunt/src/commonTest/`,
-  `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`, and
-  `src/sdks/kotlin/oliphaunt/src/nativeTest/`
+  and `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`
 - React Native package: `src/sdks/react-native/src/__tests__/`
 - Installed React Native app smoke and benchmark coverage:
-  `src/sdks/react-native/examples/expo/`
+  `examples/react-native-expo/`
 
 Use the tier model below when deciding whether a check belongs in PR fast
 feedback, affected integration, an explicit full manual run, release dry-run, or post-publish
@@ -104,6 +103,11 @@ product-native tests or policy checks:
 - `src/shared/fixtures/storage/physical-backup-wal-range-v1.properties`: exact
   inclusive WAL segment-range vectors consumed by native and both WASIX online
   backup implementations, including non-default segment size arithmetic.
+
+`bun tools/policy/check-shared-fixtures.mjs` validates the manifest and rejects
+byte-for-byte source copies outside the canonical fixture root. Published
+source packages receive any required standalone copies only in their generated
+staging directories.
 Reusable benchmark datasets, benchmark plans, and published reports belong in
 `benchmarks/`. Executable benchmark harnesses belong in `tools/perf/` unless
 the harness is intentionally part of a product's public developer API.
@@ -372,4 +376,7 @@ standard Postgres client.
 
 Direct `Oliphaunt` supports `/dev/blob` for `COPY TO` and `COPY FROM`. Server
 mode supports ordinary client-driven `COPY FROM STDIN` and other standard wire
-protocol flows through the local Postgres endpoint.
+protocol flows through the local Postgres endpoint. Native SDK regression tests
+exercise callback-streamed raw responses in direct, broker, server, and
+transaction-owned sessions; language unit tests lock callback forwarding at
+the Swift, Kotlin, React Native, and desktop TypeScript facades.

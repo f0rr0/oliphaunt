@@ -38,7 +38,10 @@ async function smokeDatabase(config: OpenConfig, label: string): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), `oliphaunt-js-${label}-`));
   let database: OliphauntDatabase | undefined;
   try {
-    database = await Oliphaunt.open({ ...config, storage: { kind: 'directory', path: root } });
+    database = await Oliphaunt.open({
+      ...config,
+      storage: { kind: 'directory', path: root },
+    });
     assert.equal(
       (await database.query(`SELECT '${label}'::text AS value`)).getText(0, 'value'),
       label,

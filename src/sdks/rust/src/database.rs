@@ -61,6 +61,20 @@ impl Oliphaunt {
             .map(ProtocolResponse::into_bytes)
     }
 
+    /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks.
+    pub async fn exec_protocol_raw_stream<F>(
+        &self,
+        request: impl AsRef<[u8]>,
+        on_chunk: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        self.executor
+            .exec_protocol_stream(ProtocolRequest::new(request.as_ref().to_vec()), on_chunk)
+            .await
+    }
+
     /// Execute exactly one PostgreSQL command through the extended-query protocol.
     pub async fn execute(&self, sql: &str) -> Result<CommandResult> {
         let response = self
@@ -232,6 +246,20 @@ impl OliphauntServer {
         self.database.exec_protocol_raw(request).await
     }
 
+    /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks.
+    pub async fn exec_protocol_raw_stream<F>(
+        &self,
+        request: impl AsRef<[u8]>,
+        on_chunk: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        self.database
+            .exec_protocol_raw_stream(request, on_chunk)
+            .await
+    }
+
     /// Run a callback in a transaction pinned to the SDK connection.
     pub async fn transaction<T>(
         &self,
@@ -289,6 +317,15 @@ impl SessionPin {
     ) -> Result<ProtocolResponse> {
         self.executor
             .pinned_exec_protocol_raw(self.token, request.into())
+            .await
+    }
+
+    async fn exec_protocol_raw_stream<F>(&self, request: ProtocolRequest, on_chunk: F) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        self.executor
+            .pinned_exec_protocol_stream(self.token, request, on_chunk)
             .await
     }
 
@@ -389,6 +426,23 @@ impl Transaction {
             .exec_protocol_raw(ProtocolRequest::new(request.as_ref().to_vec()))
             .await
             .map(ProtocolResponse::into_bytes)
+    }
+
+    /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks
+    /// inside the active transaction.
+    pub async fn exec_protocol_raw_stream<F>(
+        &self,
+        request: impl AsRef<[u8]>,
+        on_chunk: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
+        self.pin
+            .as_ref()
+            .expect("transaction pin is present until commit or rollback")
+            .exec_protocol_raw_stream(ProtocolRequest::new(request.as_ref().to_vec()), on_chunk)
+            .await
     }
 
     /// Commit the transaction and release the session pin.

@@ -826,6 +826,50 @@ static int oliphaunt_read_small_file(
     size_t capacity,
     bool *out_exists) {
     *out_exists = false;
+#ifdef _WIN32
+    HANDLE file_handle = CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+        NULL);
+    if (file_handle == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return 0;
+        }
+        char message[1024];
+        snprintf(message, sizeof(message), "open managed-root metadata %s: Windows error %lu", path, (unsigned long)error);
+        set_error(handle, message);
+        return -1;
+    }
+    BY_HANDLE_FILE_INFORMATION file_info;
+    if (!GetFileInformationByHandle(file_handle, &file_info)) {
+        DWORD error = GetLastError();
+        CloseHandle(file_handle);
+        char message[1024];
+        snprintf(message, sizeof(message), "inspect opened managed-root metadata %s: Windows error %lu", path, (unsigned long)error);
+        set_error(handle, message);
+        return -1;
+    }
+    if ((file_info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) {
+        CloseHandle(file_handle);
+        char message[1024];
+        snprintf(message, sizeof(message), "%s is not a regular managed-root metadata file", path);
+        set_error(handle, message);
+        return -1;
+    }
+    int fd = _open_osfhandle((intptr_t)file_handle, _O_RDONLY | _O_BINARY);
+    if (fd < 0) {
+        CloseHandle(file_handle);
+        char message[1024];
+        snprintf(message, sizeof(message), "read %s: %s", path, strerror(errno));
+        set_error(handle, message);
+        return -1;
+    }
+#else
     int reparse = oliphaunt_path_is_reparse_point(path);
     if (reparse > 0) {
         char message[1024];
@@ -849,11 +893,7 @@ static int oliphaunt_read_small_file(
         set_error(handle, message);
         return -1;
     }
-    int open_flags = O_RDONLY | O_CLOEXEC;
-#ifdef _WIN32
-    open_flags |= O_BINARY;
-#endif
-    int fd = open(path, open_flags);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         char message[1024];
         snprintf(message, sizeof(message), "read %s: %s", path, strerror(errno));
@@ -861,22 +901,16 @@ static int oliphaunt_read_small_file(
         return -1;
     }
     struct stat opened;
-#ifdef _WIN32
-    int stat_rc = _fstat64(fd, &opened);
-#else
     int stat_rc = fstat(fd, &opened);
-#endif
-    if (stat_rc != 0 || !S_ISREG(opened.st_mode)
-#ifndef _WIN32
-        || opened.st_dev != before.st_dev || opened.st_ino != before.st_ino
-#endif
-    ) {
+    if (stat_rc != 0 || !S_ISREG(opened.st_mode) ||
+        opened.st_dev != before.st_dev || opened.st_ino != before.st_ino) {
         char message[1024];
         snprintf(message, sizeof(message), "%s changed while its metadata was opened", path);
         close(fd);
         set_error(handle, message);
         return -1;
     }
+#endif
     size_t length = 0;
     while (length + 1 < capacity) {
         ssize_t count = read(fd, out + length, capacity - length - 1);

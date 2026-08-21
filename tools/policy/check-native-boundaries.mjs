@@ -247,7 +247,7 @@ function* walkFiles(relativeRoots, suffixes) {
 
 checkNativeRustManifest('src/sdks/rust/Cargo.toml');
 checkJsonManifest('src/sdks/react-native/package.json');
-checkJsonManifest('src/sdks/react-native/examples/expo/package.json');
+checkJsonManifest('examples/react-native-expo/package.json');
 checkToolCrateBoundaries();
 checkNativeScriptBoundary();
 

@@ -115,9 +115,17 @@ process.chdir(ROOT);
 
 run("bash", ["examples/tools/check-lockfiles.sh", "--check"]);
 run("bash", ["examples/tools/stage-tauri-webdriver-app.test.sh"]);
+run("tools/dev/bun.sh", [
+  "test",
+  "examples/tools/react-native-expo-smoke-pass-receipt.test.mjs",
+]);
+run("tools/dev/bun.sh", [
+  "test",
+  "examples/tools/react-native-expo-mobile-extension-proof.test.mjs",
+]);
 
 const allowedRootExamples =
-  /^(examples\/moon\.yml|examples\/README\.md|examples\/tools\/[^/]+|examples\/(tauri|tauri-wasix|electron|electron-wasix)(\/.*)?)$/;
+  /^(examples\/moon\.yml|examples\/README\.md|examples\/assets\/[^/]+|examples\/tools\/[^/]+|examples\/(tauri|tauri-wasix|electron|electron-wasix|browser-wasix|react-native-expo)(\/.*)?)$/;
 const violations = gitLsFiles("examples").filter((path) => !allowedRootExamples.test(path));
 if (violations.length > 0) {
   console.error("root examples/ may contain only cross-product example policy/tooling");
@@ -135,12 +143,6 @@ if (trackedNodeModules.length > 0) {
   process.exit(1);
 }
 
-requireFile("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json");
-requireFile("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml");
-requireText("src/bindings/wasix-rust/moon.yml", String.raw`^  example-check:$`);
-requireText("src/bindings/wasix-rust/moon.yml", String.raw`tags: \["examples", "quality", "ci-wasm-regression"\]`);
-requireText("src/bindings/wasix-rust/tools/check-examples.sh", "PNPM_CONFIG_LOCKFILE");
-
 requireFile("examples/tools/run-tauri-webdriver-smoke.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.test.sh");
@@ -148,6 +150,8 @@ requireFile("examples/tools/tauri-webdriver-smoke.mjs");
 requireFile("examples/tools/run-electron-driver-smoke.sh");
 requireFile("examples/tools/electron-driver-smoke.mjs");
 requireFile("examples/tools/electron-test-driver.mjs");
+requireFile("examples/tools/react-native-expo-smoke-pass-receipt.test.mjs");
+requireFile("examples/tools/react-native-expo-mobile-extension-proof.test.mjs");
 requireText("examples/tools/run-tauri-webdriver-smoke.sh", String.raw`cargo install tauri-driver --locked --version 2\.0\.6`);
 requireText(
   "examples/tools/run-tauri-webdriver-smoke.sh",
@@ -210,28 +214,6 @@ requireText("examples/electron-wasix/src-wasix/Cargo.toml", "oliphaunt-wasix-too
 requireText("examples/electron-wasix/src-wasix/Cargo.toml", "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu");
 requireText("examples/electron-wasix/src-wasix/Cargo.toml", "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu");
 requireWasixToolsSmoke("examples/electron-wasix/src-wasix/src/main.rs");
-rejectText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml",
-  'registry\\s*=\\s*"oliphaunt-local"',
-);
-requireText("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml", '"tools"');
-requireText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml",
-  "oliphaunt-wasix-tools",
-);
-requireText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml",
-  "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-);
-requireText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml",
-  "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-);
-requireWasixToolsSmoke("src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs");
-rejectText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs",
-  String.raw`tcp_addr\(\)\.is_none\(\)`,
-);
 rejectText("examples/electron/package.json", '"@oliphaunt/ts": "workspace:\\*"');
 rejectText("examples/electron/package.json", '"typescript": "catalog:"');
 rejectText("examples/tauri/package.json", '"typescript": "catalog:"');
@@ -240,21 +222,18 @@ rejectText("examples/electron-wasix/package.json", '"typescript": "catalog:"');
 rejectText("examples/tauri/src-tauri/Cargo.toml", 'path = "../../../src/sdks/rust');
 rejectText("examples/tauri-wasix/src-tauri/Cargo.toml", 'path = "../../../src/bindings/wasix-rust');
 rejectText("examples/electron-wasix/src-wasix/Cargo.toml", 'path = "../../../src/bindings/wasix-rust');
-rejectText(
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml",
-  'path = "../../../crates/oliphaunt-wasix"',
-);
 for (const lockfile of [
   "examples/tauri/src-tauri/Cargo.lock",
   "examples/tauri-wasix/src-tauri/Cargo.lock",
   "examples/electron-wasix/src-wasix/Cargo.lock",
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock",
 ]) {
   rejectFile(lockfile);
 }
 
-requireFile("src/sdks/react-native/examples/expo/package.json");
-requireFile("src/sdks/react-native/examples/expo/maestro/installed-smoke.yaml");
+requireFile("examples/browser-wasix/index.html");
+requireFile("examples/browser-wasix/vite.config.ts");
+requireFile("examples/react-native-expo/package.json");
+requireFile("examples/react-native-expo/maestro/installed-smoke.yaml");
 requireText("src/sdks/react-native/moon.yml", String.raw`^  mobile-build-android:$`);
 requireText("src/sdks/react-native/moon.yml", String.raw`^  mobile-e2e-android:$`);
 requireText("src/sdks/react-native/moon.yml", String.raw`^  mobile-build-ios:$`);

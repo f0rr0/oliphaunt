@@ -10,7 +10,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt Kotlin SDK"
-  description: "Kotlin and Android SDK for native liboliphaunt."
+  description: "Android SDK for native liboliphaunt."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-kotlin"

@@ -18,7 +18,7 @@ import { PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import {
   acquireWasixStorage,
-  canonicalStorageContract,
+  canonicalJson,
   type WasixStorageLease,
   type WasixStorageSyncBoundary,
 } from './storage-provider.js';
@@ -50,7 +50,7 @@ export type DirectWasixDependencies = Readonly<{
   acquireStorage(
     storage: SerializedOpenOptions['storage'],
     template: WasixDirectoryMount,
-    compatibility: PreparedWasixRuntime['storageCompatibility'],
+    identity: PreparedWasixRuntime['physicalIdentity'],
   ): Promise<WasixStorageLease>;
   compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
 }>;
@@ -120,16 +120,13 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
 
     await initializeHost(host);
-    const module = await dependencies.compileModule(
-      prepared.layout.module,
-      prepared.storageCompatibility.runtime.moduleSha256,
-    );
+    const module = await dependencies.compileModule(prepared.layout.module, prepared.moduleSha256);
     // Acquire persistent ownership only after every non-owning preparation
     // step succeeds, so a compilation rejection cannot strand its lock.
     const storage = await dependencies.acquireStorage(
       options.storage,
       pgdataTemplate,
-      prepared.storageCompatibility,
+      prepared.physicalIdentity,
     );
 
     let instance: OliphauntDirectInstance | undefined;
@@ -474,7 +471,7 @@ function instantiateDirectWithDeadline(
 
 function preparedRuntimeIdentity(options: SerializedOpenOptions): string {
   const runtime = options.runtime;
-  return canonicalStorageContract({
+  return canonicalJson({
     runtime: {
       product: runtime.product,
       version: runtime.version,

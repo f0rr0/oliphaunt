@@ -1,11 +1,16 @@
 # Oliphaunt Examples
 
-These examples keep the same todo schema across desktop shells:
+The desktop examples keep the same todo schema across shells:
 
 - `tauri`: Tauri v2 with the native Rust SDK.
 - `tauri-wasix`: Tauri v2 with `oliphaunt-wasix` and SQLx.
 - `electron`: Electron with the TypeScript SDK and native server mode.
 - `electron-wasix`: Electron with a Rust WASIX sidecar exposing a PostgreSQL URL.
+
+Additional platform examples live here as well:
+
+- `browser-wasix`: direct and worker WASIX TypeScript usage with browser storage.
+- `react-native-expo`: the React Native SDK in an Expo development build.
 
 Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
 tags plus trigram/accent-insensitive search for the todo list. Native examples

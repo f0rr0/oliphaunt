@@ -172,7 +172,9 @@ describe('WASIX database recovery state', () => {
     await expect(ignored).rejects.toMatchObject({ sqlstate: 'XX000' });
 
     expect(statements).toEqual(['BEGIN', 'SELECT rejected', 'COMMIT']);
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({
+      rowCount: null,
+    });
     await database.close();
   });
 
@@ -247,7 +249,9 @@ describe('WASIX database recovery state', () => {
     ).rejects.toThrow('rolled back the transaction instead of committing');
 
     expect(statements).toEqual(['BEGIN', 'RAW', 'COMMIT']);
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({
+      rowCount: null,
+    });
     await database.close();
   });
 
@@ -337,7 +341,9 @@ describe('WASIX database recovery state', () => {
         await transaction.execute('SELECT inside');
       }),
     ).rejects.toMatchObject({ sqlstate: 'XX000' });
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({ rowCount: null });
+    await expect(database.query('SELECT recovered')).resolves.toMatchObject({
+      rowCount: null,
+    });
 
     expect(statements).toEqual(
       failedStatement === 'BEGIN'
@@ -640,7 +646,10 @@ describe('WASIX database recovery state', () => {
     const database = new WasixDatabaseImpl(session);
 
     await expect(database.checkpoint()).rejects.toBeInstanceOf(PostgresError);
-    await expect(database.query('select 42')).resolves.toMatchObject({ rows: [], rowCount: null });
+    await expect(database.query('select 42')).resolves.toMatchObject({
+      rows: [],
+      rowCount: null,
+    });
     expect(requests).toEqual(['exec', 'exec']);
     await database.close();
   });
