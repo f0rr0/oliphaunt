@@ -871,7 +871,14 @@ fun publicationTokenForTask(taskName: String): String? = publicationTaskName.mat
 // task non-executable, including when an aggregate Maven Central task is used.
 tasks.configureEach {
     val publicationToken = publicationTokenForTask(name)
-    if (publicationToken != null && publicationToken != supportedMavenPublicationTaskToken) {
+    if (
+        publicationToken == supportedMavenPublicationTaskToken &&
+        name.startsWith("generateMetadataFileFor")
+    ) {
+        // This is an Android-only AAR. KMP module metadata redirects consumers
+        // to the intentionally unpublished root multiplatform component.
+        enabled = false
+    } else if (publicationToken != null && publicationToken != supportedMavenPublicationTaskToken) {
         enabled = false
     }
 }

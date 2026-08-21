@@ -866,8 +866,11 @@ static int oliphaunt_read_small_file(
 #else
     int stat_rc = fstat(fd, &opened);
 #endif
-    if (stat_rc != 0 || !S_ISREG(opened.st_mode) ||
-        opened.st_dev != before.st_dev || opened.st_ino != before.st_ino) {
+    if (stat_rc != 0 || !S_ISREG(opened.st_mode)
+#ifndef _WIN32
+        || opened.st_dev != before.st_dev || opened.st_ino != before.st_ino
+#endif
+    ) {
         char message[1024];
         snprintf(message, sizeof(message), "%s changed while its metadata was opened", path);
         close(fd);

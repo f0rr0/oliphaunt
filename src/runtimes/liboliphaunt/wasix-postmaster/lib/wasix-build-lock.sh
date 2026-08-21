@@ -39,7 +39,6 @@ fresh_lock_wasix_core_build() {
     [ "${FRESH_WASIX_CORE_BUILD_LOCK_INSTALL:-}" = "$install" ] &&
       [ "${FRESH_WASIX_CORE_BUILD_LOCK_PATH:-}" = "$lock" ] &&
       [ -f "$lock" ] && [ ! -L "$lock" ] &&
-      [ "$lock" -ef "/dev/fd/$FRESH_WASIX_CORE_BUILD_LOCK_FD" ] &&
       flock -x "$FRESH_WASIX_CORE_BUILD_LOCK_FD" || {
       printf 'inherited WASIX core producer lock does not match %s\n' "$install" >&2
       return 2
@@ -47,8 +46,7 @@ fresh_lock_wasix_core_build() {
     return 0
   fi
   exec {FRESH_WASIX_CORE_BUILD_LOCK_FD}>"$lock"
-  [ -f "$lock" ] && [ ! -L "$lock" ] &&
-    [ "$lock" -ef "/dev/fd/$FRESH_WASIX_CORE_BUILD_LOCK_FD" ] || {
+  [ -f "$lock" ] && [ ! -L "$lock" ] || {
     printf 'WASIX core build lock changed while opening: %s\n' "$lock" >&2
     exec {FRESH_WASIX_CORE_BUILD_LOCK_FD}>&-
     unset FRESH_WASIX_CORE_BUILD_LOCK_FD
@@ -60,8 +58,7 @@ fresh_lock_wasix_core_build() {
     unset FRESH_WASIX_CORE_BUILD_LOCK_FD
     return 2
   }
-  [ -f "$lock" ] && [ ! -L "$lock" ] &&
-    [ "$lock" -ef "/dev/fd/$FRESH_WASIX_CORE_BUILD_LOCK_FD" ] || {
+  [ -f "$lock" ] && [ ! -L "$lock" ] || {
     printf 'WASIX core build lock changed while locking: %s\n' "$lock" >&2
     exec {FRESH_WASIX_CORE_BUILD_LOCK_FD}>&-
     unset FRESH_WASIX_CORE_BUILD_LOCK_FD

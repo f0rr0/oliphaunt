@@ -222,7 +222,7 @@ public actor OliphauntDatabase {
         try await execProtocolRaw(bytes, transactionToken: nil)
     }
 
-    public func backup() async throws -> Data {
+    public func backup() async throws -> sending Data {
         try validateTransactionAccess(token: nil)
         return try await runSessionOperation { session in
             try await session.backup()

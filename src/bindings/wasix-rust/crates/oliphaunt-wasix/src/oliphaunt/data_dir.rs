@@ -25,8 +25,6 @@ const TRANSIENT_ROOT_FILES: &[&str] = &[
     "postmaster.opts",
     "postgresql.auto.conf.tmp",
     "current_logfiles.tmp",
-    "backup_label",
-    "tablespace_map",
     "backup_manifest",
 ];
 const TRANSIENT_STATE_DIRECTORIES: &[&str] = &[
@@ -1673,6 +1671,8 @@ mod tests {
         for file in TRANSIENT_ROOT_FILES {
             fs::write(source.path().join(file), b"transient")?;
         }
+        fs::write(source.path().join("backup_label"), b"label")?;
+        fs::write(source.path().join("tablespace_map"), b"map")?;
         fs::create_dir(source.path().join("base"))?;
         fs::write(source.path().join("base/pg_internal.init.1"), b"transient")?;
         fs::write(source.path().join("base/pgsql_tmp123"), b"transient")?;
@@ -1694,6 +1694,8 @@ mod tests {
 
         assert!(paths.contains(&PathBuf::from("pgdata/base/kept")));
         assert!(paths.contains(&PathBuf::from("pgdata/pg_wal/segment")));
+        assert!(paths.contains(&PathBuf::from("pgdata/backup_label")));
+        assert!(paths.contains(&PathBuf::from("pgdata/tablespace_map")));
         for directory in TRANSIENT_STATE_DIRECTORIES {
             assert!(paths.contains(&PathBuf::from(format!("pgdata/{directory}"))));
             assert!(!paths.contains(&PathBuf::from(format!("pgdata/{directory}/state"))));
