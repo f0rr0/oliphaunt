@@ -584,8 +584,9 @@ reject_jar_entry_pattern "$metadata_sources" '(^|/)commonTest/|(^|/)androidUnitT
 
 require_jar_entry "$metadata_jar" "META-INF/kotlin-project-structure-metadata.json" \
   "Kotlin metadata artifact must include project-structure metadata"
-require_jar_entry_pattern "$metadata_jar" '^commonMain/default/linkdata/package_dev\.oliphaunt/[0-9]+_oliphaunt\.knm$' \
-  "Kotlin metadata artifact must include common dev.oliphaunt linkdata"
+# The SDK's Android and JVM targets are both JVM-like, so Kotlin skips the
+# common metadata compilation. Common API contents are covered by the sources
+# and compiled target artifacts checked above and below.
 
 require_jar_entry "$jvm_jar" "dev/oliphaunt/OliphauntDatabase.class" \
   "Kotlin JVM artifact must include the public SDK database class"
